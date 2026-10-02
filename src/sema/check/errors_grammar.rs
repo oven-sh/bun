@@ -706,7 +706,7 @@ impl Checker<'_> {
             };
         for (i, t) in hir.types.iter().enumerate() {
             let scope = bound.type_scope[i];
-            if scope.is_none() {
+            if bound.is_unchecked_type(i) {
                 continue;
             }
             match t.kind {

@@ -3766,11 +3766,12 @@ impl<'p> Checker<'p> {
     /// `getNarrowableTypeForReference`: `declared` with what its type variables extend in their place, where that is what will count
     /// anyway and is a union: as a type variable it could not be narrowed.
     fn narrowable_type(&mut self, file: FileId, e: ExprId, declared: TypeId) -> TypeId {
-        // A `NoInfer<T>` is a `T` to whoever reads it.
-        let declared = if self.is_no_infer(declared) {
-            self.force(declared)
-        } else {
-            declared
+        let declared = match *self.data(declared) {
+            TypeData::Substitution {
+                base,
+                constraint: TypeId::UNKNOWN,
+            } => base,
+            _ => declared,
         };
         // `CheckModeInferential`: what type arguments are inferred from stays as it is declared. It is said of this one question, not
         // of what is assigned to the reference on the way here.
@@ -3916,7 +3917,7 @@ impl<'p> Checker<'p> {
                 let Some(resolved) = self.p.calls.get(&(file, call)) else {
                     return false;
                 };
-                let Some(sig) = self.p.failure_sigs.get(&(file, call)).or(resolved.sig) else {
+                let Some(sig) = resolved.sig else {
                     return false;
                 };
                 (self.sig_params(sig), None)

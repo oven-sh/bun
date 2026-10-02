@@ -10,7 +10,7 @@ use bun_sema::hir::{
     Alias, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, Func, IdList, Interface, Keyword,
     Mapped, MappedModifier, Member, MemberId, MemberKind, Param, ParamId, PatElem, PatElemId,
     PatId, PatKind, PatProp, PatPropId, PropKey, ResolutionMode, Span, SpecifierKind, SpecifierUse,
-    StmtId, StmtKind, TupleElem, TypeNodeId, TypeNodeKind, TypeParam, TypeParamId,
+    StmtId, StmtKind, TextRange, TupleElem, TypeNodeId, TypeNodeKind, TypeParam, TypeParamId,
 };
 
 use super::type_syntax::{Builder, Modified, modifier_error};
@@ -833,6 +833,8 @@ impl Builder<'_> {
             signature,
             loc,
             start,
+            full_start,
+            end,
             ..
         } = self.ts[id];
         let errors_before = self.file.early_errors.len();
@@ -901,6 +903,10 @@ impl Builder<'_> {
             func,
             pos: pos(loc),
             start: pos(start),
+            loc: TextRange {
+                pos: pos(full_start),
+                end: pos(end),
+            },
         }
     }
 

@@ -801,6 +801,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }))
     }
 
+    /// `finishNode`, of the member added last, if it is not finished: it ends where the token before the one at `next` does.
+    /// `parseTypeMemberSemicolon` is part of the member.
+    pub(crate) fn end_type_member(&self, kept: &mut ObjectTypeBuilder, next: u32) {
+        if let Some(member) = kept.members.last_mut()
+            && member.end == Loc::EMPTY
+        {
+            member.end = self.lexer.full_start_of(next as usize);
+        }
+    }
+
     /// Adds a finished member to the object type being built.
     pub(crate) fn finish_type_member(
         &mut self,
@@ -825,6 +835,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             self.finish_type_member(&bare, kept);
             let start = rest.first().map_or(member.bracket_pos, |next| next.pos);
+            self.end_type_member(kept, start);
             let rest = TypeMemberParts {
                 start,
                 words: rest.into(),
@@ -927,6 +938,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             signature: SignatureId::NONE,
             loc: loc(member.start),
             start: loc(member.start),
+            full_start: self.lexer.full_start_of(member.start as usize),
+            end: Loc::EMPTY,
         };
         if member.bracket_kind == BracketKind::IndexParameters {
             let (flags, modifiers) =

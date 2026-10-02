@@ -948,7 +948,7 @@ impl Checker<'_> {
                 for (_, m) in places.into_iter().filter(|place| place.0 == file) {
                     let start = hir[m].pos;
                     out.push(Diagnostic { start, code: 2374 });
-                    let end = self.end_of_member(file, m);
+                    let end = hir[m].loc.end;
                     self.explain_another(start, end, 2374, |c| vec![c.type_to_string(key)]);
                 }
             }

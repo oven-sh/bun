@@ -1406,55 +1406,17 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `Type.alias`, its symbol, of `ty`, which was made from the type node `node`: the type alias whose body that node is.
-    fn alias_to_sort_by(&self, ty: TypeId, file: FileId, node: TypeNodeId) -> Option<Sym> {
-        if let Some(known) = self.p.aliases_to_sort_by.get(&ty) {
-            return known;
-        }
-        let alias = self
-            .hir(file)
-            .aliases
-            .iter()
-            .position(|alias| alias.ty == node)
-            .map(|index| self.bound(file).alias_symbol[index])
-            .filter(|symbol| symbol.is_some())
-            .map(|symbol| self.files().sym(file, symbol))
-            // A class or an interface of the same name is what the name means.
-            .filter(|&alias| {
-                !self
-                    .files()
-                    .flags(alias)
-                    .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-            });
-        self.p.aliases_to_sort_by.insert(ty, alias)
-    }
-
-    /// `getTypeNameSymbol`, its name. A type does not remember the alias it was written with here: that of an object or a conditional
-    /// type is found by where the type is written, that of any other type is not known.
-    fn sort_name(&self, ty: TypeId) -> Option<&'p [u8]> {
+    /// `getTypeNameSymbol`, its name. `alias`: `t.alias.symbol`.
+    fn type_name(&self, ty: TypeId, alias: Option<Sym>) -> Option<&'p [u8]> {
         let files = self.files();
-        let name = match *self.data(ty) {
+        let name = match (alias, self.data(ty)) {
+            (Some(alias), _) => files.symbol(alias).name,
             // The `this` type has the symbol of its class.
-            TypeData::Ref { target: sym, .. } | TypeData::ThisParam(sym) => files.symbol(sym).name,
-            TypeData::TypeParam(file, tp, _) => self.hir(file)[tp].name,
-            TypeData::Anon {
-                origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
-                ..
+            (None, &TypeData::Ref { target: sym, .. } | &TypeData::ThisParam(sym)) => {
+                files.symbol(sym).name
             }
-            | TypeData::Cond { file, node, .. } => {
-                files.symbol(self.alias_to_sort_by(ty, file, node)?).name
-            }
-            TypeData::Fns { ref decls, .. } => {
-                let [(file, func)] = decls[..] else {
-                    return None;
-                };
-                let crate::bind::FnOwner::Type(node) = self.bound(file).fns[func.idx()].owner
-                else {
-                    return None;
-                };
-                files.symbol(self.alias_to_sort_by(ty, file, node)?).name
-            }
-            TypeData::StringMapping { kind, .. } => {
+            (None, &TypeData::TypeParam(file, tp, _)) => self.hir(file)[tp].name,
+            (None, &TypeData::StringMapping { kind, .. }) => {
                 return Some(match kind {
                     StringMappingKind::Uppercase => &b"Uppercase"[..],
                     StringMappingKind::Lowercase => &b"Lowercase"[..],
@@ -1550,18 +1512,52 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `CompareTypes` without its last resort, the ids, which depend on which thread came first here. Not compared either: the
-    /// mappers of instantiations of one declaration, the labels of tuples, where a deferred reference is written.
+    /// `compareTypeNames`
+    fn compare_type_names(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+        let (x, y) = (self.alias_of_type(a), self.alias_of_type(b));
+        let symbol = |alias: &Option<(Sym, Vec<TypeId>)>| alias.as_ref().map(|alias| alias.0);
+        some_first(self.type_name(a, symbol(&x)), self.type_name(b, symbol(&y))).then_with(
+            || match (&x, &y) {
+                (Some((s, x)), Some((t, y))) if s == t => self.compare_type_lists(x, y),
+                _ => std::cmp::Ordering::Equal,
+            },
+        )
+    }
+
+    /// `compareTypeMappers`, of instantiations of one declaration: by what they put for the type parameters, in the order those are
+    /// declared.
+    fn compare_type_mappers(&self, x: MapperId, y: MapperId) -> std::cmp::Ordering {
+        let targets = |mapper: MapperId| -> Vec<TypeId> {
+            let mut pairs = self.p.types.mapping(mapper).to_vec();
+            pairs.sort_by_key(|pair| match *self.data(pair.0) {
+                TypeData::TypeParam(file, tp, _) => (0u8, file.0, tp.0),
+                _ => (1, 0, pair.0.0),
+            });
+            pairs.into_iter().map(|pair| pair.1).collect()
+        };
+        self.compare_type_lists(&targets(x), &targets(y))
+    }
+
+    /// `CompareTypes` without its last resort, the ids, which depend on which thread came first here. Not compared either: where a
+    /// deferred reference is written.
     fn compare_types_without_ids(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         use std::cmp::Ordering::Equal;
         if a == b {
             return Equal;
         }
+        let by_flags = self.sort_order_flags(a).cmp(&self.sort_order_flags(b));
+        if by_flags.is_ne() {
+            return by_flags;
+        }
         let atoms = &self.files().atoms;
-        let are_of_one_symbol = matches!((self.data(a), self.data(b)), (TypeData::Ref { target: s, .. }, TypeData::Ref { target: t, .. }) if s == t);
-        // Of object types with the same symbol, or none, references come first. A tuple is one, and has no symbol.
-        let is_no_reference =
-            |t: TypeId| !matches!(self.data(t), TypeData::Ref { .. } | TypeData::Tuple { .. });
+        let types = |x: TypeId, y: TypeId| self.compare_types_without_ids(x, y);
+        let lists = |x: &[TypeId], y: &[TypeId]| self.compare_type_lists(x, y);
+        let place = |t: TypeId| {
+            let (_, file, pos) = self.sort_place(t)?;
+            Some(self.place_in_program_order(file, pos))
+        };
+        // `compareSymbols`, of a symbol and what `cloneTypeAsModuleType` makes of it, comes down to the ids of the symbols. Here the
+        // symbol comes first, then the copies in the order of the imports.
         let originating_import = |t: TypeId| match *self.data(t) {
             TypeData::Anon {
                 origin:
@@ -1572,79 +1568,118 @@ impl<'p> Checker<'p> {
             } => Some(originating_import),
             _ => None,
         };
-        self.sort_order_flags(a)
-            .cmp(&self.sort_order_flags(b))
-            .then_with(|| if are_of_one_symbol { Equal } else { some_first(self.sort_name(a), self.sort_name(b)) })
-            .then_with(|| {
-                let place = |t: TypeId| self.sort_place(t).map(|(_, file, pos)| self.place_in_program_order(file, pos));
-                if are_of_one_symbol { Equal } else { some_first(place(a), place(b)) }
+        // Of object types with the same symbol, or none, references come first. A tuple is one, and has no symbol.
+        let is_no_reference =
+            |t: TypeId| !matches!(self.data(t), TypeData::Ref { .. } | TypeData::Tuple { .. });
+        let are_of_one_symbol = matches!(
+            (self.data(a), self.data(b)),
+            (TypeData::Ref { target: s, .. }, TypeData::Ref { target: t, .. }) if s == t
+        );
+        let by_symbol = self
+            .compare_type_names(a, b)
+            .then_with(|| match are_of_one_symbol {
+                true => Equal,
+                false => some_first(place(a), place(b)),
             })
-            // `compareSymbols`, of a symbol and what `cloneTypeAsModuleType` makes of it, comes down to the ids of the symbols. Here the symbol
-            // comes first, then the copies in the order of the imports.
             .then_with(|| originating_import(a).cmp(&originating_import(b)))
-            // `compareTypeNames`: a union that a type alias stands for comes before one without a name.
-            .then_with(|| (self.is_union(a) && self.stored_alias(a).is_none()).cmp(&(self.is_union(b) && self.stored_alias(b).is_none())))
-            .then_with(|| is_no_reference(a).cmp(&is_no_reference(b)))
-            .then_with(|| match (self.data(a), self.data(b)) {
-                (TypeData::Ref { target: s, args: x }, TypeData::Ref { target: t, args: y }) => s.cmp(t).then_with(|| self.compare_type_lists(x, y)),
-                // `compareTupleTypes`
-                (TypeData::Tuple { elems: x, flags: f, readonly: r }, TypeData::Tuple { elems: y, flags: g, readonly: q }) => r
-                    .cmp(q)
-                    .then_with(|| x.len().cmp(&y.len()))
-                    .then_with(|| f.iter().map(|e| e.with_label(Atom::NONE).bits()).cmp(g.iter().map(|e| e.with_label(Atom::NONE).bits())))
-                    // `compareElementLabels`: what has none comes first.
-                    .then_with(|| {
-                        let label = |e: &ElemFlags| e.label().is_some().then(|| atoms.bytes(e.label()));
-                        f.iter().map(label).cmp(g.iter().map(label))
-                    })
-                    .then_with(|| self.compare_type_lists(x, y)),
-                // The lists TypeScript compares are in this order. Those of intersections are as written.
-                // What has an `origin` comes first, and origins compare as the types they are: a union, an intersection, a `keyof`.
-                (TypeData::Union(_), TypeData::Union(_)) => match (self.origin(a), self.origin(b)) {
-                    (UnionOrigin::None, UnionOrigin::None) => self.compare_type_lists(&self.parts_in_order(a), &self.parts_in_order(b)),
-                    (_, UnionOrigin::None) => std::cmp::Ordering::Less,
-                    (UnionOrigin::None, _) => std::cmp::Ordering::Greater,
-                    (UnionOrigin::Union(x), UnionOrigin::Union(y)) => {
-                        let in_order = |types: &[TypeId]| {
-                            let mut types = types.to_vec();
-                            types.sort_by(|&s, &t| self.compare_types(s, t));
-                            types
-                        };
-                        self.compare_type_lists(&in_order(x), &in_order(y))
-                    }
-                    (UnionOrigin::Union(_), _) => std::cmp::Ordering::Less,
-                    (_, UnionOrigin::Union(_)) => std::cmp::Ordering::Greater,
-                    (UnionOrigin::Intersection(x), UnionOrigin::Intersection(y)) => self.compare_type_lists(x, y),
-                    (UnionOrigin::Intersection(_), _) => std::cmp::Ordering::Less,
-                    (_, UnionOrigin::Intersection(_)) => std::cmp::Ordering::Greater,
-                    (UnionOrigin::Keyof(x), UnionOrigin::Keyof(y)) => self.compare_types(*x, *y),
+            .then_with(|| is_no_reference(a).cmp(&is_no_reference(b)));
+        if by_symbol.is_ne() {
+            return by_symbol;
+        }
+        match (self.data(a), self.data(b)) {
+            (TypeData::Ref { target: s, args: x }, TypeData::Ref { target: t, args: y }) => {
+                s.cmp(t).then_with(|| lists(x, y))
+            }
+            // `compareTupleTypes`, `compareElementLabels`: what has no label comes first.
+            (
+                TypeData::Tuple {
+                    elems: x,
+                    flags: f,
+                    readonly: r,
                 },
-                (TypeData::Intersection(x), TypeData::Intersection(y)) => self.compare_type_lists(x, y),
-                (TypeData::StringLit { value: x, .. }, TypeData::StringLit { value: y, .. }) => atoms.bytes(*x).cmp(atoms.bytes(*y)),
-                (TypeData::NumberLit { bits: x, .. }, TypeData::NumberLit { bits: y, .. }) => {
-                    // `cmp.Compare`: NaN before everything else.
-                    let (x, y) = (f64::from_bits(*x), f64::from_bits(*y));
-                    y.is_nan().cmp(&x.is_nan()).then_with(|| x.partial_cmp(&y).unwrap_or(Equal))
-                }
-                (TypeData::BoolLit { value: x, .. }, TypeData::BoolLit { value: y, .. }) => x.cmp(y),
-                // Ordered by id, and `zeroBigIntType` is made with the checker.
-                (TypeData::BigIntLit { text: x, .. }, TypeData::BigIntLit { text: y, .. }) => {
-                    let is_zero = |text: Atom| atoms.bytes(text).iter().all(|&c| c == b'0' || c == b'n');
-                    is_zero(*y).cmp(&is_zero(*x))
-                }
-                (TypeData::UniqueSymbol { name: x, .. }, TypeData::UniqueSymbol { name: y, .. }) => atoms.bytes(*x).cmp(atoms.bytes(*y)),
-                (TypeData::Marker(x), TypeData::Marker(y)) => x.cmp(y),
-                (TypeData::Keyof(x), TypeData::Keyof(y))
-                | (TypeData::StringMapping { ty: x, .. }, TypeData::StringMapping { ty: y, .. }) => self.compare_types_without_ids(*x, *y),
-                (TypeData::Substitution { base: o, constraint: i }, TypeData::Substitution { base: p, constraint: j })
-                | (TypeData::IndexedAccess { obj: o, index: i, .. }, TypeData::IndexedAccess { obj: p, index: j, .. }) => {
-                    self.compare_types_without_ids(*o, *p).then_with(|| self.compare_types_without_ids(*i, *j))
-                }
-                (TypeData::Template { texts: s, types: x }, TypeData::Template { texts: t, types: y }) => {
-                    s.iter().map(|&text| atoms.bytes(text)).cmp(t.iter().map(|&text| atoms.bytes(text))).then_with(|| self.compare_type_lists(x, y))
-                }
-                _ => Equal,
-            })
+                TypeData::Tuple {
+                    elems: y,
+                    flags: g,
+                    readonly: q,
+                },
+            ) => {
+                let bits = |e: &ElemFlags| e.with_label(Atom::NONE).bits();
+                let label = |e: &ElemFlags| e.label().is_some().then(|| atoms.bytes(e.label()));
+                r.cmp(q)
+                    .then_with(|| x.len().cmp(&y.len()))
+                    .then_with(|| f.iter().map(bits).cmp(g.iter().map(bits)))
+                    .then_with(|| f.iter().map(label).cmp(g.iter().map(label)))
+                    .then_with(|| lists(x, y))
+            }
+            // What has an `origin` comes first, and origins compare as the types they are: a `keyof`, a union, an intersection.
+            (TypeData::Union(_), TypeData::Union(_)) => {
+                let flags = |origin: &UnionOrigin| match origin {
+                    UnionOrigin::Keyof(_) => tf::INDEX,
+                    UnionOrigin::Union(_) => tf::UNION,
+                    UnionOrigin::Intersection(_) => tf::INTERSECTION,
+                    UnionOrigin::None => u32::MAX,
+                };
+                let (o, p) = (self.origin(a), self.origin(b));
+                flags(o).cmp(&flags(p)).then_with(|| match (o, p) {
+                    (UnionOrigin::Keyof(x), UnionOrigin::Keyof(y)) => types(*x, *y),
+                    (UnionOrigin::Union(x), UnionOrigin::Union(y)) => {
+                        lists(&self.in_order(x), &self.in_order(y))
+                    }
+                    (UnionOrigin::Intersection(x), UnionOrigin::Intersection(y)) => lists(x, y),
+                    _ => lists(&self.parts_in_order(a), &self.parts_in_order(b)),
+                })
+            }
+            // Its members are as written.
+            (TypeData::Intersection(x), TypeData::Intersection(y)) => lists(x, y),
+            (TypeData::StringLit { value: x, .. }, TypeData::StringLit { value: y, .. })
+            | (TypeData::UniqueSymbol { name: x, .. }, TypeData::UniqueSymbol { name: y, .. }) => {
+                atoms.bytes(*x).cmp(atoms.bytes(*y))
+            }
+            // `cmp.Compare`: NaN before everything else.
+            (TypeData::NumberLit { bits: x, .. }, TypeData::NumberLit { bits: y, .. }) => {
+                let (x, y) = (f64::from_bits(*x), f64::from_bits(*y));
+                y.is_nan()
+                    .cmp(&x.is_nan())
+                    .then_with(|| x.partial_cmp(&y).unwrap_or(Equal))
+            }
+            (TypeData::BoolLit { value: x, .. }, TypeData::BoolLit { value: y, .. }) => x.cmp(y),
+            // Ordered by id, and `zeroBigIntType` is made with the checker.
+            (TypeData::BigIntLit { text: x, .. }, TypeData::BigIntLit { text: y, .. }) => {
+                let is_zero =
+                    |text: Atom| atoms.bytes(text).iter().all(|&c| c == b'0' || c == b'n');
+                is_zero(*y).cmp(&is_zero(*x))
+            }
+            (TypeData::Marker(x), TypeData::Marker(y)) => x.cmp(y),
+            (TypeData::Keyof(x), TypeData::Keyof(y))
+            | (TypeData::Substitution { base: x, .. }, TypeData::Substitution { base: y, .. })
+            | (TypeData::StringMapping { ty: x, .. }, TypeData::StringMapping { ty: y, .. }) => {
+                types(*x, *y)
+            }
+            (
+                TypeData::IndexedAccess {
+                    obj: o, index: i, ..
+                },
+                TypeData::IndexedAccess {
+                    obj: p, index: j, ..
+                },
+            ) => types(*o, *p).then_with(|| types(*i, *j)),
+            (
+                TypeData::Template { texts: s, types: x },
+                TypeData::Template { texts: t, types: y },
+            ) => {
+                let text = |&text: &Atom| atoms.bytes(text);
+                s.iter()
+                    .map(text)
+                    .cmp(t.iter().map(text))
+                    .then_with(|| lists(x, y))
+            }
+            (TypeData::Anon { mapper: x, .. }, TypeData::Anon { mapper: y, .. })
+            | (TypeData::Fns { mapper: x, .. }, TypeData::Fns { mapper: y, .. })
+            | (TypeData::Cond { mapper: x, .. }, TypeData::Cond { mapper: y, .. }) => {
+                self.compare_type_mappers(*x, *y)
+            }
+            _ => Equal,
+        }
     }
 
     /// `CompareTypes`: the order TypeScript keeps the members of a union in.
@@ -1654,10 +1689,15 @@ impl<'p> Checker<'p> {
 
     /// The members of a union in the order TypeScript goes through them. They are stored by id.
     pub fn parts_in_order(&self, ty: TypeId) -> Vec<TypeId> {
-        let mut parts = self.parts(ty).to_vec();
-        if parts.len() > 1 {
-            parts.sort_by(|&a, &b| self.compare_types(a, b));
+        self.in_order(self.parts(ty))
+    }
+
+    /// `types` in that order.
+    pub(super) fn in_order(&self, types: &[TypeId]) -> Vec<TypeId> {
+        let mut types = types.to_vec();
+        if types.len() > 1 {
+            types.sort_by(|&a, &b| self.compare_types(a, b));
         }
-        parts
+        types
     }
 }

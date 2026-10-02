@@ -592,7 +592,7 @@ impl Checker<'_> {
         // lower ids.
         for n in 0..hir.types.len() {
             let node = TypeNodeId(n as u32);
-            if bound.type_scope[n].is_some() && self.is_resolved_by_check(file, node) {
+            if !bound.is_unchecked_type(n) && self.is_resolved_by_check(file, node) {
                 self.type_from_node(file, node);
             }
         }

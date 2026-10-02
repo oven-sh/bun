@@ -1212,7 +1212,7 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for i in 0..hir.types.len() {
             let scope = bound.type_scope[i];
-            if scope.is_none() {
+            if bound.is_unchecked_type(i) {
                 continue;
             }
             let (args, sym) = match hir.types[i].kind {
@@ -1375,7 +1375,7 @@ impl Checker<'_> {
             let TypeNodeKind::Mapped(m) = hir.types[t].kind else {
                 continue;
             };
-            if bound.type_scope[t].is_none() {
+            if bound.is_unchecked_type(t) {
                 continue;
             }
             let (at, ty) = if hir[m].name_ty.is_some() {

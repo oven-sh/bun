@@ -240,7 +240,7 @@ impl Checker<'_> {
 
     /// `t.alias`, as far as it can be told: the type alias `type_to_string` names `ty` by. `None`: it writes `ty` out.
     pub fn alias_for_display(&mut self, ty: TypeId) -> Option<Sym> {
-        with_printer(self, None, None, 0, |printer| printer.alias_of_type(ty)).map(|alias| alias.0)
+        self.alias_of_type(ty).map(|alias| alias.0)
     }
 
     /// `t.alias`, with its type arguments.
@@ -248,7 +248,7 @@ impl Checker<'_> {
         &mut self,
         ty: TypeId,
     ) -> Option<(Sym, Vec<TypeId>)> {
-        with_printer(self, None, None, 0, |printer| printer.alias_of_type(ty))
+        self.alias_of_type(ty)
     }
 
     /// `c.varianceTypeParameter = parameter`: the type parameter `sub-T` and `super-T` are named after, for as long as the error of
@@ -320,7 +320,6 @@ fn with_printer<'p, T>(
             reverse_mapped_stack: Vec::new(),
             mapper: MapperId::IDENTITY,
             depth: 0,
-            comparison_depth: 0,
             enclosing_declaration,
             tracker: tracker.map(|tracker| tracker as &mut dyn SymbolTracker<'p>),
             boundaries: Vec::new(),
@@ -429,14 +428,6 @@ struct ReverseMappedProperty {
     mapped: Option<(FileId, TypeNodeId)>,
 }
 
-/// What `CompareTypes` looks at first.
-struct SortKey {
-    ty: TypeId,
-    flags: u32,
-    name: Option<Vec<u8>>,
-    alias: Option<(Sym, Vec<TypeId>)>,
-}
-
 /// How one declaration of a property writes its name.
 #[derive(Copy, Clone)]
 struct WrittenName {
@@ -513,7 +504,6 @@ struct Printer<'c, 'p> {
     /// The mapper of the innermost instantiated signature being written.
     mapper: MapperId,
     depth: u32,
-    comparison_depth: u32,
     /// `enclosingDeclaration`: the scope names are looked up from. `None` in error messages.
     enclosing_declaration: Option<Enclosing>,
     /// `SymbolTrackerImpl.inner`, under all the `wrappingTracker`s there are.
@@ -918,7 +908,7 @@ impl<'p> Printer<'_, 'p> {
         };
         let is_written_out = self.flags & WRITTEN_OUT != 0 && self.depth == 1;
         if !is_written_out
-            && let Some((alias, arguments)) = self.alias_of_type(ty)
+            && let Some((alias, arguments)) = self.c.alias_of_type(ty)
             && (self.flags & USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE != 0
                 || self.is_type_symbol_accessible(alias))
         {
@@ -1687,63 +1677,6 @@ impl<'p> Printer<'_, 'p> {
         (self.specifier_of_module(module), String::new())
     }
 
-    // ───────────────────────────── aliases ─────────────────────────────
-
-    /// `t.alias`. Types do not keep it. An object, function or conditional type has it if its syntax is the whole body of a type
-    /// alias. A union or an intersection is looked up among what the aliases of the program stand for.
-    fn alias_of_type(&mut self, ty: TypeId) -> Option<(Sym, Vec<TypeId>)> {
-        if let Some((alias, type_arguments)) = self.c.stored_alias(ty) {
-            return Some((*alias, type_arguments.to_vec()));
-        }
-        if let Some(hosting) = self.c.hosting_alias_of(ty) {
-            return Some(hosting);
-        }
-        let (file, node, mapper) = match self.c.data(ty) {
-            TypeData::LazyAlias { sym, args } => return Some((*sym, args.to_vec())),
-            TypeData::Anon {
-                origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
-                mapper,
-            } => (*file, *node, *mapper),
-            TypeData::Cond { file, node, mapper } => (*file, *node, *mapper),
-            TypeData::Fns { decls, mapper } => {
-                let [(file, func)] = decls[..] else {
-                    return None;
-                };
-                let FnOwner::Type(node) = self.c.bound(file).fns[func.idx()].owner else {
-                    return None;
-                };
-                (file, node, *mapper)
-            }
-            _ => return None,
-        };
-        let index = self
-            .c
-            .hir(file)
-            .aliases
-            .iter()
-            .position(|alias| alias.ty == node)?;
-        let symbol = self.c.bound(file).alias_symbol[index];
-        if symbol.is_none() {
-            return None;
-        }
-        let alias = self.c.files().sym(file, symbol);
-        // A class or an interface of the same name is what the name means.
-        if self
-            .c
-            .files()
-            .flags(alias)
-            .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-        {
-            return None;
-        }
-        let parameters = self.c.type_params_of_symbol(alias);
-        let arguments = parameters
-            .iter()
-            .map(|&parameter| self.c.p.types.map(mapper, parameter).unwrap_or(parameter))
-            .collect();
-        Some((alias, arguments))
-    }
-
     // ───────────────────────────── lists of types ─────────────────────────────
 
     /// `mapToTypeNodes`. Nothing for an empty list.
@@ -1803,7 +1736,7 @@ impl<'p> Printer<'_, 'p> {
 
     /// The symbol or the alias a type that is written as a name goes by.
     fn symbol_of_reference(&mut self, ty: TypeId) -> Option<Sym> {
-        if let Some((alias, _)) = self.alias_of_type(ty) {
+        if let Some((alias, _)) = self.c.alias_of_type(ty) {
             return Some(alias);
         }
         match self.c.data(ty) {
@@ -2350,8 +2283,8 @@ impl<'p> Printer<'_, 'p> {
     /// `formatUnionTypes`, of the members of `ty` in the order TypeScript keeps them in.
     fn format_union_types(&mut self, ty: TypeId) -> Vec<TypeId> {
         let types = match self.c.origin(ty) {
-            UnionOrigin::Union(origin) => self.sorted(origin),
-            _ => self.sorted(self.c.parts(ty)),
+            UnionOrigin::Union(origin) => self.c.in_order(origin),
+            _ => self.c.parts_in_order(ty),
         };
         let mut result = Vec::with_capacity(types.len());
         let (mut has_null, mut has_undefined) = (false, false);
@@ -2376,7 +2309,7 @@ impl<'p> Printer<'_, 'p> {
             };
             // All the members of `boolean` or of an enum, which are next to each other, are written as one.
             if let Some(base) = base.filter(|&base| self.c.is_union(base)) {
-                let all = self.sorted_members(base);
+                let all = self.c.parts_in_order(base);
                 let last = i - 1 + all.len() - 1;
                 if last < types.len()
                     && self.c.regular(types[last]) == self.c.regular(all[all.len() - 1])
@@ -2395,209 +2328,6 @@ impl<'p> Printer<'_, 'p> {
             result.push(TypeId::UNDEFINED);
         }
         result
-    }
-
-    /// The members of the union `ty`, which are stored by id, in the order of `CompareTypes`.
-    fn sorted_members(&mut self, ty: TypeId) -> Vec<TypeId> {
-        self.sorted(self.c.parts(ty))
-    }
-
-    /// `parts` in the order of `CompareTypes`.
-    fn sorted(&mut self, parts: &[TypeId]) -> Vec<TypeId> {
-        if parts.len() < 2 {
-            return parts.to_vec();
-        }
-        let mut sorted: Vec<SortKey> = Vec::with_capacity(parts.len());
-        for &part in parts {
-            let key = self.sort_key(part);
-            let (mut low, mut high) = (0, sorted.len());
-            while low < high {
-                let middle = (low + high) / 2;
-                if self.compare_keys(&sorted[middle], &key).is_lt() {
-                    low = middle + 1;
-                } else {
-                    high = middle;
-                }
-            }
-            sorted.insert(low, key);
-        }
-        sorted.into_iter().map(|key| key.ty).collect()
-    }
-
-    /// `getSortOrderFlags`, with the values of `TypeFlags`.
-    fn sort_order_flags(&self, ty: TypeId) -> u32 {
-        match self.c.data(ty) {
-            TypeData::Intrinsic(intrinsic) => match intrinsic {
-                Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error => 1 << 0,
-                Intrinsic::Unknown => 1 << 1,
-                Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared => 1 << 2,
-                Intrinsic::Null | Intrinsic::NullDeclared => 1 << 3,
-                Intrinsic::Void => 1 << 4,
-                Intrinsic::String => 1 << 5,
-                Intrinsic::Number => 1 << 6,
-                Intrinsic::BigInt => 1 << 7,
-                Intrinsic::Symbol => 1 << 9,
-                Intrinsic::Object => 1 << 17,
-                Intrinsic::Never => 1 << 18,
-            },
-            TypeData::StringLit { .. } => 1 << 10,
-            TypeData::NumberLit { .. } => 1 << 11,
-            TypeData::BigIntLit { .. } => 1 << 12,
-            TypeData::BoolLit { .. } => 1 << 13,
-            TypeData::UniqueSymbol { .. } => 1 << 14,
-            TypeData::EnumLit { .. } | TypeData::Enum { .. } => 1 << 16,
-            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => 1 << 19,
-            TypeData::Keyof(_) => 1 << 21,
-            TypeData::Template { .. } => 1 << 22,
-            TypeData::StringMapping { .. } => 1 << 23,
-            TypeData::Substitution { .. } => 1 << 24,
-            TypeData::IndexedAccess { .. } => 1 << 25,
-            TypeData::Cond { .. } => 1 << 26,
-            TypeData::Union(_) if ty == TypeId::BOOLEAN => 1 << 27 | 1 << 8,
-            TypeData::Union(_) => 1 << 27,
-            TypeData::Intersection(_) => 1 << 28,
-            _ => 1 << 20,
-        }
-    }
-
-    fn sort_key(&mut self, ty: TypeId) -> SortKey {
-        let alias = self.alias_of_type(ty);
-        let files = self.c.files();
-        let name_of = |symbol: Sym| {
-            let name = files.symbol(symbol).name;
-            if name.is_none() {
-                // `InternalSymbolNameClass`
-                b"\xFEclass".to_vec()
-            } else {
-                files.atoms.bytes(name).to_vec()
-            }
-        };
-        // `getTypeNameSymbol`
-        let name = match (&alias, self.c.data(ty)) {
-            (Some((symbol, _)), _) => Some(name_of(*symbol)),
-            (None, TypeData::Ref { target: symbol, .. } | TypeData::ThisParam(symbol)) => {
-                Some(name_of(*symbol))
-            }
-            (None, TypeData::TypeParam(..)) => Some(self.name_of_type_parameter(ty).into_bytes()),
-            (None, TypeData::StringMapping { kind, .. }) => {
-                Some(string_mapping_name(*kind).as_bytes().to_vec())
-            }
-            _ => None,
-        };
-        SortKey {
-            ty,
-            flags: self.sort_order_flags(ty),
-            name,
-            alias,
-        }
-    }
-
-    /// What `ty` is an instantiation of, and with what.
-    fn instantiation_of(&self, ty: TypeId) -> Option<(Identity, MapperId)> {
-        match self.c.data(ty) {
-            TypeData::Anon { origin, mapper } => Some((Identity::Origin(*origin), *mapper)),
-            TypeData::Fns { decls, mapper } => decls
-                .first()
-                .map(|&(file, func)| (Identity::Function(file, func), *mapper)),
-            TypeData::Cond { file, node, mapper } => {
-                Some((Identity::Conditional(*file, *node), *mapper))
-            }
-            _ => None,
-        }
-    }
-
-    /// What `mapper` puts for the type parameters it is about, in the order they are declared.
-    fn mapper_targets(&self, mapper: MapperId) -> Vec<TypeId> {
-        let mut pairs = self.c.p.types.mapping(mapper).to_vec();
-        pairs.sort_by_key(|pair| match *self.c.data(pair.0) {
-            TypeData::TypeParam(file, tp, _) => (0u8, file.0, tp.0),
-            _ => (1, 0, pair.0.0),
-        });
-        pairs.into_iter().map(|pair| pair.1).collect()
-    }
-
-    /// `compareTypeLists`
-    fn compare_type_lists(&mut self, left: &[TypeId], right: &[TypeId]) -> std::cmp::Ordering {
-        let by_length = left.len().cmp(&right.len());
-        if by_length.is_ne() {
-            return by_length;
-        }
-        for (&a, &b) in left.iter().zip(right) {
-            let order = self.compare_types(a, b);
-            if order.is_ne() {
-                return order;
-            }
-        }
-        std::cmp::Ordering::Equal
-    }
-
-    /// `CompareTypes`
-    fn compare_types(&mut self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
-        if a == b {
-            return std::cmp::Ordering::Equal;
-        }
-        if self.comparison_depth >= 8 {
-            return self.c.compare_types(a, b);
-        }
-        self.comparison_depth += 1;
-        let (left, right) = (self.sort_key(a), self.sort_key(b));
-        let order = self.compare_keys(&left, &right);
-        self.comparison_depth -= 1;
-        order
-    }
-
-    /// `Checker::compare_types` knows nothing of aliases, and does not compare mappers: that comes first here.
-    fn compare_keys(&mut self, a: &SortKey, b: &SortKey) -> std::cmp::Ordering {
-        use std::cmp::Ordering::{Equal, Greater, Less};
-        if a.ty == b.ty {
-            return Equal;
-        }
-        let by_flags = a.flags.cmp(&b.flags);
-        if by_flags.is_ne() {
-            return by_flags;
-        }
-        // `compareTypeNames`
-        let by_name = match (&a.name, &b.name) {
-            (Some(x), Some(y)) => x.cmp(y),
-            (Some(_), None) => Less,
-            (None, Some(_)) => Greater,
-            (None, None) => Equal,
-        };
-        if by_name.is_ne() {
-            return by_name;
-        }
-        let mut lists: Option<(Vec<TypeId>, Vec<TypeId>)> = None;
-        if let (Some((x, left)), Some((y, right))) = (&a.alias, &b.alias) {
-            if x == y {
-                lists = Some((left.clone(), right.clone()));
-            }
-        } else if let (
-            TypeData::Ref {
-                target: x,
-                args: left,
-            },
-            TypeData::Ref {
-                target: y,
-                args: right,
-            },
-        ) = (self.c.data(a.ty), self.c.data(b.ty))
-        {
-            if x == y {
-                lists = Some((left.to_vec(), right.to_vec()));
-            }
-        } else if let (Some((x, left)), Some((y, right))) =
-            (self.instantiation_of(a.ty), self.instantiation_of(b.ty))
-            && x == y
-        {
-            lists = Some((self.mapper_targets(left), self.mapper_targets(right)));
-        }
-        if let Some((left, right)) = lists {
-            let by_arguments = self.compare_type_lists(&left, &right);
-            if by_arguments.is_ne() {
-                return by_arguments;
-            }
-        }
-        self.c.compare_types(a.ty, b.ty)
     }
 
     // ───────────────────────────── anonymous object types ─────────────────────────────
@@ -3490,7 +3220,7 @@ impl<'p> Printer<'_, 'p> {
         let property_type = if uses_placeholder {
             TypeId::ANY
         } else {
-            let ty = self.c.type_of_prop_for_inference(prop, mapper);
+            let ty = self.c.type_of_prop(prop, mapper);
             self.c.remove_missing_type(ty, is_optional)
         };
         let declared = if reverse_mapped.is_some() {
@@ -3711,13 +3441,7 @@ impl<'p> Printer<'_, 'p> {
         let mut minimum = 0;
         for (i, p) in parameters.iter().enumerate() {
             let parameter = &hir[p];
-            let mut declared = self.c.type_of_param(file, p);
-            if parameter.ty.is_some() {
-                let written = self.c.type_from_node(file, parameter.ty);
-                if self.c.is_no_infer(written) {
-                    declared = self.c.no_infer(declared);
-                }
-            }
+            let declared = self.c.type_of_param(file, p);
             types.push(self.c.instantiate(declared, mapper));
             if !parameter.flags.intersects(Flags::OPTIONAL | Flags::REST)
                 && parameter.default.is_none()
@@ -3943,7 +3667,7 @@ impl<'p> Printer<'_, 'p> {
         }
         // `serializeInferredReturnTypeForSignature`
         let Some(predicate) = self.c.sig_predicate(signature) else {
-            let returned = self.c.sig_return_for_inference(signature);
+            let returned = self.c.sig_return(signature);
             return self.type_to_node_without_inference_fallback(returned).text;
         };
         let mut text = String::new();

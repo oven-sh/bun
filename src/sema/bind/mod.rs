@@ -55,6 +55,8 @@ bitflags::bitflags! {
         const MODULE_EXPORTS = 1 << 20;
         /// `SymbolFlagsTransient`: made by `cloneSymbol`, not by the binder.
         const TRANSIENT = 1 << 21;
+        /// `SymbolFlagsExportValue`: the local symbol of an exported value (`declareModuleMember`). It is no value itself.
+        const EXPORT_VALUE = 1 << 22;
 
         const VARIABLE = Self::FUNCTION_SCOPED_VARIABLE.bits() | Self::BLOCK_SCOPED_VARIABLE.bits();
         const VALUE = Self::VARIABLE.bits() | Self::FUNCTION.bits() | Self::CLASS.bits() | Self::ENUM.bits()
@@ -282,6 +284,8 @@ pub struct Symbol {
     pub parent: SymbolId,
     /// What a module, namespace or enum exports.
     pub exports: TableId,
+    /// `ExportSymbol`, of the local symbol of what a module or a namespace exports.
+    pub export_symbol: SymbolId,
 }
 
 /// The declarations of a symbol. Nearly every symbol has one, which needs no block of its own.
@@ -701,10 +705,8 @@ pub struct Bound {
 
     /// The file as a module. Its exports are what other files can import.
     pub file_symbol: SymbolId,
-    /// `export * from spec`, by the module or namespace symbol that says so.
-    pub export_stars: Few<(SymbolId, Atom)>,
-    /// Which of `export_stars` are `export type *`, index for index.
-    pub export_star_type_only: Few<bool>,
+    /// `exportStars.Declarations`: every `export * from spec`, with the module or namespace symbol that says so.
+    pub export_stars: Few<(SymbolId, StmtId)>,
     /// `declare module "name"` at the top of a file, or right in an ambient module at the top of a script.
     pub ambient_modules: Few<(Atom, SymbolId)>,
     /// `declare global { }` at the top of a module, or right in an ambient module at the top of a script: symbols whose exports are
@@ -793,6 +795,8 @@ pub struct Bound {
     /// The expressions at or under a node that tsgo has in its tree and `checkSourceFile` never comes to: an element of an `extends`
     /// clause of a class after the first, the `e` of `[e]` in an enum, the `X` of `for (var of X)`. Sorted.
     pub unchecked_exprs: Few<ExprId>,
+    /// The type nodes under one of those, and the type arguments of a `super` call. Sorted.
+    pub unchecked_types: Few<TypeNodeId>,
     /// Where each `infer T` that is written somewhere that says something about `T` is written. In order of the parameters.
     pub infer_positions: Few<(TypeParamId, InferPosition)>,
     /// `f.name = value` and `f["name"] = value` next to `function f() {}`: properties of `f`, which may be written `a.f`. By the
@@ -1117,6 +1121,15 @@ impl Bound {
                 .is_ok()
     }
 
+    /// The same of a type node.
+    pub fn is_unchecked_type(&self, node: usize) -> bool {
+        self.type_scope[node].is_none()
+            || self
+                .unchecked_types
+                .binary_search(&TypeNodeId(node as u32))
+                .is_ok()
+    }
+
     /// `IsInTypeQuery`: it is asked what `e` is, but `e` is not read.
     pub fn is_in_type_query(&self, e: ExprId) -> bool {
         self.type_query_operands.binary_search(&e).is_ok()
@@ -1244,6 +1257,32 @@ impl Bound {
         let start = list.partition_point(|e| e.0 < key);
         let end = list.partition_point(|e| e.0 <= key);
         &list[start..end]
+    }
+
+    /// `node.Symbol`. `NONE`: it is not kept for a declaration of that kind, none of which has a local symbol.
+    pub fn symbol_of_declaration(&self, decl: Decl) -> SymbolId {
+        match decl {
+            Decl::Var(it) | Decl::Param(it) | Decl::Require(it) => self.pat_symbol[it.idx()],
+            Decl::Fn(it) => self.fn_symbol[it.idx()],
+            Decl::Class(it) => self.class_symbol[it.idx()],
+            Decl::Interface(it) => self.interface_symbol[it.idx()],
+            Decl::Alias(it) => self.alias_symbol[it.idx()],
+            Decl::Enum(it) => self.enum_symbol[it.idx()],
+            Decl::EnumMember(it) => self.enum_member_symbol[it.idx()],
+            Decl::Module(it) => self.module_symbol[it.idx()],
+            Decl::TypeParam(it) => self.type_param_symbol[it.idx()],
+            _ => SymbolId::NONE,
+        }
+    }
+
+    /// `getExportSymbolOfValueSymbolIfExported`, before `getMergedSymbol`.
+    pub fn export_symbol_of_value_symbol_if_exported(&self, symbol: SymbolId) -> SymbolId {
+        let local = &self.symbols[symbol.idx()];
+        if local.flags.contains(SymFlags::EXPORT_VALUE) && local.export_symbol.is_some() {
+            local.export_symbol
+        } else {
+            symbol
+        }
     }
 
     pub fn lookup(&self, table: TableId, name: Atom) -> Option<SymbolId> {

@@ -576,7 +576,7 @@ impl Checker<'_> {
             } else {
                 SmallVec::from_slice(self.parts(keys))
             };
-            parts.sort_by(|&a, &b| self.compare_keys(a, b));
+            parts.sort_by(|&a, &b| self.compare_types(a, b));
             for key in parts {
                 let name = self.property_name_of_type(key);
                 if let Some(name) = name {
@@ -1014,44 +1014,6 @@ impl Checker<'_> {
             }
             child = parent;
         }
-    }
-
-    /// The order `CompareTypes` keeps the members of a union in, as far as it matters to the type of a key: by kind, in the order of
-    /// their `TypeFlags`, then strings and numbers by their values.
-    fn compare_keys(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
-        let kind = |ty: TypeId| match self.data(ty) {
-            _ if self.is_nullish(ty) => 0u8,
-            TypeData::Intrinsic(Intrinsic::String) => 1,
-            TypeData::Intrinsic(Intrinsic::Number) => 2,
-            TypeData::Intrinsic(Intrinsic::BigInt) => 3,
-            TypeData::Intrinsic(Intrinsic::Symbol) => 4,
-            TypeData::StringLit { .. } => 5,
-            TypeData::NumberLit { .. } => 6,
-            TypeData::BigIntLit { .. } => 7,
-            TypeData::BoolLit { .. } => 8,
-            TypeData::UniqueSymbol { .. } => 9,
-            TypeData::EnumLit { .. } | TypeData::Enum { .. } => 10,
-            TypeData::Intrinsic(Intrinsic::Object) => 11,
-            TypeData::Template { .. } => 13,
-            TypeData::StringMapping { .. } => 14,
-            TypeData::Intersection(_) => 15,
-            // Objects.
-            _ => 12,
-        };
-        kind(a)
-            .cmp(&kind(b))
-            .then_with(|| match (self.data(a), self.data(b)) {
-                (TypeData::StringLit { value: a, .. }, TypeData::StringLit { value: b, .. }) => {
-                    self.files()
-                        .atoms
-                        .bytes(*a)
-                        .cmp(self.files().atoms.bytes(*b))
-                }
-                (TypeData::NumberLit { bits: a, .. }, TypeData::NumberLit { bits: b, .. }) => {
-                    f64::from_bits(*a).total_cmp(&f64::from_bits(*b))
-                }
-                _ => std::cmp::Ordering::Equal,
-            })
     }
 
     /// Whether `getPropertyOfType` finds `name` in `ty`, which is an apparent type. In a union (`createUnionOrIntersectionProperty`)
@@ -1553,7 +1515,7 @@ impl Checker<'_> {
             let TypeNodeKind::IndexedAccess { obj, index } = hir.types[t].kind else {
                 continue;
             };
-            if bound.type_scope[t].is_none() {
+            if bound.is_unchecked_type(t) {
                 continue;
             }
             let (object, keys) = (

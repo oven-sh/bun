@@ -313,11 +313,7 @@ impl<'p> Checker<'p> {
     #[inline]
     pub fn force(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
-            TypeData::LazyAlias { .. }
-            | TypeData::Substitution {
-                constraint: TypeId::UNKNOWN,
-                ..
-            } => self.force_reference(ty),
+            TypeData::LazyAlias { .. } => self.force_reference(ty),
             TypeData::Union(_) | TypeData::Intersection(_)
                 if self.p.types.flags(ty).contains(TypeFlags::HAS_LAZY_MEMBER) =>
             {
@@ -340,9 +336,6 @@ impl<'p> Checker<'p> {
         };
         let mut forced: SmallVec<[TypeId; 8]> = SmallVec::from_slice(&parts[..]);
         for part in &mut forced {
-            if self.is_no_infer(*part) {
-                continue;
-            }
             let resolved = self.force(*part);
             if self.is_known(resolved)
                 && !matches!(
@@ -363,7 +356,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `force`, of a reference to an alias or a `NoInfer<T>`.
+    /// `force`, of a reference to an alias.
     fn force_reference(&mut self, ty: TypeId) -> TypeId {
         self.guard("force");
         match self.data(ty) {
@@ -374,24 +367,18 @@ impl<'p> Checker<'p> {
                 // `instantiate` marks the object of an indexed access that waits on an alias.
                 self.note_depth(Deep::Instantiation(ty, MapperId::IDENTITY), None);
                 let (hosted, hosted_arguments) = (*sym, args);
-                match self.type_reference(hosted, hosted_arguments) {
-                    expanded if self.is_no_infer(expanded) => self.force(expanded),
-                    expanded => match self.stored_alias(ty) {
-                        Some((alias, type_arguments)) => self.instantiated_under_alias(
-                            hosted,
-                            hosted_arguments,
-                            expanded,
-                            *alias,
-                            type_arguments,
-                        ),
-                        None => expanded,
-                    },
+                let expanded = self.type_reference(hosted, hosted_arguments);
+                match self.stored_alias(ty) {
+                    Some((alias, type_arguments)) => self.instantiated_under_alias(
+                        hosted,
+                        hosted_arguments,
+                        expanded,
+                        *alias,
+                        type_arguments,
+                    ),
+                    None => expanded,
                 }
             }
-            TypeData::Substitution {
-                base,
-                constraint: TypeId::UNKNOWN,
-            } => self.force(*base),
             _ => ty,
         }
     }
@@ -401,7 +388,16 @@ impl<'p> Checker<'p> {
         if !self.has_type_variables(ty) {
             return ty;
         }
-        self.map_type(ty, |c, m| if c.is_no_infer(m) { c.force(m) } else { m })
+        self.map_type(ty, |c, m| {
+            let forced = c.force(m);
+            match *c.data(forced) {
+                TypeData::Substitution {
+                    base,
+                    constraint: TypeId::UNKNOWN,
+                } => c.force(base),
+                _ => m,
+            }
+        })
     }
 
     /// `isNoInferType`
@@ -416,7 +412,7 @@ impl<'p> Checker<'p> {
 
     /// `getNoInferType`
     pub(super) fn no_infer(&mut self, ty: TypeId) -> TypeId {
-        if self.has_type_variables(ty) && self.is_no_infer_target_type(ty) {
+        if self.is_no_infer_target_type(ty) {
             self.intern(TypeData::Substitution {
                 base: ty,
                 constraint: TypeId::UNKNOWN,
@@ -1589,10 +1585,8 @@ impl<'p> Checker<'p> {
                 if !is_near(self.hir(file)[member].pos) {
                     return false;
                 }
-                (
-                    self.end_of_token_before(file, self.hir(file)[member].start),
-                    self.end_of_member(file, member),
-                )
+                let loc = self.hir(file)[member].loc;
+                (loc.pos, loc.end)
             }
             _ => return false,
         };
@@ -2254,7 +2248,7 @@ impl<'p> Checker<'p> {
                 }
             }
             Origin::Module(sym) => {
-                for (name, export) in self.files().all_module_exports(sym) {
+                for &(name, export) in self.files().exports_of_module(sym) {
                     if name == known::export_equals || !self.symbol_is_value(export) {
                         continue;
                     }
@@ -3189,19 +3183,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── reading ─────────────────────────────
 
     /// The type of `prop`, which was found in something whose mapper is `outer`.
-    #[inline]
     pub fn type_of_prop(&mut self, prop: &Prop, outer: MapperId) -> TypeId {
-        self.type_of_prop_with(prop, outer, false)
-    }
-
-    /// The same for whoever infers to it: a `NoInfer<T>` written there is still that (`inferFromTypes`).
-    #[inline]
-    pub(super) fn type_of_prop_for_inference(&mut self, prop: &Prop, outer: MapperId) -> TypeId {
-        self.type_of_prop_with(prop, outer, true)
-    }
-
-    /// `keeps_no_infer`: a `NoInfer<T>` is given as it is, not as the `T` it is to everybody but inference.
-    fn type_of_prop_with(&mut self, prop: &Prop, outer: MapperId, keeps_no_infer: bool) -> TypeId {
         let mut adds_undefined = false;
         let mut own_mapper = prop.mapper;
         let base = match &prop.source {
@@ -3263,11 +3245,7 @@ impl<'p> Checker<'p> {
         } else {
             base
         };
-        let ty = if keeps_no_infer && self.is_no_infer(ty) {
-            ty
-        } else {
-            self.force(ty)
-        };
+        let ty = self.force(ty);
         let ty = if prop.flags.contains(PropFlags::WIDEN) {
             self.regular_object(ty)
         } else {

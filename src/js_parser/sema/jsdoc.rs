@@ -177,6 +177,8 @@ pub(crate) struct Tag {
     pub(crate) pos: u32,
     /// Where the name after the `@` is.
     pub(crate) name_pos: u32,
+    /// `node.End()`: where the next tag starts, or else before the `*/`.
+    pub(crate) end: u32,
 }
 
 /// A JSDoc comment that has tags.
@@ -1349,6 +1351,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             kind,
             pos: start as u32,
             name_pos: name.start,
+            end: self.full_start() as u32,
         }
     }
 
@@ -1489,6 +1492,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             },
             pos: start as u32,
             name_pos: tag_name.start,
+            end: self.full_start() as u32,
         }
     }
 
@@ -1550,6 +1554,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             kind: TagKind::Type(ty),
             pos: start as u32,
             name_pos: name.start,
+            end: self.full_start() as u32,
         }
     }
 
@@ -1562,6 +1567,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             kind: TagKind::This(ty),
             pos: start as u32,
             name_pos: name.start,
+            end: self.full_start() as u32,
         }
     }
 
@@ -1865,6 +1871,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             kind: TagKind::Template(Template { constraint, params }),
             pos: start as u32,
             name_pos: name.start,
+            end: self.full_start() as u32,
         }
     }
 }

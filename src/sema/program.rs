@@ -348,9 +348,6 @@ pub struct Files {
     /// Some file says `export type * from`.
     has_type_only_stars: bool,
 
-    /// For each module that was asked about, the names it has only by way of an `export type *`, in order.
-    type_only_star_names: ByNodeKept<Sym, Box<[Atom]>>,
-
     aliases: ByNode<Sym, Option<Sym>>,
     /// What each alias is declared to stand for: one step.
     alias_steps: ByNode<Sym, Option<Sym>>,
@@ -383,11 +380,39 @@ struct Memo {
     symbol_flags: ByNode<Sym, RawWord>,
     /// The declarations of a symbol that has several.
     decls: ByNodeKept<Sym, Box<[(FileId, Decl)]>>,
-    /// `export_stars_of`
-    export_stars: ByNodeKept<Sym, Box<[(Option<Sym>, bool)]>>,
-    /// `all_module_exports`
-    all_exports: ByNodeKept<Sym, Box<[(Atom, Sym)]>>,
+    /// `moduleSymbolLinks`
+    module_links: ByNodeKept<Sym, ModuleSymbolLinks>,
     has_known_exports: ByNode<Sym, bool>,
+}
+
+/// `ExportCollision`, one for each of its `exportsWithDuplicate`: 2308.
+#[derive(Copy, Clone, Debug)]
+pub struct ExportCollision {
+    /// The `export *` that exports `name` again.
+    pub duplicate: (FileId, StmtId),
+    /// The one that did first. `specifierText` is its specifier.
+    pub first: (FileId, StmtId),
+    pub name: Atom,
+}
+
+/// `ModuleSymbolLinks`
+#[derive(Default)]
+pub struct ModuleSymbolLinks {
+    /// `resolvedExports`, sorted by name.
+    pub resolved_exports: Box<[(Atom, Sym)]>,
+    /// `typeOnlyExportStarMap`, sorted by name: the `export type *`.
+    pub type_only_export_star_map: Box<[(Atom, (FileId, StmtId))]>,
+    /// What `getExportsOfModuleWorker` reports of the `export *` of the module itself.
+    pub export_collisions: Box<[ExportCollision]>,
+}
+
+/// What `getExportsOfModuleWorker` keeps while `visit` goes from module to module.
+#[derive(Default)]
+struct ExportsVisit {
+    visited_symbols: Vec<Sym>,
+    non_type_only_names: FxHashSet<Atom>,
+    type_only_export_star_map: FxHashMap<Atom, (FileId, StmtId)>,
+    export_collisions: Vec<ExportCollision>,
 }
 
 /// No flag of a symbol.
@@ -399,8 +424,7 @@ impl Memo {
             whole: ByNode::new(symbols),
             symbol_flags: ByNode::new(symbols),
             decls: ByNodeKept::new(symbols),
-            export_stars: ByNodeKept::new(symbols),
-            all_exports: ByNodeKept::new(symbols),
+            module_links: ByNodeKept::new(symbols),
             has_known_exports: ByNode::new(symbols),
         }
     }
@@ -1817,9 +1841,17 @@ impl Files {
             &starts,
             &mut include_errors,
         ));
-        let has_type_only_stars = modules
-            .iter()
-            .any(|m| m.bound.export_star_type_only.contains(&true));
+        let has_type_only_stars = modules.iter().any(|m| {
+            m.bound.export_stars.iter().any(|&(_, star)| {
+                matches!(
+                    m.hir[star].kind,
+                    StmtKind::ExportStar {
+                        type_only: true,
+                        ..
+                    }
+                )
+            })
+        });
         let symbols = Bases::new(modules.iter().map(|m| m.bound.symbols.len()));
         let memo = Memo::new(&Bases::new(modules.iter().map(|_| 0)));
         let mut files = Files {
@@ -1842,7 +1874,6 @@ impl Files {
             refused_merges: Vec::new(),
             circular_at_merge: Vec::new(),
             has_type_only_stars,
-            type_only_star_names: ByNodeKept::new(&symbols),
             aliases: ByNode::new(&symbols),
             alias_steps: ByNode::new(&symbols),
             is_merged: false,
@@ -2804,6 +2835,7 @@ impl Files {
             decls: bind::Decls::Many(cloned.decls.as_slice().into()),
             parent: cloned.parent,
             exports: cloned.exports,
+            export_symbol: cloned.export_symbol,
         };
         let result = Sym {
             file: symbol.file,
@@ -2943,6 +2975,7 @@ impl Files {
             decls: bind::Decls::Many(Box::default()),
             parent,
             exports: bind::TableId::NONE,
+            export_symbol: SymbolId::NONE,
         });
         self.stand_ins.push((refused, stand_in));
         self.merged_symbols.insert(
@@ -3242,6 +3275,9 @@ impl Files {
     /// `ExportSymbol` is the exported symbol. The binder keeps two symbols instead: returns the exported one for the local one.
     pub fn export_symbol_of_value_symbol_if_exported(&self, sym: Sym) -> Sym {
         let local = self.symbol(sym);
+        if local.flags.contains(SymFlags::EXPORT_VALUE) && local.export_symbol.is_some() {
+            return self.sym(sym.file, local.export_symbol);
+        }
         if local.parent.is_none() || local.flags.intersects(SymFlags::ALIAS | SymFlags::MERGED) {
             return sym;
         }
@@ -3700,70 +3736,191 @@ impl Files {
         self.module_export(module, known::default)
     }
 
-    /// What importing `name` from `module` gives.
+    /// `getExportsOfModule(module)[name]`
     pub fn module_export(&self, module: Sym, name: Atom) -> Option<Sym> {
-        let value = self.module_value(module);
-        if value == module {
-            return self.export_or_passed_on(module, name);
+        // Without `export =`, what the module exports itself is in the table as it is, and without an `export *` nothing else is.
+        if self.export(module, known::export_equals).is_none() {
+            if let Some(found) = self.export(module, name) {
+                return Some(found);
+            }
+            if name == known::default || self.export_stars_of(module).is_empty() {
+                return None;
+            }
         }
-        // `getExportsOfModuleWorker`: what it says it is with `export =` exports for it, with the `export *` of that and none of its own.
-        // That is not its `default`: whether it has one is up to `canHaveSyntheticDefault`.
-        // Of what the module exports besides, only what is a type or a namespace and no value counts.
-        self.export_or_passed_on(value, name).or_else(|| {
-            let own = self.export(module, name)?;
-            let flags = self.symbol_flags(own);
-            (flags.intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
-                && !flags.intersects(SymFlags::VALUE))
-            .then_some(own)
-        })
+        let find = |exports: &[(Atom, Sym)]| {
+            let found = exports.binary_search_by_key(&name, |export| export.0);
+            found.ok().map(|i| exports[i].1)
+        };
+        // While symbols are put together nothing is kept.
+        if self.is_merged {
+            find(self.exports_of_module(module))
+        } else {
+            find(&self.exports_of_module_worker(module).resolved_exports)
+        }
     }
 
-    /// `getExportsOfModuleWorker`: what `module` exports itself, or passes on with `export *`.
-    fn export_or_passed_on(&self, module: Sym, name: Atom) -> Option<Sym> {
-        if let Some(found) = self.export(module, name) {
-            return Some(found);
-        }
-        if name == known::default {
-            return None;
-        }
-        if !self.is_merged {
-            return self.module_export_inner(module, name, &mut FxHashSet::default());
-        }
-        if self.export_stars_of(module).is_empty() {
-            return None;
-        }
-        let all = self.all_exports_of(module);
-        all.binary_search_by_key(&name, |export| export.0)
-            .ok()
-            .map(|i| all[i].1)
+    /// `getExportsOfModule`, sorted by name.
+    pub fn exports_of_module(&self, module: Sym) -> &[(Atom, Sym)] {
+        &self.module_links(module).resolved_exports
     }
 
-    /// What `module` passes on with `export *`, in the order it says so: the module, if the specifier leads to one, and whether it
-    /// says `export type *`.
-    pub fn export_stars_of(&self, module: Sym) -> &[(Option<Sym>, bool)] {
-        if self
-            .parts(module)
-            .iter()
-            .all(|part| self.bound(part.file).export_stars.is_empty())
-        {
-            return &[];
-        }
-        if let Some(kept) = self.memo.export_stars.get_ref(&module) {
+    /// `moduleSymbolLinks.Get(module)`, filled in by `getExportsOfModule`.
+    pub fn module_links(&self, module: Sym) -> &ModuleSymbolLinks {
+        if let Some(kept) = self.memo.module_links.get_ref(&module) {
             return kept;
         }
-        let mut stars = Vec::new();
-        for part in self.parts(module) {
-            let bound = self.bound(part.file);
-            for (i, &(container, spec)) in bound.export_stars.iter().enumerate() {
-                if container == part.id {
-                    stars.push((
-                        self.module_of_specifier(part.file, spec),
-                        bound.export_star_type_only[i],
-                    ));
+        self.memo
+            .module_links
+            .insert_ref(module, self.exports_of_module_worker(module))
+    }
+
+    /// `getExportsOfModuleWorker`
+    fn exports_of_module_worker(&self, module: Sym) -> ModuleSymbolLinks {
+        let mut visit = ExportsVisit::default();
+        // A module defined by an `export =` consists of one export that needs to be resolved.
+        let mut exports = self
+            .visit_exports(Some(self.module_value(module)), None, false, &mut visit)
+            .unwrap_or_default();
+        // What it exports besides counts if it is a type or a namespace and no value.
+        if self.export(module, known::export_equals).is_some() {
+            for (name, symbol) in self.each_export(module) {
+                if name == known::export_equals || exports.contains_key(&name) {
+                    continue;
+                }
+                let flags = self.symbol_flags(symbol);
+                if flags.intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
+                    && !flags.intersects(SymFlags::VALUE)
+                {
+                    exports.insert(name, symbol);
                 }
             }
         }
-        self.memo.export_stars.insert_ref(module, stars.into())
+        let mut resolved_exports: Vec<(Atom, Sym)> = exports.into_iter().collect();
+        resolved_exports.sort_unstable();
+        let mut type_only_export_star_map: Vec<(Atom, (FileId, StmtId))> = visit
+            .type_only_export_star_map
+            .into_iter()
+            .filter(|star| !visit.non_type_only_names.contains(&star.0))
+            .collect();
+        type_only_export_star_map.sort_unstable();
+        visit
+            .export_collisions
+            .sort_unstable_by_key(|collision| (collision.duplicate, collision.name));
+        ModuleSymbolLinks {
+            resolved_exports: resolved_exports.into(),
+            type_only_export_star_map: type_only_export_star_map.into(),
+            export_collisions: visit.export_collisions.into(),
+        }
+    }
+
+    /// `visit` of `getExportsOfModuleWorker`. `export_star`: the `export *` that led here. `is_type_only`: that one or one before it says
+    /// `type`.
+    fn visit_exports(
+        &self,
+        symbol: Option<Sym>,
+        export_star: Option<(FileId, StmtId)>,
+        is_type_only: bool,
+        visit: &mut ExportsVisit,
+    ) -> Option<FxHashMap<Atom, Sym>> {
+        let symbol = symbol?;
+        // Before it is asked whether it has been here: a plain `export *` takes back what an `export type *` of the same module said.
+        if !is_type_only {
+            let names = self.each_export(symbol).map(|export| export.0);
+            visit.non_type_only_names.extend(names);
+        }
+        if visit.visited_symbols.contains(&symbol) {
+            return None;
+        }
+        visit.visited_symbols.push(symbol);
+        let mut symbols: FxHashMap<Atom, Sym> = self.each_export(symbol).collect();
+        let mut nested_symbols: FxHashMap<Atom, Sym> = FxHashMap::default();
+        // `ExportCollisionTable`: who exported the name first.
+        let mut lookup_table: FxHashMap<Atom, (FileId, StmtId)> = FxHashMap::default();
+        for node in self.export_stars_of(symbol) {
+            let StmtKind::ExportStar {
+                spec,
+                type_only,
+                mode,
+                ..
+            } = self.hir(node.0)[node.1].kind
+            else {
+                continue;
+            };
+            let mode = self.mode_of_import(node.0, mode);
+            let resolved_module = self.module_of_specifier_as(node.0, spec, mode);
+            let is_type_only = is_type_only || type_only;
+            let Some(exported) =
+                self.visit_exports(resolved_module, Some(node), is_type_only, visit)
+            else {
+                continue;
+            };
+            // `extendExportSymbols`
+            for (name, source) in exported {
+                if name == known::default {
+                    continue;
+                }
+                let Some(&target) = nested_symbols.get(&name) else {
+                    nested_symbols.insert(name, source);
+                    lookup_table.insert(name, node);
+                    continue;
+                };
+                // What the module exports itself settles it.
+                if export_star.is_none()
+                    && name != known::export_equals
+                    && !symbols.contains_key(&name)
+                    && self.resolve_symbol(target) != self.resolve_symbol(source)
+                {
+                    visit.export_collisions.push(ExportCollision {
+                        duplicate: node,
+                        first: lookup_table[&name],
+                        name,
+                    });
+                }
+            }
+        }
+        for (name, nested) in nested_symbols {
+            symbols.entry(name).or_insert(nested);
+        }
+        if let Some(star) = export_star
+            && matches!(
+                self.hir(star.0)[star.1].kind,
+                StmtKind::ExportStar {
+                    type_only: true,
+                    ..
+                }
+            )
+        {
+            let names = symbols.keys().map(|&name| (name, star));
+            visit.type_only_export_star_map.extend(names);
+        }
+        Some(symbols)
+    }
+
+    /// `symbol.Exports[InternalSymbolNameExportStar].Declarations`
+    fn export_stars_of(&self, symbol: Sym) -> SmallVec<[(FileId, StmtId); 4]> {
+        let mut stars = SmallVec::new();
+        for &part in self.parts(symbol).iter() {
+            let of_file = self.bound(part.file).export_stars.iter();
+            stars.extend(
+                of_file
+                    .filter(|star| star.0 == part.id)
+                    .map(|star| (part.file, star.1)),
+            );
+        }
+        stars
+    }
+
+    /// `resolveSymbol`. `None`: `unknownSymbol`.
+    pub fn resolve_symbol(&self, symbol: Sym) -> Option<Sym> {
+        let flags = self.flags(symbol);
+        // `IsNonLocalAlias`
+        if flags.contains(SymFlags::ALIAS)
+            && !flags.intersects(SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE)
+        {
+            self.resolve_alias(symbol)
+        } else {
+            Some(symbol)
+        }
     }
 
     /// Whether all there is to import from `module` can be told. What `export =` gives has properties, which can be imported as well.
@@ -3789,149 +3946,18 @@ impl Files {
             && !self.module(module.file).path.ends_with(".json")
     }
 
-    /// `visit` of `getExportsOfModuleWorker`, while symbols are being put together: what `module` exports itself, or passes on with
-    /// `export *`. An `export =` of what is passed on counts for nothing.
-    fn module_export_inner(
-        &self,
-        module: Sym,
-        name: Atom,
-        visited: &mut FxHashSet<Sym>,
-    ) -> Option<Sym> {
-        if !visited.insert(module) {
-            return None;
-        }
-        if let Some(found) = self.export(module, name) {
-            return Some(found);
-        }
-        if name == known::default {
-            return None;
-        }
-        for part in self.parts(module) {
-            for &(container, spec) in &self.bound(part.file).export_stars {
-                if container != part.id {
-                    continue;
-                }
-                if let Some(target) = self.module_of_specifier(part.file, spec)
-                    && let Some(found) = self.module_export_inner(target, name, visited)
-                {
-                    return Some(found);
-                }
-            }
-        }
-        None
-    }
-
-    /// Everything `module` exports, `export *` included. Sorted by name.
-    pub fn all_module_exports(&self, module: Sym) -> Vec<(Atom, Sym)> {
-        let mut out: FxHashMap<Atom, Sym> = FxHashMap::default();
-        let mut visited = FxHashSet::default();
-        self.collect_exports(module, &mut out, &mut visited, true);
-        let mut all: Vec<(Atom, Sym)> = out.into_iter().collect();
-        all.sort_unstable();
-        all
-    }
-
-    /// `all_module_exports`, kept for good.
-    pub fn all_exports_of(&self, module: Sym) -> &[(Atom, Sym)] {
-        if let Some(kept) = self.memo.all_exports.get_ref(&module) {
-            return kept;
-        }
-        self.memo
-            .all_exports
-            .insert_ref(module, self.all_module_exports(module).into())
-    }
-
-    fn collect_exports(
-        &self,
-        module: Sym,
-        out: &mut FxHashMap<Atom, Sym>,
-        visited: &mut FxHashSet<Sym>,
-        with_default: bool,
-    ) {
-        if !visited.insert(module) {
-            return;
-        }
-        for (name, sym) in self.each_export(module) {
-            if name == known::default && !with_default {
-                continue;
-            }
-            out.entry(name).or_insert(sym);
-        }
-        for &(target, _) in self.export_stars_of(module) {
-            if let Some(target) = target {
-                self.collect_exports(target, out, visited, false);
-            }
-        }
-    }
-
-    /// `typeOnlyExportStarMap`: whether `module` has `name` only by way of an `export type *`.
-    pub fn is_type_only_star_export(&self, module: Sym, name: Atom) -> bool {
+    /// `typeOnlyExportStarMap[name]` of `module`: the `export type *` that is the only way it has `name`.
+    pub fn type_only_export_star(&self, module: Sym, name: Atom) -> Option<(FileId, StmtId)> {
         if !self.has_type_only_stars {
-            return false;
-        }
-        let module = self.module_value(module);
-        let names = match self.type_only_star_names.get_ref(&module) {
-            Some(names) => names,
-            None => {
-                let (mut visited, mut plain, mut type_only) =
-                    (Vec::new(), FxHashSet::default(), FxHashSet::default());
-                self.visit_export_stars(
-                    module,
-                    false,
-                    false,
-                    &mut visited,
-                    &mut plain,
-                    &mut type_only,
-                );
-                let mut names: Vec<Atom> = type_only.difference(&plain).copied().collect();
-                names.sort_unstable();
-                self.type_only_star_names.insert_ref(module, names.into())
-            }
-        };
-        names.binary_search(&name).is_ok()
-    }
-
-    /// `visit` of `getExportsOfModuleWorker`, for the names alone: those `module` exports, `export *` included. `through_type_only`: the
-    /// `export *` that led here says `type`. `is_type_only`: that one or one before it does. `plain` gets the names that are reached
-    /// without any that does (`nonTypeOnlyNames`), `type_only` those that come through one.
-    fn visit_export_stars(
-        &self,
-        module: Sym,
-        through_type_only: bool,
-        is_type_only: bool,
-        visited: &mut Vec<Sym>,
-        plain: &mut FxHashSet<Atom>,
-        type_only: &mut FxHashSet<Atom>,
-    ) -> Option<FxHashSet<Atom>> {
-        // Before it is asked whether it has been here: a plain `export *` takes back what an `export type *` of the same module said.
-        if !is_type_only {
-            plain.extend(self.each_export(module).map(|e| e.0));
-        }
-        if visited.contains(&module) {
             return None;
         }
-        visited.push(module);
-        let mut names: FxHashSet<Atom> = self.each_export(module).map(|e| e.0).collect();
-        for &(target, says_type) in self.export_stars_of(module) {
-            let Some(target) = target else {
-                continue;
-            };
-            if let Some(nested) = self.visit_export_stars(
-                target,
-                says_type,
-                is_type_only || says_type,
-                visited,
-                plain,
-                type_only,
-            ) {
-                // `extendExportSymbols`: a default is not passed on.
-                names.extend(nested.into_iter().filter(|&n| n != known::default));
-            }
-        }
-        if through_type_only {
-            type_only.extend(names.iter().copied());
-        }
-        Some(names)
+        let map = &self.module_links(module).type_only_export_star_map;
+        let found = map.binary_search_by_key(&name, |star| star.0);
+        found.ok().map(|i| map[i].1)
+    }
+
+    pub fn is_type_only_star_export(&self, module: Sym, name: Atom) -> bool {
+        self.type_only_export_star(module, name).is_some()
     }
 
     /// `A.B.C` in `scope`: namespaces up to the last name, which has to have `meaning`.

@@ -2625,10 +2625,8 @@ impl<'p> Checker<'p> {
                 Parent::Expr(parent) => match hir[parent].kind {
                     ExprKind::Call(c) | ExprKind::New(c) if hir[c].callee != at => {
                         if let Some(resolved) = self.p.calls.get(&(file, parent)) {
-                            // `getContextualTypeForArgumentAtIndex`: a failed call resolves to the signature of
-                            // `getCandidateForOverloadFailure`.
-                            let sig = self.p.failure_sigs.get(&(file, parent)).or(resolved.sig);
-                            let Some((_, _, mapper)) = sig.and_then(|sig| self.sig_decl(sig))
+                            let Some((_, _, mapper)) =
+                                resolved.sig.and_then(|sig| self.sig_decl(sig))
                             else {
                                 return ty;
                             };

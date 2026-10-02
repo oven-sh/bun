@@ -481,6 +481,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                 func: FnId::NONE,
                 pos: name.start,
                 start: tag.pos,
+                loc: TextRange {
+                    pos: tag.pos,
+                    end: tag.end,
+                },
             });
         }
         let members = self.b.file.add_members(&members);
@@ -752,6 +756,11 @@ impl<'p, 'a> Lower<'p, 'a> {
                             func,
                             pos: tag.name_pos,
                             start: tag.name_pos,
+                            // `tag.TagName()`
+                            loc: TextRange {
+                                pos: tag.name_pos,
+                                end: tag.name_pos + b"overload".len() as u32,
+                            },
                             ..member
                         });
                     }

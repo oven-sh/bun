@@ -1085,7 +1085,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     ) -> Vec<(FileId, Declaration)> {
         if let (Some(&(file, a)), Some(&(other, b))) = (first.first(), second.first())
             && file == other
-            && self.start_of_declaration(file, b).0 < self.start_of_declaration(file, a).0
+            && self.pos_of_declaration(file, b) < self.pos_of_declaration(file, a)
         {
             std::mem::swap(&mut first, &mut second);
         }
@@ -1303,22 +1303,16 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             text.push_str(", --, --)");
             return;
         }
-        let (start, flags) = self.start_of_declaration(file, declaration);
-        // `declaration.Pos()`: where the token before it ends. `finishReparsedNode`: what is made of a JSDoc tag is where the tag is,
-        // and the scanner of JSDoc comments has no trivia.
-        let pos = if flags.contains(Flags::REPARSED) {
-            start
-        } else {
-            self.c.end_of_token_before(file, start)
-        };
+        let pos = self.pos_of_declaration(file, declaration);
         let (line, character) = self.line_and_character(file, pos);
         text.push_str(&format!(", {line}, {character})"));
     }
 
-    /// Where the first token of `declaration` starts, and the flags of the declaration.
-    fn start_of_declaration(&self, file: FileId, declaration: Declaration) -> (u32, Flags) {
+    /// `declaration.Pos()`
+    fn pos_of_declaration(&self, file: FileId, declaration: Declaration) -> u32 {
         let hir = self.c.hir(file);
-        match declaration {
+        // Where the first token starts, and the flags of the declaration.
+        let (start, flags) = match declaration {
             Declaration::Bound(decl) => (
                 self.c.start_of_declaration(file, decl),
                 match decl {
@@ -1329,7 +1323,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     _ => Flags::empty(),
                 },
             ),
-            Declaration::Member(member) => (hir[member].start, hir[member].flags),
+            Declaration::Member(member) => return hir[member].loc.pos,
             Declaration::Parameter(parameter) => (hir[parameter].pos, Flags::empty()),
             Declaration::Property(property) => (hir[property].start, Flags::empty()),
             Declaration::Expression(e) => {
@@ -1337,6 +1331,13 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             }
             Declaration::TypeNode(node) => (hir[node].pos, Flags::empty()),
             Declaration::ThisParameter(function) => (hir[function].this_pos, Flags::empty()),
+        };
+        // Where the token before it ends. `finishReparsedNode`: what is made of a JSDoc tag is where the tag is, and the scanner of
+        // JSDoc comments has no trivia.
+        if flags.contains(Flags::REPARSED) {
+            start
+        } else {
+            self.c.end_of_token_before(file, start)
         }
     }
 

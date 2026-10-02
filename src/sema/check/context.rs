@@ -806,15 +806,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `ty`, or what it stands for if it is a reference to an alias: put in a union, it shows its members. `NoInfer<T>` stays.
-    fn expand_lazy_alias(&mut self, ty: TypeId) -> TypeId {
-        if self.is_no_infer(ty) {
-            ty
-        } else {
-            self.force(ty)
-        }
-    }
-
     /// `contextual_property`, for the value `e` of the property. A literal or a function is asked about again for all that is
     /// written in it, so what is found for one is kept where it holds for good.
     fn contextual_property_of_value(
@@ -878,7 +869,7 @@ impl<'p> Checker<'p> {
                 }
             };
             if let Some(t) = found {
-                types.push(self.expand_lazy_alias(t));
+                types.push(self.force(t));
             }
         }
         if types.is_empty() {
@@ -1909,7 +1900,7 @@ impl<'p> Checker<'p> {
                     .position(|f| f.intersects(variable))
                     .unwrap_or(flags.len());
                 if before_spreads && index < fixed {
-                    let element = self.expand_lazy_alias(elems[index]);
+                    let element = self.force(elems[index]);
                     // What may be left out holds `undefined` too, whether or not that is kept with the element.
                     let is_optional = flags[index].contains(ElemFlags::OPTIONAL);
                     let element = if is_optional {
@@ -1935,7 +1926,7 @@ impl<'p> Checker<'p> {
                     0
                 };
                 if offset > 0 && offset <= fixed_end {
-                    types.push(self.expand_lazy_alias(elems[elems.len() - offset]));
+                    types.push(self.force(elems[elems.len() - offset]));
                     continue;
                 }
                 let from = first_spread.map_or(fixed, |s| fixed.min(s));
@@ -1949,7 +1940,7 @@ impl<'p> Checker<'p> {
                 continue;
             }
             if let Some(element) = self.array_element(part) {
-                types.push(self.expand_lazy_alias(element));
+                types.push(self.force(element));
                 continue;
             }
             // `getTypeOfPropertyOfContextualType(t, index)`: a property of that name, or the index signature that takes it.
@@ -1971,7 +1962,7 @@ impl<'p> Checker<'p> {
                 } else if !self.signatures(method, false).is_empty() {
                     let element = self.iterated_type(part, false);
                     if element != TypeId::UNRESOLVED {
-                        types.push(self.expand_lazy_alias(element));
+                        types.push(self.force(element));
                     }
                 }
             }
@@ -2001,7 +1992,7 @@ impl<'p> Checker<'p> {
             let element = if flags[i].contains(ElemFlags::VARIADIC) {
                 self.indexed_access(elems[i], TypeId::NUMBER)
             } else {
-                self.expand_lazy_alias(elems[i])
+                self.force(elems[i])
             };
             slice.push(if flags[i].contains(ElemFlags::OPTIONAL) {
                 self.optional_property(element)
@@ -2311,7 +2302,7 @@ impl<'p> Checker<'p> {
         let (ExprKind::Call(c) | ExprKind::New(c)) = hir[call].kind else {
             return None;
         };
-        if !hir[c].type_args.is_empty() {
+        if !self.type_arguments_of_call(file, call).is_empty() {
             return None;
         }
         let index = hir.ids(hir[c].args).position(|a| a == e)?;

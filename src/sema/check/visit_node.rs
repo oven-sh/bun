@@ -511,7 +511,11 @@ impl Visitor<'_, '_> {
         }
         for (index, symbol) in bound.symbols.iter().enumerate() {
             let id = SymbolId(index as u32);
-            for &decl in symbol.decls.iter().filter(|decl| symbols[*decl] == id) {
+            let is_symbol_of = |decl: &&Decl| match bound.symbol_of_declaration(**decl) {
+                SymbolId::NONE => symbols[*decl] == id,
+                own => own == id,
+            };
+            for &decl in symbol.decls.iter().filter(is_symbol_of) {
                 let (name, start) = match decl {
                     // A method is visited with the other members.
                     Decl::Fn(f) if matches!(hir[f].kind, FnKind::Decl | FnKind::Expr) => {

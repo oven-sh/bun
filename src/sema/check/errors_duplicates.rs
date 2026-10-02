@@ -100,7 +100,10 @@ impl Checker<'_> {
         let mut last_body = None;
         for i in 0..bound.symbols.len() {
             let symbol = &bound.symbols[i];
-            if symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED) {
+            // The locals of a module or a namespace: `check_locals_of_bodies`.
+            if symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED)
+                || symbol.export_symbol.is_some()
+            {
                 continue;
             }
             let sym = self.files().sym(file, SymbolId(i as u32));

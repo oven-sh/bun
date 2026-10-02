@@ -159,7 +159,7 @@ impl Checker<'_> {
                                     (name_end, super::explain::NO_LENGTH)
                                 }
                                 MemberOwner::Class(_) => (name_end, name_end),
-                                _ => (name_end, self.end_of_member(file, m)),
+                                _ => (name_end, hir[m].loc.end),
                             }
                         }
                         _ if is_missing => (start, super::explain::NO_LENGTH),
@@ -283,7 +283,7 @@ impl Checker<'_> {
         for (t, node) in hir.types.iter().enumerate() {
             if let TypeNodeKind::Mapped(m) = node.kind
                 && hir[m].ty.is_none()
-                && bound.type_scope[t].is_some()
+                && !bound.is_unchecked_type(t)
             {
                 out.push(Diagnostic {
                     start: node.pos,

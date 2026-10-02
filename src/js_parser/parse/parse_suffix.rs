@@ -1179,7 +1179,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             *optional_chain = Self::sfx_chain_after_type_arguments(p, old_optional_chain);
             // `parseSuperExpression`: type arguments after `super` are objected to from where the keyword ends. Not after what `new`
-            // is given, which is a primary expression. A template drops them, and `resolveCall` does not look at those of a call.
+            // is given, which is a primary expression. A template drops them.
             if matches!(left.data, ExprData::ESuper(_))
                 && level.lt(Level::Member)
                 && p.lexer.tolerant
@@ -1194,7 +1194,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     2754,
                 );
-                if Self::sfx_takes_type_arguments(p.lexer.token) {
+                if matches!(
+                    p.lexer.token,
+                    T::TNoSubstitutionTemplateLiteral | T::TTemplateHead
+                ) {
                     return Ok(Continuation::Next);
                 }
             }

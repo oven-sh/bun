@@ -1278,29 +1278,7 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     pub(crate) fn comments_before(&self, pos: usize) -> (core::ops::Range<usize>, usize) {
         debug_assert!(self.tolerant);
-        let text = self.contents;
-        let mut at = pos.min(text.len());
-        // In source order.
-        let end = self
-            .all_comments
-            .partition_point(|comment| comment.loc.to_usize() < at);
-        let mut first = end;
-        loop {
-            at -= trailing_whitespace_len(&text[..at]);
-            match first.checked_sub(1).map(|index| &self.all_comments[index]) {
-                // Past `at` if the comment ends with whitespace.
-                Some(comment) if comment.end_i() >= at => {
-                    at = comment.loc.to_usize();
-                    first -= 1;
-                }
-                _ => break,
-            }
-        }
-        // `Scan`: a shebang is trivia.
-        if text.starts_with(b"#!") && !(0..at).any(|i| starts_with_line_break(&text[i..])) {
-            at = 0;
-        }
-        (first..end, at)
+        comments_before(self.contents, &self.all_comments, pos)
     }
 
     /// Whether the scan may go on after something TypeScript's scanner only reports: notes `code` at `at`.
@@ -4714,6 +4692,34 @@ fn starts_with_line_break(text: &[u8]) -> bool {
 
 /// How many bytes of whitespace and line breaks `text` ends with (`IsWhiteSpaceLike`).
 #[cold]
+/// `Lexer::comments_before`. `comments`: `Lexer::all_comments` of a lexer that has been through all of `text`.
+pub(crate) fn comments_before(
+    text: &[u8],
+    comments: &[Range],
+    pos: usize,
+) -> (core::ops::Range<usize>, usize) {
+    let mut at = pos.min(text.len());
+    // In source order.
+    let end = comments.partition_point(|comment| comment.loc.to_usize() < at);
+    let mut first = end;
+    loop {
+        at -= trailing_whitespace_len(&text[..at]);
+        match first.checked_sub(1).map(|index| &comments[index]) {
+            // Past `at` if the comment ends with whitespace.
+            Some(comment) if comment.end_i() >= at => {
+                at = comment.loc.to_usize();
+                first -= 1;
+            }
+            _ => break,
+        }
+    }
+    // `Scan`: a shebang is trivia.
+    if text.starts_with(b"#!") && !(0..at).any(|i| starts_with_line_break(&text[i..])) {
+        at = 0;
+    }
+    (first..end, at)
+}
+
 fn trailing_whitespace_len(text: &[u8]) -> usize {
     let mut end = text.len();
     while end > 0 {

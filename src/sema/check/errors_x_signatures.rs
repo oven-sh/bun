@@ -1607,7 +1607,7 @@ impl Checker<'_> {
                 continue;
             };
             let scope = bound.type_scope[t];
-            if name.len() != 1 || scope.is_none() {
+            if name.len() != 1 || bound.is_unchecked_type(t) {
                 continue;
             }
             let mut symbol = None;
@@ -2121,7 +2121,7 @@ impl Checker<'_> {
         // What each function says it returns, and the function. Sorted.
         let mut returning: Option<Vec<(TypeNodeId, usize)>> = None;
         for t in 0..hir.types.len() {
-            if bound.type_scope[t].is_none() {
+            if bound.is_unchecked_type(t) {
                 continue;
             }
             let (param, ty, asserts) = match hir.types[t].kind {
@@ -2652,7 +2652,7 @@ impl Checker<'_> {
         }
         for (t, node) in hir.types.iter().enumerate() {
             if let TypeNodeKind::Object(members) = node.kind
-                && bound.type_scope[t].is_some()
+                && !bound.is_unchecked_type(t)
             {
                 self.check_member_lists_agree(file, &[(file, members, 2, t as u32)], out);
             }

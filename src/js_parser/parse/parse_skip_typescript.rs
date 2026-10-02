@@ -2622,6 +2622,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             tolerant && !is_interface_body && self.is_start_of_mapped_type();
         let saved_contexts = self.enter_list(ListKind::TypeMembers);
         while self.lexer.token != T::TCloseBrace {
+            if keeps {
+                self.end_type_member(&mut kept, self.token_start());
+            }
             // `parseMappedType` reads "[K in T]: X" itself, before the list of members.
             let is_mapped_type = core::mem::take(&mut starts_mapped_type);
             if !is_mapped_type {
@@ -2886,6 +2889,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         self.lexer.list_contexts = saved_contexts;
+        if keeps {
+            self.end_type_member(&mut kept, self.token_start());
+        }
         self.lexer.expect(T::TCloseBrace)?;
         if keeps {
             self.finish_object_type(kept, open_brace);

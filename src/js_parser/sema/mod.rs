@@ -53,6 +53,8 @@ pub(crate) enum Mark {
     /// From the name of a member of a class (the `{` of a static block) or of an object literal, to its first token: a decorator, a
     /// modifier, `get`, `set`, `*`, `[`.
     MemberStart,
+    /// From the same place, of a member of a class, to where its last token ends.
+    MemberEnd,
     /// From where a statement or a class expression is said to be, to its first token: a decorator or a modifier. From the dot before
     /// the `B` of `namespace A.B`, to `B`.
     DeclarationStart,

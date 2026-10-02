@@ -152,6 +152,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             closing_tags.insert(element, tag);
         }
         let mut b = Builder::new(lexer, atoms);
+        b.comments = p.lexer.all_comments.clone();
         b.ts = syntax.ast;
         b.kept = syntax.by_offset;
         b.ambient_statements = syntax.ambient_statements;
@@ -1621,6 +1622,12 @@ impl<'p, 'a> Lower<'p, 'a> {
                 Some(block) => Some(block.loc),
                 None => property.key.as_ref().map(|key| key.loc),
             };
+            member.loc = TextRange {
+                pos: self.b.full_start_of(member.start),
+                end: named_at
+                    .and_then(|at| self.mark(at, Mark::MemberEnd))
+                    .unwrap_or(0),
+            };
             if let Some(start) = named_at.and_then(|at| self.mark(at, Mark::MemberStart)) {
                 member = self.member_jsdoc(member, start);
                 members.append(&mut self.reparsed_members);
@@ -1681,6 +1688,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             func: FnId::NONE,
             pos: 0,
             start: 0,
+            loc: TextRange::default(),
         };
         if let Some(block) = property.class_static_block_ref() {
             member.kind = MemberKind::StaticBlock;

@@ -407,7 +407,7 @@ impl Checker<'_> {
             let JsDocTypeOwner::Fn(func) = owner else {
                 continue;
             };
-            if bound.type_scope[node.idx()].is_none()
+            if bound.is_unchecked_type(node.idx())
                 || !matches!(
                     hir[func].kind,
                     FnKind::Decl | FnKind::Method | FnKind::Expr | FnKind::Arrow

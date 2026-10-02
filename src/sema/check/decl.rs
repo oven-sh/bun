@@ -36,6 +36,340 @@ fn to_int32(n: f64) -> i32 {
     (n.trunc() % 4294967296.0) as i64 as i32
 }
 
+/// The operators `evaluate` knows, on numbers.
+fn number_operation(op: BinOp, a: f64, b: f64) -> Option<f64> {
+    let shift = to_int32(b) as u32 & 31;
+    Some(match op {
+        BinOp::BitOr => f64::from(to_int32(a) | to_int32(b)),
+        BinOp::BitAnd => f64::from(to_int32(a) & to_int32(b)),
+        BinOp::BitXor => f64::from(to_int32(a) ^ to_int32(b)),
+        BinOp::Shr => f64::from(to_int32(a) >> shift),
+        BinOp::UShr => f64::from(to_int32(a) as u32 >> shift),
+        BinOp::Shl => f64::from(to_int32(a) << shift),
+        BinOp::Mul => a * b,
+        BinOp::Div => a / b,
+        BinOp::Add => a + b,
+        BinOp::Sub => a - b,
+        BinOp::Rem => a % b,
+        // `Exponentiate` of jsnum.go
+        BinOp::Pow if (a == 1.0 || a == -1.0) && b.is_infinite() || a == 1.0 && b.is_nan() => {
+            f64::NAN
+        }
+        BinOp::Pow => a.powf(b),
+        _ => return None,
+    })
+}
+
+/// `evaluator.Result`
+#[derive(Copy, Clone, Default)]
+pub(super) struct Evaluated {
+    pub(super) value: Option<EnumValue>,
+    pub(super) is_syntactically_string: bool,
+    pub(super) resolved_other_files: bool,
+    pub(super) has_external_references: bool,
+}
+
+impl Evaluated {
+    /// There is one `NaN`.
+    pub(super) fn number(n: f64) -> Evaluated {
+        let n = if n.is_nan() { f64::NAN } else { n };
+        Evaluated {
+            value: Some(EnumValue::Number(n.to_bits())),
+            ..Evaluated::default()
+        }
+    }
+}
+
+/// `evaluate` of evaluator.go, with `evaluateEntity` and `evaluateEnumMember` of the checker. Two ask: the checker, for one member at a
+/// time in whatever order it is asked, and `EnumValues`, which goes through a file in the order of `computeEnumMemberValues` and says
+/// what is said on the way.
+pub(super) trait Evaluator<'p> {
+    fn checker(&mut self) -> &mut Checker<'p>;
+
+    /// There is no room to go on.
+    fn give_up(&mut self);
+
+    /// `resolveEntityName(e, SymbolFlagsValue, ignoreErrors)`, in what is evaluated for `location`.
+    fn resolve_entity_name(&mut self, file: FileId, e: ExprId, location: Location) -> Option<Sym>;
+
+    /// Whether the initializer of the constant `d` can be gone into. `leave_variable` follows if it can.
+    fn enter_variable(&mut self, file: FileId, d: VarDeclId) -> bool;
+
+    fn leave_variable(&mut self);
+
+    /// The error `code` of `evaluateEnumMember` at `e`, which is about `symbol`.
+    fn report(&mut self, file: FileId, e: ExprId, code: u32, symbol: Sym);
+
+    /// `getEnumMemberValue`, in what is evaluated for `location`.
+    fn enum_member_value_at(
+        &mut self,
+        file: FileId,
+        member: EnumMemberId,
+        location: Location,
+    ) -> Evaluated;
+
+    /// `evaluate`. `location`: what `e` is evaluated for, the member of an enum or the constant that it is (part of) the initializer of,
+    /// or else the expression asked about. Parentheses are not kept, and nothing else is looked through.
+    fn evaluate(&mut self, file: FileId, e: ExprId, location: Location) -> Evaluated {
+        if self.checker().is_stack_low() {
+            self.give_up();
+            return Evaluated::default();
+        }
+        let hir = self.checker().hir(file);
+        match hir[e].kind {
+            // A `PrefixUnaryExpression`, which `typeof`, `void` and `delete` are not.
+            ExprKind::Unary {
+                op:
+                    op @ (UnOp::Plus
+                    | UnOp::Minus
+                    | UnOp::BitNot
+                    | UnOp::Not
+                    | UnOp::PreInc
+                    | UnOp::PreDec),
+                operand,
+            } => {
+                let result = self.evaluate(file, operand, location);
+                let value = match (op, result.value) {
+                    (UnOp::Plus, Some(EnumValue::Number(n))) => Some(f64::from_bits(n)),
+                    (UnOp::Minus, Some(EnumValue::Number(n))) => Some(-f64::from_bits(n)),
+                    (UnOp::BitNot, Some(EnumValue::Number(n))) => {
+                        Some(f64::from(!to_int32(f64::from_bits(n))))
+                    }
+                    _ => None,
+                };
+                Evaluated {
+                    value: value.and_then(|n| Evaluated::number(n).value),
+                    is_syntactically_string: false,
+                    ..result
+                }
+            }
+            ExprKind::Binary { op, left, right } => {
+                self.evaluate_binary(file, Some(op), left, right, location)
+            }
+            // An assignment is a `BinaryExpression` with an operator that gives nothing.
+            ExprKind::Assign { target, value, .. } => {
+                self.evaluate_binary(file, None, target, value, location)
+            }
+            ExprKind::String(text) => Evaluated {
+                value: Some(EnumValue::String(text)),
+                is_syntactically_string: true,
+                ..Evaluated::default()
+            },
+            // `evaluateTemplateExpression`
+            ExprKind::Template { exprs, texts } => {
+                let atoms = &self.checker().files().atoms;
+                let mut text = atoms.bytes(hir.id_at(texts, 0)).to_vec();
+                let mut result = Evaluated {
+                    is_syntactically_string: true,
+                    ..Evaluated::default()
+                };
+                for (i, span) in hir.ids(exprs).enumerate() {
+                    let of_span = self.evaluate(file, span, location);
+                    let Some(value) = of_span.value else {
+                        return Evaluated {
+                            is_syntactically_string: true,
+                            ..Evaluated::default()
+                        };
+                    };
+                    text.extend_from_slice(self.checker().constant_text(value));
+                    text.extend_from_slice(atoms.bytes(hir.id_at(texts, i + 1)));
+                    result.resolved_other_files |= of_span.resolved_other_files;
+                    result.has_external_references |= of_span.has_external_references;
+                }
+                result.value = Some(EnumValue::String(atoms.intern(&text)));
+                result
+            }
+            ExprKind::Number(n) => Evaluated::number(hir.numbers[n as usize]),
+            ExprKind::Ident(_) | ExprKind::Index { .. } => self.evaluate_entity(file, e, location),
+            ExprKind::Dot { .. } if is_property_access_entity_name_expression(hir, e) => {
+                self.evaluate_entity(file, e, location)
+            }
+            _ => Evaluated::default(),
+        }
+    }
+
+    fn evaluate_binary(
+        &mut self,
+        file: FileId,
+        op: Option<BinOp>,
+        left: ExprId,
+        right: ExprId,
+        location: Location,
+    ) -> Evaluated {
+        let (l, r) = (
+            self.evaluate(file, left, location),
+            self.evaluate(file, right, location),
+        );
+        let value = match (l.value, r.value, op) {
+            (Some(EnumValue::Number(a)), Some(EnumValue::Number(b)), Some(op)) => {
+                number_operation(op, f64::from_bits(a), f64::from_bits(b))
+                    .and_then(|n| Evaluated::number(n).value)
+            }
+            (Some(a), Some(b), Some(BinOp::Add)) => {
+                let c = self.checker();
+                let text = [c.constant_text(a), c.constant_text(b)].concat();
+                Some(EnumValue::String(c.files().atoms.intern(&text)))
+            }
+            _ => None,
+        };
+        Evaluated {
+            value,
+            is_syntactically_string: (l.is_syntactically_string || r.is_syntactically_string)
+                && op == Some(BinOp::Add),
+            resolved_other_files: l.resolved_other_files || r.resolved_other_files,
+            has_external_references: l.has_external_references || r.has_external_references,
+        }
+    }
+
+    /// `evaluateEntity`: by what the names mean, never by the type of the expression.
+    fn evaluate_entity(&mut self, file: FileId, e: ExprId, location: Location) -> Evaluated {
+        let (hir, files) = (self.checker().hir(file), self.checker().files());
+        if let ExprKind::Index { obj, index, .. } = hir[e].kind {
+            let name = match hir[index].kind {
+                ExprKind::String(name) => name,
+                ExprKind::Template { exprs, texts } if exprs.is_empty() => hir.id_at(texts, 0),
+                _ => return Evaluated::default(),
+            };
+            // Neither `(a)["b"]` nor `a[("b")]`.
+            if is_parenthesized(hir, index) || !is_entity_name_expression(hir, obj) {
+                return Evaluated::default();
+            }
+            if let Some(root) = self.resolve_entity_name(file, obj, location)
+                && files.flags(root).contains(SymFlags::ENUM)
+                && let Some(member) = files.export(root, name)
+                && files.flags(member).contains(SymFlags::ENUM_MEMBER)
+            {
+                return self.evaluate_enum_member(file, e, member, location);
+            }
+            return Evaluated::default();
+        }
+        let Some(symbol) = self.resolve_entity_name(file, e, location) else {
+            return Evaluated::default();
+        };
+        // `Infinity` and `NaN`, unless they are somebody's own.
+        if let ExprKind::Ident(name) = hir[e].kind
+            && let Some(n) = match files.atoms.bytes(name) {
+                b"Infinity" => Some(f64::INFINITY),
+                b"NaN" => Some(f64::NAN),
+                _ => None,
+            }
+            && files.global(name, SymFlags::VALUE) == Some(symbol)
+        {
+            return Evaluated::number(n);
+        }
+        if files.flags(symbol).contains(SymFlags::ENUM_MEMBER) {
+            return self.evaluate_enum_member(file, e, symbol, location);
+        }
+        if let Some((of, d)) = self
+            .checker()
+            .constant_variable_declaration(symbol, location)
+            && self.enter_variable(of, d)
+        {
+            let initializer = self.checker().hir(of)[d].init;
+            let result = self.evaluate(of, initializer, Location::Variable(of, d));
+            self.leave_variable();
+            if location.file() != of {
+                return Evaluated {
+                    value: result.value,
+                    is_syntactically_string: false,
+                    resolved_other_files: true,
+                    has_external_references: true,
+                };
+            }
+            return Evaluated {
+                has_external_references: true,
+                ..result
+            };
+        }
+        Evaluated::default()
+    }
+
+    /// `evaluateEnumMember`
+    fn evaluate_enum_member(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        symbol: Sym,
+        location: Location,
+    ) -> Evaluated {
+        // `symbol.ValueDeclaration`
+        let declaration = self
+            .checker()
+            .files()
+            .decls_of(symbol)
+            .iter()
+            .find_map(|&(of, decl)| match decl {
+                Decl::EnumMember(member) => Some((of, member)),
+                _ => None,
+            });
+        let Some((of, member)) =
+            declaration.filter(|&(of, member)| Location::Member(of, member) != location)
+        else {
+            self.report(file, e, 2565, symbol);
+            return Evaluated::default();
+        };
+        if !is_declared_before_use(self.checker(), Location::Member(of, member), location) {
+            self.report(file, e, 2651, symbol);
+            return Evaluated::number(0.0);
+        }
+        let value = self.enum_member_value_at(of, member, location);
+        // `location.Parent != declaration.Parent`
+        let owner = &self.checker().bound(of).enum_member_owner;
+        let is_of_the_same_enum = matches!(location, Location::Member(file, using)
+            if file == of && owner[using.idx()] == owner[member.idx()]);
+        Evaluated {
+            has_external_references: value.has_external_references || !is_of_the_same_enum,
+            ..value
+        }
+    }
+}
+
+impl<'p> Evaluator<'p> for Checker<'p> {
+    fn checker(&mut self) -> &mut Checker<'p> {
+        self
+    }
+
+    fn give_up(&mut self) {
+        self.gave_up();
+    }
+
+    fn resolve_entity_name(&mut self, file: FileId, e: ExprId, _: Location) -> Option<Sym> {
+        self.resolve_entity_name_expression(file, e, SymFlags::VALUE)
+    }
+
+    /// Between files there is no before and after: constants of two files may be declared as each other.
+    fn enter_variable(&mut self, _: FileId, _: VarDeclId) -> bool {
+        let has_room = self.constant_depth <= 16;
+        self.constant_depth += u32::from(has_room);
+        has_room
+    }
+
+    fn leave_variable(&mut self) {
+        self.constant_depth -= 1;
+    }
+
+    fn report(&mut self, _: FileId, _: ExprId, _: u32, _: Sym) {}
+
+    /// `computeEnumMemberValues` goes through a declaration in order: where before and after do not count, in what is only declared, a
+    /// later member of the declaration being gone through has no value yet.
+    fn enum_member_value_at(
+        &mut self,
+        file: FileId,
+        member: EnumMemberId,
+        location: Location,
+    ) -> Evaluated {
+        let owner = &self.bound(file).enum_member_owner;
+        if let Location::Member(of, using) = location
+            && of == file
+            && member.0 > using.0
+            && owner[using.idx()] == owner[member.idx()]
+        {
+            return Evaluated::default();
+        }
+        self.get_enum_member_value(file, member)
+    }
+}
+
 /// `EnumLiteralKey`: what two values of members of an enum are the same by. `0` and `-0` are, and there is one `NaN`.
 fn enum_value_key(value: EnumValue) -> EnumValue {
     match value {
@@ -610,12 +944,12 @@ impl<'p> Checker<'p> {
 
     /// `getLocalTypeParametersOfClassOrInterfaceOrTypeAlias`: the type parameters of all the declarations of a class, an interface
     /// or an alias, in the order they are first met. Those of one name are one.
-    pub fn type_params_of_symbol(&mut self, sym: Sym) -> Arc<[TypeId]> {
+    pub fn type_params_of_symbol(&self, sym: Sym) -> Arc<[TypeId]> {
         Arc::from(&self.local_type_params_of_symbol(sym)[..])
     }
 
     /// The same, for whoever only looks at them.
-    pub(super) fn local_type_params_of_symbol(&mut self, sym: Sym) -> SmallVec<[TypeId; 4]> {
+    pub(super) fn local_type_params_of_symbol(&self, sym: Sym) -> SmallVec<[TypeId; 4]> {
         if let Some((file, params)) = self.only_type_param_list(sym) {
             return params
                 .iter()
@@ -1617,15 +1951,24 @@ impl<'p> Checker<'p> {
     }
 
     pub fn enum_member_value(&mut self, file: FileId, member: EnumMemberId) -> Option<EnumValue> {
+        self.get_enum_member_value(file, member).value
+    }
+
+    /// `getEnumMemberValue`
+    pub(super) fn get_enum_member_value(
+        &mut self,
+        file: FileId,
+        member: EnumMemberId,
+    ) -> Evaluated {
         if let Some(known) = self.p.enum_values.get(&(file, member)) {
             return known;
         }
         if !self.enter(Query::Enum(file, member)) {
-            return None;
+            return Evaluated::default();
         }
         let hir = self.hir(file);
         let value = if hir[member].init.is_some() {
-            self.constant_value_at(file, hir[member].init, Location::Member(file, member))
+            self.evaluate(file, hir[member].init, Location::Member(file, member))
         } else {
             let owner = self.bound(file).enum_member_owner[member.idx()];
             let flags = hir[owner].flags;
@@ -1633,15 +1976,13 @@ impl<'p> Checker<'p> {
             if (flags.contains(Flags::AMBIENT) || hir.kind == FileKind::Declaration)
                 && !flags.contains(Flags::CONST)
             {
-                None
+                Evaluated::default()
             } else if hir[owner].members.start == member.0 {
-                Some(EnumValue::Number(0f64.to_bits()))
+                Evaluated::number(0.0)
             } else {
                 match self.enum_member_value(file, EnumMemberId(member.0 - 1)) {
-                    Some(EnumValue::Number(bits)) => {
-                        Some(EnumValue::Number((f64::from_bits(bits) + 1.0).to_bits()))
-                    }
-                    _ => None,
+                    Some(EnumValue::Number(bits)) => Evaluated::number(f64::from_bits(bits) + 1.0),
+                    _ => Evaluated::default(),
                 }
             }
         };
@@ -1653,7 +1994,7 @@ impl<'p> Checker<'p> {
 
     /// `evaluate(e, e)`: what `e` comes to, if it is made of nothing but literals, enum members and constants that are.
     pub(super) fn constant_value(&mut self, file: FileId, e: ExprId) -> Option<EnumValue> {
-        self.constant_value_at(file, e, Location::Expr(file, e))
+        self.evaluate(file, e, Location::Expr(file, e)).value
     }
 
     fn constant_text(&self, value: EnumValue) -> &'p [u8] {
@@ -1664,157 +2005,33 @@ impl<'p> Checker<'p> {
         self.files().atoms.bytes(atom)
     }
 
-    /// `evaluate`. `at`: its `location`, what `e` is evaluated for: the member of an enum or the constant that it is (part of) the
-    /// initializer of, or else the expression asked about.
-    fn constant_value_at(&mut self, file: FileId, e: ExprId, at: Location) -> Option<EnumValue> {
-        if self.is_stack_low() {
-            self.gave_up();
+    /// `isConstantVariable(symbol)` and what `evaluateEntity` asks of its `ValueDeclaration`: a constant declared by name, its type left to
+    /// its initializer, before `location`.
+    fn constant_variable_declaration(
+        &self,
+        symbol: Sym,
+        location: Location,
+    ) -> Option<(FileId, VarDeclId)> {
+        let files = self.files();
+        let flags = files.flags(symbol);
+        if !flags.intersects(SymFlags::VARIABLE) || !flags.contains(SymFlags::CONST) {
             return None;
         }
-        let hir = self.hir(file);
-        // There is one `NaN`.
-        let number = |n: f64| {
-            Some(EnumValue::Number(
-                (if n.is_nan() { f64::NAN } else { n }).to_bits(),
-            ))
-        };
-        match hir[e].kind {
-            ExprKind::Number(n) => number(hir.numbers[n as usize]),
-            ExprKind::String(s) => Some(EnumValue::String(s)),
-            ExprKind::Template { exprs, texts } => {
-                if exprs.is_empty() {
-                    return Some(EnumValue::String(hir.id_at(texts, 0)));
-                }
-                let mut text: Vec<u8> = Vec::new();
-                for (i, span) in hir.ids(exprs).enumerate() {
-                    let value = self.constant_value_at(file, span, at)?;
-                    if i == 0 {
-                        text.extend_from_slice(self.files().atoms.bytes(hir.id_at(texts, 0)));
-                    }
-                    text.extend_from_slice(self.constant_text(value));
-                    text.extend_from_slice(self.files().atoms.bytes(hir.id_at(texts, i + 1)));
-                }
-                Some(EnumValue::String(self.files().atoms.intern(&text)))
-            }
-            ExprKind::Unary { op, operand } => {
-                let EnumValue::Number(bits) = self.constant_value_at(file, operand, at)? else {
-                    return None;
-                };
-                let n = f64::from_bits(bits);
-                match op {
-                    UnOp::Minus => number(-n),
-                    UnOp::Plus => number(n),
-                    UnOp::BitNot => number(f64::from(!to_int32(n))),
-                    _ => None,
-                }
-            }
-            ExprKind::Binary { op, left, right } => {
-                let (l, r) = (
-                    self.constant_value_at(file, left, at)?,
-                    self.constant_value_at(file, right, at)?,
-                );
-                match (l, r) {
-                    (EnumValue::Number(l), EnumValue::Number(r)) => {
-                        let (l, r) = (f64::from_bits(l), f64::from_bits(r));
-                        let (li, ri) = (to_int32(l), to_int32(r));
-                        let shift = ri as u32 & 31;
-                        match op {
-                            BinOp::Add => number(l + r),
-                            BinOp::Sub => number(l - r),
-                            BinOp::Mul => number(l * r),
-                            BinOp::Div => number(l / r),
-                            BinOp::Rem => number(l % r),
-                            // `Exponentiate` of jsnum.go
-                            BinOp::Pow
-                                if (l == 1.0 || l == -1.0) && r.is_infinite()
-                                    || l == 1.0 && r.is_nan() =>
-                            {
-                                number(f64::NAN)
-                            }
-                            BinOp::Pow => number(l.powf(r)),
-                            BinOp::BitOr => number(f64::from(li | ri)),
-                            BinOp::BitAnd => number(f64::from(li & ri)),
-                            BinOp::BitXor => number(f64::from(li ^ ri)),
-                            BinOp::Shl => number(f64::from(li.wrapping_shl(shift))),
-                            BinOp::Shr => number(f64::from(li.wrapping_shr(shift))),
-                            BinOp::UShr => number(f64::from((li as u32).wrapping_shr(shift))),
-                            _ => None,
-                        }
-                    }
-                    (l, r) if op == BinOp::Add => {
-                        let text = [self.constant_text(l), self.constant_text(r)].concat();
-                        Some(EnumValue::String(self.files().atoms.intern(&text)))
-                    }
-                    _ => None,
-                }
-            }
-            // `evaluateEntity`: by what the names mean, never by the type of the expression.
-            ExprKind::Ident(_) | ExprKind::Dot { .. } => {
-                let sym = self.resolve_entity_name_expression(file, e, SymFlags::VALUE)?;
-                // `Infinity` and `NaN`, unless they are somebody's own.
-                if let ExprKind::Ident(name) = hir[e].kind
-                    && self.files().global(name, SymFlags::VALUE) == Some(sym)
-                {
-                    match self.files().atoms.bytes(name) {
-                        b"Infinity" => return number(f64::INFINITY),
-                        b"NaN" => return number(f64::NAN),
-                        _ => {}
-                    }
-                }
-                let flags = self.files().flags(sym);
-                if flags.contains(SymFlags::ENUM_MEMBER) {
-                    return self.evaluate_enum_member(sym, at);
-                }
-                // `const x = <constant>`, its type left to the initializer, declared before it is used.
-                if !flags.contains(SymFlags::CONST) {
-                    return None;
-                }
-                let mut decls = declarations_of(self.files(), sym);
-                let (Some((decl_file, Decl::Var(pat))), None) = (decls.next(), decls.next()) else {
-                    return None;
-                };
-                let PatParent::Var(d) = self.bound(decl_file).pat_parent[pat.idx()] else {
-                    return None;
-                };
-                let decl = &self.hir(decl_file)[d];
-                let declared = Location::Variable(decl_file, d);
-                if decl.ty.is_some()
-                    || decl.init.is_none()
-                    || declared == at
-                    || !is_declared_before_use(self, declared, at)
-                {
-                    return None;
-                }
-                // Between files there is no before and after: constants of two files may be declared as each other.
-                if self.constant_depth > 16 {
-                    return None;
-                }
-                self.constant_depth += 1;
-                let value = self.constant_value_at(decl_file, decl.init, declared);
-                self.constant_depth -= 1;
-                value
-            }
-            // `IsEntityNameExpression(root)`, `IsStringLiteralLike(argument)`: not of what is in parentheses.
-            ExprKind::Index { obj, index, .. }
-                if !is_parenthesized(hir, obj) && !is_parenthesized(hir, index) =>
-            {
-                let name = match hir[index].kind {
-                    ExprKind::String(name) => name,
-                    ExprKind::Template { exprs, texts } if exprs.is_empty() => hir.id_at(texts, 0),
-                    _ => return None,
-                };
-                let root = self.resolve_entity_name_expression(file, obj, SymFlags::VALUE)?;
-                if !self.files().flags(root).contains(SymFlags::ENUM) {
-                    return None;
-                }
-                let member = self.files().export(root, name)?;
-                if !self.files().flags(member).contains(SymFlags::ENUM_MEMBER) {
-                    return None;
-                }
-                self.evaluate_enum_member(member, at)
-            }
+        let declarations = files.decls_of(symbol);
+        let (of, pat) = declarations.iter().find_map(|&(of, decl)| match decl {
+            Decl::Var(pat) => Some((of, pat)),
             _ => None,
-        }
+        })?;
+        let PatParent::Var(d) = self.bound(of).pat_parent[pat.idx()] else {
+            return None;
+        };
+        let declaration = &self.hir(of)[d];
+        let declared = Location::Variable(of, d);
+        (declaration.ty.is_none()
+            && declaration.init.is_some()
+            && declared != location
+            && is_declared_before_use(self, declared, location))
+        .then_some((of, d))
     }
 
     /// `resolveEntityName(e, meaning, ignoreErrors)`, of `e` without the parentheses around it: namespaces up to the last name. `None`
@@ -1844,35 +2061,6 @@ impl<'p> Checker<'p> {
         };
         let sym = self.files().resolve_alias_as(found, meaning)?;
         self.files().flags(sym).intersects(meaning).then_some(sym)
-    }
-
-    /// `evaluateEnumMember`
-    fn evaluate_enum_member(&mut self, member: Sym, at: Location) -> Option<EnumValue> {
-        let (of, m) =
-            declarations_of(self.files(), member).find_map(|(file, decl)| match decl {
-                Decl::EnumMember(m) => Some((file, m)),
-                _ => None,
-            })?;
-        let declared = Location::Member(of, m);
-        // It is used before it has a value.
-        if declared == at {
-            return None;
-        }
-        // One that comes later counts as 0.
-        if !is_declared_before_use(self, declared, at) {
-            return Some(EnumValue::Number(0f64.to_bits()));
-        }
-        // `computeEnumMemberValues` goes through a declaration in order: where before and after do not count, in what is only
-        // declared, a later member of the declaration being gone through has no value yet.
-        if let Location::Member(file, using) = at
-            && file == of
-            && m.0 > using.0
-            && self.bound(file).enum_member_owner[using.idx()]
-                == self.bound(file).enum_member_owner[m.idx()]
-        {
-            return None;
-        }
-        self.enum_member_value(of, m)
     }
 
     // ───────────────────────────── type syntax ─────────────────────────────
@@ -3468,15 +3656,8 @@ impl<'p> Checker<'p> {
             };
             // TypeScript looks at the type of a parameter when there is an argument to hold against it.
             self.eager.push(self.stack.len());
-            let mut declared = self.type_of_param(file, p);
+            let declared = self.type_of_param(file, p);
             self.eager.pop();
-            // Inside the function a parameter that is a `NoInfer<T>` is a `T`. To whoever calls it, it is what it says.
-            if param.ty.is_some() {
-                let written = self.type_from_node(file, param.ty);
-                if self.is_no_infer(written) {
-                    declared = self.no_infer(declared);
-                }
-            }
             // `isOptionalParameter`: nobody else calls it, so what it is not given it does not need.
             let is_left_out = given.is_some_and(|given| i >= given)
                 && param.ty.is_none()
@@ -3513,22 +3694,6 @@ impl<'p> Checker<'p> {
                 self.instantiate(declared, mapper)
             }
         }
-    }
-
-    /// `sig_return`, with a `NoInfer<T>` that is written there still in place: `inferFromTypes` infers nothing to it.
-    pub(super) fn sig_return_for_inference(&mut self, sig: SigId) -> TypeId {
-        if let SigData::Decl { file, func, mapper } = *self.p.types.sig(sig) {
-            let ret = self.hir(file)[func].ret;
-            if ret.is_some() {
-                let written = self.type_from_node(file, ret);
-                if self.is_no_infer(written) {
-                    let declared = self.return_type_of_fn(file, func);
-                    let declared = self.no_infer(declared);
-                    return self.instantiate(declared, mapper);
-                }
-            }
-        }
-        self.sig_return(sig)
     }
 
     /// `getThisTypeOfSignature`: what it is to be called on, whatever made the signature.

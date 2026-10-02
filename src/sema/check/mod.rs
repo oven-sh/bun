@@ -210,8 +210,6 @@ pub struct Program {
     shapes: ByIdKept<TypeId, shape::Resolved>,
     /// `intersectionTypes`, for those that have a union among them.
     distributed_intersections: ByKey<(Box<[TypeId]>, bool), (TypeId, bool)>,
-    /// See `alias_to_sort_by`.
-    aliases_to_sort_by: ById<TypeId, Option<Sym>>,
     sig_params: ByIdKept<SigId, Box<[SigParam]>>,
     sig_type_params: ByIdKept<SigId, Box<[TypeId]>>,
     call_signatures: ByIdKept<TypeId, Box<[SigId]>>,
@@ -228,9 +226,9 @@ pub struct Program {
     identity_mappers: ByNode<(FileId, crate::bind::ScopeId), MapperId>,
     base_types: ByNodeKept<Sym, Arc<[TypeId]>>,
     calls: ByNode<(FileId, ExprId), ResolvedCall>,
-    /// `getCandidateForOverloadFailure` for a failed call with a single signature. `calls` holds the signature that the errors
-    /// are reported against.
-    failure_sigs: ByNode<(FileId, ExprId), SigId>,
+    /// The calls for which `chooseOverload` found no candidate, or it could not be told: the signature that the errors are reported
+    /// against (`checkCandidate` if there is one signature). `calls` holds what `getCandidateForOverloadFailure` made.
+    failed_calls: ByNode<(FileId, ExprId), SigId>,
     /// What `resolveCall` reported of a call the first time it was resolved again while it was being resolved, with the notes.
     said_of_calls_resolved_again:
         ByNodeKept<(FileId, ExprId), (Vec<errors::Diagnostic>, Vec<explain::Note>)>,
@@ -267,7 +265,7 @@ pub struct Program {
     circular_constraints: IdSet<TypeId>,
     /// `constraint_of_type_param` of a type parameter, once it holds for good.
     type_param_constraints: ById<TypeId, Option<TypeId>>,
-    enum_values: ByNodeKept<(FileId, EnumMemberId), Option<EnumValue>>,
+    enum_values: ByNodeKept<(FileId, EnumMemberId), decl::Evaluated>,
     /// `default_of_type_param` of a type parameter, once it holds for good.
     type_param_defaults: ById<TypeId, Option<TypeId>>,
     conditionals: ByKey<(FileId, TypeNodeId, MapperId), TypeId>,
@@ -370,7 +368,7 @@ impl Program {
         by_node("symbol types", self.symbol_types.fill());
         by_node("declared types", self.declared_types.fill());
         by_node("calls", self.calls.fill());
-        by_node("failure signatures", self.failure_sigs.fill());
+        by_node("failed calls", self.failed_calls.fill());
         by_node("argument contexts", self.arg_contexts.fill());
         by_node("assigned property types", self.assigned_prop_types.fill());
         by_node("member types", self.member_types.fill());
@@ -425,7 +423,6 @@ impl Program {
             deferred_references: Default::default(),
             shapes: Default::default(),
             distributed_intersections: Default::default(),
-            aliases_to_sort_by: Default::default(),
             sig_params: Default::default(),
             sig_type_params: Default::default(),
             call_signatures: Default::default(),
@@ -438,7 +435,7 @@ impl Program {
             identity_mappers: ByNode::new(&scopes),
             base_types: ByNodeKept::new(&symbols),
             calls: ByNode::new(&exprs),
-            failure_sigs: ByNode::new(&exprs),
+            failed_calls: ByNode::new(&exprs),
             said_of_calls_resolved_again: ByNodeKept::new(&exprs),
             arg_contexts: ByNode::new(&exprs),
             calls_outside_const_context: NodeSet::new(&exprs),
@@ -628,7 +625,7 @@ impl Program {
             trace_relations: std::env::var_os("BUN_SEMA_TRACE_RELATIONS").is_some(),
             trace_slow_relations: std::env::var_os("BUN_SEMA_TRACE_SLOW_RELATIONS").is_some(),
             resolving: Vec::new(),
-            pending_failure_sig: None,
+            pending_failed_call: None,
             own_of_compared_sigs: Vec::new(),
             restrictive_operands: Vec::new(),
             jsx_resolving: Vec::new(),
@@ -949,9 +946,9 @@ pub struct Checker<'p> {
     candidate_holes: Vec<call::CandidateHoles>,
     /// The next target to be related to is a member of an intersection.
     resolving: Vec<call::Resolving<'p>>,
-    /// The `failure_sigs` entry of the call that `resolve_among` just resolved. `resolve_call` takes it, and stores it only together
+    /// The `failed_calls` entry of the call that `resolve_among` just resolved. `resolve_call` takes it, and stores it only together
     /// with the entry of `calls`.
-    pending_failure_sig: Option<SigId>,
+    pending_failed_call: Option<SigId>,
     /// The type parameters of the generic signatures that the permissive comparison under way is inside of.
     own_of_compared_sigs: Vec<TypeId>,
     /// The two types of each restrictive comparison under way, innermost last: what `getRestrictiveInstantiation` was called with.

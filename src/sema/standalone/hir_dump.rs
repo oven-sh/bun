@@ -985,13 +985,16 @@ impl Dump<'_> {
             func,
             pos,
             start,
+            loc,
         } = node!(self, depth, label, members, id);
         put!(
             self,
             depth,
             label,
-            "Member kind={} flags={flags:?} pos={pos} start={start}",
-            member_kind_name(kind)
+            "Member kind={} flags={flags:?} pos={pos} start={start} loc={}..{}",
+            member_kind_name(kind),
+            loc.pos,
+            loc.end
         );
         let d = depth + 1;
         self.key(d, "key", key);

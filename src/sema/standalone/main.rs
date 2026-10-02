@@ -126,11 +126,6 @@ fn print_loaded_sizes(program: &bun_sema::check::Program) {
         add(&mut rows, "bound.entries", &m.bound.entries);
         add(&mut rows, "bound.ids", &m.bound.ids);
         add(&mut rows, "bound.export_stars", &m.bound.export_stars);
-        add(
-            &mut rows,
-            "bound.export_star_type_only",
-            &m.bound.export_star_type_only,
-        );
         add(&mut rows, "bound.ambient_modules", &m.bound.ambient_modules);
         add(
             &mut rows,

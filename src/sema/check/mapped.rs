@@ -2161,7 +2161,7 @@ impl<'p> Checker<'p> {
         };
         let ty = self.instantiate(template, prop.mapper);
         // `instantiateType` resolves a reference to a type alias here, inside the resolution.
-        let ty = if matches!(self.data(ty), TypeData::LazyAlias { .. }) && !self.is_no_infer(ty) {
+        let ty = if matches!(self.data(ty), TypeData::LazyAlias { .. }) {
             self.force(ty)
         } else {
             ty

@@ -162,7 +162,7 @@ impl Checker<'_> {
             }
             // `getSuggestedSymbolForNonexistentModule`: neither a member of an enum nor `export default 1` nor `export =` is what was meant.
             let exports = if files.flags(resolved).intersects(SymFlags::MODULE) {
-                files.all_module_exports(resolved)
+                files.exports_of_module(resolved).to_vec()
             } else {
                 files.exports(resolved)
             };

@@ -15,7 +15,6 @@ use super::decl::Predicate;
 use super::enclosing_declaration::Enclosing;
 use super::errors::Diagnostic;
 use super::errors_declaration_emit::{EmitResolver, EmitResolverLinks, Meaning};
-use super::errors_x_enums_names::{Location, is_declared_before_use};
 use super::explain::Related;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
@@ -139,8 +138,6 @@ pub(super) struct Emit {
     depth: u32,
     /// The types written since the node builder was last asked, and whether that was quietly: they say the same again.
     written: FxHashSet<(TypeId, bool)>,
-    /// `Result.HasExternalReferences` of the values of enum members.
-    external: FxHashMap<(FileId, EnumMemberId), bool>,
     /// The statement that declares each interface, enum and namespace of the file.
     interfaces: Vec<StmtId>,
     enums: Vec<StmtId>,
@@ -163,7 +160,6 @@ impl Emit {
             is_quiet: true,
             depth: 0,
             written: FxHashSet::default(),
-            external: FxHashMap::default(),
             interfaces: Vec::new(),
             enums: Vec::new(),
             modules: Vec::new(),
@@ -209,7 +205,6 @@ impl<'p> Checker<'p> {
             is_quiet: false,
             depth: 0,
             written: FxHashSet::default(),
-            external: FxHashMap::default(),
             interfaces: vec![StmtId::NONE; hir.interfaces.len()],
             enums: vec![StmtId::NONE; hir.enums.len()],
             modules: vec![StmtId::NONE; hir.modules.len()],
@@ -3652,7 +3647,7 @@ impl<'p> Checker<'p> {
         };
         let is_required =
             files
-                .all_exports_of(files.file_symbol(file))
+                .exports_of_module(files.file_symbol(file))
                 .iter()
                 .any(|&(_, export)| {
                     files.flags(export).contains(SymFlags::MERGED)
@@ -3791,7 +3786,7 @@ impl<'p> Checker<'p> {
             let member = &hir[m];
             if member.init.is_some()
                 && hir.text.get(member.pos as usize) != Some(&b'[')
-                && self.iso_member_has_external_references(tx, file, m)
+                && self.get_enum_member_value(file, m).has_external_references
             {
                 let (start, end) = self.error_range_of_enum_member(file, m);
                 tx.said.push(Said {
@@ -3804,128 +3799,6 @@ impl<'p> Checker<'p> {
                 });
             }
         }
-    }
-
-    /// `getEnumMemberValue(member).HasExternalReferences`
-    fn iso_member_has_external_references(
-        &mut self,
-        tx: &mut Emit,
-        file: FileId,
-        m: EnumMemberId,
-    ) -> bool {
-        if let Some(&known) = tx.external.get(&(file, m)) {
-            return known;
-        }
-        // One that leads back to itself has no value.
-        tx.external.insert((file, m), false);
-        let init = self.hir(file)[m].init;
-        let has = init.is_some()
-            && self.iso_has_external_references(tx, file, init, Location::Member(file, m));
-        tx.external.insert((file, m), has);
-        has
-    }
-
-    /// `evaluate(e, at).HasExternalReferences`
-    fn iso_has_external_references(
-        &mut self,
-        tx: &mut Emit,
-        file: FileId,
-        e: ExprId,
-        at: Location,
-    ) -> bool {
-        if self.is_stack_low() {
-            return false;
-        }
-        let hir = self.hir(file);
-        let member = match hir[e].kind {
-            ExprKind::Unary {
-                op:
-                    UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::PreInc | UnOp::PreDec,
-                operand,
-            } => return self.iso_has_external_references(tx, file, operand, at),
-            ExprKind::Binary { left, right, .. }
-            | ExprKind::Assign {
-                target: left,
-                value: right,
-                ..
-            } => {
-                let of_left = self.iso_has_external_references(tx, file, left, at);
-                return self.iso_has_external_references(tx, file, right, at) || of_left;
-            }
-            // `evaluateTemplateExpression`
-            ExprKind::Template { exprs, .. } => {
-                let mut has = false;
-                for span in hir.ids(exprs) {
-                    if self.constant_value(file, span).is_none() {
-                        return false;
-                    }
-                    has |= self.iso_has_external_references(tx, file, span, at);
-                }
-                return has;
-            }
-            // `evaluateEntity`
-            ExprKind::Ident(_) | ExprKind::Dot { .. } => {
-                let Some(sym) = self.resolve_entity_name_expression(file, e, SymFlags::VALUE)
-                else {
-                    return false;
-                };
-                let flags = self.files().flags(sym);
-                if !flags.contains(SymFlags::ENUM_MEMBER) {
-                    // A constant whose type is left to its initializer, declared before it is used.
-                    let decls = self.files().decls_of(sym);
-                    let [(of, Decl::Var(pat))] = decls[..] else {
-                        return false;
-                    };
-                    let PatParent::Var(d) = self.bound(of).pat_parent[pat.idx()] else {
-                        return false;
-                    };
-                    let decl = &self.hir(of)[d];
-                    let declared = Location::Variable(of, d);
-                    return flags.contains(SymFlags::CONST)
-                        && decl.ty.is_none()
-                        && decl.init.is_some()
-                        && declared != at
-                        && is_declared_before_use(self, declared, at);
-                }
-                sym
-            }
-            ExprKind::Index { obj, index, .. } => {
-                let name = match hir[index].kind {
-                    ExprKind::String(name) => name,
-                    ExprKind::Template { exprs, texts } if exprs.is_empty() => hir.id_at(texts, 0),
-                    _ => return false,
-                };
-                let member = self
-                    .resolve_entity_name_expression(file, obj, SymFlags::VALUE)
-                    .filter(|&root| self.files().flags(root).contains(SymFlags::ENUM))
-                    .and_then(|root| self.files().export(root, name));
-                match member {
-                    Some(member) => member,
-                    None => return false,
-                }
-            }
-            _ => return false,
-        };
-        // `evaluateEnumMember`
-        let declaration = self
-            .files()
-            .decls_of(member)
-            .iter()
-            .find_map(|&(of, decl)| match decl {
-                Decl::EnumMember(m) => Some((of, m)),
-                _ => None,
-            });
-        let Some((of, m)) = declaration else {
-            return false;
-        };
-        let declared = Location::Member(of, m);
-        if declared == at || !is_declared_before_use(self, declared, at) {
-            return false;
-        }
-        // `location.Parent != declaration.Parent`
-        let is_of_the_same_enum = matches!(at, Location::Member(file, using) if file == of
-            && self.bound(of).enum_member_owner[using.idx()] == self.bound(of).enum_member_owner[m.idx()]);
-        !is_of_the_same_enum || self.iso_member_has_external_references(tx, of, m)
     }
 
     /// `transformClassDeclaration`, or `transformClassExpressionToDeclaration` of the class expression a file exports by default.

@@ -1540,7 +1540,7 @@ impl<'p> Checker<'p> {
         };
         for tp in &tm.shape().props {
             // A `NoInfer<T>` written there is still that.
-            let wanted = self.type_of_prop_for_inference(tp, tm.mapper);
+            let wanted = self.type_of_prop(tp, tm.mapper);
             if !self.has_type_variables(wanted) || self.is_no_infer(wanted) {
                 continue;
             }
@@ -1784,7 +1784,7 @@ impl<'p> Checker<'p> {
             return Some((st, tt));
         }
         // A `NoInfer<T>` written there is still that.
-        let wanted = self.sig_return_for_inference(target);
+        let wanted = self.sig_return(target);
         if !self.has_type_variables(wanted) {
             return None;
         }

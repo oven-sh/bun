@@ -981,13 +981,10 @@ impl Checker<'_> {
         if !is_under_way && !self.are_argument_types_known(file, &args) {
             return None;
         }
-        // `resolveCall`: the type arguments of `super<T>()` are not looked at.
         let type_args = match node {
-            CallLike::Call(c)
-                if matches!(hir[e].kind, ExprKind::New(_))
-                    || !matches!(hir[hir[c].callee].kind, ExprKind::Super) =>
-            {
-                self.types_from_nodes(file, hir[c].type_args)
+            CallLike::Call(_) => {
+                let nodes = self.type_arguments_of_call(file, e);
+                self.types_from_nodes(file, nodes)
             }
             _ => Vec::new(),
         };
@@ -1110,13 +1107,14 @@ impl Checker<'_> {
     }
 
     /// `getResolvedSignature`: a call that is asked for while it is being resolved is resolved once more, and `resolveCall` reports what
-    /// is wrong with it as things stand then. `resolved`: what it was resolved to that time. Only the first time is looked at.
-    /// `check_call` says what is kept here.
+    /// is wrong with it as things stand then. `check`, `ret`: its entry of `failed_calls` that time, and what it returned. Only the
+    /// first time is looked at. `check_call` says what is kept here.
     pub(super) fn report_call_resolved_again(
         &mut self,
         file: FileId,
         e: ExprId,
-        resolved: ResolvedCall,
+        check: SigId,
+        ret: TypeId,
     ) {
         let p = self.p;
         let hir = self.hir(file);
@@ -1142,13 +1140,15 @@ impl Checker<'_> {
         }
         let noted = self.notes.borrow().len();
         let mut said = Vec::new();
-        self.report_call_resolution(file, e, CallLike::Call(c), &sigs, resolved, None, &mut said);
+        let (node, sig) = (CallLike::Call(c), Some(check));
+        let check = ResolvedCall { sig, ret };
+        self.report_call_resolution_errors(file, e, node, &sigs, check, None, &mut said);
         let notes = self.notes.borrow_mut().split_off(noted);
         p.said_of_calls_resolved_again
             .insert_ref((file, e), (said, notes));
     }
 
-    /// `resolveCall`, for what it reports. `head`: `headMessage`.
+    /// `resolveCall`, for what it reports of a call that `resolve_call` resolved to `resolved`. `head`: `headMessage`.
     pub(super) fn report_call_resolution(
         &mut self,
         file: FileId,
@@ -1159,19 +1159,45 @@ impl Checker<'_> {
         head: Option<u32>,
         out: &mut Vec<Diagnostic>,
     ) {
+        // A resolution that is not kept left nothing behind.
+        let sig = if self.p.calls.get(&(file, e)).is_some() {
+            // `chooseOverload` found a candidate.
+            let Some(check) = self.p.failed_calls.get(&(file, e)) else {
+                return;
+            };
+            Some(check)
+        } else {
+            None
+        };
+        let check = ResolvedCall { sig, ..resolved };
+        self.report_call_resolution_errors(file, e, node, sigs, check, head, out);
+    }
+
+    /// `reportCallResolutionErrors`, and before that `chooseOverload` once more for what it left in `CallState`. `check.sig`: the
+    /// entry of `failed_calls`.
+    pub(super) fn report_call_resolution_errors(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        node: CallLike,
+        sigs: &[SigId],
+        check: ResolvedCall,
+        head: Option<u32>,
+        out: &mut Vec<Diagnostic>,
+    ) {
         let hir = self.hir(file);
         // `resolveCall`: with several candidates the errors come from the assignable pass. The subtype pass has checked every function
         // among the arguments (`NodeCheckFlagsContextChecked`), so no attempt of the assignable pass infers from their annotations.
         let mut previous = Vec::new();
         if sigs.len() > 1
             && let CallLike::Call(c) = node
-            && hir[c].type_args.is_empty()
+            && self.type_arguments_of_call(file, e).is_empty()
         {
             for arg in hir.ids(hir[c].args) {
                 self.mark_context_checked(file, arg, &mut previous);
             }
         }
-        let failed = self.failed_candidates(file, e, node, sigs, resolved);
+        let failed = self.failed_candidates(file, e, node, sigs, check);
         for (function, entry) in previous {
             match entry {
                 Some(entry) => self.context_checked_for.insert((file, function), entry),

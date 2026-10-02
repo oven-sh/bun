@@ -560,7 +560,7 @@ impl<'p> Checker<'p> {
             .module_of_specifier_as(file, import.spec, mode)?;
         let value = self.files().module_value(module);
         let ty = self.type_of_symbol(value);
-        if !self.is_known(ty) || self.is_any(ty) {
+        if !self.is_known(ty) {
             return None;
         }
         let files = self.files();
@@ -720,7 +720,7 @@ impl<'p> Checker<'p> {
         let apparent = self.apparent_type(ty);
         let apparent = self.reduced(apparent);
         let found = if self.is_union(apparent) {
-            self.type_of_property(apparent, name)
+            self.declared_property(apparent, name).map(|found| found.0)
         } else {
             self.prop_ref(apparent, name)
                 .map(|(prop, mapper)| self.type_of_prop(prop, mapper))

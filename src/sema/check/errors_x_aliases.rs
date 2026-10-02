@@ -13,9 +13,8 @@
 
 use super::errors::{Diagnostic, is_close};
 use super::*;
-use crate::bind::{ClassOwner, Decl, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId};
+use crate::bind::{ClassOwner, Decl, MemberOwner, Parent, PatParent, ScopeId, SymbolId};
 use crate::resolve::{ModuleKind, join, parent_dir};
-use crate::util::FxHashSet;
 
 const ALL_MEANINGS: SymFlags = SymFlags::VALUE
     .union(SymFlags::TYPE)
@@ -37,7 +36,7 @@ enum TypeOnlyKind {
     Import,
     ExportSpecifier,
     /// `export type * from`
-    ExportStar,
+    ExportStar(StmtId),
     /// `export type * as ns from`
     NamespaceExport,
 }
@@ -60,29 +59,6 @@ struct AliasLinks {
     /// The aliases being resolved, and whether each has come back to itself.
     resolving: Vec<(Sym, bool)>,
     circular: Vec<Sym>,
-    /// `typeOnlyExportStarMap`, by module: the file the `export type *` is in.
-    type_only_stars: FxHashMap<Sym, FxHashMap<Atom, FileId>>,
-}
-
-/// `export * from spec`
-#[derive(Copy, Clone)]
-struct ExportStar {
-    file: FileId,
-    spec: Atom,
-    pos: u32,
-    type_only: bool,
-}
-
-/// What `getExportsOfModuleWorker` keeps while it goes from module to module.
-#[derive(Default)]
-struct ExportWalk {
-    visited: FxHashSet<Sym>,
-    non_type_only_names: FxHashSet<Atom>,
-    type_only_stars: FxHashMap<Atom, FileId>,
-    /// The file whose `export *` are reported. Of those that say again what another has said: where they start, the one that said it
-    /// first, and the name.
-    report_in: Option<FileId>,
-    collisions: Vec<(u32, ExportStar, Atom)>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -253,23 +229,10 @@ impl Checker<'_> {
         Some((file, start, end))
     }
 
-    /// Where the `export type *` of `file` is that `name` comes through. Of several the last: each takes the place of what the one
-    /// before it has put in `typeOnlyExportStarMap`.
-    fn xa_place_of_export_type_star(&self, file: FileId, name: Atom) -> Option<(FileId, u32, u32)> {
-        let (files, hir) = (self.files(), self.hir(file));
-        let pos = hir.stmts.iter().rev().find_map(|s| match s.kind {
-            StmtKind::ExportStar { spec, alias, .. }
-                if alias.is_none()
-                    && says_export_type(&hir.text, s.pos)
-                    && files
-                        .module_of_specifier(file, spec)
-                        .is_some_and(|module| files.module_export(module, name).is_some()) =>
-            {
-                Some(s.pos)
-            }
-            _ => None,
-        })?;
-        Some((file, pos, self.xa_statement_end(file, pos)))
+    /// `GetErrorRangeForNode` of an `export *`.
+    fn xa_place_of_export_star(&self, star: (FileId, StmtId)) -> (FileId, u32, u32) {
+        let start = self.hir(star.0)[star.1].pos;
+        (star.0, start, self.end_of_stmt(star.0, star.1))
     }
 
     /// `typeOnlyExportStarMap[name]` of `module`: where the `export type *` is that is the only way `name` gets out.
@@ -278,8 +241,8 @@ impl Checker<'_> {
         module: Sym,
         name: Atom,
     ) -> Option<(FileId, u32, u32)> {
-        let file = self.xa_type_only_export_star(module, name, &mut AliasLinks::default())?;
-        self.xa_place_of_export_type_star(file, name)
+        let star = self.files().type_only_export_star(module, name)?;
+        Some(self.xa_place_of_export_star(star))
     }
 
     // ───────────────────────────── resolving aliases ─────────────────────────────
@@ -432,19 +395,11 @@ impl Checker<'_> {
         name: String,
     ) -> Vec<super::explain::Related> {
         let (alias, decl) = type_only.alias;
-        let place = if type_only.kind == TypeOnlyKind::ExportStar {
-            let hir = self.hir(alias.file);
-            match decl {
-                Decl::ImportSpec(s) => {
-                    self.xa_place_of_export_type_star(type_only.file, hir[s].imported)
-                }
-                Decl::ExportSpec(s) => {
-                    self.xa_place_of_export_type_star(type_only.file, hir[s].local)
-                }
-                _ => None,
+        let place = match type_only.kind {
+            TypeOnlyKind::ExportStar(star) => {
+                Some(self.xa_place_of_export_star((type_only.file, star)))
             }
-        } else {
-            self.place_of_alias_declaration(alias, decl)
+            _ => self.place_of_alias_declaration(alias, decl),
         };
         match place {
             Some(at) => vec![super::explain::Related {
@@ -658,10 +613,11 @@ impl Checker<'_> {
                     alias: (sym, decl),
                 }),
                 None => self
-                    .xa_type_only_export_star(module, name, links)
-                    .map(|file| TypeOnly {
+                    .files()
+                    .type_only_export_star(module, name)
+                    .map(|(file, star)| TypeOnly {
                         file,
-                        kind: TypeOnlyKind::ExportStar,
+                        kind: TypeOnlyKind::ExportStar(star),
                         alias: (sym, decl),
                     }),
             };
@@ -702,7 +658,6 @@ impl Checker<'_> {
                 }
             }
             if s.symbol.is_some()
-                && !matches!(s.kind, ScopeKind::File)
                 && let Some(sym) = files.export(files.sym(file, s.symbol), name)
                 && !files.flags(sym).contains(SymFlags::EXPORT_ONLY)
                 && self.xa_has_meaning(sym, meaning, links)
@@ -883,228 +838,31 @@ impl Checker<'_> {
 
     // ───────────────────────────── what a module exports ─────────────────────────────
 
-    /// The `export * from` of `module`, in the order they are written.
-    fn xa_export_stars_of(&self, module: Sym) -> Vec<ExportStar> {
-        let files = self.files();
-        let mut stars = Vec::new();
-        for part in files.parts(module) {
-            let (hir, bound) = (self.hir(part.file), self.bound(part.file));
-            if !bound.export_stars.iter().any(|s| s.0 == part.id) {
-                continue;
-            }
-            for &decl in &files.symbol(part).decls {
-                let body = match decl {
-                    Decl::File => hir.body,
-                    Decl::Module(m) => hir[m].body,
-                    _ => continue,
-                };
-                for s in hir.ids(body) {
-                    if let StmtKind::ExportStar { spec, alias, .. } = hir[s].kind
-                        && alias.is_none()
-                    {
-                        stars.push(ExportStar {
-                            file: part.file,
-                            spec,
-                            pos: hir[s].pos,
-                            type_only: says_export_type(&hir.text, hir[s].pos),
-                        });
-                    }
-                }
-            }
-        }
-        stars
-    }
-
-    /// `resolveSymbol`. `None`: `unknownSymbol`.
-    fn xa_resolve_symbol(&self, sym: Sym) -> Option<Sym> {
-        if self.xa_is_pure_alias(sym) {
-            self.files().resolve_alias(sym)
-        } else {
-            Some(sym)
-        }
-    }
-
-    /// `visit` of `getExportsOfModuleWorker`. `star`: the `export *` that led here, the file it is in and whether it says `type`.
-    fn xa_visit_exports(
-        &self,
-        symbol: Option<Sym>,
-        star: Option<(FileId, bool)>,
-        is_type_only: bool,
-        walk: &mut ExportWalk,
-    ) -> Option<FxHashMap<Atom, Sym>> {
-        let files = self.files();
-        let symbol = symbol?;
-        let is_visited = walk.visited.contains(&symbol);
-        if is_visited && is_type_only {
-            return None;
-        }
-        let own = files.exports(symbol);
-        if !is_type_only {
-            walk.non_type_only_names.extend(own.iter().map(|e| e.0));
-        }
-        if is_visited {
-            return None;
-        }
-        walk.visited.insert(symbol);
-        let mut symbols: FxHashMap<Atom, Sym> = own.into_iter().collect();
-        let stars = self.xa_export_stars_of(symbol);
-        if !stars.iter().any(|star| Some(star.file) == walk.report_in) {
-            // Nothing is said of these: all that counts is which comes first.
-            for star in &stars {
-                let resolved = files.module_of_specifier(star.file, star.spec);
-                let Some(exported) = self.xa_visit_exports(
-                    resolved,
-                    Some((star.file, star.type_only)),
-                    is_type_only || star.type_only,
-                    walk,
-                ) else {
-                    continue;
-                };
-                // `extendExportSymbols`
-                for (id, source) in exported {
-                    if id != known::default {
-                        symbols.entry(id).or_insert(source);
-                    }
-                }
-            }
-        } else {
-            let mut nested: FxHashMap<Atom, Sym> = FxHashMap::default();
-            // `ExportCollision`, by name: whose `specifierText` it is, and `exportsWithDuplicate`.
-            let mut lookup: FxHashMap<Atom, (ExportStar, Vec<(FileId, u32)>)> =
-                FxHashMap::default();
-            for star in &stars {
-                let resolved = files.module_of_specifier(star.file, star.spec);
-                let Some(exported) = self.xa_visit_exports(
-                    resolved,
-                    Some((star.file, star.type_only)),
-                    is_type_only || star.type_only,
-                    walk,
-                ) else {
-                    continue;
-                };
-                // `extendExportSymbols`
-                for (&id, &source) in &exported {
-                    if id == known::default {
-                        continue;
-                    }
-                    match nested.get(&id) {
-                        None => {
-                            nested.insert(id, source);
-                            lookup.insert(id, (*star, Vec::new()));
-                        }
-                        Some(&target) => {
-                            if self.xa_resolve_symbol(target) != self.xa_resolve_symbol(source)
-                                && let Some((_, duplicates)) = lookup.get_mut(&id)
-                            {
-                                duplicates.push((star.file, star.pos));
-                            }
-                        }
-                    }
-                }
-            }
-            let report_in = walk.report_in;
-            for (id, (first, duplicates)) in &lookup {
-                // What the module exports itself settles it.
-                if *id == known::export_equals || symbols.contains_key(id) {
-                    continue;
-                }
-                walk.collisions.extend(
-                    duplicates
-                        .iter()
-                        .filter(|d| Some(d.0) == report_in)
-                        .map(|d| (d.1, *first, *id)),
-                );
-            }
-            for (id, nested_symbol) in nested {
-                symbols.entry(id).or_insert(nested_symbol);
-            }
-        }
-        if let Some((star_file, true)) = star {
-            walk.type_only_stars
-                .extend(symbols.keys().map(|&name| (name, star_file)));
-        }
-        Some(symbols)
-    }
-
-    fn xa_has_type_only_export_star(&self, module: Sym, visited: &mut Vec<Sym>) -> bool {
-        if visited.contains(&module) {
-            return false;
-        }
-        let stars = self.xa_export_stars_of(module);
-        if stars.is_empty() {
-            return false;
-        }
-        visited.push(module);
-        stars.iter().any(|star| {
-            star.type_only
-                || self
-                    .files()
-                    .module_of_specifier(star.file, star.spec)
-                    .is_some_and(|m| self.xa_has_type_only_export_star(m, visited))
-        })
-    }
-
-    /// `typeOnlyExportStarMap[name]` of `module`: the file of the `export type *` that is the only way `name` gets out.
-    fn xa_type_only_export_star(
-        &self,
-        module: Sym,
-        name: Atom,
-        links: &mut AliasLinks,
-    ) -> Option<FileId> {
-        if let Some(map) = links.type_only_stars.get(&module) {
-            return map.get(&name).copied();
-        }
-        let mut map = FxHashMap::default();
-        if self.xa_has_type_only_export_star(module, &mut Vec::new()) {
-            let mut walk = ExportWalk::default();
-            self.xa_visit_exports(
-                Some(self.files().module_value(module)),
-                None,
-                false,
-                &mut walk,
-            );
-            map = walk.type_only_stars;
-            map.retain(|name, _| !walk.non_type_only_names.contains(name));
-        }
-        let found = map.get(&name).copied();
-        links.type_only_stars.insert(module, map);
-        found
-    }
-
     /// `getExportsOfModuleWorker`: 2308
     fn xa_export_star_conflicts(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let files = self.files();
+        let (files, hir) = (self.files(), self.hir(file));
         if self.bound(file).export_stars.len() < 2 || !files.module(file).is_module() {
             return;
         }
-        let module = files.file_symbol(file);
-        // Of a module that is `export =`, what that is has the exports.
-        if files.export(module, known::export_equals).is_some() {
-            return;
-        }
-        let mut walk = ExportWalk {
-            report_in: Some(file),
-            ..Default::default()
-        };
-        self.xa_visit_exports(Some(module), None, false, &mut walk);
-        out.extend(
-            walk.collisions
-                .iter()
-                .map(|&(start, ..)| Diagnostic { start, code: 2308 }),
-        );
         // Those at one place come in the order of their messages.
-        let mut said: Vec<(u32, Vec<String>)> = walk
-            .collisions
-            .iter()
-            .map(|&(start, first, name)| {
-                let specifier = self.xa_specifier_text(first.file, first.pos, first.spec);
-                (start, vec![specifier, self.atom_text(name)])
-            })
-            .collect();
+        let mut said: Vec<(StmtId, Vec<String>)> = Vec::new();
+        let links = files.module_links(files.file_symbol(file));
+        for collision in links.export_collisions.iter() {
+            let (of, first) = collision.first;
+            if collision.duplicate.0 == file
+                && let StmtKind::ExportStar { spec, .. } = self.hir(of)[first].kind
+            {
+                let specifier = self.xa_specifier_text(of, self.hir(of)[first].pos, spec);
+                let arguments = vec![specifier, self.atom_text(collision.name)];
+                said.push((collision.duplicate.1, arguments));
+            }
+        }
         said.sort();
-        for (start, args) in said {
-            let end = self.xa_statement_end(file, start);
-            self.explain_another(start, end, 2308, |_| args);
+        for (star, arguments) in said {
+            let start = hir[star].pos;
+            out.push(Diagnostic { start, code: 2308 });
+            let end = self.end_of_stmt(file, star);
+            self.explain_another(start, end, 2308, |_| arguments);
         }
     }
 
@@ -1309,7 +1067,7 @@ impl Checker<'_> {
             && member != known::default
             && let Some(equals) = module.and_then(|m| files.export(m, known::export_equals))
         {
-            let Some(value) = self.xa_resolve_symbol(equals) else {
+            let Some(value) = files.resolve_symbol(equals) else {
                 return;
             };
             let ty = self.type_of_symbol(value);
@@ -1538,7 +1296,7 @@ impl Checker<'_> {
             };
             let is_export = matches!(
                 type_only.kind,
-                TypeOnlyKind::ExportSpecifier | TypeOnlyKind::ExportStar
+                TypeOnlyKind::ExportSpecifier | TypeOnlyKind::ExportStar(_)
             );
             let start = skip_trivia(&hir.text, after_equals);
             let code = if is_export { 1379 } else { 1380 };
@@ -1555,7 +1313,7 @@ impl Checker<'_> {
             let type_only = *type_only;
             self.relate(start as u32, code, |c| {
                 // An `export type *` has no name.
-                let name = if type_only.kind == TypeOnlyKind::ExportStar {
+                let name = if matches!(type_only.kind, TypeOnlyKind::ExportStar(_)) {
                     "*".to_owned()
                 } else {
                     c.atom_text(c.files().symbol(type_only.alias.0).name)
@@ -1597,7 +1355,7 @@ impl Checker<'_> {
                         .module_of_specifier_as(file, spec, ResolutionMode::Require)
                         .and_then(|m| files.export(m, known::export_equals))
                 {
-                    let Some(value) = self.xa_resolve_symbol(equals) else {
+                    let Some(value) = files.resolve_symbol(equals) else {
                         continue;
                     };
                     let ty = self.type_of_symbol(value);
@@ -2784,7 +2542,7 @@ impl Checker<'_> {
             }
         }
         for i in 0..hir.types.len() {
-            if !(from..to).contains(&hir.types[i].pos) || bound.type_scope[i].is_none() {
+            if !(from..to).contains(&hir.types[i].pos) || bound.is_unchecked_type(i) {
                 continue;
             }
             let ty = self.type_from_node(file, TypeNodeId(i as u32));

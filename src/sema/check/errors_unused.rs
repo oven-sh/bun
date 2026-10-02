@@ -940,7 +940,7 @@ impl Unused<'_> {
             let TypeNodeKind::Ref { name, .. } = hir.types[i].kind else {
                 continue;
             };
-            if scope.is_none() || hir.is_in_with(hir.types[i].pos) {
+            if bound.is_unchecked_type(i) || hir.is_in_with(hir.types[i].pos) {
                 continue;
             }
             let Some(first) = hir.ids(name).next() else {
@@ -1602,6 +1602,7 @@ impl Unused<'_> {
             }
             if !is_type_parameter
                 && (kinds != 0
+                    || symbol.export_symbol.is_some()
                     || bound.lookup(exports, name) == Some(local)
                     || symbol.flags.contains(SymFlags::MODULE_EXPORTS))
             {

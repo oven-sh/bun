@@ -64,9 +64,43 @@ impl<'p> Checker<'p> {
         aliased
     }
 
+    /// `t.alias`. What is known by the node it is written at has the alias whose body the node is, with what its mapper puts for the
+    /// type parameters of that.
+    pub(super) fn alias_of_type(&self, ty: TypeId) -> Option<(Sym, Vec<TypeId>)> {
+        if let Some((alias, type_arguments)) = self.stored_alias(ty) {
+            return Some((*alias, type_arguments.to_vec()));
+        }
+        if let Some(hosting) = self.hosting_alias_of(ty) {
+            return Some(hosting);
+        }
+        let (file, node, mapper) = match *self.data(ty) {
+            TypeData::LazyAlias { sym, ref args } => return Some((sym, args.to_vec())),
+            TypeData::Anon {
+                origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
+                mapper,
+            }
+            | TypeData::Cond { file, node, mapper } => (file, node, mapper),
+            TypeData::Fns { ref decls, mapper } => {
+                let [(file, func)] = decls[..] else {
+                    return None;
+                };
+                let crate::bind::FnOwner::Type(node) = self.bound(file).fns[func.idx()].owner
+                else {
+                    return None;
+                };
+                (file, node, mapper)
+            }
+            _ => return None,
+        };
+        let scope = self.bound(file).type_scope[node.idx()];
+        let (alias, parameters) = self.alias_for_type_node(file, scope, node)?;
+        let map = |&parameter: &TypeId| self.p.types.map(mapper, parameter).unwrap_or(parameter);
+        Some((alias, parameters.iter().map(map).collect()))
+    }
+
     /// `getAliasForTypeNode`
     pub(super) fn alias_for_type_node(
-        &mut self,
+        &self,
         file: FileId,
         scope: ScopeId,
         node: TypeNodeId,

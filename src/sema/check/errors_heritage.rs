@@ -37,7 +37,7 @@ impl Checker<'_> {
         }
         for t in 0..hir.types.len() {
             if let TypeNodeKind::Object(members) = hir.types[t].kind
-                && bound.type_scope[t].is_some()
+                && !bound.is_unchecked_type(t)
                 && members
                     .iter()
                     .any(|m| hir[m].kind == MemberKind::IndexSignature)
@@ -1170,7 +1170,7 @@ impl Checker<'_> {
                 self.end_of_member_name(file, m)
             }
             MemberKind::Method if is_in_class => self.end_of_member_name(file, m),
-            _ => self.end_of_member(file, m),
+            _ => self.hir(file)[m].loc.end,
         }
     }
 

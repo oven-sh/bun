@@ -59,6 +59,8 @@ pub(crate) struct Builder<'a> {
     pub(crate) in_jsdoc: bool,
     /// Where the first token of the statement being made is: a decorator, a modifier or its keyword.
     pub(crate) statement_start: u32,
+    /// `Lexer::all_comments` of the parser, which has been through all of the file.
+    pub(crate) comments: Vec<bun_ast::Range>,
 }
 
 /// A name of at most 16 bytes and its atom. The first bytes, the last bytes and the length say all there is to say of its spelling.
@@ -324,6 +326,7 @@ impl<'a> Builder<'a> {
             is_js,
             in_jsdoc: false,
             statement_start: 0,
+            comments: Vec::new(),
         }
     }
 
@@ -1407,7 +1410,11 @@ impl<'a> Builder<'a> {
     fn parse_member(&mut self, inherited: Flags) -> R<Member> {
         let mut modifiers = Vec::new();
         let first_decorator = self.member_decorators.len();
-        let member = self.parse_member_with(inherited, &mut modifiers)?;
+        let mut member = self.parse_member_with(inherited, &mut modifiers)?;
+        member.loc = TextRange {
+            pos: self.full_start_of(member.start),
+            end: self.full_start(),
+        };
         for decorator in &mut self.member_decorators[first_decorator..] {
             decorator.0 = member.pos;
         }
@@ -1454,6 +1461,7 @@ impl<'a> Builder<'a> {
             func: FnId::NONE,
             pos: start,
             start,
+            loc: TextRange::default(),
         };
         while self.tok() == T::TAt {
             // In an ambient class a member's own `declare`, which `NodeCanBeDecorated` goes by, is not told from that of the class.
@@ -2037,11 +2045,14 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// `TokenFullStart`: where the token before the current one ends. A missing node is there. Comments are not looked for.
+    /// `TokenFullStart`: where the token before the current one ends. A missing node is there.
     fn full_start(&self) -> u32 {
-        self.lexer.contents[..self.pos() as usize]
-            .trim_ascii_end()
-            .len() as u32
+        self.full_start_of(self.pos())
+    }
+
+    /// `node.Pos()` of what starts with the token at `token`, `node.End()` of what ends before it. Not in a JSDoc comment.
+    pub(crate) fn full_start_of(&self, token: u32) -> u32 {
+        crate::lexer::comments_before(self.lexer.contents, &self.comments, token as usize).1 as u32
     }
 
     /// `isLiteralPropertyName`

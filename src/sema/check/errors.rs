@@ -1206,7 +1206,7 @@ impl Checker<'_> {
             | SymFlags::TYPE_ALIAS
             | SymFlags::ALIAS;
         let exports = if files.flags(target).intersects(SymFlags::MODULE) {
-            files.all_module_exports(target)
+            files.exports_of_module(target).to_vec()
         } else {
             files.exports(target)
         };
@@ -2080,7 +2080,7 @@ impl Checker<'_> {
         }
         for i in 0..hir.types.len() {
             if let TypeNodeKind::Import { name, .. } = hir.types[i].kind {
-                if bound.type_scope[i].is_some() && !name.is_empty() {
+                if !bound.is_unchecked_type(i) && !name.is_empty() {
                     self.check_import_type_names(file, TypeNodeId(i as u32), out);
                 }
                 continue;
@@ -2089,7 +2089,7 @@ impl Checker<'_> {
                 continue;
             };
             let scope = bound.type_scope[i];
-            if scope.is_none() {
+            if bound.is_unchecked_type(i) {
                 continue;
             }
             let Some(first) = hir.ids(name).next() else {
@@ -2516,7 +2516,7 @@ impl Checker<'_> {
         // `isJsImplicitAny`
         let is_js_implicit_any = hir.is_js && !self.p.files.options.no_implicit_any;
         for i in 0..hir.types.len() {
-            if bound.type_scope[i].is_none() {
+            if bound.is_unchecked_type(i) {
                 continue;
             }
             let (sym, given) = match hir.types[i].kind {
@@ -2701,7 +2701,7 @@ impl Checker<'_> {
             let TypeNodeKind::Ref { name, args } = node.kind else {
                 continue;
             };
-            if bound.type_scope[i].is_none() {
+            if bound.is_unchecked_type(i) {
                 continue;
             }
             let names: Vec<Atom> = hir.ids(name).collect();
@@ -2743,7 +2743,7 @@ impl Checker<'_> {
             };
             if args.is_empty()
                 || name.len() != 1
-                || bound.type_scope[i].is_none()
+                || bound.is_unchecked_type(i)
                 || !hir.is_in_jsdoc(node.pos)
             {
                 continue;
@@ -3697,7 +3697,8 @@ fn similar_in_scope_and_where(
     let sym = found.ok()??;
     let declared = files.symbol(sym);
     let leads_to_export = is_among_locals
-        && (sym.file == file && bound.refused_exports.contains(&sym.id)
+        && (declared.export_symbol.is_some()
+            || sym.file == file && bound.refused_exports.contains(&sym.id)
             || declared.parent.is_some()
                 && files.export(files.sym(sym.file, declared.parent), declared.name) == Some(sym));
     Some((Meant::Symbol(sym), leads_to_export))
@@ -4524,7 +4525,7 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
                 .iter()
                 .position(|m| m.kind == MemberKind::IndexSignature && m.pos == start);
             if let Some(m) = signature {
-                let end = c.end_of_member(file, MemberId(m as u32));
+                let end = hir.members[m].loc.end;
                 c.note(start, end, code, Vec::new());
             }
         }

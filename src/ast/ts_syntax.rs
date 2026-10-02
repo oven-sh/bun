@@ -409,6 +409,10 @@ pub struct Member {
     pub loc: Loc,
     /// Of its first token: a modifier, `get`, `set`, or `loc`.
     pub start: Loc,
+    /// `node.Pos()`
+    pub full_start: Loc,
+    /// `node.End()`
+    pub end: Loc,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

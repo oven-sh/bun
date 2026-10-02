@@ -13,6 +13,7 @@
 //!
 //! Comes after the passes that say that a name cannot be found: some of what they say is put in other words here.
 
+use super::decl::{Evaluated, Evaluator};
 use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{Decl, Parent, PatParent, ScopeId, ScopeKind, SymbolId};
@@ -378,7 +379,7 @@ impl Checker<'_> {
                 continue;
             };
             let scope = bound.type_scope[i];
-            if members.len() != 1 || scope.is_none() {
+            if members.len() != 1 || bound.is_unchecked_type(i) {
                 continue;
             }
             let member = &hir[members.at(0)];
@@ -631,30 +632,6 @@ impl Checker<'_> {
 
 // ───────────────────────────── constant expressions ─────────────────────────────
 
-/// What a constant expression comes to. Which string makes no difference to what is said.
-#[derive(Copy, Clone, PartialEq)]
-enum Value {
-    Number(f64),
-    String,
-}
-
-/// `evaluator.Result`, less what only matters to what is emitted.
-#[derive(Copy, Clone, Default)]
-struct Evaluated {
-    value: Option<Value>,
-    is_syntactically_string: bool,
-    resolved_other_files: bool,
-}
-
-impl Evaluated {
-    fn number(n: f64) -> Evaluated {
-        Evaluated {
-            value: Some(Value::Number(n)),
-            ..Evaluated::default()
-        }
-    }
-}
-
 /// The `location` of `evaluate`, and what is declared before or after it.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum Location {
@@ -664,7 +641,7 @@ pub(super) enum Location {
 }
 
 impl Location {
-    fn file(self) -> FileId {
+    pub(super) fn file(self) -> FileId {
         match self {
             Location::Member(file, _) | Location::Variable(file, _) | Location::Expr(file, _) => {
                 file
@@ -719,7 +696,7 @@ impl EnumValues<'_, '_> {
             let result = self.compute_enum_member_value(file, en, member, auto_value, previous);
             self.values.insert((file, member), result);
             auto_value = match result.value {
-                Some(Value::Number(n)) => Some(n + 1.0),
+                Some(EnumValue::Number(n)) => Some(f64::from_bits(n) + 1.0),
                 _ => None,
             };
             previous = member;
@@ -770,7 +747,7 @@ impl EnumValues<'_, '_> {
             && hir[previous].init.is_some()
         {
             let before = self.enum_member_value(file, previous);
-            if !matches!(before.value, Some(Value::Number(_))) || before.resolved_other_files {
+            if !matches!(before.value, Some(EnumValue::Number(_))) || before.resolved_other_files {
                 self.error_at_name(file, hir[member].pos, 18056);
             }
         }
@@ -830,16 +807,20 @@ impl EnumValues<'_, '_> {
         match result.value {
             Some(value) => {
                 if is_const
-                    && let Value::Number(n) = value
-                    && !n.is_finite()
+                    && let EnumValue::Number(n) = value
+                    && !f64::from_bits(n).is_finite()
                 {
-                    let code = if n.is_nan() { 2478 } else { 2477 };
+                    let code = if f64::from_bits(n).is_nan() {
+                        2478
+                    } else {
+                        2477
+                    };
                     self.error(file, start, code);
                     let end = self.c.error_end_of(file, initializer);
                     self.c.note(start, end, code, Vec::new());
                 }
                 if self.c.p.files.options.isolated_modules
-                    && value == Value::String
+                    && matches!(value, EnumValue::String(_))
                     && !result.is_syntactically_string
                 {
                     self.error(file, start, 18055);
@@ -897,227 +878,6 @@ impl EnumValues<'_, '_> {
             }
         }
         result
-    }
-
-    /// `evaluate` of evaluator.go. Parentheses are not kept, and nothing else is looked through.
-    fn evaluate(&mut self, file: FileId, e: ExprId, location: Location) -> Evaluated {
-        if self.c.is_stack_low() {
-            self.gave_up = true;
-            return Evaluated::default();
-        }
-        let hir = self.c.hir(file);
-        match hir[e].kind {
-            // A `PrefixUnaryExpression`, which `typeof`, `void` and `delete` are not.
-            ExprKind::Unary {
-                op:
-                    op @ (UnOp::Plus
-                    | UnOp::Minus
-                    | UnOp::BitNot
-                    | UnOp::Not
-                    | UnOp::PreInc
-                    | UnOp::PreDec),
-                operand,
-            } => {
-                let result = self.evaluate(file, operand, location);
-                let value = match (op, result.value) {
-                    (UnOp::Plus, Some(Value::Number(n))) => Some(Value::Number(n)),
-                    (UnOp::Minus, Some(Value::Number(n))) => Some(Value::Number(-n)),
-                    (UnOp::BitNot, Some(Value::Number(n))) => {
-                        Some(Value::Number(f64::from(!to_int32(n))))
-                    }
-                    _ => None,
-                };
-                Evaluated {
-                    value,
-                    is_syntactically_string: false,
-                    resolved_other_files: result.resolved_other_files,
-                }
-            }
-            ExprKind::Binary { op, left, right } => {
-                self.evaluate_binary(file, Some(op), left, right, location)
-            }
-            // An assignment is a `BinaryExpression` with an operator that gives nothing.
-            ExprKind::Assign { target, value, .. } => {
-                self.evaluate_binary(file, None, target, value, location)
-            }
-            ExprKind::String(_) => Evaluated {
-                value: Some(Value::String),
-                is_syntactically_string: true,
-                resolved_other_files: false,
-            },
-            // `evaluateTemplateExpression`
-            ExprKind::Template { exprs, .. } => {
-                let mut resolved_other_files = false;
-                for span in hir.ids(exprs) {
-                    let result = self.evaluate(file, span, location);
-                    if result.value.is_none() {
-                        return Evaluated {
-                            value: None,
-                            is_syntactically_string: true,
-                            resolved_other_files: false,
-                        };
-                    }
-                    resolved_other_files |= result.resolved_other_files;
-                }
-                Evaluated {
-                    value: Some(Value::String),
-                    is_syntactically_string: true,
-                    resolved_other_files,
-                }
-            }
-            ExprKind::Number(n) => Evaluated::number(hir.numbers[n as usize]),
-            ExprKind::Ident(_) | ExprKind::Index { .. } => self.evaluate_entity(file, e, location),
-            ExprKind::Dot { .. } if is_property_access_entity_name_expression(hir, e) => {
-                self.evaluate_entity(file, e, location)
-            }
-            _ => Evaluated::default(),
-        }
-    }
-
-    fn evaluate_binary(
-        &mut self,
-        file: FileId,
-        op: Option<BinOp>,
-        left: ExprId,
-        right: ExprId,
-        location: Location,
-    ) -> Evaluated {
-        let (l, r) = (
-            self.evaluate(file, left, location),
-            self.evaluate(file, right, location),
-        );
-        let value = match (l.value, r.value, op) {
-            (Some(Value::Number(a)), Some(Value::Number(b)), Some(op)) => {
-                number_operation(op, a, b).map(Value::Number)
-            }
-            (Some(_), Some(_), Some(BinOp::Add)) => Some(Value::String),
-            _ => None,
-        };
-        Evaluated {
-            value,
-            is_syntactically_string: (l.is_syntactically_string || r.is_syntactically_string)
-                && op == Some(BinOp::Add),
-            resolved_other_files: l.resolved_other_files || r.resolved_other_files,
-        }
-    }
-
-    /// `evaluateEntity`
-    fn evaluate_entity(&mut self, file: FileId, e: ExprId, location: Location) -> Evaluated {
-        let (hir, files) = (self.c.hir(file), self.c.files());
-        if let ExprKind::Index { obj, index, .. } = hir[e].kind {
-            let name = match hir[index].kind {
-                ExprKind::String(name) => name,
-                ExprKind::Template { exprs, texts } if exprs.is_empty() => hir.id_at(texts, 0),
-                _ => return Evaluated::default(),
-            };
-            // Neither `(a)["b"]` nor `a[("b")]`.
-            if is_parenthesized(hir, index) || !is_entity_name_expression(hir, obj) {
-                return Evaluated::default();
-            }
-            if let Some(root) = self.resolve_entity_name(file, obj, SymFlags::VALUE, location)
-                && files.flags(root).contains(SymFlags::ENUM)
-                && let Some(member) = files.export(root, name)
-                && files.flags(member).contains(SymFlags::ENUM_MEMBER)
-            {
-                return self.evaluate_enum_member(file, e, member, location);
-            }
-            return Evaluated::default();
-        }
-        let Some(symbol) = self.resolve_entity_name(file, e, SymFlags::VALUE, location) else {
-            return Evaluated::default();
-        };
-        // `Infinity` and `NaN`, unless they are somebody's own.
-        if let ExprKind::Ident(name) = hir[e].kind
-            && let Some(n) = match files.atoms.bytes(name) {
-                b"Infinity" => Some(f64::INFINITY),
-                b"NaN" => Some(f64::NAN),
-                _ => None,
-            }
-            && files.global(name, SymFlags::VALUE) == Some(symbol)
-        {
-            return Evaluated::number(n);
-        }
-        let flags = files.flags(symbol);
-        if flags.contains(SymFlags::ENUM_MEMBER) {
-            return self.evaluate_enum_member(file, e, symbol, location);
-        }
-        // `isConstantVariable`, declared by name, its type left to its initializer.
-        if flags.intersects(SymFlags::VARIABLE)
-            && flags.contains(SymFlags::CONST)
-            && let Some((of, pat)) =
-                files
-                    .decls(symbol)
-                    .into_iter()
-                    .find_map(|(of, decl)| match decl {
-                        Decl::Var(pat) => Some((of, pat)),
-                        _ => None,
-                    })
-            && let PatParent::Var(d) = self.c.bound(of).pat_parent[pat.idx()]
-        {
-            let declaration = &self.c.hir(of)[d];
-            let declared = Location::Variable(of, d);
-            if declaration.ty.is_none()
-                && declaration.init.is_some()
-                && declared != location
-                && !self.variables.contains(&(of, d))
-                && is_declared_before_use(self.c, declared, location)
-            {
-                self.variables.push((of, d));
-                let result = self.evaluate(of, declaration.init, declared);
-                self.variables.pop();
-                if location.file() != of {
-                    return Evaluated {
-                        value: result.value,
-                        is_syntactically_string: false,
-                        resolved_other_files: true,
-                    };
-                }
-                return result;
-            }
-        }
-        Evaluated::default()
-    }
-
-    /// `evaluateEnumMember`
-    fn evaluate_enum_member(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        symbol: Sym,
-        location: Location,
-    ) -> Evaluated {
-        let declaration =
-            self.c
-                .files()
-                .decls(symbol)
-                .into_iter()
-                .find_map(|(of, decl)| match decl {
-                    Decl::EnumMember(member) => Some((of, member)),
-                    _ => None,
-                });
-        let start = self.c.start_inside_parentheses(file, e);
-        let Some((of, member)) =
-            declaration.filter(|&(of, member)| Location::Member(of, member) != location)
-        else {
-            self.error(file, start, 2565);
-            if file == self.file {
-                let end = self.c.end_inside_parentheses(file, e);
-                self.c
-                    .explain_to(start, end, 2565, |c| vec![c.symbol_to_string(symbol)]);
-            }
-            return Evaluated::default();
-        };
-        if !is_declared_before_use(self.c, Location::Member(of, member), location) {
-            self.error(file, start, 2651);
-            if file == self.file {
-                let end = self.c.end_inside_parentheses(file, e);
-                self.c.note(start, end, 2651, Vec::new());
-            }
-            return Evaluated::number(0.0);
-        }
-        let value = self.enum_member_value(of, member);
-        self.unsure |= self.unsure_members.contains(&(of, member));
-        value
     }
 
     /// `resolveEntityName(e, meaning, ignoreErrors)`, of `a` and of `a.b.c`, in what is evaluated for `location`.
@@ -1230,36 +990,55 @@ impl EnumValues<'_, '_> {
     }
 }
 
-/// `toInt32` of jsnum.go
-fn to_int32(n: f64) -> i32 {
-    if !n.is_finite() {
-        return 0;
+impl<'p> Evaluator<'p> for EnumValues<'_, 'p> {
+    fn checker(&mut self) -> &mut Checker<'p> {
+        self.c
     }
-    (n.trunc() % 4294967296.0) as i64 as i32
-}
 
-/// The operators `evaluate` knows, on numbers.
-fn number_operation(op: BinOp, a: f64, b: f64) -> Option<f64> {
-    let shift = to_int32(b) as u32 & 31;
-    Some(match op {
-        BinOp::BitOr => f64::from(to_int32(a) | to_int32(b)),
-        BinOp::BitAnd => f64::from(to_int32(a) & to_int32(b)),
-        BinOp::BitXor => f64::from(to_int32(a) ^ to_int32(b)),
-        BinOp::Shr => f64::from(to_int32(a) >> shift),
-        BinOp::UShr => f64::from(to_int32(a) as u32 >> shift),
-        BinOp::Shl => f64::from(to_int32(a) << shift),
-        BinOp::Mul => a * b,
-        BinOp::Div => a / b,
-        BinOp::Add => a + b,
-        BinOp::Sub => a - b,
-        BinOp::Rem => a % b,
-        // `Exponentiate` of jsnum.go
-        BinOp::Pow if (a == 1.0 || a == -1.0) && b.is_infinite() || a == 1.0 && b.is_nan() => {
-            f64::NAN
+    fn give_up(&mut self) {
+        self.gave_up = true;
+    }
+
+    fn resolve_entity_name(&mut self, file: FileId, e: ExprId, location: Location) -> Option<Sym> {
+        self.resolve_entity_name(file, e, SymFlags::VALUE, location)
+    }
+
+    fn enter_variable(&mut self, file: FileId, d: VarDeclId) -> bool {
+        let is_new = !self.variables.contains(&(file, d));
+        if is_new {
+            self.variables.push((file, d));
         }
-        BinOp::Pow => a.powf(b),
-        _ => return None,
-    })
+        is_new
+    }
+
+    fn leave_variable(&mut self) {
+        self.variables.pop();
+    }
+
+    fn report(&mut self, file: FileId, e: ExprId, code: u32, symbol: Sym) {
+        let start = self.c.start_inside_parentheses(file, e);
+        self.error(file, start, code);
+        if file == self.file {
+            let end = self.c.end_inside_parentheses(file, e);
+            if code == 2565 {
+                self.c
+                    .explain_to(start, end, code, |c| vec![c.symbol_to_string(symbol)]);
+            } else {
+                self.c.note(start, end, code, Vec::new());
+            }
+        }
+    }
+
+    fn enum_member_value_at(
+        &mut self,
+        file: FileId,
+        member: EnumMemberId,
+        _: Location,
+    ) -> Evaluated {
+        let value = self.enum_member_value(file, member);
+        self.unsure |= self.unsure_members.contains(&(file, member));
+        value
+    }
 }
 
 fn is_ambient_enum(hir: &hir::File, en: EnumId) -> bool {

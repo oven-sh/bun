@@ -1556,7 +1556,10 @@ impl<'a> Spans<'a> {
             TypeNodeKind::Fn(f) => self.func(f),
             TypeNodeKind::Object(members) => {
                 let last = members.iter().next_back();
-                self.close(last.map_or(pos + 1, |last| self.member(last)), b'}')
+                self.close(
+                    last.map_or(pos + 1, |last| self.hir[last].loc.end as usize),
+                    b'}',
+                )
             }
             TypeNodeKind::Cond { no: last, .. }
             | TypeNodeKind::Keyof(last)
@@ -1877,7 +1880,7 @@ impl<'a> Spans<'a> {
             return 0;
         };
         let inside = match class.members.iter().next_back() {
-            Some(last) => self.member(last),
+            Some(last) => self.hir[last].loc.end as usize,
             None => {
                 // The last thing in the head that is kept.
                 let head = if let Some(last) = self.hir.ids(class.implements).next_back() {
@@ -1900,7 +1903,7 @@ impl<'a> Spans<'a> {
             return 0;
         };
         let inside = match interface.members.iter().next_back() {
-            Some(last) => self.member(last),
+            Some(last) => self.hir[last].loc.end as usize,
             None => {
                 let head = match self.hir.ids(interface.extends).next_back() {
                     Some(last) => self.ty_in(last, 0),
@@ -1951,35 +1954,6 @@ impl<'a> Spans<'a> {
             Some(last) => self.close(self.stmt(last), b'}'),
             None => self.braces_after(name_end),
         }
-    }
-
-    /// A member of a class, an interface or a type literal, with its `;` or `,`.
-    fn member(self, m: MemberId) -> usize {
-        let Some(member) = self.hir.members.get(m.idx()) else {
-            return 0;
-        };
-        if member.func.is_some() {
-            return self.func(member.func);
-        }
-        let pos = member.pos as usize;
-        if member.kind == MemberKind::StaticBlock {
-            return self.braces_after(self.eat_word(pos, b"static"));
-        }
-        let end = if member.init.is_some() {
-            self.expr(member.init)
-        } else if member.ty.is_some() {
-            self.ty_in(member.ty, 0)
-        } else {
-            let name_end = self.key(member.key, pos);
-            if member.flags.contains(Flags::OPTIONAL) {
-                self.eat(name_end, b"?")
-            } else if member.flags.contains(Flags::DEFINITE) {
-                self.eat(name_end, b"!")
-            } else {
-                name_end
-            }
-        };
-        self.member_separator(end)
     }
 
     // ───────────────────────────── statements ─────────────────────────────
@@ -2524,11 +2498,6 @@ impl Checker<'_> {
         self.spans(file).param(param) as u32
     }
 
-    /// `node.End()` of a member of a class, an interface or a type literal, its `;` or `,` included.
-    pub(super) fn end_of_member(&self, file: FileId, member: MemberId) -> u32 {
-        self.spans(file).member(member) as u32
-    }
-
     /// `node.End()` of the name of a member, `[computed]` included.
     pub(super) fn end_of_member_name(&self, file: FileId, member: MemberId) -> u32 {
         match self.hir(file).members.get(member.idx()) {
@@ -2554,7 +2523,7 @@ impl Checker<'_> {
             MemberKind::Constructor => {
                 return (member.start, spans.token(member.pos as usize) as u32);
             }
-            _ => return (member.pos, spans.member(m) as u32),
+            _ => return (member.pos, member.loc.end),
         }
         (
             member.pos,

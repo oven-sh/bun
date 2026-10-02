@@ -57,7 +57,7 @@ pub(super) struct Binder<'f> {
     /// `bindChildren`: control gets to where the statement, declaration or expression being bound starts. What that does to the flow
     /// of control is then noted, be control lost inside it, as in `x = (() => { throw e })()`.
     is_reached: bool,
-    /// What is being bound goes to `unchecked_exprs`.
+    /// What is being bound goes to `unchecked_exprs` and `unchecked_types`.
     is_unchecked: bool,
     /// Until the file is done, `start` of the node of a label says which of these it is.
     label_edges: Vec<Label>,
@@ -216,6 +216,7 @@ impl<'f> Binder<'f> {
             decls: Decls::One(decl),
             parent,
             exports: TableId::NONE,
+            export_symbol: SymbolId::NONE,
         });
         SymbolId(self.b.symbols.len() as u32 - 1)
     }
@@ -1190,7 +1191,12 @@ impl<'f> Binder<'f> {
     fn lookup_name(&self, name: Atom, scope: ScopeId) -> Option<SymbolId> {
         let s = &self.b.scopes[scope.idx()];
         if let Some(&local) = self.tables[s.locals.idx()].get(&name) {
-            return Some(local);
+            let export_symbol = self.b.symbols[local.idx()].export_symbol;
+            return Some(if export_symbol.is_some() {
+                export_symbol
+            } else {
+                local
+            });
         }
         if s.symbol.is_none() {
             return None;
@@ -1562,10 +1568,10 @@ impl<'f> Binder<'f> {
                 if let Some(&symbol) = tables[s.locals.idx()].get(&name)
                     && b.symbols[symbol.idx()]
                         .flags
-                        .intersects(SymFlags::VALUE | SymFlags::ALIAS)
+                        .intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS)
                     && b.is_seen_from(from, b.symbols[symbol.idx()].flags, SymFlags::VALUE)
                 {
-                    return Ok(symbol);
+                    return Ok(b.export_symbol_of_value_symbol_if_exported(symbol));
                 }
                 // Nothing goes by the name `default` where it is exported. Of an enum and a namespace that are one symbol, the enum
                 // sees the members only and the namespace all but the members.
@@ -1634,6 +1640,7 @@ impl<'f> Binder<'f> {
         self.b.assignments.sort_unstable_by_key(|a| (a.0.0, a.1.0));
         self.b.type_query_operands.as_mut_slice().sort_unstable();
         self.b.unchecked_exprs.as_mut_slice().sort_unstable();
+        self.b.unchecked_types.as_mut_slice().sort_unstable();
         self.b.free_idents.sort_unstable_by_key(|f| f.0);
         self.b.alias_idents.sort_unstable_by_key(|a| a.0);
         self.b.arguments_objects.as_mut_slice().sort_unstable();
@@ -2157,8 +2164,7 @@ impl<'f> Binder<'f> {
                 } else {
                     let container = self.b.scopes[self.scope.idx()].symbol;
                     if container.is_some() {
-                        self.b.export_stars.push((container, spec));
-                        self.b.export_star_type_only.push(type_only);
+                        self.b.export_stars.push((container, id));
                     }
                 }
             }
@@ -3401,6 +3407,9 @@ impl<'f> Binder<'f> {
 
     fn ty(&mut self, id: TypeNodeId) {
         self.b.type_scope[id.idx()] = self.scope;
+        if self.is_unchecked {
+            self.b.unchecked_types.push(id);
+        }
         // `requiresScopeChangeWorker` enters no type.
         let scope_change_of = std::mem::replace(&mut self.scope_change_of, FnId::NONE);
         let by_alias = self.by_alias;
@@ -3819,7 +3828,11 @@ impl<'f> Binder<'f> {
                     self.expr(call.callee, me);
                 } else {
                     self.expr(call.callee, me);
+                    // `resolveCall` neither takes nor checks the type arguments of a `super` call.
+                    let around = self.is_unchecked;
+                    self.is_unchecked |= matches!(self.f[call.callee].kind, ExprKind::Super);
                     self.tys(call.type_args);
+                    self.is_unchecked = around;
                     self.exprs(call.args, me);
                 }
                 if let ExprKind::Dot { obj, name, .. } = self.f[call.callee].kind

@@ -71,6 +71,15 @@ impl From<u32> for Atom {
     }
 }
 
+/// `core.TextRange`, the `Loc` of a node.
+#[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
+pub struct TextRange {
+    /// `node.Pos()`: where the token before the node ends.
+    pub pos: u32,
+    /// `node.End()`: where the last token of the node ends.
+    pub end: u32,
+}
+
 /// Ids that are not next to each other: a run of [`File::ids`].
 pub struct IdList<T> {
     pub start: u32,
@@ -872,6 +881,8 @@ pub struct Member {
     pub pos: u32,
     /// Where its first token is: a decorator, a modifier, `get`, `set`, `*`, or `pos`.
     pub start: u32,
+    /// Its `;` or `,` is part of it.
+    pub loc: TextRange,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

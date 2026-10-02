@@ -3,7 +3,7 @@
 //! Follows `getLegacyDecoratorCallSignature`, `getESDecoratorCallSignature`, `resolveDecorator`, `checkDecorator` and what
 //! `checkGrammarModifiers` says of decorators, of TypeScript 7.0.2's checker.go and grammarchecks.go.
 
-use super::call::CallLike;
+use super::call::{CallLike, ResolvedCall};
 use super::errors::Diagnostic;
 use super::*;
 use crate::bind::MemberOwner;
@@ -635,9 +635,14 @@ impl<'p> Checker<'p> {
         let args = self.effective_call_arguments(file, e, node);
         let this_arg = self.this_argument_of_call(file, e, node);
         let resolved = self.resolve_among(file, e, node, &sigs, &[], &args, this_arg, true, true);
-        // Only `resolve_call` keeps it.
-        self.pending_failure_sig = None;
-        self.report_call_resolution(file, e, node, &sigs, resolved, Some(head), out);
+        // A decorator has no entry in `calls`.
+        if let Some(check) = self.pending_failed_call.take() {
+            let check = ResolvedCall {
+                sig: Some(check),
+                ..resolved
+            };
+            self.report_call_resolution_errors(file, e, node, &sigs, check, Some(head), out);
+        }
         let returned = resolved.ret;
         let wanted = self.sig_return(expected);
         if !self.is_known(returned)

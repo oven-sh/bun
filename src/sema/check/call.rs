@@ -375,21 +375,22 @@ impl<'p> Checker<'p> {
         // A call that is resolved settles what its own arguments are expected to be, whatever is gone over again around it.
         let keeps = std::mem::replace(&mut self.keeps_arg_contexts, false);
         let keeps_boolean = std::mem::replace(&mut self.keeps_boolean_in_arg_contexts, false);
+        let around = self.pending_failed_call.take();
         let resolved = self.resolve_call_uncached(file, call);
-        let failure = self.pending_failure_sig.take();
-        if is_under_way {
-            self.report_call_resolved_again(file, call, resolved);
+        let failed = std::mem::replace(&mut self.pending_failed_call, around);
+        if is_under_way && let Some(check) = failed {
+            self.report_call_resolved_again(file, call, check, resolved.ret);
         }
         self.keeps_arg_contexts = keeps;
         self.keeps_boolean_in_arg_contexts = keeps_boolean;
         self.asking_for_context = asking;
         self.resolution_start = resolution_start;
         if self.leave() && !is_under_way {
-            self.p.calls.insert((file, call), resolved);
-            // `ShardedMap::insert` keeps the first value, so the entry is only stored together with a resolution that is kept.
-            if let Some(failure) = failure {
-                self.p.failure_sigs.insert((file, call), failure);
+            // Only together with a resolution that is kept, and first: another thread that finds the call resolved finds this too.
+            if let Some(check) = failed {
+                self.p.failed_calls.insert((file, call), check);
             }
+            self.p.calls.insert((file, call), resolved);
         }
         resolved
     }
@@ -725,6 +726,18 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `resolveCall`, `s.typeArguments`: those of the call, `new` or tagged template `call`, but not of a `super` call (`isSuperCall`).
+    pub(super) fn type_arguments_of_call(&self, file: FileId, call: ExprId) -> IdList<TypeNodeId> {
+        let hir = self.hir(file);
+        match hir[call].kind {
+            ExprKind::Call(c) if matches!(hir[hir[c].callee].kind, ExprKind::Super) => {
+                IdList::EMPTY
+            }
+            ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => hir[c].type_args,
+            _ => IdList::EMPTY,
+        }
+    }
+
     /// `resolveCallExpression`, of `super(..)`: what is called is one of the constructors of what the class extends, with the type
     /// arguments given there.
     fn resolve_super_call(&mut self, file: FileId, call: ExprId, id: CallId) -> ResolvedCall {
@@ -1023,8 +1036,8 @@ impl<'p> Checker<'p> {
         Some(self.sig_return(only))
     }
 
-    /// `chooseOverload` holds the arguments against a candidate though it is the only one and nothing depends on how that goes. What
-    /// leads back from there to something that is being worked out is a circle.
+    /// `chooseOverload` holds the arguments against a candidate though it is the only one. What leads back from there to something
+    /// that is being worked out is a circle. Unless they fit for sure, the call is one of `failed_calls`.
     fn hold_arguments_against(&mut self, s: CallState<'_>, declared: SigId, sig: SigId) {
         let (file, call) = (s.file, s.call);
         let params = self.sig_params(sig);
@@ -1036,9 +1049,13 @@ impl<'p> Checker<'p> {
             MapperId::IDENTITY,
         ));
         let uncertain = self.uncertain;
-        self.is_signature_applicable(s, sig, None);
+        let (applicable, is_certain) =
+            self.with_certainty(|c| c.is_signature_applicable(s, sig, None));
         self.uncertain = uncertain;
         self.resolving.pop();
+        if applicable != Applicable::Yes || !is_certain {
+            self.pending_failed_call = Some(sig);
+        }
     }
 
     /// The end of `resolveCall`: which of `declared`, the signatures of what is called, `node`, which `call` stands for, is a
@@ -1103,6 +1120,7 @@ impl<'p> Checker<'p> {
         if candidates.is_empty() {
             let sig = self.candidate_for_overload_failure(s, &sigs, false);
             let ret = return_of(self, sig);
+            self.pending_failed_call = Some(sig);
             return ResolvedCall {
                 sig: Some(sig),
                 ret,
@@ -1135,6 +1153,7 @@ impl<'p> Checker<'p> {
                 }
                 let sig = self.candidate_for_overload_failure(s, &sigs, false);
                 let ret = return_of(self, sig);
+                self.pending_failed_call = Some(sig);
                 return ResolvedCall {
                     sig: Some(sig),
                     ret,
@@ -1158,11 +1177,24 @@ impl<'p> Checker<'p> {
             sig: Some(sig),
             ret,
         };
+        // `chooseOverload` rejects a candidate before it holds the arguments against it: `checkTypeArguments`, and `hasCorrectArity`
+        // once more where a generic rest parameter has been instantiated. `choose_overload_among` has seen to both.
+        if !is_tested
+            && (!type_args.is_empty() && !self.do_type_arguments_fit(first, type_args) || {
+                let (declared_params, instantiated_params) =
+                    (self.sig_params(first), self.sig_params(sig));
+                self.non_array_rest_type(&declared_params).is_some()
+                    && !self.has_correct_arity(s, &instantiated_params)
+            })
+        {
+            self.pending_failed_call = Some(sig);
+        }
         // For a single signature, `getCandidateForOverloadFailure` returns a different signature only if the type arguments are
         // inferred. The return type and the contextual types of the arguments can both depend on them.
         let is_inferred = type_args.is_empty() && is_generic;
         let can_differ = sigs.len() > 1 || is_inferred;
         if !is_sure || self.is_provisional_here() {
+            self.pending_failed_call = Some(sig);
             return resolved;
         }
         if !can_differ {
@@ -1191,12 +1223,13 @@ impl<'p> Checker<'p> {
         ));
         let has_later_attempts =
             sigs.len() > 1 && type_args.is_empty() && has_sensitive && chosen.is_some();
-        let ((accepted, fails), is_certain) = self.with_certainty(|c| {
+        let ((accepted, is_applicable, fails), is_certain) = self.with_certainty(|c| {
             let accepted = if has_later_attempts {
                 c.later_attempts(s, &candidates, first, sig)
             } else {
                 None
             };
+            let mut is_applicable = accepted.is_some();
             let fails = accepted.is_none() && {
                 // `chooseOverload` repeats the arity check after instantiating a candidate with a generic rest parameter, and rejects the
                 // candidate before `isSignatureApplicable`.
@@ -1204,12 +1237,21 @@ impl<'p> Checker<'p> {
                     (c.sig_params(first), c.sig_params(sig));
                 let has_wrong_arity = c.non_array_rest_type(&declared_params).is_some()
                     && !c.has_correct_arity(s, &instantiated_params);
-                (has_wrong_arity || c.is_signature_applicable(s, sig, None) == Applicable::No)
+                let applicable = if has_wrong_arity {
+                    Applicable::No
+                } else {
+                    c.is_signature_applicable(s, sig, None)
+                };
+                is_applicable = applicable == Applicable::Yes;
+                applicable == Applicable::No
                     && c.no_candidate_applies(file, call, node, declared, resolved)
             };
-            (accepted, fails)
+            (accepted, is_applicable, fails)
         });
         self.resolving.pop();
+        if !is_certain || !is_applicable {
+            self.pending_failed_call = Some(sig);
+        }
         if !is_certain {
             return resolved;
         }
@@ -1226,12 +1268,9 @@ impl<'p> Checker<'p> {
         let failure = self.candidate_for_overload_failure(s, &sigs, true);
         let ret = return_of(self, failure);
         // The errors of a call of the only signature there is are told against `sig`: that stays what all the arguments come to.
-        // `resolve_call` stores `failure` in `failure_sigs` if it keeps the resolution.
-        if sigs.len() == 1 {
-            self.pending_failure_sig = Some(failure);
-        }
+        self.pending_failed_call = Some(if sigs.len() == 1 { sig } else { failure });
         ResolvedCall {
-            sig: Some(if sigs.len() == 1 { sig } else { failure }),
+            sig: Some(failure),
             ret,
         }
     }
@@ -2963,7 +3002,7 @@ impl<'p> Checker<'p> {
         sigs: &[SigId],
     ) -> SmallVec<[bool; 8]> {
         let hir = self.hir(file);
-        let (args, type_args) = (hir[id].args, hir[id].type_args);
+        let (args, type_args) = (hir[id].args, self.type_arguments_of_call(file, call));
         if hir
             .ids(args)
             .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
@@ -3208,11 +3247,6 @@ impl<'p> Checker<'p> {
                 .iter()
                 .copied()
                 .filter(|&t| {
-                    let t = if self.is_no_infer(t) {
-                        self.force(t)
-                    } else {
-                        t
-                    };
                     let base = if self.is_deferred(t) {
                         self.base_constraint(t)
                     } else {
@@ -5590,12 +5624,13 @@ impl<'p> Checker<'p> {
                     self.sig_return(returned),
                     self.sig_this_type(returned),
                 );
+                // `cloneSignature`: it is declared where `returned` is.
                 let generalized = self.p.types.intern_sig(SigData::Synth {
                     type_params: inferred_type_params.into(),
                     params: params.into(),
                     ret,
                     this,
-                    of: Box::new([]),
+                    of: Box::new([returned]),
                 });
                 let ret = self.type_of_signature(generalized, construct);
                 let returned_type = self.sig_return(sig);
@@ -6522,7 +6557,7 @@ impl<'p> Checker<'p> {
             {
                 self.infer(&mut inference, source, target, PRIORITY_RETURN);
             } else {
-                let target = self.sig_return_for_inference(sig);
+                let target = self.sig_return(sig);
                 if self.has_type_variables(target) {
                     let source = self.sig_return(expected);
                     self.infer(&mut inference, source, target, PRIORITY_RETURN);
@@ -9469,9 +9504,13 @@ impl<'p> Checker<'p> {
             // `anySignature`: anything is expected.
             return Some(TypeId::ANY);
         }
-        // A function called where it is written expects nothing where it does not say: it takes what it is given.
+        let pulls = self.pulls_contextual_types();
+        // A function called where it is written expects nothing where it does not say: it takes what it is given
+        // (`getContextuallyTypedParameterType` checks the argument under `anySignature`). Once the call is resolved the parameter has
+        // that type, and it is expected like any other.
         let hir = self.hir(file);
-        if let ExprKind::Call(c) = hir[call].kind
+        if !pulls
+            && let ExprKind::Call(c) = hir[call].kind
             && let ExprKind::Fn(func) = hir[hir[c].callee].kind
             && let Some(index) = hir.ids(hir[c].args).position(|a| a == arg)
         {
@@ -9488,7 +9527,6 @@ impl<'p> Checker<'p> {
                 return None;
             }
         }
-        let pulls = self.pulls_contextual_types();
         if !pulls
             && self.provisional > 0
             && let Some(&known) = self.provisional_arg_contexts.get(&(file, arg))
@@ -9544,8 +9582,7 @@ impl<'p> Checker<'p> {
                 return None;
             }
             let resolved = self.p.calls.get(&(file, call))?;
-            // `resolveCall` stores the candidate for overload failure in `resolvedSignature` before it reports.
-            let Some(sig) = self.p.failure_sigs.get(&(file, call)).or(resolved.sig) else {
+            let Some(sig) = resolved.sig else {
                 return self.has_any_flag(resolved.ret).then_some(TypeId::ANY);
             };
             let params = self.sig_params(sig);

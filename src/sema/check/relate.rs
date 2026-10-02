@@ -448,14 +448,7 @@ impl<'p> Checker<'p> {
     #[inline]
     fn forced_as(&mut self, ty: TypeId) -> (TypeId, &'p TypeData) {
         let data = self.data(ty);
-        if matches!(
-            data,
-            TypeData::LazyAlias { .. }
-                | TypeData::Substitution {
-                    constraint: TypeId::UNKNOWN,
-                    ..
-                }
-        ) {
+        if matches!(data, TypeData::LazyAlias { .. }) {
             let ty = self.force(ty);
             return (ty, self.data(ty));
         }
@@ -2409,7 +2402,7 @@ impl<'p> Checker<'p> {
 
     /// `t.alias`, of a mapped type that was instantiated under an alias whose body is a reference to a generic alias
     /// (`getTypeFromTypeAliasReference`): that alias, and what stands for its type parameters in `t`.
-    pub(super) fn hosting_alias_of(&mut self, t: TypeId) -> Option<(Sym, Vec<TypeId>)> {
+    pub(super) fn hosting_alias_of(&self, t: TypeId) -> Option<(Sym, Vec<TypeId>)> {
         let (file, alias) = self.hosting_alias_declaration(t)?;
         let (_, _, mapper) = self.mapped_origin(t)?;
         let symbol = self.bound(file).alias_symbol[alias.idx()];
@@ -4059,10 +4052,7 @@ impl<'p> Checker<'p> {
             let Some(target) = self.mapped_modifiers_type(t) else {
                 break;
             };
-            met_alias |= matches!(
-                self.data(target),
-                TypeData::LazyAlias { .. } | TypeData::Substitution { .. }
-            );
+            met_alias |= matches!(self.data(target), TypeData::LazyAlias { .. });
             let target = self.force(target);
             let found = match self.data(target) {
                 TypeData::Intersection(parts) => parts.iter().any(|&p| has_symbol(self, p)),

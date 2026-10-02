@@ -66,10 +66,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     len: 0,
                 };
                 p.lexer.ts_error(after_super, 2754);
-                // A template drops the type arguments, and `resolveCall` ignores those of a call.
+                // A template drops the type arguments.
                 if !matches!(
                     p.lexer.token,
-                    T::TOpenParen | T::TNoSubstitutionTemplateLiteral | T::TTemplateHead
+                    T::TNoSubstitutionTemplateLiteral | T::TTemplateHead
                 ) {
                     p.note_type_arguments(&target, less_than);
                 }

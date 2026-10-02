@@ -435,12 +435,12 @@ impl<'p> Checker<'p> {
         if !flags.iter().any(|f| f.contains(ElemFlags::VARIADIC)) {
             return self.tuple(elems, flags, readonly);
         }
-        // An alias is what it stands for. `NoInfer<T>` waits as a type parameter does.
+        // An alias is what it stands for.
         let elems: Vec<TypeId> = elems
             .iter()
             .zip(flags)
             .map(|(&elem, flag)| {
-                if flag.contains(ElemFlags::VARIADIC) && !self.is_no_infer(elem) {
+                if flag.contains(ElemFlags::VARIADIC) {
                     self.force(elem)
                 } else {
                     elem

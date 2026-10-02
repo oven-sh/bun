@@ -405,7 +405,7 @@ impl Checker<'_> {
                         .first()
                         .map_or(hir[m].pos, |m| m.0);
                     say(start, 8017);
-                    ends(start, self.end_of_member(file, m), 8017);
+                    ends(start, hir[m].loc.end, 8017);
                     continue;
                 }
                 _ if is_part_of_a_type(FnId(index as u32)) || func.kind == FnKind::StaticBlock => {

@@ -2174,7 +2174,7 @@ impl Checker<'_> {
             else {
                 continue;
             };
-            if bound.type_scope[i].is_none() {
+            if bound.is_unchecked_type(i) {
                 continue;
             }
             if cx.grammar

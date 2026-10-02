@@ -132,7 +132,7 @@ impl<'p> Printer<'_, 'p> {
         if matches!(pt, Pseudo::Inferred { .. } | Pseudo::NoResult(_)) {
             return None;
         }
-        let returned = self.c.sig_return_for_inference(signature);
+        let returned = self.c.sig_return(signature);
         // `getReturnTypeOfSignature`: an annotation that comes back to itself is given up for `anyType`, which is not what it says.
         if self.c.p.circular_returns.get(&(file, func)).is_some() {
             return None;

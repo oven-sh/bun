@@ -599,7 +599,7 @@ impl Checker<'_> {
             let TypeNodeKind::Tuple(elems) = hir.types[t].kind else {
                 continue;
             };
-            if bound.type_scope[t].is_none() {
+            if bound.is_unchecked_type(t) {
                 continue;
             }
             let (mut seen_optional, mut seen_rest) = (false, false);
@@ -721,7 +721,7 @@ impl Checker<'_> {
     fn check_instantiated_tuple_sizes(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for t in 0..hir.types.len() {
-            if bound.type_scope[t].is_none()
+            if bound.is_unchecked_type(t)
                 || !matches!(
                     hir.types[t].kind,
                     TypeNodeKind::Ref { .. }
@@ -848,7 +848,7 @@ impl Checker<'_> {
             let TypeNodeKind::Template { types, .. } = hir.types[t].kind else {
                 continue;
             };
-            if bound.type_scope[t].is_none() {
+            if bound.is_unchecked_type(t) {
                 continue;
             }
             self.relation_too_deep = false;
@@ -875,7 +875,7 @@ impl Checker<'_> {
     fn check_size_of_cross_products(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for t in 0..hir.types.len() {
-            if bound.type_scope[t].is_none() {
+            if bound.is_unchecked_type(t) {
                 continue;
             }
             let size = match hir.types[t].kind {
@@ -1076,7 +1076,7 @@ impl Checker<'_> {
         // The check functions of these kinds call `getTypeFromTypeNode` on the node. `checkArrayType`, `checkTypeOperator`,
         // `checkConditionalType`, `checkInferType`, `checkSignatureDeclaration` and `checkTypePredicate` only visit its children.
         let is_resolved_when_checked = |t: usize| {
-            bound.type_scope[t].is_some()
+            !bound.is_unchecked_type(t)
                 && matches!(
                     hir.types[t].kind,
                     TypeNodeKind::Ref { .. }
@@ -1198,7 +1198,7 @@ impl Checker<'_> {
             let TypeNodeKind::Infer(param) = hir.types[t].kind else {
                 continue;
             };
-            if bound.type_scope[t].is_none() {
+            if bound.is_unchecked_type(t) {
                 continue;
             }
             let mut at = TypeNodeId(t as u32);
@@ -1285,7 +1285,7 @@ impl Checker<'_> {
             let TypeNodeKind::Readonly(inner) = node.kind else {
                 continue;
             };
-            if bound.type_scope[t].is_none() {
+            if bound.is_unchecked_type(t) {
                 continue;
             }
             // `readonly (string[])` is `readonly` of something in parentheses.
@@ -1376,7 +1376,7 @@ impl Checker<'_> {
         }
         for (t, node) in hir.types.iter().enumerate() {
             if matches!(node.kind, TypeNodeKind::UniqueSymbol)
-                && bound.type_scope[t].is_some()
+                && !bound.is_unchecked_type(t)
                 && !annotations.contains(&node.pos)
             {
                 out.push(Diagnostic {
@@ -1439,7 +1439,7 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for (t, node) in hir.types.iter().enumerate() {
             if matches!(node.kind, TypeNodeKind::Keyword(Keyword::This))
-                && bound.type_scope[t].is_some()
+                && !bound.is_unchecked_type(t)
                 && !is_this_type_available(hir, bound, TypeNodeId(t as u32), parents)
                 && !self.is_in_unresolved_assignment_type(file, TypeNodeId(t as u32), parents)
             {
@@ -1562,7 +1562,7 @@ impl Checker<'_> {
                     start: member.pos,
                     code: 1021,
                 });
-                let end = self.end_of_member(file, MemberId(m as u32));
+                let end = member.loc.end;
                 self.explain_to(member.pos, end, 1021, |_| vec![]);
             }
         }
@@ -1633,7 +1633,7 @@ impl Checker<'_> {
                     self.end_of_member_name(file, all.at(0))
                 }
                 MemberKind::Method if is_in_class => self.end_of_member_name(file, all.at(0)),
-                _ => self.end_of_member(file, all.at(0)),
+                _ => first.loc.end,
             };
             self.explain_to(start, end, 7061, |_| vec![]);
         }
@@ -1714,7 +1714,7 @@ impl Checker<'_> {
                 {
                     let start = member.start;
                     out.push(Diagnostic { start, code: 18016 });
-                    let end = self.end_of_member(file, MemberId(m as u32));
+                    let end = member.loc.end;
                     self.note(start, end, 18016, vec![]);
                 }
                 _ => {}
@@ -1899,7 +1899,7 @@ impl Checker<'_> {
                 }
                 _ => continue,
             };
-            if bound.type_scope[t].is_none() {
+            if bound.is_unchecked_type(t) {
                 continue;
             }
             if !args.is_empty() {
@@ -2078,7 +2078,7 @@ impl Checker<'_> {
                 continue;
             };
             let scope = bound.type_scope[t];
-            if args.is_empty() || scope.is_none() {
+            if args.is_empty() || bound.is_unchecked_type(t) {
                 continue;
             }
             let mut ty = self.type_of_expr(file, expr);
@@ -2239,7 +2239,7 @@ impl Checker<'_> {
             let TypeNodeKind::IndexedAccess { obj, index } = hir.types[t].kind else {
                 continue;
             };
-            if bound.type_scope[t].is_none() {
+            if bound.is_unchecked_type(t) {
                 continue;
             }
             let (object, keys) = (
@@ -2841,7 +2841,7 @@ impl Checker<'_> {
         }
         let mut needs = Vec::new();
         for t in 0..hir.types.len() {
-            if bound.type_scope[t].is_none() {
+            if bound.is_unchecked_type(t) {
                 continue;
             }
             let at = written_at(hir, file, TypeNodeId(t as u32), parents, &is_declared);

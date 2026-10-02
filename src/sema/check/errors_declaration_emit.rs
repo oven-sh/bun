@@ -1261,7 +1261,7 @@ impl<'p> EmitResolver<'_, 'p> {
             Vec::new()
         } else if files.flags(symbol).intersects(SymFlags::MODULE) {
             // `getExportsOfModuleWorker`
-            files.all_exports_of(files.module_value(symbol)).to_vec()
+            files.exports_of_module(symbol).to_vec()
         } else {
             files.exports(symbol)
         };
@@ -2218,7 +2218,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     FnOwner::Member(m) if hir[f].kind == FnKind::Method => {
                         self.name_range_of_member(m)
                     }
-                    FnOwner::Member(m) => (hir[m].pos, self.c.end_of_member(self.file, m)),
+                    FnOwner::Member(m) => (hir[m].pos, hir[m].loc.end),
                     _ if hir[f].name.is_some() => (
                         hir[f].name_pos,
                         self.c.end_of_name_at(self.file, hir[f].name_pos),
@@ -4668,7 +4668,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let property_type = if uses_placeholder {
             TypeId::ANY
         } else {
-            let ty = self.c.type_of_prop_for_inference(prop, mapper);
+            let ty = self.c.type_of_prop(prop, mapper);
             self.c.remove_missing_type(ty, is_optional)
         };
         if self.c.files().atoms.is_symbol_name(prop.name) {
@@ -4864,7 +4864,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `serializeReturnTypeForSignature`
     fn serialize_return_type_for_signature(&mut self, signature: SigId) {
-        let returned = self.c.sig_return_for_inference(signature);
+        let returned = self.c.sig_return(signature);
         let predicate = self.c.sig_predicate(signature);
         if let Some((file, func, _)) = self.c.sig_decl(signature)
             && let Some(node) = self.direct_return_type_node(file, func)

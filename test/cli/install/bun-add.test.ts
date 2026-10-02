@@ -3211,3 +3211,35 @@ it("`bun pm bin -g` works before the first global add and does not adopt ~/packa
   expect(await file(join(globalDir, "package.json")).json()).toEqual({ dependencies: {} });
   expect(await file(join(homeDir, "package.json")).text()).toBe(homeProject);
 });
+
+// A mutating -g command must not bootstrap an empty manifest and wipe an existing global bun.lock.
+it.each([
+  ["update", "nothing to update"],
+  ["remove", "nothing to remove"],
+])("`bun %s -g` refuses when the global package.json is missing but bun.lock exists", async (sub, msg) => {
+  const lock = JSON.stringify({ lockfileVersion: 1, workspaces: { "": { dependencies: { pkg: "1.0.0" } } } });
+  using home = tempDir(`bun-${sub}-global-lock-no-manifest`, {
+    "package.json": JSON.stringify({ name: "home-project", private: true }),
+    ".bun": { install: { global: { "bun.lock": lock } } },
+  });
+  const homeDir = String(home);
+  const globalDir = join(homeDir, ".bun", "install", "global");
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), sub, "-g", ...(sub === "remove" ? ["pkg"] : [])],
+    cwd: homeDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: globalInstallEnv(homeDir),
+  });
+
+  const err = await stderr.text();
+  expect(err).toContain(msg);
+  await stdout.text();
+  expect(await exited).toBe(1);
+
+  // Nothing was created or destroyed in the global dir.
+  expect(await readdirSorted(globalDir)).toEqual(["bun.lock"]);
+  expect(await file(join(globalDir, "bun.lock")).text()).toBe(lock);
+});

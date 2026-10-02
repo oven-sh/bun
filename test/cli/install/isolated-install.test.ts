@@ -2,10 +2,21 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import {
+  VerdaccioRegistry,
+  bunEnv,
+  bunExe,
+  readdirSorted,
+  runBunInstall,
+  tempDir,
+  toBeValidBin,
+  toHaveBins,
+} from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { pathToFileURL } from "url";
+
+expect.extend({ toBeValidBin, toHaveBins });
 
 const registry = new VerdaccioRegistry();
 
@@ -2005,6 +2016,160 @@ test("same resolution, different dependency name", async () => {
     version: "1.0.0",
   });
   expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toEqual(["no-deps@1.0.0", "node_modules"]);
+});
+
+// One store entry serves every dependent of a package version, whatever name
+// each dependent uses for it. The entry is created for the first dependent.
+describe.concurrent("bins of a package that dependents reach under different names", () => {
+  const storeBin = (packageDir: string, entry: string, bin: string) =>
+    join(packageDir, "node_modules", ".bun", entry, "node_modules", ".bin", bin);
+  const memberBin = (packageDir: string, member: string, bin: string) =>
+    join(packageDir, "packages", member, "node_modules", ".bin", bin);
+
+  function workspace(members: Record<string, object>) {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+    };
+    for (const [name, manifest] of Object.entries(members)) {
+      files[`packages/${name}/package.json`] = JSON.stringify({ name, version: "1.0.0", ...manifest });
+    }
+    return registry.createTestDir({ bunfigOpts: { linker: "isolated" }, files });
+  }
+
+  test.each([
+    ["the alias", { aliased: "npm:what-bin@1.0.0" }, { "what-bin": "1.0.0" }],
+    ["the package name", { "what-bin": "1.0.0" }, { aliased: "npm:what-bin@1.0.0" }],
+  ])("each workspace member links the bin through its own dependency name (%s first)", async (_, first, second) => {
+    const { packageDir } = await workspace({ "a-first": { dependencies: first }, "b-second": { dependencies: second } });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(memberBin(packageDir, "a-first", "what-bin")).toBeValidBin(
+      join("..", Object.keys(first)[0], "what-bin.js"),
+    );
+    expect(memberBin(packageDir, "b-second", "what-bin")).toBeValidBin(
+      join("..", Object.keys(second)[0], "what-bin.js"),
+    );
+    // The package's own bin, beside its own folder in the store.
+    expect(storeBin(packageDir, "what-bin@1.0.0", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+  });
+
+  test("a string bin is named after the dependency for a dependent and after the package in the store", async () => {
+    const { packageDir } = await workspace({
+      "a-first": { dependencies: { al: "npm:dep-with-file-bin@1.0.0" } },
+      "b-second": { dependencies: { "dep-with-file-bin": "1.0.0" } },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(memberBin(packageDir, "a-first", "al")).toBeValidBin(join("..", "al", "file-bin"));
+    expect(memberBin(packageDir, "b-second", "dep-with-file-bin")).toBeValidBin(
+      join("..", "dep-with-file-bin", "file-bin"),
+    );
+    expect(storeBin(packageDir, "dep-with-file-bin@1.0.0", "dep-with-file-bin")).toBeValidBin(
+      join("..", "dep-with-file-bin", "file-bin"),
+    );
+  });
+
+  test("a registry package finds its dependency's command when the project aliases that dependency", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          dependencies: { aliased: "npm:what-bin@1.0.0", "uses-what-bin": "1.0.0" },
+          trustedDependencies: ["uses-what-bin"],
+        }),
+      },
+    });
+
+    // The install script of uses-what-bin runs `what-bin`.
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await file(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")).text()).toBe(
+      "what-bin@1.0.0",
+    );
+    expect(storeBin(packageDir, "uses-what-bin@1.0.0", "what-bin")).toBeValidBin(
+      join("..", "what-bin", "what-bin.js"),
+    );
+  });
+
+  test("a global store entry links its dependency's bin when the project aliases that dependency", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore: true },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          dependencies: { aliased: "npm:what-bin@1.0.0", "uses-what-bin": "1.0.0" },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(readlinkSync(join(packageDir, "node_modules", ".bun", "uses-what-bin@1.0.0"))).toContain(
+      join(".bun-cache", "links", "uses-what-bin@1.0.0-"),
+    );
+    expect(storeBin(packageDir, "uses-what-bin@1.0.0", "what-bin")).toBeValidBin(
+      join("..", "what-bin", "what-bin.js"),
+    );
+  });
+
+  test("a workspace member named like its dependency does not link its own bin to the dependency's file", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/what-bin/package.json": JSON.stringify({
+          name: "what-bin",
+          version: "9.0.0",
+          bin: { wsonly: "what-bin.js" },
+          dependencies: { "what-bin": "1.0.0" },
+        }),
+        "packages/what-bin/what-bin.js": "#!/usr/bin/env node\n",
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bins = join(packageDir, "packages", "what-bin", "node_modules", ".bin");
+    expect(await readdirSorted(bins)).toHaveBins(["what-bin"]);
+    expect(join(bins, "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+  });
+
+  test("a dependent with the alias and another version links each through its own folder", async () => {
+    const { packageDir } = await workspace({
+      "a-first": { dependencies: { "what-bin": "1.0.0" } },
+      "b-second": { dependencies: { aliased: "npm:what-bin@1.0.0", "what-bin": "1.5.0" } },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // Both dependencies of b-second have the command. `aliased` sorts first and keeps it.
+    expect(memberBin(packageDir, "b-second", "what-bin")).toBeValidBin(join("..", "aliased", "what-bin.js"));
+    expect(memberBin(packageDir, "a-first", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+  });
+
+  test("a tarball without a package name and with a string bin installs", async () => {
+    const tarball = await new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({ version: "1.0.0", bin: "cli.js" }),
+        "package/cli.js": "#!/usr/bin/env node\n",
+      },
+      { compress: "gzip" },
+    ).bytes();
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "root", dependencies: { nameless: "file:./nameless.tgz" } }),
+        "nameless.tgz": Buffer.from(tarball),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await file(join(packageDir, "node_modules", "nameless", "cli.js")).text()).toBe("#!/usr/bin/env node\n");
+  });
 });
 
 test("successfully removes and corrects symlinks", async () => {

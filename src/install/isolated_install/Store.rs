@@ -270,8 +270,8 @@ pub mod entry {
     pub(crate) type Dependencies = OrderedArraySet<DependenciesItem>;
 
     pub struct Entry {
-        // Used to get dependency name for destination path and peers
-        // for store path
+        // The first node deduped into this entry: its package and peers hold for the entry,
+        // its dep_id is only one of the dependencies that resolve to it.
         pub node_id: super::node::Id,
         // parent_id: Id,
         pub dependencies: Dependencies,
@@ -546,8 +546,8 @@ pub mod entry {
     pub struct DependenciesItem {
         pub(crate) entry_id: Id,
 
-        // TODO: this can be removed, and instead dep_id can be retrieved through:
-        // entry_id -> node_id -> node_dep_ids
+        // The dependent's own dependency on `entry_id`: the only source of the name
+        // the dependent uses for it, because dependents with other names share the entry.
         pub(crate) dep_id: DependencyID,
     }
 

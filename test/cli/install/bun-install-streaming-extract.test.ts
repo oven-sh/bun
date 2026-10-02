@@ -953,6 +953,259 @@ test("streaming extract skips a damaged header block and extracts the entries af
   expect(exitCode).toBe(0);
 });
 
+// -------------------------------------------------------------------
+// A piece of the body can end at any byte of the tar stream. The
+// streaming extractor then waits for the next piece and resumes. These
+// tests end a piece inside the map of a GNU sparse member. The map
+// follows the member header: the PAX 1.0 form stores it as text at the
+// start of the member data, the old GNU form in 512-byte extension
+// blocks. The members are built by hand because CI has no GNU tar on
+// every platform.
+// -------------------------------------------------------------------
+describe.concurrent("streaming extract: a body piece ends inside a sparse map", () => {
+  const realSize = 300_000;
+  const pkgJson = Buffer.from(JSON.stringify({ name: "sparse-pkg", version: "1.0.0" }));
+
+  type Part = [label: string, bytes: Buffer];
+  type Chunk = { offset: number; data: Buffer };
+  type Member = { parts: Part[]; expected: Buffer };
+
+  const fileOf = (chunks: Chunk[]) => {
+    const file = Buffer.alloc(realSize, 0);
+    for (const c of chunks) c.data.copy(file, c.offset);
+    return file;
+  };
+
+  // What `tar --sparse --format=posix` writes: an 'x' header with the name
+  // and the real size, then a member whose data starts with the map as
+  // decimal lines, NUL-padded to a block.
+  function paxSparseMember(): Member {
+    const record = (key: string, value: string | number) => {
+      const body = ` ${key}=${value}\n`;
+      let len = body.length + 1;
+      while (String(len).length + body.length !== len) len++;
+      return `${len}${body}`;
+    };
+    const pax = Buffer.from(
+      record("GNU.sparse.major", 1) +
+        record("GNU.sparse.minor", 0) +
+        record("GNU.sparse.name", "package/m.bin") +
+        record("GNU.sparse.realsize", realSize),
+    );
+    const chunks: Chunk[] = [
+      { offset: 0, data: Buffer.alloc(512, 0x41) },
+      { offset: realSize - 512, data: Buffer.alloc(512, 0x42) },
+    ];
+    const map = Buffer.from(`${chunks.length}\n` + chunks.map(c => `${c.offset}\n${c.data.length}\n`).join(""));
+    const data = Buffer.concat(chunks.map(c => c.data));
+    const size = map.length + pad512(map.length).length + data.length;
+    return {
+      parts: [
+        ["paxHeader", tarHeader("PaxHeaders.0/m.bin", pax.length, "x")],
+        ["paxBody", Buffer.concat([pax, pad512(pax.length)])],
+        ["header", tarHeader("package/GNUSparseFile.0/m.bin", size, "0")],
+        ["map", map],
+        ["mapPadding", pad512(map.length)],
+        ["data", data],
+      ],
+      expected: fileOf(chunks),
+    };
+  }
+
+  // What `tar --sparse` writes: typeflag 'S', magic "ustar  \0". The header
+  // holds four map entries. Each extension block holds 21 more, and a flag
+  // that says another block follows.
+  function oldGnuSparseMember(extensionBlocks: number): Member {
+    const count = 4 + 21 * (extensionBlocks - 1) + 2;
+    const chunks: Chunk[] = Array.from({ length: count }, (_, i) => ({
+      offset: i === count - 1 ? realSize - 512 : i * 4096,
+      data: Buffer.alloc(512, 0x61 + (i % 26)),
+    }));
+    const data = Buffer.concat(chunks.map(c => c.data));
+    const writeEntry = (block: Buffer, at: number, c: Chunk) => {
+      block.write(octal(c.offset, 12), at);
+      block.write(octal(c.data.length, 12), at + 12);
+    };
+
+    const header = Buffer.alloc(512, 0);
+    header.write("package/m.bin", 0, 100, "utf8");
+    header.write(octal(0o644, 8), 100);
+    header.write(octal(0, 8), 108);
+    header.write(octal(0, 8), 116);
+    header.write(octal(data.length, 12), 124);
+    header.write(octal(0, 12), 136);
+    header.fill(" ", 148, 156);
+    header.write("S", 156);
+    header.write("ustar  \0", 257, "latin1");
+    chunks.slice(0, 4).forEach((c, i) => writeEntry(header, 386 + i * 24, c));
+    header[482] = 1; // isextended
+    header.write(octal(realSize, 12), 483);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += header[i];
+    header.write(octal(sum, 8), 148);
+
+    const parts: Part[] = [["header", header]];
+    for (let n = 0; n < extensionBlocks; n++) {
+      const block = Buffer.alloc(512, 0);
+      chunks.slice(4 + n * 21, 4 + (n + 1) * 21).forEach((c, i) => writeEntry(block, i * 24, c));
+      if (n < extensionBlocks - 1) block[504] = 1; // isextended
+      parts.push([`extension${n}`, block]);
+    }
+    parts.push(["data", Buffer.concat([data, pad512(data.length)])]);
+    return { parts, expected: fileOf(chunks) };
+  }
+
+  // package.json, then the sparse member. The gzip stream is one stored
+  // block, so byte `n` of the tar is byte `15 + n` of the .tgz.
+  function buildPackage(member: Member) {
+    const before = Buffer.concat([
+      tarHeader("package/package.json", pkgJson.length, "0"),
+      pkgJson,
+      pad512(pkgJson.length),
+    ]);
+    const offsets: Record<string, number> = {};
+    let at = before.length;
+    for (const [label, bytes] of member.parts) {
+      offsets[label] = at;
+      at += bytes.length;
+    }
+    const tar = Buffer.concat([before, ...member.parts.map(([, bytes]) => bytes), Buffer.alloc(1024, 0)]);
+    expect(tar.length).toBeLessThanOrEqual(0xffff);
+
+    const head = Buffer.from([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3, 1, 0, 0, 0, 0]);
+    head.writeUInt16LE(tar.length, 11);
+    head.writeUInt16LE(~tar.length & 0xffff, 13);
+    const trailer = Buffer.alloc(8);
+    trailer.writeUInt32LE(Bun.hash.crc32(tar), 0);
+    trailer.writeUInt32LE(tar.length, 4);
+    const tgz = Buffer.concat([head, tar, trailer]);
+    return {
+      tgz,
+      integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64"),
+      offsetOf: (label: string, delta: number) => head.length + offsets[label] + delta,
+    };
+  }
+
+  // Serves the tarball in pieces that end at `cuts`, and installs it.
+  async function installInPieces(tgz: Buffer, integrity: string, cuts: number[]) {
+    using dir = tempDir("streaming-extract-sparse-map", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "sparse-pkg": "1.0.0" } }),
+      "bun-tmp/.keep": "",
+      "bun-cache/.keep": "",
+    });
+    const tmp = join(String(dir), "bun-tmp");
+    let exited = false;
+
+    // The extractor has written package.json, the member in front of the
+    // sparse one: it has read the first piece up to the sparse member.
+    const wrotePackageJson = () =>
+      readdirSync(tmp).some(name => {
+        if (!name.endsWith(".sparse-pkg")) return false;
+        const stat = statSync(join(tmp, name, "package.json"), { throwIfNoEntry: false });
+        return stat?.size === pkgJson.length;
+      });
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/sparse-pkg") {
+          return Response.json({
+            name: "sparse-pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "sparse-pkg",
+                version: "1.0.0",
+                dist: { integrity, tarball: `${server.url}sparse-pkg/-/sparse-pkg-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        if (url.pathname.endsWith("/sparse-pkg-1.0.0.tgz")) {
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(c) {
+                let sent = 0;
+                for (const cut of cuts) {
+                  c.write(tgz.subarray(sent, cut));
+                  await c.flush();
+                  sent = cut;
+                  while (!exited && !wrotePackageJson()) await Bun.sleep(5);
+                  // The extractor must run out of input at the cut, and
+                  // nothing outside the child says when it has. It is a few
+                  // in-memory steps from there now, so hold the next piece
+                  // for a moment. This shapes the input: an early piece gives
+                  // the extractor nothing to resume, and the install passes.
+                  await Bun.sleep(100);
+                }
+                c.write(tgz.subarray(sent));
+                await c.flush();
+                c.close();
+              },
+            }),
+            { headers: { "content-type": "application/octet-stream" } },
+          );
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    writeFileSync(join(String(dir), "bunfig.toml"), Bun.TOML.stringify({ install: { registry: String(server.url) } }));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--verbose", "--linker=hoisted"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_TMPDIR: tmp,
+        TMPDIR: tmp,
+        TEMP: tmp,
+        TMP: tmp,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "bun-cache"),
+        // Without a Content-Length every tarball is streamed. Drain on
+        // every piece, so that the first one is extracted when it arrives.
+        BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    void proc.exited.then(() => (exited = true));
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const installed = join(String(dir), "node_modules", "sparse-pkg", "m.bin");
+    return { stderr, exitCode, file: existsSync(installed) ? readFileSync(installed) : null };
+  }
+
+  const pax = paxSparseMember();
+  const oneExtension = oldGnuSparseMember(1);
+  const twoExtensions = oldGnuSparseMember(2);
+
+  test.each([
+    ["at the first byte of a PAX 1.0 map", pax, [["map", 0]]],
+    ["inside a PAX 1.0 map", pax, [["map", 3]]],
+    ["twice inside a PAX 1.0 map", pax, [["map", 3], ["map", 9]]],
+    ["inside the padding of a PAX 1.0 map", pax, [["mapPadding", 100]]],
+    ["at the first byte of an old GNU extension block", oneExtension, [["extension0", 0]]],
+    ["inside an old GNU extension block", oneExtension, [["extension0", 3]]],
+    ["inside the second of two old GNU extension blocks", twoExtensions, [["extension1", 100]]],
+    ["inside each of two old GNU extension blocks", twoExtensions, [["extension0", 200], ["extension1", 300]]],
+  ] as [string, Member, [string, number][]][])("%s", async (_, member, cuts) => {
+    const { tgz, integrity, offsetOf } = buildPackage(member);
+    const { stderr, exitCode, file } = await installInPieces(
+      tgz,
+      integrity,
+      cuts.map(([label, delta]) => offsetOf(label, delta)),
+    );
+    expect(stderr.match(/^error:.*$/m)?.[0] ?? null).toBeNull();
+    expect(stderr).toContain("Streamed ");
+    expect({ length: file?.length, matches: file?.equals(member.expected) }).toEqual({
+      length: realSize,
+      matches: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Unlike registry tarballs, a `github:` tarball has its directory entries
 // created, with the mode libarchive reports for them. A GNU base-256 mode
 // field can set bits far above the twelve mode bits; both extractors must

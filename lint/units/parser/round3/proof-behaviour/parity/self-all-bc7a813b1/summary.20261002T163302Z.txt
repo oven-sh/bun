@@ -1,0 +1,49 @@
+run     2026-10-02T16:33:02Z  tag self-all-bc7a813b1  expect zero  steps seams seams-bu testrows comments targeted probes small-sub check bench tscases repo-ts repo-js small files runtime bundle pmdiff order
+base    /workspace/base/bun.f4d755a9c  sha256 833143090519ea1d1c0b089ca582dc76667825a4c1aa472199a356f775c0e98c  1.4.3-canary.1+bc7a813b1
+next    /workspace/base/bun.bc7a813b1  sha256 833143090519ea1d1c0b089ca582dc76667825a4c1aa472199a356f775c0e98c  1.4.3-canary.1+bc7a813b1  built 2026-10-02T14:11:39Z  workers 4
+tree    /workspace/wt/parser  2102fb058f9c6ac2f09d43501cf821b200e8bd87  0 modified files under src and test  EXPECTED_VERSION 34
+main    the tree holds main up to bc7a813b1, which the base binary is a build of
+tools   parity.sh a77c9f4bf548  harness.all.mjs 1c94e1dad47a (34 configurations)  diff.mjs 7594403b9718  seams-seen.mjs b67da585609f  causes none
+ok    seams     sources 1089   x 34 records 37026    differ 0       crashes 0/0  corpus 140755828465  sha256 of the records 255aa6be3c2c722d =
+ok    seams-bu  sources 744    x 34 records 25296    differ 0       crashes 0/0  corpus 77db46ce5942  sha256 of the records 549e63ad6fd95188 =
+ok    testrows  sources 301    x 34 records 10234    differ 0       crashes 0/0  corpus 7188b5c7588d  sha256 of the records 672f1e03d5b5f014 =
+ok    comments  sources 122    x 34 records 4148     differ 0       crashes 0/0  corpus 71d0420c2a27  sha256 of the records 13f998485d2a2c56 =
+ok    targeted  sources 3952   x 34 records 134368   differ 0       crashes 0/0  corpus 68d65cd91163  sha256 of the records 579fa4af21be4379 =
+ok    probes    sources 3361   x 34 records 114274   differ 0       crashes 0/0  corpus 61a16b1defb4  sha256 of the records 34890ad0f98ae728 =
+ok    small-sub sources 7089   x 34 records 241026   differ 0       crashes 0/0  corpus edb744ab7286  sha256 of the records 08aaea3bb89bfe09 =
+ok    check     sources 18390  x 34 records 625260   differ 0       crashes 0/0  corpus 15d1162dae52  sha256 of the records 4120467680510265 =
+ok    bench     sources 329    x 34 records 11186    differ 0       crashes 0/0  corpus 8e8640fec3fa  sha256 of the records 28db6ef12b8fa47f =
+ok    tscases   sources 14635  x 34 records 497590   differ 0       crashes 0/0  corpus cdddef44e6e6  sha256 of the records 52b0e193992ea0d3 =
+ok    repo-ts   sources 3157   x 34 records 107338   differ 0       crashes 0/0  corpus bf81950637d9  sha256 of the records 99c63f60b08e0688 =
+ok    repo-js   sources 7365   x 34 records 250410   differ 0       crashes 0/0  corpus e985a24c5748  sha256 of the records e85e57e3501161ec =
+ok    small     sources 209628 x 34 records 7127352  differ 0       crashes 0/0  corpus 19d140cdf29b  sha256 of the records 37ffa4cd917453e0 =
+ok    files           10777 files, 104438 records, bun 1.4.3 bc7a813b10b6ef8accc00c931b9a501331ac8c5c | 10777 files, 104438 records, bun 1.4.3 bc7a813b10b6ef8accc00c931b9a501331ac8c5c  sha256 80d7475579fc0860 =
+ok    runtime seams     1089 modules, 0 evaluated | 1089 modules, 0 evaluated  base: versions 33 entries 453  next: versions 33 entries 453  sha256 210a56896c816a0e =
+ok    runtime seams-bu  744 modules, 0 evaluated | 744 modules, 0 evaluated  base: versions 33 entries 338  next: versions 33 entries 338  sha256 d9ef1cb90f5da70b =
+ok    runtime testrows  301 modules, 0 evaluated | 301 modules, 0 evaluated  base: versions 33 entries 74  next: versions 33 entries 74  sha256 580d0f25123f8737 =
+ok    runtime comments  122 modules, 0 evaluated | 122 modules, 0 evaluated  base: versions 33 entries 101  next: versions 33 entries 101  sha256 fd0b1276f239d73a =
+ok    runtime targeted  3952 modules, 0 evaluated | 3952 modules, 0 evaluated  base: versions 33 entries 1990  next: versions 33 entries 1990  sha256 97b3758ec5df97dc =
+ok    runtime probes    3361 modules, 0 evaluated | 3361 modules, 0 evaluated  base: versions 33 entries 1146  next: versions 33 entries 1146  sha256 6410dab8af8b1855 =
+ok    runtime small-sub 7089 modules, 0 evaluated | 7089 modules, 0 evaluated  base: versions 33 entries 2053  next: versions 33 entries 2053  sha256 eca8475cf2b5cec9 =
+ok    runtime bench     329 modules, 0 evaluated | 329 modules, 0 evaluated  base: versions 33 entries 328  next: versions 33 entries 328  sha256 53ef4aa301bb26cb =
+ok    bundle  seams     1089 sources, 3267 bundles | 1089 sources, 3267 bundles  sha256 9b7fe28728024eeb =
+ok    bundle  seams-bu  744 sources, 2232 bundles | 744 sources, 2232 bundles  sha256 b43d85e7028a9366 =
+ok    bundle  testrows  301 sources, 903 bundles | 301 sources, 903 bundles  sha256 5e433514c8ae6685 =
+ok    bundle  comments  122 sources, 366 bundles | 122 sources, 366 bundles  sha256 982c9368b7e6795f =
+ok    bundle  targeted  3952 sources, 11856 bundles | 3952 sources, 11856 bundles  sha256 df2721d9ac2d22be =
+ok    bundle  probes    3361 sources, 10083 bundles | 3361 sources, 10083 bundles  sha256 b6b89d247a9f858f =
+ok    pmdiff  seams     1089 sources, 3267 files a side  exit 0 | exit 0  bytes 1103101 | 1103101  sha256 369cea75f6c83919 =
+ok    pmdiff  seams-bu  744 sources, 2232 files a side  exit 0 | exit 0  bytes 753951 | 753951  sha256 1951b33a4fbec69e =
+ok    pmdiff  testrows  301 sources, 903 files a side  exit 0 | exit 0  bytes 305820 | 305820  sha256 3dcb9ea58f41b992 =
+ok    pmdiff  comments  122 sources, 366 files a side  exit 0 | exit 0  bytes 123406 | 123406  sha256 b51ce1a80bf07da5 =
+ok    pmdiff  targeted  3952 sources, 11856 files a side  exit 0 | exit 0  bytes 3993085 | 3993085  sha256 e13501f94904bb98 =
+ok    pmdiff  probes    3361 sources, 10083 files a side  exit 0 | exit 0  bytes 3406633 | 3406633  sha256 a1362e0d4b49f732 =
+ok    order   seams     1089 sources, 3267 readings, 300 with names | 1089 sources, 3267 readings, 300 with names  sha256 9ca06340fdd5881e =
+ok    order   seams-bu  744 sources, 2232 readings, 258 with names | 744 sources, 2232 readings, 258 with names  sha256 63071c8b9dd98dc7 =
+ok    order   testrows  301 sources, 903 readings, 81 with names | 301 sources, 903 readings, 81 with names  sha256 2d53a86c2206cf2c =
+ok    order   comments  122 sources, 366 readings, 18 with names | 122 sources, 366 readings, 18 with names  sha256 6c38af46c3d1169b =
+ok    order   targeted  3952 sources, 11856 readings, 723 with names | 3952 sources, 11856 readings, 723 with names  sha256 4e69592033a7ee4e =
+ok    order   probes    3361 sources, 10083 readings, 168 with names | 3361 sources, 10083 readings, 168 with names  sha256 90cc22983070a50e =
+ok    order   bench     329 sources, 987 readings, 222 with names | 329 sources, 987 readings, 222 with names  sha256 74e14da2ce3687f1 =
+ok    order   repo-js   7365 sources, 22095 readings, 18843 with names | 7365 sources, 22095 readings, 18843 with names  sha256 04fd20ebed8291fd =
+RESULT  ZERO differing records in 42 pairs of runs

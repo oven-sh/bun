@@ -1,7 +1,3 @@
-10-02_12:54:07 anon=169MB pids=61 load=353.11 top=bun:115MB
-10-02_12:54:38 anon=1280MB pids=225 load=341.15 top=clang++:895MB
-10-02_12:55:12 anon=1420MB pids=101 load=415.31 top=rustc:884MB
-10-02_12:55:44 anon=1447MB pids=100 load=401.48 top=rustc:985MB
 10-02_12:56:14 anon=3268MB pids=72 load=382.34 top=rustc:3406MB
 10-02_12:56:45 anon=2915MB pids=71 load=409.42 top=rustc:2910MB
 10-02_12:57:18 anon=383MB pids=76 load=496.53 top=ld.lld:604MB
@@ -398,3 +394,7 @@
 10-02_16:36:52 anon=1121MB pids=50 load=944.70 top=bun.bc7a813b1:1311MB
 10-02_16:37:33 anon=15MB pids=57 load=950.95 top=bun.bc7a813b1:50MB
 10-02_16:38:18 anon=26MB pids=56 load=986.20 top=bun.f4d755a9c:60MB
+10-02_16:38:59 anon=8MB pids=60 load=968.23 top=bun.f4d755a9c:37MB
+10-02_16:39:44 anon=7MB pids=39 load=892.62 top=bun.f4d755a9c:10MB
+10-02_16:40:23 anon=138MB pids=48 load=829.98 top=clippy-driver:244MB
+10-02_16:41:02 anon=9MB pids=42 load=793.22 top=bun.f4d755a9c:39MB

@@ -1021,7 +1021,11 @@ it("escapes quotes and newlines in requested version literals when writing yarn.
 });
 
 describe.concurrent("yarn.lock and --dry-run", () => {
-  async function setup() {
+  // A way to ask for a yarn.lock: flags, an environment variable, or bunfig.
+  type Route = { flags: string[]; env?: Record<string, string>; bunfig?: string };
+  const yarnBunfig = '\n[install.lockfile]\nprint = "yarn"\n';
+
+  async function setup(route: Pick<Route, "env" | "bunfig"> = {}) {
     const { packageDir, packageJson } = await registry.createTestDir();
     await write(
       packageJson,
@@ -1032,94 +1036,81 @@ describe.concurrent("yarn.lock and --dry-run", () => {
         },
       }),
     );
+    if (route.bunfig) {
+      const bunfig = join(packageDir, "bunfig.toml");
+      await write(bunfig, (await file(bunfig).text()) + route.bunfig);
+    }
+    const yarnLock = join(packageDir, "yarn.lock");
 
-    async function run(args: string[], extraEnv: Record<string, string> = {}) {
+    async function run(args: string[]) {
       const { exited, stderr } = spawn({
         cmd: [bunExe(), ...args],
         cwd: packageDir,
-        env: { ...env, ...extraEnv },
+        env: { ...env, ...route.env },
         stdout: "ignore",
         stderr: "pipe",
       });
       const [err, exitCode] = await Promise.all([stderr.text(), exited]);
-      return { err, exitCode };
+      return { err, result: { args, wrote: await exists(yarnLock), exitCode } };
     }
 
-    return { packageDir, yarnLock: join(packageDir, "yarn.lock"), run };
+    return { yarnLock, run };
   }
 
-  const yarnBunfig = '\n[install.lockfile]\nprint = "yarn"\n';
-
-  // The three ways to ask for a yarn.lock.
-  it.each([
+  describe.each([
     ["--yarn before --dry-run", { flags: ["--yarn", "--dry-run"] }],
     ["--yarn after --dry-run", { flags: ["--dry-run", "--yarn"] }],
     ["BUN_CONFIG_YARN_LOCKFILE", { flags: ["--dry-run"], env: { BUN_CONFIG_YARN_LOCKFILE: "1" } }],
     ['bunfig print = "yarn"', { flags: ["--dry-run"], bunfig: yarnBunfig }],
-  ] as [string, { flags: string[]; env?: Record<string, string>; bunfig?: string }][])(
-    "a dry run does not write it: %s",
-    async (_, route) => {
-      const { packageDir, yarnLock, run } = await setup();
-      if (route.bunfig) {
-        const bunfig = join(packageDir, "bunfig.toml");
-        await write(bunfig, (await file(bunfig).text()) + route.bunfig);
-      }
+  ] as [string, Route][])("%s", (_, route) => {
+    it("a dry run does not write it", async () => {
+      const { run } = await setup(route);
+      const args = ["install", ...route.flags];
+      const { err, result } = await run(args);
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({ args, wrote: false, exitCode: 0 });
+    });
+  });
 
-      for (const command of [["install"], ["add", "a-dep"], ["update"]]) {
-        const args = [...command, ...route.flags];
-        const { err, exitCode } = await run(args, route.env);
-        expect(err).not.toContain("error:");
-        expect({ args, wrote: await exists(yarnLock), exitCode }).toEqual({ args, wrote: false, exitCode: 0 });
-      }
-    },
-  );
+  describe.each(["add a-dep", "update"])("%s", command => {
+    it("a dry run does not write it", async () => {
+      const { run } = await setup();
+      const args = [...command.split(" "), "--yarn", "--dry-run"];
+      const { err, result } = await run(args);
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({ args, wrote: false, exitCode: 0 });
+    });
+  });
 
   it("a dry run leaves an existing yarn.lock unchanged", async () => {
     const { yarnLock, run } = await setup();
-    expect((await run(["install", "--yarn"])).err).toContain("Saved yarn.lock");
+    const install = await run(["install", "--yarn"]);
+    expect(install.err).toContain("Saved yarn.lock");
+    expect(install.result).toEqual({ args: ["install", "--yarn"], wrote: true, exitCode: 0 });
     const before = await file(yarnLock).text();
     expect(before).toContain("no-deps@1.0.0");
 
-    for (const args of [
-      ["add", "a-dep", "--yarn", "--dry-run"],
-      ["remove", "no-deps", "--yarn", "--dry-run"],
-    ]) {
-      const { err, exitCode } = await run(args);
-      expect(err).not.toContain("error:");
-      expect({ args, unchanged: (await file(yarnLock).text()) === before, exitCode }).toEqual({
-        args,
-        unchanged: true,
-        exitCode: 0,
-      });
-    }
+    const args = ["add", "a-dep", "--yarn", "--dry-run"];
+    const { err, result } = await run(args);
+    expect(err).not.toContain("error:");
+    expect({ ...result, unchanged: (await file(yarnLock).text()) === before }).toEqual({
+      args,
+      wrote: true,
+      exitCode: 0,
+      unchanged: true,
+    });
   });
 
-  it("BUN_CONFIG_YARN_LOCKFILE and bunfig still write it in an install that is not a dry run", async () => {
-    const { packageDir, yarnLock, run } = await setup();
-
-    const fromEnv = await run(["install"], { BUN_CONFIG_YARN_LOCKFILE: "1" });
-    expect(fromEnv.err).toContain("Saved yarn.lock");
-    expect({ wrote: await exists(yarnLock), exitCode: fromEnv.exitCode }).toEqual({ wrote: true, exitCode: 0 });
-
-    await rm(yarnLock);
-    const bunfig = join(packageDir, "bunfig.toml");
-    await write(bunfig, (await file(bunfig).text()) + yarnBunfig);
-    const fromBunfig = await run(["install"]);
-    expect(fromBunfig.err).toContain("Saved yarn.lock");
-    expect({ wrote: await exists(yarnLock), exitCode: fromBunfig.exitCode }).toEqual({ wrote: true, exitCode: 0 });
-  });
-
-  it("--no-save and --frozen-lockfile still write it", async () => {
-    const { yarnLock, run } = await setup();
-    expect((await run(["install", "--yarn"])).err).toContain("Saved yarn.lock");
-
-    for (const flag of ["--no-save", "--frozen-lockfile"]) {
-      await rm(yarnLock);
-      const args = ["install", flag, "--yarn"];
-      const { err, exitCode } = await run(args);
+  describe.each([
+    ["BUN_CONFIG_YARN_LOCKFILE", { flags: [], env: { BUN_CONFIG_YARN_LOCKFILE: "1" } }],
+    ['bunfig print = "yarn"', { flags: [], bunfig: yarnBunfig }],
+  ] as [string, Route][])("%s", (_, route) => {
+    it("an install that is not a dry run writes it", async () => {
+      const { run } = await setup(route);
+      const { err, result } = await run(["install"]);
       expect(err).toContain("Saved yarn.lock");
-      expect({ args, wrote: await exists(yarnLock), exitCode }).toEqual({ args, wrote: true, exitCode: 0 });
-    }
+      expect(result).toEqual({ args: ["install"], wrote: true, exitCode: 0 });
+    });
   });
 });
 

@@ -124,4 +124,59 @@ describe("tls.createSecureContext pfx argument", () => {
       expect(() => tls.createSecureContext({ pfx: view, passphrase: "sample" })).not.toThrow();
     }
   });
+
+  // Option-normalising code branches on `x instanceof tls.SecureContext`, so
+  // the export must be the class createSecureContext() instantiates.
+  it("tls.SecureContext is the class of the objects createSecureContext returns", () => {
+    expect(typeof tls.SecureContext).toBe("function");
+    expect(typeof tls.SecureContext.prototype).toBe("object");
+    expect(tls.SecureContext.name).toBe("SecureContext");
+
+    const ctx = tls.createSecureContext({});
+    expect(ctx instanceof tls.SecureContext).toBe(true);
+    expect(Object.getPrototypeOf(ctx)).toBe(tls.SecureContext.prototype);
+    expect(ctx.constructor).toBe(tls.SecureContext);
+    expect({} instanceof tls.SecureContext).toBe(false);
+
+    // A user-constructed context is the same kind of object and works as
+    // `secureContext`.
+    const own = new tls.SecureContext({ ciphers: "ECDHE-RSA-AES128-GCM-SHA256" });
+    expect(own instanceof tls.SecureContext).toBe(true);
+    expect(typeof own.context.addCACert).toBe("function");
+    expect(tls.createSecureContext(own)).toBe(own);
+
+    // Node's SecureContext returns an instance when called without `new`.
+    // @ts-expect-error the types only admit `new`
+    const called = tls.SecureContext({});
+    expect(called instanceof tls.SecureContext).toBe(true);
+    expect(typeof called.context.addCACert).toBe("function");
+  });
+
+  // Giving the builtin SecureContext function its prototype must mark only that
+  // prototype object, not the shared structure every empty `{}` starts from.
+  // When it leaked, debug builds hit `ASSERTION FAILED: !newStructure->mayBePrototype()`
+  // in JSON.parse once node:tls had loaded.
+  it("loading node:tls leaves plain object structures alone", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          require("node:tls");
+          const warm = new Object();
+          warm.zz1 = 1;
+          let parsed;
+          for (let i = 0; i < 3; i++) parsed = JSON.parse('{"zz1":1}');
+          console.log(JSON.stringify(parsed));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe('{"zz1":1}\n');
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });

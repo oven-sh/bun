@@ -3,7 +3,7 @@ import { createTest } from "node-harness";
 import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { getCACertificates, rootCertificates } from "tls";
+import tls, { getCACertificates, rootCertificates } from "tls";
 const { describe, expect } = createTest(import.meta.path);
 
 describe("NodeTLS.cpp", () => {
@@ -81,5 +81,39 @@ describe("NodeTLS.cpp", () => {
       expect(cert.ca).toBe(true);
       expect(cert.issuer).toBe(cert.subject);
     }
+  });
+
+  // Node documents tls.getCiphers() as the supported cipher names, lower-cased
+  // and sorted. It is not the DEFAULT_CIPHERS policy string split on ":".
+  test("getCiphers lists the supported ciphers, lower-cased and sorted", () => {
+    const ciphers = tls.getCiphers();
+    expect(ciphers).toEqual([...ciphers].sort());
+    expect(new Set(ciphers).size).toBe(ciphers.length);
+    for (const name of ciphers) {
+      expect(name).toBe(name.toLowerCase());
+      expect(name).not.toStartWith("!");
+    }
+    expect(ciphers).toContain("aes256-sha");
+    expect(ciphers).toContain("ecdhe-rsa-aes128-gcm-sha256");
+    expect(ciphers).toContain("tls_aes_128_gcm_sha256");
+    expect(ciphers).toContain("tls_aes_256_gcm_sha384");
+    expect(ciphers).toContain("tls_chacha20_poly1305_sha256");
+    expect(ciphers).not.toContain("high");
+    expect(ciphers).not.toContain("!anull");
+
+    // The list is the supported set, so DEFAULT_CIPHERS does not change it.
+    const before = tls.DEFAULT_CIPHERS;
+    try {
+      tls.DEFAULT_CIPHERS = "ECDHE-RSA-AES128-GCM-SHA256";
+      expect(tls.getCiphers()).toEqual(ciphers);
+    } finally {
+      tls.DEFAULT_CIPHERS = before;
+    }
+
+    // Each call returns a fresh array, so a caller cannot change the cached list.
+    const copy = [...ciphers];
+    expect(tls.getCiphers()).not.toBe(tls.getCiphers());
+    tls.getCiphers().length = 0;
+    expect(tls.getCiphers()).toEqual(copy);
   });
 });

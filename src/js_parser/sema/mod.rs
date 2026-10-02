@@ -163,8 +163,9 @@ pub(crate) fn early_error(text: &[u8], at: &[u8]) -> Option<(u32, i32)> {
     if text == b"\"await\" can only be used inside an \"async\" function" {
         return Some((1308, -6));
     }
+    // `checkGrammarModifiers`
     if text == b"Class constructor cannot be an async function" {
-        return Some((1089, -6));
+        return Some((0, 0));
     }
     // `checkMethodDeclaration`: only of the word. The string is a name like any other.
     if text == b"Class constructor cannot be a generator function" {

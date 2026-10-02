@@ -13,7 +13,7 @@ use bun_sema::hir::{
     StmtId, StmtKind, TextRange, TupleElem, TypeNodeId, TypeNodeKind, TypeParam, TypeParamId,
 };
 
-use super::builder::{Builder, Modified, modifier_error};
+use super::builder::Builder;
 
 /// A part of a cloned node that is written as a JavaScript expression or function body. The lowering converts it and fills it in.
 pub(crate) enum PendingPart {
@@ -452,7 +452,12 @@ impl Builder<'_> {
             constraint,
             default,
             flags: param_flags,
+            modifiers,
         } = self.ts[id];
+        let modifiers: smallvec::SmallVec<[(Flags, u32); 4]> = self.ts[modifiers]
+            .iter()
+            .map(|modifier| (flags(modifier.flag), pos(modifier.loc)))
+            .collect();
         TypeParam {
             name: self.atom(&name),
             pos: pos(loc),
@@ -461,6 +466,7 @@ impl Builder<'_> {
             constraint: self.clone_type(constraint),
             default: self.clone_type(default),
             flags: flags(param_flags),
+            modifiers: self.add_modifier_list(&modifiers),
         }
     }
 
@@ -495,35 +501,12 @@ impl Builder<'_> {
                     pattern,
                     ty,
                     flags: param_flags,
-                    modifiers,
                     loc,
                     full_start,
                     end,
                     ..
                 } = self.ts[param];
                 let mut param_flags = flags(param_flags);
-                // `checkGrammarModifiers`
-                if modifiers.len() > 1
-                    || param_flags.intersects(
-                        Flags::STATIC
-                            | Flags::AMBIENT
-                            | Flags::ASYNC
-                            | Flags::ABSTRACT
-                            | Flags::ACCESSOR,
-                    )
-                {
-                    let modifiers: smallvec::SmallVec<[(Flags, u32); 4]> = self.ts[modifiers]
-                        .iter()
-                        .map(|modifier| (flags(modifier.flag), pos(modifier.loc)))
-                        .collect();
-                    self.file.early_errors.extend(modifier_error(
-                        &modifiers,
-                        Modified::Parameter,
-                        false,
-                        false,
-                        false,
-                    ));
-                }
                 if param_flags.intersects(
                     Flags::PUBLIC
                         | Flags::PRIVATE
@@ -843,7 +826,7 @@ impl Builder<'_> {
         id: ts::MemberId,
         is_ambient: bool,
     ) -> Member {
-        let mut member = self.clone_member_of(id, Some(is_ambient));
+        let mut member = self.clone_member(id);
         if is_ambient {
             member.flags |= Flags::AMBIENT;
             self.file[member.func].flags |= Flags::AMBIENT;
@@ -852,11 +835,6 @@ impl Builder<'_> {
     }
 
     fn clone_member(&mut self, id: ts::MemberId) -> Member {
-        self.clone_member_of(id, None)
-    }
-
-    /// `in_class`: it is a member of a class, and whether that is ambient.
-    fn clone_member_of(&mut self, id: ts::MemberId, in_class: Option<bool>) -> Member {
         let ts::Member {
             kind,
             key,
@@ -870,7 +848,6 @@ impl Builder<'_> {
             end,
             ..
         } = self.ts[id];
-        let errors_before = self.file.early_errors.len();
         let mut modifier_list = Span::EMPTY;
         if !modifiers.is_empty() {
             let modifiers: smallvec::SmallVec<[(Flags, u32); 4]> = self.ts[modifiers]
@@ -878,28 +855,8 @@ impl Builder<'_> {
                 .map(|modifier| (flags(modifier.flag), pos(modifier.loc)))
                 .collect();
             modifier_list = self.add_modifier_list(&modifiers);
-            let on = match kind {
-                ts::MemberKind::IndexSignature if in_class.is_some() => {
-                    Modified::ClassIndexSignature
-                }
-                ts::MemberKind::IndexSignature => Modified::IndexSignature,
-                ts::MemberKind::Getter | ts::MemberKind::Setter => Modified::Accessor,
-                ts::MemberKind::Property => Modified::PropertySignature,
-                _ => Modified::MethodSignature,
-            };
-            // `checkGrammarModifiers`
-            if let Some(error) = modifier_error(
-                &modifiers,
-                on,
-                in_class.is_some() && self.in_abstract_class,
-                in_class == Some(true),
-                matches!(key, ts::PropertyKey::Private(_)),
-            ) {
-                self.file.early_errors.push(error);
-            }
         }
-        // `checkGrammarIndexSignature`: nothing more is said after an error in the modifiers.
-        if kind == ts::MemberKind::IndexSignature && self.file.early_errors.len() == errors_before {
+        if kind == ts::MemberKind::IndexSignature {
             self.check_kept_index_signature(id);
         }
         // `checkVariableLikeDeclaration`: said whatever else is wrong with the file.

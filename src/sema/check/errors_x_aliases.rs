@@ -14,7 +14,7 @@ use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{ClassOwner, Decl, MemberOwner, Parent, PatParent, SymbolId};
 use crate::program::TypeOnlyDeclaration;
-use crate::resolve::{ModuleKind, join, parent_dir};
+use crate::resolve::{ModuleKind, is_declaration_file_name, join, parent_dir};
 
 const ALL_MEANINGS: SymFlags = SymFlags::VALUE
     .union(SymFlags::TYPE)
@@ -23,38 +23,22 @@ const ALL_MEANINGS: SymFlags = SymFlags::VALUE
 /// A declaration of an alias in the file that is checked.
 #[derive(Copy, Clone)]
 struct AliasNode {
-    sym: Sym,
     decl: Decl,
     /// Where an error about it goes.
     start: u32,
     stmt: StmtId,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum SiteKind {
-    SideEffect,
-    Import,
-    Export,
-    ImportEquals,
-    ImportType,
-    ImportCall,
-    /// `require("m")` in JavaScript
-    Require,
-}
-
-/// Where a module specifier is written.
-#[derive(Copy, Clone)]
-struct SpecifierSite {
-    kind: SiteKind,
-    /// `getModeForUsageLocation`
-    mode: ResolutionMode,
+/// What `resolveExternalModule` asks of `location`.
+#[derive(Copy, Clone, Default)]
+pub(super) struct SpecifierSite {
     /// `IsEmittableImport`, of what it is in.
-    is_emittable: bool,
+    pub(super) is_emittable: bool,
     /// `IsPartOfTypeOnlyImportOrExportDeclaration`, of every node the module is asked for from.
-    is_type_only: bool,
+    pub(super) is_type_only: bool,
     /// `import type .. from`
-    is_type_only_import: bool,
-    is_ambient: bool,
+    pub(super) is_type_only_import: bool,
+    pub(super) is_ambient: bool,
 }
 
 impl Checker<'_> {
@@ -65,13 +49,9 @@ impl Checker<'_> {
             return;
         }
         self.xa_self_references(file, out);
-        self.xa_alias_declarations(file, out);
-        self.xa_required_types(file, out);
         self.xa_imports_hiding_global_values(file, out);
         self.xa_decorator_metadata(file, out);
         self.xa_export_star_conflicts(file, out);
-        self.xa_imported_members(file, out);
-        self.xa_module_specifiers(file, out);
         self.xa_expressions(file, out);
     }
 
@@ -181,17 +161,17 @@ impl Checker<'_> {
             }
         };
         let start = self.xa_alias_node_start(file, decl);
-        let node = AliasNode {
-            sym,
-            decl,
-            start,
-            stmt,
-        };
-        let end = match self.xa_alias_node_end(file, &node) {
-            0 => self.end_of_token_at(file, start),
+        let node = AliasNode { decl, start, stmt };
+        Some(self.xa_place_of_alias_node(file, &node))
+    }
+
+    /// `GetErrorRangeForNode`
+    fn xa_place_of_alias_node(&self, file: FileId, node: &AliasNode) -> (FileId, u32, u32) {
+        let end = match self.xa_alias_node_end(file, node) {
+            0 => self.end_of_token_at(file, node.start),
             end => end,
         };
-        Some((file, start, end))
+        (file, node.start, end)
     }
 
     /// `GetErrorRangeForNode` of an `export *`.
@@ -334,312 +314,226 @@ impl Checker<'_> {
 
     // ───────────────────────────── the declarations of aliases ─────────────────────────────
 
-    /// Every alias the file declares, in the order they are written, as `checkSourceElements` gets to them.
-    fn xa_alias_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let files = self.files();
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // A circle goes through a file by an alias others can get at, or by one that stands for another name of the file.
-        let (mut has_alias, mut can_be_circular) = (false, false);
-        for symbol in &bound.symbols {
-            if !symbol.flags.contains(SymFlags::ALIAS) {
-                continue;
-            }
-            has_alias = true;
-            can_be_circular = symbol.decls.iter().any(|d| {
-                matches!(
-                    d,
-                    Decl::ImportEquals(_)
-                        | Decl::ExportSpec(_)
-                        | Decl::ExportStarAs(_)
-                        | Decl::ExportExpr(_)
-                )
-            });
-            if can_be_circular {
-                break;
+    /// `node.Symbol`, of the declarations of aliases in `file`.
+    pub(super) fn symbols_of_alias_declarations(&self, file: FileId) -> FxHashMap<Decl, Sym> {
+        let mut symbols = FxHashMap::default();
+        for (i, symbol) in self.bound(file).symbols.iter().enumerate() {
+            if symbol.flags.contains(SymFlags::ALIAS) {
+                let sym = self.files().sym(file, SymbolId(i as u32));
+                symbols.extend(symbol.decls.iter().map(|&decl| (decl, sym)));
             }
         }
-        if !has_alias || !files.options.isolated_modules && !can_be_circular && !hir.is_js {
-            return;
-        }
-        let mut import_stmts = vec![StmtId::NONE; hir.imports.len()];
-        let mut import_equals_stmts = vec![StmtId::NONE; hir.import_equals.len()];
-        let mut export_stmts = vec![StmtId::NONE; hir.exports.len()];
-        for (i, stmt) in hir.stmts.iter().enumerate() {
-            let of = match stmt.kind {
-                StmtKind::Import(x) => &mut import_stmts[x.idx()],
-                StmtKind::ImportEquals(x) => &mut import_equals_stmts[x.idx()],
-                StmtKind::ExportNamed(x) => &mut export_stmts[x.idx()],
-                _ => continue,
-            };
-            if !matches!(bound.stmt_parent[i], Parent::None) {
-                *of = StmtId(i as u32);
-            }
-        }
-        let mut nodes: Vec<AliasNode> = Vec::new();
-        for (i, symbol) in bound.symbols.iter().enumerate() {
-            if !symbol.flags.contains(SymFlags::ALIAS) {
-                continue;
-            }
-            let sym = files.sym(file, SymbolId(i as u32));
-            for &decl in &symbol.decls {
-                let stmt = match decl {
-                    Decl::ImportDefault(x) | Decl::ImportNamespace(x) => import_stmts[x.idx()],
-                    Decl::ImportSpec(s) => import_stmts[hir[s].import.idx()],
-                    Decl::ImportEquals(x) => import_equals_stmts[x.idx()],
-                    Decl::ExportSpec(s) => export_stmts[hir[s].export.idx()],
-                    Decl::ExportStarAs(s) | Decl::ExportExpr(s) | Decl::UmdGlobal(s) => s,
-                    _ => continue,
-                };
-                if stmt.is_none() {
-                    continue;
-                }
-                let start = self.xa_alias_node_start(file, decl);
-                nodes.push(AliasNode {
-                    sym,
-                    decl,
-                    start,
-                    stmt,
-                });
-            }
-        }
-        nodes.sort_unstable_by_key(|n| n.start);
-        for node in &nodes {
-            self.xa_alias_symbol(file, node, out);
-        }
-        // `resolveAlias`: at `getDeclarationOfAliasSymbol`, which is the last.
-        for (i, node) in nodes.iter().enumerate() {
-            let sym = node.sym;
-            if files.alias_links(sym).is_circular && !nodes[i + 1..].iter().any(|n| n.sym == sym) {
-                out.push(Diagnostic {
-                    start: node.start,
-                    code: 2303,
-                });
-                let end = self.xa_alias_node_end(file, node);
-                self.explain_to(node.start, end, 2303, |c| vec![c.symbol_to_string(sym)]);
-            }
+        symbols
+    }
+
+    /// `getVerbatimModuleSyntaxErrorMessage`
+    pub(super) fn verbatim_module_syntax_error_message(&self, file: FileId) -> u32 {
+        let path = &self.files().module(file).path;
+        if path.ends_with(".cts") || path.ends_with(".cjs") {
+            1286
+        } else {
+            1295
         }
     }
 
-    /// `checkAliasSymbol`, and what stands before it in `checkImportDeclaration`, `checkImportEqualsDeclaration` and
-    /// `checkExportDeclaration`.
-    fn xa_alias_symbol(&mut self, file: FileId, node: &AliasNode, out: &mut Vec<Diagnostic>) {
+    /// `c.error(..)`, and `addTypeOnlyDeclarationRelatedInfo`. With `type_only`: whether it counts as an export.
+    fn xa_error_about_type_only(
+        &mut self,
+        at: (FileId, u32, u32),
+        code: u32,
+        args: &[Arg<'_>],
+        type_only: Option<(TypeOnlyDeclaration, bool)>,
+        name: Atom,
+    ) {
+        let related = type_only.map_or_else(Vec::new, |(type_only, is_export)| {
+            self.xa_type_only_related(type_only, is_export, self.atom_text(name))
+        });
+        let related = related
+            .into_iter()
+            .filter_map(super::explain::Related::into_reported);
+        self.error(at, code, args)
+            .related_information
+            .extend(related);
+    }
+
+    /// `checkAliasSymbol`, of the declaration `decl` in the statement `stmt`. `is_ambient`: `node.Flags&NodeFlagsAmbient`.
+    pub(super) fn check_alias_symbol(
+        &mut self,
+        file: FileId,
+        aliases: &FxHashMap<Decl, Sym>,
+        stmt: StmtId,
+        decl: Decl,
+        is_ambient: bool,
+    ) {
+        let Some(&sym) = aliases.get(&decl) else {
+            return;
+        };
         let files = self.files();
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let options = &files.options;
-        let AliasNode {
-            sym,
-            decl,
-            start,
-            stmt,
-        } = *node;
-        // `checkGrammarModuleElementContext`
-        let (is_at_top, is_in_ambient_module, mut is_ambient) = match bound.stmt_parent[stmt.idx()]
-        {
-            Parent::File => (true, false, false),
-            Parent::Module(m) => (
-                false,
-                !matches!(hir[m].name, ModuleName::Ident(_)),
-                hir[m].flags.contains(Flags::AMBIENT),
-            ),
-            _ => return,
-        };
-        // `NodeFlagsAmbient` is set on every node of a declaration file.
-        is_ambient |= hir.kind == FileKind::Declaration;
-        let spec = match (decl, hir[stmt].kind) {
-            (
-                Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_),
-                StmtKind::Import(x),
-            ) => hir[x].spec,
-            (Decl::ImportEquals(x), _) => match hir[x].target {
-                ImportEqualsTarget::Require(spec) => spec,
-                ImportEqualsTarget::Entity(_) => Atom::NONE,
-            },
-            (Decl::ExportSpec(_), StmtKind::ExportNamed(x)) => hir[x].spec,
-            (Decl::ExportStarAs(_), StmtKind::ExportStar { spec, .. }) => spec,
-            // Other passes report the errors of `checkExportAssignment`.
-            _ => return,
-        };
-        // `checkExternalImportOrExportDeclaration`
-        if spec.is_some() {
-            let text = files.atoms.bytes(spec);
-            if !is_at_top && !is_in_ambient_module
-                || is_in_ambient_module
-                    && (is_relative_path(text) || text.starts_with(b"/"))
-                    && !files.module(file).is_module()
-            {
-                return;
-            }
-        }
-        let module = if spec.is_some() {
-            files.module_of_specifier(file, spec)
-        } else {
-            None
-        };
-        match decl {
-            // The names in braces are looked at once the module is found.
-            Decl::ImportSpec(_) if module.is_none() => return,
-            // A module that is `export =` is refused for that.
-            Decl::ExportStarAs(_)
-                if module.is_some_and(|m| files.export(m, known::export_equals).is_some()) =>
-            {
-                return;
-            }
-            Decl::ImportEquals(x) => is_ambient |= hir[x].flags.contains(Flags::AMBIENT),
-            _ => {}
-        }
-        let links = files.alias_links(sym);
+        let (hir, bound, options) = (self.hir(file), self.bound(file), &files.options);
+        // `getTargetOfImportEqualsDeclaration`
         if let Decl::ImportEquals(x) = decl
             && let ImportEqualsTarget::Entity(names) = hir[x].target
         {
-            self.xa_import_alias_of_type_only(file, x, names, out);
+            self.xa_import_alias_of_type_only(file, x, names);
         }
-        let Some(target) = links.alias_target else {
+        self.check_target_of_alias_declaration(file, sym, decl);
+        // `getMergedSymbol(core.OrElse(symbol.ExportSymbol, symbol))`
+        let symbol = match files.symbol(sym).export_symbol {
+            SymbolId::NONE => sym,
+            exported => files.sym(sym.file, exported),
+        };
+        // Most imports of most programs: the name means nothing else here, and the rest is for JavaScript and `isolatedModules`.
+        let meanings =
+            SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
+        if !hir.is_js && !options.isolated_modules && !files.flags(symbol).intersects(meanings) {
+            return;
+        }
+        let target = self.resolve_alias(sym);
+        let Some(target_flags) = self.flags_of_alias_target(sym) else {
             return;
         };
-        // The remaining checks apply to JavaScript files and to `isolatedModules`, and only to an alias that is not type-only.
-        if !hir.is_js && !options.isolated_modules
-            || files.is_type_only_import_or_export_declaration(file, decl)
-        {
-            return;
-        }
-        // It ends in `unknownSymbol`, which is everything.
-        let target_flags = files.symbol_flags(target);
-        if target_flags == SymFlags::all() {
-            return;
-        }
-        // `combineValueAndTypeSymbols`: what it makes is a value.
-        let is_type = !target_flags.intersects(SymFlags::VALUE)
-            && self.combined_symbol_of_alias(sym).is_none();
+        let start = match decl {
+            Decl::Require(pat) => hir[pat].pos,
+            _ => self.xa_alias_node_start(file, decl),
+        };
+        let node = AliasNode { decl, start, stmt };
+        let is_type = !target_flags.intersects(SymFlags::VALUE);
+        let is_type_only = files.is_type_only_import_or_export_declaration(file, decl);
+        let is_export_specifier = matches!(decl, Decl::ExportSpec(_));
+        let binding_element = match decl {
+            Decl::Require(pat) => match bound.pat_parent[pat.idx()] {
+                PatParent::Prop(_, p) => Some(p),
+                _ => None,
+            },
+            _ => None,
+        };
         // A type-only import or export already has a grammar error in a JavaScript file.
-        if hir.is_js && is_type {
+        if hir.is_js && is_type && !is_type_only {
             // `node.PropertyNameOrName()`
             let name_start = match decl {
                 Decl::ImportDefault(x) => hir[x].default_pos,
-                Decl::ImportNamespace(x) => hir[x].namespace_pos,
                 Decl::ImportSpec(s) => hir[s].imported_pos,
                 Decl::ExportSpec(s) => hir[s].local_pos,
                 Decl::ImportEquals(x) => hir[x].name_pos,
-                _ => start,
+                _ => binding_element.map_or(start, |p| hir[p].pos),
             };
-            out.push(Diagnostic {
-                start: name_start,
-                code: if matches!(decl, Decl::ExportSpec(_)) {
-                    18043
-                } else {
-                    18042
-                },
-            });
-            // What is no Identifier goes by the name of the symbol.
-            let is_string = matches!(hir.text.get(name_start as usize), Some(b'"' | b'\''));
-            let identifier = match decl {
-                Decl::ImportSpec(s) if !is_string => hir[s].imported,
-                _ => files.symbol(sym).name,
-            };
-            self.note(
-                name_start,
-                0,
-                18042,
-                type_import_in_javascript(
-                    self.atom_text(identifier),
-                    spec.is_some().then(|| self.atom_text(spec)),
-                    matches!(decl, Decl::ImportSpec(_)),
-                ),
-            );
-            // The `@typedef` that exports it as it is.
-            if matches!(decl, Decl::ExportSpec(_)) {
-                self.relate(name_start, 18043, |c| {
+            let at = self.place_of_token(file, name_start);
+            if is_export_specifier {
+                // The `@typedef` that exports it as it is.
+                let exported = target.symbol().and_then(|target| {
                     let declarations = files.decls_of(target);
-                    let exported = declarations
-                        .iter()
-                        .find_map(|&(of, declared)| match declared {
-                            Decl::Alias(a) if of == file && hir.is_in_jsdoc(hir[a].name_pos) => {
-                                Some(hir[a].name_pos)
-                            }
-                            _ => None,
-                        });
-                    exported
-                        .map(|at| super::explain::Related {
-                            at: Some(c.place_of_token(file, at)),
-                            code: 18044,
-                            args: vec![c.atom_text(files.symbol(target).name)],
-                        })
-                        .into_iter()
-                        .collect()
+                    let mut declarations = declarations.iter();
+                    declarations.find_map(|&(of, declared)| match declared {
+                        Decl::Alias(a) if of == file && hir.is_in_jsdoc(hir[a].name_pos) => {
+                            Some((hir[a].name_pos, files.symbol(target).name))
+                        }
+                        _ => None,
+                    })
                 });
+                let related = exported.map(|(pos, name)| {
+                    let at = self.place_of_token(file, pos);
+                    self.new_diagnostic(at, 18044, &[Arg::Atom(name)])
+                });
+                self.error(at, 18043, &[])
+                    .related_information
+                    .extend(related);
+                return;
             }
-            // `checkAliasSymbol` returns before 2440 and 2484, which earlier passes report at the start of the declaration.
-            out.retain(|d| d.start != start || !matches!(d.code, 2440 | 2484));
+            // What is no Identifier goes by the name of the symbol.
+            let written = hir.text.get(name_start as usize).copied();
+            let name = files.symbol(sym).name;
+            let identifier = match decl {
+                _ if !written.is_some_and(is_identifier_part) => name,
+                Decl::ImportSpec(s) => hir[s].imported,
+                _ => binding_element.map_or(name, |p| hir[p].key.name().unwrap_or(name)),
+            };
+            // `TryGetModuleSpecifierFromDeclaration`
+            let specifier = match decl {
+                Decl::ImportDefault(x) | Decl::ImportNamespace(x) => hir[x].spec,
+                Decl::ImportSpec(s) => hir[hir[s].import].spec,
+                Decl::ImportEquals(x) => match hir[x].target {
+                    ImportEqualsTarget::Require(spec) => spec,
+                    ImportEqualsTarget::Entity(_) => Atom::NONE,
+                },
+                Decl::Require(pat) => bound.required_by(hir, pat).map_or(Atom::NONE, |it| it.0),
+                _ => Atom::NONE,
+            };
+            let specifier = match specifier {
+                Atom::NONE => &b"..."[..],
+                specifier => files.atoms.bytes(specifier),
+            };
+            let mut import_text = [b"import(\"", specifier, b"\")"].concat();
+            if matches!(decl, Decl::ImportSpec(_)) {
+                import_text.push(b'.');
+                import_text.extend_from_slice(files.atoms.bytes(identifier));
+            }
+            let args = [Arg::Atom(identifier), Arg::Bytes(&import_text)];
+            self.error(at, 18042, &args);
             return;
         }
-        if !options.isolated_modules {
-            return;
-        }
-        // The meanings the name has in the file besides. What it stands for having one of them too is 2440 or 2484.
-        let own = files.flags(sym);
+        // `declareSymbolEx`: a declaration that was refused is a symbol of its own, which means nothing besides.
+        let own = if files.declaration_of_alias_symbol(sym) == Some((file, decl)) {
+            files.flags(symbol)
+        } else {
+            SymFlags::ALIAS
+        };
+        let is_value_here = own.intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE);
         let mut excluded = SymFlags::empty();
-        for meaning in [SymFlags::VALUE, SymFlags::TYPE, SymFlags::NAMESPACE] {
-            if own.intersects(meaning) {
+        for (is_meant, meaning) in [
+            (is_value_here, SymFlags::VALUE),
+            (own.intersects(SymFlags::TYPE), SymFlags::TYPE),
+            (own.intersects(SymFlags::NAMESPACE), SymFlags::NAMESPACE),
+        ] {
+            if is_meant {
                 excluded |= meaning;
             }
         }
-        // `compilerOptions.isolatedModules` itself, not `GetIsolatedModules`: `verbatimModuleSyntax` has its own error for the import.
-        if is_type
-            && !target_flags.intersects(excluded)
-            && !matches!(decl, Decl::ExportSpec(_))
+        let at = self.xa_place_of_alias_node(file, &node);
+        if target_flags.intersects(excluded) {
+            let code = if is_export_specifier { 2484 } else { 2440 };
+            self.error(at, code, &[Arg::Sym(symbol)]);
+        } else if !is_export_specifier
+            // `compilerOptions.isolatedModules` itself, not `GetIsolatedModules`: `verbatimModuleSyntax` has its own error for the import.
             && options.isolated_modules_said
-            && own.intersects(SymFlags::VALUE)
+            && !is_type_only
+            && is_value_here
         {
-            out.push(Diagnostic { start, code: 2865 });
-            let end = self.xa_alias_node_end(file, node);
-            self.explain_to(start, end, 2865, |c| vec![c.symbol_to_string(sym)]);
+            self.error(at, 2865, &[Arg::Sym(symbol)]);
         }
-        if is_ambient {
+        if !options.isolated_modules || is_type_only || is_ambient {
             return;
         }
         let is_verbatim = options.verbatim_module_syntax;
-        let type_only_alias = links.type_only_declaration;
+        let type_only_alias = files.alias_links(sym).type_only_declaration;
+        let related = type_only_alias
+            .filter(|_| !is_type)
+            .map(|type_only| (type_only, type_only.is_export()));
         // `node.PropertyNameOrName().Text()`
-        let property_name = match decl {
+        let name = match decl {
             Decl::ImportSpec(s) => hir[s].imported,
             Decl::ExportSpec(s) => hir[s].local,
             _ => files.symbol(sym).name,
         };
-        let flag_name = || super::errors_x_modules::isolated_modules_like_flag_name(files);
+        let flag_name = super::errors_x_modules::isolated_modules_like_flag_name(files);
         if is_type || type_only_alias.is_some() {
             match decl {
                 Decl::ImportDefault(_) | Decl::ImportSpec(_) | Decl::ImportEquals(_) => {
                     if is_verbatim {
-                        let code = if spec.is_none() {
-                            1288
-                        } else if is_type {
-                            1484
-                        } else {
-                            1485
+                        let code = match decl {
+                            Decl::ImportEquals(x)
+                                if matches!(hir[x].target, ImportEqualsTarget::Entity(_)) =>
+                            {
+                                1288
+                            }
+                            _ if is_type => 1484,
+                            _ => 1485,
                         };
-                        out.push(Diagnostic { start, code });
-                        self.note(
-                            start,
-                            self.xa_alias_node_end(file, node),
-                            code,
-                            vec![self.atom_text(property_name)],
-                        );
-                        if !is_type && let Some(type_only) = type_only_alias {
-                            self.relate(start, code, |c| {
-                                let name = c.atom_text(property_name);
-                                c.xa_type_only_related(type_only, type_only.is_export(), name)
-                            });
-                        }
+                        self.xa_error_about_type_only(at, code, &[Arg::Atom(name)], related, name);
                     }
                     if is_type
                         && matches!(decl, Decl::ImportEquals(x) if hir[x].flags.contains(Flags::EXPORT))
                     {
-                        out.push(Diagnostic { start, code: 1269 });
-                        self.note(
-                            start,
-                            self.xa_alias_node_end(file, node),
-                            1269,
-                            vec![flag_name()],
-                        );
+                        self.error(at, 1269, &[Arg::Text(&flag_name)]);
                     }
                 }
                 // What says `type` in this very file can be seen to go away without looking at any other.
@@ -647,47 +541,31 @@ impl Checker<'_> {
                     if is_verbatim
                         || type_only_alias.is_none_or(|type_only| type_only.file() != file) =>
                 {
-                    let end = self.xa_alias_node_end(file, node);
                     if is_type {
-                        out.push(Diagnostic { start, code: 1205 });
-                        self.note(start, end, 1205, vec![flag_name()]);
+                        self.error(at, 1205, &[Arg::Text(&flag_name)]);
                     } else {
-                        out.push(Diagnostic { start, code: 1448 });
-                        self.note(
-                            start,
-                            end,
-                            1448,
-                            vec![self.atom_text(property_name), flag_name()],
-                        );
-                        if let Some(type_only) = type_only_alias {
-                            self.relate(start, 1448, |c| {
-                                let name = c.atom_text(property_name);
-                                c.xa_type_only_related(type_only, type_only.is_export(), name)
-                            });
-                        }
+                        let args = [Arg::Atom(name), Arg::Text(&flag_name)];
+                        self.xa_error_about_type_only(at, 1448, &args, related, name);
                     }
                 }
                 _ => {}
             }
         }
-        // `GetEmitModuleFormatOfFile` is CommonJS. With `verbatimModuleSyntax` a TypeScript file gets 1286 instead.
-        if options.module == ModuleKind::Preserve
-            && (!is_verbatim || hir.is_js)
-            && !matches!(decl, Decl::ImportEquals(_))
-            && files.module(file).implied_format == ResolutionMode::Require
-            && files.resolve_alias(sym).is_some()
-        {
-            out.push(Diagnostic { start, code: 1293 });
-            self.note(start, self.xa_alias_node_end(file, node), 1293, Vec::new());
+        let is_import_equals = matches!(decl, Decl::ImportEquals(_));
+        let is_variable_declaration = matches!(decl, Decl::Require(_)) && binding_element.is_none();
+        if !is_import_equals && self.xm_emits_commonjs(file) {
+            if is_verbatim && !hir.is_js {
+                let code = self.verbatim_module_syntax_error_message(file);
+                self.error(at, code, &[]);
+            } else if options.module == ModuleKind::Preserve && !is_variable_declaration {
+                self.error(at, 1293, &[]);
+            }
         }
-        if is_verbatim && self.xa_is_ambient_const_enum(target) {
-            out.push(Diagnostic { start, code: 2748 });
-            self.note(
-                start,
-                self.xa_alias_node_end(file, node),
-                2748,
-                vec![flag_name()],
-            );
+        if is_verbatim
+            && let AliasTarget::Symbol(target) = target
+            && self.xa_is_ambient_const_enum(target)
+        {
+            self.error(at, 2748, &[Arg::Text(&flag_name)]);
         }
     }
 
@@ -697,7 +575,6 @@ impl Checker<'_> {
         file: FileId,
         x: ImportEqualsId,
         names: Span<NameId>,
-        out: &mut Vec<Diagnostic>,
     ) {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -727,89 +604,15 @@ impl Checker<'_> {
                     | TypeOnlyDeclaration::ExportStar(..)
             );
             let start = skip_trivia(&hir.text, after_equals);
+            let at = (file, start as u32, entity_name_end(&hir.text, start) as u32);
+            let name = match type_only {
+                // An `export type *` has no name.
+                TypeOnlyDeclaration::ExportStar(..) => files.atoms.intern(b"*"),
+                TypeOnlyDeclaration::Alias(alias, ..) => files.symbol(alias).name,
+            };
             let code = if is_export { 1379 } else { 1380 };
-            out.push(Diagnostic {
-                start: start as u32,
-                code,
-            });
-            self.note(
-                start as u32,
-                entity_name_end(&hir.text, start) as u32,
-                code,
-                Vec::new(),
-            );
-            self.relate(start as u32, code, |c| {
-                let name = match type_only {
-                    // An `export type *` has no name.
-                    TypeOnlyDeclaration::ExportStar(..) => "*".to_owned(),
-                    TypeOnlyDeclaration::Alias(alias, ..) => {
-                        c.atom_text(c.files().symbol(alias).name)
-                    }
-                };
-                c.xa_type_only_related(type_only, is_export, name)
-            });
+            self.xa_error_about_type_only(at, code, &[], Some((type_only, is_export)), name);
             return;
-        }
-    }
-
-    /// `checkVariableLikeDeclaration`, `checkAliasSymbol`: 18042 at the name of `const a = require("m")` or `const { a } = require("m")`
-    /// that stands for no value.
-    fn xa_required_types(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let files = self.files();
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if !hir.is_js {
-            return;
-        }
-        for (i, symbol) in bound.symbols.iter().enumerate() {
-            if !symbol.flags.contains(SymFlags::ALIAS) {
-                continue;
-            }
-            for &decl in &symbol.decls {
-                let Decl::Require(pat) = decl else { continue };
-                let Some((spec, _)) = bound.required_by(hir, pat) else {
-                    continue;
-                };
-                let sym = files.sym(file, SymbolId(i as u32));
-                // `None`: `unknownSymbol`.
-                let Some(target) = files.resolve_alias(sym) else {
-                    continue;
-                };
-                // `combineValueAndTypeSymbols`: what it makes is a value.
-                if files.symbol_flags(target).intersects(SymFlags::VALUE)
-                    || self.combined_symbol_of_alias(sym).is_some()
-                {
-                    continue;
-                }
-                // `node.PropertyNameOrName()`
-                let start = match bound.pat_parent[pat.idx()] {
-                    PatParent::Prop(_, p) => hir[p].pos,
-                    _ => hir[pat].pos,
-                };
-                out.push(Diagnostic { start, code: 18042 });
-                // What is no Identifier goes by the name of the symbol.
-                let identifier = match bound.pat_parent[pat.idx()] {
-                    PatParent::Prop(_, p)
-                        if hir
-                            .text
-                            .get(start as usize)
-                            .copied()
-                            .is_some_and(is_identifier_part) =>
-                    {
-                        hir[p].key.name().unwrap_or(symbol.name)
-                    }
-                    _ => symbol.name,
-                };
-                self.note(
-                    start,
-                    0,
-                    18042,
-                    type_import_in_javascript(
-                        self.atom_text(identifier),
-                        Some(self.atom_text(spec)),
-                        false,
-                    ),
-                );
-            }
         }
     }
 
@@ -1133,388 +936,220 @@ impl Checker<'_> {
         common
     }
 
-    // ───────────────────────────── what is imported by name ─────────────────────────────
-
-    /// `getExternalModuleMember`: 1544 for each name imported or re-exported from a JSON module. `check_imported_names` reports the
-    /// names that a module does not export.
-    fn xa_imported_members(&self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (files, hir) = (self.files(), self.hir(file));
-        // `isOnlyImportableAsDefault` holds of nothing otherwise.
-        if !files.options.module.is_node() || !files.module(file).is_esm {
-            return;
-        }
-        let is_json = |spec: Atom| {
-            let module = files.module_of_specifier(file, spec);
-            module.is_some_and(|module| files.is_only_importable_as_default(file, module))
-        };
-        for import in &hir.imports {
-            if import.named.is_empty() || !is_json(import.spec) {
-                continue;
-            }
-            for s in import.named.iter().filter(|&s| !hir[s].is_name_missing()) {
-                self.xa_imported_from_json(hir[s].imported, hir[s].imported_pos, out);
-            }
-        }
-        for export in &hir.exports {
-            if export.spec.is_none() || export.items.is_empty() || !is_json(export.spec) {
-                continue;
-            }
-            for s in export.items.iter() {
-                self.xa_imported_from_json(hir[s].local, hir[s].local_pos, out);
-            }
-        }
-    }
-
-    fn xa_imported_from_json(&self, name: Atom, start: u32, out: &mut Vec<Diagnostic>) {
-        if name == known::default {
-            return;
-        }
-        out.push(Diagnostic { start, code: 1544 });
-        let kind = self.files().options.module.name();
-        self.note(start, 0, 1544, vec![kind.to_owned()]);
-    }
-
     // ───────────────────────────── module specifiers ─────────────────────────────
 
-    /// Every place a module is named, and how.
-    fn xa_module_specifiers(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let files = self.files();
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let text = &hir.text[..];
-        // `NodeFlagsAmbient` is set on every node of a declaration file.
-        let in_declaration_file = hir.kind == FileKind::Declaration;
-        if !hir.specifier_uses.is_empty() {
-            // Where the statements that name one start: a specifier belongs to the last that starts before it.
-            let mut statements: Vec<(u32, StmtId)> = Vec::new();
-            for (i, stmt) in hir.stmts.iter().enumerate() {
-                if matches!(
-                    stmt.kind,
-                    StmtKind::Import(_)
-                        | StmtKind::ImportEquals(_)
-                        | StmtKind::ExportNamed(_)
-                        | StmtKind::ExportStar { .. }
-                ) && !matches!(bound.stmt_parent[i], Parent::None)
-                {
-                    statements.push((stmt.pos, StmtId(i as u32)));
-                }
-            }
-            statements.sort_unstable();
-            let import_types: Vec<u32> = hir
-                .types
-                .iter()
-                .filter(|t| matches!(t.kind, TypeNodeKind::Import { .. }))
-                .filter_map(|t| start_of_import_type_specifier(text, t.pos))
-                .collect();
-            for &SpecifierUse {
-                spec,
-                pos,
-                kind,
-                mode,
-            } in &hir.specifier_uses
-            {
-                if kind.is_call() {
-                    continue;
-                }
-                // `getModeForUsageLocation`
-                let mode = if mode != ResolutionMode::None {
-                    mode
-                } else if kind == SpecifierKind::Require {
-                    ResolutionMode::Require
-                } else {
-                    files.module(file).default_mode
-                };
-                if import_types.contains(&pos) {
-                    let kind = SiteKind::ImportType;
-                    let site = SpecifierSite {
-                        kind,
-                        mode,
-                        is_emittable: false,
-                        is_type_only: false,
-                        is_type_only_import: false,
-                        is_ambient: in_declaration_file,
-                    };
-                    self.xa_resolved_module(file, spec, pos, site, out);
-                    continue;
-                }
-                let Some(&(_, stmt)) =
-                    statements[..statements.partition_point(|s| s.0 <= pos)].last()
-                else {
-                    continue;
-                };
-                // `checkExternalImportOrExportDeclaration`: at the top of a file, or of a module that is declared, which names no paths
-                // unless it adds to a module.
-                let mut is_ambient = match bound.stmt_parent[stmt.idx()] {
-                    Parent::File => in_declaration_file,
-                    Parent::Module(m) if !matches!(hir[m].name, ModuleName::Ident(_)) => {
-                        let path = files.atoms.bytes(spec);
-                        if (is_relative_path(path) || path.starts_with(b"/"))
-                            && !files.module(file).is_module()
-                        {
-                            continue;
-                        }
-                        in_declaration_file || hir[m].flags.contains(Flags::AMBIENT)
-                    }
-                    _ => continue,
-                };
-                let (said, site_kind, is_emittable, is_type_only, is_type_only_import) =
-                    match hir[stmt].kind {
-                        StmtKind::Import(x) if kind == SpecifierKind::SideEffect => {
-                            (hir[x].spec, SiteKind::SideEffect, false, false, false)
-                        }
-                        StmtKind::Import(x) => {
-                            let import = &hir[x];
-                            // The module is asked for from the declaration itself if there are braces, and that says `type` nowhere.
-                            let has_braces = import.namespace.is_none()
-                                && (!import.named.is_empty() || import.default.is_none());
-                            (
-                                import.spec,
-                                SiteKind::Import,
-                                !import.type_only,
-                                import.type_only && !has_braces,
-                                import.type_only,
-                            )
-                        }
-                        // `checkExportDeclaration` gets to the module through what is in the braces: without any it is never asked for.
-                        StmtKind::ExportNamed(x) if hir[x].items.is_empty() => continue,
-                        StmtKind::ExportNamed(x) => (
-                            hir[x].spec,
-                            SiteKind::Export,
-                            !hir[x].type_only,
-                            false,
-                            false,
-                        ),
-                        StmtKind::ExportStar {
-                            spec,
-                            alias,
-                            type_only,
-                            ..
-                        } => (
-                            spec,
-                            SiteKind::Export,
-                            !type_only,
-                            type_only && alias.is_none(),
-                            false,
-                        ),
-                        StmtKind::ImportEquals(x) => {
-                            let ImportEqualsTarget::Require(said) = hir[x].target else {
-                                continue;
-                            };
-                            let type_only = hir[x].flags.contains(Flags::TYPE_ONLY);
-                            is_ambient |= hir[x].flags.contains(Flags::AMBIENT);
-                            (said, SiteKind::ImportEquals, !type_only, type_only, false)
-                        }
-                        _ => continue,
-                    };
-                if said != spec
-                    || site_kind == SiteKind::SideEffect
-                        && !files.options.no_unchecked_side_effect_imports
-                {
-                    continue;
-                }
-                self.xa_resolved_module(
-                    file,
-                    spec,
-                    pos,
-                    SpecifierSite {
-                        kind: site_kind,
-                        mode,
-                        is_emittable,
-                        is_type_only,
-                        is_type_only_import,
-                        is_ambient,
-                    },
-                    out,
-                );
-            }
-        }
-        let index = self.exprs_by_kind(file);
-        for &e in index.of(ExprTag::ImportCall) {
-            if let ExprKind::ImportCall { args, .. } = hir[e].kind
-                && let argument = hir.id_at(args, 0)
-                && !bound.is_unchecked(e.idx())
-                && let ExprKind::String(spec) = hir[argument].kind
-            {
-                let (kind, mode) = (SiteKind::ImportCall, files.mode_of_import_call(file));
-                let site = SpecifierSite {
-                    kind,
-                    mode,
-                    is_emittable: true,
-                    is_type_only: false,
-                    is_type_only_import: false,
-                    is_ambient: in_declaration_file,
-                };
-                self.xa_resolved_module(file, spec, hir[argument].pos, site, out);
-            }
-        }
-        if !hir.is_js {
-            return;
-        }
-        // `getTargetOfImportEqualsDeclaration` and `getExternalModuleMember` resolve the module for the aliases that a variable
-        // declaration initialized to `require("m")` declares. `resolveExternalModuleTypeByLiteral` resolves it for every other call
-        // that `isCommonJSRequire` accepts.
-        let is_identifier = |pat: PatId| matches!(hir[pat].kind, PatKind::Ident(_));
-        for &call in index.of(ExprTag::Call) {
-            let Some((argument, spec)) = crate::bind::require_call_argument(hir, call) else {
-                continue;
-            };
-            // The loader resolves only the specifiers that the binder collected.
-            if !bound.specifiers.contains(&spec) {
-                continue;
-            }
-            let declares_alias = match bound.expr_parent[call.idx()] {
-                Parent::None => continue,
-                Parent::VarInit(decl)
-                    if self.external_module_require_argument(file, decl).is_some() =>
-                {
-                    match hir[hir[decl].pat].kind {
-                        PatKind::Ident(_) => true,
-                        PatKind::Object(props) => props.iter().any(|p| is_identifier(hir[p].value)),
-                        PatKind::Array(elems) => elems.iter().any(|x| is_identifier(hir[x].pat)),
-                        PatKind::Missing => false,
-                    }
-                }
-                _ => false,
-            };
-            if declares_alias || self.is_commonjs_require(file, call) {
-                let (kind, mode) = (SiteKind::Require, ResolutionMode::Require);
-                let site = SpecifierSite {
-                    kind,
-                    mode,
-                    is_emittable: false,
-                    is_type_only: false,
-                    is_type_only_import: false,
-                    is_ambient: false,
-                };
-                self.xa_resolved_module(file, spec, hir[argument].pos, site, out);
-            }
-        }
-    }
-
-    /// `resolveExternalModule`, for what it says of a module that is found.
-    fn xa_resolved_module(
+    /// `resolveExternalModule`, with an `errorNode`: the specifier `written` in `file`. Whether it finds the module.
+    pub(super) fn resolve_external_module(
         &mut self,
         file: FileId,
-        spec: Atom,
-        start: u32,
+        written: SpecifierUse,
         site: SpecifierSite,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    ) -> bool {
         let files = self.files();
-        let options = &files.options;
+        let (options, importing) = (&files.options, files.module(file));
+        let SpecifierUse {
+            spec,
+            pos: start,
+            kind,
+            ..
+        } = written;
+        let is_side_effect = kind == SpecifierKind::SideEffect;
+        // `checkImportDeclaration` does not ask.
+        if is_side_effect && !options.no_unchecked_side_effect_imports {
+            return true;
+        }
+        let mode =
+            crate::program::mode_for_usage_location(options, importing.default_mode, &written);
+        let (key, at) = ((spec, mode), self.place_of_token(file, start));
         let text = files.atoms.text(spec);
         if let Some(without_prefix) = text.strip_prefix("@types/") {
-            out.push(Diagnostic { start, code: 6137 });
-            self.note(
-                start,
-                0,
-                6137,
-                vec![without_prefix.to_owned(), text.to_string()],
-            );
+            self.error(at, 6137, &[Arg::Text(without_prefix), Arg::Atom(spec)]);
         }
-        // A module that is declared by name is what it is declared to be.
-        if files
-            .module_of_specifier_as(file, spec, site.mode)
-            .is_some_and(|m| !files.symbol(m).decls.contains(&Decl::File))
+        // `tryFindAmbientModule` and `patternAmbientModules` have what scripts declare. A `declare module` that adds to nothing is not
+        // there, and does not stand in the way of a file.
+        let found = files.module_of_specifier_as(file, spec, mode);
+        if found.is_some_and(|m| !self.xm_is_a_file(m) && self.xm_is_declared_by_a_script(m)) {
+            return true;
+        }
+        let target = importing.imports.get(&key);
+        // `GetResolutionDiagnostic`, `needJsx`: reported whether or not the file is in the program for another reason.
+        let mut needs_jsx = importing.jsx_imports.iter();
+        if let Some(&(.., path)) = needs_jsx.find(|r| (r.0, r.1) == key) {
+            self.error(at, 6142, &[Arg::Atom(spec), Arg::Atom(path)]);
+            if target.is_none() {
+                return false;
+            }
+        }
+        if let Some(&target) = target {
+            let target = files.module(target);
+            // `ResolvedUsingTsExtension`
+            let using_ts_extension = importing.ts_extension_imports.contains(&key);
+            let is_declaration_name = (using_ts_extension
+                || options.rewrite_relative_import_extensions)
+                && is_declaration_file_name(&text);
+            if using_ts_extension && is_declaration_name {
+                if site.is_emittable {
+                    let is_esm = (ModuleKind::Es2015..=ModuleKind::EsNext)
+                        .contains(&options.module)
+                        || mode == ResolutionMode::Import;
+                    let prefers_ts = options.allow_importing_ts_extensions;
+                    let suggested = suggested_import_source(&text, is_esm, prefers_ts);
+                    self.error(at, 2846, &[Arg::Text(&suggested)]);
+                }
+            // `AllowImportingTsExtensionsFrom`
+            } else if using_ts_extension
+                && !options.allow_importing_ts_extensions
+                && !is_declaration_file_name(&importing.path)
+            {
+                if site.is_emittable {
+                    // An extension that a pattern of `imports` or `paths` matched may be anywhere in the specifier.
+                    let extension = try_extract_ts_extension(&text).or_else(|| {
+                        [".ts", ".tsx", ".d.ts", ".cts", ".d.cts", ".mts", ".d.mts"]
+                            .into_iter()
+                            .find(|&e| text.contains(e))
+                    });
+                    self.error(at, 5097, &[Arg::Text(extension.unwrap_or(""))]);
+                }
+            } else if options.rewrite_relative_import_extensions
+                && !site.is_ambient
+                && !is_declaration_name
+                && kind != SpecifierKind::ImportType
+                && !site.is_type_only
+            {
+                // `ShouldRewriteModuleSpecifier`, `SourceFileMayBeEmitted`. 2878 needs project references, which are not supported.
+                let should_rewrite =
+                    is_relative_path(text.as_bytes()) && strip_ts_extension(&text).is_some();
+                let may_be_emitted = target.hir.kind != FileKind::Declaration
+                    && !target.path.contains("/node_modules/");
+                if !using_ts_extension && should_rewrite {
+                    let path = relative_path_from_file(&importing.path, &target.path);
+                    self.error(at, 2876, &[Arg::Text(&path)]);
+                } else if using_ts_extension && !should_rewrite && may_be_emitted {
+                    // `GetAnyExtensionFromPath`
+                    let base = &text[text.rfind('/').map_or(0, |i| i + 1)..];
+                    let extension = base.rfind('.').map_or("", |i| &base[i..]);
+                    self.error(at, 2877, &[Arg::Text(extension)]);
+                }
+            }
+            if !target.is_module() {
+                if !is_side_effect {
+                    let mut redirected = importing.redirected_imports.iter();
+                    let path = match redirected.find(|r| (r.0, r.1) == key) {
+                        Some(r) => Arg::Atom(r.2),
+                        None => Arg::Text(&target.path),
+                    };
+                    self.error(at, 2306, &[path]);
+                }
+                return false;
+            }
+            // `require` cannot load an ECMAScript module. Only what has code in it is of either kind.
+            let is_sync_import = !importing.is_esm && kind != SpecifierKind::ImportCall
+                || kind == SpecifierKind::Require;
+            let source = &self.hir(file).text[..];
+            if matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18)
+                && is_sync_import
+                && target.is_esm
+                && !target.path.ends_with(".json")
+                // `HasResolutionModeOverride`
+                && !(matches!(
+                    kind,
+                    SpecifierKind::SideEffect | SpecifierKind::Import | SpecifierKind::ImportType
+                ) && string_literal(source, start as usize).is_some_and(|(_, end)| {
+                    has_resolution_mode_override(source, end, kind == SpecifierKind::ImportType)
+                }))
+            {
+                let (code, details) = match kind {
+                    SpecifierKind::Require => (1471, None),
+                    SpecifierKind::Import if site.is_type_only_import => {
+                        (1541, self.create_mode_mismatch_details(file, at))
+                    }
+                    SpecifierKind::ImportType => {
+                        (1542, self.create_mode_mismatch_details(file, at))
+                    }
+                    _ => (1479, self.create_mode_mismatch_details(file, at)),
+                };
+                let diagnostic = self.new_diagnostic_chain(details, at, code, &[Arg::Atom(spec)]);
+                self.add_diagnostic(diagnostic);
+            }
+            return true;
+        }
+        // `GetResolutionDiagnostic`, `needAllowArbitraryExtensions`
+        let mut arbitrary = importing.arbitrary_extension_imports.iter();
+        if let Some(index) = arbitrary.position(|&u| u == key) {
+            let path = importing.arbitrary_extension_files[index];
+            self.error(at, 6263, &[Arg::Atom(spec), Arg::Atom(path)]);
+            return false;
+        }
+        // The specifier resolves to JavaScript that is not in the program.
+        if importing.untyped_imports.contains(&key) {
+            if options.no_implicit_any && !is_side_effect {
+                self.error_on_implicit_any_module(file, spec, mode, at);
+            }
+            return false;
+        }
+        let mut extensionless = importing.extensionless_imports.iter();
+        if !options.resolve_json_module && text.ends_with(".json") {
+            self.error(at, 2732, &[Arg::Atom(spec)]);
+        } else if options.resolves_like_node
+            && mode == ResolutionMode::Import
+            && let Some(&(_, is_there)) = extensionless.find(|e| e.0 == spec)
         {
-            return;
+            // Only of what is not found is it said that Node's `import` wants the extension written.
+            let extension =
+                super::errors_x_modules::suggested_import_extension(files, &importing.path, &text);
+            match extension.filter(|_| is_there) {
+                Some(extension) => {
+                    let suggested = [text.as_bytes(), extension.as_bytes()].concat();
+                    self.error(at, 2835, &[Arg::Bytes(&suggested)])
+                }
+                None => self.error(at, if is_there { 2835 } else { 2834 }, &[]),
+            };
+        } else if is_side_effect {
+            self.error(at, 2882, &[Arg::Atom(spec)]);
+        // `getCannotResolveModuleNameErrorForSpecificModule`: only for a string literal, not for a template.
+        } else if crate::resolve::is_node_core_module(&text)
+            && self.hir(file).text.get(start as usize) != Some(&b'`')
+        {
+            let types = options.types.as_ref();
+            let uses_wildcard_types = types.is_some_and(|t| t.iter().any(|t| t == "*"));
+            let code = if uses_wildcard_types { 2580 } else { 2591 };
+            self.error(at, code, &[Arg::Atom(spec)]);
+        } else {
+            self.error(at, 2307, &[Arg::Atom(spec)]);
         }
-        let importing = files.module(file);
-        let Some(&target) = importing.imports.get(&(spec, site.mode)) else {
-            return;
+        false
+    }
+
+    /// `createModeMismatchDetails`, for an extension `resolveExternalModule` asks it about.
+    fn create_mode_mismatch_details(
+        &mut self,
+        file: FileId,
+        at: (FileId, u32, u32),
+    ) -> Option<Reported> {
+        let importing = self.files().module(file);
+        let path = &importing.path;
+        let target_extension = if path.ends_with(".d.ts") {
+            return None;
+        } else if path.ends_with(".ts") {
+            Some(".mts")
+        } else if path.ends_with(".js") {
+            Some(".mjs")
+        } else if path.ends_with(".tsx") || path.ends_with(".jsx") {
+            None
+        } else {
+            return None;
         };
-        let target = files.module(target);
-        // `ResolvedUsingTsExtension`
-        let using_ts_extension = importing.ts_extension_imports.contains(&(spec, site.mode));
-        let is_declaration_name = (using_ts_extension
-            || options.rewrite_relative_import_extensions)
-            && is_declaration_file_name(&text);
-        // `AllowImportingTsExtensionsFrom`
-        let allows_ts_extensions =
-            || options.allow_importing_ts_extensions || is_declaration_file_name(&importing.path);
-        if using_ts_extension && is_declaration_name {
-            if site.is_emittable {
-                out.push(Diagnostic { start, code: 2846 });
-                let is_esm = (ModuleKind::Es2015..=ModuleKind::EsNext).contains(&options.module)
-                    || site.mode == ResolutionMode::Import;
-                let suggested =
-                    suggested_import_source(&text, is_esm, options.allow_importing_ts_extensions);
-                self.note(start, 0, 2846, vec![suggested]);
-            }
-        } else if using_ts_extension && !allows_ts_extensions() {
-            if site.is_emittable {
-                out.push(Diagnostic { start, code: 5097 });
-                // An extension that a pattern of `imports` or `paths` matched may be anywhere in the specifier.
-                let extension = try_extract_ts_extension(&text).or_else(|| {
-                    [".ts", ".tsx", ".d.ts", ".cts", ".d.cts", ".mts", ".d.mts"]
-                        .into_iter()
-                        .find(|&e| text.contains(e))
-                });
-                self.note(start, 0, 5097, vec![extension.unwrap_or("").to_owned()]);
-            }
-        } else if options.rewrite_relative_import_extensions
-            && !site.is_ambient
-            && !is_declaration_name
-            && site.kind != SiteKind::ImportType
-            && !site.is_type_only
-        {
-            // `ShouldRewriteModuleSpecifier`, `SourceFileMayBeEmitted`. 2878 needs project references, which are not supported.
-            let should_rewrite =
-                is_relative_path(text.as_bytes()) && strip_ts_extension(&text).is_some();
-            let may_be_emitted =
-                target.hir.kind != FileKind::Declaration && !target.path.contains("/node_modules/");
-            if !using_ts_extension && should_rewrite {
-                out.push(Diagnostic { start, code: 2876 });
-                self.note(
-                    start,
-                    0,
-                    2876,
-                    vec![relative_path_from_file(&importing.path, &target.path)],
-                );
-            } else if using_ts_extension && !should_rewrite && may_be_emitted {
-                out.push(Diagnostic { start, code: 2877 });
-                // `GetAnyExtensionFromPath`
-                let base = &text[text.rfind('/').map_or(0, |i| i + 1)..];
-                let extension = base.rfind('.').map_or("", |i| &base[i..]);
-                self.note(start, 0, 2877, vec![extension.to_owned()]);
-            }
-        }
-        if !target.is_module() || !matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18)
-        {
-            return;
-        }
-        // `require` cannot load an ECMAScript module. Only what has code in it is of either kind.
-        let is_sync_import = !importing.is_esm && site.kind != SiteKind::ImportCall
-            || site.kind == SiteKind::ImportEquals;
-        if !is_sync_import || !target.is_esm || target.path.ends_with(".json") {
-            return;
-        }
-        let source = &self.hir(file).text[..];
-        let overrides_mode = matches!(
-            site.kind,
-            SiteKind::SideEffect | SiteKind::Import | SiteKind::Export | SiteKind::ImportType
-        ) && string_literal(source, start as usize).is_some_and(|(_, end)| {
-            has_resolution_mode_override(source, end, site.kind == SiteKind::ImportType)
-        });
-        if overrides_mode {
-            return;
-        }
-        let code = match site.kind {
-            SiteKind::ImportEquals => 1471,
-            SiteKind::Import if site.is_type_only_import => 1541,
-            SiteKind::ImportType => 1542,
-            _ => 1479,
+        // The `package.json` the file goes by, if that says no `type`.
+        let package_json = Some(importing.package_json_without_type).filter(|it| it.is_some());
+        let code = match (target_extension, package_json) {
+            (Some(_), Some(_)) => 1481,
+            (None, Some(_)) => 1482,
+            (Some(_), None) => 1480,
+            (None, None) => 1483,
         };
-        out.push(Diagnostic { start, code });
-        self.note(start, 0, code, vec![text.to_string()]);
-        if code != 1471 {
-            self.explain_chain(start, code, |c| {
-                let package_json = importing.package_json_without_type;
-                let package_json = package_json.is_some().then(|| c.atom_text(package_json));
-                mode_mismatch_details(&importing.path, package_json)
-                    .into_iter()
-                    .collect()
-            });
-        }
+        let args = target_extension.map(Arg::Text).into_iter();
+        let args: Vec<Arg<'_>> = args.chain(package_json.map(Arg::Atom)).collect();
+        Some(self.new_diagnostic(at, code, &args))
     }
 
     // ───────────────────────────── expressions ─────────────────────────────
@@ -1878,16 +1513,6 @@ fn string_literal(text: &[u8], at: usize) -> Option<(&[u8], usize)> {
     (end < text.len()).then(|| (&text[at + 1..end], end + 1))
 }
 
-/// Where the specifier of `import("m")` or `typeof import("m")`, the type at `pos`, is.
-fn start_of_import_type_specifier(text: &[u8], pos: u32) -> Option<u32> {
-    let mut at = pos as usize;
-    if let Some(end) = eat_word(text, at, b"typeof") {
-        at = skip_trivia(text, end);
-    }
-    let open = eat(text, eat_word(text, at, b"import")?, b'(')?;
-    Some(skip_trivia(text, open) as u32)
-}
-
 /// `HasResolutionModeOverride`: `with { "resolution-mode": "import" }` after the specifier, which ends at `at`; in a type,
 /// `, { with: { "resolution-mode": "import" } }`.
 fn has_resolution_mode_override(text: &[u8], at: usize, is_import_type: bool) -> bool {
@@ -1970,48 +1595,6 @@ fn relative_path_from_file(from: &str, to: &str) -> String {
     }
 }
 
-/// `CreateModeMismatchDetails`, of the file at `path`, for an extension `resolveExternalModule` asks it about. `package_json`: the
-/// `package.json` the file goes by, if that says no `type`.
-fn mode_mismatch_details(path: &str, package_json: Option<String>) -> Option<super::explain::Line> {
-    let target_extension = if path.ends_with(".d.ts") {
-        return None;
-    } else if path.ends_with(".ts") {
-        Some(".mts".to_owned())
-    } else if path.ends_with(".js") {
-        Some(".mjs".to_owned())
-    } else if path.ends_with(".tsx") || path.ends_with(".jsx") {
-        None
-    } else {
-        return None;
-    };
-    let (code, args) = match (target_extension, package_json) {
-        (Some(extension), Some(package_json)) => (1481, vec![extension, package_json]),
-        (None, Some(package_json)) => (1482, vec![package_json]),
-        (Some(extension), None) => (1480, vec![extension]),
-        (None, None) => (1483, Vec::new()),
-    };
-    Some(super::explain::Line {
-        code,
-        args,
-        level: 1,
-    })
-}
-
-/// The arguments of 18042: the name, and the type to write instead. `specifier`: the module, if one is named.
-/// `is_import_specifier`: the name is one of those in the braces of an import.
-fn type_import_in_javascript(
-    identifier: String,
-    specifier: Option<String>,
-    is_import_specifier: bool,
-) -> Vec<String> {
-    let mut import = format!("import(\"{}\")", specifier.as_deref().unwrap_or("..."));
-    if is_import_specifier {
-        import.push('.');
-        import.push_str(&identifier);
-    }
-    vec![identifier, import]
-}
-
 /// Where the entity name `a.b.c` that starts at `start` ends.
 fn entity_name_end(text: &[u8], start: usize) -> usize {
     let mut end = word_end(text, start);
@@ -2025,15 +1608,6 @@ fn entity_name_end(text: &[u8], start: usize) -> usize {
         }
         end = word_end(text, next);
     }
-}
-
-/// `IsDeclarationFileName`
-fn is_declaration_file_name(path: &str) -> bool {
-    let base = &path[path.rfind('/').map_or(0, |i| i + 1)..];
-    base.ends_with(".d.ts")
-        || base.ends_with(".d.mts")
-        || base.ends_with(".d.cts")
-        || base.ends_with(".ts") && base.contains(".d.")
 }
 
 /// `isCommentOrBlankLine`

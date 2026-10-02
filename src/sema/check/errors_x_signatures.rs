@@ -729,8 +729,11 @@ impl Checker<'_> {
                         self.relations_too_deep.clear();
                         if self.is_known_not_to_fit(default, constraint) {
                             let end = self.end_of_type_node_from(file, decl.default, start);
-                            self.report_not_assignable_with_end(
-                                default, constraint, start, end, 2344, out,
+                            self.check_type_assignable_to(
+                                default,
+                                constraint,
+                                Some((file, start, end)),
+                                Some(2344),
                             );
                         }
                         // `checkTypeRelatedToEx`: a comparison without an error node reports at `currentNode`, the declaration.
@@ -1121,7 +1124,18 @@ impl Checker<'_> {
                     FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor
                 );
             let has_modifier_error = match bound.fns[i].owner {
-                FnOwner::Stmt(s) => self.grammar_error_in_modifiers(file, s).is_some(),
+                FnOwner::Stmt(s) => self
+                    .grammar_error_in_modifiers(
+                        file,
+                        super::errors_grammar_modifiers::HasModifiers::Statement(s),
+                    )
+                    .is_some(),
+                FnOwner::Member(m) => self
+                    .grammar_error_in_modifiers(
+                        file,
+                        super::errors_grammar_modifiers::HasModifiers::Member(m),
+                    )
+                    .is_some(),
                 _ => is_named && has_modifier_error(hir, func.name_pos),
             };
             let mut has_objected = !is_silent

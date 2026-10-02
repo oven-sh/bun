@@ -2835,7 +2835,7 @@ impl<'p> Checker<'p> {
             // "refers to an alias import/export/reexport"
             _ => self
                 .resolve_type_reference_name_as_alias(file, scope, node)
-                .and_then(|alias| self.resolve_alias(alias))
+                .and_then(|alias| self.resolve_alias(alias).symbol())
                 .filter(|&resolved| self.files().flags(resolved).contains(SymFlags::TYPE_ALIAS))
                 .map(|resolved| (resolved, SmallVec::from_slice(args))),
         };

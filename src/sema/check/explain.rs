@@ -73,10 +73,10 @@ impl From<Reported> for Note {
         Note {
             start: reported.start,
             code: reported.code,
-            end: if reported.end > reported.start {
-                reported.end
-            } else {
-                NO_LENGTH
+            end: match reported.end {
+                0 if reported.start > 0 => 0,
+                end if end > reported.start => end,
+                _ => NO_LENGTH,
             },
             args: reported.args,
             chain: lines_of(reported.message_chain),

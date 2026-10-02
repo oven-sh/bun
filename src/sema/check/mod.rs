@@ -81,6 +81,7 @@ use crate::types::Prop;
 use crate::types::*;
 use crate::util::{FxHashMap, List};
 use errors_modules::{root_declaration, root_pattern};
+use errors_x_aliases::SpecifierSite;
 use errors_x_regexp_scanner::{get_spelling_suggestion, spelling_suggestion};
 use errors_x_typenodes::array_element_type_node;
 use errors_x_typenodes::has_parse_diagnostics;
@@ -96,6 +97,7 @@ use spans::{is_word_at, word_at, word_before, word_end, word_start};
 use spans::{skip_trivia_back, trim_trivia_end};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use symbols::AliasTarget;
 
 pub use call::ResolvedCall;
 pub use shape::Members;

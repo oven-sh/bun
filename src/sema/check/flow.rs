@@ -5861,7 +5861,9 @@ impl<'p> Checker<'p> {
         }
         let Some(sym) = self.files().resolve_alias_if_needed(sym) else {
             // `resolveSymbol`: what the tables do not have is a property.
-            let (obj, name) = self.property_access_of_alias(sym)?;
+            let AliasTarget::Property(obj, name, _) = self.resolve_alias(sym) else {
+                return None;
+            };
             return self.explicit_type_of_property(obj, name);
         };
         let flags = self.files().flags(sym);

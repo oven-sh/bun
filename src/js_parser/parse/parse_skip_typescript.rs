@@ -3184,6 +3184,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 constraint: TypeId::NONE,
                 default: TypeId::NONE,
                 flags: Flags::empty(),
+                modifiers: bun_ast::ts_syntax::Span::EMPTY,
             };
             // Offset of the last "out". It is the parameter's name if no identifier follows.
             let mut out_pos = 0;
@@ -3413,7 +3414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             let element_start = self.lexer.loc();
             is_empty = false;
-            let parameter = self.skip_type_parameter_tolerant(flags, &mut result)?;
+            let parameter = self.skip_type_parameter_tolerant(&mut result)?;
             if keeps {
                 is_complete &= parameter.is_some();
                 kept.extend(parameter);
@@ -3457,7 +3458,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline(never)]
     fn skip_type_parameter_tolerant(
         &mut self,
-        flags: TypeParameterFlag,
         result: &mut SkipTypeParameterResult,
     ) -> Result<Option<TypeParam>, Error> {
         let keeps = self.should_keep_types();
@@ -3470,11 +3470,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             constraint: TypeId::NONE,
             default: TypeId::NONE,
             flags: Flags::empty(),
+            modifiers: bun_ast::ts_syntax::Span::EMPTY,
         };
 
         // `parseModifiersEx`: any modifier keyword that the rest of a declaration can follow (`nextTokenCanFollowModifier`).
-        // `checkGrammarModifiers` reports the first that is wrong.
-        let mut has_error = false;
+        let mut modifiers: Vec<bun_ast::ts_syntax::Modifier> = Vec::new();
         let mut has_static = false;
         while self.is_modifier_kind() && !matches!(self.lexer.token, T::TExport | T::TDefault) {
             let is_static = self.lexer.is_contextual_keyword(b"static");
@@ -3500,37 +3500,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 break;
             }
             has_static |= is_static;
-            let variance = match self.lexer.token {
-                T::TIn => Flags::IN,
-                T::TIdentifier if self.lexer.raw() == b"out" => Flags::OUT,
-                _ => Flags::empty(),
-            };
-            let code = if self.lexer.token == T::TConst {
+            if self.lexer.token == T::TConst {
                 *result = SkipTypeParameterResult::DefinitelyTypeParameters;
-                parameter.flags |= Flags::CONST;
-                if flags.contains(TypeParameterFlag::ALLOW_CONST_MODIFIER) {
-                    0
-                } else {
-                    1277
-                }
-            } else if variance.is_empty() {
-                1273
-            } else if !flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS) {
-                1274
-            } else if parameter.flags.contains(variance) {
-                1030
-            } else if variance == Flags::IN && parameter.flags.contains(Flags::OUT) {
-                1029
-            } else {
-                0
-            };
-            parameter.flags |= variance;
-            if code != 0 && !has_error {
-                has_error = true;
-                let range = self.lexer.range();
-                self.lexer.ts_grammar_error(range, code);
             }
+            let flag = self.modifier_flag_here();
+            parameter.flags |= flag & (Flags::CONST | Flags::IN | Flags::OUT);
+            modifiers.push(bun_ast::ts_syntax::Modifier {
+                flag,
+                loc: self.lexer.loc(),
+                decorator: None,
+            });
             self.lexer.next()?;
+        }
+        if keeps && !modifiers.is_empty() {
+            parameter.modifiers = self.add_param_modifiers(&modifiers);
         }
 
         // `parseIdentifier`

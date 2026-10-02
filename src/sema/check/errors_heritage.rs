@@ -101,10 +101,11 @@ impl Checker<'_> {
                             });
                             self.relate(name_or_node, 2417, |_| related);
                         }
-                        self.report_not_assignable(
+                        self.report_not_assignable_with_end(
                             static_type,
                             properties,
                             name_or_node,
+                            0,
                             2417,
                             out,
                         );

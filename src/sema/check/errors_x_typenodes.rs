@@ -371,7 +371,7 @@ impl Checker<'_> {
             self.check_size_of_cross_products(file, out);
         }
         if has(TEMPLATE) {
-            self.check_template_literal_type_nodes(file, out);
+            self.check_template_literal_type_nodes(file);
         }
         if has(INFER) {
             self.check_infer_type_nodes(file, &parents, out);
@@ -618,7 +618,7 @@ impl Checker<'_> {
 
     /// `checkTemplateLiteralType` compares each placeholder with `templateConstraintType`: 2322. And 2321, for a comparison made on the
     /// way that runs out of depth: it has no error node, and the template literal type is `currentNode`.
-    fn check_template_literal_type_nodes(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_template_literal_type_nodes(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let constraint = self.union(&[
             TypeId::STRING,
@@ -643,7 +643,7 @@ impl Checker<'_> {
                 {
                     let start = start_of_type(hir, placeholder);
                     let end = self.end_of_type_node_from(file, placeholder, start);
-                    self.report_not_assignable_with_end(ty, constraint, start, end, 2322, out);
+                    self.check_type_assignable_to(ty, constraint, Some((file, start, end)), None);
                 }
             }
             for (source, target) in std::mem::take(&mut self.relations_too_deep) {
@@ -1287,12 +1287,8 @@ impl Checker<'_> {
             }
             let func = &hir[member.func];
             // `checkGrammarModifiers` comes first, and what it objects to is all that is said.
-            if hir
-                .early_errors
-                .iter()
-                .any(|&(start, _)| (member.start..func.anchor).contains(&start))
-                || func.params.len() != 1
-            {
+            let node = super::errors_grammar_modifiers::HasModifiers::Member(MemberId(m as u32));
+            if self.grammar_error_in_modifiers(file, node).is_some() || func.params.len() != 1 {
                 continue;
             }
             // A parameter that is not `name: type` and no more has been objected to by now.
@@ -1386,12 +1382,8 @@ impl Checker<'_> {
                 continue;
             }
             // `checkGrammarModifiers` comes first, and what it objects to is all that is said.
-            let modifiers = member.start..member.name_pos;
-            if hir
-                .early_errors
-                .iter()
-                .any(|&(start, _)| modifiers.contains(&start))
-            {
+            let node = super::errors_grammar_modifiers::HasModifiers::Member(MemberId(m as u32));
+            if self.grammar_error_in_modifiers(file, node).is_some() {
                 continue;
             }
             let (all, is_in_class) = match bound.member_owner[m] {
@@ -1523,7 +1515,10 @@ impl Checker<'_> {
             };
             // `checkGrammarModifiers` comes first, and what it objects to is all that is said.
             if self
-                .grammar_error_in_modifiers(file, interface.stmt)
+                .grammar_error_in_modifiers(
+                    file,
+                    super::errors_grammar_modifiers::HasModifiers::Statement(interface.stmt),
+                )
                 .is_none()
             {
                 out.push(Diagnostic {
@@ -1908,13 +1903,11 @@ impl Checker<'_> {
             {
                 let node = hir.id_at(args, index);
                 let start = start_of_type(hir, node);
-                self.report_not_assignable_with_end(
+                self.check_type_assignable_to(
                     argument,
                     constraint,
-                    start,
-                    self.end_of_type_node_from(file, node, start),
-                    2344,
-                    out,
+                    Some((file, start, self.end_of_type_node_from(file, node, start))),
+                    Some(2344),
                 );
             }
         }

@@ -416,6 +416,8 @@ pub struct TypeParam {
     pub default: TypeId,
     /// `const`, `in`, `out`
     pub flags: Flags,
+    /// `node.Modifiers()`
+    pub modifiers: Span<Modifier>,
 }
 
 #[derive(Copy, Clone)]

@@ -522,6 +522,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             constraint,
             default: TypeId::NONE,
             flags: Flags::empty(),
+            modifiers: Span::EMPTY,
         };
         let param = self.type_syntax_mut().ast.add_type_param(param);
         self.emit_type(TypeData::Infer(param), pos);
@@ -993,6 +994,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         constraint,
                         default: TypeId::NONE,
                         flags: Flags::empty(),
+                        modifiers: Span::EMPTY,
                     };
                     let param = self.type_syntax_mut().ast.add_type_param(param);
                     return Some(Err(MappedType {

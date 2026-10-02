@@ -8,7 +8,6 @@
 //! diagnostic is a place and a number until somebody wants to read it.
 
 use super::errors_modules::fully_qualified_name;
-use super::errors_x_modules::suggested_import_extension;
 use super::errors_x_operators::{has_empty_object_intersection, type_of_property_of_type};
 use super::errors_x_statements::{is_said_by_the_binder, is_said_by_the_parser};
 use super::*;
@@ -565,43 +564,40 @@ impl Checker<'_> {
         }
     }
 
-    /// 2307 2882 2306 6137 6142 7016 2732 2834 2835 2591 2580: what a module specifier leads to. `resolveExternalModule`. 2322 2880 for the
-    /// options of `import()`.
+    /// Who asks `resolveExternalModule` besides the import and export declarations. 2322 2880 for the options of `import()`.
     fn check_modules(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
-        let unchecked = self.unchecked_module_elements(file);
-        for i in 0..hir.specifier_uses.len() {
-            let SpecifierUse {
-                spec,
-                pos,
-                kind,
-                mode,
-            } = hir.specifier_uses[i];
-            if kind.is_call() {
-                continue;
+        let is_ambient = hir.kind == FileKind::Declaration;
+        // `getTypeFromImportTypeNode`
+        for &written in &hir.specifier_uses {
+            if written.kind == SpecifierKind::ImportType {
+                let site = SpecifierSite {
+                    is_ambient,
+                    ..Default::default()
+                };
+                self.resolve_external_module(file, written, site);
             }
-            if unchecked.iter().any(|&(_, written)| written == pos) {
-                continue;
-            }
-            // `getModeForUsageLocation`: what is said where it is written, or else what the syntax and the file come to.
-            let mode = if mode != ResolutionMode::None {
-                mode
-            } else if kind == SpecifierKind::Require {
-                ResolutionMode::Require
-            } else {
-                self.files().module(file).default_mode
-            };
-            self.check_specifier(file, spec, pos, Some(kind), mode, out);
         }
         let index = self.exprs_by_kind(file);
+        // `checkImportCallExpression`
         for &e in index.of(ExprTag::ImportCall) {
             if let ExprKind::ImportCall { args, .. } = hir[e].kind
                 && let argument = hir.id_at(args, 0)
                 && !self.bound(file).is_unchecked(e.idx())
                 && let ExprKind::String(spec) = hir[argument].kind
             {
-                let mode = self.files().mode_of_import_call(file);
-                self.check_specifier(file, spec, hir[argument].pos, None, mode, out);
+                let written = SpecifierUse {
+                    spec,
+                    pos: hir[argument].pos,
+                    kind: SpecifierKind::ImportCall,
+                    mode: ResolutionMode::None,
+                };
+                let site = SpecifierSite {
+                    is_emittable: true,
+                    is_ambient,
+                    ..Default::default()
+                };
+                self.resolve_external_module(file, written, site);
             }
         }
         // `checkAliasSymbol` for the names that `const a = require("m")` declares, `resolveExternalModuleTypeByLiteral` for every other
@@ -619,41 +615,35 @@ impl Checker<'_> {
                 }
                 // `bindVariableDeclarationOrBindingElement`: the name, or each identifier directly in the binding pattern, is an alias,
                 // whatever `require` resolves to.
-                let alias_declaration = match bound.expr_parent[call.idx()] {
+                let declares_alias = match bound.expr_parent[call.idx()] {
                     Parent::None => continue,
                     Parent::VarInit(decl)
                         if self.external_module_require_argument(file, decl).is_some() =>
                     {
                         match hir[hir[decl].pat].kind {
-                            PatKind::Ident(_) => Some(decl),
-                            PatKind::Object(props) => props
-                                .iter()
-                                .any(|p| is_identifier(hir[p].value))
-                                .then_some(decl),
-                            PatKind::Array(elems) => elems
-                                .iter()
-                                .any(|x| is_identifier(hir[x].pat))
-                                .then_some(decl),
-                            PatKind::Missing => None,
+                            PatKind::Ident(_) => true,
+                            PatKind::Object(props) => {
+                                props.iter().any(|p| is_identifier(hir[p].value))
+                            }
+                            PatKind::Array(elems) => {
+                                elems.iter().any(|x| is_identifier(hir[x].pat))
+                            }
+                            PatKind::Missing => false,
                         }
                     }
-                    _ => None,
+                    _ => false,
                 };
-                if alias_declaration.is_none() && !self.is_commonjs_require(file, call) {
+                if !declares_alias && !self.is_commonjs_require(file, call) {
                     continue;
                 }
                 let mode = self.require_resolution_mode(file, spec);
-                self.check_specifier(
-                    file,
+                let written = SpecifierUse {
                     spec,
-                    hir[argument].pos,
-                    Some(SpecifierKind::Require),
+                    pos: hir[argument].pos,
+                    kind: SpecifierKind::RequireCall,
                     mode,
-                    out,
-                );
-                if let Some(decl) = alias_declaration {
-                    self.check_required_names(file, decl, spec, mode, out);
-                }
+                };
+                self.resolve_external_module(file, written, SpecifierSite::default());
             }
         }
         // `checkImportCallExpression`: the second argument is an `ImportCallOptions`, taken as a whole.
@@ -685,16 +675,7 @@ impl Checker<'_> {
                 } else {
                     0
                 };
-                self.check_assignable_with_end(
-                    file,
-                    given,
-                    wanted,
-                    at,
-                    end,
-                    ExprId::NONE,
-                    2322,
-                    out,
-                );
+                self.check_type_assignable_to(given, wanted, Some((file, at, end)), None);
             }
         }
         // `checkImportCallExpression`: 2880 at the first `assert: ..` of an options object literal, with or without a global
@@ -714,192 +695,145 @@ impl Checker<'_> {
                 out.push(Diagnostic { start: prop.pos, code: 2880 });
             }
         }
-        self.check_imported_names(file, &unchecked, out);
-    }
-
-    /// `checkGrammarModuleElementContext`: the import and export statements that are directly in neither the file nor a namespace, which
-    /// are not checked, and where the specifier of each is written (`u32::MAX`: it has none). Not those whose module is resolved all the
-    /// same: for a name they declare (`resolveAlias`) or for the exports of the file (`getExportsOfModuleWorker`).
-    fn unchecked_module_elements(&self, file: FileId) -> Vec<(StmtId, u32)> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut unchecked = Vec::new();
-        for (i, s) in hir.stmts.iter().enumerate() {
-            if matches!(
-                bound.stmt_parent[i],
-                Parent::None | Parent::File | Parent::Module(_)
-            ) {
-                continue;
-            }
-            let (spec, is_resolved) = match s.kind {
-                StmtKind::Import(x) => (
-                    hir[x].spec,
-                    [hir[x].default, hir[x].namespace]
-                        .into_iter()
-                        .chain(hir[x].named.iter().map(|n| hir[n].local))
-                        .any(|name| name.is_some() && self.is_name_mentioned(file, name)),
-                ),
-                StmtKind::ImportEquals(x) => (
-                    match hir[x].target {
-                        ImportEqualsTarget::Require(spec) => spec,
-                        ImportEqualsTarget::Entity(_) => Atom::NONE,
-                    },
-                    self.is_name_mentioned(file, hir[x].name),
-                ),
-                StmtKind::ExportNamed(x) => (hir[x].spec, false),
-                StmtKind::ExportStar { spec, alias, .. } => (
-                    spec,
-                    alias.is_none() && self.files().module(file).is_module(),
-                ),
-                _ => continue,
-            };
-            if is_resolved {
-                continue;
-            }
-            // The first specifier written after the start of the statement is its own.
-            let written = hir
-                .specifier_uses
-                .iter()
-                .filter(|u| u.pos >= s.pos && !u.kind.is_call())
-                .min_by_key(|u| u.pos)
-                .filter(|u| spec.is_some() && u.spec == spec)
-                .map_or(u32::MAX, |u| u.pos);
-            unchecked.push((StmtId(i as u32), written));
-        }
-        unchecked
-    }
-
-    /// Whether `name` is written somewhere in the file where it may stand for an alias: as an identifier, or first in an entity name.
-    fn is_name_mentioned(&self, file: FileId, name: Atom) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let is_first = |names: Span<NameId>| hir.texts(names).next() == Some(name);
-        hir.exprs.iter().zip(&bound.expr_parent).any(|(e, parent)| {
-            matches!(e.kind, ExprKind::Ident(n) if n == name) && !matches!(parent, Parent::None)
-        }) || hir.types.iter().any(|t| match t.kind {
-            TypeNodeKind::Ref { name: names, .. } | TypeNodeKind::Typeof { name: names, .. } => {
-                is_first(names)
-            }
-            _ => false,
-        }) || hir
-            .import_equals
-            .iter()
-            .any(|i| matches!(i.target, ImportEqualsTarget::Entity(names) if is_first(names)))
-            || hir
-                .exports
-                .iter()
-                .any(|x| x.spec.is_none() && x.items.iter().any(|s| hir[s].local == name))
-    }
-
-    /// What is imported by name has to be exported: 2305 2459 2460 2614 2724, 2595 2597 2616 of a module that is `export =`, and 1192 2613
-    /// for `default`. What is exported by name has to be there. `getExternalModuleMember`, `getTargetOfModuleDefault`,
-    /// `getTargetOfExportSpecifier`. `unchecked`: `unchecked_module_elements`.
-    fn check_imported_names(
-        &mut self,
-        file: FileId,
-        unchecked: &[(StmtId, u32)],
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let hir = self.hir(file);
-        // `getEmitSyntaxForModuleSpecifierExpression` for the specifier of an import or export declaration.
-        let usage = self.files().module(file).default_mode;
-        for (i, import) in hir.imports.iter().enumerate() {
-            if unchecked
-                .iter()
-                .any(|&(s, _)| matches!(hir[s].kind, StmtKind::Import(x) if x.idx() == i))
-            {
-                continue;
-            }
-            let mode = self.files().mode_of_import(file, import.mode);
-            let Some((module, target)) = self.module_to_import_from(file, import.spec, mode) else {
-                continue;
-            };
-            if import.default.is_some()
-                && self.module_has_default(usage, module, target) == Some(false)
-            {
-                // `reportNonDefaultExport`: 2613 is said of the whole clause.
-                let (start, code) = if self.files().export(module, import.default).is_none() {
-                    (import.default_pos, 1192)
-                } else {
-                    (import.clause_start, 2613)
-                };
-                out.push(Diagnostic { start, code });
-                let end = if code == 2613 {
-                    end_of_import_clause(self, file, import)
-                } else {
-                    0
-                };
-                let local = import.default;
-                self.explain_to(start, end, code, |c| {
-                    let mut arguments = vec![c.symbol_to_string(module)];
-                    if code == 2613 {
-                        arguments.push(c.atom_text(local));
-                    }
-                    arguments
-                });
-                if code == 1192 {
-                    self.relate(start, code, |c| {
-                        c.export_star_past_a_default(module)
-                            .map(|at| super::explain::Related {
-                                at: Some(at),
-                                code: 1195,
-                                args: Vec::new(),
-                            })
-                            .into_iter()
-                            .collect()
-                    });
-                }
-            }
-            for s in import.named.iter() {
-                if hir[s].is_name_missing() {
-                    continue;
-                }
-                self.check_imported_name(
-                    file,
-                    usage,
-                    module,
-                    target,
-                    import.spec,
-                    hir[s].imported,
-                    hir[s].imported_pos,
-                    out,
-                );
-                self.relate_name_kept_by_module(
-                    file,
-                    module,
-                    hir[s].imported,
-                    hir[s].imported_pos,
-                    out,
-                );
-            }
-        }
-        for (x, export) in hir.exports.iter().enumerate() {
-            if export.spec.is_none() {
+        for x in 0..hir.exports.len() {
+            if hir.exports[x].spec.is_none() {
                 self.check_exported_names_are_there(file, x, out);
-                continue;
-            }
-            if unchecked
-                .iter()
-                .any(|&(s, _)| matches!(hir[s].kind, StmtKind::ExportNamed(id) if id.idx() == x))
-            {
-                continue;
-            }
-            let mode = self.files().mode_of_import(file, export.mode);
-            let Some((module, target)) = self.module_to_import_from(file, export.spec, mode) else {
-                continue;
-            };
-            for s in export.items.iter() {
-                self.check_imported_name(
-                    file,
-                    usage,
-                    module,
-                    target,
-                    export.spec,
-                    hir[s].local,
-                    hir[s].local_pos,
-                    out,
-                );
-                self.relate_name_kept_by_module(file, module, hir[s].local, hir[s].local_pos, out);
             }
         }
+    }
+
+    /// What `getTargetOfAliasDeclaration` reports of the declaration `decl` in `file` of the alias `sym`, if its module is found:
+    /// `getTargetOfModuleDefault`, `getExternalModuleMember`.
+    pub(super) fn check_target_of_alias_declaration(&mut self, file: FileId, sym: Sym, decl: Decl) {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        if files.declaration_of_alias_symbol(sym) != Some((file, decl)) {
+            return;
+        }
+        let member = match decl {
+            Decl::ImportDefault(i) => {
+                let mode = files.mode_of_import(file, hir[i].mode);
+                Some((hir[i].spec, mode, known::default))
+            }
+            _ => files.external_module_member_of(file, decl),
+        };
+        let Some((spec, mode, name)) = member.filter(|it| it.2.is_some()) else {
+            return;
+        };
+        let Some(module) = files.module_of_specifier_as(file, spec, mode) else {
+            return;
+        };
+        // `node.PropertyNameOrName()`, and `getEmitSyntaxForModuleSpecifierExpression` of the specifier.
+        let (start, usage) = match decl {
+            Decl::ImportSpec(s) => (hir[s].imported_pos, files.module(file).default_mode),
+            Decl::ExportSpec(s) => (hir[s].local_pos, files.module(file).default_mode),
+            Decl::Require(pat) => match bound.pat_parent[pat.idx()] {
+                PatParent::Prop(_, p) => (hir[p].pos, ResolutionMode::Require),
+                _ => return,
+            },
+            _ => (0, files.module(file).default_mode),
+        };
+        let target = files.module_value(module);
+        // In a binding pattern too: `symbolFromModule == nil && nameText == InternalSymbolNameDefault`.
+        if name == known::default {
+            if self.module_has_default(usage, module) {
+                return;
+            }
+            match decl {
+                Decl::ImportDefault(i) => self.report_non_default_export(file, i, module),
+                _ => self.error_no_module_member_symbol(file, module, target, spec, name, start),
+            }
+        } else if !matches!(decl, Decl::Require(_))
+            && files.is_only_importable_as_default(usage, module)
+        {
+            let at = self.place_of_token(file, start);
+            self.error(at, 1544, &[Arg::Text(files.options.module.name())]);
+        } else if files.alias_links(sym).immediate_target.is_none()
+            && self.symbol_from_variable(sym).is_none()
+        {
+            self.error_no_module_member_symbol(file, module, target, spec, name, start);
+        }
+    }
+
+    /// `reportNonDefaultExport`
+    fn report_non_default_export(&mut self, file: FileId, import: ImportId, module: Sym) {
+        let import = &self.hir(file)[import];
+        if self.files().export(module, import.default).is_some() {
+            let end = end_of_import_clause(self, file, import);
+            let args = [Arg::Sym(module), Arg::Atom(import.default)];
+            self.error((file, import.clause_start, end), 2613, &args);
+            return;
+        }
+        let export_star = self.export_star_past_a_default(module);
+        let related = export_star.map(|at| self.new_diagnostic(at, 1195, &[]));
+        let at = self.place_of_token(file, import.default_pos);
+        self.error(at, 1192, &[Arg::Sym(module)])
+            .related_information
+            .extend(related);
+    }
+
+    /// `errorNoModuleMemberSymbol`: `name`, written at `start` in `from`, is imported from `module`, which has none. `target`: the value
+    /// `module` exports with `export =`, or else `module`. `spec`: the specifier `module` is imported by.
+    fn error_no_module_member_symbol(
+        &mut self,
+        from: FileId,
+        module: Sym,
+        target: Sym,
+        spec: Atom,
+        name: Atom,
+        start: u32,
+    ) {
+        let (code, other) = self.why_no_module_member(from, module, target, name, start);
+        let module_name = module_name_as_imported(self, module, spec);
+        // `DeclarationNameToString`: a string is written with its quotes.
+        let written = match self.hir(from).text.get(start as usize) {
+            Some(b'"' | b'\'') => word_at(self, from, start),
+            _ => self.atom_text(name),
+        };
+        let (module_name, written) = (Arg::Text(&module_name), Arg::Text(&written));
+        let mut related = Vec::new();
+        match (code, other) {
+            (2724, Some(meant)) => {
+                if let Some(place) = self.place_where_value_is_declared(meant) {
+                    related.push(self.new_diagnostic(place, 2728, &[Arg::Sym(meant)]));
+                }
+            }
+            // `reportNonExportedMember`
+            (2459 | 2460, _) => {
+                let local = self.local_of_module(module, name);
+                let declarations = local.map(|local| self.files().decls_of(local));
+                for (i, &(of, decl)) in declarations.iter().flat_map(|it| it.iter()).enumerate() {
+                    if let Some(place) = self.place_of_declaration(of, decl) {
+                        related.push(match i {
+                            0 => self.new_diagnostic(place, 2728, &[written]),
+                            _ => self.new_diagnostic(place, 6204, &[]),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+        let args: &[Arg<'_>] = match code {
+            2460 | 2724 => &[module_name, written, other.map_or(Arg::Text(""), Arg::Sym)],
+            2595 | 2597 => &[written],
+            2616 => &[written, written, module_name],
+            _ => &[module_name, written],
+        };
+        let at = self.place_of_token(from, start);
+        self.error(at, code, args).related_information = related;
+    }
+
+    /// `moduleSymbol.ValueDeclaration.Locals()[name]`: what the file, or the first `declare module "m"`, declares for itself.
+    fn local_of_module(&self, module: Sym, name: Atom) -> Option<Sym> {
+        let files = self.files();
+        let &(of, decl) = files.decls_of(module).first()?;
+        let bound = files.bound(of);
+        let scope = match decl {
+            Decl::File => 0,
+            Decl::Module(m) => bound.module_scope[m.idx()].idx(),
+            _ => return None,
+        };
+        let local = bound.lookup(bound.scopes.get(scope)?.locals, name)?;
+        Some(files.sym(of, local))
     }
 
     /// `reportNonDefaultExport`: the first `export *` of `module` that leads to a module with a default export, which is not passed on.
@@ -980,235 +914,26 @@ impl Checker<'_> {
         }
     }
 
-    /// The module `spec` means when it is resolved as `mode` says, if what there is to import from it can be told, and what it says it is
-    /// with `export =`, or else the module once more.
-    fn module_to_import_from(
-        &self,
-        file: FileId,
-        spec: Atom,
-        mode: ResolutionMode,
-    ) -> Option<(Sym, Sym)> {
-        if let Some(module) = self.module_with_known_exports(file, spec, mode) {
-            return Some((module, module));
-        }
+    /// `getTargetOfModuleDefault`: whether `module` has a default export, its own or a synthetic one. `usage`: the syntax the specifier is
+    /// emitted as (`getEmitSyntaxForModuleSpecifierExpression`), whatever it says of how it is resolved.
+    fn module_has_default(&mut self, usage: ResolutionMode, module: Sym) -> bool {
         let files = self.files();
-        let module = files.module_of_specifier_as(file, spec, mode)?;
-        let target = files.resolve_alias(files.export(module, known::export_equals)?)?;
-        Some((module, target))
-    }
-
-    /// The module `spec` means when it is resolved as `mode` says, if all there is to import from it can be told.
-    pub(super) fn module_with_known_exports(
-        &self,
-        file: FileId,
-        spec: Atom,
-        mode: ResolutionMode,
-    ) -> Option<Sym> {
-        let files = self.files();
-        let module = files.module_of_specifier_as(file, spec, mode)?;
-        files.has_known_exports(module).then_some(module)
-    }
-
-    /// `getTargetOfModuleDefault`: whether `module` has a default export, its own or a synthetic one. `usage` and `target` as in
-    /// `check_imported_name`. `None` if the type of `target` is unknown.
-    fn module_has_default(
-        &mut self,
-        usage: ResolutionMode,
-        module: Sym,
-        target: Sym,
-    ) -> Option<bool> {
-        let files = self.files();
-        // `isOnlyImportableAsDefault`, `canHaveSyntheticDefault`: they go by how the import is emitted, whatever it says of how its
-        // specifier is resolved.
         if files.is_only_importable_as_default(usage, module)
             || self.can_have_synthetic_default(usage, module)
         {
-            return Some(true);
+            return true;
         }
         // `resolveExportByName`: of a module that is `export =`, the property `default` of what it is.
-        if target == module {
-            Some(files.export(module, known::default).is_some())
-        } else {
-            self.value_has_declared_property(target, known::default)
+        let value = files.module_value(module);
+        if value == module {
+            return files.export(module, known::default).is_some();
         }
-    }
-
-    /// `getPropertyOfTypeEx(getTypeOfSymbol(sym), name, skipObjectFunctionPropertyAugment)`. `None`: the type is not known.
-    fn value_has_declared_property(&mut self, sym: Sym, name: Atom) -> Option<bool> {
-        // What is no value has the error type, which has no properties.
-        if !self.files().flags(sym).intersects(SymFlags::VALUE) {
-            return Some(false);
-        }
-        let ty = self.type_of_symbol(sym);
-        if !self.is_known(ty) {
-            return None;
-        }
-        Some(self.has_declared_property(ty, name))
-    }
-
-    /// `getPropertyOfTypeEx` with `skipObjectFunctionPropertyAugment`: whether `ty` declares a property `name`. What every function and
-    /// every object has does not count, what an index signature covers is no property, and `any` has none.
-    fn has_declared_property(&mut self, ty: TypeId, name: Atom) -> bool {
-        // `getReducedApparentType`
-        let ty = self.reduced(ty);
-        let ty = self.apparent_type(ty);
-        let ty = self.reduced(ty);
-        let TypeData::Union(parts) = self.data(ty) else {
-            return self.prop_ref(ty, name).is_some();
-        };
-        // `createUnionOrIntersectionProperty`: some member has it, and those that do not have an index signature for it, or are object
-        // literals that leave it out.
-        let mut is_somewhere = false;
-        for &part in parts.iter() {
-            if self.has_declared_property(part, name) {
-                is_somewhere = true;
-                continue;
-            }
-            let apparent = self.apparent_type(part);
-            let is_covered = match self.members(apparent) {
-                Some(members) => self
-                    .applicable_index_info(&members, TypeId::STRING, Some(name))
-                    .is_some(),
-                None => false,
-            };
-            if !is_covered && !self.is_closed_object_literal_type(part) {
-                return false;
-            }
-        }
-        is_somewhere
-    }
-
-    /// `getExternalModuleMember`, and `getTargetOfModuleDefault` for `default`: `name`, written at `start` in `from`, is imported from
-    /// `module`. `usage`: the syntax the specifier is emitted as (`getEmitSyntaxForModuleSpecifierExpression`). `target`: the value
-    /// `module` exports with `export =`, or else `module`. `spec`: the specifier `module` is imported by.
-    #[allow(clippy::too_many_arguments)]
-    fn check_imported_name(
-        &mut self,
-        from: FileId,
-        usage: ResolutionMode,
-        module: Sym,
-        target: Sym,
-        spec: Atom,
-        name: Atom,
-        start: u32,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let files = self.files();
-        let is_there = if name == known::default {
-            self.module_has_default(usage, module, target)
-        } else if files.is_only_importable_as_default(usage, module) {
-            // 1544 is what is said of it then.
-            return;
-        } else if target == module {
-            Some(files.module_export(module, name).is_some())
-        } else if files.namespace_member(target, name).is_some()
-            || files.export(module, name).is_some_and(|own| {
-                let flags = files.symbol_flags(own);
-                flags.intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
-                    && !flags.intersects(SymFlags::VALUE)
-            })
-        {
-            // `getExportsOfModuleWorker`: what the value exports as a namespace, and of the module itself what is a type or a namespace
-            // and no value.
-            Some(true)
-        } else {
-            self.value_has_declared_property(target, name)
-        };
-        if is_there == Some(false) {
-            let (code, other) = self.why_no_module_member(from, module, target, name, start);
-            out.push(Diagnostic { start, code });
-            self.explain(start, code, |c| {
-                let module_name = module_name_as_imported(c, module, spec);
-                // `DeclarationNameToString`: a string is written with its quotes.
-                let name = match c.hir(from).text.get(start as usize) {
-                    Some(b'"' | b'\'') => word_at(c, from, start),
-                    _ => c.atom_text(name),
-                };
-                match code {
-                    2460 | 2724 => {
-                        let other = other.map_or_else(String::new, |s| c.symbol_to_string(s));
-                        vec![module_name, name, other]
-                    }
-                    2595 | 2597 => vec![name],
-                    2616 => vec![name.clone(), name, module_name],
-                    _ => vec![module_name, name],
-                }
-            });
-            // `errorNoModuleMemberSymbol`
-            if code == 2724
-                && let Some(meant) = other
-            {
-                self.relate(start, code, |c| {
-                    let Some(place) = c.place_where_value_is_declared(meant) else {
-                        return Vec::new();
-                    };
-                    let name = c.symbol_to_string(meant);
-                    vec![c.declared_here(place, name)]
-                });
-            }
-        }
-    }
-
-    /// `reportNonExportedMember`: where `module` declares the `name` it does not export, if 2459 or 2460 has just been said of it at
-    /// `start` in `from`.
-    fn relate_name_kept_by_module(
-        &mut self,
-        from: FileId,
-        module: Sym,
-        name: Atom,
-        start: u32,
-        out: &[Diagnostic],
-    ) {
-        let Some(&Diagnostic { start: at, code }) = out.last() else {
-            return;
-        };
-        if at != start || !matches!(code, 2459 | 2460) {
-            return;
-        }
-        self.relate(start, code, |c| {
-            let files = c.files();
-            // As in `why_no_module_member`.
-            let local = files.decls_of(module).first().and_then(|&(of, decl)| {
-                let bound = files.bound(of);
-                let scope = match decl {
-                    Decl::File => 0,
-                    Decl::Module(m) => bound.module_scope[m.idx()].idx(),
-                    _ => return None,
-                };
-                bound
-                    .lookup(bound.scopes.get(scope)?.locals, name)
-                    .map(|id| files.sym(of, id))
-            });
-            let Some(local) = local else {
-                return Vec::new();
-            };
-            // `DeclarationNameToString`: a string is written with its quotes.
-            let written = match c.hir(from).text.get(start as usize) {
-                Some(b'"' | b'\'') => word_at(c, from, start),
-                _ => c.atom_text(name),
-            };
-            files
-                .decls_of(local)
-                .iter()
-                .enumerate()
-                .filter_map(|(i, &(of, decl))| {
-                    let at = c.place_of_declaration(of, decl)?;
-                    Some(if i == 0 {
-                        c.declared_here(at, written.clone())
-                    } else {
-                        super::explain::Related {
-                            at: Some(at),
-                            code: 6204,
-                            args: Vec::new(),
-                        }
-                    })
-                })
-                .collect()
-        });
+        let ty = self.type_of_symbol(value);
+        self.type_of_own_property(ty, known::default).is_some()
     }
 
     /// `errorNoModuleMemberSymbol`, `reportNonExportedMember`, `reportInvalidImportEqualsExportMember`. The arguments are those of
-    /// `check_imported_name`. With 2724 comes what may have been meant, with 2460 what the name is exported as.
+    /// `error_no_module_member_symbol`. With 2724 comes what may have been meant, with 2460 what the name is exported as.
     fn why_no_module_member(
         &self,
         from: FileId,
@@ -1251,18 +976,7 @@ impl Checker<'_> {
         if files.export(module, known::default).is_some() {
             return (2614, None);
         }
-        // What the file, or the first `declare module "m"`, declares for itself.
-        let local = files.decls_of(module).first().and_then(|&(of, decl)| {
-            let bound = files.bound(of);
-            let scope = match decl {
-                Decl::File => 0,
-                Decl::Module(m) => bound.module_scope[m.idx()].idx(),
-                _ => return None,
-            };
-            bound
-                .lookup(bound.scopes.get(scope)?.locals, name)
-                .map(|id| files.sym(of, id))
-        });
+        let local = self.local_of_module(module, name);
         let Some(local) = local else {
             return (2305, None);
         };
@@ -1296,161 +1010,33 @@ impl Checker<'_> {
         (code, None)
     }
 
-    /// `errorOnImplicitAnyModule` with `isError`: 7016 of `spec`, which is one of the `untyped_imports` of `file` in `mode`. The error goes
-    /// from `at.0` to `at.1`. `at.1` is `0` for the specifier written at `at.0`.
+    /// `errorOnImplicitAnyModule` with `isError`: 7016 at `at`, of `spec`, which is one of the `untyped_imports` of `file` in `mode`.
     pub(super) fn error_on_implicit_any_module(
         &mut self,
         file: FileId,
         spec: Atom,
         mode: ResolutionMode,
-        at: (u32, u32),
-        out: &mut Vec<Diagnostic>,
+        at: (FileId, u32, u32),
     ) {
         let module = self.files().module(file);
-        let Some(index) = module
-            .untyped_imports
-            .iter()
-            .position(|&u| u == (spec, mode))
-        else {
+        let mut untyped = module.untyped_imports.iter();
+        let Some(index) = untyped.position(|&u| u == (spec, mode)) else {
             return;
         };
-        let start = at.0;
-        out.push(Diagnostic { start, code: 7016 });
         let (path, package) = module.untyped_import_files[index];
-        self.explain_to(start, at.1, 7016, |c| {
-            vec![c.atom_text(spec), c.atom_text(path)]
-        });
-        if let Some(package) = package
-            && !crate::resolve::is_relative(&self.atom_text(spec))
-        {
-            let alternate = module
-                .untyped_import_alternates
-                .iter()
-                .find(|a| (a.0, a.1) == (spec, mode))
-                .map(|a| a.2);
-            self.explain_chain(start, 7016, |c| {
-                let alternate = alternate.map(|types| c.atom_text(types));
-                let (spec, package) = (c.atom_text(spec), c.atom_text(package));
-                vec![c.module_not_found_hint(&spec, &package, alternate)]
+        let text = self.atom_text(spec);
+        let error_info = package
+            .filter(|_| !crate::resolve::is_relative(&text))
+            .map(|package| {
+                let mut alternates = module.untyped_import_alternates.iter();
+                let alternate = alternates.find(|a| (a.0, a.1) == (spec, mode));
+                let alternate = alternate.map(|a| self.atom_text(a.2));
+                let hint = self.module_not_found_hint(&text, &self.atom_text(package), alternate);
+                Reported::new(at, hint.code, hint.args)
             });
-        }
-    }
-
-    /// `resolveExternalModule`. `kind` is `None` for `import()` and `Require` for a `require()` call too. `mode`: the way the specifier is
-    /// resolved where it is written.
-    fn check_specifier(
-        &mut self,
-        file: FileId,
-        spec: Atom,
-        start: u32,
-        kind: Option<SpecifierKind>,
-        mode: ResolutionMode,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let options = &self.files().options;
-        let is_side_effect = kind == Some(SpecifierKind::SideEffect);
-        if is_side_effect && !options.no_unchecked_side_effect_imports {
-            return;
-        }
-        // Reported before the module is looked up, found or not.
-        if self.files().atoms.bytes(spec).starts_with(b"@types/") {
-            out.push(Diagnostic { start, code: 6137 });
-            self.explain(start, 6137, |c| {
-                let text = c.atom_text(spec);
-                vec![text["@types/".len()..].to_owned(), text]
-            });
-        }
-        let module = self.files().module(file);
-        let found = self.files().module_of_specifier_as(file, spec, mode);
-        let target = module
-            .imports
-            .get(&(spec, mode))
-            // A module that is declared by name is what it is declared to be.
-            .filter(|&&target| found.is_none_or(|m| m == self.files().file_symbol(target)));
-        if target.is_none() && found.is_some() {
-            return;
-        }
-        // `GetResolutionDiagnostic`, `needJsx`: reported whether or not the file is in the program for another reason.
-        let mut needs_jsx = module.jsx_imports.iter();
-        if let Some(&(.., path)) = needs_jsx.find(|r| (r.0, r.1) == (spec, mode)) {
-            out.push(Diagnostic { start, code: 6142 });
-            self.explain(start, 6142, |c| vec![c.atom_text(spec), c.atom_text(path)]);
-            if target.is_none() {
-                return;
-            }
-        }
-        if let Some(&target) = target {
-            // The file is not a module.
-            if found.is_none() && !is_side_effect {
-                let path = &self.files().module(target).path;
-                out.push(Diagnostic { start, code: 2306 });
-                self.explain(start, 2306, |c| {
-                    let mut redirected = module.redirected_imports.iter();
-                    match redirected.find(|r| (r.0, r.1) == (spec, mode)) {
-                        Some(r) => vec![c.atom_text(r.2)],
-                        None => vec![path.clone()],
-                    }
-                });
-            }
-            return;
-        }
-        // `GetResolutionDiagnostic`, `needAllowArbitraryExtensions`
-        if module.arbitrary_extension_imports.contains(&(spec, mode)) {
-            out.push(Diagnostic { start, code: 6263 });
-            let at = module
-                .arbitrary_extension_imports
-                .iter()
-                .position(|&u| u == (spec, mode));
-            let path = module.arbitrary_extension_files[at.unwrap()];
-            self.explain(start, 6263, |c| vec![c.atom_text(spec), c.atom_text(path)]);
-            return;
-        }
-        // The specifier resolves to JavaScript that is not in the program.
-        if module.untyped_imports.contains(&(spec, mode)) {
-            if options.no_implicit_any && !is_side_effect {
-                self.error_on_implicit_any_module(file, spec, mode, (start, 0), out);
-            }
-            return;
-        }
-        let text = self.files().atoms.text(spec);
-        let code = if !options.resolve_json_module && text.ends_with(".json") {
-            2732
-        } else if options.resolves_like_node
-            && mode == ResolutionMode::Import
-            && let Some(&(_, is_there)) = module.extensionless_imports.iter().find(|e| e.0 == spec)
-        {
-            // Only of what is not found is it said that Node's `import` wants the extension written.
-            if is_there { 2835 } else { 2834 }
-        } else if is_side_effect {
-            2882
-        // `getCannotResolveModuleNameErrorForSpecificModule`: only for a string literal, not for a template.
-        } else if crate::resolve::is_node_core_module(&text)
-            && self.hir(file).text.get(start as usize) != Some(&b'`')
-        {
-            if options
-                .types
-                .as_ref()
-                .is_some_and(|t| t.iter().any(|t| t == "*"))
-            {
-                2580
-            } else {
-                2591
-            }
-        } else {
-            2307
-        };
-        out.push(Diagnostic { start, code });
-        match code {
-            2580 | 2591 | 2732 => self.explain(start, code, |c| vec![c.atom_text(spec)]),
-            2835 => self.explain(start, code, |c| {
-                let (files, text) = (c.files(), c.atom_text(spec));
-                match suggested_import_extension(files, &files.module(file).path, &text) {
-                    Some(extension) => vec![text + extension],
-                    None => Vec::new(),
-                }
-            }),
-            _ => {}
-        }
+        let args = [Arg::Atom(spec), Arg::Atom(path)];
+        let diagnostic = self.new_diagnostic_chain(error_info, at, 7016, &args);
+        self.add_diagnostic(diagnostic);
     }
 
     /// `getModeForUsageLocation` for the argument of `require(spec)`: CommonJS. Falls back to the first mode the loader resolved `spec`
@@ -1491,71 +1077,6 @@ impl Checker<'_> {
             return None;
         }
         crate::bind::require_call_argument(hir, init)
-    }
-
-    /// `getTargetOfImportSpecifier` for a binding element: each identifier directly in the pattern of `const { a, b: c } = require(spec)`
-    /// is an alias for the export that `PropertyNameOrName` names, and `getExternalModuleMember` reports the ones that are missing.
-    /// `IsVariableDeclarationInitializedToRequire` holds for `decl`.
-    fn check_required_names(
-        &mut self,
-        file: FileId,
-        decl: VarDeclId,
-        spec: Atom,
-        mode: ResolutionMode,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let hir = self.hir(file);
-        let pattern = hir[hir[decl].pat].kind;
-        if matches!(pattern, PatKind::Ident(_) | PatKind::Missing) {
-            return;
-        }
-        let Some((module, target)) = self.module_to_import_from(file, spec, mode) else {
-            return;
-        };
-        let identifier = |pat: PatId| match hir[pat].kind {
-            PatKind::Ident(name) => Some((name, hir[pat].pos)),
-            _ => None,
-        };
-        let mut check = |name: Atom, start: u32| {
-            self.check_imported_name(
-                file,
-                ResolutionMode::Require,
-                module,
-                target,
-                spec,
-                name,
-                start,
-                out,
-            );
-            self.relate_name_kept_by_module(file, module, name, start, out);
-        };
-        match pattern {
-            PatKind::Object(props) => {
-                for prop in props.iter().map(|p| hir[p]) {
-                    let Some((local_name, local_start)) = identifier(prop.value) else {
-                        continue;
-                    };
-                    let first_byte = hir.text.get(prop.pos as usize);
-                    match prop.key {
-                        // `...rest` has no property name.
-                        _ if prop.is_rest => check(local_name, local_start),
-                        // Only an identifier or a string literal names an export: not `[k]`, `["a"]` or `0`.
-                        PropKey::Name(name)
-                            if !matches!(first_byte, None | Some(b'[' | b'.' | b'0'..=b'9')) =>
-                        {
-                            check(name, prop.pos)
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            PatKind::Array(elems) => {
-                for (name, start) in elems.iter().filter_map(|x| identifier(hir[x].pat)) {
-                    check(name, start);
-                }
-            }
-            PatKind::Ident(_) | PatKind::Missing => {}
-        }
     }
 
     // ───────────────────────────── variables without a value ─────────────────────────────
@@ -3736,79 +3257,6 @@ const VIABLE_KEYWORD_SUGGESTIONS: &[&str] = &[
     "await",
 ];
 
-/// The modifiers written right before `at`.
-fn modifiers_before(text: &[u8], at: usize) -> Vec<&[u8]> {
-    let mut found = Vec::new();
-    let mut end = at.min(text.len());
-    loop {
-        end = text[..end].trim_ascii_end().len();
-        let from = text[..end]
-            .iter()
-            .rposition(|b| !b.is_ascii_alphabetic())
-            .map_or(0, |before| before + 1);
-        let is_part_of_a_name = text[..from]
-            .last()
-            .is_some_and(|&b| b.is_ascii_digit() || matches!(b, b'_' | b'$') || b >= 0x80);
-        let is_modifier = matches!(
-            &text[from..end],
-            b"abstract"
-                | b"accessor"
-                | b"async"
-                | b"const"
-                | b"declare"
-                | b"default"
-                | b"export"
-                | b"in"
-                | b"out"
-                | b"override"
-                | b"private"
-                | b"protected"
-                | b"public"
-                | b"readonly"
-                | b"static"
-        );
-        if is_part_of_a_name || !is_modifier {
-            return found;
-        }
-        found.push(&text[from..end]);
-        end = from;
-    }
-}
-
-/// `checkGrammarModifiers`: what 1029, 1040 or 1243 names, when it is reported at the modifier `word`, which comes after `before`.
-fn modifiers_in_message(code: u32, word: &str, before: &[&[u8]]) -> Option<Vec<String>> {
-    // What is looked for among the modifiers seen so far, in this order.
-    let looked_for: &[&str] = match (code, word) {
-        (1029, "default") => return Some(vec!["export".to_owned(), "default".to_owned()]),
-        (1040, "async") => return Some(vec!["async".to_owned()]),
-        (1243, "async") => return Some(vec!["async".to_owned(), "abstract".to_owned()]),
-        (1029, "override") => &["readonly", "accessor", "async"],
-        (1029, "public" | "private" | "protected") => &[
-            "override", "static", "accessor", "readonly", "async", "abstract",
-        ],
-        (1029, "static") => &["readonly", "async", "accessor", "override"],
-        (1029, "export") => &["declare", "abstract", "async"],
-        (1029, "abstract") => &["override", "accessor"],
-        (1029, "in") => &["out"],
-        (1040, "declare") => &["async", "override"],
-        (1243, "override") => &["declare"],
-        (1243, "private" | "static") => &["abstract"],
-        (1243, "accessor") => &["readonly", "declare"],
-        (1243, "readonly" | "declare") => &["accessor"],
-        (1243, "abstract") => &["static", "private"],
-        _ => return None,
-    };
-    let seen = looked_for
-        .iter()
-        .find(|seen| before.contains(&seen.as_bytes()))?
-        .to_string();
-    Some(match (code, word) {
-        (1040, _) => vec![seen],
-        (1243, "abstract") => vec![seen, word.to_owned()],
-        _ => vec![word.to_owned(), seen],
-    })
-}
-
 /// `checkJSDocTypeIsInJsFile`: 17019 of `T?` or `T!`, 17020 of `?T` or `!T`, which starts at `start`.
 fn explain_jsdoc_nullable_type(c: &mut Checker<'_>, file: FileId, start: u32, code: u32) {
     let hir = c.hir(file);
@@ -3944,12 +3392,6 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             }
             c.note(start, c.end_of_expr(file, last), code, Vec::new());
         }
-        1029 | 1040 | 1243 => {
-            let (word, before) = (word_at(c, file, start), modifiers_before(text, at));
-            if let Some(arguments) = modifiers_in_message(code, &word, &before) {
-                c.note(start, 0, code, arguments);
-            }
-        }
         // `checkGrammarModifiers`, `checkJSDecoratorSyntax`: all of a decorator the class keeps, which is one after `export`.
         // `reportObviousDecoratorErrors` points at the `@`.
         1206 | 8038 => {
@@ -3966,9 +3408,9 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
         1358 | 1443 => c.note(start, c.end_of_template_at(file, start), code, Vec::new()),
         // `createIdentifierWithDiagnostic`, `parsingContextErrors`, `parseErrorForInvalidName`: these name the word they are reported at.
         1359 | 1389 | 1390 | 2819 => c.note(start, 0, code, vec![word_at(c, file, start)]),
-        // What is made of a tag is as long as the tag, which goes on to the next one: the `?` of `makeQuestionIfOptional`, the modifier that
-        // `@readonly` is, the type parameters of `@template`.
-        1024 | 1047 | 1051 | 1092 if hir.is_in_jsdoc(start) => {
+        // What is made of a tag is as long as the tag, which goes on to the next one: the `?` of `makeQuestionIfOptional`, the type
+        // parameters of `@template`.
+        1047 | 1051 | 1092 if hir.is_in_jsdoc(start) => {
             let comment = hir.jsdoc_comments.partition_point(|c| c.0 <= start) - 1;
             let last = (hir.jsdoc_comments[comment].1 as usize)
                 .saturating_sub(2)
@@ -4174,17 +3616,6 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
                 c.note(start, c.end_of_bracket_at(file, start), code, Vec::new());
             }
         }
-        // `checkGrammarModifiers`: said of the parameter.
-        1187 | 1317 => {
-            if let Some(p) = hir.params.iter().position(|p| p.pos == start) {
-                c.note(
-                    start,
-                    c.end_of_param(file, ParamId(p as u32)),
-                    code,
-                    Vec::new(),
-                );
-            }
-        }
         1488 => c.note(
             start,
             start + 2,
@@ -4317,10 +3748,6 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             code,
             Vec::new(),
         ),
-        // `checkGrammarModifiers`: a modifier that is made from a tag of a JSDoc comment is as long as the tag.
-        18010 if hir.is_in_jsdoc(start) => {
-            c.note(start, c.end_of_jsdoc_tag(file, start), code, Vec::new());
-        }
         // `checkGrammarMetaProperty`
         17012 => {
             let Some(dot) = start_of_token_before(text, start, b".") else {

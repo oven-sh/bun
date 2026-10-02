@@ -1306,7 +1306,10 @@ impl File {
                     || v.one(parameter.default)
             }
             NodeData::TypeParam(p) => {
-                v.one(node.with(Part::Name)) || v.one(self[p].constraint) || v.one(self[p].default)
+                v.span(self[p].modifiers)
+                    || v.one(node.with(Part::Name))
+                    || v.one(self[p].constraint)
+                    || v.one(self[p].default)
             }
             NodeData::Member(m) => {
                 let member = &self[m];

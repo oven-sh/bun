@@ -13,7 +13,8 @@ use bun_sema::hir::Flags;
 use super::TypeSyntax;
 use crate::Error;
 use crate::lexer::{
-    LexerSnapshot, T, is_identifier_continue, is_identifier_start, peek_unicode_escape,
+    LexerSnapshot, PropertyModifierKeyword, T, is_identifier_continue, is_identifier_start,
+    peek_unicode_escape,
 };
 use crate::p::P;
 use crate::parse::lists::ListKind;
@@ -93,7 +94,7 @@ pub(crate) struct TypeParameter {
     /// Where its first token is: the `[`, a modifier, or the name.
     pub(crate) pos: u32,
     pub(crate) name: Name,
-    /// `const`, `in`, `out`, and nothing for a modifier that cannot be on a type parameter, with where each is.
+    /// `node.Modifiers()`: each with where it is.
     pub(crate) modifiers: Vec<(Flags, u32)>,
     /// `[T=Default]`
     pub(crate) default: Option<TypeExpr>,
@@ -1750,9 +1751,12 @@ impl<'p, 'a> Reader<'p, 'a> {
                 b"const" => Flags::CONST,
                 b"in" => Flags::IN,
                 b"out" => Flags::OUT,
-                b"abstract" | b"accessor" | b"async" | b"declare" | b"override" | b"private"
-                | b"protected" | b"public" | b"readonly" | b"static" => Flags::empty(),
-                _ => break,
+                word => {
+                    match PropertyModifierKeyword::find(word).and_then(super::keep::modifier_flag) {
+                        Some(flag) => Flags::from_bits_retain(flag.bits()),
+                        None => break,
+                    }
+                }
             };
             let is_static = self.token_text() == b"static";
             if is_static && has_static {

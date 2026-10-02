@@ -50,9 +50,8 @@ struct Cx<'a> {
     /// The start, the end and the type (`getTypeFromImportAttributes`) of the attributes of each import or export declaration. The
     /// `&self` passes collect them, and `check_import_attribute_types` relates them, which needs `&mut self`.
     attribute_types: std::cell::RefCell<Vec<(u32, u32, AttributesType)>>,
-    /// The imported names that are no export of their module, and the specifier `esm_syntax_code` is said of if they stand for
-    /// something after all. `check_members_of_export_equals` asks the type of the `export =` value, which needs `&mut self`.
-    members_of_export_equals: std::cell::RefCell<Vec<(Sym, ImportSpecId)>>,
+    /// `node.Symbol`, of the declarations of aliases.
+    aliases: FxHashMap<Decl, Sym>,
     /// The start and the code of each error whose message names a symbol, and the symbol. Printing it needs `&mut self`.
     named_symbols: std::cell::RefCell<Vec<(u32, u32, Sym)>>,
 }
@@ -108,7 +107,6 @@ impl Checker<'_> {
         }
         self.check_flow_too_deep(file, out);
         let module = self.files().module(file);
-        let path = module.path.as_str();
         let sorted;
         let has_calls = hir.specifier_uses.iter().any(|u| u.kind.is_call());
         let uses: &[SpecifierUse] = if !has_calls && hir.specifier_uses.is_sorted_by_key(|u| u.pos)
@@ -131,13 +129,9 @@ impl Checker<'_> {
             is_js: hir.is_js,
             is_verbatim,
             verbatim_commonjs: is_verbatim && self.xm_emits_commonjs(file),
-            esm_syntax_code: if path.ends_with(".cts") || path.ends_with(".cjs") {
-                1286
-            } else {
-                1295
-            },
+            esm_syntax_code: self.verbatim_module_syntax_error_message(file),
             attribute_types: Default::default(),
-            members_of_export_equals: Default::default(),
+            aliases: self.symbols_of_alias_declarations(file),
             named_symbols: Default::default(),
             uses,
             last_keyword: std::cell::Cell::new((u32::MAX, false, None)),
@@ -150,12 +144,36 @@ impl Checker<'_> {
             is_ambient: hir.kind == FileKind::Declaration,
         };
         self.xm_statements(&cx, hir.body, top, false, out);
+        self.xm_statements_out_of_place(&cx, top);
         self.xm_statements_in_blocks(&cx, out);
         self.xm_static_blocks(&cx, out);
         self.xm_collisions_of_declarations(&cx, out);
         self.xm_import_calls_and_types(&cx, out);
-        self.check_import_attribute_types(&cx, out);
-        self.check_members_of_export_equals(&cx, out);
+        self.check_import_attribute_types(&cx);
+        // A circle goes through a file by an alias others can get at, or by one that stands for another name of the file.
+        let can_be_circular = cx.aliases.keys().any(|d| {
+            matches!(
+                d,
+                Decl::ImportEquals(_)
+                    | Decl::ExportSpec(_)
+                    | Decl::ExportStarAs(_)
+                    | Decl::ExportExpr(_)
+            )
+        });
+        for (&decl, &sym) in &cx.aliases {
+            // `checkVariableLikeDeclaration`
+            if matches!(decl, Decl::Require(_)) {
+                self.check_alias_symbol(file, &cx.aliases, StmtId::NONE, decl, false);
+            }
+            // `resolveAlias`: at `getDeclarationOfAliasSymbol`
+            if can_be_circular
+                && self.files().alias_links(sym).is_circular
+                && self.files().declaration_of_alias_symbol(sym) == Some((file, decl))
+                && let Some(at) = self.place_of_alias_declaration(Sym { file, ..sym }, decl)
+            {
+                self.error(at, 2303, &[Arg::Sym(sym)]);
+            }
+        }
         for (start, code, sym) in cx.named_symbols.take() {
             self.explain(start, code, |c| vec![c.symbol_to_string(sym)]);
         }
@@ -387,7 +405,7 @@ impl Checker<'_> {
 
     /// The statements of the file or of the body of a module. `says_module`: of `module A.B`, when this is what is in `A`.
     fn xm_statements(
-        &self,
+        &mut self,
         cx: &Cx<'_>,
         list: IdList<StmtId>,
         around: Around,
@@ -435,7 +453,7 @@ impl Checker<'_> {
 
     /// `bindModuleDeclaration`, `checkModuleDeclaration`
     fn xm_module(
-        &self,
+        &mut self,
         cx: &Cx<'_>,
         list: IdList<StmtId>,
         s: StmtId,
@@ -718,13 +736,13 @@ impl Checker<'_> {
         true
     }
 
-    fn xm_is_a_file(&self, module: Sym) -> bool {
+    pub(super) fn xm_is_a_file(&self, module: Sym) -> bool {
         self.files().symbol(module).decls.contains(&Decl::File)
     }
 
     /// Whether a file that is no module declares the module `sym` at its top. Those are what `tryFindAmbientModule` and
     /// `patternAmbientModules` have.
-    fn xm_is_declared_by_a_script(&self, sym: Sym) -> bool {
+    pub(super) fn xm_is_declared_by_a_script(&self, sym: Sym) -> bool {
         let files = self.files();
         files.decls(sym).iter().any(|&(of, decl)| {
             let hir = files.hir(of);
@@ -800,148 +818,104 @@ impl Checker<'_> {
         are_strings
     }
 
-    /// `collectModuleReferences`: whether the module a statement directly in `around` calls `spec` is looked for on account of it.
-    fn xm_is_collected(&self, cx: &Cx<'_>, spec: Atom, around: Around) -> bool {
-        around.module.is_none()
-            || !cx.is_module
-                && around.is_top_level
-                && around.is_ambient_module
-                && around.is_ambient
-                && !is_relative_name(self.files().atoms.bytes(spec))
-    }
-
-    /// Whether anything in the file has the module called `spec` looked for: `Imports` and `ModuleAugmentations`.
-    fn xm_is_looked_for(&self, cx: &Cx<'_>, spec: Atom) -> bool {
+    /// `resolveExternalModuleName(node, node.ModuleSpecifier())`, of the statement `s`, which calls the module `spec`: whether it is at a
+    /// loss.
+    fn xm_module_is_missing(&mut self, cx: &Cx<'_>, s: StmtId, spec: Atom, around: Around) -> bool {
         let hir = self.hir(cx.file);
-        let is_relative = is_relative_name(self.files().atoms.bytes(spec));
-        let names_it = |s: StmtId| match hir[s].kind {
-            StmtKind::Import(i) => hir[i].spec == spec,
-            StmtKind::ExportNamed(x) => hir[x].spec == spec,
-            StmtKind::ExportStar { spec: named, .. } => named == spec,
-            StmtKind::ImportEquals(i) => {
-                matches!(hir[i].target, ImportEqualsTarget::Require(named) if named == spec)
-            }
-            _ => false,
-        };
-        let is_declaration_file = hir.kind == FileKind::Declaration;
-        hir.ids(hir.body).any(|s| {
-            let StmtKind::Module(m) = hir[s].kind else { return names_it(s) };
-            let module = hir[m];
-            if matches!(module.name, ModuleName::Ident(_)) || !(is_declaration_file || module.flags.contains(Flags::AMBIENT)) {
-                return false;
-            }
-            if cx.is_module {
-                return module.name == ModuleName::String(spec);
-            }
-            !is_relative
-                && hir.ids(module.body).any(|inner| names_it(inner) || matches!(hir[inner].kind, StmtKind::Module(x) if hir[x].name == ModuleName::String(spec)))
-        }) || hir.exprs.iter().any(|e| matches!(e.kind, ExprKind::ImportCall { args, .. } if matches!(hir[hir.id_at(args, 0)].kind, ExprKind::String(named) if named == spec)))
-            || hir.types.iter().any(|t| matches!(t.kind, TypeNodeKind::Import { spec: named, .. } if named == spec))
-    }
-
-    /// Whether `resolveExternalModule` is at a loss for the module the statement at `pos` calls `spec`. It finds less than is found
-    /// here: a file nothing has looked for is not there, and neither is a module that is only declared where that declares nothing.
-    /// That is said, unless it has been.
-    fn xm_module_is_missing(
-        &self,
-        cx: &Cx<'_>,
-        pos: u32,
-        spec: Atom,
-        is_collected: bool,
-        out: &mut Vec<Diagnostic>,
-    ) -> bool {
-        let (files, options) = (self.files(), &self.p.files.options);
-        let is_found = match self.xm_module_of_specifier(cx.file, spec) {
-            Some(found) => {
-                !self.xm_is_a_file(found) || is_collected || self.xm_is_looked_for(cx, spec)
-            }
-            // What is not found here either has been reported.
-            None if files.module_of_specifier(cx.file, spec).is_none() => return true,
-            None => false,
-        };
-        if is_found {
-            return false;
-        }
-        let Some(written) = cx.specifier(pos, spec) else {
+        let Some(written) = cx.specifier(hir[s].pos, spec) else {
             return true;
         };
-        let is_side_effect = written.kind == SpecifierKind::SideEffect;
-        if is_side_effect && !options.no_unchecked_side_effect_imports {
-            return true;
-        }
-        let text = files.atoms.text(spec);
-        let code = if !options.resolve_json_module && text.ends_with(".json") {
-            2732
-        } else if is_side_effect {
-            2882
-        } else if crate::resolve::is_node_core_module(&text) {
-            // `getCannotResolveModuleNameErrorForSpecificModule`
-            if options
-                .types
-                .as_ref()
-                .is_some_and(|t| t.iter().any(|t| t == "*"))
-            {
-                2580
-            } else {
-                2591
-            }
-        } else {
-            2307
+        let mut site = SpecifierSite {
+            is_ambient: around.is_ambient,
+            ..Default::default()
         };
-        out.push(Diagnostic {
-            start: written.pos,
-            code,
-        });
-        self.note(written.pos, 0, code, vec![self.atom_text(spec)]);
-        true
+        let type_only = match hir[s].kind {
+            StmtKind::Import(_) if written.kind == SpecifierKind::SideEffect => true,
+            StmtKind::Import(x) => {
+                let import = &hir[x];
+                // The module is asked for from the declaration itself if there are braces, and that says `type` nowhere.
+                let has_braces = import.namespace.is_none()
+                    && (!import.named.is_empty() || import.default.is_none());
+                site.is_type_only = import.type_only && !has_braces;
+                site.is_type_only_import = import.type_only;
+                import.type_only
+            }
+            StmtKind::ExportNamed(x) => hir[x].type_only,
+            StmtKind::ExportStar {
+                alias, type_only, ..
+            } => {
+                site.is_type_only = type_only && alias.is_none();
+                type_only
+            }
+            StmtKind::ImportEquals(x) => {
+                site.is_type_only = hir[x].flags.contains(Flags::TYPE_ONLY);
+                site.is_ambient |= hir[x].flags.contains(Flags::AMBIENT);
+                site.is_type_only
+            }
+            _ => return true,
+        };
+        site.is_emittable = !type_only;
+        !self.resolve_external_module(cx.file, written, site)
     }
 
-    /// What is left of a statement nothing is made of, be it that `checkExternalImportOrExportDeclaration` refuses it. Its module is
-    /// looked for when something asks what a name it declares stands for (`resolveAlias`), and not otherwise.
-    /// `may_be_used`: that cannot be told.
-    fn xm_leave_alone(
-        &self,
-        cx: &Cx<'_>,
-        pos: u32,
-        spec: Atom,
-        is_used: bool,
-        may_be_used: bool,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        if is_used {
-            self.xm_module_is_missing(cx, pos, spec, false, out);
-        } else if !may_be_used && let Some(written) = cx.specifier(pos, spec) {
-            // All that `resolveExternalModule` says of a specifier.
-            out.retain(|d| {
-                d.start != written.pos
-                    || !matches!(
-                        d.code,
-                        1471 | 1479
-                            | 1541
-                            | 1542
-                            | 2306
-                            | 2307
-                            | 2580
-                            | 2591
-                            | 2732
-                            | 2834
-                            | 2835
-                            | 2846
-                            | 2876
-                            ..=2878 | 2882 | 5097 | 6137 | 6142 | 6263 | 7016
-                    )
-            });
+    /// `checkGrammarModuleElementContext` leaves the imports and exports alone that are directly in neither the file nor a namespace.
+    /// Their module is looked for all the same for a name they declare (`resolveAlias`), or for the exports of the file
+    /// (`getExportsOfModuleWorker`).
+    fn xm_statements_out_of_place(&mut self, cx: &Cx<'_>, top: Around) {
+        let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
+        for (i, statement) in hir.stmts.iter().enumerate() {
+            if matches!(
+                bound.stmt_parent[i],
+                Parent::None | Parent::File | Parent::Module(_)
+            ) {
+                continue;
+            }
+            let s = StmtId(i as u32);
+            match statement.kind {
+                StmtKind::Import(x) => {
+                    let (import, scope) = (hir[x], bound.import_scope[x.idx()]);
+                    let named = import.named.iter();
+                    let used: Vec<Decl> = [
+                        (import.default, Decl::ImportDefault(x)),
+                        (import.namespace, Decl::ImportNamespace(x)),
+                    ]
+                    .into_iter()
+                    .chain(named.map(|n| (hir[n].local, Decl::ImportSpec(n))))
+                    .filter(|it| it.0.is_some() && self.xm_alias_is_used(cx, scope, it.0))
+                    .map(|it| it.1)
+                    .collect();
+                    if used.is_empty() || self.xm_module_is_missing(cx, s, import.spec, top) {
+                        continue;
+                    }
+                    for decl in used {
+                        if let Some(&sym) = cx.aliases.get(&decl) {
+                            self.check_target_of_alias_declaration(cx.file, sym, decl);
+                        }
+                    }
+                }
+                StmtKind::ImportEquals(x) => {
+                    if let ImportEqualsTarget::Require(spec) = hir[x].target
+                        && self.xm_alias_is_used(
+                            cx,
+                            bound.import_equals_scope[x.idx()],
+                            hir[x].name,
+                        )
+                    {
+                        self.xm_module_is_missing(cx, s, spec, top);
+                    }
+                }
+                StmtKind::ExportStar { spec, alias, .. } if alias.is_none() && cx.is_module => {
+                    self.xm_module_is_missing(cx, s, spec, top);
+                }
+                _ => {}
+            }
         }
     }
 
-    /// Whether the file mentions `alias`, which a statement directly in the module `m` declares, or at the top of the file.
-    fn xm_alias_is_used(&self, cx: &Cx<'_>, m: ModuleId, alias: Atom) -> bool {
+    /// Whether the file mentions `alias`, which a statement in `scope` declares.
+    fn xm_alias_is_used(&self, cx: &Cx<'_>, scope: ScopeId, alias: Atom) -> bool {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
-        let scope = if m.is_none() {
-            bound.scopes.first()
-        } else {
-            bound.scopes.get(bound.module_scope[m.idx()].idx())
-        };
+        let scope = bound.scopes.get(scope.idx());
         let Some(symbol) = scope.and_then(|s| bound.lookup(s.locals, alias)) else {
             return false;
         };
@@ -983,14 +957,14 @@ impl Checker<'_> {
 
     /// `checkImportDeclaration`
     fn xm_import(
-        &self,
+        &mut self,
         cx: &Cx<'_>,
         s: StmtId,
         i: ImportId,
         around: Around,
         out: &mut Vec<Diagnostic>,
     ) {
-        let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
+        let (hir, files) = (self.hir(cx.file), self.files());
         let (import, pos) = (hir[i], hir[s].pos);
         if self.xm_is_in_place(cx, s, import.spec, false, around, out) {
             // `checkGrammarImportClause`, of `import defer ..`
@@ -1014,13 +988,7 @@ impl Checker<'_> {
                     self.note(start, import.clause_end, code, Vec::new());
                 }
             }
-            let is_missing = self.xm_module_is_missing(
-                cx,
-                pos,
-                import.spec,
-                self.xm_is_collected(cx, import.spec, around),
-                out,
-            );
+            let is_missing = self.xm_module_is_missing(cx, s, import.spec, around);
             // `checkImportBinding`: `checkCollisionsForDeclarationName`. `needCollisionCheckForIdentifier` lets a name that is only
             // about types pass, but not that of a namespace import.
             if !is_clause_refused && around.module.is_none() && !around.is_ambient {
@@ -1037,57 +1005,30 @@ impl Checker<'_> {
                     }
                 }
             }
-            // `checkImportBinding`, `checkAliasSymbol`: of the names that stand for something.
-            if !is_missing
-                && !is_clause_refused
-                && cx.verbatim_commonjs
-                && !cx.is_js
-                && around.module.is_none()
-                && !around.is_ambient
-                && !import.type_only
-            {
-                let locals = bound.scopes[0].locals;
-                let is_resolved = |name: Atom| {
-                    bound
-                        .lookup(locals, name)
-                        .is_some_and(|id| files.resolve_alias(files.sym(cx.file, id)).is_some())
-                };
-                if import.default.is_some() && is_resolved(import.default) {
-                    out.push(Diagnostic {
-                        start: import.default_pos,
-                        code: cx.esm_syntax_code,
-                    });
-                    let end = cx
-                        .specifier(pos, import.spec)
-                        .map_or(0, |written| import_clause_end(cx.text, written.pos));
-                    self.note(import.default_pos, end, cx.esm_syntax_code, Vec::new());
-                }
-                if import.namespace.is_some() && is_resolved(import.namespace) {
-                    out.push(Diagnostic {
-                        start: import.namespace_pos,
-                        code: cx.esm_syntax_code,
-                    });
-                }
-                for s in import.named.iter() {
-                    if hir[s].type_only {
-                        continue;
-                    }
-                    if is_resolved(hir[s].local) {
-                        out.push(Diagnostic {
-                            start: hir[s].imported_pos,
-                            code: cx.esm_syntax_code,
-                        });
-                        self.note(
-                            hir[s].imported_pos,
-                            self.end_of_import_spec(cx.file, s),
-                            cx.esm_syntax_code,
-                            Vec::new(),
-                        );
-                    } else if let Some(id) = bound.lookup(locals, hir[s].local) {
-                        cx.members_of_export_equals
-                            .borrow_mut()
-                            .push((files.sym(cx.file, id), s));
-                    }
+            // `checkImportBinding`: `checkAliasSymbol`. The names in braces are looked at once the module is found.
+            if !is_clause_refused {
+                self.check_alias_symbol(
+                    cx.file,
+                    &cx.aliases,
+                    s,
+                    Decl::ImportDefault(i),
+                    around.is_ambient,
+                );
+                self.check_alias_symbol(
+                    cx.file,
+                    &cx.aliases,
+                    s,
+                    Decl::ImportNamespace(i),
+                    around.is_ambient,
+                );
+                for named in import.named.iter().filter(|_| !is_missing) {
+                    self.check_alias_symbol(
+                        cx.file,
+                        &cx.aliases,
+                        s,
+                        Decl::ImportSpec(named),
+                        around.is_ambient,
+                    );
                 }
             }
             // `checkImportBinding`: `checkModuleExportName`, of the name before `as`.
@@ -1134,15 +1075,19 @@ impl Checker<'_> {
             let is_used = [import.default, import.namespace]
                 .into_iter()
                 .chain(import.named.iter().map(|s| hir[s].local))
-                .any(|name| self.xm_alias_is_used(cx, around.module, name));
-            self.xm_leave_alone(cx, pos, import.spec, is_used, false, out);
+                .any(|name| {
+                    self.xm_alias_is_used(cx, self.bound(cx.file).import_scope[i.idx()], name)
+                });
+            if is_used {
+                self.xm_module_is_missing(cx, s, import.spec, around);
+            }
         }
         self.xm_import_attributes(cx, pos, import.spec, import.type_only, false, out);
     }
 
     /// `checkImportEqualsDeclaration`
     fn xm_import_equals(
-        &self,
+        &mut self,
         cx: &Cx<'_>,
         s: StmtId,
         i: ImportEqualsId,
@@ -1150,29 +1095,35 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
-        let (import, pos) = (hir[i], hir[s].pos);
+        let import = hir[i];
+        let is_ambient = around.is_ambient || import.flags.contains(Flags::AMBIENT);
         let names = match import.target {
             ImportEqualsTarget::Require(spec) => {
                 if self.xm_is_in_place(cx, s, spec, false, around, out) {
                     self.xm_collision_of_import_equals(cx, &import, around, out);
-                    self.xm_module_is_missing(
-                        cx,
-                        pos,
-                        spec,
-                        self.xm_is_collected(cx, spec, around),
-                        out,
+                    self.check_alias_symbol(
+                        cx.file,
+                        &cx.aliases,
+                        s,
+                        Decl::ImportEquals(i),
+                        is_ambient,
                     );
+                    self.xm_module_is_missing(cx, s, spec, around);
                 } else {
-                    let is_used = self.xm_alias_is_used(cx, around.module, import.name);
+                    let is_used =
+                        self.xm_alias_is_used(cx, bound.import_equals_scope[i.idx()], import.name);
                     let may_be_used = import.flags.contains(Flags::EXPORT)
                         && self.xm_follows_a_dot_somewhere(cx, import.name);
-                    self.xm_leave_alone(cx, pos, spec, is_used, may_be_used, out);
+                    if is_used || may_be_used {
+                        self.xm_module_is_missing(cx, s, spec, around);
+                    }
                 }
                 return;
             }
             ImportEqualsTarget::Entity(names) => names,
         };
         self.xm_collision_of_import_equals(cx, &import, around, out);
+        self.check_alias_symbol(cx.file, &cx.aliases, s, Decl::ImportEquals(i), is_ambient);
         let scope = bound.import_equals_scope[i.idx()];
         let mut path = [Atom::NONE; 8];
         if scope.is_none() || names.is_empty() || names.len() > path.len() {
@@ -1252,30 +1203,23 @@ impl Checker<'_> {
 
     /// `checkExportDeclaration`, of `export { .. }`
     fn xm_export_named(
-        &self,
+        &mut self,
         cx: &Cx<'_>,
         s: StmtId,
         x: ExportId,
         around: Around,
         out: &mut Vec<Diagnostic>,
     ) {
-        let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
+        let hir = self.hir(cx.file);
         let (export, pos) = (hir[x], hir[s].pos);
         if export.spec.is_none() || self.xm_is_in_place(cx, s, export.spec, true, around, out) {
             let is_missing = if export.spec.is_none() {
                 false
             } else if export.items.is_empty() {
                 // Without a name to look up nobody asks for the module.
-                self.xm_leave_alone(cx, pos, export.spec, false, false, out);
                 true
             } else {
-                self.xm_module_is_missing(
-                    cx,
-                    pos,
-                    export.spec,
-                    self.xm_is_collected(cx, export.spec, around),
-                    out,
-                )
+                self.xm_module_is_missing(cx, s, export.spec, around)
             };
             // `checkExportSpecifier`: `checkModuleExportName`, of both names. Without `from`, a string before `as` is a 1003.
             for s in export.items.iter() {
@@ -1284,42 +1228,15 @@ impl Checker<'_> {
                 }
                 self.xm_module_export_name(cx, hir[s].pos, out);
             }
-            // `checkExportSpecifier`, `checkAliasSymbol`
-            if !is_missing
-                && cx.verbatim_commonjs
-                && !cx.is_js
-                && !around.is_ambient
-                && !export.type_only
-            {
-                for s in export.items.iter() {
-                    let target = if export.spec.is_some() {
-                        self.xm_module_of_specifier(cx.file, export.spec)
-                            .and_then(|module| files.module_export(module, hir[s].local))
-                    } else {
-                        files.resolve_name(
-                            cx.file,
-                            bound.export_scope[x.idx()],
-                            hir[s].local,
-                            SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE,
-                        )
-                    };
-                    if !hir[s].type_only
-                        && target
-                            .and_then(|t| files.resolve_alias_if_needed(t))
-                            .is_some()
-                    {
-                        out.push(Diagnostic {
-                            start: hir[s].local_pos,
-                            code: cx.esm_syntax_code,
-                        });
-                        self.note(
-                            hir[s].local_pos,
-                            self.end_of_export_spec(cx.file, s),
-                            cx.esm_syntax_code,
-                            Vec::new(),
-                        );
-                    }
-                }
+            // `checkExportSpecifier`: `checkAliasSymbol`
+            for item in export.items.iter().filter(|_| !is_missing) {
+                self.check_alias_symbol(
+                    cx.file,
+                    &cx.aliases,
+                    s,
+                    Decl::ExportSpec(item),
+                    around.is_ambient,
+                );
             }
             let is_in_ambient_namespace = export.spec.is_none() && around.is_ambient;
             if around.module.is_some() && !around.is_ambient_module && !is_in_ambient_namespace {
@@ -1334,13 +1251,21 @@ impl Checker<'_> {
                     .items
                     .iter()
                     .any(|s| self.xm_follows_a_dot_somewhere(cx, hir[s].exported));
-            self.xm_leave_alone(cx, pos, export.spec, false, may_be_used, out);
+            if may_be_used {
+                self.xm_module_is_missing(cx, s, export.spec, around);
+            }
         }
         self.xm_import_attributes(cx, pos, export.spec, export.type_only, true, out);
     }
 
     /// `checkExportDeclaration`, of `export * from` and `export * as alias from`
-    fn xm_export_star(&self, cx: &Cx<'_>, s: StmtId, around: Around, out: &mut Vec<Diagnostic>) {
+    fn xm_export_star(
+        &mut self,
+        cx: &Cx<'_>,
+        s: StmtId,
+        around: Around,
+        out: &mut Vec<Diagnostic>,
+    ) {
         let files = self.files();
         let statement = self.hir(cx.file)[s];
         let pos = statement.pos;
@@ -1348,7 +1273,6 @@ impl Checker<'_> {
             spec,
             alias,
             type_only: is_type_only,
-            star_pos,
             alias_pos,
             ..
         } = statement.kind
@@ -1356,13 +1280,8 @@ impl Checker<'_> {
             return;
         };
         if self.xm_is_in_place(cx, s, spec, true, around, out) {
-            if !self.xm_module_is_missing(
-                cx,
-                pos,
-                spec,
-                self.xm_is_collected(cx, spec, around),
-                out,
-            ) && let Some(module) = self.xm_module_of_specifier(cx.file, spec)
+            if !self.xm_module_is_missing(cx, s, spec, around)
+                && let Some(module) = self.xm_module_of_specifier(cx.file, spec)
             {
                 // `hasExportAssignmentSymbol`
                 if files.export(module, known::export_equals).is_some() {
@@ -1375,19 +1294,14 @@ impl Checker<'_> {
                             .borrow_mut()
                             .push((written.pos, 2498, module));
                     }
-                } else if alias.is_some()
-                    && cx.verbatim_commonjs
-                    && !cx.is_js
-                    && !around.is_ambient
-                    && !is_type_only
-                {
-                    // `checkAliasSymbol`, of `* as alias`.
-                    out.push(Diagnostic {
-                        start: star_pos,
-                        code: cx.esm_syntax_code,
-                    });
-                    let end = self.end_of_name_at(cx.file, alias_pos);
-                    self.note(star_pos, end, cx.esm_syntax_code, Vec::new());
+                } else {
+                    self.check_alias_symbol(
+                        cx.file,
+                        &cx.aliases,
+                        s,
+                        Decl::ExportStarAs(s),
+                        around.is_ambient,
+                    );
                 }
             }
             // `checkModuleExportName`, of the name in `export * as name`, unless 2498 was all there is to say.
@@ -1401,7 +1315,9 @@ impl Checker<'_> {
         } else {
             let may_be_used = around.module.is_none()
                 || alias.is_some() && self.xm_follows_a_dot_somewhere(cx, alias);
-            self.xm_leave_alone(cx, pos, spec, false, may_be_used, out);
+            if may_be_used {
+                self.xm_module_is_missing(cx, s, spec, around);
+            }
         }
         self.xm_import_attributes(cx, pos, spec, is_type_only, true, out);
     }
@@ -1631,7 +1547,7 @@ impl Checker<'_> {
 
     /// `checkImportAttributes`: reports 2322 at the keyword unless the attributes are assignable to the global `ImportAttributes`.
     /// tsgo reports it with a plain `error`, so parse diagnostics do not suppress it.
-    fn check_import_attribute_types(&mut self, cx: &Cx<'_>, out: &mut Vec<Diagnostic>) {
+    fn check_import_attribute_types(&mut self, cx: &Cx<'_>) {
         let attribute_types = cx.attribute_types.take();
         if attribute_types.is_empty() {
             return;
@@ -1656,35 +1572,7 @@ impl Checker<'_> {
                 }
             };
             if let Some(source) = source {
-                self.check_assignable_with_end(
-                    cx.file,
-                    source,
-                    target,
-                    start,
-                    end,
-                    ExprId::NONE,
-                    2322,
-                    out,
-                );
-            }
-        }
-    }
-
-    /// `getExternalModuleMember`: a property of the value a module is with `export =` is what the imported name stands for.
-    fn check_members_of_export_equals(&mut self, cx: &Cx<'_>, out: &mut Vec<Diagnostic>) {
-        for (sym, specifier) in cx.members_of_export_equals.take() {
-            if self.imported_property_of_export_equals(sym).is_some() {
-                let start = self.hir(cx.file)[specifier].imported_pos;
-                out.push(Diagnostic {
-                    start,
-                    code: cx.esm_syntax_code,
-                });
-                self.note(
-                    start,
-                    self.end_of_import_spec(cx.file, specifier),
-                    cx.esm_syntax_code,
-                    Vec::new(),
-                );
+                self.check_type_assignable_to(source, target, Some((cx.file, start, end)), None);
             }
         }
     }

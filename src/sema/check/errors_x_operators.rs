@@ -51,7 +51,7 @@ impl Checker<'_> {
                         self.note(start, end, 1355, Vec::new());
                     }
                 }
-                ExprKind::Satisfies { expr, ty } => check_satisfies(self, file, e, expr, ty, out),
+                ExprKind::Satisfies { expr, ty } => check_satisfies(self, file, e, expr, ty),
                 // `checkTaggedTemplateExpression` never comes to `checkTemplateExpression`.
                 ExprKind::Template { .. }
                     if matches!(bound.expr_parent[i], Parent::Expr(p)
@@ -526,12 +526,12 @@ fn check_assignment_operator(
         && type_of_property_of_type(c, object, name)
             .is_some_and(|declared| c.contains_missing_type(declared));
     let at = c.start_of(file, target);
-    if !c.check_assignable_with_end_from(
+    if !c.check_assignable_with_end(
         file,
         source,
         wanted,
         at,
-        |c| error_end(c, file, target),
+        error_end(c, file, target),
         value,
         if is_mismatch { 2412 } else { 2322 },
         out,
@@ -571,21 +571,22 @@ pub(super) fn exact_optional_write_type(
 // ───────────────────────────── assertions ─────────────────────────────
 
 /// `checkSatisfiesExpression`
-fn check_satisfies(
-    c: &mut Checker<'_>,
-    file: FileId,
-    node: ExprId,
-    expr: ExprId,
-    ty: TypeNodeId,
-    out: &mut Vec<Diagnostic>,
-) {
+fn check_satisfies(c: &mut Checker<'_>, file: FileId, node: ExprId, expr: ExprId, ty: TypeNodeId) {
     let source = c.type_of_expr(file, expr);
     let target = c.type_from_node(file, ty);
     if !c.is_known(source) || !c.is_known(target) || c.is_assignable(source, target) {
         return;
     }
     let at = c.error_start_inside_parentheses(file, node);
-    c.check_assignable(file, source, target, at, expr, 1360, out);
+    c.check_type_assignable_to_and_optionally_elaborate(
+        source,
+        target,
+        Some(c.place_of_token(file, at)),
+        Some((file, expr)),
+        false,
+        Some(1360),
+        None,
+    );
 }
 
 // ───────────────────────────── templates ─────────────────────────────
@@ -694,15 +695,11 @@ fn check_instanceof(
     let node = CallLike::InstanceOf { left, right };
     c.report_call_resolution(file, e, node, &signatures, resolved, Some(2860), out);
     let at = c.error_start_of(file, right);
-    c.check_assignable_with_end_from(
-        file,
+    c.check_type_assignable_to(
         resolved.ret,
         TypeId::BOOLEAN,
-        at,
-        |c| error_end(c, file, right),
-        ExprId::NONE,
-        2861,
-        out,
+        Some((file, at, error_end(c, file, right))),
+        Some(2861),
     );
 }
 

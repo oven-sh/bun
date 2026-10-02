@@ -923,6 +923,8 @@ pub struct TypeParam {
     pub constraint: TypeNodeId,
     pub default: TypeNodeId,
     pub flags: Flags,
+    /// `node.Modifiers()`
+    pub modifiers: Span<ModifierId>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

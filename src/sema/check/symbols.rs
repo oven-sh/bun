@@ -6,6 +6,25 @@ use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, ScopeKind, UNREACHABLE};
 use smallvec::SmallVec;
 
+/// What `resolveAlias` gives.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(super) enum AliasTarget {
+    Symbol(Sym),
+    /// A property has no `Sym`: the type that has it (`never`: none), its name, its type.
+    Property(TypeId, Atom, TypeId),
+    /// `unknownSymbol`
+    Unknown,
+}
+
+impl AliasTarget {
+    pub(super) fn symbol(self) -> Option<Sym> {
+        match self {
+            AliasTarget::Symbol(symbol) => Some(symbol),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Copy, Clone)]
 enum WideningKind {
     FunctionReturn,
@@ -242,9 +261,13 @@ impl<'p> Checker<'p> {
         if sym == self.files().undefined_symbol {
             return TypeId::UNDEFINED;
         }
-        // `cloneTypeAsModuleType` gives the symbol it makes its type.
-        if let Some(originating_import) = self.files().originating_import_of_module_clone(sym)
-            && let Some(ty) = self.type_of_namespace_import(originating_import)
+        // `cloneTypeAsModuleType` gives the symbol it makes its type. What `combineValueAndTypeSymbols` makes has that of the value.
+        if let Some((alias, is_combined)) = self.files().alias_of_transient_symbol(sym)
+            && let Some(ty) = if is_combined {
+                self.symbol_from_variable(alias).map(|found| found.2)
+            } else {
+                self.type_of_namespace_import(alias)
+            }
         {
             return ty;
         }
@@ -404,76 +427,90 @@ impl<'p> Checker<'p> {
         ))
     }
 
-    /// `getTypeOfAlias`, a step at a time: `resolveAlias` stops at the first symbol that is more than an alias, and `getTypeOfSymbol`
-    /// goes on from there.
+    /// `getTypeOfAlias`
     pub(super) fn type_of_alias(&mut self, sym: Sym) -> TypeId {
-        if let Some(ty) = self.type_of_namespace_import(sym) {
-            return ty;
-        }
-        match self.files().alias_target(sym) {
-            Some(next) if next != sym => {
-                // `combineValueAndTypeSymbols`: when the export has no value flag of its own, the property of the `export =` value
-                // with the same name is the value side.
-                if !self.files().flags(next).intersects(SymFlags::VALUE)
-                    && let Some(property) = self.imported_property_of_export_equals(sym)
-                {
-                    return property;
-                }
-                self.type_of_symbol(next)
-            }
-            _ => match self.type_of_alias_like_expression(sym) {
-                Some(ty) => ty,
-                None => self.type_of_unresolved_import(sym),
-            },
+        match self.resolve_alias(sym) {
+            AliasTarget::Symbol(target) if target != sym => self.type_of_symbol(target),
+            AliasTarget::Property(_, _, ty) => ty,
+            _ => TypeId::ERROR,
         }
     }
 
-    /// The fallback of `getTargetOfAliasLikeExpression`, followed by `getTypeOfAlias`. In `export = e`, `export default e`,
-    /// `module.exports = e` and `exports.x = e`, an entity name `e` that `resolveEntityName` cannot resolve aliases the symbol that
-    /// checking `e` records as its `resolvedSymbol`. Returns the declared type of that symbol, or `None` if `sym` has no such
-    /// declaration.
-    fn type_of_alias_like_expression(&mut self, sym: Sym) -> Option<TypeId> {
-        // `getDeclarationOfAliasSymbol` takes the last declaration.
-        let (file, decl) = self.files().decls(sym).into_iter().rev().find(|(_, d)| {
-            matches!(
-                d,
-                Decl::ExportExpr(_) | Decl::ModuleExports(_) | Decl::ExportsProperty(_)
-            )
-        })?;
+    /// `resolveAlias`. `Files::alias_links` has `getTargetOfAliasDeclaration` as far as names tell. What types tell is added here.
+    pub(super) fn resolve_alias(&mut self, alias: Sym) -> AliasTarget {
+        let files = self.files();
+        let mut at = alias;
+        for _ in 0..32 {
+            if !files.flags(at).contains(SymFlags::ALIAS) {
+                return AliasTarget::Symbol(at);
+            }
+            // `resolveESModuleSymbol`. No symbol is made for the copy of what has none itself: `export = a`, where `a` ends at a property.
+            if let Some(ty) = self.type_of_namespace_import(at) {
+                return match files.module_clone(at) {
+                    Some(clone) => AliasTarget::Symbol(clone),
+                    None => AliasTarget::Property(TypeId::NEVER, files.symbol(at).name, ty),
+                };
+            }
+            let links = files.alias_links(at);
+            if links.is_circular {
+                return AliasTarget::Unknown;
+            }
+            let Some(next) = links.immediate_target else {
+                return match self.symbol_from_variable(at) {
+                    Some((object, name, ty)) => AliasTarget::Property(object, name, ty),
+                    None => self.resolved_symbol_of_alias_like_expression(at),
+                };
+            };
+            if let Some(combined) = self.combined_symbol_of_alias(at) {
+                return AliasTarget::Symbol(combined);
+            }
+            // As the links have it: what was resolved while symbols were put together stands for what was there then.
+            if next == at || !files.is_non_local_alias(next) {
+                return AliasTarget::Symbol(next);
+            }
+            at = next;
+        }
+        AliasTarget::Unknown
+    }
+
+    /// The end of `getTargetOfAliasLikeExpression`: in `export = e`, `export default e`, `module.exports = e` and `exports.x = e`, an
+    /// entity name `e` that `resolveEntityName` does not resolve stands for the `resolvedSymbol` that checking `e` records.
+    fn resolved_symbol_of_alias_like_expression(&mut self, sym: Sym) -> AliasTarget {
+        let Some((file, decl)) = self.files().declaration_of_alias_symbol(sym) else {
+            return AliasTarget::Unknown;
+        };
         let hir = self.hir(file);
         let e = match decl {
             Decl::ExportExpr(stmt) => match hir[stmt].kind {
                 StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => e,
-                _ => return None,
+                _ => return AliasTarget::Unknown,
             },
             Decl::ModuleExports(assignment) | Decl::ExportsProperty(assignment) => {
                 match hir[assignment].kind {
                     ExprKind::Assign { value, .. } => value,
-                    _ => return None,
+                    _ => return AliasTarget::Unknown,
                 }
             }
-            _ => return None,
+            _ => return AliasTarget::Unknown,
         };
         match hir[e].kind {
-            // `argumentsSymbol` has no `Sym`. Any other undeclared name is `unknownSymbol`.
-            ExprKind::Ident(name) if self.symbol_of_identifier(file, e, name).is_none() => {
-                Some(self.type_of_expr(file, e))
+            // `argumentsSymbol` is a property of nothing.
+            ExprKind::Ident(name)
+                if name == known::arguments
+                    && self.symbol_of_identifier(file, e, name).is_none() =>
+            {
+                AliasTarget::Property(TypeId::NEVER, name, self.type_of_expr(file, e))
             }
-            // `checkPropertyAccessExpressionOrQualifiedName` records a property as `resolvedSymbol`, never an index signature.
+            // `checkPropertyAccessExpressionOrQualifiedName` records a property, never an index signature, and none of `any`.
             ExprKind::Dot { obj, name, .. } => {
                 let object = self.type_of_expr(file, obj);
                 // `checkNonNullExpression`
                 let object = self.non_null_type(object);
-                // Of `any` no property is recorded: `unknownSymbol`.
                 if self.is_any(object) {
-                    return Some(if self.is_known(object) {
-                        TypeId::ERROR
-                    } else {
-                        object
-                    });
+                    return AliasTarget::Unknown;
                 }
                 if let Some((property, _)) = self.declared_property(object, name) {
-                    return Some(property);
+                    return AliasTarget::Property(object, name, property);
                 }
                 // `getPropertyOfTypeEx` also finds the members of `Object` and `Function`, except on a `const enum` object.
                 let apparent = self.apparent_type(object);
@@ -484,66 +521,53 @@ impl<'p> Checker<'p> {
                     && members.resolved.prop(name).is_none()
                     && let Some((prop, mapper)) = self.property_of_type(&members, name)
                 {
-                    return Some(self.type_of_prop(&prop, mapper));
+                    return AliasTarget::Property(object, name, self.type_of_prop(&prop, mapper));
                 }
-                // `unknownSymbol`
-                Some(if self.is_known(object) {
-                    TypeId::ERROR
-                } else {
-                    TypeId::UNRESOLVED
-                })
+                AliasTarget::Unknown
             }
-            _ => None,
-        }
-    }
-
-    /// `resolveAlias`, with what only types tell: whether an `import * as ns` on the way stands for a copy of the module
-    /// (`resolveESModuleSymbol`).
-    pub(super) fn resolve_alias(&mut self, alias: Sym) -> Option<Sym> {
-        if !self.files().flags(alias).contains(SymFlags::ALIAS) {
-            return Some(alias);
-        }
-        if let Some(combined) = self.combined_symbol_of_alias(alias) {
-            return Some(combined);
-        }
-        match self.originating_import_of_alias(alias) {
-            Some(originating_import) => self.files().module_clone(originating_import),
-            None => self.files().resolve_alias(alias),
+            _ => AliasTarget::Unknown,
         }
     }
 
     /// `getExternalModuleMember`: `combineValueAndTypeSymbols(symbolFromVariable, symbolFromModule)`, where it makes a symbol.
     pub(super) fn combined_symbol_of_alias(&mut self, alias: Sym) -> Option<Sym> {
         let combined = self.files().combined_symbol(alias)?;
-        self.imported_property_of_export_equals(alias)
-            .map(|_| combined)
+        self.symbol_from_variable(alias).map(|_| combined)
     }
 
-    /// Whether the alias `sym` ends at a property.
-    fn is_alias_of_property(&mut self, sym: Sym) -> bool {
-        self.property_access_of_alias(sym).is_some()
-    }
-
-    /// `getSymbolFlags`. On the tables an alias that ends at a property ends nowhere, which is `SymbolFlagsAll`.
+    /// `getSymbolFlags`. The tables have it, and keep it, unless only types tell: where they end nowhere, or there is a symbol to combine.
     pub(super) fn get_symbol_flags(&mut self, sym: Sym) -> SymFlags {
-        let flags = self.files().symbol_flags(sym);
-        if flags == SymFlags::all() && self.is_alias_of_property(sym) {
-            self.files().flags(sym) | SymFlags::PROPERTY
-        } else {
-            flags
+        let files = self.files();
+        let kept = files.symbol_flags(sym);
+        if kept != SymFlags::all() && files.combined_symbol(sym).is_none() {
+            return kept;
+        }
+        self.flags_of_alias_target(sym)
+            .map_or(SymFlags::all(), |of_target| files.flags(sym) | of_target)
+    }
+
+    /// `getSymbolFlags(resolveAlias(alias))`. `None`: `unknownSymbol`.
+    pub(super) fn flags_of_alias_target(&mut self, alias: Sym) -> Option<SymFlags> {
+        let files = self.files();
+        match self.resolve_alias(alias) {
+            AliasTarget::Symbol(target) => {
+                Some(files.symbol_flags(files.export_symbol_of_value_symbol_if_exported(target)))
+            }
+            // What a namespace or a module exports is a property of its type, and means what it means there.
+            AliasTarget::Property(..) => Some(match self.property_of_alias(alias) {
+                Some(&Prop {
+                    source: PropSource::Symbol(member),
+                    ..
+                }) => files.symbol_flags(member),
+                _ => SymFlags::PROPERTY,
+            }),
+            AliasTarget::Unknown => None,
         }
     }
 
     /// `getSymbol`
     pub(super) fn get_symbol(&mut self, held: Option<Sym>, meaning: SymFlags) -> Option<Sym> {
-        let files = self.files();
-        let symbol = held.filter(|&symbol| files.means(symbol, meaning))?;
-        // On the tables it ends nowhere, which passes for everything. It is a property.
-        let is_only_a_property = !meaning.contains(SymFlags::PROPERTY)
-            && !files.flags(symbol).intersects(meaning)
-            && files.symbol_flags(symbol) == SymFlags::all()
-            && self.is_alias_of_property(symbol);
-        (!is_only_a_property).then_some(symbol)
+        held.filter(|&symbol| self.get_symbol_flags(symbol).intersects(meaning))
     }
 
     /// `resolveName`
@@ -582,86 +606,13 @@ impl<'p> Checker<'p> {
 
     /// `resolveAlias` of `sym`, where it ends at a property.
     pub(super) fn property_of_alias(&mut self, sym: Sym) -> Option<&'p Prop> {
-        let (object, name) = self.property_access_of_alias(sym)?;
+        let AliasTarget::Property(object, name, _) = self.resolve_alias(sym) else {
+            return None;
+        };
         // `getReducedApparentType`
         let apparent = self.apparent_type(object);
         let apparent = self.reduced(apparent);
         Some(self.prop_ref(apparent, name)?.0)
-    }
-
-    /// Where the alias `sym` ends at a property: the type that has it, and its name. The symbol tables alone lead nowhere then. It is
-    /// a property of the `export =` value of a module (`getExternalModuleMember`), or the `resolvedSymbol` of `a.b` in
-    /// `exports.x = a.b` and the like (`getTargetOfAliasLikeExpression`).
-    pub(super) fn property_access_of_alias(&mut self, sym: Sym) -> Option<(TypeId, Atom)> {
-        let files = self.files();
-        if !files.flags(sym).contains(SymFlags::ALIAS)
-            || files.resolve_alias_as(sym, SymFlags::TYPE).is_some()
-        {
-            return None;
-        }
-        let (mut last, mut steps) = (sym, 0);
-        while let Some(next) = files.alias_target(last) {
-            steps += 1;
-            if next == last || steps > 32 {
-                return None;
-            }
-            last = files.canonical(next);
-        }
-        if self.imported_property_of_export_equals(last).is_some() {
-            return self.imported_from_export_equals(last);
-        }
-        let (file, decl) = files.declaration_of_alias_symbol(last)?;
-        let hir = self.hir(file);
-        let e = match decl {
-            Decl::ExportExpr(stmt) => match hir[stmt].kind {
-                StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => e,
-                _ => return None,
-            },
-            Decl::ModuleExports(assignment) | Decl::ExportsProperty(assignment) => {
-                match hir[assignment].kind {
-                    ExprKind::Assign { value, .. } => value,
-                    _ => return None,
-                }
-            }
-            _ => return None,
-        };
-        let ExprKind::Dot { obj, name, .. } = hir[e].kind else {
-            return None;
-        };
-        let object = self.type_of_expr(file, obj);
-        let object = self.non_null_type(object);
-        (self.is_known(object)
-            && !self.is_any(object)
-            && self.declared_property(object, name).is_some())
-        .then_some((object, name))
-    }
-
-    /// `resolveAlias`, where it comes to a symbol `cloneTypeAsModuleType` made: the alias of the `import * as ns` that made it, which
-    /// is `alias` or what `alias` stands for by way of symbols that are aliases and nothing else.
-    pub(super) fn originating_import_of_alias(&mut self, alias: Sym) -> Option<Sym> {
-        let files = self.files();
-        let mut at = alias;
-        for _ in 0..32 {
-            let is_namespace_import = files
-                .symbol(at)
-                .decls
-                .iter()
-                .any(|d| matches!(d, Decl::ImportNamespace(_)));
-            if is_namespace_import {
-                return self.type_of_namespace_import(at).map(|_| at);
-            }
-            let next = files.canonical(files.alias_target(at)?);
-            // `IsNonLocalAlias`
-            let flags = files.flags(next);
-            if next == at
-                || !flags.contains(SymFlags::ALIAS)
-                || flags.intersects(SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE)
-            {
-                return None;
-            }
-            at = next;
-        }
-        None
     }
 
     /// `resolveESModuleSymbol`: the type of the symbol `cloneTypeAsModuleType` makes for the `import * as ns` that declares `sym`. It
@@ -802,23 +753,26 @@ impl<'p> Checker<'p> {
     }
 
     /// `symbolFromVariable` of `getExternalModuleMember`: `import { a } from "m"`, `export { a } from "m"` and
-    /// `const { a } = require("m")` name a property of the value when `m` has `export = value`. Returns the type of the value and
-    /// the type of its property `a`, if it has one. `None` if `sym` is not such an import or export.
-    fn property_of_export_equals(&mut self, sym: Sym) -> Option<(TypeId, Option<TypeId>)> {
+    /// `const { a } = require("m")` name a property of the value when `m` has `export = value`. The type of the value, `a`, and the
+    /// type of the property.
+    pub(super) fn symbol_from_variable(&mut self, sym: Sym) -> Option<(TypeId, Atom, TypeId)> {
         let (ty, name) = self.imported_from_export_equals(sym)?;
+        Some((ty, name, self.type_of_own_property(ty, name)?))
+    }
+
+    /// `getPropertyOfTypeEx(ty, name, skipObjectFunctionPropertyAugment)`, and its type: what every object and every function has does
+    /// not count, nor does an index signature. `any` has none.
+    pub(super) fn type_of_own_property(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
         if self.is_any(ty) {
-            return Some((ty, None));
+            return None;
         }
-        // `skipObjectFunctionPropertyAugment`: what every object and every function has does not count, nor does an index signature.
         let apparent = self.apparent_type(ty);
         let apparent = self.reduced(apparent);
-        let found = if self.is_union(apparent) {
-            self.declared_property(apparent, name).map(|found| found.0)
-        } else {
-            self.prop_ref(apparent, name)
-                .map(|(prop, mapper)| self.type_of_prop(prop, mapper))
-        };
-        Some((ty, found))
+        if self.is_union(apparent) {
+            return Some(self.declared_property(apparent, name)?.0);
+        }
+        let (prop, mapper) = self.prop_ref(apparent, name)?;
+        Some(self.type_of_prop(prop, mapper))
     }
 
     /// The type of the value and the name `a`, for the same.
@@ -843,94 +797,6 @@ impl<'p> Checker<'p> {
             return Some((self.type_of_symbol(value), name));
         }
         None
-    }
-
-    /// The type of the property of a module's `export =` value that the import or export specifier `sym` names, if there is one.
-    pub(super) fn imported_property_of_export_equals(&mut self, sym: Sym) -> Option<TypeId> {
-        self.property_of_export_equals(sym)?.1
-    }
-
-    /// `getExternalModuleMember` for an import that resolves to no symbol.
-    fn type_of_unresolved_import(&mut self, sym: Sym) -> TypeId {
-        match self.property_of_export_equals(sym) {
-            Some((_, Some(property))) => property,
-            Some((value, None)) if self.is_any(value) => value,
-            // `errorNoModuleMemberSymbol` reports the missing member, and the import has the error type.
-            Some((value, None)) if self.is_known(value) => TypeId::ERROR,
-            Some(_) => TypeId::UNRESOLVED,
-            None if self.is_alias_in_error(sym) => TypeId::ERROR,
-            None => TypeId::UNRESOLVED,
-        }
-    }
-
-    /// Whether the alias `sym` stands for nothing, and that is an error in the program: it is from a module that cannot be
-    /// found, or that does not have it, or it names an entity that is not there. What is in error can be anything.
-    pub(super) fn is_alias_in_error(&self, mut sym: Sym) -> bool {
-        let files = self.files();
-        for _ in 0..32 {
-            if !files.flags(sym).contains(SymFlags::ALIAS) {
-                return false;
-            }
-            match files.alias_target(sym) {
-                Some(next) if next != sym => sym = next,
-                _ => break,
-            }
-        }
-        let file = sym.file;
-        let hir = self.hir(file);
-        files.symbol(sym).decls.iter().any(|&decl| {
-            // `getModeForUsageLocation`: a module is looked for the way the declaration that names it asks for it.
-            let (spec, name, mode) = match decl {
-                Decl::ImportDefault(i) => (
-                    hir[i].spec,
-                    known::default,
-                    files.mode_of_import(file, hir[i].mode),
-                ),
-                Decl::ImportNamespace(i) => (
-                    hir[i].spec,
-                    Atom::NONE,
-                    files.mode_of_import(file, hir[i].mode),
-                ),
-                Decl::ImportSpec(_) | Decl::ExportSpec(_) => {
-                    match files.external_module_member_of(file, decl) {
-                        Some((spec, mode, name)) => (spec, name, mode),
-                        // `getTargetOfExportSpecifier` without a module: `resolveEntityName` finds nothing.
-                        None => return matches!(decl, Decl::ExportSpec(_)),
-                    }
-                }
-                Decl::ImportEquals(i) => match hir[i].target {
-                    ImportEqualsTarget::Require(spec) => {
-                        (spec, Atom::NONE, ResolutionMode::Require)
-                    }
-                    // `resolveAlias`: an entity name that resolves to nothing leaves `unknownSymbol`.
-                    ImportEqualsTarget::Entity(_) => {
-                        return true;
-                    }
-                },
-                // `getTargetOfImportSpecifier` for a binding element, `getTargetOfImportEqualsDeclaration` for the whole module.
-                Decl::Require(pat) => match self.bound(file).required_by(hir, pat) {
-                    Some((spec, part)) => {
-                        (spec, part.unwrap_or(Atom::NONE), ResolutionMode::Require)
-                    }
-                    None => return false,
-                },
-                _ => return false,
-            };
-            if files.module_of_specifier_as(file, spec, mode).is_none() {
-                return true;
-            }
-            name.is_some()
-                && self
-                    .module_with_known_exports(file, spec, mode)
-                    .is_some_and(|m| {
-                        // `getTargetOfModuleDefault`
-                        if name == known::default {
-                            files.default_of_module(file, m).is_none()
-                        } else {
-                            files.module_export(m, name).is_none()
-                        }
-                    })
-        })
     }
 
     /// What a mutable location initialized with a value of type `ty` is declared as.

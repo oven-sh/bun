@@ -13,8 +13,6 @@ pub(crate) struct Builder<'a> {
     pub(crate) ts: bun_ast::ts_syntax::Syntax,
     /// Parts of cloned nodes that the lowering still has to fill in.
     pub(crate) pending: Vec<super::clone_types::PendingPart>,
-    /// The class whose members are being lowered is a declaration that says `abstract`.
-    pub(crate) in_abstract_class: bool,
     /// The modifiers of the statements being lowered, those of the innermost last.
     pub(crate) statement_modifiers: Vec<Modifier>,
     /// How many classes what is being lowered is written in.
@@ -44,206 +42,6 @@ impl SeenName {
     };
 }
 
-/// What modifiers are written on, as far as it matters to which are allowed.
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum Modified {
-    Property,
-    Method,
-    Accessor,
-    Constructor,
-    ClassIndexSignature,
-    IndexSignature,
-    PropertySignature,
-    MethodSignature,
-    Parameter,
-}
-
-/// `checkGrammarModifiers`, of TypeScript 7.0.2's grammarchecks.go, for the members of classes and types and for parameters:
-/// the first thing that is wrong, where it is and the code it goes by.
-pub(crate) fn modifier_error(
-    modifiers: &[(Flags, u32)],
-    on: Modified,
-    in_abstract_class: bool,
-    is_parent_ambient: bool,
-    has_private_name: bool,
-) -> Option<(u32, u32)> {
-    const ACCESSIBILITY: Flags = Flags::PUBLIC.union(Flags::PRIVATE).union(Flags::PROTECTED);
-    let mut seen = Flags::empty();
-    let (mut last_static, mut last_override, mut last_async) = (0, 0, 0);
-    let in_class = !matches!(
-        on,
-        Modified::IndexSignature
-            | Modified::PropertySignature
-            | Modified::MethodSignature
-            | Modified::Parameter
-    );
-    for &(modifier, at) in modifiers {
-        let error = |code: u32| Some((at, code));
-        // One that is made from a JSDoc tag comes last wherever the tag is: nothing is said of the order.
-        let is_written = !modifier.contains(Flags::REPARSED);
-        let modifier = modifier.difference(Flags::REPARSED);
-        if modifier != Flags::READONLY {
-            if matches!(on, Modified::PropertySignature | Modified::MethodSignature) {
-                return error(1070);
-            }
-            if on == Modified::IndexSignature
-                || on == Modified::ClassIndexSignature && modifier != Flags::STATIC
-            {
-                return error(1071);
-            }
-        }
-        if modifier == Flags::CONST {
-            // Reported on the declaration: `check_modifiers` moves it to the name.
-            return error(1248);
-        } else if modifier == Flags::IN || modifier == Flags::OUT {
-            return error(1274);
-        } else if modifier == Flags::EXPORT {
-            if seen.contains(Flags::EXPORT) {
-                return error(1030);
-            } else if seen.intersects(Flags::AMBIENT | Flags::ABSTRACT | Flags::ASYNC) {
-                return error(1029);
-            } else if in_class {
-                return error(1031);
-            } else if on == Modified::Parameter {
-                return error(1090);
-            }
-        } else if modifier == Flags::OVERRIDE {
-            if seen.contains(Flags::OVERRIDE) {
-                return error(1030);
-            } else if seen.contains(Flags::AMBIENT) {
-                return error(1243);
-            } else if is_written
-                && seen.intersects(Flags::READONLY | Flags::ACCESSOR | Flags::ASYNC)
-            {
-                return error(1029);
-            }
-            last_override = at;
-        } else if ACCESSIBILITY.contains(modifier) {
-            if seen.intersects(ACCESSIBILITY) {
-                return error(1028);
-            } else if is_written
-                && seen.intersects(
-                    Flags::OVERRIDE
-                        | Flags::STATIC
-                        | Flags::ACCESSOR
-                        | Flags::READONLY
-                        | Flags::ASYNC,
-                )
-            {
-                return error(1029);
-            } else if seen.contains(Flags::ABSTRACT) {
-                if modifier == Flags::PRIVATE {
-                    return error(1243);
-                } else if is_written {
-                    return error(1029);
-                }
-            } else if has_private_name {
-                return error(18010);
-            }
-        } else if modifier == Flags::STATIC {
-            if seen.contains(Flags::STATIC) {
-                return error(1030);
-            } else if seen.intersects(Flags::READONLY | Flags::ASYNC | Flags::ACCESSOR) {
-                return error(1029);
-            } else if on == Modified::Parameter {
-                return error(1090);
-            } else if seen.contains(Flags::ABSTRACT) {
-                return error(1243);
-            } else if seen.contains(Flags::OVERRIDE) {
-                return error(1029);
-            }
-            last_static = at;
-        } else if modifier == Flags::ACCESSOR {
-            if seen.contains(Flags::ACCESSOR) {
-                return error(1030);
-            } else if seen.intersects(Flags::READONLY | Flags::AMBIENT) {
-                return error(1243);
-            } else if on != Modified::Property {
-                return error(1275);
-            }
-        } else if modifier == Flags::READONLY {
-            if seen.contains(Flags::READONLY) {
-                return error(1030);
-            } else if matches!(
-                on,
-                Modified::Method
-                    | Modified::Accessor
-                    | Modified::Constructor
-                    | Modified::MethodSignature
-            ) {
-                return error(1024);
-            } else if seen.contains(Flags::ACCESSOR) {
-                return error(1243);
-            }
-        } else if modifier == Flags::AMBIENT {
-            if seen.contains(Flags::AMBIENT) {
-                return error(1030);
-            } else if seen.intersects(Flags::ASYNC | Flags::OVERRIDE) {
-                return error(1040);
-            } else if in_class && on != Modified::Property {
-                return error(1031);
-            } else if on == Modified::Parameter {
-                return error(1090);
-            } else if has_private_name {
-                return error(18019);
-            } else if seen.contains(Flags::ACCESSOR) {
-                return error(1243);
-            }
-        } else if modifier == Flags::ABSTRACT {
-            if seen.contains(Flags::ABSTRACT) {
-                return error(1030);
-            }
-            if !matches!(
-                on,
-                Modified::Method | Modified::Property | Modified::Accessor
-            ) {
-                return error(1242);
-            }
-            if !in_abstract_class {
-                return error(if on == Modified::Property { 1253 } else { 1244 });
-            }
-            if seen.intersects(Flags::STATIC | Flags::PRIVATE) {
-                return error(1243);
-            }
-            if seen.contains(Flags::ASYNC) {
-                return Some((last_async, 1243));
-            }
-            if seen.intersects(Flags::OVERRIDE | Flags::ACCESSOR) {
-                return error(1029);
-            }
-            if has_private_name {
-                return error(18019);
-            }
-        } else if modifier == Flags::ASYNC {
-            if seen.contains(Flags::ASYNC) {
-                return error(1030);
-            } else if seen.contains(Flags::AMBIENT) || is_parent_ambient {
-                return error(1040);
-            } else if on == Modified::Parameter {
-                return error(1090);
-            }
-            if seen.contains(Flags::ABSTRACT) {
-                return error(1243);
-            }
-            last_async = at;
-        }
-        seen |= modifier;
-    }
-    if on == Modified::Constructor {
-        return if seen.contains(Flags::STATIC) {
-            Some((last_static, 1089))
-        } else if seen.contains(Flags::OVERRIDE) {
-            Some((last_override, 1089))
-        } else if seen.contains(Flags::ASYNC) {
-            Some((last_async, 1089))
-        } else {
-            None
-        };
-    }
-    // `checkGrammarAsyncModifier`
-    (seen.contains(Flags::ASYNC) && on != Modified::Method).then_some((last_async, 1042))
-}
-
 impl<'a> Builder<'a> {
     pub(crate) fn new(source_len: usize, is_js: bool, atoms: &'a Interner) -> Self {
         // A power of two, and more than a file of this length has different names.
@@ -255,7 +53,6 @@ impl<'a> Builder<'a> {
 
             ts: Default::default(),
             pending: Vec::new(),
-            in_abstract_class: false,
             statement_modifiers: Vec::new(),
             classes_around: 0,
             is_js,
@@ -357,7 +154,9 @@ impl<'a> Builder<'a> {
             kind: ModifierKind::Decorator(decorator),
             pos,
         }));
-        all.sort_by_key(|modifier| modifier.pos);
+        // What a tag of a comment makes comes last.
+        let is_reparsed = |it: &Modifier| matches!(it.kind, ModifierKind::Keyword(flag) if flag.contains(Flags::REPARSED));
+        all.sort_by_key(|modifier| (is_reparsed(modifier), modifier.pos));
         self.file.add_modifiers(&all)
     }
 
@@ -404,28 +203,5 @@ impl<'a> Builder<'a> {
             }
         }
         self.statement_modifiers.truncate(base);
-    }
-
-    /// Says what is wrong with `modifiers`, if anything is. `name_pos`: where the name of what they are written on is.
-    pub(crate) fn check_modifiers(
-        &mut self,
-        modifiers: &[(Flags, u32)],
-        on: Modified,
-        is_parent_ambient: bool,
-        has_private_name: bool,
-        name_pos: u32,
-    ) {
-        if let Some((at, code)) = modifier_error(
-            modifiers,
-            on,
-            self.in_abstract_class,
-            is_parent_ambient,
-            has_private_name,
-        ) {
-            // 1248 is reported on the declaration, whose error span is its name.
-            self.file
-                .early_errors
-                .push((if code == 1248 { name_pos } else { at }, code));
-        }
     }
 }

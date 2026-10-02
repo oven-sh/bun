@@ -7,7 +7,7 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId, flags_of_member};
+use crate::bind::{Decl, FnOwner, MemberOwner, SymbolId, flags_of_member};
 use smallvec::SmallVec;
 
 impl Checker<'_> {
@@ -259,7 +259,7 @@ impl Checker<'_> {
         Node::NONE
     }
 
-    /// What several declarations make together: 2428 2374 2440.
+    /// What several declarations make together: 2428 2374.
     fn check_merged_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let bound = self.bound(file);
         for i in 0..bound.symbols.len() {
@@ -267,7 +267,7 @@ impl Checker<'_> {
             if symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED)
                 || !symbol
                     .flags
-                    .intersects(SymFlags::CLASS | SymFlags::INTERFACE | SymFlags::ALIAS)
+                    .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
             {
                 continue;
             }
@@ -287,9 +287,6 @@ impl Checker<'_> {
                     self.check_type_parameter_lists_identical(file, sym, &decls, out);
                     self.check_merged_index_signatures(file, &decls, out);
                 }
-            }
-            if symbol.flags.contains(SymFlags::ALIAS) {
-                self.check_alias_conflicts(file, sym, &decls, out);
             }
         }
     }
@@ -494,193 +491,6 @@ impl Checker<'_> {
         });
     }
 
-    /// `checkAliasSymbol`: what is imported, or exported by a specifier, means something that is declared here as well.
-    fn check_alias_conflicts(
-        &mut self,
-        file: FileId,
-        sym: Sym,
-        decls: &[(FileId, Decl)],
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let files = self.files();
-        // `getMergedSymbol(core.OrElse(symbol.ExportSymbol, symbol))`
-        let flags = match files.symbol(sym).export_symbol {
-            SymbolId::NONE => files.flags(sym),
-            exported => files.flags(files.sym(sym.file, exported)),
-        };
-        let mut excluded = SymFlags::empty();
-        for meaning in [SymFlags::VALUE, SymFlags::TYPE, SymFlags::NAMESPACE] {
-            if flags.intersects(meaning) {
-                excluded |= meaning;
-            }
-        }
-        if excluded.is_empty() {
-            return;
-        }
-        // `declareSymbolEx`: an import after another of the name is refused, and is a symbol of its own that means nothing besides.
-        let is_import = |d: Decl| {
-            matches!(
-                d,
-                Decl::ExportSpec(_)
-                    | Decl::ImportDefault(_)
-                    | Decl::ImportNamespace(_)
-                    | Decl::ImportSpec(_)
-                    | Decl::ImportEquals(_)
-            )
-        };
-        let Some(&(of, decl)) = decls.iter().find(|d| is_import(d.1)) else {
-            return;
-        };
-        if of != file {
-            return;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // What it is declared by, the module that names if it names one, and where it starts (`GetErrorRangeForNode`): `* as ns` at
-        // the name, `import a = b` where the statement does.
-        let (import, import_equals, spec, start) = match decl {
-            Decl::ImportDefault(i) => (
-                i,
-                ImportEqualsId::NONE,
-                hir[i].spec,
-                Some(hir[i].clause_start),
-            ),
-            Decl::ImportNamespace(i) => (
-                i,
-                ImportEqualsId::NONE,
-                hir[i].spec,
-                Some(hir[i].namespace_pos),
-            ),
-            Decl::ImportSpec(s) => {
-                let i = hir[s].import;
-                let start = hir[s].start;
-                (i, ImportEqualsId::NONE, hir[i].spec, Some(start))
-            }
-            Decl::ImportEquals(i) => match hir[i].target {
-                ImportEqualsTarget::Require(spec) => (ImportId::NONE, i, spec, None),
-                ImportEqualsTarget::Entity(_) => (ImportId::NONE, i, Atom::NONE, None),
-            },
-            Decl::ExportSpec(s) => (
-                ImportId::NONE,
-                ImportEqualsId::NONE,
-                hir[hir[s].export].spec,
-                Some(hir[s].start),
-            ),
-            _ => return,
-        };
-        let statement = hir.stmts.iter().position(|s| match s.kind {
-            StmtKind::Import(x) => x == import,
-            StmtKind::ImportEquals(x) => x == import_equals,
-            StmtKind::ExportNamed(x) => matches!(decl, Decl::ExportSpec(s) if hir[s].export == x),
-            _ => false,
-        });
-        let Some(statement) = statement else { return };
-        // `checkGrammarModuleElementContext`, `checkExternalImportOrExportDeclaration`: an import that is out of place is looked at no
-        // further. In a namespace no module can be named, and in `declare module "m"` none by where its file is, unless that
-        // adds to a module.
-        let is_in_place = match bound.stmt_parent[statement] {
-            Parent::File => true,
-            Parent::Module(m) => {
-                spec.is_none()
-                    || !matches!(hir[m].name, ModuleName::Ident(_))
-                        && (files.module(file).is_module()
-                            || !crate::resolve::is_relative(&files.atoms.text(spec)))
-            }
-            _ => false,
-        };
-        if is_in_place && self.flags_of_alias_target(sym).intersects(excluded) {
-            let start = start.unwrap_or(hir.stmts[statement].pos);
-            let code = match decl {
-                Decl::ExportSpec(_) => 2484,
-                _ => 2440,
-            };
-            out.push(Diagnostic { start, code });
-            let end = match decl {
-                Decl::ImportDefault(i) => end_of_import_clause(self, file, i),
-                Decl::ImportSpec(s) => self.end_of_import_spec(file, s),
-                Decl::ImportEquals(_) => self.end_of_stmt(file, StmtId(statement as u32)),
-                Decl::ExportSpec(s) => self.end_of_export_spec(file, s),
-                _ => 0,
-            };
-            self.explain_to(start, end, code, |c| vec![c.symbol_to_string(sym)]);
-        }
-    }
-
-    /// `getSymbolFlags(resolveAlias(sym))`: what all that is on the way from the alias `sym` to what it stands for in the end means,
-    /// taken together, `sym` itself left out. Where the way is lost, what is known to be meant up to there.
-    fn flags_of_alias_target(&mut self, sym: Sym) -> SymFlags {
-        let files = self.files();
-        let mut flags = SymFlags::empty();
-        let mut at = sym;
-        for _ in 0..32 {
-            let next = files.alias_target(at).map(|t| files.canonical(t));
-            // `resolveEntityName` returns what has a meaning without `resolveAlias`: `export { a }` next to an exported `a` stands for
-            // the symbol it is a declaration of.
-            if next == Some(at) {
-                return flags | files.flags(at);
-            }
-            // `combineValueAndTypeSymbols`: next to an export that is no value, the value that goes by the name counts too; and it
-            // alone if it is more than a value.
-            if next.is_none_or(|t| !files.flags(t).intersects(SymFlags::VALUE))
-                && let Some(of_value) = self.flags_of_imported_value(at)
-            {
-                flags |= of_value;
-                if of_value.intersects(SymFlags::TYPE | SymFlags::NAMESPACE) {
-                    return flags;
-                }
-            }
-            let Some(next) = next else { return flags };
-            flags |= files.flags(next);
-            if !files.flags(next).contains(SymFlags::ALIAS) {
-                return flags;
-            }
-            at = next;
-        }
-        flags
-    }
-
-    /// `getExternalModuleMember`: what `import { a }` or `export { a } from`, if the alias `sym` is declared by one, finds that is not
-    /// among the exports of the module. `declare module "m";` is itself all that is asked of it. Of a module that is
-    /// `export = value`, the properties of the value can be had by their names.
-    fn flags_of_imported_value(&mut self, sym: Sym) -> Option<SymFlags> {
-        let files = self.files();
-        let (spec, mode, name) = files
-            .symbol(sym)
-            .decls
-            .iter()
-            .rev()
-            .filter(|decl| !matches!(decl, Decl::Require(_)))
-            .find_map(|&decl| files.external_module_member_of(sym.file, decl))?;
-        // `getTargetOfImportSpecifier`: `{ default as d }` is the default import by another spelling.
-        if name == known::default {
-            return None;
-        }
-        let module = files.module_of_specifier_as(sym.file, spec, mode)?;
-        if files.is_shorthand_ambient_module_symbol(module) {
-            return Some(files.flags(module));
-        }
-        let value = files.module_value(module);
-        if value == module {
-            return None;
-        }
-        let ty = self.type_of_symbol(value);
-        if !self.is_known(ty) || self.is_any(ty) {
-            return None;
-        }
-        // `getPropertyOfTypeEx`, `skipObjectFunctionPropertyAugment`: its own properties. Not what every object and every function
-        // has, and no index signature.
-        let apparent = self.apparent_type(ty);
-        let apparent = self.reduced(apparent);
-        let (prop, _) = self.prop_of(apparent, name)?;
-        match prop.source {
-            // What a namespace or a module exports means what it means there, if that is known.
-            PropSource::Symbol(member) => {
-                Some(files.symbol_flags(member)).filter(|&flags| flags != SymFlags::all())
-            }
-            // A property is a value and nothing else. `SymFlags::VALUE` would not say so: it shares bits with `TYPE` and `NAMESPACE`.
-            _ => Some(SymFlags::FUNCTION_SCOPED_VARIABLE),
-        }
-    }
-
     /// `checkTypeForDuplicateIndexSignatures`: 2374, within each class, interface and type literal of the file.
     fn check_index_signatures(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
@@ -792,24 +602,5 @@ impl Checker<'_> {
                 }
             }
         }
-    }
-}
-
-/// `node.End()` of the import clause of `import`, which has a default import: that, and the `{ .. }` or `* as ns` after it.
-fn end_of_import_clause(c: &Checker<'_>, file: FileId, import: ImportId) -> u32 {
-    let hir = c.hir(file);
-    let name_end = c.end_of_name_at(file, hir[import].default_pos);
-    if hir[import].namespace.is_some() {
-        return c.end_of_name_at(file, hir[import].namespace_pos);
-    }
-    let rest = hir.text.get(name_end as usize..).unwrap_or_default();
-    let Some(after_comma) = rest.trim_ascii_start().strip_prefix(b",") else {
-        return name_end;
-    };
-    let braces = after_comma.trim_ascii_start();
-    if braces.starts_with(b"{") {
-        c.end_of_bracket_at(file, (hir.text.len() - braces.len()) as u32)
-    } else {
-        name_end
     }
 }

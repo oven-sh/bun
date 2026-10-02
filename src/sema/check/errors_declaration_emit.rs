@@ -591,16 +591,8 @@ impl<'p> Checker<'p> {
 
     /// `resolveSymbol`
     fn resolve_symbol(&mut self, symbol: Sym) -> Sym {
-        let files = self.files();
-        let flags = files.flags(symbol);
-        // `IsNonLocalAlias`
-        if flags.contains(SymFlags::ALIAS)
-            && !flags.intersects(SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE)
-        {
-            return match self.originating_import_of_alias(symbol) {
-                Some(originating_import) => self.module_clone(originating_import),
-                None => files.resolve_alias(symbol).unwrap_or(symbol),
-            };
+        if self.files().is_non_local_alias(symbol) {
+            return self.resolve_alias(symbol).symbol().unwrap_or(symbol);
         }
         symbol
     }
@@ -628,16 +620,6 @@ impl<'p> Checker<'p> {
             order = order.then_with(|| self.compare_symbols_of_chain(x, y));
         }
         order
-    }
-
-    /// `resolve_alias`, with its target in place of a symbol `cloneTypeAsModuleType` made.
-    fn target_of_alias(&self, alias: Sym) -> Option<Sym> {
-        let files = self.files();
-        let target = files.canonical(files.alias_target(alias)?);
-        files.resolve_alias_as(
-            target,
-            SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE,
-        )
     }
 
     /// `GetFirstIdentifier`: the name, and where it is written.
@@ -1374,19 +1356,10 @@ impl<'p> Checker<'p> {
         None
     }
 
-    /// `resolveAlias`: what the alias is declared to stand for, and on from there while that is an alias and nothing else
-    /// (`resolveSymbol`, `isNonLocalAlias`).
+    /// `resolveAlias`
     fn resolve_alias_or_unknown(&mut self, alias: Sym) -> Option<Sym> {
-        if let Some(combined) = self.combined_symbol_of_alias(alias) {
-            return Some(combined);
-        }
-        match self.originating_import_of_alias(alias) {
-            Some(originating_import) => Some(self.module_clone(originating_import)),
-            None => Some(
-                self.target_of_alias(alias)
-                    .unwrap_or(self.files().unknown_symbol),
-            ),
-        }
+        let target = self.resolve_alias(alias).symbol();
+        Some(target.unwrap_or(self.files().unknown_symbol))
     }
 
     /// `getCandidateListForSymbol`

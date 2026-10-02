@@ -67,8 +67,14 @@ impl Checker<'_> {
                         let wanted = self.type_of_assignment_target(file, target);
                         let at = self.error_start_of(file, target);
                         let end = self.error_end_of(file, target);
-                        self.check_assignable_with_end(
-                            file, iterated, wanted, at, end, expr, 2322, out,
+                        self.check_type_assignable_to_and_optionally_elaborate(
+                            iterated,
+                            wanted,
+                            Some((file, at, end)),
+                            expr.some().map(|e| (file, e)),
+                            false,
+                            None,
+                            None,
                         );
                     }
                 }
@@ -164,7 +170,7 @@ impl Checker<'_> {
                     let given = self.type_of_expr(file, value);
                     self.check_destructuring_assignment(file, target, given, out);
                 }
-                ExprKind::Yield { value, star } => self.check_yield(file, e, value, star, out),
+                ExprKind::Yield { value, star } => self.check_yield(file, e, value, star),
                 _ => {}
             }
         }
@@ -208,15 +214,11 @@ impl Checker<'_> {
             }
             let generator = self.generator_instantiation(declared, f.flags.contains(Flags::ASYNC));
             let end = self.end_of_type_node(file, f.ret);
-            self.check_assignable_with_end(
-                file,
+            self.check_type_assignable_to(
                 generator,
                 declared,
-                hir[f.ret].pos,
-                end,
-                ExprId::NONE,
-                2322,
-                out,
+                Some((file, hir[f.ret].pos, end)),
+                None,
             );
         }
         for p in 0..hir.pats.len() {
@@ -494,7 +496,7 @@ impl Checker<'_> {
             if self.is_assignment_pattern(file, inner) {
                 self.check_destructuring_assignment(file, inner, default, out);
             } else {
-                self.check_reference_assignment(file, inner, default, value, out);
+                self.check_reference_assignment(file, inner, default, value);
             }
             // That of `{ a = d }` sees to it only if it cannot be `undefined` itself.
             let is_shorthand = matches!(self.bound(file).expr_parent[target.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand);
@@ -509,7 +511,7 @@ impl Checker<'_> {
         }
         if !self.is_assignment_pattern(file, target) {
             let said = out.len();
-            self.check_reference_assignment(file, target, source, ExprId::NONE, out);
+            self.check_reference_assignment(file, target, source, ExprId::NONE);
             // What is said of a default is said at the same name, and both stand.
             if let Some(&said) = out.get(said) {
                 self.explain_apart(said.start, said.code);
@@ -734,7 +736,6 @@ impl Checker<'_> {
         target: ExprId,
         source: TypeId,
         value: ExprId,
-        out: &mut Vec<Diagnostic>,
     ) {
         // What cannot be assigned to is told off for that with the operators (2364 2701 2778 2779), and no more is said.
         if !self.is_reference(file, target) {
@@ -743,7 +744,15 @@ impl Checker<'_> {
         let wanted = self.type_of_assignment_target(file, target);
         let at = self.error_start_of(file, target);
         let end = self.error_end_of(file, target);
-        self.check_assignable_with_end(file, source, wanted, at, end, value, 2322, out);
+        self.check_type_assignable_to_and_optionally_elaborate(
+            source,
+            wanted,
+            Some((file, at, end)),
+            value.some().map(|e| (file, e)),
+            false,
+            None,
+            None,
+        );
     }
 
     /// `checkReferenceExpression`: a name or a property access, whatever is asserted of it, that is no optional chain.
@@ -1015,14 +1024,7 @@ impl Checker<'_> {
     }
 
     /// `checkYieldExpression`: what is yielded against what the generator says it yields.
-    fn check_yield(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        value: ExprId,
-        star: bool,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_yield(&mut self, file: FileId, e: ExprId, value: ExprId, star: bool) {
         let hir = self.hir(file);
         let Some(func) = self.containing_generator(file, e) else {
             return;
@@ -1044,7 +1046,7 @@ impl Checker<'_> {
             if value.is_some() {
                 c.error_end_of(file, value)
             } else {
-                0
+                c.error_end_inside_parentheses(file, e)
             }
         };
         if star {
@@ -1092,15 +1094,14 @@ impl Checker<'_> {
             yielded = self.awaited(yielded);
         }
         let end = end(&*self);
-        self.check_assignable_with_end(
-            file,
+        self.check_type_assignable_to_and_optionally_elaborate(
             yielded,
             wanted,
-            at,
-            end,
-            if star { ExprId::NONE } else { value },
-            2322,
-            out,
+            Some((file, at, end)),
+            value.some().filter(|_| !star).map(|e| (file, e)),
+            false,
+            None,
+            None,
         );
     }
 }

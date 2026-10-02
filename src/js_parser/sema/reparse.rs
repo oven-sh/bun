@@ -11,7 +11,6 @@ use bun_sema::atom::Atom;
 use bun_sema::hir::*;
 use smallvec::SmallVec;
 
-use super::builder::{Modified, modifier_error};
 use super::comments::flags;
 use super::jsdoc::{
     self, ClassName, DeclaredName, JsDoc, Name, Property, Signature, Tag, TagKind, TagType,
@@ -39,14 +38,6 @@ pub(super) enum Host {
     ClassMember(Member),
     /// A property of an object literal, before it is added to the file, and the type of its `@type` tag.
     Property(Prop, TypeNodeId),
-}
-
-/// What has the type parameters of `@template` tags, as far as `checkGrammarModifiers` tells one from another.
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum TemplateOwner {
-    Alias,
-    Function,
-    Class,
 }
 
 /// `GetJSDocCommentRanges`: the JSDoc comments before a token.
@@ -135,7 +126,6 @@ impl<'p, 'a> Lower<'p, 'a> {
         if self.jsdoc.list.is_empty() {
             return member;
         }
-        let written = member.flags;
         self.member_modifiers.clear();
         let full_start = member.loc.pos;
         let mut host = Host::ClassMember(member);
@@ -157,45 +147,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 ModifierKind::Decorator(_) => None,
             })
             .collect();
-        all.extend_from_slice(&self.member_modifiers);
+        all.append(&mut self.member_modifiers);
         member.modifiers = self.b.add_modifier_list(&all);
-        // `checkGrammarModifiers`. What is wrong with the modifiers that are written has been said: they come first, in an order
-        // nothing is wrong with, at no place.
-        const NOWHERE: u32 = u32::MAX;
-        let mut modifiers: Vec<(Flags, u32)> = [
-            Flags::AMBIENT,
-            Flags::PUBLIC,
-            Flags::PRIVATE,
-            Flags::PROTECTED,
-            Flags::ABSTRACT,
-            Flags::STATIC,
-            Flags::OVERRIDE,
-            Flags::READONLY,
-            Flags::ACCESSOR,
-            Flags::ASYNC,
-        ]
-        .into_iter()
-        .filter(|&modifier| written.contains(modifier))
-        .map(|modifier| (modifier, NOWHERE))
-        .collect();
-        modifiers.append(&mut self.member_modifiers);
-        let on = match member.kind {
-            MemberKind::Constructor => Modified::Constructor,
-            MemberKind::Getter | MemberKind::Setter => Modified::Accessor,
-            MemberKind::Property => Modified::Property,
-            _ => Modified::Method,
-        };
-        let error = modifier_error(
-            &modifiers,
-            on,
-            self.b.in_abstract_class,
-            false,
-            matches!(member.key, PropKey::Private(_)),
-        );
-        self.b
-            .file
-            .early_errors
-            .extend(error.filter(|error| error.0 != NOWHERE));
         member
     }
 
@@ -480,7 +433,6 @@ impl<'p, 'a> Lower<'p, 'a> {
         &mut self,
         doc: &JsDoc,
         typedef_or_callback: bool,
-        owner: TemplateOwner,
     ) -> Span<TypeParamId> {
         // In a comment with a `@typedef` or a `@callback` the `@template` tags are about the type that is defined.
         if !typedef_or_callback
@@ -508,33 +460,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                     Some(default) => self.reparse_type(default),
                     None => TypeNodeId::NONE,
                 };
-                let mut flags = Flags::REPARSED;
-                // `checkGrammarModifiers`: the first that is wrong.
-                let mut error = None;
-                for &(modifier, at) in &param.modifiers {
-                    let code = if modifier.is_empty() {
-                        1273
-                    } else if modifier == Flags::CONST {
-                        if owner == TemplateOwner::Alias {
-                            1277
-                        } else {
-                            0
-                        }
-                    } else if owner == TemplateOwner::Function {
-                        1274
-                    } else if flags.contains(modifier) {
-                        1030
-                    } else if modifier == Flags::IN && flags.contains(Flags::OUT) {
-                        1029
-                    } else {
-                        0
-                    };
-                    if code != 0 {
-                        error.get_or_insert((at, code));
-                    }
-                    flags |= modifier;
-                }
-                self.b.file.early_errors.extend(error);
+                let written = param.modifiers.iter();
+                let written = written.fold(Flags::empty(), |all, modifier| all | modifier.0);
+                let flags = Flags::REPARSED | written & (Flags::CONST | Flags::IN | Flags::OUT);
+                let modifiers = self.b.add_modifier_list(&param.modifiers);
                 params.push(TypeParam {
                     name: self.name_atom(param.name),
                     pos: param.name.start,
@@ -543,6 +472,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     constraint,
                     default,
                     flags,
+                    modifiers,
                 });
             }
         }
@@ -598,7 +528,7 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     /// The type alias of a `@typedef` or a `@callback`, in the namespaces its name says (`wrapInJSDocNamespace`).
     fn reparse_alias(&mut self, name: &DeclaredName, ty: TypeNodeId, tag: &Tag, doc: &JsDoc) {
-        let type_params = self.gather_type_parameters(doc, true, TemplateOwner::Alias);
+        let type_params = self.gather_type_parameters(doc, true);
         let mut flags = Flags::REPARSED;
         if !name.namespaces.is_empty() {
             flags |= Flags::EXPORT;
@@ -781,7 +711,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         tag: &Tag,
     ) -> FnId {
         let type_params = match like {
-            Some(_) => self.gather_type_parameters(doc, false, TemplateOwner::Function),
+            Some(_) => self.gather_type_parameters(doc, false),
             None => Span::EMPTY,
         };
         let mut this_param = ParamId::NONE;
@@ -904,8 +834,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 let func = self.function_like_host(host);
                 if func.is_some() {
                     if self.b.file[func].type_params.is_empty() && !self.has_full_signature(func) {
-                        let type_params =
-                            self.gather_type_parameters(doc, false, TemplateOwner::Function);
+                        let type_params = self.gather_type_parameters(doc, false);
                         self.b.file[func].type_params = type_params;
                         // `checkGrammarConstructorTypeParameters`: the list starts with its first tag.
                         if self.b.file[func].kind == FnKind::Constructor && !type_params.is_empty()
@@ -916,7 +845,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 } else if let Host::Class(class) = *host
                     && self.b.file[class].type_params.is_empty()
                 {
-                    let type_params = self.gather_type_parameters(doc, false, TemplateOwner::Class);
+                    let type_params = self.gather_type_parameters(doc, false);
                     self.b.file[class].type_params = type_params;
                 }
             }

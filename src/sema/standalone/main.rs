@@ -110,11 +110,24 @@ fn main() {
                 .into_owned();
             let lib_dir = std::env::var("BUN_SEMA_TS_LIB").ok();
             // `--progress`: as `bun check` shows it at a terminal.
-            let progress = args
-                .iter()
-                .any(|a| a == "--progress")
+            let shows_progress = args.iter().any(|a| a == "--progress");
+            let is_timed = args.iter().any(|a| a == "--timing");
+            let progress = (shows_progress || is_timed)
                 .then(|| std::sync::Arc::new(bun_sema_driver::Progress::default()));
-            if let Some(progress) = progress.clone() {
+            // `--timing`: the instructions of loading, so that those of checking can be told apart. Loading opens every file, and what the
+            // system does for that differs from run to run.
+            let instructions_of_loading = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            if let (true, Some(progress)) = (is_timed, progress.clone()) {
+                let noted = instructions_of_loading.clone();
+                std::thread::spawn(move || {
+                    use std::sync::atomic::Ordering::Relaxed;
+                    while progress.to_check.load(Relaxed) == 0 {
+                        std::thread::sleep(std::time::Duration::from_micros(200));
+                    }
+                    noted.store(bun_sema_standalone::instructions_and_cycles().0, Relaxed);
+                });
+            }
+            if let (true, Some(progress)) = (shows_progress, progress.clone()) {
                 std::thread::spawn(move || {
                     let style = Style {
                         layout: Layout::Pretty,
@@ -200,7 +213,7 @@ fn main() {
                     .unwrap_or_else(bun_sema_standalone::terminal_width),
                 show_all: has("--all"),
             };
-            if progress.is_some() {
+            if shows_progress {
                 eprint!("{}", bun_sema_driver::format::ERASE_LINE);
             }
             let mut out = String::new();
@@ -235,6 +248,11 @@ fn main() {
                     "instructions {:.2} G, cycles {:.2} G",
                     instructions as f64 / 1e9,
                     cycles as f64 / 1e9
+                );
+                let loading = instructions_of_loading.load(std::sync::atomic::Ordering::Relaxed);
+                eprintln!(
+                    "instructions of checking {:.2} G",
+                    instructions.saturating_sub(loading) as f64 / 1e9
                 );
             }
             std::process::exit(i32::from(report.error_count() > 0));

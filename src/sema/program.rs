@@ -448,7 +448,6 @@ struct Memo {
     decls: ByNodeKept<Sym, Box<[(FileId, Decl)]>>,
     /// `moduleSymbolLinks`
     module_links: ByNodeKept<Sym, ModuleSymbolLinks>,
-    has_known_exports: ByNode<Sym, bool>,
 }
 
 /// `ExportCollision`, one for each of its `exportsWithDuplicate`: 2308.
@@ -491,7 +490,6 @@ impl Memo {
             symbol_flags: ByNode::new(symbols),
             decls: ByNodeKept::new(symbols),
             module_links: ByNodeKept::new(symbols),
-            has_known_exports: ByNode::new(symbols),
         }
     }
 }
@@ -1038,7 +1036,7 @@ fn end_of_string_literal(text: &[u8], start: u32) -> u32 {
 }
 
 /// `getModeForUsageLocation`. `default_mode`: of the file the use is in.
-fn mode_for_usage_location(
+pub(crate) fn mode_for_usage_location(
     options: &Options,
     default_mode: ResolutionMode,
     u: &SpecifierUse,
@@ -4129,26 +4127,6 @@ impl Files {
         }
     }
 
-    /// Whether all there is to import from `module` can be told. What `export =` gives has properties, which can be imported as well.
-    /// `declare module "m";` has whatever is asked of it. What a JSON file has is up to what is in it. What its `export *` lead to
-    /// makes no difference. `visit` of `getExportsOfModuleWorker` passes on the export table of the module a specifier resolves to,
-    /// and nothing if it resolves to none or the module has no table.
-    pub fn has_known_exports(&self, module: Sym) -> bool {
-        if let Some(known) = self.memo.has_known_exports.get(&module) {
-            return known;
-        }
-        self.memo
-            .has_known_exports
-            .insert(module, self.has_known_exports_uncached(module))
-    }
-
-    fn has_known_exports_uncached(&self, module: Sym) -> bool {
-        self.export(module, known::export_equals).is_none()
-            && self.symbol(module).exports.is_some()
-            && !self.is_shorthand_ambient_module_symbol(module)
-            && !self.module(module.file).path.ends_with(".json")
-    }
-
     /// `typeOnlyExportStarMap[name]` of `module`: the `export type *` that is the only way it has `name`.
     pub fn type_only_export_star(&self, module: Sym, name: Atom) -> Option<(FileId, StmtId)> {
         if !self.has_type_only_stars {
@@ -4337,13 +4315,14 @@ impl Files {
         (!made.is_combined).then_some(made.target)
     }
 
-    /// `exportTypeLinks.originatingImport`
-    pub fn originating_import_of_module_clone(&self, symbol: Sym) -> Option<Sym> {
+    /// The alias `symbol` was made for, and whether by `combineValueAndTypeSymbols`. Or else `exportTypeLinks.originatingImport`.
+    pub fn alias_of_transient_symbol(&self, symbol: Sym) -> Option<(Sym, bool)> {
         let made = self.transient_symbol(symbol)?;
-        (!made.is_combined).then_some(Sym {
+        let alias = Sym {
             file: symbol.file,
             id: made.alias,
-        })
+        };
+        Some((alias, made.is_combined))
     }
 
     /// Whose table `Exports` of `sym` is. `maps.Clone(symbol.Exports)`: a copy that nothing was added to has what it copies has.

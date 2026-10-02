@@ -622,11 +622,7 @@ impl Checker<'_> {
                 let sym = self.files().sym(file, local);
                 // `getSymbol`: an alias that leads nowhere goes for a value as for anything else.
                 let flags = self.files().symbol_flags(sym);
-                let is_value = if flags == SymFlags::all() {
-                    self.is_alias_in_error(sym)
-                } else {
-                    flags.intersects(SymFlags::VALUE)
-                };
+                let is_value = flags.intersects(SymFlags::VALUE);
                 let type_only = self
                     .files()
                     .type_only_alias_declaration_ex(sym, SymFlags::VALUE);

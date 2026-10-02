@@ -686,7 +686,8 @@ impl Checker<'_> {
         };
         let start = start_of_declaration_list(&hir.text, hir[s].pos);
         // `!c.checkGrammarModifiers(node) && !c.checkGrammarVariableDeclarationList(..)`
-        if parses && self.grammar_error_in_modifiers(file, s).is_some() {
+        let node = super::errors_grammar_modifiers::HasModifiers::Statement(s);
+        if parses && self.grammar_error_in_modifiers(file, node).is_some() {
             out.retain(|d| d.start != start || !matches!(d.code, 1545 | 1546));
             return;
         }

@@ -106,18 +106,15 @@ impl Checker<'_> {
                 }
                 _ => source,
             };
-            self.check_assignable_to(
-                file,
+            let at = (file, hir[decl.pat].pos, self.end_of_pat(file, decl.pat));
+            self.check_type_assignable_to_and_optionally_elaborate(
                 source,
                 target,
-                |c| {
-                    let end = c.end_if_explained(|c| c.end_of_pat(file, decl.pat));
-                    (hir[decl.pat].pos, end)
-                },
-                decl.init,
+                Some(at),
+                Some((file, decl.init)),
                 false,
-                2322,
-                out,
+                None,
+                None,
             );
         }
         for p in 0..hir.params.len() {
@@ -134,18 +131,19 @@ impl Checker<'_> {
             }
             let target = self.param_default_target(file, ParamId(p as u32));
             let source = self.type_of_expr(file, param.default);
-            self.check_assignable_to(
+            let at = (
                 file,
+                param.pos.min(hir[param.pat].pos),
+                self.end_of_param(file, ParamId(p as u32)),
+            );
+            self.check_type_assignable_to_and_optionally_elaborate(
                 source,
                 target,
-                |c| {
-                    let end = c.end_if_explained(|c| c.end_of_param(file, ParamId(p as u32)));
-                    (param.pos.min(hir[param.pat].pos), end)
-                },
-                param.default,
+                Some(at),
+                Some((file, param.default)),
                 false,
-                2322,
-                out,
+                None,
+                None,
             );
         }
         // The defaults in a pattern, against what the pattern takes apart says they stand in for.
@@ -185,18 +183,15 @@ impl Checker<'_> {
                 {
                     let target = self.type_of_pat(file, pat);
                     let source = self.type_of_expr(file, default);
-                    self.check_assignable_to(
-                        file,
+                    let at = (file, hir[pat].pos, self.end_of_pat(file, pat));
+                    self.check_type_assignable_to_and_optionally_elaborate(
                         source,
                         target,
-                        |c| {
-                            let end = c.end_if_explained(|c| c.end_of_pat(file, pat));
-                            (hir[pat].pos, end)
-                        },
-                        default,
+                        Some(at),
+                        Some((file, default)),
                         false,
-                        2322,
-                        out,
+                        None,
+                        None,
                     );
                 }
             }
@@ -221,24 +216,21 @@ impl Checker<'_> {
             } else {
                 self.widen_literal_for_context(source, Some(target))
             };
-            self.check_assignable_to(
-                file,
+            let at = (file, hir[p].pos, self.end_of_prop(file, p));
+            self.check_type_assignable_to_and_optionally_elaborate(
                 source,
                 target,
-                |c| {
-                    let end = c.end_if_explained(|c| c.end_of_prop(file, p));
-                    (hir[p].pos, end)
-                },
-                value,
+                Some(at),
+                Some((file, value)),
                 false,
-                2322,
-                out,
+                None,
+                None,
             );
         }
         self.check_assertions(file, out);
         self.check_literals_against_patterns(file, out);
         self.check_redeclared_variables(file, out);
-        self.check_type_argument_constraints(file, out);
+        self.check_type_argument_constraints(file);
         self.check_mapped_type_keys(file);
         // `checkExportAssignment`: what is exported is held against the type of its `@type` tag.
         for &(owner, node) in &hir.jsdoc_types {
@@ -253,18 +245,15 @@ impl Checker<'_> {
             }
             let target = self.type_from_node(file, node);
             let source = self.type_of_expr(file, e);
-            self.check_assignable_to(
-                file,
+            let at = (file, self.start_of(file, e), self.end_of_expr(file, e));
+            self.check_type_assignable_to_and_optionally_elaborate(
                 source,
                 target,
-                |c| {
-                    let end = c.end_if_explained(|c| c.end_of_expr(file, e));
-                    (c.start_of(file, e), end)
-                },
-                e,
+                Some(at),
+                Some((file, e)),
                 false,
-                2322,
-                out,
+                None,
+                None,
             );
         }
         for m in 0..hir.members.len() {
@@ -284,19 +273,19 @@ impl Checker<'_> {
             } else {
                 declared
             };
-            self.check_assignable_to(
+            let at = (
                 file,
+                member.name_pos,
+                self.end_of_member_name(file, MemberId(m as u32)),
+            );
+            self.check_type_assignable_to_and_optionally_elaborate(
                 source,
                 target,
-                |c| {
-                    let end =
-                        c.end_if_explained(|c| c.end_of_member_name(file, MemberId(m as u32)));
-                    (member.name_pos, end)
-                },
-                member.init,
+                Some(at),
+                Some((file, member.init)),
                 false,
-                2322,
-                out,
+                None,
+                None,
             );
         }
         let by_kind = self.exprs_by_kind(file);
@@ -372,16 +361,13 @@ impl Checker<'_> {
                     continue;
                 }
             }
-            self.check_assignable_to(
+            self.check_assignable_with_end(
                 file,
                 source,
                 wanted,
-                |c| {
-                    let end = c.end_if_explained(|c| c.end_of_expr(file, target));
-                    (c.start_of(file, target), end)
-                },
+                self.start_of(file, target),
+                self.end_of_expr(file, target),
                 value,
-                false,
                 2322,
                 out,
             );
@@ -964,7 +950,7 @@ impl Checker<'_> {
     }
 
     /// `checkTypeArgumentConstraints`, of the type arguments of a type reference: 2344, or what says more.
-    fn check_type_argument_constraints(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_type_argument_constraints(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for i in 0..hir.types.len() {
             let scope = bound.type_scope[i];
@@ -1052,7 +1038,12 @@ impl Checker<'_> {
                     continue;
                 }
                 let (at, end) = (hir[node].pos, self.end_of_type_node(file, node));
-                self.report_not_assignable_with_end(argument, constraint, at, end, 2344, out);
+                self.check_type_assignable_to(
+                    argument,
+                    constraint,
+                    Some((file, at, end)),
+                    Some(2344),
+                );
                 break;
             }
         }
@@ -1114,8 +1105,11 @@ impl Checker<'_> {
                     if k < given.len() {
                         let node: TypeNodeId = hir.id_at(class.extends_args, k);
                         let (at, end) = (hir[node].pos, self.end_of_type_node(file, node));
-                        self.report_not_assignable_with_end(
-                            argument, constraint, at, end, 2344, out,
+                        self.check_type_assignable_to(
+                            argument,
+                            constraint,
+                            Some((file, at, end)),
+                            Some(2344),
                         );
                     }
                     break 'signatures;
@@ -1564,22 +1558,7 @@ impl Checker<'_> {
         );
     }
 
-    /// Complains unless `source`, the type of `e` if there is an `e`, fits `target`. `at`: where, if not further in.
-    /// `head`: what to say if there is nothing more telling to say.
-    pub(super) fn check_assignable(
-        &mut self,
-        file: FileId,
-        source: TypeId,
-        target: TypeId,
-        at: u32,
-        e: ExprId,
-        head: u32,
-        out: &mut Vec<Diagnostic>,
-    ) -> bool {
-        self.check_assignable_to(file, source, target, |_| (at, 0), e, false, head, out)
-    }
-
-    /// The same. `end`: where the node that starts at `at` ends.
+    /// `checkTypeAssignableToAndOptionallyElaborate`, for who reads back what was said.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn check_assignable_with_end(
         &mut self,
@@ -1592,123 +1571,20 @@ impl Checker<'_> {
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
-        self.check_assignable_to(file, source, target, |_| (at, end), e, false, head, out)
-    }
-
-    /// The same. `end` is only asked where the node ends once there is something to complain of.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn check_assignable_with_end_from(
-        &mut self,
-        file: FileId,
-        source: TypeId,
-        target: TypeId,
-        at: u32,
-        end: impl FnOnce(&Self) -> u32,
-        e: ExprId,
-        head: u32,
-        out: &mut Vec<Diagnostic>,
-    ) -> bool {
-        self.check_assignable_to(file, source, target, |c| (at, end(c)), e, false, head, out)
-    }
-
-    /// `end()`, if where errors end is going to be read.
-    fn end_if_explained(&self, end: impl FnOnce(&Self) -> u32) -> u32 {
-        if self.explains { end(self) } else { 0 }
-    }
-
-    /// `is_effective`: the parentheses around `e` are no part of it.
-    /// `place`: where to complain if not further in, and where the node that starts there ends (`0`: with the token there). It is
-    /// only asked once there is something to complain of.
-    #[allow(clippy::too_many_arguments)]
-    #[inline]
-    fn check_assignable_to(
-        &mut self,
-        file: FileId,
-        source: TypeId,
-        target: TypeId,
-        place: impl FnOnce(&Self) -> (u32, u32),
-        e: ExprId,
-        is_effective: bool,
-        head: u32,
-        out: &mut Vec<Diagnostic>,
-    ) -> bool {
-        let Some(is_too_complex) = self.finds_unassignable(source, target) else {
-            return true;
-        };
-        let (at, end) = place(&*self);
-        self.report_unassignable(
-            file,
+        let (at, expr, mut diags) = ((file, at, end), e.some().map(|e| (file, e)), Vec::new());
+        let head = Some(head).filter(|&head| head != 2322);
+        let output = Some(&mut diags);
+        let is_assignable = self.check_type_assignable_to_and_optionally_elaborate(
             source,
             target,
-            (at, end),
-            e,
-            is_effective,
-            is_too_complex,
+            Some(at),
+            expr,
+            false,
             head,
-            out,
+            output,
         );
-        false
-    }
-
-    /// `None`: `source` fits `target`, or there is no telling. Otherwise there is something to complain of, and it is said whether
-    /// that is that the comparison got too complex.
-    fn finds_unassignable(&mut self, source: TypeId, target: TypeId) -> Option<bool> {
-        if !self.is_known(source) || !self.is_known(target) {
-            return None;
-        }
-        self.relation_too_complex = false;
-        let fits = self.answer_if_sure(|c| c.is_assignable(source, target));
-        let is_too_complex = std::mem::take(&mut self.relation_too_complex) && !self.timed_out();
-        match fits {
-            Some(true) => return None,
-            // Cut short for another reason than complexity: the result is unknown. tsgo's own depth limit (2321) is among those.
-            None if !is_too_complex => return None,
-            _ => {}
-        }
-        Some(is_too_complex)
-    }
-
-    /// What `check_assignable_to` says once `finds_unassignable` has found something to complain of.
-    #[allow(clippy::too_many_arguments)]
-    fn report_unassignable(
-        &mut self,
-        file: FileId,
-        source: TypeId,
-        target: TypeId,
-        (at, end): (u32, u32),
-        e: ExprId,
-        is_effective: bool,
-        is_too_complex: bool,
-        head: u32,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        // `checkTypeRelatedToEx`: an overflow is reported instead of the relation error. The pair is not compared again to elaborate.
-        if is_too_complex {
-            out.push(Diagnostic {
-                start: at,
-                code: 2859,
-            });
-            self.explain_to(at, end, 2859, |c| {
-                vec![c.type_to_string(source), c.type_to_string(target)]
-            });
-            // `isTypeRelatedTo` has come upon it before, with no node to report it on but `c.currentNode`: the assignment.
-            if e.is_some()
-                && let Parent::Expr(whole) = self.bound(file).expr_parent[e.idx()]
-                && whole.is_some()
-                && matches!(self.hir(file)[whole].kind, ExprKind::Assign { value, .. } if value == e)
-            {
-                let start = self.start_inside_parentheses(file, whole);
-                let end = self.end_inside_parentheses(file, whole);
-                out.push(Diagnostic { start, code: 2859 });
-                self.explain_to(start, end, 2859, |c| {
-                    vec![c.type_to_string(source), c.type_to_string(target)]
-                });
-            }
-            return;
-        }
-        if e.is_none() || !self.elaborate_from(file, e, is_effective, source, target, head, out) {
-            self.report_not_assignable_with_end(source, target, at, end, head, out);
-        }
+        self.put_out(diags, out);
+        is_assignable
     }
 
     // ───────────────────────────── further in ─────────────────────────────
@@ -1726,7 +1602,9 @@ impl Checker<'_> {
         head_message: Option<u32>,
         mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
-        match self.is_type_related_to_if_told(source, target, Relation::Assignable, false) {
+        let is_related =
+            self.is_type_related_to_if_told(source, target, Relation::Assignable, false);
+        match is_related {
             Some(true) => return true,
             Some(false) if error_node.is_none() => return false,
             Some(false) => {
@@ -1748,13 +1626,22 @@ impl Checker<'_> {
             // The overflow is reported instead of the relation error. The pair is not compared again to elaborate.
             None => {}
         }
-        self.check_type_assignable_to_ex(
-            source,
-            target,
-            error_node,
-            head_message,
-            diagnostic_output,
-        )
+        let output = diagnostic_output.as_deref_mut();
+        let is_assignable =
+            self.check_type_assignable_to_ex(source, target, error_node, head_message, output);
+        // `isTypeRelatedTo` has come upon the overflow before, with no node to report it on but `c.currentNode`: the assignment.
+        if is_related.is_none()
+            && let Some((file, e)) = expr
+            && let Parent::Expr(whole) = self.bound(file).expr_parent[e.idx()]
+            && whole.is_some()
+            && matches!(self.hir(file)[whole].kind, ExprKind::Assign { value, .. } if value == e)
+        {
+            let start = self.start_inside_parentheses(file, whole);
+            let at = (file, start, self.end_inside_parentheses(file, whole));
+            let diagnostic = self.new_diagnostic(at, 2859, &[Arg::Type(source), Arg::Type(target)]);
+            self.report_diagnostic(diagnostic, diagnostic_output);
+        }
+        is_assignable
     }
 
     /// What went to a `diagnosticOutput`, for who still has an `out`.
@@ -1768,31 +1655,6 @@ impl Checker<'_> {
                 self.notes.borrow_mut().push(diagnostic.into());
             }
         }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn elaborate_from(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        is_effective: bool,
-        source: TypeId,
-        target: TypeId,
-        head: u32,
-        out: &mut Vec<Diagnostic>,
-    ) -> bool {
-        let (head, mut diags) = (Some(head), Vec::new());
-        let is_elaborated = self.elaborate_error(
-            file,
-            e,
-            is_effective,
-            source,
-            target,
-            head,
-            Some(&mut diags),
-        );
-        self.put_out(diags, out);
-        is_elaborated
     }
 
     /// `elaborateError`: takes the complaint that `e`, of type `source`, does not fit `target` to the part of `e` that is to blame.
@@ -2398,18 +2260,6 @@ impl Checker<'_> {
     }
 
     // ───────────────────────────── what is said ─────────────────────────────
-
-    /// `source` does not fit `target`: says why, in as far as the reason lies at the surface.
-    pub(super) fn report_not_assignable(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        at: u32,
-        head: u32,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        self.report_not_assignable_with_end(source, target, at, 0, head, out);
-    }
 
     /// The same. `end`: where the node that starts at `at` ends.
     pub(super) fn report_not_assignable_with_end(

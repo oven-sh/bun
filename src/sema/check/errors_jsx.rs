@@ -114,7 +114,7 @@ impl Checker<'_> {
                 let end = if is_whole_element { element.end } else { end };
                 if let Some((spec, mode)) = untyped_runtime {
                     if no_implicit_any {
-                        self.error_on_implicit_any_module(file, spec, mode, (start, end), out);
+                        self.error_on_implicit_any_module(file, spec, mode, (file, start, end));
                     }
                 } else if let Some(spec) = runtime {
                     match self.files().module(file).imported_file(spec) {

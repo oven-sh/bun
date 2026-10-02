@@ -1069,14 +1069,16 @@ impl Dump<'_> {
             constraint,
             default,
             flags,
+            modifiers,
         } = node!(self, depth, label, type_params, id);
-        put!(
-            self,
-            depth,
-            label,
+        let mut head = format!(
             "TypeParam name={} pos={pos} start={start} end={end} flags={flags:?}",
             self.q(name)
         );
+        for modifier in self.file.modifier_list(modifiers) {
+            head += &format!(" {:?}@{}", modifier.kind, modifier.pos);
+        }
+        self.line(depth, label, &head);
         let d = depth + 1;
         self.ty(d, "constraint", constraint);
         self.ty(d, "default", default);

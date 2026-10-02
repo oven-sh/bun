@@ -1,6 +1,6 @@
 //! From the statements as the parse pass left them (nothing bound, folded or dropped) to `bun_sema::hir`.
 
-use super::builder::{Builder, Modified};
+use super::builder::Builder;
 use super::clone_types::PendingPart;
 use super::jsdoc::Comments;
 use super::notes::Notes;
@@ -1103,8 +1103,6 @@ impl<'p, 'a> Lower<'p, 'a> {
                 flags |= Flags::OPTIONAL;
             }
             let pos = self.declaration_start(arg.binding.loc);
-            // 1187 or 1317
-            let mut parameter_property_error = None;
             let mut modifiers: Vec<(Flags, u32)> = Vec::new();
             if arg.is_typescript_ctor_field {
                 const PROPERTY_MODIFIERS: Flags = Flags::PUBLIC
@@ -1128,34 +1126,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                 if seen.intersects(PROPERTY_MODIFIERS) {
                     flags |= Flags::PARAMETER_PROPERTY;
                 }
-                let errors_before = self.b.file.early_errors.len();
-                if modifiers.len() > 1 || !PROPERTY_MODIFIERS.contains(seen) {
-                    self.b.check_modifiers(
-                        &modifiers,
-                        Modified::Parameter,
-                        false,
-                        false,
-                        self.pos_of(arg.binding.loc),
-                    );
-                }
-                // `checkGrammarModifiers`, after the modifiers themselves were found in order.
-                if flags.contains(Flags::PARAMETER_PROPERTY)
-                    && self.b.file.early_errors.len() == errors_before
-                {
-                    if matches!(arg.binding.data, B::B::BArray(_) | B::B::BObject(_)) {
-                        parameter_property_error = Some(1187);
-                    } else if flags.contains(Flags::REST) {
-                        parameter_property_error = Some(1317);
-                    }
-                }
             }
             let pat = self.binding(&arg.binding);
             let ty = self.annotation(arg.binding.loc);
             let default = self.optional_expr(arg.default.as_ref());
-
-            if let Some(code) = parameter_property_error {
-                self.b.file.early_errors.push((pos, code));
-            }
             let loc = self.range_of(arg.binding.loc);
             self.list_params.push(Param {
                 pat,
@@ -1364,10 +1338,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             .iter()
             .map(|d| (self.expr(d), self.at_sign(d)))
             .collect();
-        let outer_is_abstract = std::mem::replace(
-            &mut self.b.in_abstract_class,
-            flags.contains(Flags::ABSTRACT),
-        );
         let mut members = Vec::with_capacity(class.properties.slice().len());
         // By where the member is: they are put in order further down.
         let mut of_members: Vec<(u32, ExprId)> = Vec::new();
@@ -1409,7 +1379,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             let member = ts::MemberId::from_index(member);
             members.push(self.b.clone_class_index_signature(member, is_ambient));
         }
-        self.b.in_abstract_class = outer_is_abstract;
         self.b.classes_around -= 1;
         // Overloads go before what implements them.
         members.sort_by_key(|m| m.name_pos);
@@ -1556,20 +1525,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             };
             member.kind = member_kind;
             member.ty = TypeNodeId::NONE;
-            if !modifiers.is_empty() {
-                let on = match member_kind {
-                    MemberKind::Constructor => Modified::Constructor,
-                    MemberKind::Method => Modified::Method,
-                    _ => Modified::Accessor,
-                };
-                self.b.check_modifiers(
-                    &modifiers,
-                    on,
-                    is_parent_ambient,
-                    matches!(member.key, PropKey::Private(_)),
-                    member.name_pos,
-                );
-            }
             // `parseClassElement`: but not an accessor or a constructor.
             if !is_parent_ambient && !matches!(member_kind, MemberKind::Method) {
                 member.flags.remove(Flags::AMBIENT);
@@ -1597,15 +1552,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             self.b.file[func].name_pos = member.name_pos;
             member.func = func;
             return member;
-        }
-        if !modifiers.is_empty() {
-            self.b.check_modifiers(
-                &modifiers,
-                Modified::Property,
-                is_parent_ambient,
-                matches!(member.key, PropKey::Private(_)),
-                member.name_pos,
-            );
         }
         member
             .flags

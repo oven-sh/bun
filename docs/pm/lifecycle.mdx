@@ -87,3 +87,11 @@ Or in `.npmrc`:
 ```ini .npmrc icon="npm"
 ignore-scripts=true
 ```
+
+You can also set the `NPM_CONFIG_IGNORE_SCRIPTS` environment variable, for example in a CI job:
+
+```bash terminal icon="terminal"
+NPM_CONFIG_IGNORE_SCRIPTS=true bun install
+```
+
+The variable overrides `bunfig.toml` and `.npmrc`. Set it to `false` to run lifecycle scripts in a project whose config turns them off.

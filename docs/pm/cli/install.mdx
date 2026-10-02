@@ -375,6 +375,9 @@ Environment variables take priority over `bunfig.toml`.
 | `BUN_CONFIG_SKIP_SAVE_LOCKFILE`    | Don’t save a lockfile                                     |
 | `BUN_CONFIG_SKIP_LOAD_LOCKFILE`    | Don’t load a lockfile                                     |
 | `BUN_CONFIG_SKIP_INSTALL_PACKAGES` | Don’t install any packages                                |
+| `NPM_CONFIG_IGNORE_SCRIPTS`        | Don’t run lifecycle scripts                               |
+
+Bun also reads `NPM_CONFIG_IGNORE_SCRIPTS` under the name `npm_config_ignore_scripts`. `false` or `0` turns the option off, even if `.npmrc` or `bunfig.toml` turns it on. An empty value counts as unset. Any other value turns the option on. Bun reads this variable from the process environment only, never from a `.env` file. The `--ignore-scripts` flag skips lifecycle scripts whatever the variable says.
 
 Bun uses the fastest installation method available on the target platform: `clonefile` on macOS and `hardlink` on Linux and Windows. You can change the installation method with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fall back to a platform-specific implementation of copying files.
 

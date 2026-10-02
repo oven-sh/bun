@@ -1372,6 +1372,24 @@ pub(crate) fn get() -> *mut PackageManager {
 // init
 // ──────────────────────────────────────────────────────────────────────────
 
+/// npm's `ignore-scripts` config key as an environment variable: `false` or `0`
+/// is off, unset or empty is no setting, any other value is on.
+fn ignore_scripts_from_process_env(env: &dot_env::Loader) -> Option<bool> {
+    let mut ignore_scripts = None;
+    for name in [
+        b"NPM_CONFIG_IGNORE_SCRIPTS" as &[u8],
+        b"npm_config_ignore_scripts",
+    ] {
+        match env.get(name) {
+            Some(b"false" | b"0") => ignore_scripts = Some(false),
+            // When the spellings disagree, on wins. npm takes the later environment entry.
+            Some(_) if env.has(name) => return Some(true),
+            _ => {}
+        }
+    }
+    ignore_scripts
+}
+
 fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall) {
     let Api::BunInstall {
         default_registry,
@@ -1893,6 +1911,8 @@ pub fn init(
     };
 
     env.load_process()?;
+    // Read before the `.env` files load, so that only the process environment counts.
+    let env_ignore_scripts = ignore_scripts_from_process_env(env);
     // Copy the listing's basenames out under `entries_mutex`; `.data` must
     // only be probed while the lock is held.
     let env_probe_keys = {
@@ -1915,7 +1935,7 @@ pub fn init(
     initialize_store();
 
     {
-        // npmrc < bunfig < CLI
+        // npmrc < bunfig < env (ignore-scripts) < CLI
         let mut bunfig_install = ctx
             .install
             .take()
@@ -1958,6 +1978,9 @@ pub fn init(
 
         ini::apply_registry_auth(&mut bunfig_install, &registry_auth);
         overlay_bunfig_install(&mut install, bunfig_install);
+        if let Some(ignore_scripts) = env_ignore_scripts {
+            install.ignore_scripts = Some(ignore_scripts);
+        }
         ctx.install = Some(Box::new(install));
     }
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());

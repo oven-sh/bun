@@ -140,41 +140,112 @@ test.concurrent("ignore-scripts is read from npmrc", async () => {
   expect(await checkScripts()).toEqual([true, true]);
 });
 
-describe.concurrent.each([
-  ["npm_config_ignore_scripts", "true"],
-  ["NPM_CONFIG_IGNORE_SCRIPTS", "true"],
-  ["BUN_CONFIG_IGNORE_SCRIPTS", "1"],
-])("ignore-scripts is read from the %s environment variable", (key, value) => {
-  test(`${key}=${value} skips lifecycle scripts`, async () => {
+const writeFileScript = (name: string) => `${bunExe()} -e 'await Bun.write("${name}", "ran")'`;
+
+// One row for each command that runs lifecycle scripts. `files` is what its scripts write.
+const scriptReaders: {
+  name: string;
+  packageJson: Record<string, unknown>;
+  fileDependency?: boolean;
+  cmd: string[];
+  env?: Record<string, string>;
+  files: string[][];
+}[] = [
+  {
+    name: "bun install (root scripts)",
+    packageJson: { scripts: { postinstall: writeFileScript("ran.txt") } },
+    cmd: ["install"],
+    files: [["ran.txt"]],
+  },
+  {
+    name: "bun install --linker=hoisted (trusted dependency scripts)",
+    packageJson: { dependencies: { dep: "file:./dep" }, trustedDependencies: ["dep"] },
+    fileDependency: true,
+    cmd: ["install", "--linker=hoisted"],
+    files: [
+      ["node_modules", "dep", "preinstall.txt"],
+      ["node_modules", "dep", "postinstall.txt"],
+    ],
+  },
+  {
+    name: "bun install --linker=isolated (trusted dependency scripts)",
+    packageJson: { dependencies: { dep: "file:./dep" }, trustedDependencies: ["dep"] },
+    fileDependency: true,
+    cmd: ["install", "--linker=isolated"],
+    files: [
+      ["node_modules", "dep", "preinstall.txt"],
+      ["node_modules", "dep", "postinstall.txt"],
+    ],
+  },
+  {
+    name: "bun pm pack",
+    packageJson: { scripts: { prepack: writeFileScript("ran.txt") } },
+    cmd: ["pm", "pack"],
+    files: [["ran.txt"]],
+  },
+  {
+    name: "bun publish --dry-run",
+    packageJson: { scripts: { prepublishOnly: writeFileScript("ran.txt") } },
+    cmd: ["publish", "--dry-run"],
+    env: { BUN_CONFIG_TOKEN: "dry-run" },
+    files: [["ran.txt"]],
+  },
+  {
+    name: "bun pm version",
+    packageJson: { scripts: { preversion: writeFileScript("ran.txt") } },
+    cmd: ["pm", "version", "patch", "--no-git-tag-version"],
+    files: [["ran.txt"]],
+  },
+];
+
+describe.concurrent.each(scriptReaders)("$name reads ignore-scripts from the process environment", reader => {
+  test.each([
+    {
+      name: "npm_config_ignore_scripts=true skips the script",
+      ignoreScriptsEnv: { npm_config_ignore_scripts: "true" },
+      npmrc: "",
+      ran: false,
+    },
+    {
+      name: "NPM_CONFIG_IGNORE_SCRIPTS=false runs the script over .npmrc ignore-scripts=true",
+      ignoreScriptsEnv: { NPM_CONFIG_IGNORE_SCRIPTS: "false" },
+      npmrc: "ignore-scripts=true\n",
+      ran: true,
+    },
+  ])("$name", async ({ ignoreScriptsEnv, npmrc, ran }) => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
-    await write(
-      packageJson,
-      JSON.stringify({
-        name: "foo",
-        version: "1.2.3",
-        scripts: {
-          postinstall: `${bunExe()} -e 'await Bun.write("postinstall.txt", "postinstall!!")'`,
-        },
-      }),
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.2.3", ...reader.packageJson })),
+      reader.fileDependency &&
+        write(
+          join(packageDir, "dep", "package.json"),
+          JSON.stringify({
+            name: "dep",
+            version: "1.0.0",
+            scripts: {
+              preinstall: writeFileScript("preinstall.txt"),
+              postinstall: writeFileScript("postinstall.txt"),
+            },
+          }),
+        ),
+      npmrc && write(join(packageDir, ".npmrc"), npmrc),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), ...reader.cmd],
+      cwd: packageDir,
+      env: { ...env, ...reader.env, ...ignoreScriptsEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+    expect(await Promise.all(reader.files.map(file => exists(join(packageDir, ...file))))).toEqual(
+      reader.files.map(() => ran),
     );
-
-    const cleanEnv = {
-      ...env,
-      BUN_CONFIG_IGNORE_SCRIPTS: undefined,
-      NPM_CONFIG_IGNORE_SCRIPTS: undefined,
-      npm_config_ignore_scripts: undefined,
-    };
-    const marker = join(packageDir, "postinstall.txt");
-
-    await runBunInstall({ ...cleanEnv, [key]: value }, packageDir, { savesLockfile: false });
-    expect(await exists(marker)).toBe(false);
-
-    for (const falsy of ["false", ""]) {
-      await runBunInstall({ ...cleanEnv, [key]: falsy }, packageDir, { savesLockfile: false });
-      expect(await exists(marker)).toBe(true);
-      await rm(marker);
-    }
+    expect(exitCode).toBe(0);
   });
 });
 

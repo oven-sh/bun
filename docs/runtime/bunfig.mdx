@@ -450,7 +450,7 @@ exact = false
 
 ### `install.ignoreScripts`
 
-Whether to skip lifecycle scripts during install. Default `false`. Equivalent to the `--ignore-scripts` flag.
+Whether to skip lifecycle scripts during install. Default `false`. Equivalent to the `--ignore-scripts` flag. The `NPM_CONFIG_IGNORE_SCRIPTS` environment variable overrides this option.
 
 When `true`, Bun does not run any `preinstall` / `install` / `postinstall` / `prepare` scripts, both for your project and for packages in `trustedDependencies`. See [Lifecycle scripts](/pm/lifecycle).
 

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync } from "fs";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, readdirSorted, tempDir } from "harness";
 import { join } from "path";
 
 // Own config dir: other install files' VerdaccioRegistry start()/stop() delete the shared htpasswd, invalidating our token.
@@ -519,6 +519,138 @@ describe.concurrent("bun install config precedence", () => {
     expect(postinstallRan(String(dir))).toBe(true);
     expect(exitCode).toBe(0);
   });
+
+  type IgnoreScriptsEnvRow = {
+    name: string;
+    /** NPM_CONFIG_IGNORE_SCRIPTS in the process environment. Cleared when absent. */
+    upper?: string;
+    /** npm_config_ignore_scripts in the process environment. Cleared when absent. */
+    lower?: string;
+    npmrc?: string;
+    bunfigIgnoreScripts?: boolean;
+    /** Put the bunfig outside the project and pass it with --config. */
+    bunfigByFlag?: boolean;
+    dotenv?: string;
+    args?: string[];
+    ran: boolean;
+  };
+
+  async function expectIgnoreScriptsEnvRow(row: IgnoreScriptsEnvRow) {
+    const bunfigDir = row.bunfigByFlag ? "operator" : "project";
+    using dir = tempDir("config-precedence", {
+      [`${bunfigDir}/bunfig.toml`]: bunfig({
+        registry: registry.registryUrl(),
+        ...(row.bunfigIgnoreScripts === undefined ? {} : { ignoreScripts: row.bunfigIgnoreScripts }),
+      }),
+      "project/package.json": packageJson(
+        { "lifecycle-postinstall": "1.0.0" },
+        { trustedDependencies: ["lifecycle-postinstall"] },
+      ),
+      ...(row.npmrc === undefined ? {} : { "project/.npmrc": row.npmrc }),
+      ...(row.dotenv === undefined ? {} : { "project/.env": row.dotenv }),
+    });
+    const args = [
+      ...(row.bunfigByFlag ? [`--config=${join(String(dir), "operator", "bunfig.toml")}`] : []),
+      ...(row.args ?? []),
+    ];
+    const { stderr, exitCode } = await install(String(dir), args, {
+      NPM_CONFIG_IGNORE_SCRIPTS: row.upper,
+      npm_config_ignore_scripts: row.lower,
+    });
+    expect(stderr).not.toContain("error:");
+    expect(installed(String(dir), "lifecycle-postinstall")).toBe(true);
+    expect(postinstallRan(String(dir))).toBe(row.ran);
+    expect(exitCode).toBe(0);
+  }
+
+  // For ignore-scripts the order is: .npmrc < bunfig < process environment < command line.
+  test.each<IgnoreScriptsEnvRow>([
+    { name: "NPM_CONFIG_IGNORE_SCRIPTS=true skips scripts", upper: "true", ran: false },
+    { name: "npm_config_ignore_scripts=true skips scripts", lower: "true", ran: false },
+    {
+      name: "npm_config_ignore_scripts=true beats project .npmrc ignore-scripts=false",
+      lower: "true",
+      npmrc: "ignore-scripts=false\n",
+      ran: false,
+    },
+    {
+      name: "NPM_CONFIG_IGNORE_SCRIPTS=true beats bunfig ignoreScripts = false",
+      upper: "true",
+      bunfigIgnoreScripts: false,
+      ran: false,
+    },
+    {
+      name: "npm_config_ignore_scripts=false beats project .npmrc ignore-scripts=true",
+      lower: "false",
+      npmrc: "ignore-scripts=true\n",
+      ran: true,
+    },
+    {
+      name: "NPM_CONFIG_IGNORE_SCRIPTS=0 beats project .npmrc ignore-scripts=true",
+      upper: "0",
+      npmrc: "ignore-scripts=true\n",
+      ran: true,
+    },
+    {
+      name: "NPM_CONFIG_IGNORE_SCRIPTS=false beats bunfig ignoreScripts = true",
+      upper: "false",
+      bunfigIgnoreScripts: true,
+      ran: true,
+    },
+    {
+      name: "npm_config_ignore_scripts=0 beats bunfig ignoreScripts = true",
+      lower: "0",
+      bunfigIgnoreScripts: true,
+      ran: true,
+    },
+    { name: "an empty npm_config_ignore_scripts is unset", lower: "", ran: true },
+    {
+      name: "an empty NPM_CONFIG_IGNORE_SCRIPTS does not beat bunfig ignoreScripts = true",
+      upper: "",
+      bunfigIgnoreScripts: true,
+      ran: false,
+    },
+    {
+      name: "--ignore-scripts beats npm_config_ignore_scripts=false",
+      lower: "false",
+      args: ["--ignore-scripts"],
+      ran: false,
+    },
+    {
+      name: "npm_config_ignore_scripts=true in a project .env is not read",
+      dotenv: "npm_config_ignore_scripts=true\n",
+      ran: true,
+    },
+    {
+      name: "npm_config_ignore_scripts=false in a project .env does not beat project .npmrc ignore-scripts=true",
+      dotenv: "npm_config_ignore_scripts=false\n",
+      npmrc: "ignore-scripts=true\n",
+      ran: false,
+    },
+    {
+      name: "npm_config_ignore_scripts=false in a project .env does not beat a --config bunfig with ignoreScripts = true",
+      dotenv: "npm_config_ignore_scripts=false\n",
+      bunfigIgnoreScripts: true,
+      bunfigByFlag: true,
+      ran: false,
+    },
+  ])("$name", expectIgnoreScriptsEnvRow);
+
+  // Windows environment names are case-insensitive, so there the two spellings are one variable.
+  test.skipIf(isWindows).each<IgnoreScriptsEnvRow>([
+    {
+      name: "NPM_CONFIG_IGNORE_SCRIPTS=true with npm_config_ignore_scripts=false skips scripts",
+      upper: "true",
+      lower: "false",
+      ran: false,
+    },
+    {
+      name: "NPM_CONFIG_IGNORE_SCRIPTS=false with npm_config_ignore_scripts=true skips scripts",
+      upper: "false",
+      lower: "true",
+      ran: false,
+    },
+  ])("$name", expectIgnoreScriptsEnvRow);
 
   test("bunfig publicHoistPattern beats project .npmrc public-hoist-pattern", async () => {
     using dir = tempDir("config-precedence", {

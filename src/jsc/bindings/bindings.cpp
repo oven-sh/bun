@@ -4993,6 +4993,13 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
 
 #pragma mark - JSC::VM
 
+void JSC__VM__completeAllJITPlans(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(vm);
+    // Concurrent compiler plans can root values that are no longer JS-reachable.
+    vm->heap.completeAllJITPlans();
+}
+
 size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);

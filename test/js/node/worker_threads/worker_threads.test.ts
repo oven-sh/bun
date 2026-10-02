@@ -1562,37 +1562,84 @@ describe("transfer list invalidated while the message is serialized", () => {
     }
   });
 
-  // The other direction of the same rule: once the buffers are detached, the listed ports go
-  // with them even though the message itself is dropped because the sending port is closed.
-  // Node performs the transfer for a closed sender too; bun used to leave the port usable.
-  test.each([
-    ["before the call", true],
-    ["by a getter during serialization", false],
-  ])("port.postMessage on a port closed %s still detaches the listed port", async (_name, closeBeforeCall) => {
-    const { port1: sender, port2: senderPeer } = new MessageChannel();
-    const { port1: transferred, port2: peer } = new MessageChannel();
-    const { promise: peerSawClose, resolve } = Promise.withResolvers<void>();
-    peer.on("close", () => resolve());
-    const buffer = new ArrayBuffer(8);
-    if (closeBeforeCall) sender.close();
+  // The mark stops a listed port in the same way. Node only rejects a port that was marked
+  // before the call: it delivers one that a getter marks during serialization.
+  test("port.postMessage honors markAsUntransferable applied to a listed port during serialization", () => {
+    const { port1, port2 } = new MessageChannel();
+    const { port1: listed, port2: peer } = new MessageChannel();
+    const buffer = new ArrayBuffer(16);
     const message = {
       buffer,
-      get closeSender() {
-        sender.close();
+      get markIt() {
+        markAsUntransferable(listed);
         return 1;
       },
-      transferred,
+      listed,
     };
-    expect(() => sender.postMessage(message, [buffer, transferred])).not.toThrow();
-    expect(buffer.byteLength).toBe(0);
-    const { port1: other, port2: otherPeer } = new MessageChannel();
-    expect(() => other.postMessage(null, [transferred])).toThrow("MessagePort in transfer list is already detached");
-    // The transferred endpoint had no receiver, which closes the channel from the peer's view.
-    await peerSawClose;
+    expect(() => port1.postMessage(message, [buffer, listed])).toThrow(dataClone);
+    expect(buffer.byteLength).toBe(16);
+    expect(receiveMessageOnPort(port2)).toBeUndefined();
+    // The port was not transferred, so it still delivers.
+    listed.postMessage("still attached");
+    expect(receiveMessageOnPort(peer)).toEqual({ message: "still attached" });
+    port1.close();
+    port2.close();
+    listed.close();
     peer.close();
-    senderPeer.close();
-    other.close();
-    otherPeer.close();
+  });
+
+  // The other direction of the same rule: once the buffers are detached, the listed ports go
+  // with them even though the message itself is dropped because the sending port is closed.
+  // Node consumes the listed port in all four rows too, and bun used to leave it usable. The
+  // "by a getter" rows differ from Node in one way. Node picks the target before it serializes,
+  // so it still dispatches: it delivers the message with the other port in it, and for the
+  // sender's own peer it warns that the port was posted to itself. Bun decides after
+  // serialization and drops the message in all four rows.
+  test.each([
+    ["before the call", "another port", true, false],
+    ["by a getter during serialization", "another port", false, false],
+    ["before the call", "its own peer", true, true],
+    ["by a getter during serialization", "its own peer", false, true],
+  ])("port.postMessage on a port closed %s still detaches %s", async (_when, _which, closeBeforeCall, listOwnPeer) => {
+    const { port1: sender, port2: senderPeer } = new MessageChannel();
+    const { port1: another, port2: anotherPeer } = new MessageChannel();
+    const listed = listOwnPeer ? senderPeer : another;
+    const { promise: anotherPeerSawClose, resolve } = Promise.withResolvers<void>();
+    anotherPeer.on("close", () => resolve());
+    const warnings: string[] = [];
+    const onWarning = (warning: Error) => void warnings.push(warning.message);
+    process.on("warning", onWarning);
+    try {
+      const buffer = new ArrayBuffer(8);
+      if (closeBeforeCall) sender.close();
+      const message = {
+        buffer,
+        get closeSender() {
+          sender.close();
+          return 1;
+        },
+        listed,
+      };
+      expect(() => sender.postMessage(message, [buffer, listed])).not.toThrow();
+      expect(buffer.byteLength).toBe(0);
+      const { port1: other, port2: otherPeer } = new MessageChannel();
+      expect(() => other.postMessage(null, [listed])).toThrow("MessagePort in transfer list is already detached");
+      other.close();
+      otherPeer.close();
+      if (listOwnPeer) {
+        // The closed sender drops the message before the "posted to itself" branch, so nothing warns.
+        for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+        expect(warnings.filter(message => message.includes("posted to itself"))).toEqual([]);
+        another.close();
+      } else {
+        // The transferred endpoint had no receiver, which closes the channel from the peer's view.
+        await anotherPeerSawClose;
+      }
+    } finally {
+      process.off("warning", onWarning);
+      anotherPeer.close();
+      senderPeer.close();
+    }
   });
 });
 

@@ -481,6 +481,31 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             second: second.byteLength,
           }).toEqual({ name: "DataCloneError", first: 8, second: 0 });
         });
+        // The same check finds a listed MessagePort that a getter closed. Before it existed,
+        // structuredClone returned here with `buffer` detached.
+        test("a listed MessagePort closed during serialization fails without detaching the listed buffer", () => {
+          const { port1, port2 } = new MessageChannel();
+          const buffer = new ArrayBuffer(8);
+          const value = {
+            buffer,
+            get closePort() {
+              port1.close();
+              return 1;
+            },
+          };
+          let error: unknown;
+          try {
+            structuredCloneFn(value, { transfer: [buffer, port1] });
+          } catch (e) {
+            error = e;
+          }
+          expect(error).toBeInstanceOf(DOMException);
+          expect({ name: (error as DOMException).name, buffer: buffer.byteLength }).toEqual({
+            name: "DataCloneError",
+            buffer: 8,
+          });
+          port2.close();
+        });
         // Bun's native borrows call ArrayBuffer::pin(), which makes the buffer
         // non-detachable without setting the C-API lock flag. Transferring a
         // pinned buffer must copy via transferTo()'s copyTo() fallback, not

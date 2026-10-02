@@ -6306,15 +6306,25 @@ extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject,
 
 #pragma mark - WebCore::DOMFormData
 
+// toStringCopy() gives a null String for an empty slice (a part with `name=""`).
+// An entry name must not be null: toJSON() puts the names in a HashSet.
+static WTF::String toFormDataEntryName(const EncodedSlice& name)
+{
+    WTF::String string = toStringCopy(name);
+    if (string.isNull())
+        return WTF::emptyString();
+    return string;
+}
+
 CPP_DECL void WebCore__DOMFormData__append(WebCore::DOMFormData* arg0, const EncodedSlice* arg1, const EncodedSlice* arg2)
 {
-    arg0->append(toStringCopy(*arg1), toStringCopy(*arg2));
+    arg0->append(toFormDataEntryName(*arg1), toStringCopy(*arg2));
 }
 
 CPP_DECL void WebCore__DOMFormData__appendBlob(WebCore::DOMFormData* arg0, JSC::JSGlobalObject* arg1, const EncodedSlice* arg2, void* blobValueInner, const EncodedSlice* fileName)
 {
     RefPtr<Blob> blob = WebCore::Blob::create(blobValueInner);
-    arg0->append(toStringCopy(*arg2), blob, toStringCopy(*fileName));
+    arg0->append(toFormDataEntryName(*arg2), blob, toStringCopy(*fileName));
 }
 CPP_DECL size_t WebCore__DOMFormData__count(WebCore::DOMFormData* arg0)
 {

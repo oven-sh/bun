@@ -3,7 +3,6 @@
 use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{EncodedSlice, Utf8Bytes, strings};
 use bun_jsc::{AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult};
-use bun_semver::{self, SlicedString};
 use core::ffi::c_void;
 
 use crate::webcore::Blob;
@@ -54,28 +53,15 @@ impl AsyncFormDataExt for AsyncFormData {
     }
 }
 
-/// Raw slice into the input buffer. Not using `bun.Semver.String` because
-/// file bodies are binary data that can contain null bytes, which
-/// Semver.String's inline storage treats as terminators.
+/// Raw slices into the caller-owned input buffer. Not `bun_semver::String`:
+/// its inline storage ends a value at the first NUL byte, and its empty value
+/// is the same as no value.
+#[derive(Default)]
 pub(crate) struct Field<'a> {
-    /// Borrows into the caller-owned input buffer (binary body slice).
     pub value: &'a [u8],
-    pub(crate) filename: bun_semver::String,
-    pub(crate) content_type: bun_semver::String,
+    pub(crate) filename: &'a [u8],
+    pub(crate) content_type: &'a [u8],
     pub(crate) is_file: bool,
-    pub(crate) zero_count: u8,
-}
-
-impl Default for Field<'_> {
-    fn default() -> Self {
-        Field {
-            value: b"",
-            filename: bun_semver::String::default(),
-            content_type: bun_semver::String::default(),
-            is_file: false,
-            zero_count: 0,
-        }
-    }
 }
 
 impl FormData {
@@ -166,20 +152,21 @@ pub(crate) fn to_js_from_multipart_data(
     }
 
     impl<'a> Wrapper<'a> {
-        fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field<'_>, buf: &[u8]) {
+        fn on_entry(wrap: &mut Self, name: &[u8], field: &Field<'_>) {
             let value_str: &[u8] = field.value;
-            let key = EncodedSlice::utf8(name.slice(buf));
+            let key = EncodedSlice::utf8(name);
 
             if field.is_file {
-                let filename_str = field.filename.slice(buf);
+                let filename_str = field.filename;
 
                 let mut blob = Blob::create(value_str, wrap.global, false);
                 let filename = EncodedSlice::utf8(filename_str);
 
                 if !field.content_type.is_empty() {
-                    let ct = field.content_type.slice(buf);
                     blob.content_type
-                        .set(crate::webcore::blob::BlobContentType::Owned(ct.into()));
+                        .set(crate::webcore::blob::BlobContentType::Owned(
+                            field.content_type.into(),
+                        ));
                     blob.content_type_was_set.set(true);
                 } else {
                     let mime = 'brk: {
@@ -242,10 +229,9 @@ pub(crate) fn for_each_multipart_entry<C>(
     input: &[u8],
     boundary: &[u8],
     ctx: &mut C,
-    mut iterator: impl FnMut(&mut C, bun_semver::String, &Field<'_>, &[u8]),
+    mut iterator: impl FnMut(&mut C, &[u8], &Field<'_>),
 ) -> crate::Result<()> {
     let mut slice = input;
-    let subslicer = SlicedString::init(input, input);
 
     let mut buf = [0u8; 76];
     {
@@ -285,11 +271,17 @@ pub(crate) fn for_each_multipart_entry<C>(
         remain = &remain[header_end + 4..];
 
         let mut field = Field::default();
-        let mut name = bun_semver::String::default();
-        let mut filename: Option<bun_semver::String> = None;
+        let mut name: Option<&[u8]> = None;
+        let mut filename: Option<&[u8]> = None;
         let mut header_chunk = header;
         let mut is_file = false;
-        while !header_chunk.is_empty() && (filename.is_none() || name.len() == 0) {
+        // Both scans below stop once the part has a filename and a non-empty
+        // name. An empty name keeps them going: a later `name` parameter
+        // replaces it, and the remaining header lines are still read.
+        let scan_is_done = |name: Option<&[u8]>, filename: Option<&[u8]>| {
+            filename.is_some() && name.is_some_and(|name| !name.is_empty())
+        };
+        while !header_chunk.is_empty() && !scan_is_done(name, filename) {
             let line_end = strings::index_of(header_chunk, b"\r\n")
                 .ok_or(crate::Error::IsMissingHeaderLineEnd)?;
             let line = &header_chunk[..line_end];
@@ -341,13 +333,13 @@ pub(crate) fn for_each_multipart_entry<C>(
                     }
 
                     if strings::eql_case_insensitive_ascii(eql_key, b"name", true) {
-                        name = subslicer.sub(field_value).value();
+                        name = Some(field_value);
                     } else if strings::eql_case_insensitive_ascii(eql_key, b"filename", true) {
-                        filename = Some(subslicer.sub(field_value).value());
+                        filename = Some(field_value);
                         is_file = true;
                     }
 
-                    if !name.is_empty() && filename.is_some() {
+                    if scan_is_done(name, filename) {
                         break;
                     }
 
@@ -372,14 +364,15 @@ pub(crate) fn for_each_multipart_entry<C>(
                     .iter()
                     .all(|&b| b == b'\t' || (0x20..=0x7E).contains(&b))
                 {
-                    field.content_type = subslicer.sub(trimmed).value();
+                    field.content_type = trimmed;
                 }
             }
         }
 
-        if name.len() + field.zero_count as usize == 0 {
+        // A part with no `name` parameter is skipped. `name=""` is an entry.
+        let Some(name) = name else {
             continue;
-        }
+        };
 
         let mut body = remain;
         if body.ends_with(b"\r\n") {
@@ -389,7 +382,7 @@ pub(crate) fn for_each_multipart_entry<C>(
         field.filename = filename.unwrap_or_default();
         field.is_file = is_file;
 
-        iterator(ctx, name, &field, input);
+        iterator(ctx, name, &field);
     }
 
     Ok(())

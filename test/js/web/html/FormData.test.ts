@@ -407,6 +407,124 @@ describe("FormData", () => {
     }
   });
 
+  // `FormData.append("", value)` is valid and serializes to `name=""`.
+  // The empty string is a name. Only a part with no `name` parameter has none.
+  describe('multipart part with name=""', () => {
+    const boundary = "emptyname";
+    const contentType = `multipart/form-data; boundary=${boundary}`;
+    const headers = { "Content-Type": contentType };
+    const part = (disposition: string, body: string) =>
+      `--${boundary}\r\nContent-Disposition: form-data; ${disposition}\r\n\r\n${body}\r\n`;
+    const multipart = (...parts: string[]) => parts.join("") + `--${boundary}--\r\n`;
+
+    type EntryValue = string | { filename: string; text: string };
+    type Entry = [name: string, value: EntryValue];
+    const entriesOf = async (form: FormData | Promise<FormData>): Promise<Entry[]> =>
+      Promise.all(
+        [...(await form)].map(
+          async ([name, value]): Promise<Entry> =>
+            typeof value === "string" ? [name, value] : [name, { filename: value.name, text: await value.text() }],
+        ),
+      );
+
+    // `FormData.from` is a Bun extension that bun-types does not declare.
+    const fromMultipart: (input: string | Uint8Array | Blob, boundary: string) => FormData = (FormData as any).from;
+
+    function streamOf(body: string) {
+      const bytes = new TextEncoder().encode(body);
+      const chunks = [bytes.subarray(0, bytes.length >> 1), bytes.subarray(bytes.length >> 1)];
+      return new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(chunks.shift()!);
+          if (chunks.length === 0) controller.close();
+        },
+      });
+    }
+
+    const parsers: [label: string, parse: (body: string) => Promise<Entry[]>][] = [
+      ["Response", body => entriesOf(new Response(body, { headers }).formData())],
+      ["Request", body => entriesOf(new Request("http://localhost/", { method: "POST", body, headers }).formData())],
+      ["Blob", body => entriesOf(new Blob([body], { type: contentType }).formData())],
+      ["FormData.from(string)", body => entriesOf(fromMultipart(body, boundary))],
+      ["FormData.from(bytes)", body => entriesOf(fromMultipart(new TextEncoder().encode(body), boundary))],
+      ["FormData.from(Blob)", body => entriesOf(fromMultipart(new Blob([body]), boundary))],
+      ["Response with a ReadableStream body", body => entriesOf(new Response(streamOf(body), { headers }).formData())],
+      ["Bun.readableStreamToFormData", body => entriesOf(Bun.readableStreamToFormData(streamOf(body), boundary))],
+      [
+        "Bun.serve request",
+        async body => {
+          await using server = Bun.serve({
+            port: 0,
+            fetch: async req => Response.json(await entriesOf(req.formData())),
+          });
+          const response = await fetch(server.url, { method: "POST", body, headers });
+          return (await response.json()) as Entry[];
+        },
+      ],
+    ];
+
+    const shapes: [label: string, probed: string, value: EntryValue][] = [
+      ['name=""', part('name=""', "v"), "v"],
+      ["name= without quotes", part("name=", "v"), "v"],
+      ['name=""; filename="b"', part('name=""; filename="b"', "v"), { filename: "b", text: "v" }],
+      ['filename="b"; name=""', part('filename="b"; name=""', "v"), { filename: "b", text: "v" }],
+      ['name="x"; name=""', part('name="x"; name=""', "v"), "v"],
+      ['name="" with an empty body', part('name=""', ""), ""],
+    ];
+
+    describe.each(parsers)("%s", (_label, parse) => {
+      it.each(shapes)("keeps %s", async (_shape, probed, value) => {
+        const body = multipart(part('name="first"', "1"), probed, part('name="last"', "2"));
+        expect(await parse(body)).toEqual([
+          ["first", "1"],
+          ["", value],
+          ["last", "2"],
+        ]);
+      });
+    });
+
+    it("round-trips entries appended under the empty name", async () => {
+      const form = new FormData();
+      form.append("", "v");
+      form.append("", new File(["x"], "b.txt"));
+      form.append("k", "w");
+      const expected: Entry[] = [
+        ["", "v"],
+        ["", { filename: "b.txt", text: "x" }],
+        ["k", "w"],
+      ];
+
+      const parsed = await new Response(form).formData();
+      expect(await entriesOf(parsed)).toEqual(expected);
+      // The parsed form serializes and parses to the same entries again.
+      expect(await entriesOf(new Response(parsed).formData())).toEqual(expected);
+    });
+
+    it("a parsed empty-name entry behaves like one appended from JS", async () => {
+      const body = multipart(part('name=""', "v"), part('name="k"', "w"), part('name=""', "v2"));
+      const parsed = await new Response(body, { headers }).formData();
+      const appended = new FormData();
+      appended.append("", "v");
+      appended.append("k", "w");
+      appended.append("", "v2");
+
+      expect(parsed.has("")).toBe(true);
+      expect(parsed.get("")).toBe("v");
+      expect(parsed.getAll("")).toEqual(["v", "v2"]);
+      expect((parsed as any).toJSON()).toEqual({ "": ["v", "v2"], k: "w" });
+      expect(Bun.inspect(parsed)).toBe(Bun.inspect(appended));
+      expect(await new Response(parsed).text()).toContain('Content-Disposition: form-data; name=""\r\n\r\nv\r\n');
+
+      parsed.set("", "z");
+      expect([...parsed]).toEqual([
+        ["", "z"],
+        ["k", "w"],
+      ]);
+      parsed.delete("");
+      expect([...parsed]).toEqual([["k", "w"]]);
+    });
+  });
+
   it("file upload on HTTP server (receive)", async () => {
     using server = Bun.serve({
       port: 0,

@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -560,6 +560,57 @@ test.concurrent("sequential Bun.build() calls with different defines each reach 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({ lastLine: "[]", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+// Each move loads the build's `define` again. Kept, a string value is one copy per build and per
+// pool thread for as long as the VM lives: here 1 MiB a copy, 32 builds, two threads, 64 MB.
+test.concurrent("a macro VM that moves to another build frees the previous build's string define values", async () => {
+  const libs = [0, 1, 2, 3];
+  using dir = tempDir("macro-build-api-define-memory", {
+    "macro.ts": `export function one() {\n  return 1;\n}\n`,
+    ...Object.fromEntries(
+      libs.map(i => [
+        `lib${i}.ts`,
+        `import { one } from "./macro.ts" with { type: "macro" };\nexport const v${i} = one();\n`,
+      ]),
+    ),
+    "entry.ts": [
+      ...libs.map(i => `import { v${i} } from "./lib${i}.ts";`),
+      `console.log(${libs.map(i => `v${i}`).join(", ")});`,
+      ``,
+    ].join("\n"),
+    "build.ts": `
+      const define = { BIG_DEFINE: JSON.stringify(Buffer.alloc(1024 * 1024, "d").toString()) };
+      async function build(times: number) {
+        for (let i = 0; i < times; i++) {
+          const result = await Bun.build({ entrypoints: ["./entry.ts"], target: "bun", define });
+          if (!result.success) throw new AggregateError(result.logs, "build failed");
+        }
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
+      const before = await build(8);
+      const after = await build(32);
+      console.log(JSON.stringify({ grewMB: Math.round((after - before) / 1024 / 1024) }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "build.ts"],
+    env: {
+      ...bunEnv,
+      UV_THREADPOOL_SIZE: "2",
+      // What each build frees would sit in ASAN's quarantine and count as growth.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+    },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { grewMB } = JSON.parse(stdout.trim().split("\n").pop()!);
+  expect(grewMB).toBeLessThan(isASAN || isDebug ? 32 : 16);
   expect(exitCode).toBe(0);
 });
 

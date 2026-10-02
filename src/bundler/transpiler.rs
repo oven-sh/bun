@@ -143,6 +143,9 @@ pub struct Transpiler<'a> {
     pub env: *mut dot_env::Loader,
 
     pub macro_context: Option<js_ast::Macro::MacroContext>,
+
+    /// Holds what `load_defines` allocates for `options.define` after a `reset_transform_options`.
+    define_arena: Option<Arena>,
 }
 
 impl<'a> Transpiler<'a> {
@@ -199,6 +202,7 @@ impl<'a> Transpiler<'a> {
             core::ptr::drop_in_place(&raw mut self.resolver.opts);
             core::ptr::drop_in_place(&raw mut self.resolve_results);
         }
+        self.define_arena = None;
     }
 
     /// Shared borrow of the process-lifetime `Fs::FileSystem` singleton.
@@ -354,6 +358,7 @@ impl<'a> Transpiler<'a> {
             // `MacroContext::init(transpiler)` takes the
             // transpiler's *address*; deferred to `wire_after_move`.
             macro_context: None,
+            define_arena: None,
         }
     }
 
@@ -617,7 +622,8 @@ impl<'a> Transpiler<'a> {
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
-        self.options.load_defines(self.arena, Some(env_loader))?;
+        let define_arena = self.define_arena.as_ref().unwrap_or(self.arena);
+        self.options.load_defines(define_arena, Some(env_loader))?;
 
         let mut is_development = false;
         if had_explicit_node_env {
@@ -764,6 +770,8 @@ impl<'a> Transpiler<'a> {
         // `from_api` leaves this at its default; the VM path applies it.
         let preserve_symlinks = opts.preserve_symlinks.unwrap_or(false);
         self.options = options::BundleOptions::from_api(self.fs_mut(), self.log, opts)?;
+        // The table it replaced is gone. This frees what `load_defines` allocated for it.
+        self.define_arena = Some(Arena::new());
         self.options.preserve_symlinks = preserve_symlinks;
         self.sync_resolver_opts();
         self.apply_root_tsconfig();
@@ -1370,6 +1378,7 @@ impl<'a> Transpiler<'a> {
             ));
             core::ptr::addr_of_mut!((*p).env).write(env_loader);
             core::ptr::addr_of_mut!((*p).macro_context).write(None);
+            core::ptr::addr_of_mut!((*p).define_arena).write(None);
         }
         Ok(())
     }

@@ -4,6 +4,8 @@
 //! node builder makes syntax of a type and the printer writes the syntax out. Here a [`Node`] is the text of a type node, with the
 //! precedence the printer parenthesizes it by.
 
+use super::enclosing_declaration::Enclosing;
+use super::errors_isolated_declarations::Node as SyntaxNode;
 use super::*;
 use crate::bind::{
     ClassOwner, Decl, FnOwner, InferPosition, MemberOwner, Parent, ScopeId, ScopeKind, SymbolId,
@@ -12,13 +14,18 @@ use crate::bind::{
 #[path = "print_node_reuse.rs"]
 mod node_reuse;
 
-/// `nodebuilder.Flags`, those that change what is written.
+/// `nodebuilder.Flags`, those that change what is written or reported.
 const NO_TRUNCATION: u32 = 1 << 0;
 const USE_FULLY_QUALIFIED_TYPE: u32 = 1 << 1;
 const ALLOW_UNIQUE_ES_SYMBOL_TYPE: u32 = 1 << 2;
 const USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE: u32 = 1 << 3;
 const NO_TYPE_REDUCTION: u32 = 1 << 4;
 const GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS: u32 = 1 << 5;
+const IN_OBJECT_TYPE_LITERAL: u32 = 1 << 6;
+const ALLOW_ANONYMOUS_IDENTIFIER: u32 = 1 << 7;
+const ALLOW_NODE_MODULES_RELATIVE_PATHS: u32 = 1 << 8;
+/// `FlagsIgnoreErrors`, which `typeToStringEx`, `symbolToStringEx` and `signatureToStringEx` add.
+const IGNORE_ERRORS: u32 = ALLOW_ANONYMOUS_IDENTIFIER | ALLOW_NODE_MODULES_RELATIVE_PATHS;
 /// Not of `nodebuilder.Flags`: the type that is asked about has no `alias`. What it is made of goes by what it goes by.
 const WRITTEN_OUT: u32 = 1 << 16;
 
@@ -53,12 +60,17 @@ impl Checker<'_> {
         type_to_string_with(
             self,
             ty,
+            None,
             ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE,
         )
     }
 
     /// `TypeToTypeNode` with the flags of `typeWriterWalker.writeTypeOrSymbol`.
-    pub fn type_to_string_for_baseline(&mut self, ty: TypeId) -> String {
+    fn type_to_string_for_baseline_with(
+        &mut self,
+        ty: TypeId,
+        enclosing_declaration: Option<Enclosing>,
+    ) -> String {
         // `writeTypeOrSymbol` does not ask the node builder about it in a test without errors.
         if ty == TypeId::ERROR {
             return super::type_writer::ERROR_TYPE_TEXT.to_owned();
@@ -66,8 +78,13 @@ impl Checker<'_> {
         type_to_string_with(
             self,
             ty,
+            enclosing_declaration,
             NO_TRUNCATION | ALLOW_UNIQUE_ES_SYMBOL_TYPE | GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS,
         )
+    }
+
+    pub fn type_to_string_for_baseline(&mut self, ty: TypeId) -> String {
+        self.type_to_string_for_baseline_with(ty, None)
     }
 
     /// `type_to_string_for_baseline` with an `enclosingDeclaration`: the scope of `node.Parent`.
@@ -77,20 +94,17 @@ impl Checker<'_> {
         file: FileId,
         scope: ScopeId,
     ) -> String {
-        self.enclosing_declaration = Some((file, scope));
-        let text = self.type_to_string_for_baseline(ty);
-        self.enclosing_declaration = None;
-        text
+        self.type_to_string_for_baseline_with(ty, Some(Enclosing::at_scope(file, scope)))
     }
 
     /// `getTypeNameForErrorDisplay`
     pub fn type_to_string_fully_qualified(&mut self, ty: TypeId) -> String {
-        type_to_string_with(self, ty, USE_FULLY_QUALIFIED_TYPE)
+        type_to_string_with(self, ty, None, USE_FULLY_QUALIFIED_TYPE)
     }
 
     /// `typeToStringEx(t, nil, TypeFormatFlagsNoTypeReduction)`: an intersection nothing can be is written out, not as `never`.
     pub fn type_to_string_without_reduction(&mut self, ty: TypeId) -> String {
-        type_to_string_with(self, ty, NO_TYPE_REDUCTION)
+        type_to_string_with(self, ty, None, NO_TYPE_REDUCTION)
     }
 
     /// `typeToString` of a type that is made of what `ty` is made of and has no `alias`.
@@ -98,6 +112,7 @@ impl Checker<'_> {
         type_to_string_with(
             self,
             ty,
+            None,
             ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE | WRITTEN_OUT,
         )
     }
@@ -148,17 +163,16 @@ impl Checker<'_> {
     /// `typeToString(t, t.symbol.ValueDeclaration)` if `symbolValueDeclarationIsContextSensitive`, which says the opposite of its
     /// name. Otherwise `typeToString(t)`.
     fn type_to_string_where_it_is_declared(&mut self, ty: TypeId) -> String {
-        self.enclosing_declaration = self
+        let enclosing_declaration = self
             .value_declaration_expression_of_type(ty)
             .filter(|&(file, e, _)| !self.is_context_sensitive(file, e))
-            .map(|(file, _, scope)| (file, scope));
-        let text = type_to_string_with(
+            .map(|(file, _, scope)| Enclosing::at_scope(file, scope));
+        type_to_string_with(
             self,
             ty,
+            enclosing_declaration,
             ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE,
-        );
-        self.enclosing_declaration = None;
-        text
+        )
     }
 
     /// `getTypeNamesForErrorDisplay`: both, with qualified names if they would read the same.
@@ -182,12 +196,14 @@ impl Checker<'_> {
 
     /// `symbolToString`
     pub fn symbol_to_string(&mut self, symbol: Sym) -> String {
-        with_printer(self, 0, |printer| printer.symbol_to_text(symbol))
+        with_printer(self, None, None, IGNORE_ERRORS, |printer| {
+            printer.symbol_to_text(symbol)
+        })
     }
 
     /// `getNameOfSymbolAsWritten`, of the symbol of the function expression or arrow function `e`, which has no `Sym`.
     pub(super) fn name_of_function_expression(&mut self, file: FileId, e: ExprId) -> String {
-        with_printer(self, 0, |printer| {
+        with_printer(self, None, None, 0, |printer| {
             printer
                 .name_of_initialized_variable(file, e)
                 .unwrap_or_else(|| "(Anonymous function)".to_owned())
@@ -196,7 +212,7 @@ impl Checker<'_> {
 
     /// `symbolToString`, of a property.
     pub fn prop_to_string(&mut self, prop: &Prop) -> String {
-        with_printer(self, 0, |printer| {
+        with_printer(self, None, None, IGNORE_ERRORS, |printer| {
             printer.name_of_property_as_written(prop, 0)
         })
     }
@@ -217,14 +233,14 @@ impl Checker<'_> {
             }
             _ => SignatureKind::Call,
         };
-        with_printer(self, 0, |printer| {
+        with_printer(self, None, None, IGNORE_ERRORS, |printer| {
             printer.signature_to_text(signature, kind, "", false)
         })
     }
 
     /// `t.alias`, as far as it can be told: the type alias `type_to_string` names `ty` by. `None`: it writes `ty` out.
     pub fn alias_for_display(&mut self, ty: TypeId) -> Option<Sym> {
-        with_printer(self, 0, |printer| printer.alias_of_type(ty)).map(|alias| alias.0)
+        with_printer(self, None, None, 0, |printer| printer.alias_of_type(ty)).map(|alias| alias.0)
     }
 
     /// `t.alias`, with its type arguments.
@@ -232,7 +248,7 @@ impl Checker<'_> {
         &mut self,
         ty: TypeId,
     ) -> Option<(Sym, Vec<TypeId>)> {
-        with_printer(self, 0, |printer| printer.alias_of_type(ty))
+        with_printer(self, None, None, 0, |printer| printer.alias_of_type(ty))
     }
 
     /// `c.varianceTypeParameter = parameter`: the type parameter `sub-T` and `super-T` are named after, for as long as the error of
@@ -246,14 +262,21 @@ impl Checker<'_> {
 }
 
 /// `typeToStringEx`
-fn type_to_string_with(checker: &mut Checker<'_>, ty: TypeId, flags: u32) -> String {
+fn type_to_string_with(
+    checker: &mut Checker<'_>,
+    ty: TypeId,
+    enclosing_declaration: Option<Enclosing>,
+    flags: u32,
+) -> String {
     let no_truncation = no_error_truncation(checker);
     let flags = if no_truncation {
         flags | NO_TRUNCATION
     } else {
         flags
-    };
-    let text = with_printer(checker, flags, |printer| printer.type_to_node(ty).text);
+    } | IGNORE_ERRORS;
+    let text = with_printer(checker, enclosing_declaration, None, flags, |printer| {
+        printer.type_to_node(ty).text
+    });
     let maximum = 2 * if no_truncation {
         NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH
     } else {
@@ -273,6 +296,8 @@ fn type_to_string_with(checker: &mut Checker<'_>, ty: TypeId, flags: u32) -> Str
 /// out so far stays what it was.
 fn with_printer<'p, T>(
     checker: &mut Checker<'p>,
+    enclosing_declaration: Option<Enclosing>,
+    tracker: Option<&mut dyn SymbolTracker<'p>>,
     flags: u32,
     print: impl FnOnce(&mut Printer<'_, 'p>) -> T,
 ) -> T {
@@ -283,7 +308,6 @@ fn with_printer<'p, T>(
         checker.union_too_complex,
     );
     checker.eager.push(checker.stack.len());
-    let enclosing_declaration = checker.enclosing_declaration.take();
     let result = {
         let mut printer = Printer {
             c: &mut *checker,
@@ -298,12 +322,17 @@ fn with_printer<'p, T>(
             depth: 0,
             comparison_depth: 0,
             enclosing_declaration,
+            tracker: tracker.map(|tracker| tracker as &mut dyn SymbolTracker<'p>),
+            boundaries: Vec::new(),
+            suppress_report_inference_fallback: false,
             type_parameter_names: Vec::new(),
             type_parameter_name_counts: Vec::new(),
             fake_scope_type_parameters: Vec::new(),
             fake_scope_parameters: Vec::new(),
         };
-        print(&mut printer)
+        let result = print(&mut printer);
+        printer.exit_context_check();
+        result
     };
     checker.eager.pop();
     (
@@ -425,6 +454,53 @@ enum Place {
 }
 
 /// `NodeBuilderImpl` and its `NodeBuilderContext`.
+/// A call of `ReportCyclicStructureError`, `ReportInaccessibleThisError`, `ReportInaccessibleUniqueSymbolError`,
+/// `ReportLikelyUnsafeImportRequiredError`, `ReportNonSerializableProperty` or `ReportPrivateInBaseOfClassExpression`: those a
+/// `wrappingTracker` puts off (`deferredReports`).
+#[derive(Clone)]
+pub(super) enum Report {
+    CyclicStructure,
+    InaccessibleThis,
+    InaccessibleUniqueSymbol,
+    /// The specifier, and the name of the symbol.
+    LikelyUnsafeImportRequired(String, String),
+    NonSerializableProperty(String),
+    PrivateInBaseOfClassExpression(String),
+}
+
+/// `nodebuilder.SymbolTracker`, what the node builder calls of it. It is handed the checker, which the printer has while it runs.
+pub(super) trait SymbolTracker<'p> {
+    /// `TrackSymbol`. Whether a diagnostic is reported.
+    fn track_symbol(
+        &mut self,
+        c: &mut Checker<'p>,
+        symbol: Sym,
+        enclosing_declaration: Option<Enclosing>,
+        meaning: SymFlags,
+    ) -> bool;
+    fn report(&mut self, c: &mut Checker<'p>, report: Report);
+    /// `ReportInferenceFallback`, of `node` of `file`.
+    fn report_inference_fallback(&mut self, c: &mut Checker<'p>, file: FileId, node: SyntaxNode);
+    /// `ReportTruncationError`
+    fn report_truncation_error(&mut self, c: &mut Checker<'p>);
+}
+
+/// `TrackedSymbolArgs`
+struct TrackedSymbolArgs {
+    symbol: Sym,
+    enclosing_declaration: Option<Enclosing>,
+    meaning: SymFlags,
+}
+
+/// `recoveryBoundary`
+#[derive(Default)]
+struct RecoveryBoundary {
+    /// Set by a report, and where the visitor gives a node up for good. Otherwise the visitor comes back with `None`.
+    had_error: bool,
+    tracked_symbols: Vec<TrackedSymbolArgs>,
+    deferred_reports: Vec<Report>,
+}
+
 struct Printer<'c, 'p> {
     c: &'c mut Checker<'p>,
     flags: u32,
@@ -439,7 +515,13 @@ struct Printer<'c, 'p> {
     depth: u32,
     comparison_depth: u32,
     /// `enclosingDeclaration`: the scope names are looked up from. `None` in error messages.
-    enclosing_declaration: Option<(FileId, ScopeId)>,
+    enclosing_declaration: Option<Enclosing>,
+    /// `SymbolTrackerImpl.inner`, under all the `wrappingTracker`s there are.
+    tracker: Option<&'c mut dyn SymbolTracker<'p>>,
+    /// `wrappingTracker.bound`, of each of those.
+    boundaries: Vec<RecoveryBoundary>,
+    /// `suppressReportInferenceFallback`
+    suppress_report_inference_fallback: bool,
     /// `typeParameterNames` and `typeParameterNamesByText`. A later entry hides an earlier one, here and in the next two.
     type_parameter_names: Vec<(TypeId, String)>,
     /// `typeParameterNamesByTextNextNameCount`
@@ -530,12 +612,7 @@ fn quoted_with_lone_surrogates(mut rest: &[u8], quote: char) -> String {
 
 /// `IsIdentifierText`
 fn is_identifier_text(text: &str) -> bool {
-    use super::errors_x_regexp_scanner::{is_identifier_part, is_identifier_start};
-    let mut chars = text.chars();
-    chars
-        .next()
-        .is_some_and(|first| is_identifier_start(u32::from(first)))
-        && chars.all(|ch| is_identifier_part(u32::from(ch)))
+    bun_core::lexer::is_identifier(text.as_bytes())
 }
 
 /// `RemoveFileExtension`
@@ -565,6 +642,124 @@ impl<'p> Printer<'_, 'p> {
             return String::new();
         }
         String::from_utf8_lossy(self.c.files().atoms.bytes(name)).into_owned()
+    }
+
+    // ───────────────────────────── the tracker (`symboltracker.go`, `nodecopy.go`) ─────────────────────────────
+
+    /// `b.ctx.tracker.TrackSymbol(symbol, b.ctx.enclosingDeclaration, meaning)`
+    fn track_symbol(&mut self, symbol: Sym, meaning: SymFlags) {
+        self.track(TrackedSymbolArgs {
+            symbol,
+            enclosing_declaration: self.enclosing_declaration,
+            meaning,
+        });
+    }
+
+    /// `wrappingTracker.TrackSymbol`, `SymbolTrackerImpl.TrackSymbol`
+    fn track(&mut self, tracked: TrackedSymbolArgs) {
+        let Some(tracker) = self.tracker.as_deref_mut() else {
+            return;
+        };
+        match self.boundaries.last_mut() {
+            Some(boundary) => boundary.tracked_symbols.push(tracked),
+            None => {
+                tracker.track_symbol(
+                    self.c,
+                    tracked.symbol,
+                    tracked.enclosing_declaration,
+                    tracked.meaning,
+                );
+            }
+        }
+    }
+
+    /// What `wrappingTracker` and `SymbolTrackerImpl` do with the calls `Report` stands for.
+    fn report(&mut self, report: Report) {
+        // `markError`
+        if let Some(boundary) = self.boundaries.last_mut() {
+            boundary.had_error = true;
+            if self.tracker.is_some() {
+                boundary.deferred_reports.push(report);
+            }
+        } else if let Some(tracker) = self.tracker.as_deref_mut() {
+            tracker.report(self.c, report);
+        }
+    }
+
+    /// `bound.markError(nil)`
+    fn mark_error(&mut self) {
+        if let Some(boundary) = self.boundaries.last_mut() {
+            boundary.had_error = true;
+        }
+    }
+
+    /// `bound.hadError`
+    fn had_error(&self) -> bool {
+        self.boundaries
+            .last()
+            .is_some_and(|boundary| boundary.had_error)
+    }
+
+    /// `ReportInferenceFallback`, which does not wait.
+    fn report_inference_fallback(&mut self, file: FileId, node: SyntaxNode) {
+        if let Some(tracker) = self.tracker.as_deref_mut() {
+            tracker.report_inference_fallback(self.c, file, node);
+        }
+    }
+
+    /// `exitContextCheck`
+    fn exit_context_check(&mut self) {
+        if self.truncating
+            && self.flags & NO_TRUNCATION != 0
+            && let Some(tracker) = self.tracker.as_deref_mut()
+        {
+            tracker.report_truncation_error(self.c);
+        }
+    }
+
+    /// `createRecoveryBoundary`
+    fn create_recovery_boundary(&mut self) {
+        self.boundaries.push(RecoveryBoundary::default());
+    }
+
+    /// `finalizeBoundary`. `had_error`: the visitor came back with `None`.
+    fn finalize_boundary(&mut self, had_error: bool) -> bool {
+        let Some(boundary) = self.boundaries.pop() else {
+            return !had_error;
+        };
+        for report in boundary.deferred_reports {
+            self.report(report);
+        }
+        if had_error || boundary.had_error {
+            return false;
+        }
+        for tracked in boundary.tracked_symbols {
+            self.track(tracked);
+        }
+        true
+    }
+
+    /// `startRecoveryScope`: `unreportedErrorsTop`
+    fn start_recovery_scope(&self) -> usize {
+        self.boundaries
+            .last()
+            .map_or(0, |boundary| boundary.deferred_reports.len())
+    }
+
+    /// `endRecoveryScope`. The symbols it drops are those of the context, not those of the boundary, which stay tracked.
+    fn end_recovery_scope(&mut self, unreported_errors_top: usize) {
+        if let Some(boundary) = self.boundaries.last_mut() {
+            boundary.had_error = false;
+            boundary.deferred_reports.truncate(unreported_errors_top);
+        }
+    }
+
+    /// `typeToTypeNode(t)` under `suppressReportInferenceFallback`
+    fn type_to_node_without_inference_fallback(&mut self, ty: TypeId) -> Node {
+        let suppressed = std::mem::replace(&mut self.suppress_report_inference_fallback, true);
+        let node = self.type_to_node(ty);
+        self.suppress_report_inference_fallback = suppressed;
+        node
     }
 
     // ───────────────────────────── truncation ─────────────────────────────
@@ -703,6 +898,9 @@ impl<'p> Printer<'_, 'p> {
                 return Node::new(format!("typeof {name}"), TYPE_OPERATOR);
             }
             TypeData::ThisParam(_) => {
+                if self.flags & IN_OBJECT_TYPE_LITERAL != 0 {
+                    self.report(Report::InaccessibleThis);
+                }
                 self.approximate_length += 4;
                 return Node::simple("this");
             }
@@ -770,9 +968,12 @@ impl<'p> Printer<'_, 'p> {
                 let of = self.type_to_node(*of);
                 self.intrinsic_alias_to_node(string_mapping_name(*kind), of)
             }
-            TypeData::Substitution { base: of, .. } => {
-                let of = self.type_to_node(*of);
-                self.intrinsic_alias_to_node("NoInfer", of)
+            TypeData::Substitution { base, constraint } => {
+                let base = self.type_to_node(*base);
+                if *constraint != TypeId::UNKNOWN {
+                    return base;
+                }
+                self.intrinsic_alias_to_node("NoInfer", base)
             }
             TypeData::IndexedAccess { obj, index, .. } => {
                 let object = self.type_to_node(*obj);
@@ -797,7 +998,7 @@ impl<'p> Printer<'_, 'p> {
     /// `IsTypeSymbolAccessible(symbol, enclosingDeclaration)`
     fn is_type_symbol_accessible(&mut self, symbol: Sym) -> bool {
         match self.enclosing_declaration {
-            Some((file, scope)) => self.c.is_type_symbol_accessible_at(symbol, file, scope),
+            Some(at) => self.c.is_type_symbol_accessible_at(symbol, at),
             None => true,
         }
     }
@@ -1349,10 +1550,9 @@ impl<'p> Printer<'_, 'p> {
 
     /// `symbolToExpression(symbol, SymbolFlagsValue)`
     fn symbol_to_expression(&mut self, symbol: Sym) -> String {
+        self.track_symbol(symbol, SymFlags::VALUE);
         let (starts_with_global_this, chain) = match self.enclosing_declaration {
-            Some((file, scope)) => self
-                .c
-                .lookup_symbol_chain_at(symbol, true, false, file, scope),
+            Some(at) => self.c.lookup_symbol_chain_at(symbol, true, false, at),
             None => (false, self.lookup_symbol_chain(symbol, false)),
         };
         // `createExpressionFromSymbolChain`
@@ -1375,6 +1575,14 @@ impl<'p> Printer<'_, 'p> {
         is_type_of: bool,
         type_arguments: Vec<Node>,
     ) -> Node {
+        self.track_symbol(
+            symbol,
+            if is_type_of {
+                SymFlags::VALUE
+            } else {
+                SymFlags::TYPE
+            },
+        );
         let yields_module = self.flags & USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE == 0;
         let is_type_parameter = self
             .c
@@ -1382,34 +1590,38 @@ impl<'p> Printer<'_, 'p> {
             .flags(symbol)
             .contains(SymFlags::TYPE_PARAMETER);
         let (starts_with_global_this, chain) = match self.enclosing_declaration {
-            Some((file, scope)) if !is_type_parameter => {
+            Some(at) if !is_type_parameter => {
                 self.c
-                    .lookup_symbol_chain_at(symbol, is_type_of, yields_module, file, scope)
+                    .lookup_symbol_chain_at(symbol, is_type_of, yields_module, at)
             }
             _ => (false, self.lookup_symbol_chain(symbol, yields_module)),
         };
-        self.symbol_chain_to_type_node(starts_with_global_this, chain, is_type_of, type_arguments)
+        self.symbol_chain_to_type_node(
+            symbol,
+            starts_with_global_this,
+            chain,
+            is_type_of,
+            type_arguments,
+        )
     }
 
     /// `symbolToTypeNode`, with the meaning `SymbolFlagsValue`, of the symbol `cloneTypeAsModuleType` made of `module` for
     /// `originating_import`.
     fn module_clone_to_type_node(&mut self, module: Sym, originating_import: Sym) -> Node {
-        let Some((file, scope)) = self.enclosing_declaration else {
+        let Some(at) = self.enclosing_declaration else {
             return self.symbol_to_type_node(module, true, Vec::new());
         };
         let yields_module = self.flags & USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE == 0;
-        let (starts_with_global_this, chain) = self.c.lookup_symbol_chain_of_module_clone_at(
-            originating_import,
-            yields_module,
-            file,
-            scope,
-        );
-        self.symbol_chain_to_type_node(starts_with_global_this, chain, true, Vec::new())
+        let (starts_with_global_this, chain) =
+            self.c
+                .lookup_symbol_chain_of_module_clone_at(originating_import, yields_module, at);
+        self.symbol_chain_to_type_node(module, starts_with_global_this, chain, true, Vec::new())
     }
 
     /// `symbolToTypeNode`, from where it has the chain of `lookupSymbolChain`.
     fn symbol_chain_to_type_node(
         &mut self,
+        symbol: Sym,
         starts_with_global_this: bool,
         chain: Vec<Sym>,
         is_type_of: bool,
@@ -1426,6 +1638,13 @@ impl<'p> Printer<'_, 'p> {
         let query = if is_type_of { "typeof " } else { "" };
         if !starts_with_global_this && self.is_external_module(chain[0]) {
             let (specifier, attributes) = self.import_type_specifier(chain[0]);
+            if self.flags & ALLOW_NODE_MODULES_RELATIVE_PATHS == 0
+                && attributes.is_empty()
+                && specifier.contains("/node_modules/")
+            {
+                let name = self.export_name(symbol);
+                self.report(Report::LikelyUnsafeImportRequired(specifier.clone(), name));
+            }
             self.approximate_length += specifier.len() + 10;
             return Node::simple(format!(
                 "{query}import({}{attributes}){qualifier}{type_arguments}",
@@ -1450,8 +1669,12 @@ impl<'p> Printer<'_, 'p> {
 
     /// `getSpecifierForModuleSymbol`, and the import attributes `symbolToTypeNode` writes after it.
     fn import_type_specifier(&mut self, module: Sym) -> (String, String) {
-        if let Some((file, scope)) = self.enclosing_declaration {
-            let (specifier, mode) = self.c.import_type_specifier_at(module, file, scope);
+        if let Some(at) = self.enclosing_declaration {
+            let allows_node_modules_relative_paths =
+                self.flags & ALLOW_NODE_MODULES_RELATIVE_PATHS != 0;
+            let (specifier, mode) =
+                self.c
+                    .import_type_specifier_at(module, at, allows_node_modules_relative_paths);
             // Empty: `paths` or `rootDirs` have a say, which is not worked out.
             if !specifier.is_empty() {
                 let attributes = match mode {
@@ -1827,7 +2050,7 @@ impl<'p> Printer<'_, 'p> {
         name: &str,
         parameter: TypeId,
     ) -> bool {
-        let Some((file, scope)) = self.enclosing_declaration else {
+        let Some(Enclosing { file, scope, .. }) = self.enclosing_declaration else {
             return false;
         };
         let found = match self
@@ -2647,7 +2870,10 @@ impl<'p> Printer<'_, 'p> {
         properties: &[Prop],
         mapper: MapperId,
     ) -> Node {
+        let saved_flags = self.flags;
+        self.flags |= IN_OBJECT_TYPE_LITERAL;
         let elements = self.type_elements(ty, call, construct, index, properties, mapper);
+        self.flags = saved_flags;
         self.approximate_length += 2;
         if elements.is_empty() {
             Node::simple("{}")
@@ -2747,7 +2973,7 @@ impl<'p> Printer<'_, 'p> {
         type_node: Option<&Node>,
     ) -> Option<Vec<String>> {
         let components = self.c.index_components(info.components);
-        let (enclosing_file, enclosing_scope) = self.enclosing_declaration?;
+        let at = self.enclosing_declaration?;
         if components.is_empty() {
             return None;
         }
@@ -2757,12 +2983,10 @@ impl<'p> Printer<'_, 'p> {
             let PropKey::Computed(name) = key else {
                 return None;
             };
-            if !self.c.is_trivially_serializable_computed_name_at(
-                file,
-                name,
-                enclosing_file,
-                enclosing_scope,
-            ) {
+            if !self
+                .c
+                .is_trivially_serializable_computed_name_at(file, name, at)
+            {
                 return None;
             }
             names.push((component, file, name));
@@ -3717,9 +3941,10 @@ impl<'p> Printer<'_, 'p> {
         if let Some(reused) = self.try_reuse_return_type_of_signature(signature) {
             return reused;
         }
+        // `serializeInferredReturnTypeForSignature`
         let Some(predicate) = self.c.sig_predicate(signature) else {
             let returned = self.c.sig_return_for_inference(signature);
-            return self.type_to_node(returned).text;
+            return self.type_to_node_without_inference_fallback(returned).text;
         };
         let mut text = String::new();
         if predicate.asserts {
@@ -3735,7 +3960,7 @@ impl<'p> Printer<'_, 'p> {
         }
         if let Some(ty) = predicate.ty {
             text.push_str(" is ");
-            text.push_str(&self.type_to_node(ty).text);
+            text.push_str(&self.type_to_node_without_inference_fallback(ty).text);
         }
         text
     }
@@ -3883,9 +4108,11 @@ impl<'p> Printer<'_, 'p> {
         // `isHomomorphicMappedTypeWithNonHomomorphicInstantiation`: declared over `keyof T`, instantiated with a `T` that is not a
         // type parameter.
         let is_homomorphic_with_non_homomorphic_instantiation = generates_names
-            && matches!(over_keyof, Some((declared, true)) if matches!(self.c.data(declared), TypeData::TypeParam(..)))
+            && matches!(over_keyof, Some((_, true)))
+            && self.c.homomorphic_type_variable(file, node).is_some()
             && modifiers.is_some_and(|modifiers| {
                 let modifiers = self.c.force(modifiers);
+                let modifiers = self.c.actual_type_variable(modifiers);
                 !matches!(self.c.data(modifiers), TypeData::TypeParam(..))
             });
         let needs_modifier_preserving_wrapper =
@@ -4021,6 +4248,9 @@ impl<'p> Printer<'_, 'p> {
             return self.type_to_node(ty);
         }
         if self.visited_types.contains(&ty) {
+            if self.flags & ALLOW_ANONYMOUS_IDENTIFIER == 0 {
+                self.report(Report::CyclicStructure);
+            }
             return self.elided_information_placeholder();
         }
         let Some(depth) = self.enter_type(ty, None) else {

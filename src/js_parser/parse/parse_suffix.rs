@@ -451,7 +451,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.mark_type_syntax(left.loc, Mark::IncompleteTemplate, left.loc);
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-        p.mark_type_syntax(left.loc, Mark::Template, p.lexer.loc());
+        p.mark_cast(left, crate::sema::CastKind::Tag, p.lexer.loc());
         let head = E::Str::new(p.lexer.raw_template_contents());
         p.lexer.next()?;
 
@@ -486,7 +486,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.mark_type_syntax(left.loc, Mark::TagTypeArguments, type_arguments);
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-        p.mark_type_syntax(left.loc, Mark::Template, p.lexer.loc());
+        p.mark_cast(left, crate::sema::CastKind::Tag, p.lexer.loc());
         let head = E::Str::new(p.lexer.raw_template_contents());
         let (parts, tail_loc) = p.parse_template_parts(true)?;
         // `hasCorrectArity`: a call with a template whose last literal is missing or unterminated is incomplete.

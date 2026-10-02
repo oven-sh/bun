@@ -1331,8 +1331,9 @@ impl TypeStore {
                     | (made_with & (TypeFlags::HAS_UNRESOLVED | TypeFlags::HAS_MARKER))
             }
             TypeData::IndexedAccess { obj, index, .. } => self.flags(*obj) | self.flags(*index),
+            // `couldContainTypeVariables`: instantiating one resolves it.
             TypeData::Substitution { base, constraint } => {
-                self.flags(*base) | self.flags(*constraint)
+                self.flags(*base) | self.flags(*constraint) | TypeFlags::HAS_TYPE_VARIABLES
             }
             TypeData::Keyof(t) | TypeData::StringMapping { ty: t, .. } => self.flags(*t),
             TypeData::Template { types, .. } => all(types),

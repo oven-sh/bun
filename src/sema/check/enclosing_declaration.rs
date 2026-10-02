@@ -4,12 +4,62 @@
 use super::*;
 use crate::bind::{Decl, Parent, PatParent, ScopeId, ScopeKind};
 
+/// `enclosingDeclaration`
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub(super) struct Enclosing {
+    pub(super) file: FileId,
+    /// Where names are looked up from: its locals, or those of the innermost node around it that has any.
+    pub(super) scope: ScopeId,
+    /// It is that variable declaration.
+    pub(super) variable: VarDeclId,
+    /// It is a block that `enterNewScope` made up for the parameters or the type parameters of a signature, and the rest says what
+    /// that is in.
+    pub(super) is_fake_scope: bool,
+}
+
+impl Enclosing {
+    pub(super) fn at_scope(file: FileId, scope: ScopeId) -> Enclosing {
+        Enclosing {
+            file,
+            scope,
+            variable: VarDeclId::NONE,
+            is_fake_scope: false,
+        }
+    }
+
+    /// `getEnclosingDeclarationIgnoringFakeScope`
+    pub(super) fn ignoring_fake_scope(self) -> Enclosing {
+        Enclosing {
+            is_fake_scope: false,
+            ..self
+        }
+    }
+}
+
 /// The scope of the file stands in for a scope the binder did not record.
 pub(super) fn or_file_scope(scope: ScopeId) -> ScopeId {
     if scope.is_some() { scope } else { ScopeId(0) }
 }
 
 impl Checker<'_> {
+    /// `IsFunctionLikeDeclaration(enclosingDeclaration)`
+    pub(super) fn is_function_like_declaration(&self, at: Enclosing) -> bool {
+        !at.is_fake_scope
+            && at.variable.is_none()
+            && at.scope.is_some()
+            && matches!(self.bound(at.file).scopes[at.scope.idx()].kind, ScopeKind::Fn(f)
+            if matches!(
+                self.hir(at.file)[f].kind,
+                FnKind::Decl
+                    | FnKind::Expr
+                    | FnKind::Arrow
+                    | FnKind::Method
+                    | FnKind::Getter
+                    | FnKind::Setter
+                    | FnKind::Constructor
+            ))
+    }
+
     fn enclosing_scope_of_kind(&self, file: FileId, kind: ScopeKind) -> ScopeId {
         let scopes = &self.bound(file).scopes;
         let found = scopes.iter().position(|scope| scope.kind == kind);

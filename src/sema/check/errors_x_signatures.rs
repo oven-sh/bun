@@ -145,7 +145,7 @@ fn skip_type(text: &[u8], mut i: usize) -> Option<usize> {
                     wants_operand = false;
                 }
                 b'|' | b'&' | b'-' => i = at + 1,
-                _ if is_identifier_part(b) => {
+                _ if !word_at(text, at).is_empty() => {
                     let word = word_at(text, at);
                     i = at + word.len();
                     let next = skip_trivia(text, i);
@@ -2427,7 +2427,7 @@ impl Checker<'_> {
         let by_kind = self.exprs_by_kind(file);
         for &e in by_kind.of(ExprTag::Await) {
             if let ExprKind::Await(operand) = hir[e].kind
-                && !matches!(bound.expr_parent[e.idx()], Parent::None)
+                && !bound.is_unchecked(e.idx())
             {
                 let pos = hir[e].pos;
                 sites.push((pos, Ok(operand), Some((pos, Reported::Expr(e))), 0));
@@ -2563,9 +2563,7 @@ impl Checker<'_> {
         let by_kind = self.exprs_by_kind(file);
         for &id in by_kind.of(ExprTag::ImportCall) {
             let e = &hir[id];
-            if !matches!(bound.expr_parent[id.idx()], Parent::None)
-                && word_at(&hir.text, e.pos as usize) == b"import"
-            {
+            if !bound.is_unchecked(id.idx()) && word_at(&hir.text, e.pos as usize) == b"import" {
                 out.push(Diagnostic {
                     start: e.pos,
                     code: 2712,
@@ -3093,7 +3091,7 @@ impl Checker<'_> {
         let assertions = by_kind.of(ExprTag::As).iter();
         for &id in assertions.chain(by_kind.of(ExprTag::AsConst)) {
             let e = &hir[id];
-            if matches!(bound.expr_parent[id.idx()], Parent::None) {
+            if bound.is_unchecked(id.idx()) {
                 continue;
             }
             // Where the `<` ends, and the `>`.

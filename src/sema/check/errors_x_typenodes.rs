@@ -194,10 +194,7 @@ fn start_of_tuple_element(hir: &hir::File, elem: &TupleElem) -> u32 {
         if text[..end].ends_with(b"?") {
             end = skip_trivia_back(text, end - 1);
         }
-        at = end;
-        while at > 0 && is_identifier_part(text[at - 1]) {
-            at -= 1;
-        }
+        at = word_start(text, end);
         if elem.rest {
             at = before_dots(at);
         }
@@ -208,10 +205,7 @@ fn start_of_tuple_element(hir: &hir::File, elem: &TupleElem) -> u32 {
 /// Where `implements` is written in the head of the interface whose name is at `name_pos`. `None` if it is not, or a second
 /// `extends` comes first: `checkGrammarInterfaceDeclaration` stops at whichever it meets first.
 fn implements_in_interface_head(text: &[u8], name_pos: usize) -> Option<usize> {
-    let mut at = name_pos;
-    while text.get(at).is_some_and(|&c| is_identifier_part(c)) {
-        at += 1;
-    }
+    let mut at = word_end(text, name_pos);
     let (mut depth, mut seen_extends, mut previous) = (0usize, false, 0u8);
     loop {
         at = skip_trivia(text, at);
@@ -226,11 +220,9 @@ fn implements_in_interface_head(text: &[u8], name_pos: usize) -> Option<usize> {
                 previous = c;
                 continue;
             }
-            _ if is_identifier_part(c) => {
+            _ if !word_at(text, at).is_empty() => {
                 let start = at;
-                while text.get(at).is_some_and(|&c| is_identifier_part(c)) {
-                    at += 1;
-                }
+                at += word_at(text, at).len();
                 if depth == 0 && previous != b'.' {
                     match &text[start..at] {
                         b"implements" => return Some(start),
@@ -552,13 +544,13 @@ impl Checker<'_> {
         }
         let kinds = kinds_of_types_written(hir);
         let has = |any_of: u32| kinds & any_of != 0;
-        let parents = if has(TUPLE | INFER | THIS | INDEXED_ACCESS) || !hir.aliases.is_empty() {
+        let parents = if has(INFER | THIS) || !hir.aliases.is_empty() {
             Self::type_node_parents(hir, bound)
         } else {
             Vec::new()
         };
         if has(TUPLE) {
-            self.check_tuple_type_nodes(file, &parents, out);
+            self.check_tuple_type_nodes(file, out);
         }
         self.check_instantiated_tuple_sizes(file, out);
         if has(TEMPLATE | TUPLE | INTERSECTION) {
@@ -580,7 +572,7 @@ impl Checker<'_> {
         self.check_intrinsic_aliases(file, out);
         self.check_keys_of_index_signatures(file, out);
         if has(INDEXED_ACCESS) {
-            self.check_indexed_access_type_nodes(file, &parents, out);
+            self.check_indexed_access_type_nodes(file, out);
         }
         if has(TYPEOF) {
             self.check_instantiated_type_queries(file, out);
@@ -600,12 +592,7 @@ impl Checker<'_> {
     // ───────────────────────────── tuple types ─────────────────────────────
 
     /// `checkTupleType`: 2574, 1265 1266 1257. And 2799, which `TupleNormalizer.normalize` says when the type is made.
-    fn check_tuple_type_nodes(
-        &mut self,
-        file: FileId,
-        parents: &[TypeNodeId],
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_tuple_type_nodes(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_silent = has_parse_diagnostics(hir);
         for t in 0..hir.types.len() {
@@ -632,20 +619,7 @@ impl Checker<'_> {
                     if !self.is_known(ty) || !self.is_known(apparent) {
                         break;
                     }
-                    let fits = self.answer_if_sure(|c| {
-                        c.can_be_spread_in_a_tuple(ty)
-                            || {
-                                let narrowed = c.conditional_flow_type(file, ty, elem.ty, parents);
-                                narrowed != ty && c.can_be_spread_in_a_tuple(narrowed)
-                            }
-                            // What `ty` only mentions is a substitution type as well.
-                            || {
-                                let flow = c.conditional_flow_mapper(file, elem.ty, parents);
-                                let substituted = c
-                                    .type_from_node_with_substitutions(file, elem.ty, parents, flow);
-                                substituted != ty && c.can_be_spread_in_a_tuple(substituted)
-                            }
-                    });
+                    let fits = self.answer_if_sure(|c| c.can_be_spread_in_a_tuple(ty));
                     if fits != Some(true) {
                         if fits == Some(false) {
                             out.push(Diagnostic {
@@ -785,7 +759,7 @@ impl Checker<'_> {
             let ExprKind::Array(items) = hir.exprs[i].kind else {
                 continue;
             };
-            if matches!(bound.expr_parent[i], Parent::None)
+            if bound.is_unchecked(i)
                 || !hir
                     .ids(items)
                     .any(|x| matches!(hir[x].kind, ExprKind::Spread(_)))
@@ -831,7 +805,7 @@ impl Checker<'_> {
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for i in exprs.of(ExprTag::Array).iter().map(|e| e.idx()) {
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             let e = ExprId(i as u32);
@@ -1008,7 +982,7 @@ impl Checker<'_> {
             let ExprKind::Object(props) = hir.exprs[i].kind else {
                 continue;
             };
-            if props.is_empty() || matches!(bound.expr_parent[i], Parent::None) {
+            if props.is_empty() || bound.is_unchecked(i) {
                 continue;
             }
             // `contextual_type_for_object_literal`. Its last step leaves out members of a union and makes none: it is spared where no
@@ -1142,7 +1116,7 @@ impl Checker<'_> {
             order.push((hir[outermost].pos, t as u32, true));
         }
         for e in 0..hir.exprs.len() {
-            if !matches!(bound.expr_parent[e], Parent::None) {
+            if !bound.is_unchecked(e) {
                 order.push((
                     self.start_of(file, ExprId(e as u32)),
                     u32::MAX - e as u32,
@@ -1808,7 +1782,7 @@ impl Checker<'_> {
                 continue;
             };
             let call = &hir[c];
-            if call.close_pos == u32::MAX || matches!(bound.expr_parent[i], Parent::None) {
+            if call.close_pos == u32::MAX || bound.is_unchecked(i) {
                 continue;
             }
             // Back from the arguments: `(`, and before that the `>` of the list, if there is one.
@@ -1856,7 +1830,7 @@ impl Checker<'_> {
                 ExprKind::Dot { name, name_pos, .. } => (name, name_pos as usize),
                 _ => continue,
             };
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             let name = self.files().atoms.bytes(name);
@@ -1880,7 +1854,7 @@ impl Checker<'_> {
         for i in exprs.of(ExprTag::Jsx).iter().map(|e| e.idx()) {
             let e = &hir.exprs[i];
             let ExprKind::Jsx(j) = e.kind else { continue };
-            if hir[j].tag.is_none() || matches!(bound.expr_parent[i], Parent::None) {
+            if hir[j].tag.is_none() || bound.is_unchecked(i) {
                 continue;
             }
             if !hir[j].type_args.is_empty() {
@@ -1892,14 +1866,8 @@ impl Checker<'_> {
                 }
                 continue;
             }
-            let mut at = skip_trivia(text, e.pos as usize + 1);
-            while text
-                .get(at)
-                .is_some_and(|&c| is_identifier_part(c) || matches!(c, b'.' | b'-' | b':'))
-            {
-                at += 1;
-            }
-            let open = skip_trivia(text, at);
+            let name = skip_trivia(text, e.pos as usize + 1);
+            let open = skip_trivia(text, jsx_tag_name_end(text, name));
             if is_empty_list_at(open) {
                 out.push(Diagnostic {
                     start: open as u32,
@@ -1954,12 +1922,7 @@ impl Checker<'_> {
                 if i > 0 && text.get(at) == Some(&b'.') {
                     at = skip_trivia(text, at + 1);
                 }
-                while text
-                    .get(at)
-                    .is_some_and(|&c| is_identifier_part(c) || c == b'#')
-                {
-                    at += 1;
-                }
+                at = word_end(text, at);
             }
             let open = skip_trivia(text, at);
             if text.get(open) == Some(&b'<')
@@ -2000,7 +1963,7 @@ impl Checker<'_> {
         }
         let text: &[u8] = &hir.text;
         for &e in exprs.of(ExprTag::ImportCall) {
-            if matches!(bound.expr_parent[e.idx()], Parent::None) {
+            if bound.is_unchecked(e.idx()) {
                 continue;
             }
             let open = skip_trivia(text, hir[e].pos as usize + b"import".len());
@@ -2035,7 +1998,7 @@ impl Checker<'_> {
             let ExprKind::Instantiation { expr, type_args } = hir.exprs[i].kind else {
                 continue;
             };
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             if !is_silent && let Some(comma) = trailing_comma_of_type_arguments(hir, type_args) {
@@ -2079,7 +2042,7 @@ impl Checker<'_> {
             else {
                 continue;
             };
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             let (name, name_pos) = match hir[right].kind {
@@ -2230,7 +2193,8 @@ impl Checker<'_> {
             TypeData::TypeParam(..)
             | TypeData::ThisParam(_)
             | TypeData::IndexedAccess { .. }
-            | TypeData::Cond { .. } => {
+            | TypeData::Cond { .. }
+            | TypeData::Substitution { .. } => {
                 if let Some(constraint) = self.base_constraint_of(ty) {
                     self.note_signatures_that_take(
                         constraint,
@@ -2269,12 +2233,7 @@ impl Checker<'_> {
     // ───────────────────────────── `T[K]`, `a[k]` ─────────────────────────────
 
     /// `checkIndexedAccessType`: 2536 4105. And 2514, which `getPropertyTypeForIndexType` says.
-    fn check_indexed_access_type_nodes(
-        &mut self,
-        file: FileId,
-        parents: &[TypeNodeId],
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_indexed_access_type_nodes(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for t in 0..hir.types.len() {
             let TypeNodeKind::IndexedAccess { obj, index } = hir.types[t].kind else {
@@ -2296,7 +2255,12 @@ impl Checker<'_> {
                 let end = self.end_of_type_node_from(file, index, start);
                 self.explain_to(start, end, 2514, |_| vec![]);
             }
+            // `getTypeFromIndexedAccessTypeNode`, which comes before `getConditionalFlowTypeOfType`.
             let whole = self.type_from_node(file, TypeNodeId(t as u32));
+            let whole = match *self.data(whole) {
+                TypeData::Substitution { base, .. } => base,
+                _ => whole,
+            };
             let TypeData::IndexedAccess {
                 obj: waiting,
                 index: key,
@@ -2308,38 +2272,6 @@ impl Checker<'_> {
             let Some(code) = self.why_not_a_key_of(waiting, key) else {
                 continue;
             };
-            // What the conditional types around have found out may be what makes it one.
-            let narrowed = (
-                self.conditional_flow_type(file, object, obj, parents),
-                self.conditional_flow_type(file, keys, index, parents),
-            );
-            if narrowed != (object, keys) && self.why_not_a_key_of(narrowed.0, narrowed.1).is_none()
-            {
-                continue;
-            }
-            // `getTypeFromTypeNode` applies `getConditionalFlowTypeOfType` to every type node, so a type parameter that the object
-            // type or the index type only mentions is narrowed as well.
-            let flow = self.conditional_flow_mapper(file, TypeNodeId(t as u32), parents);
-            if let Some(flow) = flow {
-                let mentioned = (self.instantiate(object, flow), self.instantiate(keys, flow));
-                if mentioned != (object, keys)
-                    && self.why_not_a_key_of(mentioned.0, mentioned.1).is_none()
-                {
-                    continue;
-                }
-            }
-            // So is a check type of any other kind that `object[keys]` starts from.
-            let substituted = (
-                self.type_from_node_with_substitutions(file, obj, parents, flow),
-                self.type_from_node_with_substitutions(file, index, parents, flow),
-            );
-            if substituted != (object, keys)
-                && self
-                    .why_not_a_key_of(substituted.0, substituted.1)
-                    .is_none()
-            {
-                continue;
-            }
             out.push(Diagnostic {
                 start: hir.types[t].pos,
                 code,
@@ -2530,9 +2462,7 @@ impl Checker<'_> {
                 continue;
             };
             let e = ExprId(i as u32);
-            if matches!(bound.expr_parent[i], Parent::None)
-                || matches!(hir[index].kind, ExprKind::Missing)
-            {
+            if bound.is_unchecked(i) || matches!(hir[index].kind, ExprKind::Missing) {
                 continue;
             }
             let (object, keys) = (self.type_of_expr(file, obj), self.type_of_expr(file, index));

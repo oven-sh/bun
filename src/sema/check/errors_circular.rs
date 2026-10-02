@@ -500,7 +500,7 @@ impl Checker<'_> {
             // `getTypeOfAlias` reports a cycle through a symbol that is only an alias at the target of the alias.
             if !symbol
                 .flags
-                .intersects(SymFlags::VARIABLE | SymFlags::EXPORT_VALUE)
+                .intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
             {
                 continue;
             }
@@ -820,7 +820,7 @@ impl Checker<'_> {
                 };
                 let at = (is_second, hir[obj].pos);
                 if !matches!(hir[obj].kind, ExprKind::Ident(_))
-                    || matches!(bound.expr_parent[e.idx()], Parent::None)
+                    || bound.is_unchecked(e.idx())
                     || bound.is_in_type_query(e)
                     || first.is_some_and(|first| first <= at)
                 {

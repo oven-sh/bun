@@ -19,9 +19,6 @@ pub struct TypeAtLocation {
 
 /// What the walk for the types of a file keeps from one node to the next.
 struct TypeWalk {
-    /// `literal_types_in_resolved_context`
-    literal_types: FxHashMap<ExprId, TypeId>,
-    literal_prop_types: FxHashMap<PropId, TypeId>,
     /// The type that was written last for an expression, and how it is written. The parentheses around an expression and the name of a
     /// property access repeat it.
     text_of_expr: Vec<Option<(TypeId, String)>>,
@@ -31,10 +28,7 @@ impl Checker<'_> {
     /// `typeWriterWalker.getTypes`, in no particular order. The file must have been checked, as in the harness.
     pub fn types_at_locations(&mut self, file: FileId) -> Vec<TypeAtLocation> {
         let hir = self.hir(file);
-        let (literal_types, literal_prop_types) = self.literal_types_in_resolved_context(file);
         let mut walk = TypeWalk {
-            literal_types,
-            literal_prop_types,
             text_of_expr: vec![None; hir.exprs.len()],
         };
         let nodes = self.visited_nodes(file);
@@ -42,6 +36,8 @@ impl Checker<'_> {
         for node in nodes {
             self.write_type_of_visited_node(file, node, &mut walk, &mut results);
         }
+        self.rechecked_exprs.clear();
+        self.rechecked_members.clear();
         results
     }
 
@@ -56,7 +52,7 @@ impl Checker<'_> {
         if self.is_left_out_of_types(file, node.kind) {
             return;
         }
-        let ty = self.get_type_of_visited_node(file, node, walk);
+        let ty = self.get_type_of_visited_node(file, node);
         let type_text = if ty == TypeId::ERROR && self.is_error_type_written_as_any(file, node.kind)
         {
             "any".to_owned()
@@ -209,12 +205,7 @@ impl Checker<'_> {
     }
 
     /// `getTypeOfNode`, and before it what `writeTypeOrSymbol` asks of the node after the `extends` of a class.
-    fn get_type_of_visited_node(
-        &mut self,
-        file: FileId,
-        node: VisitedNode,
-        walk: &TypeWalk,
-    ) -> TypeId {
+    fn get_type_of_visited_node(&mut self, file: FileId, node: VisitedNode) -> TypeId {
         let hir = self.hir(file);
         // No semantic question is answered within a `with` block.
         if hir.is_in_with(node.start) {
@@ -237,7 +228,7 @@ impl Checker<'_> {
                         return base;
                     }
                 }
-                self.type_of_visited_expression(file, e, walk)
+                self.type_of_visited_expression(file, e)
             }
             VisitedKind::BindingName(pat) => self.type_of_binding_name(file, pat),
             // `IsJsxTagName`: the identifier is an expression, and `checkIdentifier` resolves it as a value from where the element is.
@@ -258,13 +249,11 @@ impl Checker<'_> {
                 self.type_of_symbol(sym)
             }
             VisitedKind::MemberName(m) => self.type_of_member_name(file, m),
-            VisitedKind::PropertyName(p) => match walk.literal_prop_types.get(&p) {
-                // `getTypeOfSymbol` of the property first checks its initializer when the writer asks, under the same contextual type.
-                Some(&ty) => self.widened(ty),
-                // `declareSymbolEx`: what has no name has a symbol of its own.
-                None if matches!(hir[p].key, PropKey::None) => self.type_of_literal_prop(file, p),
-                None => self.type_of_literal_member_symbol(file, p),
-            },
+            // `declareSymbolEx`: what has no name has a symbol of its own.
+            VisitedKind::PropertyName(p) if matches!(hir[p].key, PropKey::None) => {
+                self.get_type_of_literal_member(file, p)
+            }
+            VisitedKind::PropertyName(p) => self.type_of_literal_member_symbol(file, p),
             VisitedKind::LiteralInMemberName(m) => {
                 self.type_of_literal_in_computed_name(file, hir[m].key, node.start)
             }
@@ -320,7 +309,7 @@ impl Checker<'_> {
 
     /// `getTypeOfNode` of an expression, of the parentheses around it, and of the name a property access ends with
     /// (`isRightSideOfQualifiedNameOrPropertyAccess`).
-    fn type_of_visited_expression(&mut self, file: FileId, e: ExprId, walk: &TypeWalk) -> TypeId {
+    fn type_of_visited_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
         let hir = self.hir(file);
         match hir[e].kind {
             // `getResolvedSymbol`: `NodeIsMissing`
@@ -335,20 +324,14 @@ impl Checker<'_> {
             return ty;
         }
         // `getRegularTypeOfExpression`
-        let ty = match walk.literal_types.get(&e) {
-            Some(&ty) => ty,
-            None => match hir[e].kind {
-                // `checkSpreadExpression`
-                ExprKind::Spread(operand) => {
-                    let iterable = match walk.literal_types.get(&operand) {
-                        Some(&ty) => ty,
-                        None => self.type_of_expr(file, operand),
-                    };
-                    self.iterated_type_if_any(iterable, false)
-                        .unwrap_or(TypeId::ANY)
-                }
-                _ => self.type_of_expr(file, e),
-            },
+        let ty = match hir[e].kind {
+            // `checkSpreadExpression`
+            ExprKind::Spread(operand) => {
+                let iterable = self.get_type_of_expression(file, operand);
+                self.iterated_type_if_any(iterable, false)
+                    .unwrap_or(TypeId::ANY)
+            }
+            _ => self.get_type_of_expression(file, e),
         };
         self.regular(ty)
     }
@@ -649,7 +632,7 @@ impl Checker<'_> {
         let declaration = of_kind(PropKind::Getter)
             .or_else(|| of_kind(PropKind::Setter))
             .unwrap_or(declarations[0]);
-        self.type_of_literal_prop(file, declaration)
+        self.get_type_of_literal_member(file, declaration)
     }
 }
 

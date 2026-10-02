@@ -38,9 +38,7 @@ impl Checker<'_> {
             .of(ExprTag::Jsx)
             .iter()
             .filter_map(|&e| match hir[e].kind {
-                ExprKind::Jsx(j) if !matches!(bound.expr_parent[e.idx()], Parent::None) => {
-                    Some((e, j))
-                }
+                ExprKind::Jsx(j) if !bound.is_unchecked(e.idx()) => Some((e, j)),
                 _ => None,
             })
             .collect();
@@ -430,7 +428,7 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let is_part_of_the_file = |e: ExprId| !matches!(bound.expr_parent[e.idx()], Parent::None);
+        let is_part_of_the_file = |e: ExprId| !bound.is_unchecked(e.idx());
         for &e in index.of(ExprTag::Object) {
             if is_part_of_the_file(e) && bound.get_assignment_target(hir, e).is_none() {
                 self.check_grammar_of_object_literal(file, e, false, out);
@@ -1287,9 +1285,7 @@ fn jsx_elements(hir: &File, bound: &Bound) -> Vec<(ExprId, JsxId)> {
     }
     (0..hir.exprs.len())
         .filter_map(|i| match hir.exprs[i].kind {
-            ExprKind::Jsx(j) if !matches!(bound.expr_parent[i], Parent::None) => {
-                Some((ExprId(i as u32), j))
-            }
+            ExprKind::Jsx(j) if !bound.is_unchecked(i) => Some((ExprId(i as u32), j)),
             _ => None,
         })
         .collect()
@@ -1322,7 +1318,6 @@ fn is_invalid_dynamic_name(hir: &File, key: PropKey, name: u32) -> bool {
                 return end_of_quoted(text, literal)
                     .is_some_and(|end| text.get(skip_trivia(text, end)) != Some(&b']'));
             }
-            // Where a number ends is not always made out.
             end_of_name(text, literal).is_some_and(|end| {
                 let after = skip_trivia(text, end);
                 text.get(after) == Some(&b'!')
@@ -1405,10 +1400,7 @@ fn are_modifiers_refused(
     loop {
         let so_far = upto(&hir.text, start);
         let before = trim_trivia_end(so_far);
-        let word = before
-            .iter()
-            .rposition(|&c| !is_identifier_part(c))
-            .map_or(0, |i| i + 1);
+        let word = word_start(before, before.len());
         // `nextTokenCanFollowModifier`: all but `static` are on the line of what follows them.
         if &before[word..] != b"static" && so_far[before.len()..].contains(&b'\n') {
             break;
@@ -1513,10 +1505,10 @@ fn ends_with_decorator(mut text: &[u8]) -> bool {
         let Some(open) = open else { return false };
         text = trim_trivia_end(&text[..open]);
     }
-    let name = text
-        .iter()
-        .rposition(|&c| !(is_identifier_part(c) || c == b'.'))
-        .map_or(0, |i| i + 1);
+    let mut name = word_start(text, text.len());
+    while name > 0 && text[name - 1] == b'.' {
+        name = word_start(text, name - 1);
+    }
     name > 0 && text[name - 1] == b'@'
 }
 
@@ -1533,8 +1525,7 @@ fn has_no_modifier_but_async(text: &[u8], name: u32) -> bool {
 }
 
 fn ends_with_word(text: &[u8], word: &[u8]) -> bool {
-    text.strip_suffix(word)
-        .is_some_and(|before| !before.last().is_some_and(|&c| is_identifier_part(c)))
+    word_before(text, text.len()) == word
 }
 
 /// `pos`, or where the parentheses that open right before it do. For what a `(` before it can be nothing but its own.
@@ -1566,10 +1557,7 @@ fn is_all_in_parentheses(text: &[u8], bracket: u32) -> bool {
 /// A comment after it hides what follows.
 fn is_word_outside_parentheses(text: &[u8], pos: u32) -> bool {
     let rest = &text[(pos as usize).min(text.len())..];
-    let length = rest
-        .iter()
-        .position(|&c| !is_identifier_part(c))
-        .unwrap_or(rest.len());
+    let length = word_at(text, pos as usize).len();
     length > 0
         && !rest[0].is_ascii_digit()
         && !matches!(
@@ -1635,16 +1623,8 @@ fn end_of_quoted(text: &[u8], start: usize) -> Option<usize> {
 /// `None`: it is not made out.
 fn end_of_name(text: &[u8], start: usize) -> Option<usize> {
     match *text.get(start)? {
-        b'"' | b'\'' => end_of_quoted(text, start),
         b'[' => end_of_brackets(text, start),
-        _ => {
-            let rest = &text[start..];
-            let length = rest
-                .iter()
-                .position(|&c| !(is_identifier_part(c) || c == b'#' || c == b'.'))
-                .unwrap_or(rest.len());
-            (length > 0).then_some(start + length)
-        }
+        _ => Some(token_end(text, start, false)),
     }
 }
 

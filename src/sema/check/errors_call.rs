@@ -79,7 +79,7 @@ impl Checker<'_> {
             if !matches!(
                 hir.exprs[i].kind,
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_)
-            ) || matches!(bound.expr_parent[i], Parent::None)
+            ) || bound.is_unchecked(i)
             {
                 continue;
             }

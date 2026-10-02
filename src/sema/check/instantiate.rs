@@ -98,34 +98,10 @@ impl<'p> Checker<'p> {
             changed |= new != value;
             pairs.push((param, new));
         }
-        // `getConditionalFlowTypeOfType`: the check type `T[K]` of a conditional type is a substitution type everywhere in the true
-        // branch. `cond_true_under` has a pair for it, in terms of the declared `T` and `K`.
-        for &(key, value) in self.p.types.mapping(second) {
-            if matches!(self.data(key), TypeData::IndexedAccess { .. })
-                && self.p.types.map(first, key).is_none()
-                && self.is_identity_for(first, key)
-            {
-                pairs.push((key, value));
-                changed = true;
-            }
-        }
         if !changed {
             return first;
         }
         self.p.types.mapper_of(&pairs)
-    }
-
-    /// Whether `mapper` maps each type parameter in the indexed access type `ty` to itself.
-    fn is_identity_for(&self, mapper: MapperId, ty: TypeId) -> bool {
-        match *self.data(ty) {
-            TypeData::IndexedAccess { obj, index, .. } => {
-                self.is_identity_for(mapper, obj) && self.is_identity_for(mapper, index)
-            }
-            TypeData::TypeParam(..) | TypeData::ThisParam(_) => {
-                self.p.types.map(mapper, ty) == Some(ty)
-            }
-            _ => !self.has_type_variables(ty),
-        }
     }
 
     pub fn instantiate_all(&mut self, types: &[TypeId], mapper: MapperId) -> Vec<TypeId> {
@@ -380,11 +356,6 @@ impl<'p> Checker<'p> {
                 index,
                 undefined,
             } => {
-                // `cond_true_under` maps the checked `T[K]` of a conditional type as a whole: in the true branch it is a
-                // substitution type (`getConditionalFlowTypeOfType`).
-                if let Some(substituted) = self.p.types.map(mapper, ty) {
-                    return substituted;
-                }
                 let undefined = *undefined;
                 let declared = *obj;
                 let (obj, index) = (
@@ -419,9 +390,27 @@ impl<'p> Checker<'p> {
                 let t = self.instantiate(*t, mapper);
                 self.keyof_with_origin(t)
             }
-            TypeData::Substitution { base: t, .. } => {
-                let t = self.instantiate(*t, mapper);
-                self.no_infer(t)
+            &TypeData::Substitution { base, constraint } => {
+                let base = self.instantiate(base, mapper);
+                if constraint == TypeId::UNKNOWN {
+                    return self.no_infer(base);
+                }
+                let constraint = self.instantiate(constraint, mapper);
+                // It can be resolved to the base type in the same cases as the conditional type resolves to its true branch.
+                let is_variable = self.is_type_variable(base);
+                if is_variable && self.is_generic(constraint) {
+                    return self.substitution_type(base, constraint);
+                }
+                if self.is_any(constraint)
+                    || constraint == TypeId::UNKNOWN
+                    || self.related(base, constraint, super::relate::Relation::Restrictive)
+                {
+                    return base;
+                }
+                if is_variable {
+                    return self.substitution_type(base, constraint);
+                }
+                self.intersection(&[constraint, base])
             }
             TypeData::Template { texts, types } => {
                 let types = self.instantiate_all(types, mapper);

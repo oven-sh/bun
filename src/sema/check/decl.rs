@@ -190,11 +190,20 @@ impl<'p> Checker<'p> {
             .filter(|&(i, p)| {
                 i < taken
                     || match *self.data(p) {
-                        TypeData::TypeParam(f, tp, _) => mentioned.type_params.contains(&Sym {
-                            file: f,
-                            id: self.bound(f).type_param_symbol[tp.idx()],
-                        }),
-                        TypeData::ThisParam(_) => mentioned.this,
+                        TypeData::TypeParam(f, tp, _) => {
+                            let id = self.bound(f).type_param_symbol[tp.idx()];
+                            mentioned.type_params.contains(&Sym { file: f, id })
+                                || !self.type_param_has_one_declaration(f, tp)
+                        }
+                        // `getDeclaredTypeOfClassOrInterface`: a class, and what is generic, has a `this` type.
+                        TypeData::ThisParam(owner) => {
+                            mentioned.this
+                                || self.files().decls_of(owner).len() != 1
+                                    && (self.files().flags(owner).contains(SymFlags::CLASS)
+                                        || params[..i].iter().any(|&outer| {
+                                            matches!(self.data(outer), TypeData::TypeParam(..))
+                                        }))
+                        }
                         _ => true,
                     }
             })
@@ -205,6 +214,16 @@ impl<'p> Checker<'p> {
         } else {
             self.p.types.mapper(pairs)
         }
+    }
+
+    /// `len(tp.symbol.Declarations) == 1`. `infer U` written twice is one symbol of its scope. The type parameters of a class or an
+    /// interface are among its members.
+    fn type_param_has_one_declaration(&self, file: FileId, tp: TypeParamId) -> bool {
+        let bound = self.bound(file);
+        let symbol = bound.type_param_symbol[tp.idx()];
+        let declaration = crate::bind::MemberDeclaration::TypeParameter(tp);
+        (symbol.is_none() || bound.symbols[symbol.idx()].decls.len() == 1)
+            && self.files().declarations_of_member(file, declaration).len() == 1
     }
 
     fn type_param_names_in_scope(&mut self, file: FileId, scope: ScopeId) -> SmallVec<[Atom; 8]> {
@@ -1505,6 +1524,10 @@ impl<'p> Checker<'p> {
         for (file, decl) in declarations_of(self.files(), sym) {
             let Decl::Enum(e) = decl else { continue };
             for m in self.hir(file)[e].members.iter() {
+                // `hasBindableName`
+                if self.hir(file)[m].name.is_none() {
+                    continue;
+                }
                 let member = self
                     .files()
                     .sym(file, self.bound(file).enum_member_symbol[m.idx()]);
@@ -1880,6 +1903,7 @@ impl<'p> Checker<'p> {
             return self.excessively_deep();
         }
         let ty = self.type_from_node_uncached(file, node);
+        let ty = self.conditional_flow_type_of_type(file, ty, node);
         let ty = self.with_alias_for_type_node(file, node, ty);
         if self.leave() {
             self.p.type_node_types.set(file, node.idx(), ty);

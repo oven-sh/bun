@@ -313,7 +313,11 @@ impl<'p> Checker<'p> {
     #[inline]
     pub fn force(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
-            TypeData::LazyAlias { .. } | TypeData::Substitution { .. } => self.force_reference(ty),
+            TypeData::LazyAlias { .. }
+            | TypeData::Substitution {
+                constraint: TypeId::UNKNOWN,
+                ..
+            } => self.force_reference(ty),
             TypeData::Union(_) | TypeData::Intersection(_)
                 if self.p.types.flags(ty).contains(TypeFlags::HAS_LAZY_MEMBER) =>
             {
@@ -371,9 +375,7 @@ impl<'p> Checker<'p> {
                 self.note_depth(Deep::Instantiation(ty, MapperId::IDENTITY), None);
                 let (hosted, hosted_arguments) = (*sym, args);
                 match self.type_reference(hosted, hosted_arguments) {
-                    expanded if matches!(self.data(expanded), TypeData::Substitution { .. }) => {
-                        self.force(expanded)
-                    }
+                    expanded if self.is_no_infer(expanded) => self.force(expanded),
                     expanded => match self.stored_alias(ty) {
                         Some((alias, type_arguments)) => self.instantiated_under_alias(
                             hosted,
@@ -386,7 +388,10 @@ impl<'p> Checker<'p> {
                     },
                 }
             }
-            TypeData::Substitution { base: t, .. } => self.force(*t),
+            TypeData::Substitution {
+                base,
+                constraint: TypeId::UNKNOWN,
+            } => self.force(*base),
             _ => ty,
         }
     }
@@ -421,6 +426,46 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `getSubstitutionType`
+    pub(super) fn substitution_type(&mut self, base: TypeId, constraint: TypeId) -> TypeId {
+        if self.is_any(constraint)
+            || constraint == TypeId::UNKNOWN
+            || constraint == base
+            || self.is_any(base)
+        {
+            return base;
+        }
+        self.intern(TypeData::Substitution { base, constraint })
+    }
+
+    /// `getSubstitutionIntersection`
+    pub(super) fn substitution_intersection(&mut self, base: TypeId, constraint: TypeId) -> TypeId {
+        if constraint == TypeId::UNKNOWN {
+            base
+        } else {
+            self.intersection(&[constraint, base])
+        }
+    }
+
+    /// `getActualTypeVariable`
+    pub(super) fn actual_type_variable(&mut self, ty: TypeId) -> TypeId {
+        let is_substitution =
+            |c: &Self, t: TypeId| matches!(c.data(t), TypeData::Substitution { .. });
+        match *self.data(ty) {
+            TypeData::Substitution { base, .. } => self.actual_type_variable(base),
+            TypeData::IndexedAccess { obj, index, .. }
+                if is_substitution(self, obj) || is_substitution(self, index) =>
+            {
+                let (obj, index) = (
+                    self.actual_type_variable(obj),
+                    self.actual_type_variable(index),
+                );
+                self.indexed_access(obj, index)
+            }
+            _ => ty,
+        }
+    }
+
     /// `isNoInferTargetType`
     fn is_no_infer_target_type(&mut self, ty: TypeId) -> bool {
         match self.data(ty) {
@@ -428,6 +473,9 @@ impl<'p> Checker<'p> {
                 parts.iter().any(|&part| self.is_no_infer_target_type(part))
             }
             TypeData::LazyAlias { .. } => !self.is_no_infer(ty),
+            &TypeData::Substitution { base, constraint } => {
+                constraint != TypeId::UNKNOWN && self.is_no_infer_target_type(base)
+            }
             _ => {
                 self.is_object_type(ty) && !self.is_empty_anonymous_object_type(ty)
                     || self.is_instantiable(ty) && !self.is_pattern_literal(ty)
@@ -550,15 +598,18 @@ impl<'p> Checker<'p> {
     fn members_uncached(&mut self, ty: TypeId) -> Option<(Built<'p>, MapperId)> {
         self.guard("members");
         match self.data(ty) {
-            TypeData::Substitution { base: t, .. } => self.members(*t).map(|members| {
-                (
-                    Built {
-                        resolved: members.resolved,
-                        kept: None,
-                    },
-                    members.mapper,
-                )
-            }),
+            &TypeData::Substitution { base, constraint } => {
+                let both = self.substitution_intersection(base, constraint);
+                self.members(both).map(|members| {
+                    (
+                        Built {
+                            resolved: members.resolved,
+                            kept: None,
+                        },
+                        members.mapper,
+                    )
+                })
+            }
             TypeData::Ref { target, args } => {
                 let target = *target;
                 let declared = self.declared_type(target);
@@ -1564,7 +1615,8 @@ impl<'p> Checker<'p> {
             Decl::Interface(i) => bound.interface_symbol[i.idx()],
             _ => return true,
         };
-        own.is_none() || self.files().sym(file, own) == self.files().canonical(sym)
+        let whole = self.files().canonical(sym);
+        own.is_none() || self.files().parts(whole).contains(&Sym { file, id: own })
     }
 
     /// The declaration of class `sym` that says what it extends.
@@ -4390,8 +4442,10 @@ impl<'p> Checker<'p> {
             TypeData::Template { .. } | TypeData::StringMapping { .. } => {
                 self.base_constraint_of_as(t, true).unwrap_or(t)
             }
-            // `getSubstitutionIntersection`
-            TypeData::Substitution { base: of, .. } => self.next_base_constraint(*of),
+            &TypeData::Substitution { base, constraint } => {
+                let both = self.substitution_intersection(base, constraint);
+                self.next_base_constraint(both)
+            }
             // A variadic element gives way to what it extends only if that is arrays and tuples with no variadic element of their own.
             TypeData::Tuple {
                 elems,

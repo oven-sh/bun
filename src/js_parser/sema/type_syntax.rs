@@ -3200,8 +3200,6 @@ impl<'a> Builder<'a> {
                         other_extends.extend(self.attempt(|p| p.parse_member_expr().map(Some)));
                     }
                     self.skip_heritage_expression()?;
-                    let end = self.pos();
-                    self.file.stray_decorators.push((at, end));
                     if is_extends && count == 1 && error.is_none() {
                         error = Some((at, 1174));
                     }

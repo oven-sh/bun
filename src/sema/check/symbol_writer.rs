@@ -4,6 +4,7 @@
 //! Members of classes, interfaces, type literals and object literals have no `SymbolId`: such a symbol is a [`Prop`], and its
 //! declarations are those the binder and `lateBindMember` have put together with the first of them.
 
+use super::enclosing_declaration::Enclosing;
 use super::errors_misc::QueriedThisContainer;
 use super::visit_node::{VisitedKind, VisitedNode};
 use super::*;
@@ -147,13 +148,17 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 Vec::new(),
             ),
             Found::SyntheticDefault(module) => {
-                let (starts_with_global_this, mut chain) = self
-                    .c
-                    .lookup_symbol_chain_for_symbol_to_string(*module, true, self.file, scope);
-                // `hasNonGlobalAugmentationExternalModuleSymbol`: a JSON file is no external module, so it is written.
+                let (starts_with_global_this, mut chain) =
+                    self.c.lookup_symbol_chain_for_symbol_to_string(
+                        *module,
+                        true,
+                        Enclosing::at_scope(self.file, scope),
+                    );
+                // `hasNonGlobalAugmentationExternalModuleSymbol`: a JSON file is no external module, so it is written. It has an
+                // `export =`, which is what an import of it stands for, so no alias names the file.
                 let is_json = self.c.hir(module.file).kind == FileKind::Json;
-                if chain.is_empty() && is_json {
-                    chain.push(*module);
+                if is_json {
+                    chain = vec![*module];
                 }
                 // `getSymbolChain`: "symbol is a module export=, so it kinda looks like it's own parent".
                 let is_its_own_parent = is_json
@@ -519,36 +524,41 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             ExprKind::String(_) | ExprKind::Number(_) | ExprKind::Template { .. } => {
                 self.get_symbol_of_literal(e)
             }
-            // `isThisInTypeQuery`: no expression, so `getTypeFromThisTypeNode(node).symbol`, which no narrowing changes.
-            ExprKind::This if bound.is_in_type_query(e) => {
-                let QueriedThisContainer::Fn(function) =
-                    self.c.this_container_of_type_query(file, e)?
-                else {
-                    return None;
+            ExprKind::This => {
+                let is_queried = bound.is_in_type_query(e);
+                // `GetThisContainer`
+                let function = if is_queried {
+                    match self.c.this_container_of_type_query(file, e) {
+                        Some(QueriedThisContainer::Fn(function)) => Some(function),
+                        _ => None,
+                    }
+                } else {
+                    match self.c.this_container(file, e) {
+                        Some(Ok(function)) => Some(function),
+                        _ => None,
+                    }
                 };
-                if let Some(found) = self.this_parameter_of_function(function) {
+                if let Some(found) =
+                    function.and_then(|function| self.this_parameter_of_function(function))
+                {
                     return Some(found);
                 }
-                // `getThisType`
-                match bound.fns[function.idx()].owner {
-                    FnOwner::Member(m) if !hir[m].flags.contains(Flags::STATIC) => {
-                        self.container_of_member(file, m).map(Found::Symbol)
-                    }
-                    _ => None,
+                // `IsInExpressionContext`: not the `this` of a bare `typeof this`, whose parent is the type query, so it is
+                // `getThisType(node).symbol`, which no narrowing changes. That of `typeof this.x` is under a qualified name, which
+                // is an expression node.
+                if is_queried
+                    && !matches!(bound.expr_parent[e.idx()], Parent::Expr(_))
+                    && let Some(function) = function
+                {
+                    return match bound.fns[function.idx()].owner {
+                        FnOwner::Member(m) if !hir[m].flags.contains(Flags::STATIC) => {
+                            self.container_of_member(file, m).map(Found::Symbol)
+                        }
+                        _ => None,
+                    };
                 }
-            }
-            ExprKind::This => {
-                let this_parameter = match self.c.this_container(file, e) {
-                    Some(Ok(function)) => self.this_parameter_of_function(function),
-                    _ => None,
-                };
-                match this_parameter {
-                    Some(found) => Some(found),
-                    None => {
-                        let ty = self.c.type_of_expr(file, e);
-                        self.symbol_of_type(ty)
-                    }
-                }
+                let ty = self.c.type_of_expr(file, e);
+                self.symbol_of_type(ty)
             }
             // The `meta` of `import.meta` is the member of `getGlobalImportMetaExpressionType`.
             ExprKind::ImportMeta if is_name => {
@@ -669,7 +679,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             }
             // `getSymbolOfDeclaration(parent)`: the key of `Object.defineProperty(object, "name", descriptor)`, which declares
             // the property in JavaScript.
-            ExprKind::Call(_) if hir.is_js => {
+            ExprKind::Call(_) if hir.is_js && !matches!(hir[e].kind, ExprKind::Number(_)) => {
                 let (object, key) = crate::bind::define_property_call(hir, parent)?;
                 if key != e {
                     return None;
@@ -772,9 +782,14 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         {
             // `getSymbol`: an alias that stands for no value is not there. `resolveName` finds the local symbol, which has
             // `SymbolFlagsExportValue`, and `resolveEntityName` leaves it at that.
-            Some(symbol) => files
-                .means(symbol, SymFlags::VALUE)
-                .then_some(Found::LocalSymbol(symbol)),
+            // `trySymbolTable` looks under `symbol.Name`: a module that `export as namespace a` makes global is not called `a`.
+            Some(symbol) => files.means(symbol, SymFlags::VALUE).then(|| {
+                if files.symbol(symbol).name == name {
+                    Found::LocalSymbol(symbol)
+                } else {
+                    Found::Symbol(symbol)
+                }
+            }),
             None => match name {
                 known::undefined | known::globalThis => {
                     Some(Found::Undeclared(self.c.atom_text(name)))
@@ -825,7 +840,19 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                                 originating_import, ..
                             },
                         ..
-                    } => self.c.files().alias_target(*originating_import),
+                    } => {
+                        // `resolveESModuleSymbol`: `moduleSymbol`, not what it says it is with `export =`.
+                        let (files, at) = (self.c.files(), originating_import.file);
+                        let declarations = &files.symbol(*originating_import).decls;
+                        declarations.iter().find_map(|decl| match *decl {
+                            Decl::ImportNamespace(import) => {
+                                let import = &self.c.hir(at)[import];
+                                let mode = files.mode_of_import(at, import.mode);
+                                files.module_of_specifier_as(at, import.spec, mode)
+                            }
+                            _ => None,
+                        })
+                    }
                     _ => None,
                 };
                 if let Some(module) = module {
@@ -1309,8 +1336,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 (self.c.start_inside_parentheses(file, e), Flags::empty())
             }
             Declaration::TypeNode(node) => (hir[node].pos, Flags::empty()),
-            // Right after the `(`.
-            Declaration::ThisParameter(function) => (hir[function].anchor + 1, Flags::empty()),
+            Declaration::ThisParameter(function) => (hir[function].this_pos, Flags::empty()),
         }
     }
 
@@ -1345,8 +1371,11 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         let (starts_with_global_this, chain) = if is_type_parameter || is_found_by_name {
             (false, vec![symbol])
         } else {
-            self.c
-                .lookup_symbol_chain_for_symbol_to_string(symbol, false, self.file, at)
+            self.c.lookup_symbol_chain_for_symbol_to_string(
+                symbol,
+                false,
+                Enclosing::at_scope(self.file, at),
+            )
         };
         (
             self.symbol_chain_to_string(starts_with_global_this, &chain, at),
@@ -1461,9 +1490,12 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             None => return name,
             Some(PropertyParent::Named(parent)) => parent,
             Some(PropertyParent::Symbol(parent)) => {
-                let (starts_with_global_this, chain) = self
-                    .c
-                    .lookup_symbol_chain_for_symbol_to_string(parent, true, self.file, at);
+                let (starts_with_global_this, chain) =
+                    self.c.lookup_symbol_chain_for_symbol_to_string(
+                        parent,
+                        true,
+                        Enclosing::at_scope(self.file, at),
+                    );
                 if chain.is_empty() {
                     return name;
                 }
@@ -1533,7 +1565,9 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         let name = self.c.symbol_to_string(symbol);
         // `startsWithSingleOrDoubleQuote`: a function that `declare module "m" {}` adds to goes by its own name.
         if name.starts_with(['"', '\'']) && self.is_external_module(symbol) {
-            let specifier = self.c.specifier_for_module_symbol_at(symbol, self.file, at);
+            let specifier = self
+                .c
+                .specifier_for_module_symbol_at(symbol, Enclosing::at_scope(self.file, at));
             // `getSpecifierForModuleSymbol`: without a file, `StripQuotes(symbol.Name)` (`isAmbientModuleSymbolName`).
             if !specifier.is_empty() {
                 return super::print::quoted(&specifier, '"', true);
@@ -1578,10 +1612,7 @@ fn this_parameter(file: FileId, function: FnId) -> Found {
 fn push_access(text: &mut String, name: &str, is_enum_member: bool) {
     let bare = name.strip_prefix('#').unwrap_or(name);
     // `canUsePropertyAccess`
-    if !bare.is_empty()
-        && !bare.as_bytes()[0].is_ascii_digit()
-        && bare.bytes().all(is_identifier_part)
-    {
+    if bun_core::lexer::is_identifier(bare.as_bytes()) {
         text.push('.');
         text.push_str(name);
         return;

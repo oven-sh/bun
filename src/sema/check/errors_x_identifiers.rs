@@ -102,7 +102,7 @@ impl Pass<'_, '_> {
     }
 
     fn is_bound(&self, e: ExprId) -> bool {
-        !matches!(self.bound.expr_parent[e.idx()], Parent::None)
+        !self.bound.is_unchecked(e.idx())
     }
 
     /// Whether `node` is the expression of a decorator.

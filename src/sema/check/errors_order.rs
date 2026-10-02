@@ -69,7 +69,7 @@ impl Checker<'_> {
         let index = self.exprs_by_kind(file);
         let runs_in_place = self.has_function_run_in_place(file);
         for &e in index.of(ExprTag::Ident) {
-            if !matches!(bound.expr_parent[e.idx()], Parent::None) {
+            if !bound.is_unchecked(e.idx()) {
                 self.check_name_declared_before_use(file, e, runs_in_place, out);
             }
         }
@@ -88,7 +88,7 @@ impl Checker<'_> {
                 name_pos,
                 ..
             } = hir[e].kind
-                && !matches!(bound.expr_parent[e.idx()], Parent::None)
+                && !bound.is_unchecked(e.idx())
             {
                 self.check_property_not_used_before_declaration(
                     file,

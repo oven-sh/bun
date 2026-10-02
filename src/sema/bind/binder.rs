@@ -57,6 +57,8 @@ pub(super) struct Binder<'f> {
     /// `bindChildren`: control gets to where the statement, declaration or expression being bound starts. What that does to the flow
     /// of control is then noted, be control lost inside it, as in `x = (() => { throw e })()`.
     is_reached: bool,
+    /// What is being bound goes to `unchecked_exprs`.
+    is_unchecked: bool,
     /// Until the file is done, `start` of the node of a label says which of these it is.
     label_edges: Vec<Label>,
     /// Where the functions without a body start that nothing known outside holds in.
@@ -164,6 +166,7 @@ impl<'f> Binder<'f> {
             expando_assignments: Vec::new(),
             flow: UNREACHABLE,
             is_reached: false,
+            is_unchecked: false,
             label_edges: Vec::new(),
             start_of_signatures: FlowId::NONE,
             spared: 0,
@@ -1630,6 +1633,7 @@ impl<'f> Binder<'f> {
         }
         self.b.assignments.sort_unstable_by_key(|a| (a.0.0, a.1.0));
         self.b.type_query_operands.as_mut_slice().sort_unstable();
+        self.b.unchecked_exprs.as_mut_slice().sort_unstable();
         self.b.free_idents.sort_unstable_by_key(|f| f.0);
         self.b.alias_idents.sort_unstable_by_key(|a| a.0);
         self.b.arguments_objects.as_mut_slice().sort_unstable();
@@ -1903,7 +1907,7 @@ impl<'f> Binder<'f> {
                     self.b.enum_member_symbol[m.idx()] = member;
                     self.b.enum_member_owner[m.idx()] = e;
                     if self.f[m].computed_name.is_some() {
-                        self.expr(self.f[m].computed_name, Parent::EnumInit(m));
+                        self.unchecked_expr(self.f[m].computed_name, Parent::EnumInit(m));
                     }
                     if self.f[m].init.is_some() {
                         self.expr(self.f[m].init, Parent::EnumInit(m));
@@ -2000,7 +2004,14 @@ impl<'f> Binder<'f> {
             } => {
                 self.push_scope(ScopeKind::Block, SymbolId::NONE);
                 let (pre, post) = (self.loop_label(), self.branch_label());
-                self.expr(expr, me);
+                // `checkForOfStatement` checks the right side only through the declared variable. `for (var of X)` declares none.
+                if matches!(self.f[id].kind, StmtKind::ForOf { .. })
+                    && matches!(self.f[left].kind, StmtKind::Var(decls) if decls.is_empty())
+                {
+                    self.unchecked_expr(expr, me);
+                } else {
+                    self.expr(expr, me);
+                }
                 self.enter_loop(pre);
                 self.add_edge(post, self.flow);
                 self.b.stmt_parent[left.idx()] = me;
@@ -2163,7 +2174,7 @@ impl<'f> Binder<'f> {
                 let flags = if expression_is_alias(self.f, e) {
                     SymFlags::ALIAS
                 } else {
-                    SymFlags::EXPORT_VALUE
+                    SymFlags::PROPERTY
                 } | SymFlags::EXPORT_ONLY;
                 let symbol = self.new_symbol(name, flags, Decl::ExportExpr(id), SymbolId::NONE);
                 self.export_if_vacant(name, symbol);
@@ -3119,8 +3130,8 @@ impl<'f> Binder<'f> {
             self.expr(c.extends, Parent::ClassExtends(id));
             for other in self.f.ids(c.other_extends) {
                 self.b.expr_scope.insert(other, base_expression);
+                self.unchecked_expr(other, Parent::ClassExtends(id));
             }
-            self.exprs(c.other_extends, Parent::ClassExtends(id));
             self.pop_scope();
             self.scope_change_of = scope_change_of;
         }
@@ -3636,8 +3647,18 @@ impl<'f> Binder<'f> {
         }
     }
 
+    /// `expr`, of what `checkSourceFile` never comes to.
+    fn unchecked_expr(&mut self, id: ExprId, parent: Parent) {
+        let around = std::mem::replace(&mut self.is_unchecked, true);
+        self.expr(id, parent);
+        self.is_unchecked = around;
+    }
+
     fn expr(&mut self, id: ExprId, parent: Parent) {
         self.b.expr_parent[id.idx()] = parent;
+        if self.is_unchecked {
+            self.b.unchecked_exprs.push(id);
+        }
         let around_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
         match self.f[id].kind {
             // Of a declaration file there is no text: there the names the classes around declare tell.
@@ -3905,7 +3926,7 @@ impl<'f> Binder<'f> {
                             if is_alias {
                                 SymFlags::ALIAS
                             } else {
-                                SymFlags::EXPORT_VALUE
+                                SymFlags::PROPERTY
                             },
                             Decl::ModuleExports(id),
                         )),

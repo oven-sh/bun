@@ -1173,9 +1173,7 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for &e in index.of(ExprTag::Await) {
             let start = hir[e].pos;
-            if matches!(bound.expr_parent[e.idx()], Parent::None)
-                || !is_word_at(&hir.text, start as usize, b"await")
-            {
+            if bound.is_unchecked(e.idx()) || !is_word_at(&hir.text, start as usize, b"await") {
                 continue;
             }
             let place = self.place_of_await_in(file, Parent::Expr(e), rules);
@@ -1219,9 +1217,7 @@ impl Checker<'_> {
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for &e in index.of(ExprTag::Yield) {
-            if !matches!(bound.expr_parent[e.idx()], Parent::None)
-                && self.xs_is_in_parameter_initializer(file, e)
-            {
+            if !bound.is_unchecked(e.idx()) && self.xs_is_in_parameter_initializer(file, e) {
                 out.push(Diagnostic {
                     start: hir[e].pos,
                     code: 2523,
@@ -1651,7 +1647,7 @@ impl Checker<'_> {
             let ExprKind::Yield { value, .. } = e.kind else {
                 continue;
             };
-            if value.is_none() || matches!(bound.expr_parent[yield_expr.idx()], Parent::None) {
+            if value.is_none() || bound.is_unchecked(yield_expr.idx()) {
                 continue;
             }
             let is_operand_checked = match self.xs_containing_function(file, yield_expr) {

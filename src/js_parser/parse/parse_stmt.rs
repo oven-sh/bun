@@ -620,16 +620,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 lexical_decl: LexicalDecl::AllowAll,
                                 ..Default::default()
                             };
-                            let stmt_start = p.lexer.loc();
-                            let stmt = p.parse_stmt(&mut stmt_opts)?;
-                            if stmt.loc.start > stmt_start.start {
-                                p.mark_type_syntax(
-                                    stmt.loc,
-                                    crate::sema::Mark::DeclarationStart,
-                                    stmt_start,
-                                );
-                            }
-                            body.push(stmt);
+                            body.push(p.parse_stmt(&mut stmt_opts)?);
                         }
                     }
                 }
@@ -3089,7 +3080,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let loc = self.lexer.loc();
-        match self.lexer.token {
+        let stmt = match self.lexer.token {
             T::TSemicolon => Self::t_semicolon(self),
             T::TAt => Self::t_at(self, opts),
 
@@ -3117,7 +3108,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TEscapedKeyword => Self::t_escaped_keyword(self, opts, loc),
 
             _ => Self::parse_stmt_fallthrough(self, opts, loc),
+        }?;
+        if stmt.loc.start > loc.start {
+            self.mark_type_syntax(stmt.loc, crate::sema::Mark::DeclarationStart, loc);
         }
+        Ok(stmt)
     }
 }
 

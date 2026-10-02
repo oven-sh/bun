@@ -182,7 +182,7 @@ impl Checker<'_> {
                 continue;
             };
             let parent = bound.expr_parent[e.idx()];
-            if matches!(parent, Parent::None) {
+            if bound.is_unchecked(e.idx()) {
                 continue;
             }
             let text = self.files().atoms.bytes(name);
@@ -416,9 +416,7 @@ impl Checker<'_> {
             else {
                 continue;
             };
-            if !is_private_name_at(hir, name_pos)
-                || matches!(bound.expr_parent[e.idx()], Parent::None)
-            {
+            if !is_private_name_at(hir, name_pos) || bound.is_unchecked(e.idx()) {
                 continue;
             }
             if is_private_constructor_name(text, name_pos) {
@@ -444,7 +442,7 @@ impl Checker<'_> {
         }
         for &e in index.of(ExprTag::String) {
             let (parent, pos) = (bound.expr_parent[e.idx()], hir[e].pos);
-            if !is_private_name_at(hir, pos) || matches!(parent, Parent::None) {
+            if !is_private_name_at(hir, pos) || bound.is_unchecked(e.idx()) {
                 continue;
             }
             // JSX text may start with `#`.
@@ -504,7 +502,7 @@ impl Checker<'_> {
                 continue;
             };
             let i = e.idx();
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             // `checkNonNullExpression`: that the object is there comes first, whatever the key.
@@ -1551,7 +1549,6 @@ impl Checker<'_> {
             }
         }
         // `getTypeFromIndexedAccessTypeNode`
-        let mut parents: Option<Vec<TypeNodeId>> = None;
         for t in 0..hir.types.len() {
             let TypeNodeKind::IndexedAccess { obj, index } = hir.types[t].kind else {
                 continue;
@@ -1559,11 +1556,11 @@ impl Checker<'_> {
             if bound.type_scope[t].is_none() {
                 continue;
             }
-            let (written, keys) = (
+            let (object, keys) = (
                 self.type_from_node(file, obj),
                 self.type_from_node(file, index),
             );
-            let (object, keys) = (self.force(written), self.force(keys));
+            let (object, keys) = (self.force(object), self.force(keys));
             // `shouldDeferIndexedAccessType`
             if !self.is_known(object)
                 || !self.is_known(keys)
@@ -1582,20 +1579,6 @@ impl Checker<'_> {
                 if code == 2514 {
                     continue;
                 }
-                // `getConditionalFlowTypeOfType`: in the true branch of `A extends B ? .. : ..`, `A` is a `B` as well.
-                let parents = parents.get_or_insert_with(|| Self::type_node_parents(hir, bound));
-                let narrowed = self.conditional_flow_type(file, written, obj, parents);
-                let mut looked_into = apparent;
-                if narrowed != written {
-                    if self.is_generic(narrowed) {
-                        continue;
-                    }
-                    let narrowed = self.reduced_apparent_type(narrowed);
-                    if self.why_no_lookup(narrowed, key, false).is_none() {
-                        continue;
-                    }
-                    looked_into = narrowed;
-                }
                 out.push(Diagnostic {
                     start: hir[index].pos,
                     code,
@@ -1604,7 +1587,7 @@ impl Checker<'_> {
                 let key = if keys == TypeId::BOOLEAN { keys } else { key };
                 let end = self.end_of_type_node(file, index);
                 self.explain_another(hir[index].pos, end, code, |c| {
-                    c.names_in_no_lookup(code, looked_into, key)
+                    c.names_in_no_lookup(code, apparent, key)
                 });
             }
         }

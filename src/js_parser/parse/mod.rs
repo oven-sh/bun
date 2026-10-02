@@ -416,7 +416,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         p.discard_scopes_up_to(scope_index);
                         p.mark_type_syntax(class_keyword.loc, Mark::OtherExtends, start.loc);
-                        p.mark_type_syntax(start.loc, Mark::StrayDecorator, p.lexer.full_start());
                         if count == 1 && !stop_checking {
                             p.lexer.ts_grammar_error(start, 1174);
                             stop_checking = true;
@@ -2691,10 +2690,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
             }
-            if stmt.loc.start > stmt_start.start {
-                p.mark_type_syntax(stmt.loc, Mark::DeclarationStart, stmt_start);
-            }
-
             let mut skip = matches!(stmt.data, js_ast::stmt::Data::SEmpty(_));
             // Parse one or more directives at the beginning
             if is_directive_prologue {

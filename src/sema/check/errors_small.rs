@@ -499,7 +499,7 @@ impl Checker<'_> {
         let index = self.exprs_by_kind(file);
         for e in in_file_order([index.of(ExprTag::Cond), index.of(ExprTag::Binary)]) {
             let i = e.idx();
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             match hir.exprs[i].kind {
@@ -936,7 +936,7 @@ impl Checker<'_> {
             }
             let owner = bound.prop_owner[p];
             if owner.is_none()
-                || matches!(bound.expr_parent[owner.idx()], Parent::None)
+                || bound.is_unchecked(owner.idx())
                 || self.is_assignment_target(file, owner)
             {
                 continue;
@@ -1008,7 +1008,7 @@ impl Checker<'_> {
             else {
                 continue;
             };
-            if matches!(bound.expr_parent[e.idx()], Parent::None) {
+            if bound.is_unchecked(e.idx()) {
                 continue;
             }
             let (l, r) = (

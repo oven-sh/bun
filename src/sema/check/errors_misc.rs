@@ -43,7 +43,7 @@ impl Checker<'_> {
             this,
         ]) {
             let i = e.idx();
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             match hir.exprs[i].kind {

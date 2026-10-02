@@ -4,7 +4,6 @@
 //! A port of `verifyCompilerOptions` (TypeScript 7.0.2, compiler/program.go) without the checks that depend on output paths. 6266 is
 //! reported by `convertJsonOption` (tsoptions) while the configuration is parsed.
 
-use crate::check::errors_x_regexp_scanner::{is_identifier_part, is_identifier_start};
 use crate::json::Json;
 use crate::json_places::{self, Value};
 use crate::resolve::{JsxEmit, ModuleKind, Options};
@@ -69,8 +68,7 @@ fn is_white_space_like(ch: char) -> bool {
 
 /// `IsIdentifierText`
 fn is_identifier(text: &str) -> bool {
-    let mut chars = text.chars().map(u32::from);
-    chars.next().is_some_and(is_identifier_start) && chars.all(is_identifier_part)
+    bun_core::lexer::is_identifier(text.as_bytes())
 }
 
 /// `ParseIsolatedEntityName`: whether `text` is an identifier or a qualified name. Keywords count as identifiers, and white space may

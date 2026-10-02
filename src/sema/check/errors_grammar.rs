@@ -204,7 +204,7 @@ impl Checker<'_> {
             let ExprKind::ImportCall(specifier, more) = e.kind else {
                 continue;
             };
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             let after_keyword = hir
@@ -390,8 +390,7 @@ impl Checker<'_> {
                 continue;
             };
             let i = id.idx();
-            if matches!(bound.expr_parent[i], Parent::None) || !self.is_side_effect_free(file, left)
-            {
+            if bound.is_unchecked(i) || !self.is_side_effect_free(file, left) {
                 continue;
             }
             // `isIndirectCall`: `(0, x.f)()` is a way of calling `x.f` without `x` for `this`.
@@ -543,7 +542,7 @@ impl Checker<'_> {
                 // The operand of a `typeof` in a type is seen to with the types.
                 if let ExprKind::Ident(name) = e.kind
                     && is_reserved(name)
-                    && !matches!(bound.expr_parent[id.idx()], Parent::None)
+                    && !bound.is_unchecked(id.idx())
                     && !bound.is_in_type_query(id)
                     && !self.is_ambient_expr(file, id)
                 {
@@ -559,7 +558,7 @@ impl Checker<'_> {
             .iter()
             .chain(index.of(ExprTag::Unary))
         {
-            if matches!(bound.expr_parent[id.idx()], Parent::None) {
+            if bound.is_unchecked(id.idx()) {
                 continue;
             }
             let e = &hir[id];
@@ -673,9 +672,7 @@ impl Checker<'_> {
         }
         for (i, c) in hir.classes.iter().enumerate() {
             let is_bound = match bound.class_owner[i] {
-                ClassOwner::Expr(x) => {
-                    x.is_some() && !matches!(bound.expr_parent[x.idx()], Parent::None)
-                }
+                ClassOwner::Expr(x) => x.is_some() && !bound.is_unchecked(x.idx()),
                 ClassOwner::Stmt(s) => s.is_some(),
             };
             // Its name is inside it.

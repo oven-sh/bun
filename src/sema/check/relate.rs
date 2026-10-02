@@ -261,6 +261,7 @@ fn is_instantiable_kind(data: &TypeData) -> bool {
             | TypeData::Marker(_)
             | TypeData::IndexedAccess { .. }
             | TypeData::Cond { .. }
+            | TypeData::Substitution { .. }
             | TypeData::Keyof(_)
             | TypeData::Template { .. }
             | TypeData::StringMapping { .. }
@@ -449,7 +450,11 @@ impl<'p> Checker<'p> {
         let data = self.data(ty);
         if matches!(
             data,
-            TypeData::LazyAlias { .. } | TypeData::Substitution { .. }
+            TypeData::LazyAlias { .. }
+                | TypeData::Substitution {
+                    constraint: TypeId::UNKNOWN,
+                    ..
+                }
         ) {
             let ty = self.force(ty);
             return (ty, self.data(ty));
@@ -599,6 +604,9 @@ impl<'p> Checker<'p> {
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
                 parts.iter().any(|&p| self.is_generic_object_type(p))
             }
+            &TypeData::Substitution { base, constraint } => {
+                self.is_generic_object_type(base) || self.is_generic_object_type(constraint)
+            }
             TypeData::TypeParam(..)
             | TypeData::ThisParam(_)
             | TypeData::Marker(_)
@@ -613,6 +621,9 @@ impl<'p> Checker<'p> {
         match self.data(ty) {
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
                 parts.iter().any(|&p| self.is_generic_index_type(p))
+            }
+            &TypeData::Substitution { base, constraint } => {
+                self.is_generic_index_type(base) || self.is_generic_index_type(constraint)
             }
             TypeData::Template { .. } | TypeData::StringMapping { .. } => {
                 !self.is_pattern_literal(ty)
@@ -937,6 +948,7 @@ impl<'p> Checker<'p> {
                 | TypeData::Intersection(_)
                 | TypeData::IndexedAccess { .. }
                 | TypeData::Cond { .. }
+                | TypeData::Substitution { .. }
         )
     }
 
@@ -1378,7 +1390,11 @@ impl<'p> Checker<'p> {
                         self.normalized_tuple(&simpler, flags, *readonly)
                     }
                 }
-                TypeData::LazyAlias { .. } | TypeData::Substitution { .. } => self.force(t),
+                TypeData::LazyAlias { .. } => self.force(t),
+                &TypeData::Substitution { base, .. } if writing => base,
+                &TypeData::Substitution { base, constraint } => {
+                    self.substitution_intersection(base, constraint)
+                }
                 // `createTypeReference(t.Target(), getTypeArguments(t))`, of a deferred type reference.
                 TypeData::Ref { .. } | TypeData::Tuple { .. } => {
                     return self.without_alias_of_reference(t);
@@ -1629,14 +1645,15 @@ impl<'p> Checker<'p> {
     fn simplified_conditional(&mut self, t: TypeId, writing: bool) -> TypeId {
         let (check, extends) = (self.cond_check(t), self.cond_extends(t));
         let (yes, no) = (self.cond_true(t), self.cond_false(t));
-        if no == TypeId::NEVER && yes == check {
+        let checked = self.actual_type_variable(check);
+        if no == TypeId::NEVER && self.actual_type_variable(yes) == checked {
             if self.has_any_flag(check) || self.related(check, extends, Relation::Restrictive) {
                 return self.simplified(yes, writing);
             }
             if self.intersection(&[check, extends]) == TypeId::NEVER {
                 return TypeId::NEVER;
             }
-        } else if yes == TypeId::NEVER && no == check {
+        } else if yes == TypeId::NEVER && self.actual_type_variable(no) == checked {
             if !self.has_any_flag(check) && self.related(check, extends, Relation::Restrictive) {
                 return TypeId::NEVER;
             }
@@ -1955,24 +1972,9 @@ impl<'p> Checker<'p> {
         self.cond_piece(t, 1)
     }
 
-    /// `getTrueTypeFromConditionalType`, where it is what a value goes to.
+    /// `getTrueTypeFromConditionalType`
     pub(super) fn cond_true(&mut self, t: TypeId) -> TypeId {
-        self.resolved_cond_true(t, false)
-    }
-
-    /// `resolvedTrueType`: the true branch under the mapper of `t` itself, computed once. `as_source`: see `substitution`.
-    fn resolved_cond_true(&mut self, t: TypeId, as_source: bool) -> TypeId {
-        if let Some(&cached) = self.cond_true_memo.get(&(t, as_source)) {
-            return cached;
-        }
-        let cycles_before = self.cycles;
-        let mapper = self.cond_origin(t).2;
-        let result = self.cond_true_under(t, mapper, as_source);
-        // A result computed while a resolution cycle was hit may be incomplete, so it is not cached.
-        if self.cycles == cycles_before {
-            self.cond_true_memo.insert((t, as_source), result);
-        }
-        result
+        self.cond_piece(t, 2)
     }
 
     /// `getFalseTypeFromConditionalType`
@@ -1997,103 +1999,6 @@ impl<'p> Checker<'p> {
         matches!(self.data(declared), TypeData::TypeParam(..)).then_some(declared)
     }
 
-    /// What is checked, as declared, and the syntax of what it is checked against: `[T] extends [U]` checks `T` against `U`.
-    /// `getImpliedConstraint`
-    fn cond_implied_constraint(
-        &mut self,
-        file: FileId,
-        check: TypeNodeId,
-        extends: TypeNodeId,
-    ) -> (TypeId, TypeNodeId) {
-        let hir = self.hir(file);
-        if let (TypeNodeKind::Tuple(a), TypeNodeKind::Tuple(b)) =
-            (hir[check].kind, hir[extends].kind)
-            && let (Some(a), None, Some(b), None) = (
-                a.iter().next(),
-                a.iter().nth(1),
-                b.iter().next(),
-                b.iter().nth(1),
-            )
-        {
-            return self.cond_implied_constraint(file, hir[a].ty, hir[b].ty);
-        }
-        (self.type_from_node(file, check), extends)
-    }
-
-    /// What a reference to `base` comes to in the branch taken when the test passes, where it is known to be a `constraint`:
-    /// `instantiateTypeWorker` of a substitution type. What is a substitution type still is `constraint & base` where a value
-    /// comes from (`getSubstitutionIntersection`) and `base` where one goes to (`getNormalizedType`).
-    pub(super) fn substitution(
-        &mut self,
-        base: TypeId,
-        constraint: TypeId,
-        as_source: bool,
-    ) -> TypeId {
-        // `getSubstitutionType`
-        if self.is_any(constraint) || constraint == TypeId::UNKNOWN || constraint == base {
-            return base;
-        }
-        let is_variable = self.is_type_variable(base);
-        if is_variable && !as_source {
-            return base;
-        }
-        // The base alone where the conditional type would come to this branch.
-        if !(is_variable && self.is_generic(constraint))
-            && self.related(base, constraint, Relation::Restrictive)
-        {
-            return base;
-        }
-        self.intersection(&[constraint, base])
-    }
-
-    /// `getTrueTypeFromConditionalType`, with `mapper` for the mapper of `t`. `as_source`: see `substitution`.
-    fn cond_true_under(&mut self, t: TypeId, mapper: MapperId, as_source: bool) -> TypeId {
-        let (file, _, _, nodes) = self.cond_origin(t);
-        let declared = self.type_from_node(file, nodes[2]);
-        // With nothing filled in nothing is instantiated: whatever is checked is a substitution type still.
-        if !as_source && self.p.types.mapping(mapper).iter().all(|p| p.0 == p.1) {
-            return self.instantiate(declared, mapper);
-        }
-        let (checked, extends) = self.cond_implied_constraint(file, nodes[0], nodes[1]);
-        // Substitution types are not represented. `getConditionalFlowTypeOfType` makes one of every reference to the checked type
-        // in the branch. A checked type variable (`TypeFlagsTypeVariable`) is replaced through the mapper wherever the branch
-        // references it. Any other checked type is replaced where it is the whole branch, `any[] extends T ? any[] : never`, or
-        // by making the branch again from its syntax.
-        if declared != checked
-            && !(self.is_type_variable(checked) && self.references_type_variable(declared, checked))
-        {
-            if !self.is_type_variable(checked)
-                && let Some(substituted) = self.true_branch_with_check_type_substituted(
-                    file,
-                    [nodes[0], extends, nodes[2]],
-                    checked,
-                    mapper,
-                    as_source,
-                )
-            {
-                return substituted;
-            }
-            return self.instantiate(declared, mapper);
-        }
-        let extends = self.type_from_node(file, extends);
-        let (base, constraint) = (
-            self.instantiate(checked, mapper),
-            self.instantiate(extends, mapper),
-        );
-        let known = self.substitution(base, constraint, as_source);
-        if declared == checked {
-            return known;
-        }
-        if known == base {
-            return self.instantiate(declared, mapper);
-        }
-        let mut pairs = self.p.types.mapping(mapper).to_vec();
-        pairs.retain(|p| p.0 != checked);
-        pairs.push((checked, known));
-        let passed = self.p.types.mapper(pairs);
-        self.instantiate(declared, passed)
-    }
-
     /// Whether instantiating `ty` replaces the type variable `variable` anywhere in it.
     fn references_type_variable(&mut self, ty: TypeId, variable: TypeId) -> bool {
         if !self.has_type_variables(ty) {
@@ -2107,20 +2012,14 @@ impl<'p> Checker<'p> {
         is_referenced
     }
 
-    /// `getTrueTypeFromConditionalType`, where it is what a value comes from.
-    pub(super) fn cond_true_as_source(&mut self, t: TypeId) -> TypeId {
-        self.resolved_cond_true(t, true)
-    }
-
     /// `getInferredTrueTypeFromConditionalType`: the true branch under `combinedMapper`, that is with what `getConditionalType`
     /// inferred before it put the test off. From what waits itself nothing is inferred: what is to be inferred is then as wide
-    /// as it can be. `narrowed`: what was checked is read as having passed, as where a value comes from; otherwise as where a
-    /// value goes to. A substitution type is the one or the other place by place.
-    fn cond_inferred_true(&mut self, t: TypeId, narrowed: bool) -> TypeId {
+    /// as it can be.
+    fn cond_inferred_true(&mut self, t: TypeId) -> TypeId {
         let params = self.cond_infer_params(t);
         let (file, _, mapper, nodes) = self.cond_origin(t);
         if params.is_empty() {
-            return self.resolved_cond_true(t, narrowed);
+            return self.cond_true(t);
         }
         let check = self.cond_check(t);
         let check = self.force(check);
@@ -2154,21 +2053,13 @@ impl<'p> Checker<'p> {
             pairs.extend(params.iter().copied().zip(inferred));
         }
         let combined = self.p.types.mapper(pairs);
-        self.cond_true_under(t, combined, narrowed)
+        let declared = self.type_from_node(file, nodes[2]);
+        self.instantiate(declared, combined)
     }
 
     /// `getDefaultConstraintOfConditionalType`
     pub(super) fn default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
-        self.default_constraint_of_conditional_ex(t, true)
-    }
-
-    /// `narrowed`: see `cond_inferred_true`.
-    pub(super) fn default_constraint_of_conditional_ex(
-        &mut self,
-        t: TypeId,
-        narrowed: bool,
-    ) -> TypeId {
-        let (yes, no) = (self.cond_inferred_true(t, narrowed), self.cond_false(t));
+        let (yes, no) = (self.cond_inferred_true(t), self.cond_false(t));
         // A branch that is `any` would make the whole assignable to anything.
         if self.is_any(yes) {
             no
@@ -3200,6 +3091,7 @@ impl<'p> Checker<'p> {
             TypeData::Intersection(parts) => parts
                 .iter()
                 .all(|&p| self.is_excess_property_check_target(p)),
+            TypeData::Substitution { base, .. } => self.is_excess_property_check_target(*base),
             // `ObjectFlagsObjectLiteralPatternWithComputedProperties`: there is no telling what else it takes.
             TypeData::Synth(shape) => shape.literal != Literalness::PatternWithComputedNames,
             data => t == TypeId::OBJECT || is_object_kind(data),
@@ -3213,6 +3105,7 @@ impl<'p> Checker<'p> {
                 self.is_excess_property_check_target(t)
                     && parts.iter().any(|&p| self.is_known_property(p, name))
             }
+            TypeData::Substitution { base, .. } => self.is_known_property(*base, name),
             data => {
                 if !is_object_kind(data) {
                     return false;
@@ -3243,6 +3136,9 @@ impl<'p> Checker<'p> {
         let data = self.data(t);
         if let TypeData::Intersection(parts) = data {
             return parts.iter().all(|&p| self.is_weak_type(p));
+        }
+        if let TypeData::Substitution { base, .. } = data {
+            return self.is_weak_type(*base);
         }
         if !is_object_kind(data) || is_mapped_kind(data) && self.is_generic(t) {
             return false;
@@ -4524,6 +4420,24 @@ impl<'p> Checker<'p> {
                         }
                     }
                 }
+                (
+                    TypeData::Substitution {
+                        base: sb,
+                        constraint: sc,
+                    },
+                    TypeData::Substitution {
+                        base: tb,
+                        constraint: tc,
+                    },
+                ) => {
+                    let mut result = self.is_related_to(r, *sb, *tb, REC_BOTH);
+                    if result.holds() {
+                        result &= self.is_related_to(r, *sc, *tc, REC_BOTH);
+                        if result.holds() {
+                            return result;
+                        }
+                    }
+                }
                 (TypeData::Cond { .. }, TypeData::Cond { .. }) => {
                     if self.cond_distributes_over(source).is_some()
                         == self.cond_distributes_over(target).is_some()
@@ -5030,17 +4944,9 @@ impl<'p> Checker<'p> {
                         if self.is_related_to(r, sc, tc, REC_BOTH).holds()
                             || self.is_related_to(r, tc, sc, REC_BOTH).holds()
                         {
-                            // What was checked has passed where it is a source, and is itself where it ends up as a target
-                            // (`getNormalizedType` of a substitution type). Either reading all through asks for no less.
-                            let ty = self.cond_true(target);
-                            let (narrowed, plain) =
-                                (self.cond_true_as_source(source), self.cond_true(source));
-                            let sy = self.instantiate(narrowed, mapper);
+                            let (sy, ty) = (self.cond_true(source), self.cond_true(target));
+                            let sy = self.instantiate(sy, mapper);
                             let mut result = self.is_related_to(r, sy, ty, REC_BOTH);
-                            if !result.holds() && plain != narrowed {
-                                let sy = self.instantiate(plain, mapper);
-                                result = self.is_related_to(r, sy, ty, REC_BOTH);
-                            }
                             if result.holds() {
                                 let (sn, tn) = (self.cond_false(source), self.cond_false(target));
                                 result &= self.is_related_to(r, sn, tn, REC_BOTH);
@@ -5056,14 +4962,6 @@ impl<'p> Checker<'p> {
                 let result = self.is_related_to(r, default_constraint, target, REC_SOURCE);
                 if result.holds() {
                     return result;
-                }
-                // The other reading, as above.
-                let plain = self.default_constraint_of_conditional_ex(source, false);
-                if plain != default_constraint {
-                    let result = self.is_related_to(r, plain, target, REC_SOURCE);
-                    if result.holds() {
-                        return result;
-                    }
                 }
                 // Not against another conditional type: what is checked is replaced by what it extends, and too much fits.
                 if !matches!(self.data(target), TypeData::Cond { .. })
@@ -5241,8 +5139,13 @@ impl<'p> Checker<'p> {
         }
         // An object fits a union told apart by some properties if every way it can be is some member's.
         if source_is_object_or_intersection && matches!(td, TypeData::Union(_)) {
-            let object_only =
-                self.filter(target, |c, m| c.is_object_type(m) || c.is_intersection(m));
+            let object_only = self.filter(target, |c, m| {
+                c.is_object_type(m)
+                    || matches!(
+                        c.data(m),
+                        TypeData::Intersection(_) | TypeData::Substitution { .. }
+                    )
+            });
             if self.is_union(object_only) {
                 let result = self.type_related_to_discriminated_type(
                     r,

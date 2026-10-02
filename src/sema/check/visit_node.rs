@@ -737,7 +737,7 @@ impl Visitor<'_, '_> {
                 TypeNodeKind::Ref { name, .. } if hir.ids(name).eq([known::empty]) => {
                     self.missing_identifier(start, VisitedKind::TypeReferenceName(node, 0));
                 }
-                TypeNodeKind::Keyword(_)
+                TypeNodeKind::Keyword(Keyword::Any)
                     if !hir.is_in_jsdoc(start) && self.c.is_missing_type(file, node) =>
                 {
                     self.missing_identifier(start, VisitedKind::TypeReferenceName(node, 0));

@@ -1461,8 +1461,8 @@ fn excluded_flags(flags: SymFlags) -> SymFlags {
     if flags.contains(SymFlags::FUNCTION_SCOPED_VARIABLE) {
         out |= value.difference(SymFlags::FUNCTION_SCOPED_VARIABLE);
     }
-    if flags.contains(SymFlags::EXPORT_VALUE) {
-        out |= value.difference(SymFlags::EXPORT_VALUE);
+    if flags.contains(SymFlags::PROPERTY) {
+        out |= value.difference(SymFlags::PROPERTY);
     }
     if flags.contains(SymFlags::ENUM_MEMBER) {
         out |= both;
@@ -3218,9 +3218,9 @@ impl Files {
                 };
             }
             flags |= self.flags(next);
-            // The static member is a property, which is a value. `EXPORT_VALUE` stands for `SymbolFlagsProperty` here.
+            // The static member is a property, which is a value. `SymbolFlagsProperty`.
             if self.static_member_of_same_name(next).is_some() {
-                flags |= SymFlags::EXPORT_VALUE;
+                flags |= SymFlags::PROPERTY;
             }
             way[i] = next;
         }

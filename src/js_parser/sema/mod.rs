@@ -42,8 +42,6 @@ pub(crate) enum Mark {
     AssertedParen,
     /// From a tagged template, to the `<` of the type arguments of its tag.
     TagTypeArguments,
-    /// From a tagged template, to its `` ` ``.
-    Template,
     /// From where the body of an arrow function is said to be, to its `=>`.
     ArrowToken,
     /// From the `class` keyword, to the `<` after the expression it extends.
@@ -91,6 +89,8 @@ pub(crate) enum CastKind {
     Instantiation,
     /// `(e)`. `to` is where the `(` is; of `<T>(e)`, where the `<` is.
     Paren,
+    /// `e` is the tag of a tagged template. `to` is where the `` ` `` is.
+    Tag,
 }
 
 /// Which expression, when several start at the same place: `a`, `a.b` and `a.b()` do.

@@ -70,7 +70,7 @@ impl Checker<'_> {
                     } => !matches!(hir[right].kind, ExprKind::Number(_)),
                     _ => false,
                 };
-                is_evaluated && !matches!(bound.expr_parent[e.idx()], Parent::None)
+                is_evaluated && !bound.is_unchecked(e.idx())
             }));
         }
         if evaluated.is_empty() && hir.enums.is_empty() {
@@ -132,7 +132,7 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for i in 0..hir.exprs.len() {
             let parent = bound.expr_parent[i];
-            if matches!(parent, Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             let e = ExprId(i as u32);
@@ -260,7 +260,7 @@ impl Checker<'_> {
             let ExprKind::Ident(name) = hir[e].kind else {
                 continue;
             };
-            if matches!(bound.expr_parent[e.idx()], Parent::None) {
+            if bound.is_unchecked(e.idx()) {
                 continue;
             }
             let mut at = scope;
@@ -478,7 +478,7 @@ impl Checker<'_> {
         };
         for &(e, scope) in &bound.free_idents {
             if let ExprKind::Ident(name) = hir[e].kind
-                && !matches!(bound.expr_parent[e.idx()], Parent::None)
+                && !bound.is_unchecked(e.idx())
                 && means_umd_global(name, scope, SymFlags::VALUE)
             {
                 out.push(Diagnostic {
@@ -596,7 +596,7 @@ impl Checker<'_> {
         }
         for (i, x) in hir.exprs.iter().enumerate() {
             let ExprKind::Jsx(jsx) = x.kind else { continue };
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             if hir[jsx].tag.is_none() {

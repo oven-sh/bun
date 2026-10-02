@@ -6,7 +6,7 @@
 use super::call::CallLike;
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{MemberOwner, Parent};
+use crate::bind::MemberOwner;
 
 /// Where a decorator is written.
 #[derive(Copy, Clone)]
@@ -390,7 +390,7 @@ impl<'p> Checker<'p> {
         let mut refused: Vec<DecoratorOwner> = Vec::new();
         for i in 0..hir.decorators.len() {
             let (owner, e) = hir.decorators[i];
-            if matches!(bound.expr_parent[e.idx()], Parent::None) {
+            if bound.is_unchecked(e.idx()) {
                 continue;
             }
             let written = self.where_decorator_is(file, e);

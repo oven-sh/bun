@@ -1006,9 +1006,13 @@ impl<'p> Checker<'p> {
     fn is_excluded_mapped_property_name(&mut self, t: TypeId, key: TypeId) -> bool {
         match self.data(t) {
             TypeData::Cond { .. } => {
-                let yes = self.cond_piece(t, 2);
+                let (check, yes, no) = (
+                    self.cond_piece(t, 0),
+                    self.cond_piece(t, 2),
+                    self.cond_piece(t, 3),
+                );
                 if self.reduced(yes) != TypeId::NEVER
-                    || self.cond_piece(t, 3) != self.cond_piece(t, 0)
+                    || self.actual_type_variable(no) != self.actual_type_variable(check)
                 {
                     return false;
                 }
@@ -2646,7 +2650,10 @@ impl<'p> Checker<'p> {
     pub(super) fn is_instantiable_non_primitive(&self, ty: TypeId) -> bool {
         self.is_type_variable(ty)
             || self.is_no_infer(ty)
-            || matches!(self.data(ty), TypeData::Cond { .. })
+            || matches!(
+                self.data(ty),
+                TypeData::Cond { .. } | TypeData::Substitution { .. }
+            )
     }
 
     /// Whether `sig` is of a function that is being looked at for the first time: see `Query::ReturnAtFirstLook`.

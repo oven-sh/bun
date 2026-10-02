@@ -12,7 +12,9 @@
 //! be reached (4xxx), which `TrackSymbol` reports.
 
 use super::decl::Predicate;
+use super::enclosing_declaration::Enclosing;
 use super::errors::Diagnostic;
+use super::errors_declaration_emit::{EmitResolver, EmitResolverLinks, Meaning};
 use super::errors_x_enums_names::{Location, is_declared_before_use};
 use super::explain::Related;
 use super::*;
@@ -121,36 +123,16 @@ struct Said {
     is_merged: bool,
 }
 
-/// What a statement is directly in.
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Container {
-    File,
-    Module(ModuleId),
-    Elsewhere,
-}
-
-/// `enclosingDeclaration`, as far as anything is asked of it.
-#[derive(Copy, Clone)]
-struct Around {
-    /// Where names are looked up from.
-    scope: ScopeId,
-    /// The variable, if it is one.
-    variable: VarDeclId,
-    /// `IsFunctionLikeDeclaration`
-    is_function: bool,
-}
-
 /// `DeclarationTransformer`, `SymbolTrackerSharedState` and `NodeBuilderContext`, for one file.
 pub(super) struct Emit {
     file: FileId,
     said: Vec<Said>,
-    /// `DeclarationLinks.isVisible`
-    visible: FxHashMap<Decl, bool>,
+    links: EmitResolverLinks,
     /// `lateMarkedStatements`
     late: Vec<StmtId>,
     /// `expandoHosts`: the variable statements that are written as functions.
     hosts: FxHashSet<StmtId>,
-    around: Around,
+    around: Enclosing,
     /// `suppressReportInferenceFallback`
     is_quiet: bool,
     /// How deep in types what is being written is.
@@ -159,13 +141,10 @@ pub(super) struct Emit {
     written: FxHashSet<(TypeId, bool)>,
     /// `Result.HasExternalReferences` of the values of enum members.
     external: FxHashMap<(FileId, EnumMemberId), bool>,
-    /// The statement that declares each interface, type alias, enum, namespace, import and `import =` of the file.
+    /// The statement that declares each interface, enum and namespace of the file.
     interfaces: Vec<StmtId>,
-    aliases: Vec<StmtId>,
     enums: Vec<StmtId>,
     modules: Vec<StmtId>,
-    imports: Vec<StmtId>,
-    import_equals: Vec<StmtId>,
     /// The scope of each namespace.
     module_scopes: Vec<ScopeId>,
 }
@@ -177,24 +156,17 @@ impl Emit {
         Emit {
             file,
             said: Vec::new(),
-            visible: FxHashMap::default(),
+            links: EmitResolverLinks::default(),
             late: Vec::new(),
             hosts: FxHashSet::default(),
-            around: Around {
-                scope: ScopeId(0),
-                variable: VarDeclId::NONE,
-                is_function: false,
-            },
+            around: Enclosing::at_scope(file, ScopeId(0)),
             is_quiet: true,
             depth: 0,
             written: FxHashSet::default(),
             external: FxHashMap::default(),
             interfaces: Vec::new(),
-            aliases: Vec::new(),
             enums: Vec::new(),
             modules: Vec::new(),
-            imports: Vec::new(),
-            import_equals: Vec::new(),
             module_scopes: Vec::new(),
         }
     }
@@ -205,16 +177,14 @@ impl Emit {
         self.depth = 0;
         self.written.clear();
     }
-}
 
-/// `scanner.IsIdentifierText`
-fn is_identifier_text(text: &[u8]) -> bool {
-    let is_start = |b: u8| b.is_ascii_alphabetic() || b == b'_' || b == b'$' || b >= 0x80;
-    match text.split_first() {
-        Some((&first, rest)) => {
-            is_start(first) && rest.iter().all(|&b| is_start(b) || b.is_ascii_digit())
+    /// `handleSymbolAccessibilityError`, of what is accessible: `AliasesToMakeVisible` are gone over later.
+    fn add_late_marked_statements(&mut self, aliases: Vec<(FileId, StmtId)>) {
+        for (file, statement) in aliases {
+            if file == self.file && !self.late.contains(&statement) {
+                self.late.push(statement);
+            }
         }
-        None => false,
     }
 }
 
@@ -232,35 +202,25 @@ impl<'p> Checker<'p> {
         let mut tx = Emit {
             file,
             said: Vec::new(),
-            visible: FxHashMap::default(),
+            links: EmitResolverLinks::default(),
             late: Vec::new(),
             hosts: FxHashSet::default(),
-            around: Around {
-                scope: ScopeId(0),
-                variable: VarDeclId::NONE,
-                is_function: false,
-            },
+            around: Enclosing::at_scope(file, ScopeId(0)),
             is_quiet: false,
             depth: 0,
             written: FxHashSet::default(),
             external: FxHashMap::default(),
             interfaces: vec![StmtId::NONE; hir.interfaces.len()],
-            aliases: vec![StmtId::NONE; hir.aliases.len()],
             enums: vec![StmtId::NONE; hir.enums.len()],
             modules: vec![StmtId::NONE; hir.modules.len()],
-            imports: vec![StmtId::NONE; hir.imports.len()],
-            import_equals: vec![StmtId::NONE; hir.import_equals.len()],
             module_scopes: vec![ScopeId(0); hir.modules.len()],
         };
         for (i, stmt) in hir.stmts.iter().enumerate() {
             let s = StmtId(i as u32);
             match stmt.kind {
                 StmtKind::Interface(x) => tx.interfaces[x.idx()] = s,
-                StmtKind::TypeAlias(x) => tx.aliases[x.idx()] = s,
                 StmtKind::Enum(x) => tx.enums[x.idx()] = s,
                 StmtKind::Module(x) => tx.modules[x.idx()] = s,
-                StmtKind::Import(x) => tx.imports[x.idx()] = s,
-                StmtKind::ImportEquals(x) => tx.import_equals[x.idx()] = s,
                 _ => {}
             }
         }
@@ -325,7 +285,7 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── the tree ─────────────────────────────
 
-    fn iso_node_of_fn(&self, file: FileId, f: FnId) -> Node {
+    pub(super) fn iso_node_of_fn(&self, file: FileId, f: FnId) -> Node {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match bound.fns[f.idx()].owner {
             FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
@@ -2316,13 +2276,47 @@ impl<'p> Checker<'p> {
     }
 
     /// `enterNewScope`: the names of the parameters and type parameters of `func` mean something.
-    fn iso_enter_scope(&self, tx: &mut Emit, func: FnId) -> Around {
+    fn iso_enter_scope(&self, tx: &mut Emit, func: FnId) -> Enclosing {
         let saved = tx.around;
         let scope = self.bound(tx.file).fns[func.idx()].scope;
         if scope.is_some() {
             tx.around.scope = scope;
+            tx.around.is_fake_scope = true;
         }
         saved
+    }
+
+    /// Of the expression of a `PseudoTypeInferred`: `node.Parent`, which is a pair of parentheses if there is one, and that again if
+    /// `IsDeclaration`.
+    fn iso_parent_of_inferred(&self, tx: &Emit, of: Node) -> (Option<Node>, Option<Node>) {
+        let parent = match of {
+            Node::Expr(e) if !is_parenthesized(self.hir(tx.file), e) => self.iso_parent(tx, of),
+            _ => None,
+        };
+        let declaration = parent.filter(|&parent| self.iso_is_declaration(tx.file, parent));
+        (parent, declaration)
+    }
+
+    /// What `pseudoTypeToNode` reports of a `PseudoTypeInferred`.
+    pub(super) fn iso_error_nodes_of_inferred(
+        &self,
+        tx: &Emit,
+        of: Node,
+        errors: &[Node],
+    ) -> Vec<Node> {
+        if !errors.is_empty() {
+            return errors.to_vec();
+        }
+        let hir = self.hir(tx.file);
+        match (of, self.iso_parent_of_inferred(tx, of).1) {
+            (Node::Expr(e), Some(declaration))
+                if matches!(hir[e].kind, ExprKind::Ident(_))
+                    || is_property_access_entity_name_expression(hir, e) =>
+            {
+                vec![declaration]
+            }
+            _ => vec![of],
+        }
     }
 
     /// `pseudoTypeToNode`
@@ -2337,25 +2331,9 @@ impl<'p> Checker<'p> {
                 is_signature_return,
             } => {
                 let of = *of;
-                // `node.Parent`, which is a pair of parentheses if there is one.
-                let parent = match of {
-                    Node::Expr(e) if !is_parenthesized(self.hir(file), e) => {
-                        self.iso_parent(tx, of)
-                    }
-                    _ => None,
-                };
-                let declaration = parent.filter(|&parent| self.iso_is_declaration(file, parent));
-                if !errors.is_empty() {
-                    for &node in errors {
-                        self.iso_report(tx, node);
-                    }
-                } else if let (Node::Expr(e), Some(declaration)) = (of, declaration)
-                    && (matches!(hir[e].kind, ExprKind::Ident(_))
-                        || is_property_access_entity_name_expression(hir, e))
-                {
-                    self.iso_report(tx, declaration);
-                } else {
-                    self.iso_report(tx, of);
+                let (parent, declaration) = self.iso_parent_of_inferred(tx, of);
+                for node in self.iso_error_nodes_of_inferred(tx, of, errors) {
+                    self.iso_report(tx, node);
                 }
                 if *is_signature_return {
                     if let Some(func) = self.iso_fn_of_node(file, of) {
@@ -2563,7 +2541,7 @@ impl<'p> Checker<'p> {
             return self.iso_write_type(tx, ty);
         }
         let hir = self.hir(file);
-        let in_function = tx.around.is_function;
+        let in_function = self.is_function_like_declaration(tx.around);
         let requires_undefined = match node {
             Node::Param(p) => self.iso_requires_implicit_undefined(file, p, in_function),
             _ => false,
@@ -2777,39 +2755,8 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── types the checker worked out (`nodebuilderimpl.go`) ─────────────────────────────
 
-    /// `t.alias`, of an object type, a function type or a conditional type.
-    fn iso_alias_of(&mut self, ty: TypeId) -> Option<(Sym, Vec<TypeId>)> {
-        if let Some(found) = self.alias_of(ty) {
-            return Some(found);
-        }
-        let (file, node) = match *self.data(ty) {
-            TypeData::Anon {
-                origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
-                ..
-            } => (file, node),
-            TypeData::Cond { file, node, .. } => (file, node),
-            TypeData::Fns { ref decls, .. } => {
-                let [(file, func)] = decls[..] else {
-                    return None;
-                };
-                let FnOwner::Type(node) = self.bound(file).fns[func.idx()].owner else {
-                    return None;
-                };
-                (file, node)
-            }
-            _ => return None,
-        };
-        let aliases = &self.hir(file).aliases;
-        let a = aliases.iter().position(|alias| alias.ty == node)?;
-        let symbol = self.bound(file).alias_symbol[a];
-        if symbol.is_none() || !aliases[a].type_params.is_empty() {
-            return None;
-        }
-        Some((self.files().sym(file, symbol), Vec::new()))
-    }
-
     /// The enum `sym` is, or is a member of, is named.
-    fn iso_track_enum(&self, tx: &mut Emit, sym: Sym) {
+    fn iso_track_enum(&mut self, tx: &mut Emit, sym: Sym) {
         let files = self.files();
         let of = if files.flags(sym).contains(SymFlags::ENUM_MEMBER) {
             let parent = files.symbol(sym).parent;
@@ -2824,7 +2771,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `typeof x`, for the `unique symbol` that `x` holds.
-    fn iso_track_unique_symbol(&self, tx: &mut Emit, symbol: UniqueSymbolDeclaration) {
+    fn iso_track_unique_symbol(&mut self, tx: &mut Emit, symbol: UniqueSymbolDeclaration) {
         let named = match symbol {
             UniqueSymbolDeclaration::Variable(variable) => variable,
             UniqueSymbolDeclaration::Member(file, m) => {
@@ -2863,7 +2810,7 @@ impl<'p> Checker<'p> {
     }
 
     fn iso_write_type_worker(&mut self, tx: &mut Emit, ty: TypeId) {
-        if let Some((alias, args)) = self.iso_alias_of(ty)
+        if let Some((alias, args)) = self.alias_with_arguments_for_declaration_emit(ty)
             && self.iso_is_symbol_accessible(tx, alias, SymFlags::TYPE, false)
         {
             self.iso_track_symbol(tx, alias, SymFlags::TYPE);
@@ -3037,7 +2984,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `trackComputedName`
-    fn iso_track_computed_name(&self, tx: &mut Emit, file: FileId, e: ExprId) {
+    fn iso_track_computed_name(&mut self, tx: &mut Emit, file: FileId, e: ExprId) {
         let first = first_identifier(self.hir(file), e);
         let ExprKind::Ident(name) = self.hir(file)[first].kind else {
             return;
@@ -3052,14 +2999,17 @@ impl<'p> Checker<'p> {
     }
 
     /// `isEntityNameVisible(e, enclosingDeclaration, false)`, of the computed name `[e]`.
-    fn iso_is_computed_name_visible(&self, tx: &mut Emit, file: FileId, e: ExprId) -> bool {
+    fn iso_is_computed_name_visible(&mut self, tx: &mut Emit, file: FileId, e: ExprId) -> bool {
         let first = first_identifier(self.hir(file), e);
         let ExprKind::Ident(name) = self.hir(file)[first].kind else {
             return false;
         };
-        self.files()
-            .resolve_name(tx.file, tx.around.scope, name, SymFlags::VALUE)
-            .is_some_and(|sym| self.iso_has_visible_declarations(tx, sym, false))
+        EmitResolver {
+            c: &mut *self,
+            links: &mut tx.links,
+        }
+        .is_entity_name_visible(name, None, Meaning::Value, tx.around, false)
+        .is_accessible()
     }
 
     /// `indexInfoToObjectComputedNamesOrSignatureDeclaration`: whether the names of `info.components` are written instead of `info`.
@@ -3254,165 +3204,19 @@ impl<'p> Checker<'p> {
         tx.around = saved;
     }
 
-    // ───────────────────────────── what can be seen (`emitresolver.go`, `symbolaccessibility.go`) ─────────────────────────────
-
-    fn iso_container(&self, file: FileId, s: StmtId) -> Container {
-        match self.bound(file).stmt_parent.get(s.idx()) {
-            Some(Parent::File) => Container::File,
-            Some(&Parent::Module(m)) => Container::Module(m),
-            _ => Container::Elsewhere,
-        }
-    }
-
-    fn iso_is_container_visible(&self, tx: &mut Emit, container: Container) -> bool {
-        match container {
-            Container::File => true,
-            Container::Module(m) => self.iso_is_declaration_visible(tx, Decl::Module(m)),
-            Container::Elsewhere => false,
-        }
-    }
-
-    /// The statement of the file that `decl` is, or is declared by, and its modifiers. Of a variable, if it is not taken out of a
-    /// pattern.
-    fn iso_statement_of(&self, tx: &Emit, decl: Decl) -> Option<(StmtId, Flags)> {
-        let (hir, bound) = (self.hir(tx.file), self.bound(tx.file));
-        let (statement, flags) = match decl {
-            Decl::Var(pat) => {
-                let PatParent::Var(d) = bound.pat_parent[pat.idx()] else {
-                    return None;
-                };
-                (bound.var_stmt[d.idx()], hir[d].flags)
-            }
-            Decl::Fn(f) => {
-                let FnOwner::Stmt(s) = bound.fns[f.idx()].owner else {
-                    return None;
-                };
-                (s, hir[f].flags)
-            }
-            Decl::Class(c) => {
-                let ClassOwner::Stmt(s) = bound.class_owner[c.idx()] else {
-                    return None;
-                };
-                (s, hir[c].flags)
-            }
-            Decl::Interface(i) => (tx.interfaces[i.idx()], hir[i].flags),
-            Decl::Alias(a) => (tx.aliases[a.idx()], hir[a].flags),
-            Decl::Enum(e) => (tx.enums[e.idx()], hir[e].flags),
-            Decl::Module(m) => (tx.modules[m.idx()], hir[m].flags),
-            Decl::ImportEquals(i) => (tx.import_equals[i.idx()], hir[i].flags),
-            _ => return None,
-        };
-        statement.is_some().then_some((statement, flags))
-    }
+    // ───────────────────────────── what can be seen: the `EmitResolver` is asked ─────────────────────────────
 
     /// `isDeclarationVisible`, of a declaration of the file.
-    fn iso_is_declaration_visible(&self, tx: &mut Emit, decl: Decl) -> bool {
-        if let Some(&known) = tx.visible.get(&decl) {
-            return known;
+    fn iso_is_declaration_visible(&mut self, tx: &mut Emit, decl: Decl) -> bool {
+        EmitResolver {
+            c: &mut *self,
+            links: &mut tx.links,
         }
-        let is_visible = self.iso_determine_if_visible(tx, decl);
-        tx.visible.insert(decl, is_visible);
-        is_visible
-    }
-
-    /// `determineIfDeclarationIsVisible`
-    fn iso_determine_if_visible(&self, tx: &mut Emit, decl: Decl) -> bool {
-        let file = tx.file;
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match decl {
-            Decl::Var(pat) => match bound.pat_parent[pat.idx()] {
-                PatParent::Var(_) => {}
-                // A binding element: `isDeclarationVisible(node.Parent.Parent)`
-                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => {
-                    return self.iso_is_pattern_owner_visible(tx, outer);
-                }
-                _ => return false,
-            },
-            Decl::Param(_) | Decl::TypeParam(_) | Decl::File | Decl::UmdGlobal(_) => return true,
-            Decl::ExportSpec(x) => {
-                let export = hir[x].export;
-                let statement = hir
-                    .stmts
-                    .iter()
-                    .position(|s| matches!(s.kind, StmtKind::ExportNamed(e) if e == export));
-                return match statement {
-                    Some(s) if hir[export].spec.is_none() => {
-                        let container = self.iso_container(file, StmtId(s as u32));
-                        self.iso_is_container_visible(tx, container)
-                    }
-                    _ => false,
-                };
-            }
-            _ => {}
-        }
-        let Some((statement, flags)) = self.iso_statement_of(tx, decl) else {
-            return false;
-        };
-        self.iso_is_statement_visible(tx, decl, statement, flags)
-    }
-
-    /// The same, of what is declared by the statement `statement` with the modifiers `flags`.
-    fn iso_is_statement_visible(
-        &self,
-        tx: &mut Emit,
-        decl: Decl,
-        statement: StmtId,
-        flags: Flags,
-    ) -> bool {
-        let file = tx.file;
-        let hir = self.hir(file);
-        let container = self.iso_container(file, statement);
-        // `IsExternalModuleAugmentation`
-        if let Decl::Module(m) = decl
-            && !matches!(hir[m].name, ModuleName::Ident(_))
-        {
-            let is_augmentation = match container {
-                Container::File => hir.has_module_syntax,
-                Container::Module(outer) => {
-                    !matches!(hir[outer].name, ModuleName::Ident(_))
-                        && !hir.has_module_syntax
-                        && self.iso_container(file, tx.modules[outer.idx()]) == Container::File
-                }
-                Container::Elsewhere => false,
-            };
-            if is_augmentation {
-                return true;
-            }
-        }
-        let is_in_ambient_namespace = !matches!(decl, Decl::ImportEquals(_))
-            && matches!(container, Container::Module(m) if hir[m].flags.contains(Flags::AMBIENT));
-        if !flags.contains(Flags::EXPORT) && !is_in_ambient_namespace {
-            // `IsGlobalSourceFile`
-            return container == Container::File && !self.files().module(file).is_module();
-        }
-        self.iso_is_container_visible(tx, container)
-    }
-
-    /// `isDeclarationVisible`, of what binds the pattern `pat`: a variable declaration, a parameter or another binding element.
-    fn iso_is_pattern_owner_visible(&self, tx: &mut Emit, pat: PatId) -> bool {
-        let (hir, bound) = (self.hir(tx.file), self.bound(tx.file));
-        match bound.pat_parent[pat.idx()] {
-            PatParent::Var(d) => {
-                let is_empty = match hir[pat].kind {
-                    PatKind::Object(props) => props.is_empty(),
-                    PatKind::Array(elems) => elems.is_empty(),
-                    _ => false,
-                };
-                let statement = bound.var_stmt[d.idx()];
-                !is_empty
-                    && statement.is_some()
-                    && self.iso_is_statement_visible(tx, Decl::Var(pat), statement, hir[d].flags)
-            }
-            PatParent::Param(_) => true,
-            PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => {
-                self.iso_is_pattern_owner_visible(tx, outer)
-            }
-            PatParent::None => false,
-        }
+        .is_declaration_visible(tx.file, decl)
     }
 
     /// `getBindingNameVisible`, of what binds `pat`.
-    fn iso_is_binding_name_visible(&self, tx: &mut Emit, pat: PatId) -> bool {
+    fn iso_is_binding_name_visible(&mut self, tx: &mut Emit, pat: PatId) -> bool {
         let hir = self.hir(tx.file);
         match hir[pat].kind {
             PatKind::Missing => false,
@@ -3426,145 +3230,26 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `hasVisibleDeclarations`. With `paints`, what is not visible and can be made so is (`addVisibleAlias`), and its statement is gone
-    /// over later (`handleSymbolAccessibilityError`).
-    fn iso_has_visible_declarations(&self, tx: &mut Emit, sym: Sym, paints: bool) -> bool {
-        let file = tx.file;
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut painted: Vec<StmtId> = Vec::new();
-        for &(of, decl) in self.files().decls_of(sym).iter() {
-            // What is found by a name from here and is declared elsewhere is global, or in a module that is declared.
-            if of != file || self.iso_is_declaration_visible(tx, decl) {
-                continue;
-            }
-            let aliasing = match decl {
-                // `getAnyImportSyntax`
-                Decl::ImportDefault(i) | Decl::ImportNamespace(i) => Some(tx.imports[i.idx()]),
-                Decl::ImportSpec(x) => Some(tx.imports[hir[x].import.idx()]),
-                // A binding element.
-                Decl::Var(pat) if !matches!(bound.pat_parent[pat.idx()], PatParent::Var(_)) => {
-                    if !self
-                        .files()
-                        .flags(sym)
-                        .contains(SymFlags::BLOCK_SCOPED_VARIABLE)
-                    {
-                        return false;
-                    }
-                    // `WalkUpBindingElementsAndPatterns`
-                    let mut at = pat;
-                    let root = loop {
-                        match bound.pat_parent[at.idx()] {
-                            PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => at = outer,
-                            PatParent::Var(d) => break d,
-                            _ => return false,
-                        }
-                    };
-                    if hir[root].flags.contains(Flags::EXPORT) {
-                        continue;
-                    }
-                    Some(bound.var_stmt[root.idx()])
-                }
-                _ => self
-                    .iso_statement_of(tx, decl)
-                    .filter(|(_, flags)| !flags.contains(Flags::EXPORT))
-                    .map(|(statement, _)| statement),
-            };
-            let Some(statement) = aliasing.filter(|s| s.is_some()) else {
-                return false;
-            };
-            if matches!(decl, Decl::Var(_)) && !matches!(hir[statement].kind, StmtKind::Var(_)) {
-                return false;
-            }
-            let container = self.iso_container(file, statement);
-            if !self.iso_is_container_visible(tx, container) {
-                return false;
-            }
-            if paints {
-                tx.visible.insert(decl, true);
-                painted.push(statement);
-            }
-        }
-        for statement in painted {
-            if !tx.late.contains(&statement) {
-                tx.late.push(statement);
-            }
-        }
-        true
-    }
-
-    /// The first of `getAccessibleSymbolChain`: `sym` itself if its name means it where the declaration is written, or else an alias
-    /// at the top of the file that stands for it.
-    fn iso_name_in_scope(&self, tx: &Emit, sym: Sym, meaning: SymFlags) -> Option<Sym> {
-        let files = self.files();
-        let name = files.symbol(sym).name;
-        if name.is_some()
-            && let Some(found) = files.resolve_name(tx.file, tx.around.scope, name, meaning)
-        {
-            if found == sym || files.export_symbol_of_value_symbol_if_exported(found) == sym {
-                return Some(sym);
-            }
-            if files.flags(found).contains(SymFlags::ALIAS)
-                && files.resolve_alias(found) == Some(sym)
-            {
-                return Some(found);
-            }
-        }
-        let bound = self.bound(tx.file);
-        bound
-            .table(bound.scopes[0].locals)
-            .iter()
-            .map(|&(_, id)| files.sym(tx.file, id))
-            .find(|&alias| {
-                files.flags(alias).contains(SymFlags::ALIAS)
-                    && files.resolve_alias(alias) == Some(sym)
-            })
-    }
-
-    /// `IsSymbolAccessible`, cut down: by its name or that of an import, or else as a member of what it is exported from. A module can
-    /// always be imported.
+    /// `IsSymbolAccessible(sym, enclosingDeclaration, meaning, paints)`
     fn iso_is_symbol_accessible(
-        &self,
+        &mut self,
         tx: &mut Emit,
         sym: Sym,
         meaning: SymFlags,
         paints: bool,
     ) -> bool {
-        let files = self.files();
-        let (mut at, mut meaning) = (sym, meaning);
-        for _ in 0..16 {
-            if let Some(first) = self.iso_name_in_scope(tx, at, meaning)
-                && self.iso_has_visible_declarations(tx, first, paints)
-            {
-                return true;
-            }
-            // `hasNonGlobalAugmentationExternalModuleSymbol`
-            let is_module = files.decls_of(at).iter().any(|&(file, decl)| match decl {
-                Decl::File => files.module(file).is_module(),
-                Decl::Module(m) => matches!(self.hir(file)[m].name, ModuleName::String(_)),
-                _ => false,
-            });
-            if is_module {
-                return true;
-            }
-            let symbol = files.symbol(at);
-            if symbol.parent.is_none() {
-                return false;
-            }
-            let parent = files.sym(at.file, symbol.parent);
-            if files.export(parent, symbol.name) != Some(at) {
-                return false;
-            }
-            at = parent;
-            // `getQualifiedLeftMeaning`
-            if meaning != SymFlags::VALUE {
-                meaning = SymFlags::NAMESPACE;
-            }
+        let access = EmitResolver {
+            c: &mut *self,
+            links: &mut tx.links,
         }
-        false
+        .is_symbol_accessible(sym, tx.around, Meaning::of(meaning, false), paints);
+        let is_accessible = access.is_accessible();
+        tx.add_late_marked_statements(access.aliases);
+        is_accessible
     }
 
     /// `TrackSymbol`
-    fn iso_track_symbol(&self, tx: &mut Emit, sym: Sym, meaning: SymFlags) {
+    fn iso_track_symbol(&mut self, tx: &mut Emit, sym: Sym, meaning: SymFlags) {
         if !self.files().flags(sym).contains(SymFlags::TYPE_PARAMETER) {
             self.iso_is_symbol_accessible(tx, sym, meaning, true);
         }
@@ -3572,27 +3257,36 @@ impl<'p> Checker<'p> {
 
     /// `checkEntityNameVisibility`, of a name whose first identifier is `name`, looked up in `scope`.
     fn iso_check_name_visibility(
-        &self,
+        &mut self,
         tx: &mut Emit,
         scope: ScopeId,
         name: Atom,
         meaning: SymFlags,
     ) {
-        if let Some(sym) = self.files().resolve_name(tx.file, scope, name, meaning)
-            && !self.files().flags(sym).contains(SymFlags::TYPE_PARAMETER)
-        {
-            self.iso_has_visible_declarations(tx, sym, true);
+        let at = Enclosing { scope, ..tx.around };
+        let access = EmitResolver {
+            c: &mut *self,
+            links: &mut tx.links,
         }
+        .is_entity_name_visible(name, None, Meaning::of(meaning, false), at, true);
+        tx.add_late_marked_statements(access.aliases);
     }
 
     /// The same, of `a` or `a.b.c` written as an expression: a computed name, or what a class extends.
-    fn iso_check_expression_visibility(&self, tx: &mut Emit, e: ExprId) {
+    fn iso_check_expression_visibility(&mut self, tx: &mut Emit, e: ExprId) {
         let first = first_identifier(self.hir(tx.file), e);
-        if let ExprKind::Ident(name) = self.hir(tx.file)[first].kind
-            && let Some(sym) = self.symbol_of_identifier(tx.file, first, name)
-        {
-            self.iso_has_visible_declarations(tx, sym, true);
+        let ExprKind::Ident(name) = self.hir(tx.file)[first].kind else {
+            return;
+        };
+        let Some(sym) = self.symbol_of_identifier(tx.file, first, name) else {
+            return;
+        };
+        let aliases = EmitResolver {
+            c: &mut *self,
+            links: &mut tx.links,
         }
+        .has_visible_declarations(sym, true);
+        tx.add_late_marked_statements(aliases.unwrap_or_default());
     }
 
     // ───────────────────────────── the way over the file (`transform.go`) ─────────────────────────────
@@ -3641,7 +3335,7 @@ impl<'p> Checker<'p> {
                     if of != file {
                         continue;
                     }
-                    tx.visible.insert(decl, true);
+                    tx.links.paint_visible(file, decl);
                     if let Decl::ImportEquals(i) = decl
                         && let ImportEqualsTarget::Entity(names) = hir[i].target
                         && !names.is_empty()
@@ -3656,10 +3350,10 @@ impl<'p> Checker<'p> {
 
     /// The scope of what the statement `s` is directly in.
     fn iso_scope_around(&self, tx: &Emit, s: StmtId) -> ScopeId {
-        match self.iso_container(tx.file, s) {
-            Container::File => ScopeId(0),
-            Container::Module(m) => tx.module_scopes[m.idx()],
-            Container::Elsewhere => tx.around.scope,
+        match self.bound(tx.file).stmt_parent.get(s.idx()) {
+            Some(Parent::File) => ScopeId(0),
+            Some(&Parent::Module(m)) => tx.module_scopes[m.idx()],
+            _ => tx.around.scope,
         }
     }
 
@@ -3760,7 +3454,9 @@ impl<'p> Checker<'p> {
                 },
                 _ => None,
             };
-            if !property.is_some_and(|name| is_identifier_text(self.files().atoms.bytes(name))) {
+            if !property
+                .is_some_and(|name| bun_core::lexer::is_identifier(self.files().atoms.bytes(name)))
+            {
                 continue;
             }
             // `isDeclarationAndNotVisible`
@@ -3859,11 +3555,7 @@ impl<'p> Checker<'p> {
             return;
         }
         let saved = tx.around;
-        tx.around = Around {
-            scope: self.iso_scope_around(tx, s),
-            variable: VarDeclId::NONE,
-            is_function: false,
-        };
+        tx.around = Enclosing::at_scope(tx.file, self.iso_scope_around(tx, s));
         match kind {
             // `transformImportEqualsDeclaration`
             StmtKind::ImportEquals(i) => {
@@ -3995,11 +3687,7 @@ impl<'p> Checker<'p> {
             unwrapped = right;
         }
         let saved = tx.around;
-        tx.around = Around {
-            scope: self.iso_scope_around(tx, s),
-            variable: VarDeclId::NONE,
-            is_function: false,
-        };
+        tx.around = Enclosing::at_scope(tx.file, self.iso_scope_around(tx, s));
         match hir[unwrapped].kind {
             // `transformClassExpressionToDeclaration`
             ExprKind::Class(c) => self.iso_transform_class(tx, c, false),
@@ -4455,16 +4143,7 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         let saved = self.iso_enter_scope(tx, f);
         tx.around.variable = VarDeclId::NONE;
-        tx.around.is_function = matches!(
-            hir[f].kind,
-            FnKind::Decl
-                | FnKind::Expr
-                | FnKind::Arrow
-                | FnKind::Method
-                | FnKind::Getter
-                | FnKind::Setter
-                | FnKind::Constructor
-        );
+        tx.around.is_fake_scope = false;
         self.iso_visit_type_params(tx, hir[f].type_params);
         self.iso_update_param_list(tx, f);
         if !matches!(hir[f].kind, FnKind::Constructor | FnKind::Setter) {
@@ -4491,7 +4170,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `visitBindingName`
-    fn iso_visit_binding_name(&self, tx: &mut Emit, pat: PatId) {
+    fn iso_visit_binding_name(&mut self, tx: &mut Emit, pat: PatId) {
         let hir = self.hir(tx.file);
         match hir[pat].kind {
             PatKind::Object(props) => {
@@ -4517,7 +4196,7 @@ impl<'p> Checker<'p> {
     fn iso_ensure_type_of_parameter(&mut self, tx: &mut Emit, p: ParamId) {
         let file = tx.file;
         let ty = self.hir(file)[p].ty;
-        let in_function = tx.around.is_function;
+        let in_function = self.is_function_like_declaration(tx.around);
         if ty.is_some() && !self.iso_requires_implicit_undefined(file, p, in_function) {
             return self.iso_visit_type(tx, ty);
         }

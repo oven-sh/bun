@@ -1800,9 +1800,7 @@ impl Checker<'_> {
             }
             last = Some(owner);
             // `NodeCanBeDecorated`
-            if matches!(bound.expr_parent[e.idx()], Parent::None)
-                || bound.refused_decorators.contains(&e)
-            {
+            if bound.is_unchecked(e.idx()) || bound.refused_decorators.contains(&e) {
                 continue;
             }
             match owner {
@@ -2173,7 +2171,7 @@ impl Checker<'_> {
         for &e in index.of(ExprTag::ImportCall) {
             if let ExprKind::ImportCall(argument, _) = hir[e].kind
                 && argument.is_some()
-                && !matches!(bound.expr_parent[e.idx()], Parent::None)
+                && !bound.is_unchecked(e.idx())
                 && let ExprKind::String(spec) = hir[argument].kind
             {
                 let (kind, mode) = (SiteKind::ImportCall, files.mode_of_import_call(file));
@@ -2387,13 +2385,13 @@ impl Checker<'_> {
                         || bound.symbols[local.idx()]
                             .flags
                             .intersects(SymFlags::ENUM | SymFlags::ALIAS))
-                        && !matches!(bound.expr_parent[i], Parent::None)
+                        && !bound.is_unchecked(i)
                     {
                         self.xa_const_enum_access(file, e, out);
                     }
                 }
                 ExprKind::Dot { .. } => {
-                    if !matches!(bound.expr_parent[i], Parent::None) {
+                    if !bound.is_unchecked(i) {
                         self.xa_const_enum_access(file, e, out);
                     }
                 }
@@ -2414,7 +2412,7 @@ impl Checker<'_> {
     ) {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if matches!(bound.expr_parent[e.idx()], Parent::None) {
+        if bound.is_unchecked(e.idx()) {
             return;
         }
         match hir[e].kind {
@@ -2776,9 +2774,7 @@ impl Checker<'_> {
     fn xa_is_all_known(&mut self, file: FileId, from: u32, to: u32) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for i in 0..hir.exprs.len() {
-            if !(from..to).contains(&hir.exprs[i].pos)
-                || matches!(bound.expr_parent[i], Parent::None)
-            {
+            if !(from..to).contains(&hir.exprs[i].pos) || bound.is_unchecked(i) {
                 continue;
             }
             let e = ExprId(i as u32);
@@ -2804,9 +2800,7 @@ impl Checker<'_> {
 
 /// Where `word` ends, if it is what is written at `at`.
 fn eat_word(text: &[u8], at: usize, word: &[u8]) -> Option<usize> {
-    let end = at + word.len();
-    (text.get(at..end)? == word && !text.get(end).is_some_and(|&c| is_identifier_part(c)))
-        .then_some(end)
+    is_word_at(text, at, word).then_some(at + word.len())
 }
 
 /// Past `c`, if it is the next token from `at` on.
@@ -2828,11 +2822,7 @@ fn meta_property_end(text: &[u8], pos: u32, keyword: &[u8]) -> u32 {
     else {
         return 0;
     };
-    let mut end = skip_trivia(text, dot_end);
-    while text.get(end).copied().is_some_and(is_identifier_part) {
-        end += 1;
-    }
-    end as u32
+    word_end(text, skip_trivia(text, dot_end)) as u32
 }
 
 /// The string literal at `at`: what is between the quotes, as written, and where it ends.
@@ -2993,19 +2983,16 @@ fn type_import_in_javascript(
 
 /// Where the entity name `a.b.c` that starts at `start` ends.
 fn entity_name_end(text: &[u8], start: usize) -> usize {
-    let mut end = start;
+    let mut end = word_end(text, start);
     loop {
-        while text.get(end).copied().is_some_and(is_identifier_part) {
-            end += 1;
-        }
         let Some(after_dot) = eat(text, end, b'.') else {
             return end;
         };
         let next = skip_trivia(text, after_dot);
-        if !text.get(next).copied().is_some_and(is_identifier_part) {
+        if word_end(text, next) == next {
             return end;
         }
-        end = next;
+        end = word_end(text, next);
     }
 }
 
@@ -3064,31 +3051,11 @@ fn can_start_regular_expression(before: &[u8]) -> bool {
     let Some(&last) = before.last() else {
         return true;
     };
-    if is_identifier_part(last) {
-        let word = &before[before
-            .iter()
-            .rposition(|&c| !is_identifier_part(c))
-            .map_or(0, |i| i + 1)..];
-        return matches!(
-            word,
-            b"return"
-                | b"typeof"
-                | b"instanceof"
-                | b"in"
-                | b"of"
-                | b"new"
-                | b"delete"
-                | b"void"
-                | b"throw"
-                | b"case"
-                | b"do"
-                | b"else"
-                | b"yield"
-                | b"await"
-        );
+    match word_before(before, before.len()) {
+        // After `<` it closes a JSX element.
+        [] => !matches!(last, b')' | b']' | b'}' | b'<' | b'"' | b'\'' | b'`'),
+        word => is_keyword_before_expression(word),
     }
-    // After `<` it closes a JSX element.
-    !matches!(last, b')' | b']' | b'}' | b'<' | b'"' | b'\'' | b'`')
 }
 
 /// Whether `@ts-` is written anywhere in `text`.

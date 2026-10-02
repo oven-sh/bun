@@ -808,7 +808,7 @@ impl Checker<'_> {
             let extends = hir.classes[c].extends;
             if extends.is_none()
                 || bound.class_symbol[c].is_none()
-                || matches!(bound.expr_parent[extends.idx()], Parent::None)
+                || bound.is_unchecked(extends.idx())
             {
                 continue;
             }

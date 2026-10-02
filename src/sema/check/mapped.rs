@@ -59,8 +59,10 @@ impl<'p> Checker<'p> {
             }
             TypeData::Template { .. } | TypeData::StringMapping { .. } => true,
             TypeData::LazyAlias { .. } => false,
-            // `getGenericObjectFlags`: a substitution type is as generic as what it stands for.
-            TypeData::Substitution { base: of, .. } => self.is_generic(*of),
+            // `getGenericObjectFlags`
+            &TypeData::Substitution { base, constraint } => {
+                self.is_generic(base) || self.is_generic(constraint)
+            }
             _ => self.is_deferred(ty),
         }
     }
@@ -110,7 +112,11 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         self.guard("keyof");
         // The keys of `NoInfer<T>` are those of `T`, and nothing is inferred to them either.
-        if let TypeData::Substitution { base: of, .. } = *self.data(ty) {
+        if let TypeData::Substitution {
+            base: of,
+            constraint: TypeId::UNKNOWN,
+        } = *self.data(ty)
+        {
             let keys = self.get_index_type_ex(of, no_reducible_check, no_index_signatures);
             return self.no_infer(keys);
         }
@@ -1015,21 +1021,13 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// `ConditionalRoot.isDistributive`: the check type of the conditional type at `node` is a type parameter. Inside the true branch of
-    /// a conditional type that implies a constraint for the parameter, the reference to it is a substitution type
-    /// (`getConditionalFlowTypeOfType`), which does not distribute.
+    /// `ConditionalRoot.isDistributive`
     pub(super) fn is_distributive_conditional(&mut self, file: FileId, node: TypeNodeId) -> bool {
         let TypeNodeKind::Cond { check, .. } = self.hir(file)[node].kind else {
             return false;
         };
         let declared = self.type_from_node(file, check);
-        if !matches!(self.data(declared), TypeData::TypeParam(..)) {
-            return false;
-        }
-        let parents = self.type_parents(file);
-        let narrowed = self.conditional_flow_type(file, declared, check, &parents);
-        // `getSubstitutionType` returns the base type for a constraint that is `any`, `unknown` or the base type itself.
-        narrowed == declared || self.has_any_flag(narrowed) || narrowed == TypeId::UNRESOLVED
+        matches!(self.data(declared), TypeData::TypeParam(..))
     }
 
     /// `for_constraint`: what is checked is not the type itself but what it extends, so that failing the test does not
@@ -1061,8 +1059,6 @@ impl<'p> Checker<'p> {
                 let mut results: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(parts.len());
                 for &part in parts.iter() {
                     let mut pairs = self.p.types.mapping(mapper).to_vec();
-                    // What `map_mapper` took along for a checked `T[K]` goes by the whole union.
-                    pairs.retain(|p| !matches!(self.data(p.0), TypeData::IndexedAccess { .. }));
                     for p in &mut pairs {
                         if p.0 == check_declared {
                             p.1 = part;
@@ -1134,7 +1130,8 @@ impl<'p> Checker<'p> {
                 return TypeId::UNRESOLVED;
             };
             let check_declared = self.type_from_node(file, check);
-            let check_ty = self.instantiate(check_declared, mapper);
+            let check_variable = self.actual_type_variable(check_declared);
+            let check_ty = self.instantiate(check_variable, mapper);
             let check_ty = self.force(check_ty);
             let extends_declared = self.type_from_node(file, extends);
             if check_ty == TypeId::UNRESOLVED {
@@ -1208,26 +1205,8 @@ impl<'p> Checker<'p> {
                             .iter()
                             .any(|&t| self.is_assignable_permissive(t, check_ty));
                 if with_true {
-                    // In the true branch the type parameter that is checked is a substitution type. What it stands for did not pass,
-                    // so it comes to that and what it is checked against, both (`instantiateTypeWorker`). `any` passes all but
-                    // `never`.
-                    let in_true_branch = if (!self.has_any_flag(check_ty)
-                        || extends_ty == TypeId::NEVER)
-                        && matches!(self.data(check_declared), TypeData::TypeParam(..))
-                    {
-                        let narrowed = self.intersection(&[extends_ty, check_ty]);
-                        let mut pairs = self.p.types.mapping(combined).to_vec();
-                        for pair in &mut pairs {
-                            if pair.0 == check_declared {
-                                pair.1 = narrowed;
-                            }
-                        }
-                        self.p.types.mapper(pairs)
-                    } else {
-                        combined
-                    };
                     let yes_declared = self.type_from_node(file, yes);
-                    extra_types.push(self.instantiate(yes_declared, in_true_branch));
+                    extra_types.push(self.instantiate(yes_declared, combined));
                 }
                 (no, mapper, true)
             } else {
@@ -1458,12 +1437,11 @@ impl<'p> Checker<'p> {
         node: TypeNodeId,
     ) -> Option<TypeId> {
         let constraint = self.constraint_of_mapped_param(file, node)?;
-        match *self.data(constraint) {
-            TypeData::Keyof(target) if matches!(self.data(target), TypeData::TypeParam(..)) => {
-                Some(target)
-            }
-            _ => None,
-        }
+        let TypeData::Keyof(target) = *self.data(constraint) else {
+            return None;
+        };
+        let variable = self.actual_type_variable(target);
+        matches!(self.data(variable), TypeData::TypeParam(..)).then_some(variable)
     }
 
     /// `getResolvedApparentTypeOfMappedType`: `{ [P in keyof T]: X }` where all `T` can be is an array or a tuple is one too.
@@ -1571,16 +1549,10 @@ impl<'p> Checker<'p> {
         }
         let with = |c: &mut Self, t: TypeId| {
             let mut pairs = c.p.types.mapping(mapper).to_vec();
-            let mut is_changed = false;
             for p in &mut pairs {
                 if p.0 == source {
-                    is_changed |= p.1 != t;
                     p.1 = t;
                 }
-            }
-            // What `map_mapper` took along for a checked `T[K]` goes by what `source` stood for.
-            if is_changed {
-                pairs.retain(|p| !matches!(c.data(p.0), TypeData::IndexedAccess { .. }));
             }
             c.p.types.mapper(pairs)
         };

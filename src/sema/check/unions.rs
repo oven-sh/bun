@@ -1635,9 +1635,9 @@ impl<'p> Checker<'p> {
                 (TypeData::UniqueSymbol { name: x, .. }, TypeData::UniqueSymbol { name: y, .. }) => atoms.bytes(*x).cmp(atoms.bytes(*y)),
                 (TypeData::Marker(x), TypeData::Marker(y)) => x.cmp(y),
                 (TypeData::Keyof(x), TypeData::Keyof(y))
-                | (TypeData::Substitution { base: x, .. }, TypeData::Substitution { base: y, .. })
                 | (TypeData::StringMapping { ty: x, .. }, TypeData::StringMapping { ty: y, .. }) => self.compare_types_without_ids(*x, *y),
-                (TypeData::IndexedAccess { obj: o, index: i, .. }, TypeData::IndexedAccess { obj: p, index: j, .. }) => {
+                (TypeData::Substitution { base: o, constraint: i }, TypeData::Substitution { base: p, constraint: j })
+                | (TypeData::IndexedAccess { obj: o, index: i, .. }, TypeData::IndexedAccess { obj: p, index: j, .. }) => {
                     self.compare_types_without_ids(*o, *p).then_with(|| self.compare_types_without_ids(*i, *j))
                 }
                 (TypeData::Template { texts: s, types: x }, TypeData::Template { texts: t, types: y }) => {

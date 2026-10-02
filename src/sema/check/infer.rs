@@ -21,6 +21,7 @@ const VISITED_INDEX_FROM: usize = 16;
 // InferencePriority. The lower the better.
 pub(super) const PRIORITY_NAKED: u32 = 1;
 const PRIORITY_SPECULATIVE_TUPLE: u32 = 1 << 1;
+const PRIORITY_SUBSTITUTE_SOURCE: u32 = 1 << 2;
 pub(super) const PRIORITY_HOMOMORPHIC: u32 = 1 << 3;
 /// The same, from a source with something left out of it.
 pub(super) const PRIORITY_PARTIAL_HOMOMORPHIC: u32 = 1 << 4;
@@ -354,6 +355,7 @@ impl<'p> Checker<'p> {
         if self.is_no_infer(target) {
             return;
         }
+        target = self.actual_type_variable(target);
         if self.is_type_variable(target) {
             if let Some(index) = n.index_of(target) {
                 // A parameter says nothing about itself, unless it is the caller's as well. It still counts as an inference made.
@@ -465,6 +467,11 @@ impl<'p> Checker<'p> {
                 if sk == tk {
                     self.infer_types(n, *s, *t);
                 }
+            }
+            (&TypeData::Substitution { base, constraint }, _) => {
+                self.infer_types(n, base, target);
+                let both = self.substitution_intersection(base, constraint);
+                self.infer_with_priority(n, both, target, PRIORITY_SUBSTITUTE_SOURCE);
             }
             (_, TypeData::Cond { .. }) => {
                 self.invoke_once(n, source, target, Self::infer_to_conditional_type)
@@ -2864,9 +2871,12 @@ impl<'p> Checker<'p> {
                 let (obj, index) = (*obj, *index);
                 self.mentions(obj, param, depth + 1) || self.mentions(index, param, depth + 1)
             }
-            TypeData::Keyof(t)
-            | TypeData::Substitution { base: t, .. }
-            | TypeData::StringMapping { ty: t, .. } => self.mentions(*t, param, depth + 1),
+            &TypeData::Substitution { base, constraint } => {
+                self.mentions(base, param, depth + 1) || self.mentions(constraint, param, depth + 1)
+            }
+            TypeData::Keyof(t) | TypeData::StringMapping { ty: t, .. } => {
+                self.mentions(*t, param, depth + 1)
+            }
             TypeData::Template { types, .. } => {
                 types.iter().any(|&t| self.mentions(t, param, depth + 1))
             }

@@ -49,7 +49,7 @@ impl Checker<'_> {
             }
         }
         for (e, start) in keys {
-            if matches!(bound.expr_parent[e.idx()], Parent::None) {
+            if bound.is_unchecked(e.idx()) {
                 continue;
             }
             let ty = self.type_of_expr(file, e);
@@ -312,7 +312,7 @@ impl Checker<'_> {
                 continue;
             };
             if props.len() < 2
-                || matches!(bound.expr_parent[literal.idx()], Parent::None)
+                || bound.is_unchecked(literal.idx())
                 || self.is_assignment_target(file, literal)
             {
                 continue;
@@ -897,7 +897,7 @@ impl Checker<'_> {
         for &(e, _) in &bound.alias_idents {
             let i = e.idx();
             let local = bound.expr_symbol[i];
-            if local.is_none() || matches!(bound.expr_parent[i], Parent::None) {
+            if local.is_none() || bound.is_unchecked(i) {
                 continue;
             }
             let flags = bound.symbols[local.idx()].flags;

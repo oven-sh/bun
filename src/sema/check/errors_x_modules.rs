@@ -269,7 +269,7 @@ impl Checker<'_> {
         for i in 0..hir.exprs.len() {
             let e = ExprId(i as u32);
             if !matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::This)
-                || matches!(bound.expr_parent[i], Parent::None)
+                || bound.is_unchecked(i)
                 // `checkWithStatement` does not check the body.
                 || hir.is_in_with(hir[e].pos)
             {
@@ -2149,7 +2149,7 @@ impl Checker<'_> {
         if cx.grammar && cx.is_verbatim && self.p.files.options.module == ModuleKind::CommonJs {
             let index = self.exprs_by_kind(cx.file);
             for &e in index.of(ExprTag::ImportCall) {
-                if !matches!(bound.expr_parent[e.idx()], Parent::None) {
+                if !bound.is_unchecked(e.idx()) {
                     let start = hir[e].pos;
                     out.push(Diagnostic {
                         start,

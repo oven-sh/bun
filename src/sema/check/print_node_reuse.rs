@@ -3,7 +3,7 @@
 //! writes it (`pseudotypenodebuilder.go`, `nodecopy.go`). The pseudochecker is the one `isolatedDeclarations` is checked with.
 
 use super::super::errors_isolated_declarations::{
-    Emit, Node as SyntaxNode, Pseudo, PseudoElement, PseudoElementKind, PseudoParam,
+    Emit, Pseudo, PseudoElement, PseudoElementKind, PseudoParam,
 };
 use super::super::errors_x_properties_jsx::start_of_member_name;
 use super::*;
@@ -24,6 +24,7 @@ impl<'p> Printer<'_, 'p> {
                     file,
                     SyntaxNode::Param(declaration),
                     parameter.ty,
+                    false,
                     false,
                 ),
             _ => self.type_to_node(parameter.ty),
@@ -66,7 +67,16 @@ impl<'p> Printer<'_, 'p> {
                     ..
                 }
             );
-            return self.serialize_type_for_declaration(file, declaration, ty, is_unwidened);
+            // `symbol.Flags&SymbolFlagsOptional != 0 && ReverseMappedSymbolLinks.Has(symbol)`
+            let is_optional_reverse_mapped = prop.flags.contains(PropFlags::OPTIONAL)
+                && matches!(self.c.data(owner), TypeData::ReverseMapped { .. });
+            return self.serialize_type_for_declaration(
+                file,
+                declaration,
+                ty,
+                is_unwidened,
+                is_optional_reverse_mapped,
+            );
         }
         self.type_to_node(ty)
     }
@@ -102,7 +112,7 @@ impl<'p> Printer<'_, 'p> {
             && let Some((file, declaration)) = declaration
             && self.reuses_nodes_of(file)
         {
-            return self.serialize_type_for_declaration(file, declaration, ty, false);
+            return self.serialize_type_for_declaration(file, declaration, ty, false, false);
         }
         self.type_to_node(ty)
     }
@@ -139,6 +149,10 @@ impl<'p> Printer<'_, 'p> {
                 .c
                 .iso_matches_predicate(file, &pt, signature, predicate)
         {
+            if !self.suppress_report_inference_fallback {
+                let declaration = self.c.iso_node_of_fn(file, func);
+                self.report_inference_fallback(file, declaration);
+            }
             return None;
         }
         Some(
@@ -152,7 +166,7 @@ impl<'p> Printer<'_, 'p> {
     pub(super) fn enclosing_declaration_of_property_name(
         &mut self,
         prop: &Prop,
-    ) -> Option<(FileId, ScopeId)> {
+    ) -> Option<Enclosing> {
         let (file, declaration) = self.value_declaration_of_property(prop, 0)?;
         let scope = match declaration {
             SyntaxNode::Member(member) => self.c.enclosing_scope_of_member(file, member),
@@ -164,7 +178,7 @@ impl<'p> Printer<'_, 'p> {
             SyntaxNode::Expr(assignment) => self.c.enclosing_scope_of_expr(file, assignment),
             _ => return None,
         };
-        Some((file, scope))
+        Some(Enclosing::at_scope(file, scope))
     }
 
     /// `symbol.ValueDeclaration`, or else the first of `symbol.Declarations`.
@@ -216,20 +230,30 @@ impl<'p> Printer<'_, 'p> {
 
     /// `serializeTypeForDeclaration` with `tryReuse`, of the declaration `node` of `file`, whose type is `ty` here. `is_unwidened`: if
     /// `ty` is the type of an array literal it still says so (`ObjectFlagsArrayLiteral`), which types do not keep.
+    /// `is_optional_reverse_mapped`: the symbol is an optional property of a reverse mapped type.
     fn serialize_type_for_declaration(
         &mut self,
         file: FileId,
         node: SyntaxNode,
         ty: TypeId,
         is_unwidened: bool,
+        is_optional_reverse_mapped: bool,
     ) -> Node {
         let hir = self.c.hir(file);
-        // The enclosing declaration is the scope made up for the signature, which is not function-like.
+        // `requiresAddingImplicitUndefined`
         let requires_undefined = match node {
+            // The enclosing declaration is the scope made up for the signature, which is not function-like.
             SyntaxNode::Param(p) => self.c.iso_requires_implicit_undefined(file, p, false),
+            SyntaxNode::Member(m) => {
+                is_optional_reverse_mapped
+                    && hir[m].kind == MemberKind::Property
+                    && hir[m].flags.contains(Flags::OPTIONAL)
+                    && self.contains_non_missing_undefined_type(ty)
+            }
             _ => false,
         };
-        let ty = if requires_undefined {
+        // `addUndefinedForParameter`
+        let ty = if requires_undefined && matches!(node, SyntaxNode::Param(_)) {
             self.c.optional(ty)
         } else {
             ty
@@ -305,11 +329,24 @@ impl<'p> Printer<'_, 'p> {
         ty: TypeId,
     ) -> Node {
         match pt {
-            Pseudo::Inferred { .. } => self.type_to_node(ty),
+            Pseudo::Inferred { of, errors, .. } => {
+                if !self.suppress_report_inference_fallback {
+                    if errors.is_empty() {
+                        self.report_inference_fallback(file, *of);
+                    }
+                    for &node in errors {
+                        self.report_inference_fallback(file, node);
+                    }
+                }
+                self.type_to_node_without_inference_fallback(ty)
+            }
             Pseudo::Direct(existing)
                 if !self.can_reuse_existing_js_type_node(file, *existing, ty) =>
             {
-                self.type_to_node(ty)
+                if !self.suppress_report_inference_fallback {
+                    self.report_inference_fallback(file, SyntaxNode::Type(*existing));
+                }
+                self.type_to_node_without_inference_fallback(ty)
             }
             _ => self.pseudo_type_to_node(file, pt),
         }
@@ -318,6 +355,16 @@ impl<'p> Printer<'_, 'p> {
     /// `pseudoTypeToNode`
     fn pseudo_type_to_node(&mut self, file: FileId, pt: &Pseudo) -> Node {
         let is_strict = self.c.files().options.strict_null_checks;
+        match pt {
+            Pseudo::Inferred { of, errors, .. } if self.tracker.is_some() => {
+                let tx = Emit::without_reports(file);
+                for node in self.c.iso_error_nodes_of_inferred(&tx, *of, errors) {
+                    self.report_inference_fallback(file, node);
+                }
+            }
+            Pseudo::NoResult(node) => self.report_inference_fallback(file, *node),
+            _ => {}
+        }
         match pt {
             Pseudo::Direct(node) => self.reuse_type_node(file, *node),
             Pseudo::Inferred {
@@ -467,7 +514,10 @@ impl<'p> Printer<'_, 'p> {
         let function = hir[func];
         let mut type_parameters = Vec::with_capacity(function.type_params.len());
         for tp in function.type_params.iter() {
-            let declaration = match self.visit_type_parameter_declaration(file, tp) {
+            let reused = self.try_reuse_existing_node_helper(|printer| {
+                printer.visit_type_parameter_declaration(file, tp)
+            });
+            let declaration = match reused {
                 Some(declaration) => declaration,
                 None => {
                     let parameter = self.c.declared_type_of_type_parameter(file, tp);
@@ -543,6 +593,8 @@ impl<'p> Printer<'_, 'p> {
         let hir = self.c.hir(file);
         let literal = self.c.bound(file).prop_owner[first.prop.idx()];
         let is_const = literal.is_some() && self.c.is_const_by_contextual_type(file, literal, true);
+        let saved_flags = self.flags;
+        self.flags |= IN_OBJECT_TYPE_LITERAL;
         let mut members = Vec::with_capacity(elements.len());
         for element in elements {
             let readonly = if is_const { "readonly " } else { "" };
@@ -593,6 +645,7 @@ impl<'p> Printer<'_, 'p> {
                 }
             });
         }
+        self.flags = saved_flags;
         Node::simple(format!("{{ {} }}", members.join(" ")))
     }
 }
@@ -610,6 +663,20 @@ fn emit_postfix_type_operand(operand: Node) -> String {
 }
 
 impl<'p> Printer<'_, 'p> {
+    /// `tryReuseExistingNodeHelper`, but for the length. `visit`: the visitor, at the node.
+    fn try_reuse_existing_node_helper<T>(
+        &mut self,
+        visit: impl FnOnce(&mut Self) -> Option<T>,
+    ) -> Option<T> {
+        self.create_recovery_boundary();
+        let transformed = visit(self);
+        if self.finalize_boundary(transformed.is_none()) {
+            transformed
+        } else {
+            None
+        }
+    }
+
     /// `reuseTypeNode`
     pub(super) fn reuse_type_node(&mut self, file: FileId, node: TypeNodeId) -> Node {
         if node.is_none() {
@@ -618,7 +685,9 @@ impl<'p> Printer<'_, 'p> {
         // `finalizeBoundary`, `tryReuseExistingNodeHelper`: what counts is how long the node is in the source, with the space before
         // it. The text of the default library is not kept.
         let length_before = self.approximate_length;
-        let reused = self.visit_existing_type_node(file, node, 0);
+        let reused = self.try_reuse_existing_node_helper(|printer| {
+            printer.visit_existing_type_node(file, node, 0)
+        });
         self.approximate_length = length_before;
         match reused {
             Some(reused) => {
@@ -631,7 +700,10 @@ impl<'p> Printer<'_, 'p> {
                 self.approximate_length += length + 1;
                 reused
             }
-            None => self.resolved_type_node_to_node(file, node),
+            None => {
+                self.report_inference_fallback(file, SyntaxNode::Type(node));
+                self.resolved_type_node_to_node(file, node)
+            }
         }
     }
 
@@ -643,6 +715,10 @@ impl<'p> Printer<'_, 'p> {
         node: TypeNodeId,
         floor: u32,
     ) -> Option<Node> {
+        // After an error in a sibling whatever comes of it is dropped.
+        if self.had_error() {
+            return None;
+        }
         if node.is_none() {
             return Some(Node::simple("any"));
         }
@@ -650,13 +726,25 @@ impl<'p> Printer<'_, 'p> {
             return Some(self.elided_information_placeholder());
         }
         self.depth += 1;
+        let recovery_scope = self.start_recovery_scope();
         let visited = self.visit_existing_type_node_worker(file, node);
         self.depth -= 1;
         let hir = self.c.hir(file);
         let mut visited = match visited {
-            Some(visited) => visited,
-            None if matches!(hir[node].kind, TypeNodeKind::Predicate { .. }) => return None,
-            None => self.resolved_type_node_to_node(file, node),
+            Some(visited) if !self.had_error() => visited,
+            _ if matches!(hir[node].kind, TypeNodeKind::Predicate { .. }) => {
+                self.mark_error();
+                return None;
+            }
+            _ => {
+                self.end_recovery_scope(recovery_scope);
+                let serialized = self.resolved_type_node_to_node(file, node);
+                // What is reported of the type is an error of the node around this one.
+                if self.had_error() {
+                    return None;
+                }
+                serialized
+            }
         };
         for _ in 0..self.c.parenthesized_type_depth(file, node, floor) {
             visited = Node::simple(format!("({})", visited.text));
@@ -700,7 +788,7 @@ impl<'p> Printer<'_, 'p> {
                 // `getModuleSpecifierOverride`: what the module is called depends on where it is called that.
                 let is_in_enclosing_file = self
                     .enclosing_declaration
-                    .is_none_or(|enclosing| enclosing.0 == file);
+                    .is_none_or(|enclosing| enclosing.file == file);
                 let declared = self.c.type_from_node(file, node);
                 // `IsLiteralImportTypeNode`
                 if spec.is_none()
@@ -1060,7 +1148,8 @@ impl<'p> Printer<'_, 'p> {
                 let ExprKind::Ident(first) = hir[first].kind else {
                     return None;
                 };
-                if self.track_existing_entity_name(file, scope, first, SymFlags::VALUE) {
+                let node = SyntaxNode::Expr(e);
+                if self.track_existing_entity_name(file, node, scope, first, SymFlags::VALUE) {
                     return None;
                 }
                 format!("[{name}]")
@@ -1175,7 +1264,13 @@ impl<'p> Printer<'_, 'p> {
             return None;
         }
         let scope = self.c.bound(file).type_scope[node.idx()];
-        let introduces_error = self.track_existing_entity_name(file, scope, first, SymFlags::VALUE);
+        let introduces_error = self.track_existing_entity_name(
+            file,
+            SyntaxNode::EntityName(node),
+            scope,
+            first,
+            SymFlags::VALUE,
+        );
         let arguments = self.visit_existing_type_nodes(file, args, 0)?;
         if introduces_error {
             return self.serialize_type_name(file, scope, &names, true, arguments);
@@ -1208,12 +1303,13 @@ impl<'p> Printer<'_, 'p> {
             .resolve_entity(file, scope, &names, SymFlags::TYPE)
             .is_some_and(|symbol| files.flags(symbol).contains(SymFlags::TYPE_PARAMETER));
         // The type parameter of a class means nothing in a static member: that is a name nothing goes by.
-        if is_type_parameter && matches!(self.c.data(declared), TypeData::TypeParam(..)) {
+        let variable = self.c.actual_type_variable(declared);
+        if is_type_parameter && matches!(self.c.data(variable), TypeData::TypeParam(..)) {
             // One that the signature being written is instantiated for stands for something else.
-            if self.c.instantiate(declared, self.mapper) != declared {
+            if self.c.instantiate(variable, self.mapper) != variable {
                 return None;
             }
-            let name = self.type_parameter_to_name(declared);
+            let name = self.type_parameter_to_name(variable);
             return Some(Node {
                 text: name.clone(),
                 precedence: NON_ARRAY,
@@ -1228,7 +1324,13 @@ impl<'p> Printer<'_, 'p> {
         } else {
             SymFlags::NAMESPACE
         };
-        let introduces_error = self.track_existing_entity_name(file, scope, first, meaning);
+        let introduces_error = self.track_existing_entity_name(
+            file,
+            SyntaxNode::EntityName(node),
+            scope,
+            first,
+            meaning,
+        );
         let arguments = self.visit_existing_type_nodes(file, args, 0)?;
         if introduces_error {
             return self.serialize_type_name(file, scope, &names, false, arguments);
@@ -1257,19 +1359,23 @@ impl<'p> Printer<'_, 'p> {
             return None;
         };
         let scope = self.c.enclosing_scope_of_expr(file, name);
-        if self.track_existing_entity_name(file, scope, first, SymFlags::VALUE) {
-            return None;
-        }
+        let node = SyntaxNode::Expr(name);
+        self.try_reuse_existing_node_helper(|printer| {
+            let introduces_error =
+                printer.track_existing_entity_name(file, node, scope, first, SymFlags::VALUE);
+            (!introduces_error).then_some(())
+        })?;
         let text = format!("[{}]", self.entity_name_text(file, name)?);
         self.approximate_length += text.len();
         Some(text)
     }
 
-    /// `trackExistingEntityName`, of a name that starts with `first` and is written in `scope` of `file`: whether it does not mean the
-    /// same, or cannot be used, where the type is wanted.
+    /// `trackExistingEntityName`, of the name `node` that starts with `first` and is written in `scope` of `file`: whether it does not
+    /// mean the same, or cannot be used, where the type is wanted.
     fn track_existing_entity_name(
         &mut self,
         file: FileId,
+        node: SyntaxNode,
         scope: ScopeId,
         first: Atom,
         meaning: SymFlags,
@@ -1281,7 +1387,7 @@ impl<'p> Printer<'_, 'p> {
             return false;
         }
         // `IsSymbolAccessible`: from nowhere everything is.
-        let Some((enclosing_file, enclosing_scope)) = self.enclosing_declaration else {
+        let Some(at) = self.enclosing_declaration else {
             return false;
         };
         let parameter = self
@@ -1292,31 +1398,35 @@ impl<'p> Printer<'_, 'p> {
         let there = match parameter {
             Some(&(_, Some(parameter))) => Some(parameter),
             Some(&(_, None)) => return here.is_some(),
-            None => files.resolve_name(enclosing_file, enclosing_scope, first, meaning),
+            None => files.resolve_name(at.file, at.scope, first, meaning),
         };
         let symbol = match (there, here) {
-            (None, Some(_)) => return true,
             (None, None) => return false,
             // `getSymbolIfSameReference`
             (Some(there), Some(here))
-                if there != here
-                    && files.export_symbol_of_value_symbol_if_exported(there)
-                        != files.export_symbol_of_value_symbol_if_exported(here)
-                    && files.resolve_alias(there) != files.resolve_alias(here) =>
+                if there == here
+                    || files.export_symbol_of_value_symbol_if_exported(there)
+                        == files.export_symbol_of_value_symbol_if_exported(here)
+                    || files.resolve_alias(there) == files.resolve_alias(here) =>
             {
+                there
+            }
+            (Some(there), None) => there,
+            _ => {
+                self.report_inference_fallback(file, node);
                 return true;
             }
-            (Some(there), _) => there,
         };
         // A parameter that is found is visible.
-        !files.flags(symbol).contains(SymFlags::PARAMETER)
-            && !self.c.is_symbol_accessible_at(
-                symbol,
-                meaning,
-                true,
-                enclosing_file,
-                enclosing_scope,
-            )
+        if files.flags(symbol).contains(SymFlags::PARAMETER) {
+            return false;
+        }
+        if !self.c.is_symbol_accessible_at(symbol, meaning, true, at) {
+            self.report_inference_fallback(file, node);
+            return true;
+        }
+        self.track_symbol(symbol, meaning);
+        false
     }
 
     /// `serializeTypeName`, of the entity name `names` written in `scope` of `file`. `None`: what it means cannot be named where the
@@ -1330,7 +1440,7 @@ impl<'p> Printer<'_, 'p> {
         type_arguments: Vec<Node>,
     ) -> Option<Node> {
         let files = self.c.files();
-        let (enclosing_file, enclosing_scope) = self.enclosing_declaration?;
+        let at = self.enclosing_declaration?;
         let meaning = if is_type_of {
             SymFlags::VALUE
         } else {
@@ -1343,10 +1453,7 @@ impl<'p> Printer<'_, 'p> {
         } else {
             files.resolve_alias(found).unwrap_or(found)
         };
-        if !self
-            .c
-            .is_symbol_accessible_at(symbol, meaning, false, enclosing_file, enclosing_scope)
-        {
+        if !self.c.is_symbol_accessible_at(symbol, meaning, false, at) {
             return None;
         }
         let resolved = files.resolve_alias(symbol).unwrap_or(symbol);

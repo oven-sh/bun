@@ -5,7 +5,6 @@
 //! on. Only what the tree keeps nothing of is skipped token by token.
 
 use super::Checker;
-use super::errors_x_regexp_scanner as regexp_scanner;
 use crate::atom::{Atom, known};
 use crate::bind::{FnOwner, MemberOwner};
 use crate::hir::{
@@ -17,6 +16,7 @@ use crate::hir::{
     is_parenthesized, open_parenthesis,
 };
 use crate::program::FileId;
+use bun_core::lexer;
 
 // ───────────────────────────── the text ─────────────────────────────
 
@@ -281,7 +281,7 @@ pub(super) fn ident_end(text: &[u8], mut at: usize) -> usize {
         match text.get(at) {
             Some(&b) if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' => at += 1,
             Some(b'\\') => match unicode_escape(text, at) {
-                Some((len, ch)) if regexp_scanner::is_identifier_part(ch) => at += len,
+                Some((len, ch)) if lexer::is_identifier_part(ch) => at += len,
                 _ => return at,
             },
             Some(&b) if b >= 0x80 && white_space_len(text, at) == 0 => at += utf8_len(b),
@@ -294,7 +294,7 @@ pub(super) fn ident_end(text: &[u8], mut at: usize) -> usize {
 /// `scanIdentifier`: the same from where a name starts, which an escape that stands for no `IsIdentifierStart` does not.
 pub(super) fn identifier_end(text: &[u8], at: usize) -> usize {
     match unicode_escape(text, at) {
-        Some((_, ch)) if !regexp_scanner::is_identifier_start(ch) => at,
+        Some((_, ch)) if !lexer::is_identifier_start(ch) => at,
         _ => ident_end(text, at),
     }
 }
@@ -508,8 +508,9 @@ fn jsx_name_end(text: &[u8], at: usize) -> usize {
 /// `parseJsxElementName`: `a`, `a-b`, `a:b`, `a.b.c`
 pub(super) fn jsx_tag_name_end(text: &[u8], at: usize) -> usize {
     let mut end = jsx_name_end(text, at);
-    if end == at {
-        return at;
+    // "`a:b.c` is invalid syntax, don't even look for the `.` if we parse `a:b`"
+    if end == at || text[at..end].contains(&b':') {
+        return end;
     }
     loop {
         let dot = skip_trivia(text, end);
@@ -532,7 +533,7 @@ const LONG_OPERATORS: [&[u8]; 28] = [
 ];
 
 /// `Scan`: where the token that starts at `at` ends. A template ends at its first `${`, and a `/` is never a regular expression.
-fn token_end(text: &[u8], at: usize, is_jsx: bool) -> usize {
+pub(super) fn token_end(text: &[u8], at: usize, is_jsx: bool) -> usize {
     let Some(&first) = text.get(at) else {
         return at.min(text.len());
     };
@@ -562,7 +563,7 @@ fn token_end(text: &[u8], at: usize, is_jsx: bool) -> usize {
 }
 
 /// Whether an expression can start after the word `word`, so that a `/` there starts a regular expression and a `<` a JSX element.
-fn is_keyword_before_expression(word: &[u8]) -> bool {
+pub(super) fn is_keyword_before_expression(word: &[u8]) -> bool {
     matches!(
         word,
         b"return"
@@ -1071,6 +1072,9 @@ impl<'a> Spans<'a> {
                     }
                 }
                 ExprKind::Cond { test, .. } => test,
+                ExprKind::Class(c) => {
+                    return self.hir.classes.get(c.idx()).map_or(pos, |c| c.start) as usize;
+                }
                 ExprKind::As { expr, ty } if self.type_pos(ty) > self.expr_pos(expr) => expr,
                 ExprKind::AsConst(x) if (pos as usize) < self.expr_pos(x) => return pos as usize,
                 ExprKind::NonNull(x)
@@ -1183,9 +1187,14 @@ impl<'a> Spans<'a> {
                 ..
             } => {
                 let obj_end = self.expr(obj);
-                match self.eat(obj_end, b"?.") {
+                let dot_end = match self.eat(obj_end, b"?.") {
                     end if end != obj_end => end,
                     _ => self.eat(obj_end, b"."),
+                };
+                // `parseRightSideOfDot`: a private name that is not allowed there is consumed all the same.
+                match self.skip_trivia(dot_end) {
+                    name if self.byte(name) == b'#' => word_end(self.text, name),
+                    _ => dot_end,
                 }
             }
             ExprKind::Dot { name_pos, .. } => word_end(self.text, name_pos as usize),
@@ -2640,7 +2649,11 @@ impl Checker<'_> {
     pub(super) fn start_of_this_parameter(&self, file: FileId, f: FnId) -> Option<u32> {
         let hir = self.hir(file);
         let start = hir.fns.get(f.idx())?.this_pos;
-        (start != u32::MAX && !hir.is_in_jsdoc(start)).then_some(start)
+        // Of a tag it is the name after the `@`, in a `@callback` the `@`. `u32::MAX` is nowhere in the text.
+        let from_before = hir
+            .text
+            .get((start as usize).saturating_sub(1)..=start as usize)?;
+        (!from_before.contains(&b'@')).then_some(start)
     }
 
     /// Whether `node` is where a type must be and none starts: a reference to a type whose name is missing, which the lowered tree

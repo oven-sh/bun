@@ -6,8 +6,10 @@
 //! symbol it names and of what it cannot write. Nothing is written here: the same way is gone, and the same is asked
 //! (`checker/symbolaccessibility.go`, `checker/emitresolver.go`).
 
+use super::enclosing_declaration::Enclosing;
 use super::errors::Diagnostic;
 use super::explain::Related;
+use super::print::Report;
 use super::*;
 use crate::bind::{
     ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId,
@@ -50,7 +52,7 @@ const MAXIMUM_DEPTH: u32 = 150;
 
 /// What a name is wanted as.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-enum Meaning {
+pub(super) enum Meaning {
     /// `SymbolFlagsNone`
     None,
     Value,
@@ -61,6 +63,19 @@ enum Meaning {
 }
 
 impl Meaning {
+    /// Of `SymFlags::TYPE`, `NAMESPACE` or `VALUE`. `with_export_value`: `SymbolFlagsValue | SymbolFlagsExportValue`.
+    pub(super) fn of(meaning: SymFlags, with_export_value: bool) -> Meaning {
+        if meaning == SymFlags::TYPE {
+            Meaning::Type
+        } else if meaning == SymFlags::NAMESPACE {
+            Meaning::Namespace
+        } else if with_export_value {
+            Meaning::ValueOfName
+        } else {
+            Meaning::Value
+        }
+    }
+
     fn flags(self) -> SymFlags {
         match self {
             Meaning::None => SymFlags::empty(),
@@ -78,14 +93,6 @@ impl Meaning {
             Meaning::Namespace
         }
     }
-}
-
-/// `enclosingDeclaration`: the scope names are looked up from. `variable`: it is that variable declaration.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-struct Enclosing {
-    file: FileId,
-    scope: ScopeId,
-    variable: VarDeclId,
 }
 
 /// `symbolTableID`
@@ -107,10 +114,10 @@ enum Accessibility {
 }
 
 /// `printer.SymbolAccessibilityResult`
-struct Access {
+pub(super) struct Access {
     accessibility: Accessibility,
     /// `AliasesToMakeVisible`
-    aliases: Vec<(FileId, StmtId)>,
+    pub(super) aliases: Vec<(FileId, StmtId)>,
     symbol_name: String,
     module_name: String,
     /// `ErrorNode`: from where to where.
@@ -128,7 +135,7 @@ impl Access {
         }
     }
 
-    fn is_accessible(&self) -> bool {
+    pub(super) fn is_accessible(&self) -> bool {
         self.accessibility == Accessibility::Accessible
     }
 }
@@ -234,18 +241,6 @@ struct Tracked {
     as_local: bool,
 }
 
-/// What the `SymbolTracker` is told of besides symbols.
-#[derive(Clone)]
-enum Report {
-    CyclicStructure,
-    InaccessibleThis,
-    InaccessibleUniqueSymbol,
-    /// The specifier, and the name of the symbol.
-    LikelyUnsafeImportRequired(String, String),
-    NonSerializableProperty(String),
-    PrivateInBaseOfClassExpression(String),
-}
-
 /// `recoveryBoundary`
 struct Boundary {
     had_error: bool,
@@ -283,8 +278,6 @@ struct Builder {
     visited_types: Vec<TypeId>,
     symbol_depth: Vec<(Identity, u32)>,
     infer_type_parameters: Vec<TypeId>,
-    /// `enclosingDeclaration` is a block `enterNewScope` made up for the parameters or the type parameters of a signature.
-    is_in_made_up_scope: bool,
     reverse_mapped_stack: Vec<ReverseMappedProperty>,
     mapper: MapperId,
     depth: u32,
@@ -308,7 +301,6 @@ impl Builder {
             visited_types: Vec::new(),
             symbol_depth: Vec::new(),
             infer_type_parameters: Vec::new(),
-            is_in_made_up_scope: false,
             reverse_mapped_stack: Vec::new(),
             mapper: MapperId::IDENTITY,
             depth: 0,
@@ -349,18 +341,7 @@ struct DeclarationEmit<'c, 'p> {
     interface_scopes: Vec<ScopeId>,
     module_scopes: Vec<ScopeId>,
 
-    // `EmitResolver`
-    /// `declarationLinks.isVisible`
-    visibility: FxHashMap<(FileId, Decl), bool>,
-    statements: FxHashMap<FileId, Rc<Statements>>,
-
-    // `symbolContainerLinks`, `symbolTableAliasCache`
-    chains: FxHashMap<(Sym, FileId, ScopeId, Meaning), Rc<Vec<Sym>>>,
-    containing_modules: FxHashMap<(Sym, FileId), Rc<Vec<Sym>>>,
-    exports: FxHashMap<Sym, Rc<Vec<(Atom, Sym)>>>,
-    global_aliases: Option<Rc<Vec<(Atom, Sym)>>>,
-    /// `specifierCache`
-    specifiers: FxHashMap<(Sym, FileId, ResolutionMode), String>,
+    links: EmitResolverLinks,
 
     b: Builder,
 }
@@ -432,11 +413,7 @@ impl<'c, 'p> DeclarationEmit<'c, 'p> {
                 _ => {}
             }
         }
-        let top = Enclosing {
-            file,
-            scope: ScopeId(0),
-            variable: VarDeclId::NONE,
-        };
+        let top = Enclosing::at_scope(file, ScopeId(0));
         DeclarationEmit {
             c,
             file,
@@ -451,67 +428,78 @@ impl<'c, 'p> DeclarationEmit<'c, 'p> {
             written: FxHashSet::default(),
             interface_scopes,
             module_scopes,
-            visibility: FxHashMap::default(),
-            statements: FxHashMap::default(),
-            chains: FxHashMap::default(),
-            containing_modules: FxHashMap::default(),
-            exports: FxHashMap::default(),
-            global_aliases: None,
-            specifiers: FxHashMap::default(),
+            links: EmitResolverLinks::default(),
             b: Builder::new(top, 0),
+        }
+    }
+
+    fn resolver(&mut self) -> EmitResolver<'_, 'p> {
+        EmitResolver {
+            c: &mut *self.c,
+            links: &mut self.links,
         }
     }
 }
 
-/// What `getAccessibleSymbolChain`, `getAlternativeContainingModules`, `isDeclarationVisible` and `getSpecifierForModuleSymbol` memoize,
-/// kept between the types that are printed from one enclosing file.
+/// What `isDeclarationVisible`, `getAccessibleSymbolChain`, `getAlternativeContainingModules`, `getExportsOfSymbol`,
+/// `getSymbolTableAliases` and `getSpecifierForModuleSymbol` memoize.
 #[derive(Default)]
-pub(super) struct SymbolChainCache {
-    file: Option<FileId>,
+pub(super) struct EmitResolverLinks {
+    /// `declarationLinks.isVisible`
     visibility: FxHashMap<(FileId, Decl), bool>,
     statements: FxHashMap<FileId, Rc<Statements>>,
+
+    // `symbolContainerLinks`, `symbolTableAliasCache`
     chains: FxHashMap<(Sym, FileId, ScopeId, Meaning), Rc<Vec<Sym>>>,
     containing_modules: FxHashMap<(Sym, FileId), Rc<Vec<Sym>>>,
     exports: FxHashMap<Sym, Rc<Vec<(Atom, Sym)>>>,
     global_aliases: Option<Rc<Vec<(Atom, Sym)>>>,
+    /// `specifierCache`
     specifiers: FxHashMap<(Sym, FileId, ResolutionMode), String>,
 }
 
+impl EmitResolverLinks {
+    /// `addVisibleAlias`
+    pub(super) fn paint_visible(&mut self, file: FileId, decl: Decl) {
+        let decl = match decl {
+            Decl::Param(pat) | Decl::Require(pat) => Decl::Var(pat),
+            decl => decl,
+        };
+        self.visibility.insert((file, decl), true);
+    }
+}
+
+/// `EmitResolver`, `symbolaccessibility.go` and `modulespecifiers`: the checker, and where they memoize.
+pub(super) struct EmitResolver<'a, 'p> {
+    pub(super) c: &'a mut Checker<'p>,
+    pub(super) links: &'a mut EmitResolverLinks,
+}
+
+/// The links the printers go by, kept between the types that are printed from one enclosing file.
+#[derive(Default)]
+pub(super) struct SymbolChainCache {
+    file: Option<FileId>,
+    links: EmitResolverLinks,
+}
+
 impl<'p> Checker<'p> {
-    /// Asks something of `symbolaccessibility.go` with `scope` of `file` for `enclosingDeclaration`.
-    fn with_enclosing_declaration<T>(
+    /// Asks the `EmitResolver` something for a printer whose enclosing declaration is in `file`.
+    fn with_emit_resolver<T>(
         &mut self,
         file: FileId,
-        scope: ScopeId,
-        ask: impl FnOnce(&mut DeclarationEmit<'_, 'p>) -> T,
+        ask: impl FnOnce(&mut EmitResolver<'_, 'p>) -> T,
     ) -> T {
         let mut cache = std::mem::take(&mut self.symbol_chain_cache);
         if cache.file != Some(file) {
-            cache = SymbolChainCache::default();
-        }
-        let (result, cache) = {
-            let mut emit = DeclarationEmit::new(self, file);
-            emit.b.enclosing.scope = scope;
-            emit.visibility = cache.visibility;
-            emit.statements = cache.statements;
-            emit.chains = cache.chains;
-            emit.containing_modules = cache.containing_modules;
-            emit.exports = cache.exports;
-            emit.global_aliases = cache.global_aliases;
-            emit.specifiers = cache.specifiers;
-            let result = ask(&mut emit);
-            let cache = SymbolChainCache {
+            cache = SymbolChainCache {
                 file: Some(file),
-                visibility: emit.visibility,
-                statements: emit.statements,
-                chains: emit.chains,
-                containing_modules: emit.containing_modules,
-                exports: emit.exports,
-                global_aliases: emit.global_aliases,
-                specifiers: emit.specifiers,
+                links: EmitResolverLinks::default(),
             };
-            (result, cache)
-        };
+        }
+        let result = ask(&mut EmitResolver {
+            c: &mut *self,
+            links: &mut cache.links,
+        });
         self.symbol_chain_cache = cache;
         result
     }
@@ -522,16 +510,15 @@ impl<'p> Checker<'p> {
         symbol: Sym,
         is_value: bool,
         yields_module: bool,
-        file: FileId,
-        scope: ScopeId,
+        at: Enclosing,
     ) -> (bool, Vec<Sym>) {
         let meaning = if is_value {
             Meaning::Value
         } else {
             Meaning::Type
         };
-        let mut chain = self.with_enclosing_declaration(file, scope, |emit| {
-            emit.symbol_chain_ex(symbol, meaning, yields_module, 0)
+        let mut chain = self.with_emit_resolver(at.file, |resolver| {
+            resolver.symbol_chain_ex(symbol, at, meaning, yields_module, 0)
         });
         let starts_with_global_this = chain.len() > 1 && chain[0] == GLOBAL_THIS;
         if starts_with_global_this {
@@ -545,23 +532,17 @@ impl<'p> Checker<'p> {
         &mut self,
         originating_import: Sym,
         yields_module: bool,
-        file: FileId,
-        scope: ScopeId,
+        at: Enclosing,
     ) -> (bool, Vec<Sym>) {
         let symbol = module_clone(originating_import);
-        self.lookup_symbol_chain_at(symbol, true, yields_module, file, scope)
+        self.lookup_symbol_chain_at(symbol, true, yields_module, at)
     }
 
     /// `IsTypeSymbolAccessible`
-    pub(super) fn is_type_symbol_accessible_at(
-        &mut self,
-        symbol: Sym,
-        file: FileId,
-        scope: ScopeId,
-    ) -> bool {
-        self.with_enclosing_declaration(file, scope, |emit| {
-            let at = emit.b.enclosing;
-            emit.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false, 0)
+    pub(super) fn is_type_symbol_accessible_at(&mut self, symbol: Sym, at: Enclosing) -> bool {
+        self.with_emit_resolver(at.file, |resolver| {
+            resolver
+                .is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false, 0)
                 .is_some_and(|access| access.is_accessible())
         })
     }
@@ -574,16 +555,15 @@ impl<'p> Checker<'p> {
         &mut self,
         symbol: Sym,
         is_parent: bool,
-        file: FileId,
-        scope: ScopeId,
+        at: Enclosing,
     ) -> (bool, Vec<Sym>) {
         let (meaning, depth) = if is_parent {
             (Meaning::Namespace, 1)
         } else {
             (Meaning::None, 0)
         };
-        let mut chain = self.with_enclosing_declaration(file, scope, |emit| {
-            emit.symbol_chain_ex(symbol, meaning, false, depth)
+        let mut chain = self.with_emit_resolver(at.file, |resolver| {
+            resolver.symbol_chain_ex(symbol, at, meaning, false, depth)
         });
         let starts_with_global_this = chain.len() > 1 && chain[0] == GLOBAL_THIS;
         if starts_with_global_this {
@@ -599,21 +579,16 @@ impl<'p> Checker<'p> {
         file: FileId,
         scope: ScopeId,
     ) -> Option<Sym> {
-        self.with_enclosing_declaration(file, scope, |emit| {
-            let at = emit.b.enclosing;
-            emit.accessible_alias_of_property(property, at)
+        let at = Enclosing::at_scope(file, scope);
+        self.with_emit_resolver(file, |resolver| {
+            resolver.accessible_alias_of_property(property, at)
         })
     }
 
     /// `getSpecifierForModuleSymbol`
-    pub(super) fn specifier_for_module_symbol_at(
-        &mut self,
-        module: Sym,
-        file: FileId,
-        scope: ScopeId,
-    ) -> String {
-        self.with_enclosing_declaration(file, scope, |emit| {
-            emit.specifier_for_module_symbol(module, ResolutionMode::None)
+    pub(super) fn specifier_for_module_symbol_at(&mut self, module: Sym, at: Enclosing) -> String {
+        self.with_emit_resolver(at.file, |resolver| {
+            resolver.specifier_for_module_symbol(module, at.file, ResolutionMode::None)
         })
     }
 
@@ -621,11 +596,15 @@ impl<'p> Checker<'p> {
     pub(super) fn import_type_specifier_at(
         &mut self,
         module: Sym,
-        file: FileId,
-        scope: ScopeId,
+        at: Enclosing,
+        allows_node_modules_relative_paths: bool,
     ) -> (String, Option<&'static str>) {
-        self.with_enclosing_declaration(file, scope, |emit| {
-            emit.import_type_specifier_and_mode(module)
+        self.with_emit_resolver(at.file, |resolver| {
+            resolver.import_type_specifier_and_mode(
+                module,
+                at.file,
+                allows_node_modules_relative_paths,
+            )
         })
     }
 }
@@ -633,56 +612,42 @@ impl<'p> Checker<'p> {
 // ───────────────────────────── symbols ─────────────────────────────
 
 impl<'p> Checker<'p> {
-    /// `IsSymbolAccessible(symbol, enclosingDeclaration, meaning, false)` with `scope` of `file` for `enclosingDeclaration`. `meaning` is
-    /// `SymFlags::TYPE`, `NAMESPACE` or `VALUE`. `with_export_value`: `SymbolFlagsValue | SymbolFlagsExportValue`.
+    /// `IsSymbolAccessible(symbol, enclosingDeclaration, meaning, false)`. `meaning`, `with_export_value`: see `Meaning::of`.
     pub(super) fn is_symbol_accessible_at(
         &mut self,
         symbol: Sym,
         meaning: SymFlags,
         with_export_value: bool,
-        file: FileId,
-        scope: ScopeId,
+        at: Enclosing,
     ) -> bool {
-        let meaning = if meaning == SymFlags::TYPE {
-            Meaning::Type
-        } else if meaning == SymFlags::NAMESPACE {
-            Meaning::Namespace
-        } else if with_export_value {
-            Meaning::ValueOfName
-        } else {
-            Meaning::Value
-        };
-        self.with_enclosing_declaration(file, scope, |emit| {
-            let at = emit.b.enclosing;
-            emit.is_symbol_accessible(symbol, at, meaning, false)
+        let meaning = Meaning::of(meaning, with_export_value);
+        self.with_emit_resolver(at.file, |resolver| {
+            resolver
+                .is_symbol_accessible(symbol, at, meaning, false)
                 .is_accessible()
         })
     }
 
-    /// `isTriviallySerializableComputedName`, of the computed property name `[name]` written in `file`, with `scope` of
-    /// `enclosing_file` for `enclosingDeclaration`.
+    /// `isTriviallySerializableComputedName`, of the computed property name `[name]` written in `file`.
     pub(super) fn is_trivially_serializable_computed_name_at(
         &mut self,
         file: FileId,
         name: ExprId,
-        enclosing_file: FileId,
-        scope: ScopeId,
+        at: Enclosing,
     ) -> bool {
-        self.with_enclosing_declaration(enclosing_file, scope, |emit| {
-            if !is_entity_name_expression(emit.c.hir(file), name) {
-                return false;
-            }
-            let Some((first, _)) = emit.first_identifier(file, name) else {
-                return false;
-            };
-            let at = emit.b.enclosing;
-            emit.is_entity_name_visible(first, None, Meaning::ValueOfName, at, false)
+        if !is_entity_name_expression(self.hir(file), name) {
+            return false;
+        }
+        let Some((first, _)) = self.first_identifier(file, name) else {
+            return false;
+        };
+        self.with_emit_resolver(at.file, |resolver| {
+            resolver
+                .is_entity_name_visible(first, None, Meaning::ValueOfName, at, false)
                 .is_accessible()
         })
     }
-}
 
-impl<'p> DeclarationEmit<'_, 'p> {
     /// `exportTypeLinks.Get(symbol).target` of a symbol `cloneTypeAsModuleType` made, which has the flags, the name, the declarations,
     /// the parent and the exports of that. Any other symbol is given back.
     fn target_of_module_clone(&self, symbol: Sym) -> Sym {
@@ -701,22 +666,21 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if symbol == GLOBAL_THIS {
             return SymFlags::VALUE_MODULE;
         }
-        self.c.files().flags(self.target_of_module_clone(symbol))
+        self.files().flags(self.target_of_module_clone(symbol))
     }
 
     fn decls_of(&self, symbol: Sym) -> Vec<(FileId, Decl)> {
         if symbol == GLOBAL_THIS {
             return Vec::new();
         }
-        self.c.files().decls(self.target_of_module_clone(symbol))
+        self.files().decls(self.target_of_module_clone(symbol))
     }
 
     fn name_of(&self, symbol: Sym) -> Atom {
         if symbol == GLOBAL_THIS {
             return known::globalThis;
         }
-        self.c
-            .files()
+        self.files()
             .symbol(self.target_of_module_clone(symbol))
             .name
     }
@@ -727,11 +691,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             return "globalThis".to_owned();
         }
         let symbol = self.target_of_module_clone(symbol);
-        self.c.symbol_to_string(symbol)
-    }
-
-    fn text(&self, range: (u32, u32)) -> String {
-        self.c.source_text(self.file, range.0, range.1)
+        self.symbol_to_string(symbol)
     }
 
     /// `symbol.Parent`. The binder notes what a declaration is written in whether or not it is exported: only what is declared
@@ -741,13 +701,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
             return None;
         }
         let symbol = self.target_of_module_clone(symbol);
-        let files = self.c.files();
+        let files = self.files();
         let declared = files.symbol(symbol);
         if declared.parent.is_none() {
             return None;
         }
         let parent = files.sym(symbol.file, declared.parent);
-        let bound = self.c.bound(symbol.file);
+        let bound = self.bound(symbol.file);
         let is_exported = files.export(parent, declared.name) == Some(symbol)
             || files.export(parent, known::default) == Some(symbol)
             || bound
@@ -765,7 +725,6 @@ impl<'p> DeclarationEmit<'_, 'p> {
     fn is_external_module_symbol(&self, symbol: Sym) -> bool {
         symbol != GLOBAL_THIS
             && self
-                .c
                 .files()
                 .parts(self.target_of_module_clone(symbol))
                 .iter()
@@ -774,10 +733,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `is_external_module_symbol`, of the symbol one file has made.
     fn is_external_module_part(&self, part: Sym) -> bool {
-        let files = self.c.files();
+        let files = self.files();
         files.symbol(part).decls.iter().any(|&decl| match decl {
             Decl::File => files.module(part.file).is_module(),
-            Decl::Module(m) => matches!(self.c.hir(part.file)[m].name, ModuleName::String(_)),
+            Decl::Module(m) => matches!(self.hir(part.file)[m].name, ModuleName::String(_)),
             _ => false,
         })
     }
@@ -788,7 +747,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if symbol == GLOBAL_THIS {
             return false;
         }
-        let parts = self.c.files().parts(self.target_of_module_clone(symbol));
+        let parts = self.files().parts(self.target_of_module_clone(symbol));
         let modules = parts
             .iter()
             .filter(|&&part| self.is_external_module_part(part))
@@ -801,7 +760,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if symbol == GLOBAL_THIS {
             return None;
         }
-        let files = self.c.files();
+        let files = self.files();
         let parts = files.parts(self.target_of_module_clone(symbol));
         let declares = |meaning: SymFlags| {
             parts
@@ -825,9 +784,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if symbol == GLOBAL_THIS {
             return None;
         }
-        let files = self.c.files();
+        let files = self.files();
         for part in files.parts(self.target_of_module_clone(symbol)) {
-            let (hir, bound) = (self.c.hir(part.file), self.c.bound(part.file));
+            let (hir, bound) = (self.hir(part.file), self.bound(part.file));
             let mut at = part.id;
             loop {
                 let declared = &bound.symbols[at.idx()];
@@ -854,8 +813,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `c.getExternalModuleContainer(enclosingDeclaration)`
     fn external_module_container_of_scope(&self, at: Enclosing) -> Option<Sym> {
-        let files = self.c.files();
-        let (hir, bound) = (self.c.hir(at.file), self.c.bound(at.file));
+        let files = self.files();
+        let (hir, bound) = (self.hir(at.file), self.bound(at.file));
         let mut scope = at.scope;
         while scope.is_some() {
             let s = &bound.scopes[scope.idx()];
@@ -878,13 +837,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if symbol == GLOBAL_THIS || symbol.id.0 & MODULE_CLONE != 0 {
             return symbol;
         }
-        let files = self.c.files();
+        let files = self.files();
         let flags = files.flags(symbol);
         // `IsNonLocalAlias`
         if flags.contains(SymFlags::ALIAS)
             && !flags.intersects(SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE)
         {
-            return match self.c.originating_import_of_alias(symbol) {
+            return match self.originating_import_of_alias(symbol) {
                 Some(originating_import) => module_clone(originating_import),
                 None => files.resolve_alias(symbol).unwrap_or(symbol),
             };
@@ -897,32 +856,12 @@ impl<'p> DeclarationEmit<'_, 'p> {
         self.resolve_symbol(a) == self.resolve_symbol(b)
     }
 
-    /// `getExportsOfSymbol`
-    fn exports_of_symbol(&mut self, symbol: Sym) -> Rc<Vec<(Atom, Sym)>> {
-        let symbol = self.target_of_module_clone(symbol);
-        if let Some(known) = self.exports.get(&symbol) {
-            return Rc::clone(known);
-        }
-        let files = self.c.files();
-        let exports = if symbol == GLOBAL_THIS {
-            Vec::new()
-        } else if files.flags(symbol).intersects(SymFlags::MODULE) {
-            // `getExportsOfModuleWorker`
-            files.all_exports_of(files.module_value(symbol)).to_vec()
-        } else {
-            files.exports(symbol)
-        };
-        let exports = Rc::new(exports);
-        self.exports.insert(symbol, Rc::clone(&exports));
-        exports
-    }
-
     /// `compareSymbols`: by where they are first declared.
     fn compare_symbols(&self, a: Sym, b: Sym) -> std::cmp::Ordering {
         let place = |symbol: Sym| match self.decls_of(symbol).first() {
             Some(&(file, decl)) => {
-                let start = self.c.declaration_name_start(file, decl).unwrap_or(0);
-                (0, self.c.place_in_program_order(file, start))
+                let start = self.declaration_name_start(file, decl).unwrap_or(0);
+                (0, self.place_in_program_order(file, start))
             }
             None => (1, (false, 0, 0)),
         };
@@ -936,13 +875,33 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
         order
     }
+
+    /// `resolve_alias`, with its target in place of a symbol `cloneTypeAsModuleType` made.
+    fn target_of_alias(&self, alias: Sym) -> Option<Sym> {
+        let files = self.files();
+        let target = files.canonical(files.alias_target(alias)?);
+        files.resolve_alias_as(
+            target,
+            SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE,
+        )
+    }
+
+    /// `GetFirstIdentifier`: the name, and where it is written.
+    fn first_identifier(&self, file: FileId, e: ExprId) -> Option<(Atom, u32)> {
+        let hir = self.hir(file);
+        let first = &hir[first_identifier(hir, e)];
+        match first.kind {
+            ExprKind::Ident(name) => Some((name, first.pos)),
+            _ => None,
+        }
+    }
 }
 
 // ───────────────────────────── what is visible ─────────────────────────────
 
-impl<'p> DeclarationEmit<'_, 'p> {
+impl<'p> EmitResolver<'_, 'p> {
     fn statements_of(&mut self, file: FileId) -> Rc<Statements> {
-        if let Some(known) = self.statements.get(&file) {
+        if let Some(known) = self.links.statements.get(&file) {
             return Rc::clone(known);
         }
         let hir = self.c.hir(file);
@@ -969,7 +928,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
         }
         let statements = Rc::new(statements);
-        self.statements.insert(file, Rc::clone(&statements));
+        self.links.statements.insert(file, Rc::clone(&statements));
         statements
     }
 
@@ -1010,26 +969,18 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     /// `isDeclarationVisible`
-    fn is_declaration_visible(&mut self, file: FileId, decl: Decl) -> bool {
+    pub(super) fn is_declaration_visible(&mut self, file: FileId, decl: Decl) -> bool {
         // A name is bound by one node, whatever it is bound as.
         let decl = match decl {
             Decl::Param(pat) | Decl::Require(pat) => Decl::Var(pat),
             decl => decl,
         };
-        if let Some(&known) = self.visibility.get(&(file, decl)) {
+        if let Some(&known) = self.links.visibility.get(&(file, decl)) {
             return known;
         }
         let is_visible = self.determine_if_declaration_is_visible(file, decl);
-        self.visibility.insert((file, decl), is_visible);
+        self.links.visibility.insert((file, decl), is_visible);
         is_visible
-    }
-
-    fn paint_visible(&mut self, file: FileId, decl: Decl) {
-        let decl = match decl {
-            Decl::Param(pat) | Decl::Require(pat) => Decl::Var(pat),
-            decl => decl,
-        };
-        self.visibility.insert((file, decl), true);
     }
 
     /// `determineIfDeclarationIsVisible`
@@ -1114,7 +1065,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
             let is_augmentation = match container {
                 Parent::File => hir.has_module_syntax,
                 Parent::Module(around) => {
-                    !matches!(hir[around].name, ModuleName::Ident(_)) && !hir.has_module_syntax
+                    !matches!(hir[around].name, ModuleName::Ident(_))
+                        && !hir.has_module_syntax
+                        && self
+                            .statement_of(file, Decl::Module(around))
+                            .is_some_and(|s| bound.stmt_parent[s.idx()] == Parent::File)
                 }
                 _ => false,
             };
@@ -1165,14 +1120,14 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `hasVisibleDeclarations`: `None` if some declaration of `symbol` is not and cannot be made visible, or else the statements that
     /// have to be written for it to be. `paints`: `shouldComputeAliasToMakeVisible`.
-    fn has_visible_declarations(
+    pub(super) fn has_visible_declarations(
         &mut self,
         symbol: Sym,
         paints: bool,
     ) -> Option<Vec<(FileId, StmtId)>> {
         let mut aliases: Vec<(FileId, StmtId)> = Vec::new();
-        let flags = self.flags_of(symbol);
-        for (file, decl) in self.decls_of(symbol) {
+        let flags = self.c.flags_of(symbol);
+        for (file, decl) in self.c.decls_of(symbol) {
             if self.is_declaration_visible(file, decl) {
                 continue;
             }
@@ -1246,7 +1201,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 return None;
             }
             if paints {
-                self.paint_visible(file, decl);
+                self.links.paint_visible(file, decl);
                 if !aliases.contains(&(file, statement)) {
                     aliases.push((file, statement));
                 }
@@ -1255,9 +1210,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
         Some(aliases)
     }
 
-    /// `isEntityNameVisible`, of a name that starts with the identifier `first`. `start`: where that is written in the file at hand,
+    /// `isEntityNameVisible`, of a name that starts with the identifier `first`. `start`: where that is written in the file of `at`,
     /// for `ErrorNode`.
-    fn is_entity_name_visible(
+    pub(super) fn is_entity_name_visible(
         &mut self,
         first: Atom,
         start: Option<u32>,
@@ -1274,12 +1229,12 @@ impl<'p> DeclarationEmit<'_, 'p> {
             aliases: Vec::new(),
             symbol_name: self.c.atom_text(first),
             module_name: String::new(),
-            error_node: start.map(|start| (start, self.c.end_of_name_at(self.file, start))),
+            error_node: start.map(|start| (start, self.c.end_of_name_at(at.file, start))),
         };
         let Some(symbol) = found else {
             return result;
         };
-        if meaning == Meaning::Type && self.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER) {
+        if meaning == Meaning::Type && self.c.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER) {
             return Access::accessible(Vec::new());
         }
         match self.has_visible_declarations(symbol, should_compute_alias_to_make_visible) {
@@ -1294,7 +1249,27 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
 // ───────────────────────────── what can be named ─────────────────────────────
 
-impl<'p> DeclarationEmit<'_, 'p> {
+impl<'p> EmitResolver<'_, 'p> {
+    /// `getExportsOfSymbol`
+    fn exports_of_symbol(&mut self, symbol: Sym) -> Rc<Vec<(Atom, Sym)>> {
+        let symbol = self.c.target_of_module_clone(symbol);
+        if let Some(known) = self.links.exports.get(&symbol) {
+            return Rc::clone(known);
+        }
+        let files = self.c.files();
+        let exports = if symbol == GLOBAL_THIS {
+            Vec::new()
+        } else if files.flags(symbol).intersects(SymFlags::MODULE) {
+            // `getExportsOfModuleWorker`
+            files.all_exports_of(files.module_value(symbol)).to_vec()
+        } else {
+            files.exports(symbol)
+        };
+        let exports = Rc::new(exports);
+        self.links.exports.insert(symbol, Rc::clone(&exports));
+        exports
+    }
+
     /// `someSymbolTableInScope`: the tables, innermost first.
     fn tables_in_scope(&self, at: Enclosing) -> Vec<Table> {
         let files = self.c.files();
@@ -1350,7 +1325,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `symbols[symbol.Name]`. The binder keeps a default export under the name it is declared with, and exports it as `default`.
     fn lookup_symbol(&mut self, table: Table, symbol: Sym) -> Option<Sym> {
-        let by_name = self.lookup(table, self.name_of(symbol));
+        let by_name = self.lookup(table, self.c.name_of(symbol));
         if by_name == Some(symbol) {
             return by_name;
         }
@@ -1387,7 +1362,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `declareModuleMember`: `export import a = ..` is declared among the exports alone.
     fn is_exported_import_equals(&self, symbol: Sym) -> bool {
-        self.decls_of(symbol).iter().any(|&(file, decl)| {
+        self.c.decls_of(symbol).iter().any(|&(file, decl)| {
             matches!(decl, Decl::ImportEquals(import) if self.c.hir(file)[import].flags.contains(Flags::EXPORT))
         })
     }
@@ -1414,7 +1389,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 .filter(is_alias)
                 .collect(),
             Table::ResolvedExports(_) | Table::Globals => {
-                if let Some(known) = &self.global_aliases {
+                if let Some(known) = &self.links.global_aliases {
                     return Rc::clone(known);
                 }
                 let mut aliases: Vec<(Atom, Sym)> = files
@@ -1425,7 +1400,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     .collect();
                 aliases.sort_unstable();
                 let aliases = Rc::new(aliases);
-                self.global_aliases = Some(Rc::clone(&aliases));
+                self.links.global_aliases = Some(Rc::clone(&aliases));
                 return aliases;
             }
         };
@@ -1452,7 +1427,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         visited: &mut Vec<(Sym, Table)>,
     ) -> Rc<Vec<Sym>> {
         let key = (symbol, at.file, at.scope, meaning);
-        if let Some(known) = self.chains.get(&key) {
+        if let Some(known) = self.links.chains.get(&key) {
             return Rc::clone(known);
         }
         let mut result = Vec::new();
@@ -1463,7 +1438,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
         }
         let result = Rc::new(result);
-        self.chains.insert(key, Rc::clone(&result));
+        self.links.chains.insert(key, Rc::clone(&result));
         result
     }
 
@@ -1525,7 +1500,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 visited,
             )
         {
-            if self.is_export_among_locals(table, self.name_of(found), found) {
+            if self.is_export_among_locals(table, self.c.name_of(found), found) {
                 // `res.ExportSymbol`: it is weighed against the aliases.
                 if !self.is_exported_import_equals(found) {
                     candidates.push(vec![symbol]);
@@ -1553,7 +1528,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
         if !candidates.is_empty() {
             // The first of the shortest.
-            candidates.sort_by(|a, b| self.compare_symbol_chains(a, b));
+            candidates.sort_by(|a, b| self.c.compare_symbol_chains(a, b));
             return candidates.swap_remove(0);
         }
         if table == Table::Globals {
@@ -1584,7 +1559,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             if name == known::export_equals || name == known::default {
                 continue;
             }
-            let decls = self.decls_of(alias);
+            let decls = self.c.decls_of(alias);
             // `isUMDExportSymbol`
             if is_in_module && matches!(decls.first(), Some((_, Decl::UmdGlobal(_)))) {
                 continue;
@@ -1635,7 +1610,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     candidates.push(alias);
                 }
             }
-            candidates.sort_by(|&a, &b| self.compare_symbols(a, b));
+            candidates.sort_by(|&a, &b| self.c.compare_symbols(a, b));
             if let Some(&first) = candidates.first() {
                 return Some(first);
             }
@@ -1649,23 +1624,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
         match self.c.originating_import_of_alias(alias) {
             Some(originating_import) => Some(module_clone(originating_import)),
             None => {
-                let target = self.target_of_alias(alias)?;
+                let target = self.c.target_of_alias(alias)?;
                 // `combineValueAndTypeSymbols` makes a symbol that nothing else is and that exports nothing.
-                let is_combined = !self.flags_of(target).intersects(SymFlags::VALUE)
+                let is_combined = !self.c.flags_of(target).intersects(SymFlags::VALUE)
                     && self.c.imported_property_of_export_equals(alias).is_some();
                 (!is_combined).then_some(target)
             }
         }
-    }
-
-    /// `resolve_alias`, with its target in place of a symbol `cloneTypeAsModuleType` made.
-    fn target_of_alias(&self, alias: Sym) -> Option<Sym> {
-        let files = self.c.files();
-        let target = files.canonical(files.alias_target(alias)?);
-        files.resolve_alias_as(
-            target,
-            SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE,
-        )
     }
 
     /// `getCandidateListForSymbol`
@@ -1725,7 +1690,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if symbol != from_table && Some(symbol) != resolved {
             return false;
         }
-        !self.is_external_module_symbol_in_table(from_table)
+        !self.c.is_external_module_symbol_in_table(from_table)
             && (ignores_qualification || self.can_qualify_symbol(at, from_table, meaning, visited))
     }
 
@@ -1740,7 +1705,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if !self.needs_qualification(from_table, at, meaning) {
             return true;
         }
-        match self.parent_of_symbol(from_table) {
+        match self.c.parent_of_symbol(from_table) {
             Some(parent) => !self
                 .accessible_symbol_chain_ex(parent, at, meaning.left(), visited)
                 .is_empty(),
@@ -1757,9 +1722,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
             if found == symbol {
                 return false;
             }
-            let flags = self.flags_of(found);
+            let flags = self.c.flags_of(found);
             let resolves_alias = flags.contains(SymFlags::ALIAS)
                 && !self
+                    .c
                     .decls_of(found)
                     .iter()
                     .any(|d| matches!(d.1, Decl::ExportSpec(_)));
@@ -1777,36 +1743,37 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `getAliasForSymbolInContainer`
     fn alias_for_symbol_in_container(&mut self, container: Sym, symbol: Sym) -> Option<Sym> {
-        if Some(container) == self.parent_of_symbol(symbol) {
+        if Some(container) == self.c.parent_of_symbol(symbol) {
             return Some(symbol);
         }
         if container == GLOBAL_THIS {
             return None;
         }
         if let Some(equals) = self.c.files().export(container, known::export_equals)
-            && self.is_same_reference(equals, symbol)
+            && self.c.is_same_reference(equals, symbol)
         {
             return Some(container);
         }
         let exports = self.exports_of_symbol(container);
-        let name = self.name_of(symbol);
+        let name = self.c.name_of(symbol);
         if let Some(quick) = exports.iter().find(|export| export.0 == name)
-            && self.is_same_reference(quick.1, symbol)
+            && self.c.is_same_reference(quick.1, symbol)
         {
             return Some(quick.1);
         }
         let mut same = Vec::new();
         for &(_, exported) in exports.iter() {
-            if self.is_same_reference(exported, symbol) {
+            if self.c.is_same_reference(exported, symbol) {
                 same.push(exported);
             }
         }
-        same.into_iter().min_by(|&a, &b| self.compare_symbols(a, b))
+        same.into_iter()
+            .min_by(|&a, &b| self.c.compare_symbols(a, b))
     }
 
     /// `getAlternativeContainingModules`
     fn alternative_containing_modules(&mut self, symbol: Sym, at: Enclosing) -> Rc<Vec<Sym>> {
-        if let Some(known) = self.containing_modules.get(&(symbol, at.file)) {
+        if let Some(known) = self.links.containing_modules.get(&(symbol, at.file)) {
             return Rc::clone(known);
         }
         let files = self.c.files();
@@ -1832,7 +1799,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
         }
         let results = Rc::new(results);
-        self.containing_modules
+        self.links
+            .containing_modules
             .insert((symbol, at.file), Rc::clone(&results));
         results
     }
@@ -1847,14 +1815,17 @@ impl<'p> DeclarationEmit<'_, 'p> {
     ) -> Vec<Sym> {
         // `getFileSymbolIfFileSymbolExportEqualsContainer`
         let mut additional = Vec::new();
-        if let Some(module) = self.external_module_container_of_symbol(container)
+        if let Some(module) = self.c.external_module_container_of_symbol(container)
             && let Some(equals) = self.c.files().export(module, known::export_equals)
-            && self.is_same_reference(equals, container)
+            && self.c.is_same_reference(equals, container)
         {
             additional.push(module);
         }
         let reexports = self.alternative_containing_modules(symbol, at);
-        let is_in_scope = self.flags_of(container).intersects(meaning.left().flags())
+        let is_in_scope = self
+            .c
+            .flags_of(container)
+            .intersects(meaning.left().flags())
             && !self
                 .accessible_symbol_chain(container, at, Meaning::Namespace)
                 .is_empty();
@@ -1918,14 +1889,14 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `getContainersOfSymbol`
     fn containers_of_symbol(&mut self, symbol: Sym, at: Enclosing, meaning: Meaning) -> Vec<Sym> {
-        if let Some(container) = self.parent_of_symbol(symbol)
-            && !self.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER)
+        if let Some(container) = self.c.parent_of_symbol(symbol)
+            && !self.c.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER)
         {
             return self.with_alternative_containers(container, symbol, at, meaning);
         }
         let files = self.c.files();
         let mut candidates: Vec<Sym> = Vec::new();
-        for (file, decl) in self.decls_of(symbol) {
+        for (file, decl) in self.c.decls_of(symbol) {
             // `IsAmbientModule`
             if matches!(decl, Decl::Module(m) if !matches!(self.c.hir(file)[m].name, ModuleName::Ident(_)))
                 || matches!(
@@ -2011,7 +1982,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 }
             }
             // Whatever a module means can be written as an `import` type.
-            if self.is_external_module_symbol(symbol) {
+            if self.c.is_external_module_symbol(symbol) {
                 if paints {
                     early_module_bail = true;
                     continue;
@@ -2037,9 +2008,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
         Some(Access {
             accessibility: Accessibility::NotAccessible,
             aliases: Vec::new(),
-            symbol_name: self.symbol_text(initial),
+            symbol_name: self.c.symbol_text(initial),
             module_name: if had != initial {
-                self.symbol_text(had)
+                self.c.symbol_text(had)
             } else {
                 String::new()
             },
@@ -2048,7 +2019,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     /// `IsSymbolAccessible`
-    fn is_symbol_accessible(
+    pub(super) fn is_symbol_accessible(
         &mut self,
         symbol: Sym,
         at: Enclosing,
@@ -2068,17 +2039,17 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let mut result = Access {
             accessibility: Accessibility::NotAccessible,
             aliases: Vec::new(),
-            symbol_name: self.symbol_text(symbol),
+            symbol_name: self.c.symbol_text(symbol),
             module_name: String::new(),
             error_node: None,
         };
-        if let Some(module) = self.external_module_container_of_symbol(symbol)
-            && Some(module) != self.external_module_container_of_scope(at)
+        if let Some(module) = self.c.external_module_container_of_symbol(symbol)
+            && Some(module) != self.c.external_module_container_of_scope(at)
         {
             result.accessibility = Accessibility::CannotBeNamed;
-            result.module_name = self.symbol_text(module);
+            result.module_name = self.c.symbol_text(module);
             // `ErrorNode`: `enclosingDeclaration`, if it is in JavaScript. A variable declaration is where the error is anyway.
-            if self.c.hir(at.file).is_js && at.variable.is_none() && !self.b.is_in_made_up_scope {
+            if self.c.hir(at.file).is_js && at.variable.is_none() && !at.is_fake_scope {
                 let start = self.c.skip_trivia_from(at.file, 0);
                 result.error_node = Some((start, self.c.end_of_token_at(at.file, start)));
             }
@@ -2090,6 +2061,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
 // ───────────────────────────── `SymbolTracker` ─────────────────────────────
 
 impl<'p> DeclarationEmit<'_, 'p> {
+    fn text(&self, range: (u32, u32)) -> String {
+        self.c.source_text(self.file, range.0, range.1)
+    }
+
     fn add_diagnostic(&mut self, range: (u32, u32), code: u32, args: Vec<String>) {
         self.found.push(Found {
             start: range.0,
@@ -2423,7 +2398,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     fn is_declared_in_javascript(&self, symbol: Sym) -> bool {
-        self.decls_of(symbol)
+        self.c
+            .decls_of(symbol)
             .iter()
             .any(|declaration| self.c.hir(declaration.0).is_js)
     }
@@ -2440,6 +2416,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     fn track(&mut self, tracked: Tracked) {
         if self
+            .c
             .flags_of(tracked.symbol)
             .contains(SymFlags::TYPE_PARAMETER)
         {
@@ -2449,6 +2426,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if !tracked.as_local
             && (self.b.may_be_named > 0 || self.is_declared_in_javascript(tracked.symbol))
             && !self
+                .resolver()
                 .is_symbol_accessible(tracked.symbol, tracked.at, tracked.meaning, false)
                 .is_accessible()
         {
@@ -2459,9 +2437,14 @@ impl<'p> DeclarationEmit<'_, 'p> {
             boundary.tracked.push(tracked);
         } else {
             let access = if tracked.as_local {
-                self.inaccessible(tracked.symbol, tracked.at)
+                self.resolver().inaccessible(tracked.symbol, tracked.at)
             } else {
-                self.is_symbol_accessible(tracked.symbol, tracked.at, tracked.meaning, true)
+                self.resolver().is_symbol_accessible(
+                    tracked.symbol,
+                    tracked.at,
+                    tracked.meaning,
+                    true,
+                )
             };
             if self.handle_symbol_accessibility_error(access) {
                 self.b.reported_diagnostic = true;
@@ -2511,7 +2494,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             // `GetReferencedValueDeclaration`
             let host = files.sym(self.file, symbol);
-            let decls = self.decls_of(host);
+            let decls = self.c.decls_of(host);
             let Some(&(file, decl)) = decls
                 .iter()
                 .find(|d| matches!(d.1, Decl::Fn(_) | Decl::Var(_)))
@@ -2552,7 +2535,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     matches!(d.1, Decl::Fn(f)
                         if d.0 == file && !matches!(hir[f].body, FnBody::None))
                 });
-                if !has_body || !self.is_declaration_visible(file, decl) {
+                if !has_body || !self.resolver().is_declaration_visible(file, decl) {
                     continue;
                 }
             }
@@ -2653,7 +2636,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
         let hir = self.c.hir(self.file);
         for (_, symbol) in files.exports(files.file_symbol(self.file)) {
-            let Some(&(file, Decl::ExportsProperty(e))) = self.decls_of(symbol).first() else {
+            let Some(&(file, Decl::ExportsProperty(e))) = self.c.decls_of(symbol).first() else {
                 continue;
             };
             if file != self.file || crate::bind::define_property_call(hir, e).is_none() {
@@ -2682,7 +2665,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             visited.push(symbol);
             at = None;
             for (file, decl) in files.decls(symbol) {
-                self.paint_visible(file, decl);
+                self.links.paint_visible(file, decl);
                 // `import a = b.c` makes `b` visible.
                 if let Decl::ImportEquals(i) = decl
                     && let ImportEqualsTarget::Entity(names) = self.c.hir(file)[i].target
@@ -2731,11 +2714,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
     /// Makes `scope` what names are looked up from.
     fn enter(&mut self, scope: ScopeId) {
         if scope.is_some() {
-            self.enclosing = Enclosing {
-                file: self.file,
-                scope,
-                variable: VarDeclId::NONE,
-            };
+            self.enclosing = Enclosing::at_scope(self.file, scope);
         }
     }
 
@@ -2755,8 +2734,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
             StmtKind::Var(_) => None,
             _ => return false,
         };
+        let file = self.file;
         if let Some(decl) = decl
-            && !self.is_declaration_visible(self.file, decl)
+            && !self.resolver().is_declaration_visible(file, decl)
         {
             return false;
         }
@@ -2820,7 +2800,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `transformImportEqualsDeclaration`
     fn transform_import_equals(&mut self, i: ImportEqualsId, s: StmtId) -> bool {
-        if !self.is_declaration_visible(self.file, Decl::ImportEquals(i)) {
+        let file = self.file;
+        if !self
+            .resolver()
+            .is_declaration_visible(file, Decl::ImportEquals(i))
+        {
             return false;
         }
         let hir = self.c.hir(self.file);
@@ -2841,10 +2825,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `getBindingNameVisible`
     fn is_binding_name_visible(&mut self, pat: PatId) -> bool {
-        let hir = self.c.hir(self.file);
+        let file = self.file;
+        let hir = self.c.hir(file);
         match hir[pat].kind {
             PatKind::Missing => false,
-            PatKind::Ident(_) => self.is_declaration_visible(self.file, Decl::Var(pat)),
+            PatKind::Ident(_) => self.resolver().is_declaration_visible(file, Decl::Var(pat)),
             PatKind::Object(props) => props
                 .iter()
                 .any(|p| self.is_binding_name_visible(hir[p].value)),
@@ -2890,9 +2875,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.suppresses_new_contexts,
             );
             self.enclosing = Enclosing {
-                file: self.file,
-                scope,
                 variable: d,
+                ..Enclosing::at_scope(self.file, scope)
             };
             if !self.suppresses_new_contexts {
                 self.context = Context::Variable(pat);
@@ -3038,7 +3022,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     };
                     self.context = Context::Heritage(code, name, node);
                 }
-                if let Some((first, start)) = self.first_identifier(self.file, class.extends) {
+                if let Some((first, start)) = self.c.first_identifier(self.file, class.extends) {
                     self.check_entity_name_visibility(first, start, Meaning::ValueOfName);
                 }
                 for argument in hir.ids(class.extends_args) {
@@ -3140,16 +3124,6 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     // ───────────────────────────── members and signatures ─────────────────────────────
-
-    /// `GetFirstIdentifier`: the name, and where it is written.
-    fn first_identifier(&self, file: FileId, e: ExprId) -> Option<(Atom, u32)> {
-        let hir = self.c.hir(file);
-        let first = &hir[first_identifier(hir, e)];
-        match first.kind {
-            ExprKind::Ident(name) => Some((name, first.pos)),
-            _ => None,
-        }
-    }
 
     /// `IsImplementationOfOverload`
     fn is_implementation_of_overload(&self, f: FnId) -> bool {
@@ -3274,7 +3248,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 for p in props.iter() {
                     if let PropKey::Computed(key) = hir[p].key
                         && is_entity_name_expression(self.c.hir(self.file), key)
-                        && let Some((first, start)) = self.first_identifier(self.file, key)
+                        && let Some((first, start)) = self.c.first_identifier(self.file, key)
                     {
                         self.check_entity_name_visibility(first, start, Meaning::ValueOfName);
                     }
@@ -3393,7 +3367,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         // `checkName`
         if is_written
             && let Some(key) = dynamic_name
-            && let Some((first, start)) = self.first_identifier(self.file, key)
+            && let Some((first, start)) = self.c.first_identifier(self.file, key)
         {
             if !self.suppresses_new_contexts {
                 self.context = match member.kind {
@@ -3416,7 +3390,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `checkEntityNameVisibility`
     fn check_entity_name_visibility(&mut self, first: Atom, start: u32, meaning: Meaning) {
-        let access = self.is_entity_name_visible(first, Some(start), meaning, self.enclosing, true);
+        let at = self.enclosing;
+        let access = self
+            .resolver()
+            .is_entity_name_visible(first, Some(start), meaning, at, true);
         self.handle_symbol_accessibility_error(access);
     }
 
@@ -3442,7 +3419,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             TypeNodeKind::Typeof { args, expr, .. } => {
                 if expr.is_some()
-                    && let Some((first, start)) = self.first_identifier(self.file, expr)
+                    && let Some((first, start)) = self.c.first_identifier(self.file, expr)
                 {
                     self.check_entity_name_visibility(first, start, Meaning::ValueOfName);
                 }
@@ -3561,13 +3538,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let is_property = parameter.flags.contains(Flags::PARAMETER_PROPERTY);
         // `isRequiredInitializedParameter`, `isOptionalUninitializedParameterProperty`
         let may_be_undefined = if parameter.default.is_some() {
-            !is_optional
-                && (!is_property
-                    || at.scope.is_some()
-                        && matches!(
-                            self.c.bound(at.file).scopes[at.scope.idx()].kind,
-                            ScopeKind::Fn(_)
-                        ))
+            !is_optional && (!is_property || self.c.is_function_like_declaration(at))
         } else {
             is_optional && is_property
         };
@@ -3756,7 +3727,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 .decls_of(symbol)
                 .iter()
                 .any(|&d| d == (self.file, Decl::ExportExpr(s)))
-            && files.flags(symbol).contains(SymFlags::EXPORT_VALUE)
+            && files.flags(symbol).contains(SymFlags::PROPERTY)
         {
             return self.c.type_of_symbol(symbol);
         }
@@ -3806,9 +3777,16 @@ impl<'p> DeclarationEmit<'_, 'p> {
         self.c.written_name(name).len()
     }
 
-    fn is_value_symbol_accessible(&mut self, symbol: Sym) -> bool {
-        self.is_symbol_accessible(symbol, self.b.enclosing, Meaning::Value, false)
+    /// `IsSymbolAccessible(symbol, b.ctx.enclosingDeclaration, meaning, false)`
+    fn is_symbol_accessible(&mut self, symbol: Sym, meaning: Meaning) -> bool {
+        let at = self.b.enclosing;
+        self.resolver()
+            .is_symbol_accessible(symbol, at, meaning, false)
             .is_accessible()
+    }
+
+    fn is_value_symbol_accessible(&mut self, symbol: Sym) -> bool {
+        self.is_symbol_accessible(symbol, Meaning::Value)
     }
 
     /// `getTypeFromTypeNode` of the node builder: under the mapper of the signature that is being written.
@@ -3821,19 +3799,20 @@ impl<'p> DeclarationEmit<'_, 'p> {
     fn symbol_to_type_node(&mut self, symbol: Sym, meaning: Meaning) {
         // `lookupSymbolChain`
         self.track_symbol(symbol, self.b.enclosing, meaning);
-        let chain = if self.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER) {
+        let chain = if self.c.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER) {
             vec![symbol]
         } else {
-            self.symbol_chain(symbol, meaning, 0)
+            let at = self.b.enclosing;
+            self.resolver().symbol_chain(symbol, at, meaning, 0)
         };
         for &part in &chain[1..] {
-            self.b.approximate_length += self.length_of(self.name_of(part)) + 1;
+            self.b.approximate_length += self.length_of(self.c.name_of(part)) + 1;
         }
-        if self.is_external_module_symbol(chain[0]) {
+        if self.c.is_external_module_symbol(chain[0]) {
             let specifier = self.import_type_specifier(chain[0], symbol);
             self.b.approximate_length += specifier.len() + 10;
         } else {
-            self.b.approximate_length += 2 * (self.length_of(self.name_of(chain[0])) + 1);
+            self.b.approximate_length += 2 * (self.length_of(self.c.name_of(chain[0])) + 1);
         }
     }
 
@@ -3877,7 +3856,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             TypeData::EnumLit { member, .. } => return self.enum_member_to_node(*member),
             TypeData::Enum { symbol, .. } => {
                 let symbol = *symbol;
-                if self.flags_of(symbol).contains(SymFlags::ENUM_MEMBER) {
+                if self.c.flags_of(symbol).contains(SymFlags::ENUM_MEMBER) {
                     return self.enum_member_to_node(symbol);
                 }
                 return self.symbol_to_type_node(symbol, Meaning::Type);
@@ -3914,9 +3893,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
         let alias = self.c.alias_with_arguments_for_declaration_emit(ty);
         if let Some((alias, arguments)) = &alias
-            && self
-                .is_symbol_accessible(*alias, self.b.enclosing, Meaning::Type, false)
-                .is_accessible()
+            && self.is_symbol_accessible(*alias, Meaning::Type)
         {
             self.map_to_type_nodes(arguments, false);
             return self.symbol_to_type_node(*alias, Meaning::Type);
@@ -3951,11 +3928,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.map_to_type_nodes(&types, false);
             }
             TypeData::TypeParam(..) => self.type_parameter_to_node(ty),
-            TypeData::Union(members) => {
-                if let Some((alias, arguments)) = self.alias_found_from_members(ty, members) {
-                    self.map_to_type_nodes(&arguments, false);
-                    return self.symbol_to_type_node(alias, Meaning::Type);
-                }
+            TypeData::Union(_) => {
                 // `UnionType.origin`
                 if let UnionOrigin::Intersection(origin) = self.c.origin(ty) {
                     return self.list_to_node(origin);
@@ -3963,13 +3936,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 let types = self.format_union_types(ty);
                 self.list_to_node(&types);
             }
-            TypeData::Intersection(members) => {
-                if let Some((alias, arguments)) = self.alias_found_from_members(ty, members) {
-                    self.map_to_type_nodes(&arguments, false);
-                    return self.symbol_to_type_node(alias, Meaning::Type);
-                }
-                self.list_to_node(members);
-            }
+            TypeData::Intersection(members) => self.list_to_node(members),
             TypeData::Anon { .. }
             | TypeData::Fns { .. }
             | TypeData::Synth(_)
@@ -3993,10 +3960,15 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.b.approximate_length += 2;
             }
             // `Uppercase<T>`, `NoInfer<T>`
-            TypeData::StringMapping { ty: of, .. } | TypeData::Substitution { base: of, .. } => {
+            TypeData::StringMapping { ty: of, .. }
+            | TypeData::Substitution {
+                base: of,
+                constraint: TypeId::UNKNOWN,
+            } => {
                 self.type_to_node(*of);
                 self.b.approximate_length += 20;
             }
+            TypeData::Substitution { base, .. } => self.type_to_node(*base),
             TypeData::IndexedAccess { obj, index, .. } => {
                 self.type_to_node(*obj);
                 self.type_to_node(*index);
@@ -4019,211 +3991,6 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
     }
 
-    /// `t.alias`, of a union or an intersection the printer knows none for. `instantiateTypeWorker` passes the alias on with its type
-    /// arguments instantiated, and an alias that is written `= A<X>` takes the place of `A`. Here what `instantiate` makes does not
-    /// say what it is made from. So the alias is looked for among the generic aliases of the files the members are written in: one
-    /// that can be named where the type is wanted and comes to `ty` with the type arguments read off the members.
-    fn alias_found_from_members(
-        &mut self,
-        ty: TypeId,
-        members: &[TypeId],
-    ) -> Option<(Sym, Vec<TypeId>)> {
-        let files = self.c.files();
-        let is_union = self.c.is_union(ty);
-        let mut written_in: Vec<FileId> = Vec::new();
-        // What stands for the type parameters around each member that is written somewhere.
-        let mut mappers: Vec<MapperId> = Vec::new();
-        for &member in members {
-            let file = match self.c.data(member) {
-                TypeData::Ref { target, .. } => target.file,
-                TypeData::Anon {
-                    origin: Origin::TypeLiteral(file, _) | Origin::Mapped(file, _),
-                    mapper,
-                }
-                | TypeData::Cond { file, mapper, .. } => {
-                    mappers.push(*mapper);
-                    *file
-                }
-                TypeData::Fns { decls, mapper } => match decls.first() {
-                    Some(first) => {
-                        mappers.push(*mapper);
-                        first.0
-                    }
-                    None => continue,
-                },
-                _ => continue,
-            };
-            if !written_in.contains(&file) {
-                written_in.push(file);
-            }
-        }
-        for file in written_in {
-            let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-            for (a, alias) in hir.aliases.iter().enumerate() {
-                if alias.type_params.is_empty()
-                    || alias.ty.is_none()
-                    || bound.alias_symbol[a].is_none()
-                {
-                    continue;
-                }
-                let symbol = files.sym(file, bound.alias_symbol[a]);
-                // A class or an interface of the same name is what the name means. What `ty` is made from has been resolved.
-                if files
-                    .flags(symbol)
-                    .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-                {
-                    continue;
-                }
-                let Some(declared) = self.c.p.declared_types.get(&symbol) else {
-                    continue;
-                };
-                let body = hir[alias.ty].kind;
-                let parameters = self.c.local_type_params_of_symbol(symbol);
-                let mut arguments: Vec<Option<TypeId>> = vec![None; parameters.len()];
-                let mut keys = None;
-                let fits = match self.c.data(declared) {
-                    TypeData::Union(patterns) | TypeData::Intersection(patterns)
-                        if self.c.is_union(declared) == is_union
-                            && patterns.len() == members.len()
-                            && matches!(
-                                body,
-                                TypeNodeKind::Union(_)
-                                    | TypeNodeKind::Intersection(_)
-                                    | TypeNodeKind::Ref { .. }
-                                    | TypeNodeKind::Mapped(_)
-                            ) =>
-                    {
-                        patterns.iter().all(|&pattern| {
-                            members.iter().any(|&member| {
-                                let mut attempt = arguments.clone();
-                                let fits =
-                                    self.fits_alias(pattern, member, &parameters, &mut attempt, 0);
-                                if fits {
-                                    arguments = attempt;
-                                }
-                                fits
-                            })
-                        })
-                    }
-                    // `getIndexedAccessTypeOrUndefined`: what a union of keys selects is a union that has the alias of the indexed
-                    // access type. `{ a: X[K] }["a"]` is `X[K]`, which has none.
-                    &TypeData::IndexedAccess { index, .. } if is_union => {
-                        let TypeNodeKind::IndexedAccess { index: written, .. } = body else {
-                            continue;
-                        };
-                        if self.c.type_from_node(file, written) != index {
-                            continue;
-                        }
-                        for (argument, &parameter) in arguments.iter_mut().zip(parameters.iter()) {
-                            *argument = mappers
-                                .iter()
-                                .find_map(|&mapper| self.c.p.types.map(mapper, parameter));
-                        }
-                        keys = Some(index);
-                        true
-                    }
-                    _ => false,
-                };
-                let Some(arguments) = arguments.into_iter().collect::<Option<Vec<TypeId>>>() else {
-                    continue;
-                };
-                if !fits {
-                    continue;
-                }
-                let mapper = self.c.mapper_from(&parameters, &arguments);
-                if let Some(keys) = keys {
-                    let keys = self.c.instantiate(keys, mapper);
-                    if keys == TypeId::BOOLEAN || !self.c.is_union(keys) {
-                        continue;
-                    }
-                }
-                if self.c.instantiate(declared, mapper) == ty
-                    && self
-                        .is_symbol_accessible(symbol, self.b.enclosing, Meaning::Type, false)
-                        .is_accessible()
-                {
-                    return Some((symbol, arguments));
-                }
-            }
-        }
-        None
-    }
-
-    /// Whether `actual` is `pattern` with something for each of `parameters`, which is noted in `arguments`.
-    fn fits_alias(
-        &self,
-        pattern: TypeId,
-        actual: TypeId,
-        parameters: &[TypeId],
-        arguments: &mut [Option<TypeId>],
-        depth: u32,
-    ) -> bool {
-        if let Some(i) = parameters.iter().position(|&p| p == pattern) {
-            return *arguments[i].get_or_insert(actual) == actual;
-        }
-        if depth > 8 || !self.c.has_type_variables(pattern) {
-            return pattern == actual;
-        }
-        let (left, right) = match (self.c.data(pattern), self.c.data(actual)) {
-            (
-                TypeData::Ref {
-                    target: a,
-                    args: left,
-                },
-                TypeData::Ref {
-                    target: b,
-                    args: right,
-                },
-            ) if a == b && left.len() == right.len() => {
-                return left
-                    .iter()
-                    .zip(right.iter())
-                    .all(|(&l, &r)| self.fits_alias(l, r, parameters, arguments, depth + 1));
-            }
-            (
-                TypeData::Anon {
-                    origin: a,
-                    mapper: left,
-                },
-                TypeData::Anon {
-                    origin: b,
-                    mapper: right,
-                },
-            ) if a == b => (*left, *right),
-            (
-                TypeData::Fns {
-                    decls: a,
-                    mapper: left,
-                },
-                TypeData::Fns {
-                    decls: b,
-                    mapper: right,
-                },
-            ) if a == b => (*left, *right),
-            (
-                TypeData::Cond {
-                    file: a,
-                    node: at,
-                    mapper: left,
-                },
-                TypeData::Cond {
-                    file: b,
-                    node: other,
-                    mapper: right,
-                },
-            ) if (a, at) == (b, other) => (*left, *right),
-            // What instantiation resolves does not show its type arguments. The caller instantiates the alias with those that are
-            // read off elsewhere, and compares.
-            _ => return !self.c.is_object_type(pattern),
-        };
-        // What is written at one place mentions the same type parameters.
-        let (left, right) = (self.c.p.types.mapping(left), self.c.p.types.mapping(right));
-        left.len() == right.len()
-            && left.iter().zip(right).all(|(l, r)| {
-                l.0 == r.0 && self.fits_alias(l.1, r.1, parameters, arguments, depth + 1)
-            })
-    }
-
     /// The enum whose declared type is the union `ty` of `members`.
     fn enum_of_members(&mut self, ty: TypeId, members: &[TypeId]) -> Option<Sym> {
         let member = match *self.c.data(*members.first()?) {
@@ -4231,13 +3998,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
             TypeData::Enum { symbol, .. } => symbol,
             _ => return None,
         };
-        let parent = self.parent_of_symbol(member)?;
+        let parent = self.c.parent_of_symbol(member)?;
         (self.c.enum_type_of_member(member) == ty).then_some(parent)
     }
 
     /// `E.A`: the enum is what is named.
     fn enum_member_to_node(&mut self, member: Sym) {
-        let named = self.parent_of_symbol(member).unwrap_or(member);
+        let named = self.c.parent_of_symbol(member).unwrap_or(member);
         self.symbol_to_type_node(named, Meaning::Type);
     }
 
@@ -4357,7 +4124,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             return self.type_to_node(element);
         }
         if self.b.flags & WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL != 0
-            && self.flags_of(target).contains(SymFlags::CLASS)
+            && self.c.flags_of(target).contains(SymFlags::CLASS)
             && !self.is_value_symbol_accessible(target)
         {
             // `createAnonymousTypeNode`, of the instance side.
@@ -4457,7 +4224,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `shouldEmitTypeOfSymbol`, but for functions: whether the type of a class, an enum or a namespace is written as its name.
     fn should_emit_type_of_symbol(&mut self, symbol: Sym, meaning: Meaning) -> bool {
-        let flags = self.flags_of(symbol);
+        let flags = self.c.flags_of(symbol);
         if flags.intersects(SymFlags::ENUM | SymFlags::VALUE_MODULE) {
             return true;
         }
@@ -4468,14 +4235,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if self.b.flags & WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL == 0 {
             return true;
         }
-        let is_declaration = self.decls_of(symbol).into_iter().any(|(file, decl)| {
+        let is_declaration = self.c.decls_of(symbol).into_iter().any(|(file, decl)| {
             matches!(decl, Decl::Class(c)
                 if matches!(self.c.bound(file).class_owner[c.idx()], ClassOwner::Stmt(_)))
         });
-        is_declaration
-            && self
-                .is_symbol_accessible(symbol, self.b.enclosing, meaning, false)
-                .is_accessible()
+        is_declaration && self.is_symbol_accessible(symbol, meaning)
     }
 
     /// `shouldWriteTypeOfFunctionSymbol`: the symbol `typeof` names the type of a function by.
@@ -4495,8 +4259,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
             } => {
                 let symbol = *symbol;
                 // `isNonLocalFunctionSymbol`
-                let is_non_local = self.parent_of_symbol(symbol).is_some()
-                    || self.decls_of(symbol).into_iter().any(|(file, decl)| {
+                let is_non_local = self.c.parent_of_symbol(symbol).is_some()
+                    || self.c.decls_of(symbol).into_iter().any(|(file, decl)| {
                         let bound = self.c.bound(file);
                         matches!(decl, Decl::Fn(f)
                             if matches!(bound.fns[f.idx()].owner, FnOwner::Stmt(s) if is_at_top(bound, s)))
@@ -4603,7 +4367,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         identity: Option<Identity>,
         transform: fn(&mut Self, TypeId),
     ) {
-        let key = (ty, self.b.flags, self.b.enclosing);
+        let key = (ty, self.b.flags, self.b.enclosing.ignoring_fake_scope());
         if let Some(cached) = self.b.serialized.get(&key) {
             let (truncating, added_length) = (cached.truncating, cached.added_length);
             for tracked in cached.tracked.clone() {
@@ -4944,7 +4708,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
         let is_function = prop.flags.contains(PropFlags::METHOD)
             || matches!(prop.source, PropSource::Symbol(symbol)
-                if self.flags_of(symbol).contains(SymFlags::FUNCTION));
+                if self.c.flags_of(symbol).contains(SymFlags::FUNCTION));
         if is_function && !is_readonly {
             let has_properties = self.c.is_object_type(property_type)
                 && self
@@ -4998,13 +4762,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
     fn signature_to_declaration(&mut self, signature: SigId) {
         // `enterSignatureScope`
         let saved_mapper = self.b.mapper;
-        let saved_scope = self.b.is_in_made_up_scope;
+        let saved_scope = self.b.enclosing.is_fake_scope;
         let declaration = self.c.sig_decl(signature);
         if declaration.is_some()
             && (!self.c.sig_params(signature).is_empty()
                 || !self.c.sig_type_params(signature).is_empty())
         {
-            self.b.is_in_made_up_scope = true;
+            self.b.enclosing.is_fake_scope = true;
         }
         if let Some((_, _, mapper)) = declaration
             && self
@@ -5060,7 +4824,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
         self.serialize_return_type_for_signature(signature);
         self.b.mapper = saved_mapper;
-        self.b.is_in_made_up_scope = saved_scope;
+        self.b.enclosing.is_fake_scope = saved_scope;
     }
 
     /// `createReturnFromSignature`: the type node that says what `func` returns.
@@ -5569,7 +5333,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             {
                 return;
             }
-            if let Some((first, _)) = self.first_identifier(file, key)
+            if let Some((first, _)) = self.c.first_identifier(file, key)
                 && self.track_existing_entity_name(file, scope, first, Meaning::ValueOfName)
             {
                 self.mark_error();
@@ -5603,7 +5367,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     return false;
                 };
                 // A type parameter that stands for something else where the type is wanted.
-                if self.flags_of(resolved).contains(SymFlags::TYPE_PARAMETER) {
+                if self.c.flags_of(resolved).contains(SymFlags::TYPE_PARAMETER) {
                     let declared = self.c.type_from_node(file, node);
                     if self.c.instantiate(declared, self.b.mapper) != declared {
                         return false;
@@ -5674,13 +5438,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let symbol = match (there, here) {
             (None, Some(_)) => return true,
             (None, None) => return false,
-            (Some(there), Some(here)) if !self.is_same_reference(there, here) => return true,
+            (Some(there), Some(here)) if !self.c.is_same_reference(there, here) => return true,
             (Some(there), _) => there,
         };
-        if !self
-            .is_symbol_accessible(symbol, at, meaning, false)
-            .is_accessible()
-        {
+        if !self.is_symbol_accessible(symbol, meaning) {
             return true;
         }
         self.track_symbol(symbol, at, meaning);
@@ -5705,10 +5466,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         } else {
             files.resolve_alias(found).unwrap_or(found)
         };
-        if !self
-            .is_symbol_accessible(symbol, self.b.enclosing, meaning, false)
-            .is_accessible()
-        {
+        if !self.is_symbol_accessible(symbol, meaning) {
             return false;
         }
         let resolved = files.resolve_alias(symbol).unwrap_or(symbol);
@@ -5952,7 +5710,7 @@ fn module_name_from_package_exports(
     )
 }
 
-impl<'p> DeclarationEmit<'_, 'p> {
+impl<'p> EmitResolver<'_, 'p> {
     /// The relative specifiers `file` mentions, in the order it does.
     fn relative_specifiers_of(&self, file: FileId) -> Vec<&'p str> {
         let files = self.c.files();
@@ -6400,15 +6158,32 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     /// `getSpecifierForModuleSymbol`
-    fn specifier_for_module_symbol(&mut self, symbol: Sym, mode: ResolutionMode) -> String {
-        let importing = self.b.enclosing.file;
+    fn specifier_for_module_symbol(
+        &mut self,
+        symbol: Sym,
+        importing: FileId,
+        mode: ResolutionMode,
+    ) -> String {
         let resolution_mode = self.resolution_mode_for_specifier(importing, mode);
-        if let Some(known) = self.specifiers.get(&(symbol, importing, resolution_mode)) {
+        if let Some(known) = self
+            .links
+            .specifiers
+            .get(&(symbol, importing, resolution_mode))
+        {
             return known.clone();
         }
+        let decls = self.c.decls_of(symbol);
+        // `isAmbientModuleSymbolName(symbol.Name)`
+        let ambient_name = match decls.first() {
+            Some(&(file, Decl::Module(m))) => match self.c.hir(file)[m].name {
+                ModuleName::String(name) => Some(name),
+                _ => None,
+            },
+            _ => None,
+        };
         let mut target = None;
         let mut specifier = None;
-        for (file, decl) in self.decls_of(symbol) {
+        for (file, decl) in decls {
             match decl {
                 Decl::File => target = target.or(Some(file)),
                 // `tryGetModuleNameFromAmbientModule`
@@ -6423,15 +6198,17 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 _ => {}
             }
         }
-        let specifier = match (
-            specifier,
-            target.or_else(|| self.source_file_of_module(symbol)),
-        ) {
-            (Some(name), _) => name,
-            (None, Some(target)) => self.module_specifier(target, importing, mode),
-            (None, None) => String::new(),
+        let specifier = match (ambient_name, specifier, target) {
+            // Without a file, `StripQuotes(symbol.Name)`.
+            (Some(name), _, None) => self.c.atom_text(name),
+            (_, Some(name), _) => name,
+            (_, None, target) => match target.or_else(|| self.c.source_file_of_module(symbol)) {
+                Some(target) => self.module_specifier(target, importing, mode),
+                None => String::new(),
+            },
         };
-        self.specifiers
+        self.links
+            .specifiers
             .insert((symbol, importing, resolution_mode), specifier.clone());
         specifier
     }
@@ -6439,7 +6216,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
     /// `sortByBestName`
     fn sort_by_best_name(&self, a: &(Sym, String), b: &(Sym, String)) -> std::cmp::Ordering {
         if a.1.is_empty() || b.1.is_empty() {
-            return self.compare_symbols(a.0, b.0);
+            return self.c.compare_symbols(a.0, b.0);
         }
         // `CountPathComponents`
         let components = |path: &str| path.strip_prefix("./").unwrap_or(path).matches('/').count();
@@ -6451,19 +6228,25 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     /// `getSymbolChain`, which may start with a module (`yieldModuleSymbol`).
-    fn symbol_chain(&mut self, symbol: Sym, meaning: Meaning, depth: u32) -> Vec<Sym> {
-        self.symbol_chain_ex(symbol, meaning, true, depth)
+    fn symbol_chain(
+        &mut self,
+        symbol: Sym,
+        at: Enclosing,
+        meaning: Meaning,
+        depth: u32,
+    ) -> Vec<Sym> {
+        self.symbol_chain_ex(symbol, at, meaning, true, depth)
     }
 
     /// `getSymbolChain`. `endOfChain`: `depth` is 0.
     fn symbol_chain_ex(
         &mut self,
         symbol: Sym,
+        at: Enclosing,
         meaning: Meaning,
         yields_module: bool,
         depth: u32,
     ) -> Vec<Sym> {
-        let at = self.b.enclosing;
         let mut chain = self.accessible_symbol_chain(symbol, at, meaning).to_vec();
         let qualifier_meaning = if chain.len() > 1 {
             meaning.left()
@@ -6477,8 +6260,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
             // Go up and add the parent.
             let mut parents: Vec<(Sym, String)> = Vec::new();
             for parent in self.containers_of_symbol(root.unwrap_or(symbol), at, meaning) {
-                let name = if self.is_external_module_symbol(parent) {
-                    self.specifier_for_module_symbol(parent, ResolutionMode::None)
+                let name = if self.c.is_external_module_symbol(parent) {
+                    self.specifier_for_module_symbol(parent, at.file, ResolutionMode::None)
                 } else {
                     String::new()
                 };
@@ -6487,7 +6270,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             parents.sort_by(|a, b| self.sort_by_best_name(a, b));
             for (parent, _) in parents {
                 let mut parent_chain =
-                    self.symbol_chain_ex(parent, meaning.left(), yields_module, depth + 1);
+                    self.symbol_chain_ex(parent, at, meaning.left(), yields_module, depth + 1);
                 if parent_chain.is_empty() {
                     continue;
                 }
@@ -6497,13 +6280,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
                         .c
                         .files()
                         .export(parent, known::export_equals)
-                        .is_some_and(|equals| self.is_same_reference(equals, symbol));
+                        .is_some_and(|equals| self.c.is_same_reference(equals, symbol));
                 if !is_the_module {
                     if chain.is_empty() {
                         let last = self
                             .alias_for_symbol_in_container(parent, symbol)
                             .unwrap_or(symbol);
-                        chain.push(self.target_of_module_clone(last));
+                        chain.push(self.c.target_of_module_clone(last));
                     }
                     parent_chain.append(&mut chain);
                 }
@@ -6513,26 +6296,32 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
         // A parent that is an external module is not written, unless the chain may start with it.
         if chain.is_empty()
-            && (depth == 0 || yields_module || !self.is_external_module_symbol(symbol))
+            && (depth == 0 || yields_module || !self.c.is_external_module_symbol(symbol))
         {
             // What `cloneTypeAsModuleType` made is written as its target: it has the name and the declarations of that.
-            chain.push(self.target_of_module_clone(symbol));
+            chain.push(self.c.target_of_module_clone(symbol));
         }
         chain
     }
 
     /// The part of `symbolToTypeNode` that writes `import("specifier")` for `module`: the specifier, and the `resolution-mode` attribute.
-    fn import_type_specifier_and_mode(&mut self, module: Sym) -> (String, Option<&'static str>) {
+    fn import_type_specifier_and_mode(
+        &mut self,
+        module: Sym,
+        importing: FileId,
+        allows_node_modules_relative_paths: bool,
+    ) -> (String, Option<&'static str>) {
         let files = self.c.files();
         let is_node = files.options.resolves_like_node;
         // `GetEmitModuleFormatOfFile`
-        let context_format = files.module(self.b.enclosing.file).implied_format;
+        let context_format = files.module(importing).implied_format;
         let target_format = self
+            .c
             .decls_of(module)
             .into_iter()
             .find(|d| d.1 == Decl::File)
             .map(|d| d.0)
-            .or_else(|| self.source_file_of_module(module))
+            .or_else(|| self.c.source_file_of_module(module))
             .map(|file| files.module(file).implied_format);
         let mut specifier = String::new();
         let mut mode = None;
@@ -6541,40 +6330,46 @@ impl<'p> DeclarationEmit<'_, 'p> {
             && target_format == Some(ResolutionMode::Import)
             && context_format != ResolutionMode::Import
         {
-            specifier = self.specifier_for_module_symbol(module, ResolutionMode::Import);
+            specifier = self.specifier_for_module_symbol(module, importing, ResolutionMode::Import);
             mode = Some("import");
         }
         if specifier.is_empty() {
-            specifier = self.specifier_for_module_symbol(module, ResolutionMode::None);
+            specifier = self.specifier_for_module_symbol(module, importing, ResolutionMode::None);
         }
-        if is_node && specifier.contains("/node_modules/") {
+        if !allows_node_modules_relative_paths && is_node && specifier.contains("/node_modules/") {
             // Resolved the other way it may be found.
             let (swapped, swapped_mode) = if context_format == ResolutionMode::Import {
                 (ResolutionMode::Require, "require")
             } else {
                 (ResolutionMode::Import, "import")
             };
-            let other = self.specifier_for_module_symbol(module, swapped);
+            let other = self.specifier_for_module_symbol(module, importing, swapped);
             if !other.contains("/node_modules/") {
                 return (other, Some(swapped_mode));
             }
         }
         (specifier, mode)
     }
+}
 
-    /// The same with its error. `module` is what the chain of names for `symbol` starts with.
+impl<'p> DeclarationEmit<'_, 'p> {
+    /// `import_type_specifier_and_mode` with its error. `module` is what the chain of names for `symbol` starts with.
     fn import_type_specifier(&mut self, module: Sym, symbol: Sym) -> String {
-        let (specifier, mode) = self.import_type_specifier_and_mode(module);
+        let importing = self.b.enclosing.file;
+        let (specifier, mode) = self
+            .resolver()
+            .import_type_specifier_and_mode(module, importing, false);
         if specifier.contains("/node_modules/") && mode.is_none() {
             self.b.encountered_error = true;
             let files = self.c.files();
             let name = if self
+                .c
                 .parent_of_symbol(symbol)
                 .is_some_and(|parent| files.export(parent, known::default) == Some(symbol))
             {
                 "default".to_owned()
             } else {
-                self.c.atom_text(self.name_of(symbol))
+                self.c.atom_text(self.c.name_of(symbol))
             };
             self.report(Report::LikelyUnsafeImportRequired(specifier.clone(), name));
         }

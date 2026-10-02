@@ -126,7 +126,7 @@ impl Checker<'_> {
             if let ExprKind::Assign {
                 op: None, target, ..
             } = hir[e].kind
-                && !matches!(bound.expr_parent[e.idx()], Parent::None)
+                && !bound.is_unchecked(e.idx())
                 && self.is_assignment_pattern(file, target)
                 && !self.is_assignment_target(file, e)
             {
@@ -135,7 +135,7 @@ impl Checker<'_> {
         }
         if has_iterable {
             for &e in index.of(ExprTag::Yield) {
-                if !matches!(bound.expr_parent[e.idx()], Parent::None) {
+                if !bound.is_unchecked(e.idx()) {
                     looked_at.push(e);
                 }
             }

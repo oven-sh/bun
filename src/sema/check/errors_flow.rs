@@ -782,7 +782,7 @@ impl Checker<'_> {
         for e in in_file_order([index.of(ExprTag::This), index.of(ExprTag::Super)]) {
             let i = e.idx();
             let is_this = matches!(hir.exprs[i].kind, ExprKind::This);
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             // `checkIdentifier` hands the `this` of `typeof this.x` to `checkThisExpression`.
@@ -858,7 +858,7 @@ impl Checker<'_> {
         let index = self.exprs_by_kind(file);
         for &this in index.of(ExprTag::This) {
             let i = this.idx();
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             let mut parent = bound.expr_parent[i];
@@ -960,7 +960,7 @@ impl Checker<'_> {
         let index = self.exprs_by_kind(file);
         for &e in index.of(ExprTag::Super) {
             let i = e.idx();
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             let start = hir[e].pos;

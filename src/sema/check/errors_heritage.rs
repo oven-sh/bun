@@ -6,7 +6,7 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent};
+use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner};
 use smallvec::SmallVec;
 
 /// The node an error of `checkIndexConstraints` is reported on.
@@ -23,9 +23,7 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for c in 0..hir.classes.len() {
             let is_bound = match bound.class_owner[c] {
-                ClassOwner::Expr(x) => {
-                    x.is_some() && !matches!(bound.expr_parent[x.idx()], Parent::None)
-                }
+                ClassOwner::Expr(x) => x.is_some() && !bound.is_unchecked(x.idx()),
                 ClassOwner::Stmt(s) => s.is_some(),
             };
             if is_bound && bound.class_symbol[c].is_some() {

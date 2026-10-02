@@ -32,7 +32,7 @@ impl Checker<'_> {
         let mut sites = Vec::new();
         let mut awaiting = Awaiting::new(file, 1320);
         for i in 0..hir.exprs.len() {
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             let e = ExprId(i as u32);
@@ -357,21 +357,14 @@ fn closed_before_const_assertion(text: &[u8], from: usize, open: usize, mut skip
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' | b'}' if depth == 0 => closed += 1,
             b')' | b']' | b'}' => depth -= 1,
-            _ if is_identifier_part(b) => {
-                let start = i;
-                while i < text.len() && is_identifier_part(text[i]) {
-                    i += 1;
-                }
-                if depth == 0 && &text[start..i] == b"as" {
-                    let next = skip_trivia(text, i);
-                    if text[next..].starts_with(b"const")
-                        && !text.get(next + 5).is_some_and(|&b| is_identifier_part(b))
-                    {
-                        if skip == 0 {
-                            return closed;
-                        }
-                        skip -= 1;
+            _ if !word_at(text, i).is_empty() => {
+                let word = word_at(text, i);
+                i += word.len();
+                if depth == 0 && word == b"as" && is_word_at(text, skip_trivia(text, i), b"const") {
+                    if skip == 0 {
+                        return closed;
                     }
+                    skip -= 1;
                 }
                 continue;
             }

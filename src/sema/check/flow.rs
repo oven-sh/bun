@@ -2909,14 +2909,7 @@ impl<'p> Checker<'p> {
         if let TypeData::Intersection(parts) = self.data(source) {
             return parts.iter().any(|&s| self.is_type_derived_from(s, target));
         }
-        if matches!(
-            self.data(source),
-            TypeData::TypeParam(..)
-                | TypeData::ThisParam(_)
-                | TypeData::Marker(_)
-                | TypeData::IndexedAccess { .. }
-                | TypeData::Cond { .. }
-        ) {
+        if self.is_instantiable_non_primitive(source) {
             let constraint = self.base_constraint(source);
             return constraint != source && self.is_type_derived_from(constraint, target);
         }

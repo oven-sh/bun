@@ -714,8 +714,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // `checkEnumMember` never looks at it.
                     _ => {
                         p.keep_expressions(value.loc, &[name]);
-                        let end = p.lexer.full_start();
-                        p.mark_type_syntax(name.loc, crate::sema::Mark::StrayDecorator, end);
                     }
                 }
                 if p.lexer.token != T::TCloseBracket {

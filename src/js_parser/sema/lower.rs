@@ -672,7 +672,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             let start = self.declaration_start(stmt.loc);
             self.b.file[id].start = start;
         }
-        if !self.jsdoc.list.is_empty() {
+        // `S::Comment`, a comment kept for the printer, is no node. The parser puts it where the next statement starts.
+        if !self.jsdoc.list.is_empty() && !matches!(stmt.data, StmtData::SComment(_)) {
             self.statement_jsdoc(stmt, id);
         }
         id
@@ -824,11 +825,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             StmtData::SForOf(s) => {
                 let left = self.for_initializer(&s.init);
-                // `checkForOfStatement` only checks the right side through the declared variable. `for (var of X)` declares none.
-                if matches!(&s.init.data, StmtData::SLocal(local) if local.decls.len() == 0) {
-                    let unchecked = (pos_of(s.value.loc), pos_of(s.body.loc));
-                    self.b.file.stray_decorators.push(unchecked);
-                }
                 let expr = self.expr(&s.value);
                 let body = self.required_stmt(&s.body);
                 // `parseForOrForInOrForOfStatement`: `await` after `for` makes it one wherever it stands. The parser forgets the
@@ -1693,10 +1689,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             member.start = self
                 .mark(block.loc, Mark::MemberStart)
                 .unwrap_or(member.pos);
-            // `reportObviousDecoratorErrors`
-            if self.source.get(member.start as usize) == Some(&b'@') {
-                self.b.file.early_errors.push((member.start, 1206));
-            }
             let body = FnBody::Block(self.stmts(block.stmts.as_slice(), false));
             member.func = self.b.file.add_fn(Func {
                 kind: FnKind::StaticBlock,
@@ -1926,6 +1918,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                         }
                         continue;
                     }
+                    CastKind::Tag => continue,
                     CastKind::NonNull => ExprKind::NonNull(id),
                     CastKind::Instantiation => {
                         let type_args = self.type_args_at(at as u32);
@@ -2164,7 +2157,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                         } else {
                             ExprKind::Template { exprs, texts }
                         };
-                        let template_pos = self.mark(expr.loc, Mark::Template).unwrap_or(pos);
+                        let casts = self.casts.get(&ExprKey::of(tag));
+                        let template_pos = casts
+                            .and_then(|casts| casts.iter().find(|cast| cast.0 == CastKind::Tag))
+                            .map_or(pos, |cast| cast.1 as u32);
                         let template = self.b.file.expr(template, template_pos);
                         ExprKind::TaggedTemplate(self.b.file.add_call(Call {
                             callee,

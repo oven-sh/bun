@@ -133,9 +133,7 @@ impl Checker<'_> {
         }
         for c in 0..hir.classes.len() {
             let is_bound = match bound.class_owner[c] {
-                ClassOwner::Expr(x) => {
-                    x.is_some() && !matches!(bound.expr_parent[x.idx()], Parent::None)
-                }
+                ClassOwner::Expr(x) => x.is_some() && !bound.is_unchecked(x.idx()),
                 ClassOwner::Stmt(s) => s.is_some(),
             };
             if is_bound && bound.class_symbol[c].is_some() {
@@ -1561,7 +1559,7 @@ impl Checker<'_> {
         for &e in index.of(ExprTag::Dot) {
             if let ExprKind::Dot { obj, .. } = hir[e].kind
                 && is_this(obj)
-                && !matches!(bound.expr_parent[e.idx()], Parent::None)
+                && !bound.is_unchecked(e.idx())
                 && !bound.is_in_type_query(e)
                 && self.is_used_during_class_initialization(file, bound.expr_parent[e.idx()])
             {
@@ -1576,7 +1574,7 @@ impl Checker<'_> {
                 value,
             } = hir[e].kind
                 && is_this(value)
-                && !matches!(bound.expr_parent[e.idx()], Parent::None)
+                && !bound.is_unchecked(e.idx())
                 && matches!(hir[target].kind, ExprKind::Object(_))
                 && !is_parenthesized(hir, target)
                 && self.is_used_during_class_initialization(file, bound.expr_parent[e.idx()])
@@ -1634,10 +1632,7 @@ impl Checker<'_> {
         // `isThisInitializedDeclaration`
         for d in 0..hir.var_decls.len() {
             let decl = &hir.var_decls[d];
-            if decl.init.is_none()
-                || !is_this(decl.init)
-                || matches!(bound.expr_parent[decl.init.idx()], Parent::None)
-            {
+            if decl.init.is_none() || !is_this(decl.init) || bound.is_unchecked(decl.init.idx()) {
                 continue;
             }
             let PatKind::Object(props) = hir[decl.pat].kind else {

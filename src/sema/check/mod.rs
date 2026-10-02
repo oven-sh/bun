@@ -51,7 +51,6 @@ mod explain_relation;
 mod explain_table;
 mod expr;
 mod fix_t7;
-mod fix_t8;
 mod flow;
 mod in_order;
 mod infer;
@@ -92,6 +91,7 @@ use spans::jsx_tag_name_end;
 use spans::line_break_len;
 use spans::skip_trivia;
 use spans::start_of_token_before;
+use spans::{is_keyword_before_expression, token_end};
 use spans::{is_word_at, word_at, word_before, word_end, word_start};
 use spans::{skip_trivia_back, trim_trivia_end};
 use std::sync::Arc;
@@ -540,6 +540,9 @@ impl Program {
             depth: 0,
             contextual: Vec::new(),
             pulls_contextual_types_at: usize::MAX,
+            rechecks_at: usize::MAX,
+            rechecked_exprs: FxHashMap::default(),
+            rechecked_members: FxHashMap::default(),
             inference: Vec::new(),
             instantiation_depth: 0,
             recent_instantiations: Default::default(),
@@ -555,7 +558,6 @@ impl Program {
             is_marker_comparison: false,
             variances_in_progress: Vec::new(),
             simplified: FxHashMap::default(),
-            cond_true_memo: FxHashMap::default(),
             cond_distributive_memo: FxHashMap::default(),
             relation_gave_up: false,
             relation_too_complex: false,
@@ -587,7 +589,6 @@ impl Program {
             shapes_for_now: Vec::new(),
             held_for_now: FxHashMap::default(),
             trials: FxHashMap::default(),
-            enclosing_declaration: None,
             enclosing_module_specifier_mode: None,
             symbol_chain_cache: Default::default(),
             explains: false,
@@ -782,6 +783,13 @@ pub struct Checker<'p> {
     /// is not read, and an argument is expected to be what `links.resolvedSignature` takes. A question entered on top of that is
     /// answered as ever, so that what is kept of it does not depend on who asked. `usize::MAX`: nowhere.
     pulls_contextual_types_at: usize,
+    /// How high `stack` is where `checkExpression` is not memoised: an expression is checked again, its kept type neither read nor
+    /// replaced. See `get_type_of_expression`. `usize::MAX`: nowhere.
+    rechecks_at: usize,
+    /// What checking again has come to, with nothing pushed: it is the same whoever asks. By expression, and by member of an object
+    /// literal or JSX attribute.
+    rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
+    rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
     inference: Vec<infer::Inference>,
     instantiation_depth: u32,
     /// What was last read from or put into `Program::instantiations`.
@@ -807,8 +815,6 @@ pub struct Checker<'p> {
     is_marker_comparison: bool,
     variances_in_progress: Vec<Sym>,
     simplified: FxHashMap<(TypeId, bool), TypeId>,
-    /// `resolvedTrueType`, keyed by the conditional type and whether it is read as a source.
-    cond_true_memo: FxHashMap<(TypeId, bool), TypeId>,
     /// `resolvedConstraintOfDistributive`. `None` is `noConstraintType`.
     cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
     /// A comparison was cut short. What it answered is not to be told anybody.
@@ -864,8 +870,6 @@ pub struct Checker<'p> {
     held_for_now: FxHashMap<(FileId, PropId), Held>,
     /// The last candidate tried for a call that is being resolved: see `instantiate_for_call_as`.
     trials: FxHashMap<(FileId, ExprId), Trial>,
-    /// `NodeBuilderContext.enclosingDeclaration` for the next printer, which takes it: the scope names are looked up from.
-    enclosing_declaration: Option<(FileId, crate::bind::ScopeId)>,
     /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration(enclosingDeclaration)`, while the name of an import or an
     /// export is printed.
     enclosing_module_specifier_mode: Option<ResolutionMode>,
@@ -1068,16 +1072,18 @@ impl<'p> Checker<'p> {
     }
 
     /// `node.Parent` for each type node of `file`, as `getConditionalFlowTypeOfType` walks it. Empty for a file without a
-    /// conditional type.
+    /// conditional or a mapped type.
     pub(super) fn type_parents(&self, file: FileId) -> Arc<Vec<TypeNodeId>> {
         if let Some(cached) = self.p.type_parents.get(&file) {
             return cached;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let has_conditional = hir
-            .types
-            .iter()
-            .any(|node| matches!(node.kind, TypeNodeKind::Cond { .. }));
+        let has_conditional = hir.types.iter().any(|node| {
+            matches!(
+                node.kind,
+                TypeNodeKind::Cond { .. } | TypeNodeKind::Mapped(_)
+            )
+        });
         let parents = if has_conditional {
             Self::type_node_parents(hir, bound)
         } else {
@@ -1565,15 +1571,14 @@ impl<'p> Checker<'p> {
             // push no resolution.
             Query::Symbol(sym) => {
                 let flags = self.files().flags(sym);
-                flags.intersects(
-                    SymFlags::VARIABLE | SymFlags::EXPORT_VALUE | SymFlags::MODULE_EXPORTS,
-                ) || !flags.intersects(
-                    SymFlags::FUNCTION
-                        | SymFlags::CLASS
-                        | SymFlags::ENUM
-                        | SymFlags::VALUE_MODULE
-                        | SymFlags::ENUM_MEMBER,
-                )
+                flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY | SymFlags::MODULE_EXPORTS)
+                    || !flags.intersects(
+                        SymFlags::FUNCTION
+                            | SymFlags::CLASS
+                            | SymFlags::ENUM
+                            | SymFlags::VALUE_MODULE
+                            | SymFlags::ENUM_MEMBER,
+                    )
             }
             Query::Pat(file, pat) => matches!(self.hir(file)[pat].kind, PatKind::Ident(_)),
             // `getDeclaredTypeOfTypeAlias` is the only one to push `TypeSystemPropertyNameDeclaredType`.
@@ -1773,6 +1778,26 @@ impl<'p> Checker<'p> {
         let frame = self.frames.pop().unwrap();
         self.left_a_circle = frame.circular;
         !frame.tainted
+    }
+
+    /// See `rechecks_at`.
+    #[inline]
+    fn is_rechecking(&self) -> bool {
+        self.stack.len() == self.rechecks_at
+    }
+
+    /// From here, and as long as `stack` is as high as it is, expressions are checked again, with nothing pushed. Returns what
+    /// `end_recheck` takes.
+    fn begin_recheck(&mut self) -> (usize, usize) {
+        let height = self.stack.len();
+        (
+            std::mem::replace(&mut self.pulls_contextual_types_at, height),
+            std::mem::replace(&mut self.rechecks_at, height),
+        )
+    }
+
+    fn end_recheck(&mut self, outer: (usize, usize)) {
+        (self.pulls_contextual_types_at, self.rechecks_at) = outer;
     }
 
     /// The answers to the questions from `stack[from]` up do not hold whoever asks.
@@ -1997,6 +2022,7 @@ impl<'p> Checker<'p> {
                 | TypeData::Marker(_)
                 | TypeData::IndexedAccess { .. }
                 | TypeData::Cond { .. }
+                | TypeData::Substitution { .. }
                 | TypeData::Keyof(_)
         )
     }

@@ -38,8 +38,8 @@ bitflags::bitflags! {
         const TYPE_ALIAS = 1 << 9;
         const ALIAS = 1 << 10;
         const ENUM_MEMBER = 1 << 11;
-        /// `export default <expression>`, `export = <expression>`
-        const EXPORT_VALUE = 1 << 12;
+        /// `SymbolFlagsProperty`, of `bindExportAssignment`: `export default <expression>`, `export = <expression>`.
+        const PROPERTY = 1 << 12;
         /// Something assigns to the variable after its declaration.
         const ASSIGNED = 1 << 13;
         const CONST = 1 << 14;
@@ -58,7 +58,7 @@ bitflags::bitflags! {
 
         const VARIABLE = Self::FUNCTION_SCOPED_VARIABLE.bits() | Self::BLOCK_SCOPED_VARIABLE.bits();
         const VALUE = Self::VARIABLE.bits() | Self::FUNCTION.bits() | Self::CLASS.bits() | Self::ENUM.bits()
-            | Self::VALUE_MODULE.bits() | Self::ENUM_MEMBER.bits() | Self::EXPORT_VALUE.bits();
+            | Self::VALUE_MODULE.bits() | Self::ENUM_MEMBER.bits() | Self::PROPERTY.bits();
         const TYPE = Self::CLASS.bits() | Self::INTERFACE.bits() | Self::ENUM.bits() | Self::TYPE_PARAMETER.bits()
             | Self::TYPE_ALIAS.bits() | Self::ENUM_MEMBER.bits();
         const NAMESPACE = Self::VALUE_MODULE.bits() | Self::NAMESPACE_MODULE.bits() | Self::ENUM.bits();
@@ -790,6 +790,9 @@ pub struct Bound {
     pub assignments: Vec<(SymbolId, ExprId)>,
     /// The expressions that are (part of) the operand of a `typeof` in a type. Sorted.
     pub type_query_operands: Few<ExprId>,
+    /// The expressions at or under a node that tsgo has in its tree and `checkSourceFile` never comes to: an element of an `extends`
+    /// clause of a class after the first, the `e` of `[e]` in an enum, the `X` of `for (var of X)`. Sorted.
+    pub unchecked_exprs: Few<ExprId>,
     /// Where each `infer T` that is written somewhere that says something about `T` is written. In order of the parameters.
     pub infer_positions: Few<(TypeParamId, InferPosition)>,
     /// `f.name = value` and `f["name"] = value` next to `function f() {}`: properties of `f`, which may be written `a.f`. By the
@@ -1102,6 +1105,16 @@ impl Bound {
             }
             _ => None,
         }
+    }
+
+    /// Whether `checkSourceFile` never comes to the expression: nothing leads to it, or it is one of `unchecked_exprs`. Who goes through
+    /// all expressions of a file passes over it.
+    pub fn is_unchecked(&self, e: usize) -> bool {
+        matches!(self.expr_parent[e], Parent::None)
+            || self
+                .unchecked_exprs
+                .binary_search(&ExprId(e as u32))
+                .is_ok()
     }
 
     /// `IsInTypeQuery`: it is asked what `e` is, but `e` is not read.

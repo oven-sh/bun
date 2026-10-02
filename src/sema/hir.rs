@@ -1344,7 +1344,6 @@ pub struct File {
     pub unclosed_literals: Few<(u32, u32)>,
     /// The decorators of missing declarations and of `this` parameters, which `checkDecorators` never looks at: from where the
     /// expression starts to where what comes after the decorators starts. The expressions are statements of their own.
-    /// `Class::other_extends` and `EnumMember::computed_name` too.
     pub stray_decorators: Few<(u32, u32)>,
     /// The opening and closing JSX tags in which the parser objected to something: where their `<` is, and where they end
     /// (`finishNode`). Sorted.

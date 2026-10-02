@@ -519,7 +519,7 @@ impl Checker<'_> {
             .of(ExprTag::Jsx)
             .iter()
             .copied()
-            .filter(|e| !matches!(bound.expr_parent[e.idx()], Parent::None))
+            .filter(|e| !bound.is_unchecked(e.idx()))
             .collect();
         elements.sort_unstable_by_key(|&e| hir[e].pos);
         // What is said once for the file is said of what is checked first.

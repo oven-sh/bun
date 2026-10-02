@@ -569,7 +569,7 @@ impl Checker<'_> {
         let index = self.exprs_by_kind(file);
         for &e in index.of(ExprTag::ImportCall) {
             if let ExprKind::ImportCall(argument, _) = hir[e].kind
-                && !matches!(self.bound(file).expr_parent[e.idx()], Parent::None)
+                && !self.bound(file).is_unchecked(e.idx())
                 && let ExprKind::String(spec) = hir[argument].kind
             {
                 let mode = self.files().mode_of_import_call(file);
@@ -645,7 +645,7 @@ impl Checker<'_> {
                 .and_then(|name| self.global_type_symbol(name))
         {
             for &options in &import_options {
-                if matches!(self.bound(file).expr_parent[options.idx()], Parent::None) {
+                if self.bound(file).is_unchecked(options.idx()) {
                     continue;
                 }
                 let given = self.type_of_expr(file, options);
@@ -675,9 +675,7 @@ impl Checker<'_> {
         // `checkImportCallExpression`: 2880 at the first `assert: ..` of an options object literal, with or without a global
         // `ImportCallOptions`.
         for &options in &import_options {
-            if matches!(self.bound(file).expr_parent[options.idx()], Parent::None)
-                || is_parenthesized(hir, options)
-            {
+            if self.bound(file).is_unchecked(options.idx()) || is_parenthesized(hir, options) {
                 continue;
             }
             if let ExprKind::Object(props) = hir[options].kind
@@ -1635,7 +1633,7 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let parent = bound.expr_parent[e.idx()];
         if hir.kind == FileKind::Declaration
-            || matches!(parent, Parent::None)
+            || bound.is_unchecked(e.idx())
             || bound.is_in_type_query(e)
         {
             return true;
@@ -1963,7 +1961,7 @@ impl Checker<'_> {
             {
                 continue;
             }
-            if matches!(bound.expr_parent[e.idx()], Parent::None)
+            if bound.is_unchecked(e.idx())
                 || matches!(name, known::undefined | known::globalThis)
                 // What another declaration of the namespace or the enum around exports, in whichever file, is in scope too.
                 || matches!(
@@ -2035,7 +2033,7 @@ impl Checker<'_> {
             let ExprKind::Ident(name) = hir[e].kind else {
                 continue;
             };
-            if matches!(bound.expr_parent[e.idx()], Parent::None) {
+            if bound.is_unchecked(e.idx()) {
                 continue;
             }
             if imports_value.is_empty() {
@@ -2268,7 +2266,7 @@ impl Checker<'_> {
                             .any(|s| !hir[s].type_only && hir[s].local == import.name)
                 })
                 || bound.alias_idents.iter().any(|&(e, _)| {
-                    !matches!(bound.expr_parent[e.idx()], Parent::None)
+                    !bound.is_unchecked(e.idx())
                         && !bound.is_in_type_query(e)
                         && bound.symbols[bound.expr_symbol[e.idx()].idx()]
                             .decls
@@ -2616,7 +2614,7 @@ impl Checker<'_> {
             let class = &hir.classes[c];
             if class.extends.is_none()
                 || bound.class_symbol[c].is_none()
-                || matches!(bound.expr_parent[class.extends.idx()], Parent::None)
+                || bound.is_unchecked(class.extends.idx())
             {
                 continue;
             }
@@ -4765,7 +4763,7 @@ impl Checker<'_> {
             index.of(ExprTag::Unary),
         ]) {
             let i = e.idx();
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             match hir.exprs[i].kind {
@@ -5557,7 +5555,7 @@ impl Checker<'_> {
         written.dedup();
         for e in super::errors_small::in_file_order([&written[..], assignments, unaries]) {
             let i = e.idx();
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if bound.is_unchecked(i) {
                 continue;
             }
             match hir.exprs[i].kind {

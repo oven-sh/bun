@@ -147,7 +147,7 @@ impl Checker<'_> {
                     && let Err((2301 | 2844, _)) =
                         self.files()
                             .resolve(file, scope, name, SymFlags::VALUE, true)
-                    && !matches!(bound.expr_parent[e.idx()], Parent::None)
+                    && !bound.is_unchecked(e.idx())
                     && !u.is_unchecked(e)
                     && !u.is_write_only(e)
                 {
@@ -213,7 +213,7 @@ impl Checker<'_> {
             let ExprKind::Jsx(j) = hir[e].kind else {
                 continue;
             };
-            if matches!(bound.expr_parent[e.idx()], Parent::None) || u.is_unchecked(e) {
+            if bound.is_unchecked(e.idx()) || u.is_unchecked(e) {
                 continue;
             }
             let is_fragment = hir[j].tag.is_none();
@@ -301,7 +301,7 @@ impl Checker<'_> {
                     | ExprKind::Index { .. }
                     | ExprKind::Assign { op: None, .. }
                     | ExprKind::Binary { op: BinOp::In, .. }
-            ) || matches!(bound.expr_parent[i], Parent::None)
+            ) || bound.is_unchecked(i)
                 || u.is_unchecked(e)
             {
                 continue;
@@ -916,7 +916,7 @@ impl Unused<'_> {
             let symbol = bound.expr_symbol[i];
             if symbol.is_none()
                 || self.referenced[symbol.idx()] & VALUE != 0
-                || matches!(bound.expr_parent[i], Parent::None)
+                || bound.is_unchecked(i)
                 || self.is_unchecked(e)
                 || self.is_write_only(e)
                 || self.is_inside_declaration_of(e, symbol)

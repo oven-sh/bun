@@ -216,7 +216,7 @@ impl<'p> Checker<'p> {
                 mapper: MapperId::IDENTITY,
             });
         }
-        if flags.contains(SymFlags::EXPORT_VALUE) {
+        if flags.contains(SymFlags::PROPERTY) {
             for (file, decl) in declarations_of(self.files(), sym) {
                 if let Decl::ExportExpr(stmt) = decl
                     && let StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) =

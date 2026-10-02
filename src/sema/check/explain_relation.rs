@@ -2015,9 +2015,8 @@ impl<'p> Checker<'p> {
                         if self.is_related_to(&mut x.r, sc, tc, REC_BOTH).holds()
                             || self.is_related_to(&mut x.r, tc, sc, REC_BOTH).holds()
                         {
-                            let ty = self.cond_true(target);
-                            let narrowed = self.cond_true_as_source(source);
-                            let sy = self.instantiate(narrowed, mapper);
+                            let (sy, ty) = (self.cond_true(source), self.cond_true(target));
+                            let sy = self.instantiate(sy, mapper);
                             let mut result = self.is_related_to_reporting(x, sy, ty, REC_BOTH);
                             if result.holds() {
                                 let (sn, tn) = (self.cond_false(source), self.cond_false(target));
@@ -2034,22 +2033,6 @@ impl<'p> Checker<'p> {
                     self.is_related_to_reporting(x, default_constraint, target, REC_SOURCE);
                 if result.holds() {
                     return result;
-                }
-                // A substitution type among the members of a union is written as the type parameter it is made of.
-                let plain = self.default_constraint_of_conditional_ex(source, false);
-                if plain != default_constraint
-                    && self.is_union(plain)
-                    && self.is_union(default_constraint)
-                    && let Some(said) = x.chain.clone()
-                    && said.args.first() == Some(&self.type_to_string(default_constraint))
-                {
-                    let mut args = said.args.clone();
-                    args[0] = self.type_to_string(plain);
-                    x.chain = Some(Rc::new(Reported {
-                        next: said.next.clone(),
-                        code: said.code,
-                        args,
-                    }));
                 }
                 if !matches!(self.data(target), TypeData::Cond { .. })
                     && relation != Relation::Restrictive

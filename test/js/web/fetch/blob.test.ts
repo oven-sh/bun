@@ -613,9 +613,9 @@ describe("slice bounds are respected when streaming and serving", () => {
 // A slice shares its parent's backing store. Once the parent and the slice
 // objects have been collected, a stream made from the slice holds the only
 // reference to that store, and the buffered consumers (Bun.readableStreamTo*,
-// stream.text(), Response.text() after .body was materialized) take a fast
-// path that hands the store itself to JS. That path used to ignore the slice's
-// offset and size and return every byte in the store.
+// stream.text(), text() of a Response or Request whose body is that stream)
+// take a fast path that hands the store itself to JS. That path used to ignore
+// the slice's offset and size and return every byte in the store.
 describe("consuming a slice's stream after the Blobs were collected", () => {
   // Bytes on both sides of the slice, non-ASCII after it. The slice is valid
   // JSON so that every consumer can be checked against the same fixture.
@@ -639,17 +639,20 @@ describe("consuming a slice's stream after the Blobs were collected", () => {
     return result;
   }
 
-  function collectedSliceStream(makeStream: (slice: Blob) => ReadableStream) {
+  type Track = (blob: Blob) => Blob;
+
+  function fromCollectedSlice<T>(make: (slice: Blob, track: Track) => T) {
     return afterBlobsAreCollected(track => {
       const parent = track(new Blob(parts));
       const slice = track(parent.slice(start, end));
-      return makeStream(slice);
+      return make(slice, track);
     });
   }
 
-  const sources: [string, (slice: Blob) => ReadableStream][] = [
+  const sources: [string, (slice: Blob, track: Track) => ReadableStream][] = [
     ["slice.stream()", slice => slice.stream()],
     ["new Response(slice).body", slice => new Response(slice).body!],
+    ["new Blob([slice]).stream()", (slice, track) => track(new Blob([slice])).stream()],
   ];
 
   const consumers: [string, (stream: ReadableStream) => Promise<unknown>, unknown][] = [
@@ -680,19 +683,33 @@ describe("consuming a slice's stream after the Blobs were collected", () => {
 
   describe.each(sources)("%s", (_, makeStream) => {
     test.each(consumers)("%s", async (_, consume, expected) => {
-      const stream = await collectedSliceStream(makeStream);
+      const stream = await fromCollectedSlice(makeStream);
       expect(await consume(stream)).toEqual(expected);
     });
   });
 
-  test("Response.text() after .body was accessed", async () => {
-    const response = await afterBlobsAreCollected(track => {
-      const parent = track(new Blob(parts));
-      const response = new Response(track(parent.slice(start, end)));
-      expect(response.body).toBeInstanceOf(ReadableStream);
-      return response;
-    });
-    expect(await response.text()).toBe(sliced);
+  // A body keeps a Blob-backed stream as its stream, and text() reads it
+  // through the same fast path as Bun.readableStreamToText.
+  const bodies: [string, (slice: Blob) => Response | Request][] = [
+    [
+      "new Response(slice) after .body was accessed",
+      slice => {
+        const response = new Response(slice);
+        expect(response.body).toBeInstanceOf(ReadableStream);
+        return response;
+      },
+    ],
+    ["new Response(slice.stream())", slice => new Response(slice.stream())],
+    ["new Response(new Response(slice).body)", slice => new Response(new Response(slice).body)],
+    [
+      "new Request(url, { body: new Response(slice).body })",
+      slice => new Request("http://localhost/", { method: "POST", body: new Response(slice).body, duplex: "half" }),
+    ],
+  ];
+
+  test.each(bodies)("%s, read by text()", async (_, makeBody) => {
+    const body = await fromCollectedSlice(makeBody);
+    expect(await body.text()).toBe(sliced);
   });
 
   test("slice of a slice", async () => {

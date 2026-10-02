@@ -122,15 +122,6 @@ unsafe extern "C" fn TextEncoder__encode16(
     encode16_impl(global_this, slice)
 }
 
-/// # Safety
-/// `ptr` must be valid for reading `len` UTF-16 code units.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn c(global_this: &JSGlobalObject, ptr: *const u16, len: usize) -> JSValue {
-    // SAFETY: caller guarantees ptr[0..len] is valid UTF-16 data
-    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-    encode16_impl(global_this, slice)
-}
-
 // This is a fast path for copying a Rope string into a Uint8Array.
 // This keeps us from an extra string temporary allocation
 struct RopeStringEncoder<'a> {

@@ -1236,6 +1236,42 @@ impl GetAddrInfoRequest {
         }
     }
 
+    /// QueryRecord reply callback: records rdata state; completion happens in `on_readable`.
+    /// # Safety
+    /// `context` is the registered `*mut GetAddrInfoRequest`; `rdata`, if non-null, spans `rdlen` bytes.
+    #[cfg(target_os = "macos")]
+    pub(crate) unsafe extern "C" fn dns_sd_query_reply(
+        _sd_ref: dns_sd::DNSServiceRef,
+        flags: u32,
+        _interface_index: u32,
+        error_code: i32,
+        _fullname: *const c_char,
+        rrtype: u16,
+        _rrclass: u16,
+        rdlen: u16,
+        rdata: *const c_void,
+        ttl: u32,
+        context: *mut c_void,
+    ) {
+        dns_sd::SharedConnection::note_reply(context);
+        // SAFETY: context is the *mut GetAddrInfoRequest passed to start().
+        let this: *mut Self = context.cast();
+        let bytes: &[u8] = if rdata.is_null() {
+            &[]
+        } else {
+            // SAFETY: `rdata` spans `rdlen` bytes per dns_sd.h (non-null checked above).
+            unsafe { core::slice::from_raw_parts(rdata.cast::<u8>(), rdlen as usize) }
+        };
+        // SAFETY: `this` is the live heap request (JS thread).
+        unsafe {
+            (*this)
+                .backend
+                .as_dns_sd_mut()
+                .query
+                .record_query_reply(flags, error_code, rrtype, rdlen, bytes, ttl);
+        }
+    }
+
     /// Complete a dns_sd-backed request; `this` is the live heap request, consumed on every path.
     #[cfg(target_os = "macos")]
     pub(crate) fn complete_dns_sd(this: *mut Self) {
@@ -2779,21 +2815,17 @@ pub(crate) mod internal {
                 query: dns_sd::QueryState::new(protocol),
             };
         }
-        let Some(_) = shared.start(
+        shared.start(
             dns_sd::Inflight::Internal(req),
             protocol,
             host,
-            dns_sd_reply,
+            dns_sd::Reply::QueryRecord(dns_sd_query_reply),
             req.cast::<c_void>(),
-        ) else {
-            return false;
-        };
-
-        true
+        )
     }
 
     #[cfg(target_os = "macos")]
-    unsafe extern "C" fn dns_sd_reply(
+    pub(super) unsafe extern "C" fn dns_sd_reply(
         _sd_ref: dns_sd::DNSServiceRef,
         flags: u32,
         _interface_index: u32,
@@ -2811,6 +2843,37 @@ pub(crate) mod internal {
                 .dns_sd
                 .query
                 .record_reply(flags, error_code, address, ttl)
+        };
+    }
+
+    #[cfg(target_os = "macos")]
+    unsafe extern "C" fn dns_sd_query_reply(
+        _sd_ref: dns_sd::DNSServiceRef,
+        flags: u32,
+        _interface_index: u32,
+        error_code: i32,
+        _fullname: *const c_char,
+        rrtype: u16,
+        _rrclass: u16,
+        rdlen: u16,
+        rdata: *const c_void,
+        ttl: u32,
+        context: *mut c_void,
+    ) {
+        dns_sd::SharedConnection::note_reply(context);
+        let req: *mut Request = context.cast();
+        let bytes: &[u8] = if rdata.is_null() {
+            &[]
+        } else {
+            // SAFETY: `rdata` spans `rdlen` bytes per dns_sd.h (non-null checked above).
+            unsafe { core::slice::from_raw_parts(rdata.cast::<u8>(), rdlen as usize) }
+        };
+        // SAFETY: `context` is the registered `req` (event-loop thread).
+        unsafe {
+            (*req)
+                .dns_sd
+                .query
+                .record_query_reply(flags, error_code, rrtype, rdlen, bytes, ttl)
         };
     }
 

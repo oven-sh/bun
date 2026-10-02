@@ -123,6 +123,33 @@ describe("dns", () => {
     });
   });
 
+  // Trailing-dot names exercise the dns_sd FQDN builder on the `system`
+  // backend (macOS `system` == dns_sd): `localhost.` must not gain a second
+  // dot. Scoped to `system` — the c-ares backend rejects `localhost.`.
+  describe("lookup() with trailing dot [backend: system]", () => {
+    test.each([
+      { options: { backend: "system" }, address: isIP },
+      { options: { backend: "system", family: 4 }, address: isIPv4, family: 4 },
+      { options: { backend: "system", family: 6 }, address: isIPv6, family: 6 },
+    ])("%j", async ({ options, address: expectedAddress, family: expectedFamily }) => {
+      // @ts-expect-error
+      const result = await dns.lookup("localhost.", options);
+      expect(result).toBeArray();
+      expect(result.length).toBeGreaterThan(0);
+      withoutAggressiveGC(() => {
+        for (const { family, address, ttl } of result) {
+          expect(address).toBeString();
+          expect(expectedAddress(address)).toBeTruthy();
+          expect(family).toBeInteger();
+          if (expectedFamily !== undefined) {
+            expect(family).toBe(expectedFamily);
+          }
+          expect(ttl).toBeInteger();
+        }
+      });
+    });
+  });
+
   // Hostnames longer than the fixed stack buffer used by the libc/system
   // backends (bun.PathBuffer, which is MAX_PATH_BYTES: 1024 on macOS, 4096 on
   // Linux, ~98302 on Windows) previously overflowed when writing the NUL

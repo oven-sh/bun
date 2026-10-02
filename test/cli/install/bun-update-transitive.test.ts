@@ -1572,6 +1572,39 @@ test.concurrent(
   },
 );
 
+// `extra` fails in the wave that resolves parent. The pass that then moves parent's own dependencies prints the log, and the error has to outlive that.
+test.concurrent(
+  "a failed download next to `bun update --latest <name>` fails the update and writes nothing",
+  async () => {
+    const knobs: RegistryKnobs = { status: {} };
+    using server = await serveRegistry(
+      {
+        parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } }, "1.1.0": { dependencies: { leaf: "^1.0.0" } } },
+        leaf: { "1.0.0": {}, "1.1.0": {} },
+        extra: { "1.0.0": {}, "1.1.0": {} },
+      },
+      {},
+      knobs,
+    );
+    const dir = await setupServed(
+      server,
+      "update-latest-failed-",
+      pkgJson({ parent: "1.0.0", leaf: "1.0.0" }),
+      pkgJson({ parent: "^1.0.0" }),
+    );
+    await write(join(dir, "package.json"), stringify(pkgJson({ parent: "^1.0.0", extra: "^1.0.0" })));
+    const before = { packageJson: await packageJsonText(dir), lock: await lockText(dir) };
+
+    knobs.status!["extra-1.1.0.tgz"] = 404;
+    const { stderr, exitCode } = await run(dir, "update", "--latest", "parent");
+    expect(errorLines(stderr)).toStrictEqual([`error: GET ${server.url.origin}/extra-1.1.0.tgz - 404`]);
+    expect(stderr).not.toContain("Saved lockfile");
+    expect(await packageJsonText(dir)).toBe(before.packageJson);
+    expect(await lockText(dir)).toBe(before.lock);
+    expect(exitCode).toBe(1);
+  },
+);
+
 // parent and other are already at their newest; the leaf under each is parked one release behind by the dropped root pins.
 const STALE_CHILDREN: Manifests = {
   parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },

@@ -1,0 +1,47 @@
+== 04:41:19 start tag=head expect=differ jobs=4 corpora=testrows comments targeted small small-sub check
+base e9cfacdf4af2477170858e2d713791ef310d90a6e21a5b05dfb0e78be0d9bfe0 /workspace/base/bun.f4d755a9c 1.4.3-canary.1+f4d755a9c
+next d0a760e664b2ebb2dac4dd4d1ff1e9e370b57abea77eb69b0fa0c899ff80cbf9 /workspace/head/bun.head 1.4.3-canary.1+23a20afa7
+tree 23a20afa7ee95996f0d044f5df67bbca179d7667 changed-files-under-src=0 main-commits-after-f4d755a9cf=0 next-mtime=2026-10-01 23:29:56
+harnesses main extra
+tools 136692ee9fd8d306 eb7426e155d7e1fc 7594403b9718820d 
+judge /usr/local/bin/bun 1.4.2+744846f84
+causes /workspace/notes/lint/units/parser/grammar-diff/causes.mjs: 0 entries
+ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0 BUN_DEBUG_QUIET_LOGS=1 BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1 BUN_GARBAGE_COLLECTOR_LEVEL=0 BUN_NO_CORE_DUMP=1 
+DETECTED main testrows: 4515 records compared, 3556 differ, in 301 sources (diff rc=1) A>A unexplained=352; R>A unexplained=3204; 
+DETECTED extra testrows: 2107 records compared, 688 differ, in 236 sources (diff rc=1) A>A unexplained=30; R>R unexplained=2; R>A unexplained=656; 
+DETECTED main comments: 1830 records compared, 258 differ, in 18 sources (diff rc=1) R>A unexplained=258; 
+DETECTED extra comments: 854 records compared, 50 differ, in 18 sources (diff rc=1) R>A unexplained=50; 
+DETECTED main targeted: 59280 records compared, 2423 differ, in 180 sources (diff rc=1) A>A unexplained=55; R>R unexplained=653; R>A unexplained=1715; 
+DETECTED extra targeted: 27664 records compared, 464 differ, in 169 sources (diff rc=1) A>A unexplained=3; R>R unexplained=138; R>A unexplained=323; 
+DETECTED main small: 3144420 records compared, 111240 differ, in 7772 sources (diff rc=1) A>A unexplained=1180; R>R unexplained=86300; R>A unexplained=23760; 
+DETECTED extra small: 1467396 records compared, 22018 differ, in 7483 sources (diff rc=1) R>R unexplained=17266; R>A unexplained=4752; 
+DETECTED main small-sub: 106335 records compared, 21973 differ, in 1642 sources (diff rc=1) A>A unexplained=808; R>R unexplained=855; R>A unexplained=20310; 
+DETECTED extra small-sub: 49623 records compared, 4233 differ, in 1440 sources (diff rc=1) R>R unexplained=171; R>A unexplained=4062; 
+DETECTED main check: 275850 records compared, 119219 differ, in 8344 sources (diff rc=1) A>A unexplained=1287; R>R unexplained=87186; R>A unexplained=30746; 
+DETECTED extra check: 128730 records compared, 23568 differ, in 8017 sources (diff rc=1) A>A unexplained=3; R>R unexplained=17440; R>A unexplained=6125; 
+run files:
+b1063d35ccad2a0b8569cbaaefc078542d1de5a3a0470a95c4711f87ee2e9c2f  base.e9cfacdf4af2/main.testrows.7188b5c7.jsonl.gz
+24cde88d5dc22d5bbbd5135820c335fb0a819df322b172a923df6b538157f2a3  head/main.testrows.jsonl.gz
+5b5804209b19a1dff3fb84f8c1236000621153a7519e92b2196becdf93d571c3  base.e9cfacdf4af2/extra.testrows.7188b5c7.jsonl.gz
+1511c7cd71a2bb398d66217d53097d0e8188e15d767d3ea4e585bedb4e1732f5  head/extra.testrows.jsonl.gz
+81e913ae78d61956d15b3e3a5e1f08111b23f146d556d3cd4a00c32d4e6ba3c6  base.e9cfacdf4af2/main.comments.71d0420c.jsonl.gz
+9e524439bec69b615ac6ad593edc8b7a5274860adf18c33d21bb98a4447e0d50  head/main.comments.jsonl.gz
+230f39d6f837ec3dcfdadd18ea99846c098ea1e9b858ee0af3f7b4260e560d32  base.e9cfacdf4af2/extra.comments.71d0420c.jsonl.gz
+7ee9d7a275753d925114aafe0b0b1b7d42b75fec4b8b37e789876bc9be126212  head/extra.comments.jsonl.gz
+10ea2eb155f52af2b4f108da4f194678d7e421ab2ccc622eaf51b770ae4c401f  base.e9cfacdf4af2/main.targeted.68d65cd9.jsonl.gz
+5d0a59b0f13f4ad62048059fb2c6bfc0fe5f8db461a9cb6f40ddcd41c721d88a  head/main.targeted.jsonl.gz
+73bc7a082b77cce7ffadb8c85d1684ef7bee0b9fd6adcc107de1a5b05e3309ed  base.e9cfacdf4af2/extra.targeted.68d65cd9.jsonl.gz
+76e06c055c1d842bde2255a857b0aafb70db5cd5ca37b2d389df058bf39a2d03  head/extra.targeted.jsonl.gz
+1bd1e7d6273af78dff4c966656b88bb2fe4d5287a9c3f3e4de8f207e6cf5f766  base.e9cfacdf4af2/main.small.19d140cd.jsonl.gz
+638a154c983e50f91779d8b82628f9e5ccbec88bdb2b8bbaa8ae0d418c80de66  head/main.small.jsonl.gz
+280188dff47c18bb24ae6f91b90a61684c8b03491ca52f1cb34ef5bead0a6d04  base.e9cfacdf4af2/extra.small.19d140cd.jsonl.gz
+af7b54d4f6d6d6a7b86d7d10fa70e6a5c7310d29b2cf59e2d7d59b2e3c2c6319  head/extra.small.jsonl.gz
+2236663eb2267ef3150ad9e515b38ba9069da2f678ff37a873c71f59ef308e48  base.e9cfacdf4af2/main.small-sub.edb744ab.jsonl.gz
+d5da598a4433590ae3004ce11d7d06ab4e42e8e2f38ffddc9a51a99ec2864857  head/main.small-sub.jsonl.gz
+86f3966ebd70f73c18abe8b6b7adf81c200158171003ef85c9c026a906ccb4c2  base.e9cfacdf4af2/extra.small-sub.edb744ab.jsonl.gz
+9dccecd5a1068b40e07837534d5f675f90037fc425cc361ba1eb98d24db824dc  head/extra.small-sub.jsonl.gz
+d2c9ee9f4b0ace33b7088f883c0a0cfc82a879344cc375abe7e20a59e46e2706  base.e9cfacdf4af2/main.check.15d1162d.jsonl.gz
+b637e3b2bbacb32a86e54d6a467d6c967b067c3628026e9cb6f2cd67f4d68501  head/main.check.jsonl.gz
+4a9b46959930ce18ada53438656a5c4ec76abf38218a9ce80b756d70703d1e44  base.e9cfacdf4af2/extra.check.15d1162d.jsonl.gz
+89b2dbc520babcea8b0939d234d6a7b52992ff575c80fda9f81cc6893d3a65c9  head/extra.check.jsonl.gz
+RESULT head: OK (expect=differ)

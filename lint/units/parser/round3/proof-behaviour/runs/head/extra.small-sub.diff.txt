@@ -1,0 +1,17 @@
+base 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 (7089 sources)
+next 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667 (7089 sources)
+49623 records compared, 4233 differ, in 1440 sources
+!!     4062  R>A          unexplained  
+              t.ts.min.ids     "class C implements A\n<B> {}"
+                base ["e",[["Expected \"{\" but found \"<\"",2,1],["Expected \";\" but found \">\"",2,3],["Expected identifier but found \"{\"",2,5],["Expected \"}\" but found end of file",2,6]]]
+                next ["o","class s {\n}\n"]
+              t.tsx.min.ids    "class C implements A\n<B> {}"
+                base ["e",[["Expected \"{\" but found \"<\"",2,1],["Expected \";\" but found \">\"",2,3],["Expected identifier but found \"{\"",2,5],["Expected \"}\" but found end of file",2,6]]]
+                next ["o","class s {\n}\n"]
+!!      171  R>R          unexplained  
+              t.ts.min.ids     "function f(): (class: A) => void { return x; }"
+                base ["e",[["Unexpected class",1,16],["Expected \";\" but found \":\"",1,21],["Expected \";\" but found \")\"",1,24],["Unexpected =>",1,26]]]
+                next ["e",[["Expected \")\" but found \":\"",1,21],["Expected \";\" but found \"A\"",1,23],["Unexpected )",1,24]]]
+              t.tsx.min.ids    "function f(): (class: A) => void { return x; }"
+                base ["e",[["Unexpected class",1,16],["Expected \";\" but found \":\"",1,21],["Expected \";\" but found \")\"",1,24],["Unexpected =>",1,26]]]
+                next ["e",[["Expected \")\" but found \":\"",1,21],["Expected \";\" but found \"A\"",1,23],["Unexpected )",1,24]]]

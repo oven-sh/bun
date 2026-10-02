@@ -1,0 +1,17 @@
+base 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 (301 sources)
+next 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667 (301 sources)
+4515 records compared, 3556 differ, in 301 sources
+!!      352  A>A          unexplained  
+              t.ts.plain       "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.exp         "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+!!     3204  R>A          unexplained  
+              t.ts.plain       "let x: if;"
+                base ["e",[["Unexpected if",1,8]]]
+                next ["o","let x;\n"]
+              t.ts.exp         "let x: if;"
+                base ["e",[["Unexpected if",1,8]]]
+                next ["o","let x;\n"]

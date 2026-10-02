@@ -1,0 +1,17 @@
+base 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 (209628 sources)
+next 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667 (209628 sources)
+1467396 records compared, 22018 differ, in 7483 sources
+!!     4752  R>A          unexplained  
+              t.ts.min.ids     "class C implements +1 {}"
+                base ["e",[["Unexpected +",1,20],["Expected \";\" but found \"{\"",1,23]]]
+                next ["o","class s {\n}\n"]
+              t.tsx.min.ids    "class C implements +1 {}"
+                base ["e",[["Unexpected +",1,20],["Expected \";\" but found \"{\"",1,23]]]
+                next ["o","class s {\n}\n"]
+!!    17266  R>R          unexplained  
+              t.ts.min.ids     "class C { @d m(): keyof<A> { return x; } }"
+                base ["e",[["Expected \"(\" but found \"{\"",1,28],["Unexpected return",1,30],["Expected \";\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+                next ["e",[["Expected \"(\" but found \"{\"",1,28],["Expected \")\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+              t.tsx.min.ids    "class C { @d m(): keyof<A> { return x; } }"
+                base ["e",[["Expected \"(\" but found \"{\"",1,28],["Unexpected return",1,30],["Expected \";\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+                next ["e",[["Expected \"(\" but found \"{\"",1,28],["Expected \")\" but found \"x\"",1,37],["Unexpected }",1,42]]]

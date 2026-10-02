@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Per-function difference of two cachegrind runs, five groups side by side, split by the file that defines the function.
-usage: outside.py <dir> <tagA> <tagB> [--srca ROOT] [--srcb ROOT] [--ev ir|bc|bi] [--min N] [--grammar] [--tsv]
+usage: outside.py <dir> <tagA> <tagB> [--srca ROOT] [--srcb ROOT] [--ev ir|bc|bi] [--min N] [--grammar] [--strip-p] [--grammar-files a.rs,b.rs]
 A symbol is of the type grammar when the function of its name is defined in one of GRAMMAR_FILES (either tree);
---grammar lists those instead of the others. ICF: P<true, true> names of the base are the code of P<true, false>."""
+--grammar lists those instead of the others. --strip-p cuts the const arguments of P from the names: identical code
+folding keeps one body for several instantiations and cachegrind names it by any of them (main: P<true, true>)."""
 import re, sys, os, collections
 def arg(k, d): return sys.argv[sys.argv.index(k) + 1] if k in sys.argv else d
-pos = [a for a in sys.argv[1:] if not a.startswith('--') and a not in (arg('--srca', None), arg('--srcb', None), arg('--ev', None), arg('--min', None))]
+pos = [a for a in sys.argv[1:] if not a.startswith('--') and a not in (arg('--srca', None), arg('--srcb', None), arg('--ev', None), arg('--min', None), arg('--grammar-files', None))]
 D, TA, TB = pos[0], pos[1], pos[2]
 SRCA = arg('--srca', '/tmp/proofcost/base-src'); SRCB = arg('--srcb', '/workspace/wt/parser')
 EV = {'ir': 0, 'bc': 1, 'bi': 3}[arg('--ev', 'bc')]; MIN = int(arg('--min', '1'))
 GROUPS = ['bun-types', 'typescript-lib', 'src-js', 'tsx', 'js-control']
-GRAMMAR_FILES = ('parse/parse_skip_typescript.rs', 'parse/type_sink.rs', 'parse/lint_grammar.rs', 'parse/skip_typescript.rs')
+GRAMMAR_FILES = tuple(arg('--grammar-files', 'parse/parse_skip_typescript.rs,parse/type_sink.rs').split(','))
 def fnfiles(root):
     m = collections.defaultdict(set)
     base = root + '/src/js_parser'

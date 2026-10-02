@@ -1,0 +1,29 @@
+== 04:43:38 start tag=self-real expect=zero jobs=4 corpora=tscases repo-ts repo-js
+base e9cfacdf4af2477170858e2d713791ef310d90a6e21a5b05dfb0e78be0d9bfe0 /workspace/base/bun.f4d755a9c 1.4.3-canary.1+f4d755a9c
+next e9cfacdf4af2477170858e2d713791ef310d90a6e21a5b05dfb0e78be0d9bfe0 /workspace/base/bun.f4d755a9c 1.4.3-canary.1+f4d755a9c
+tree 23a20afa7ee95996f0d044f5df67bbca179d7667 changed-files-under-src=0 main-commits-after-f4d755a9cf=0 next-mtime=2026-10-01 22:36:05
+harnesses main extra
+tools 136692ee9fd8d306 eb7426e155d7e1fc 7594403b9718820d 
+judge /usr/local/bin/bun 1.4.2+744846f84
+causes /workspace/notes/lint/units/parser/grammar-diff/causes.mjs: 0 entries
+ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0 BUN_DEBUG_QUIET_LOGS=1 BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1 BUN_GARBAGE_COLLECTOR_LEVEL=0 BUN_NO_CORE_DUMP=1 
+PASS main tscases: 203085 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS extra tscases: 94773 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS main repo-ts: 47355 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS extra repo-ts: 22099 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS main repo-js: 110475 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS extra repo-js: 51555 records compared, 0 differ, in 0 sources (diff rc=0) 
+run files:
+eab48a9d99921d21cf07f32629a55cb9cee1c6d0d259136ad82de031e48810da  base.e9cfacdf4af2/main.tscases.9bdb097e.jsonl.gz
+eab48a9d99921d21cf07f32629a55cb9cee1c6d0d259136ad82de031e48810da  self-real/main.tscases.jsonl.gz
+856fadd67808391f8c7617f262abcd3eea00fa4814c6a5cbb757dceb674bd668  base.e9cfacdf4af2/extra.tscases.9bdb097e.jsonl.gz
+856fadd67808391f8c7617f262abcd3eea00fa4814c6a5cbb757dceb674bd668  self-real/extra.tscases.jsonl.gz
+99902f8eda875faccc229831d0718cdd9e60182d0044ae43f7777a16fa00ecf6  base.e9cfacdf4af2/main.repo-ts.558ff988.jsonl.gz
+99902f8eda875faccc229831d0718cdd9e60182d0044ae43f7777a16fa00ecf6  self-real/main.repo-ts.jsonl.gz
+191d9d90bf70f5b0515c1b4c41f04d8791e051bba106a25ee5ef7377ef3fdbeb  base.e9cfacdf4af2/extra.repo-ts.558ff988.jsonl.gz
+191d9d90bf70f5b0515c1b4c41f04d8791e051bba106a25ee5ef7377ef3fdbeb  self-real/extra.repo-ts.jsonl.gz
+f29310a11c2ee19fba64ef4872e6d01b1d991d3a6977109a805d319f33db514b  base.e9cfacdf4af2/main.repo-js.e985a24c.jsonl.gz
+f29310a11c2ee19fba64ef4872e6d01b1d991d3a6977109a805d319f33db514b  self-real/main.repo-js.jsonl.gz
+8b22b6eb3c5cabd462cb91e6810e96b5e2e27491220036999d14ba668b16f938  base.e9cfacdf4af2/extra.repo-js.e985a24c.jsonl.gz
+8b22b6eb3c5cabd462cb91e6810e96b5e2e27491220036999d14ba668b16f938  self-real/extra.repo-js.jsonl.gz
+RESULT self-real: OK (expect=zero)

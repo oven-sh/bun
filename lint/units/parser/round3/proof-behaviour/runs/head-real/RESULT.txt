@@ -1,0 +1,17 @@
+== 04:44:58 start tag=head-real expect=differ jobs=4 corpora=tscases
+base e9cfacdf4af2477170858e2d713791ef310d90a6e21a5b05dfb0e78be0d9bfe0 /workspace/base/bun.f4d755a9c 1.4.3-canary.1+f4d755a9c
+next d0a760e664b2ebb2dac4dd4d1ff1e9e370b57abea77eb69b0fa0c899ff80cbf9 /workspace/head/bun.head 1.4.3-canary.1+23a20afa7
+tree 23a20afa7ee95996f0d044f5df67bbca179d7667 changed-files-under-src=0 main-commits-after-f4d755a9cf=0 next-mtime=2026-10-01 23:29:56
+harnesses main extra
+tools 136692ee9fd8d306 eb7426e155d7e1fc 7594403b9718820d 
+judge /usr/local/bin/bun 1.4.2+744846f84
+causes /workspace/notes/lint/units/parser/grammar-diff/causes.mjs: 0 entries
+ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0 BUN_DEBUG_QUIET_LOGS=1 BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1 BUN_GARBAGE_COLLECTOR_LEVEL=0 BUN_NO_CORE_DUMP=1 
+DETECTED main tscases: 203085 records compared, 1487 differ, in 121 sources (diff rc=1) A>A unexplained=8; R>R unexplained=280; R>A unexplained=1199; 
+DETECTED extra tscases: 94773 records compared, 235 differ, in 95 sources (diff rc=1) R>R unexplained=40; R>A unexplained=195; 
+run files:
+eab48a9d99921d21cf07f32629a55cb9cee1c6d0d259136ad82de031e48810da  base.e9cfacdf4af2/main.tscases.9bdb097e.jsonl.gz
+5852b4ab9f1662385409145c444d0cb1c7a1e08ab9148d4c1dd30c07541bfe11  head-real/main.tscases.jsonl.gz
+856fadd67808391f8c7617f262abcd3eea00fa4814c6a5cbb757dceb674bd668  base.e9cfacdf4af2/extra.tscases.9bdb097e.jsonl.gz
+c5e49b4dac7a45d14df2a440195b875bf33ecdb63b249549ea336c9bf1b7834b  head-real/extra.tscases.jsonl.gz
+RESULT head-real: OK (expect=differ)

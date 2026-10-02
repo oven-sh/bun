@@ -31,6 +31,18 @@ if [ -n "$NOLINT" ]; then
   $L/cgbench.sh $NOLINT $O nolint 20 > $O/nolint.jsonl
   $T/cgbench-raw.sh $NOLINT $O rawnolint 20 > $O/rawnolint.jsonl
 fi
+# 3b. JavaScript that js-control lacks (classes, accessors, private names, async arrows, generators, import attributes)
+J=/workspace/notes/lint/units/parser/round2/zero-cost-measure/top-down/js-classes-bench.mjs
+for t in base head; do
+  [ $t = base ] && B=$BASE || B=$HEAD
+  BUN_JSC_useJIT=0 BUN_DEBUG_QUIET_LOGS=1 /workspace/tools/vg --tool=cachegrind --cache-sim=no --branch-sim=yes --vex-guest-chase=no \
+    --cachegrind-out-file=$O/raw$t.js-classes.cg $B $J --iterations=5 > $O/raw$t.js-classes.log 2>&1
+done
+python3 /workspace/notes/lint/units/parser/measure/tools/cgdiff.py $O/rawbase.js-classes.cg $O/rawhead.js-classes.cg --top 60 > $O/cgdiff.raw.js-classes.txt
+python3 $T/newlines.py $O/rawhead.js-classes.cg --srcb /workspace/bun --tests > $O/newlines.js-classes.txt
+python3 $T/optsites.py $BASE > $O/optsites.js.base.txt; python3 $T/optsites.py $HEAD > $O/optsites.js.head.txt
+# the same work on both sides: the rows `group files bytes passes output-length` of the logs must be equal but for the time
+for g in bun-types typescript-lib src-js tsx js-control; do grep -A1 '^group' $O/rawbase.$g.log | tail -1 | cut -c1-72; grep -A1 '^group' $O/rawhead.$g.log | tail -1 | cut -c1-72; done > $O/work.txt
 # 4. the table, and what it rests on
 python3 $T/r3table.py $O base head --raw ${NOLINT:+--nolint nolint} > $O/table.txt
 for g in bun-types typescript-lib src-js tsx js-control; do
@@ -40,4 +52,4 @@ for g in bun-types typescript-lib src-js tsx js-control; do
 done
 python3 $T/outside.py $O rawbase rawhead --ev bc --strip-p > $O/outside.bc.txt
 python3 $T/outside.py $O rawbase rawhead --ev ir --strip-p --min 1000 > $O/outside.ir.txt
-cat $O/base.sym.txt $O/head.sym.txt $O/stripped.txt $O/table.txt; head -1 $O/fncmp.js.txt; tail -1 $O/fncmp.js.txt; tail -1 $O/newlines.js-control.txt
+cat $O/base.sym.txt $O/head.sym.txt $O/stripped.txt $O/table.txt; head -1 $O/fncmp.js.txt; tail -1 $O/fncmp.js.txt; tail -2 $O/newlines.js-control.txt; tail -2 $O/newlines.js-classes.txt; tail -1 $O/optsites.js.base.txt; tail -1 $O/optsites.js.head.txt; uniq -c $O/work.txt

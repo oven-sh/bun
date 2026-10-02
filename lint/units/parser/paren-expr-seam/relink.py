@@ -16,7 +16,7 @@ After its own tag the script works through $OUT/queue.txt (lines `<tag> [full]`,
 once under the lock can be extended without giving the lock back. While $OUT/HOLD holds the tag of the running
 invocation, an empty queue is polled for up to ten minutes before the script ends."""
 import os, re, signal, shutil, subprocess, sys, time
-R = '/workspace/wt/parser/build/release'
+R = os.path.realpath('/workspace/wt/parser/build/release')  # the worktree is a symlink to /workspace/bun and build.ninja holds the real path
 OUT = os.environ.get('OUT', '/tmp/paren-seam/link')
 CACHE = os.environ.get('CACHE', '/tmp/paren-seam/thinlto-cache')
 RLIB = '/tmp/paren-seam/out/%s/libbun_js_parser-185fe25973f3a1f8.rlib'

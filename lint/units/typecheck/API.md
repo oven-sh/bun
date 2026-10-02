@@ -2032,3 +2032,115 @@ At `0f2dab7801`:
   meaning) -> SymbolId`. A name that is `Text<'a>` or a receiver that is `&self` does not coerce.
 - A consumer that does not fit: `nodebuilderimpl.rs` 2059, 3601 and 3613 pass `None` as the message of
   `resolve_name`; it is `MessageId::NIL`.
+
+## Checker: object literals and spread (`checker/c20_object_literals_spread.rs`)
+
+Commits `88e8c64306` and `51528b0cf0` (written by the job that commits the worktree). The 25 functions of
+`checker.go` 13235-13989 in upstream order: the 23 of layers E-LITERAL, E-ACCESS and E-CORE that the file did not
+have, around `getUnionIndexInfos` and `isReadonlySymbol` (T-UIMEMBERS), which it had and which are unchanged.
+PORT_STATUS.md has the row.
+
+NOT compiled by cargo: `checker/mod.rs` still names modules without a file. "Verified" below says what was checked
+instead.
+
+### How a caller writes the calls
+
+- `check_object_literal(node, check_mode)`, `check_property_assignment(node, check_mode)`,
+  `check_shorthand_property_assignment(node, in_destructuring_pattern, check_mode)`,
+  `check_object_literal_method(node, check_mode)` and `check_expression_for_mutable_location(node, check_mode)`
+  answer a `TypeId`.
+- `get_spread_type(left, right, symbol: SymbolId, object_flags, readonly) -> TypeId`,
+  `try_merge_union_of_object_type_and_empty_object(t, readonly) -> TypeId`,
+  `get_spread_symbol(prop, readonly) -> SymbolId`,
+  `get_index_info_with_readonly(info: IndexInfoId, readonly) -> IndexInfoId` and
+  `check_spread_prop_overrides(t, props: SymbolTableId, spread: NodeId)`: the table is the id of upstream's map.
+- `get_narrowed_type_of_symbol(symbol, location) -> TypeId`. `is_const_type_variable(t, depth: isize)`: the nil type
+  answers false, as upstream's nil.
+- `check_contextual_deprecations(node)` takes an object literal or a JSX attributes node,
+  `check_deprecated_property(name: NodeId, contextual_type)` the name node of a property.
+- These only read and take `&self`: `is_spreadable_property`, `has_default_value` and
+  `is_in_property_initializer_or_class_static_block(node, ignore_arrow_functions)`. Every other method takes
+  `&mut self`.
+
+### Differences from upstream
+
+- `checkObjectLiteral`: the closure `createObjectLiteralType` (13284-13308) is a local function, and the locals that
+  it reads are the fields of the private record `ObjectLiteralState`: the node, the contextual type,
+  `inDestructuringPattern`, `propertiesTable`, `propertiesArray`, `offset`, `objectFlags`,
+  `patternWithComputedProperties` and the three `hasComputed...Property`. The function writes them between the calls
+  of the closure, which a closure of Rust that borrows them does not allow. The callback of `mapType` (13437) calls
+  the local function with the state as the resets of 13431-13434 left it: `hasComputedSymbolProperty` keeps its
+  value there, as upstream (hazard 16 of `checker-expressions-calls-flow/top-down/data/hazards.txt`).
+  `propertiesArray[offset:]` is `get(offset..)`, the empty slice for an offset beyond the length.
+  `allPropertiesTable` is the nil table without `strictNullChecks`. `propertiesArray = nil` is a new empty `Vec`.
+- Stack tests, each the first statement of its function, at the six entries of
+  `checker-expressions-calls-flow/top-down/data/tested_entries.tsv` that are in this range: `get_spread_type` (the
+  error type), `is_valid_spread_type` (true), `has_default_value` (false), `is_const_context` (false),
+  `is_valid_const_assertion_argument` (true) and `is_const_type_variable` (false, before the test of the depth).
+- Asserts and indexings: the assert of 13403 records and goes on. `types[len(types)-1]` (13531),
+  `elementInfos[i]` (13766), `contextualSignature.parameters[0]` (13917) and `node.Arguments()[2]` (13934) are
+  `List::at`, the zero value outside the list. The write `newTypes[len(newTypes)-1]` (13534) into an empty copy is a
+  fault.
+- `tryMergeUnionOfObjectTypeAndEmptyObject`: the empty branch for private and protected properties (13657-13658) is
+  the negated test in front of `isSpreadableProperty`, which is still not asked for them. `t.Types()` is read once.
+- `getSpreadType`: `collections.Set[string]` is `collections::Set<Text>`, and the two `spreadLinks.Get(result)` are
+  one link.
+- `getNarrowedTypeOfSymbol`: the `switch` (13828-13925) is an `if` with an `else if`, and the body of its first arm
+  is a labeled block that upstream's `break` leaves. `slices.Index` is `core::find_index`. Each of the two comments
+  with a code example is one line.
+- `isConstTypeVariable` and `checkExpressionForMutableLocation`: the `switch` over conditions is a sequence of `if`
+  with returns, in upstream's order.
+- `isConstContext`: the second operand of `&&` at 13719 is a block, so that the contextual type is asked only after
+  `isValidConstAssertionArgument` answered true, as upstream's evaluation order has it.
+
+### Verified
+
+No cargo build has seen the file, and nothing ran a function of it. What was checked:
+
+- `rustfmt --check --edition 2024`: exit 0. rustfmt leaves a statement alone when a token of it is longer than the
+  line (the two `error` calls with the long message names, the assert with the long text): a copy of the file with
+  short names in their place is formatted without a difference.
+- A probe of the file with `rustc` alone and with `clippy-driver` alone: exit 0 each.
+  `round2-layer7-checker/c20-probe-gen.py` writes `c20-probe.rs`, and `c20-probe-clippy.sh` has the clippy table of
+  the workspace and its `clippy.toml`. The probe denies warnings, unused imports, variables, `mut` and assignments and
+  `unreachable_pub`. It holds this file and `checker/types.rs` by `#[path]`, the leaf files they stand on by `#[path]`
+  (`diagnostics/`, `core/{arena,golang,linkstore,text,tristate}.rs`, `collections/{set,ordered_map,ordered_set}.rs`,
+  `jsnum/jsnum.rs`, `ast/{flags,ids,checkflags,symbolflags,modifierflags,nodeflags,kind_generated,diagnostic}.rs`),
+  and stand-ins for every other name. The script reads the signature of a stand-in from the file of the tree that
+  defines the function, and the body of a stand-in never returns: 140 functions (21 methods of `Ast` and 30 free
+  functions of `ast/`, 5 of `core/core.rs`, 73 methods of the checker from 26 files and 11 free functions of
+  `checker/`), with the `Symbol` record, three node records, `FindAncestorResult`, `CheckMode`, `UnionReduction` and
+  `IntersectionState` copied from their files. Written by hand in the probe: the 13 callees of the last section,
+  `core::Map` with the signatures of the contract, `StackCheck`, `CacheHashKey`, `ScriptTarget`, `PseudoBigInt`,
+  `evaluator::Result`, `Fallback`, `ListItem`, and a `Checker` of the 27 fields that the two files read, with the
+  types of `c02_program_checker.rs`. `Ast` and `Checker` are invariant in their lifetime there, as in the tree.
+  A copy of the file with an unused variable, two swapped arguments and a nested `&mut self` call gave the four
+  errors (two of unused variables, E0308, E0499).
+- Scripts over the file: the 25 functions have upstream's names in upstream's order
+  (`round2-layer7-checker/ranges.py`: 25 in the file, 0 nowhere); no two comment lines are adjacent; no `unwrap`,
+  `expect`, `panic`, `todo`, `unimplemented`, `unreachable` or `unsafe`; every `[...]` indexes a store of records or a
+  link store of the checker.
+- Read against the tree at `0f2dab7801`: the calls that other files make into these functions match by name, number
+  and order of arguments (`c05` 338, `c14` 711, 998, 1053 and 1122, `c24` 1047-1048, `c28` 307-313, 651 and 659,
+  `c31` 126, 137, 301, 332, 525 and 722, `jsx.rs` 1394-1587, `relater.rs` 1329 and 5646).
+- Not checked: the 13 callees that have no definition, the `core::Map` of the tree (no file defines it), clippy and
+  rustc on the real crate, and any result against upstream's baselines.
+
+### What this file expects and the tree does not have
+
+At `51528b0cf0`, 13 callees, each called by its upstream name with upstream's parameter order, as the other callers
+of the tree write them:
+
+- `c50` (no file): `get_apparent_type_of_contextual_type(node, context_flags) -> TypeId` (30809),
+  `instantiate_contextual_type(contextual_type, node, context_flags) -> TypeId` (30940),
+  `push_cached_contextual_type(node)` (30995), `pop_contextual_type()` (31003), `is_context_sensitive(node) -> bool`
+  (31020), `get_inference_context(node) -> InferenceContextId` (31088).
+- `c48`: `get_contextual_type(node, context_flags) -> TypeId` (29466),
+  `is_context_sensitive_function_or_object_literal_method(func) -> bool` (29619).
+- `c47`: `remove_definitely_falsy_types(t) -> TypeId` (29229).
+- `c18` (no file): `get_control_flow_container(node) -> NodeId` (11528).
+- `c16` (no file): `check_function_expression_or_object_literal_method(node, check_mode) -> TypeId` (10204),
+  `get_contextual_signature(node) -> SignatureId` (10354), nil for none.
+- `inference.rs` (no file): `add_intra_expression_inference_site(context: InferenceContextId, node, t)`
+  (`inference.go` 1285).
+- `crate::core::Map` as the contract has it (`get` and `set` with its `bool`), for `pattern_for_type`.

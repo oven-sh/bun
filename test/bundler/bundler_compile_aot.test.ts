@@ -1154,3 +1154,153 @@ describe.skipIf(!supported)("--compile-aot across threads", () => {
     ).toEqual({ stdout: `["2461,t2,3,a|b1,true,1,3000"] true\n`, stderr: "", exitCode: 0 });
   });
 });
+
+describe.skipIf(!supported)("--compile-aot optimizations", () => {
+  const program = /* ts */ `
+    const out: unknown[] = [];
+    const kept: unknown[] = [];
+    function keep<T>(x: T): T { kept.push(x); return x; }
+
+    function small(x: number) { return x + 1; }
+    function inlinesSmall(x: number) { return small(x); }
+    function recursive(n: number): number { return n < 2 ? n : recursive(n - 1) + recursive(n - 2); }
+    function callsRecursive(n: number) { return recursive(n); }
+    let reassigned = (x: number) => x + 1;
+    function callsReassigned(x: number) { return reassigned(x); }
+    function oneOfTwoA(x: number) { return x + 1; }
+    function oneOfTwoB(x: number) { return x + 2; }
+    function callsEither(f: (x: number) => number, x: number) { return f(x); }
+    function large(a: number, b: number) {
+      let s = 0;
+      for (let i = 0; i < a; i++) { s += i * b; if (s > 1000) s -= 1000; if (s % 7 == 3) s += b; else s -= a; }
+      for (let i = 0; i < b; i++) { s ^= i + a; if (s < 0) s = -s; if (s % 5 == 1) s += a; else s -= b; }
+      return s;
+    }
+    function callsLargeOnce(x: number) { return large(x, 3); }
+    function callsLargeTwice(x: number) { return large(x, 4) + 1; }
+    out.push(inlinesSmall(1), callsRecursive(10), callsReassigned(1), callsEither(oneOfTwoA, 1), callsEither(oneOfTwoB, 1));
+    out.push(callsLargeOnce(5), callsLargeTwice(5));
+    reassigned = x => x + 2;
+    out.push(callsReassigned(1));
+
+    function makeAdderCalled(k: number) { return (x: number) => x + k; }
+    function callsClosure(i: number) { return makeAdderCalled(i)(1); }
+    function makeAdderKept(k: number) { return (x: number) => x + k; }
+    function keepsClosure(i: number) { return keep(makeAdderKept(i))(1); }
+    out.push(callsClosure(1), keepsClosure(1));
+
+    function sumOfPair(p: { x: number; y: number }) { return p.x + p.y; }
+    function passesLiteral(i: number) { return sumOfPair({ x: i, y: i + 1 }); }
+    function keepsPair(p: { x: number; y: number }) { return keep(p).x + p.y; }
+    function passesLiteralThatEscapes(i: number) { return keepsPair({ x: i, y: i + 1 }); }
+    out.push(passesLiteral(1), passesLiteralThatEscapes(1));
+
+    function withDefaultOmitted({ a, b = 2 }: { a: number; b?: number }) { return a * b; }
+    function omitsB(i: number) { return withDefaultOmitted({ a: i }); }
+    function withDefaultPassed({ a, b = 2 }: { a: number; b?: number }) { return a * b; }
+    function passesB(i: number) { return withDefaultPassed({ a: i, b: 3 }); }
+    function withInherited({ a, toString }: { a: number; toString?: unknown }) { return typeof toString + a; }
+    function omitsInherited(i: number) { return withInherited({ a: i }); }
+    out.push(omitsB(4), passesB(4), omitsInherited(1));
+
+    function returnsPairRead(n: number) { let s = 0; for (let j = 0; j < n; j++) s += keep(j); return { x: s, y: n }; }
+    function readsReturnedA(i: number) { const { x, y } = returnsPairRead(i); return x + y; }
+    function readsReturnedB(i: number) { const r = returnsPairRead(i); return r.x - r.y; }
+    function returnsPairKept(n: number) { let s = 0; for (let j = 0; j < n; j++) s += keep(j); return { x: s, y: n }; }
+    function readsReturnedC(i: number) { const { x, y } = returnsPairKept(i); return x + y; }
+    function keepsReturned(i: number) { return keep(returnsPairKept(i)).x; }
+    out.push(readsReturnedA(3), readsReturnedB(3), readsReturnedC(3), keepsReturned(3));
+
+    class Planned { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } sum() { return this.x + this.y; } }
+    class Conditional { x = 0; y?: number; constructor(x: number) { if (x > 1) this.y = x; this.x = x; } }
+    class EitherA { v: number; constructor(v: number) { this.v = v; } }
+    class EitherB { v: number; constructor(v: number) { this.v = v + 1; } }
+    function constructsPlanned(i: number) { return new Planned(i, 1).sum(); }
+    function constructsConditional(i: number) { return new Conditional(i).x; }
+    function constructsEither(C: new (v: number) => { v: number }, i: number) { return new C(i).v; }
+    out.push(constructsPlanned(1), constructsConditional(2), constructsEither(EitherA, 1), constructsEither(EitherB, 1));
+
+    function floors(x: number) { return Math.floor(x); }
+    function floorsShadowed(x: number) { const Math = { floor: (y: number) => y + 0.5 }; return Math.floor(x); }
+    function isArray(x: unknown) { return Array.isArray(x); }
+    out.push(floors(1.5), floorsShadowed(1), isArray([]));
+
+    function sumsNumbers(a: number[]) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]; return s; }
+    function sumsFields(a: { v: number }[]) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i].v; return s; }
+    function callsInLoop(a: number[]) { let s = 0; for (let i = 0; i < a.length; i++) s += keep(a[i]); return s; }
+    function hasNoLoop(a: number[]) { return a[0] + a[1]; }
+    out.push(sumsNumbers([1, 2, 3]), sumsFields([{ v: 1 }, { v: 2 }]), callsInLoop([1, 2, 3]), hasNoLoop([1, 2]));
+
+    console.log(out.join());
+  `;
+  const expectedOutput = "2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3\n";
+  const loopOptions = "useAOTLoopSplitting=1,useAOTInlineFastPathsInLoops=1";
+
+  const builds = new Map<string, Promise<Map<string, string[]>>>();
+  function remarksWith(options: string) {
+    let build = builds.get(options);
+    if (!build) builds.set(options, (build = buildAndRun(options)));
+    return build;
+  }
+  async function buildAndRun(options: string) {
+    using dir = tempDir("compile-aot-optimizations", { "entry.ts": program });
+    const path = join(String(dir), "remarks.txt");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
+      env: { ...bunEnv, BUN_AOT_OPTIONS: [`aotRemarksPath=${path}`, options].filter(Boolean).join(",") },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+    await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(expectedOutput);
+    expect(exitCode).toBe(0);
+    const remarks = new Map<string, string[]>();
+    for (const line of (await Bun.file(path).text()).split("\n")) {
+      const [name, remark] = line.split("\t");
+      if (remark) remarks.set(name, [...(remarks.get(name) ?? []), remark]);
+    }
+    return remarks;
+  }
+
+  const cases: [remark: string, appliesTo: string[], doesNotApplyTo: string[], options?: string][] = [
+    ["inlined-call:small", ["inlinesSmall"], []],
+    ["inlined-call", [], ["recursive", "callsRecursive", "callsReassigned", "callsEither", "callsLargeOnce", "callsLargeTwice"]],
+    ["direct-call:recursive", ["recursive", "callsRecursive"], []],
+    ["direct-call:large", ["callsLargeOnce", "callsLargeTwice"], []],
+    ["direct-call", [], ["inlinesSmall", "callsReassigned", "callsEither"]],
+    ["inlined-closure", ["callsClosure"], ["keepsClosure"]],
+    ["scalar-replaced-object", ["passesLiteral", "omitsB", "passesB"], ["passesLiteralThatEscapes", "omitsInherited"]],
+    ["absent-property-is-undefined:b", ["omitsB"], ["passesB"]],
+    ["absent-property-is-undefined", [], ["omitsInherited"]],
+    ["reads-returned-object-from-registers:returnsPairRead", ["readsReturnedA", "readsReturnedB"], []],
+    ["reads-returned-object-from-registers", [], ["readsReturnedC", "keepsReturned"]],
+    ["planned-construction", ["Planned", "EitherA", "EitherB"], ["Conditional"]],
+    ["direct-construct:Planned", ["constructsPlanned"], []],
+    ["direct-construct:Conditional", ["constructsConditional"], []],
+    ["direct-construct", [], ["constructsEither"]],
+    ["lowered-builtin:Math.floor", ["floors"], ["floorsShadowed"]],
+    ["lowered-builtin:Array.isArray", ["isArray"], []],
+    ["profitable-loop", ["sumsNumbers", "sumsFields"], ["callsInLoop", "hasNoLoop"], loopOptions],
+    ["split-loop", ["sumsFields"], ["callsInLoop", "hasNoLoop"], loopOptions],
+    ["profitable-loop", [], ["sumsNumbers", "sumsFields"]],
+    ["split-loop", [], ["sumsFields"]],
+  ];
+  const matches = (remark: string, pattern: string) => remark === pattern || remark.startsWith(pattern + ":");
+
+  test.each(cases)("%s applies to %j and not to %j", async (pattern, appliesTo, doesNotApplyTo, options = "") => {
+    const remarks = await remarksWith(options);
+    const have = (name: string) => {
+      expect(remarks.get(name), name).toContain("compiled");
+      return remarks.get(name)!.some(remark => matches(remark, pattern));
+    };
+    expect(Object.fromEntries(appliesTo.map(name => [name, have(name)]))).toEqual(
+      Object.fromEntries(appliesTo.map(name => [name, true])),
+    );
+    expect(Object.fromEntries(doesNotApplyTo.map(name => [name, have(name)]))).toEqual(
+      Object.fromEntries(doesNotApplyTo.map(name => [name, false])),
+    );
+  });
+});

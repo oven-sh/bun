@@ -1,10 +1,11 @@
 // checker.go:29449-30162 (layers E-CTX, E-DECOR): the contextual type of an expression by the kind of its parent: the initializer of a declaration, a parameter of a contextually typed function, the operands of return, yield, await, binary and conditional expressions, an argument with the type of a spread argument, a decorator, an object literal element, an array element, a template substitution and an import attribute.
 use crate::ast::{
     FunctionFlags, Kind, NodeFlags, NodeId, SymbolFlags, SymbolId, get_containing_function,
-    get_function_flags, get_immediately_invoked_function_expression, get_leftmost_expression,
-    get_name_of_declaration, get_this_parameter, has_dynamic_name, index_of_node,
-    is_access_expression, is_array_binding_pattern, is_binding_element, is_binding_pattern,
-    is_computed_non_literal_name, is_computed_property_name, is_const_assertion, is_expression,
+    get_element_or_property_access_name, get_function_flags,
+    get_immediately_invoked_function_expression, get_leftmost_expression, get_name_of_declaration,
+    get_this_parameter, has_dynamic_name, index_of_node, is_access_expression,
+    is_array_binding_pattern, is_binding_element, is_binding_pattern, is_computed_non_literal_name,
+    is_computed_property_name, is_const_assertion, is_expression,
     is_function_expression_or_arrow_function, is_identifier, is_import_call,
     is_jsx_opening_like_element, is_object_literal_method, is_private_identifier,
     is_property_access_expression, is_property_declaration, is_property_signature_declaration,
@@ -929,7 +930,12 @@ impl<'a> Checker<'a> {
                         if !is_object_literal_method(a, container) {
                             return TypeId::NIL;
                         }
-                        // The one case of object literal methods: `this` in object literals has no contextual typing upstream, which answers nil with and without a name of the access.
+                        // and now for one single case of object literal methods
+                        let name = get_element_or_property_access_name(a, left);
+                        if name.is_nil() {
+                            return TypeId::NIL;
+                        }
+                        // Upstream has no contextual typing for `this` in object literals: the answer with a name is nil as well.
                         return TypeId::NIL;
                     }
                 }

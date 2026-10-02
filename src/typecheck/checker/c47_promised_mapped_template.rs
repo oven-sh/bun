@@ -1,13 +1,21 @@
-// checker.go:29042-29447 (layers E-AWAIT, T-SIGSHAPE, T-SYMTYPE, T-CONSTRAINT, K-TEMPLATE): the functions of 29042-29133, 29198-29227 and 29255-29344: the promised type of a promise, the type of the first parameter of a signature, optional type markers and missing types, the constraint declaration of a type parameter, and template literal type construction.
-use crate::ast::{Arg, NodeId, is_outermost_optional_chain, is_type_parameter_declaration};
-use crate::checker::{
-    CachedTypeKey, CachedTypeKind, Checker, RelationKind, SignatureId, SignatureKind, TypeAliasId,
-    TypeFacts, TypeFlags, TypeId, UnionReduction, get_template_type_key, is_type_any,
+// checker.go:29042-29447 (layers E-AWAIT, T-SIGSHAPE, T-MAPPED, E-ACCESS, T-SYMTYPE, E-FACTS, T-CONSTRAINT, K-TEMPLATE, K-INDEXED): the promised type of a promise, the type of the first parameter of a signature, the modifiers and the optionality of a mapped type, optional type markers and missing types, the definitely falsy part of a type, the constraint declaration of a type parameter, template literal types, string mapping types, the substitution of an indexed mapped type, and the type of a property or index signature.
+use crate::ast::{
+    Arg, Ast, Kind, NodeId, SymbolFlags, SymbolId, is_expression_of_optional_chain_root,
+    is_optional_chain, is_outermost_optional_chain, is_type_parameter_declaration,
 };
-use crate::core::{List, Text};
+use crate::checker::{
+    CachedTypeKey, CachedTypeKind, Checker, IntrinsicTypeKind, MappedTypeModifiers, ObjectFlags,
+    RelationKind, SignatureId, SignatureKind, StringMappingKey, TypeAliasId, TypeFacts, TypeFlags,
+    TypeId, UnionReduction, get_number_literal_value, get_string_literal_value,
+    get_template_type_key, intrinsic_type_kinds, is_type_any, is_zero_big_int,
+    new_simple_type_mapper,
+};
+use crate::core::{List, Text, if_else, or_else};
 use crate::diagnostics;
 use crate::evaluator::any_to_string;
-use crate::stringutil::combine_surrogate_pairs;
+use crate::jsnum::Number;
+use crate::stringutil::{combine_surrogate_pairs, decode_js_string_rune, to_lower_js, to_upper_js};
+use std::borrow::Cow;
 
 impl<'a> Checker<'a> {
     pub fn get_promised_type_of_promise(&mut self, t: TypeId) -> TypeId {

@@ -264,6 +264,7 @@ pub struct IO_STATUS_BLOCK {
 }
 
 // Path-length constants.
+pub const MAX_PATH: usize = 260;
 pub const PATH_MAX_WIDE: usize = 32767;
 
 // `SetFilePointer` move methods.

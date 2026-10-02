@@ -56,12 +56,10 @@ public:
     }
     virtual ~CryptoKeyEC() = default;
 
-    WEBCORE_EXPORT static ExceptionOr<CryptoKeyPair> generatePair(CryptoAlgorithmIdentifier, const String& curve, bool extractable, CryptoKeyUsageBitmap);
-    // P-384 or P-521. A P-256 pair costs about 12 us, so generatePair() makes it in the call.
-    static std::optional<NamedCurve> curveGeneratedOnWorkPool(const String& curve);
-    using KeyPairCallback = Function<void(CryptoKeyPair&&)>;
-    using FailureCallback = Function<void()>;
-    static void generatePairOnWorkPool(CryptoAlgorithmIdentifier, NamedCurve, bool extractable, CryptoKeyUsageBitmap, KeyPairCallback&&, FailureCallback&&, ScriptExecutionContext&);
+    using KeyOrKeyPairCallback = Function<void(std::variant<RefPtr<CryptoKey>, CryptoKeyPair>&&)>;
+    using ExceptionCallback = Function<void(ExceptionCode, const String&)>;
+    // P-384 and P-521 pairs are generated on the work pool. A P-256 pair costs about 12 us and is generated in the call.
+    static void generatePair(CryptoAlgorithmIdentifier, const String& curve, bool extractable, CryptoKeyUsageBitmap publicKeyUsages, CryptoKeyUsageBitmap privateKeyUsages, KeyOrKeyPairCallback&&, ExceptionCallback&&, ScriptExecutionContext&);
     WEBCORE_EXPORT static RefPtr<CryptoKeyEC> importRaw(CryptoAlgorithmIdentifier, const String& curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyEC> importJwk(CryptoAlgorithmIdentifier, const String& curve, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap);
     // On failure, `keyTypeMismatch` (when given) reports whether the data held a

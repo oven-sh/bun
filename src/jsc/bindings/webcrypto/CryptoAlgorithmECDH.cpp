@@ -54,34 +54,7 @@ void CryptoAlgorithmECDH::generateKey(const CryptoAlgorithmParameters& parameter
         return;
     }
 
-    auto restrictUsages = [](CryptoKeyPair& pair) {
-        pair.publicKey->setUsagesBitmap(0);
-        pair.privateKey->setUsagesBitmap(pair.privateKey->usagesBitmap() & (CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits));
-    };
-
-    if (auto curve = CryptoKeyEC::curveGeneratedOnWorkPool(ecParameters.namedCurve)) {
-        CryptoKeyEC::generatePairOnWorkPool(
-            CryptoAlgorithmIdentifier::ECDH, *curve, extractable, usages,
-            [restrictUsages, callback = WTF::move(callback)](CryptoKeyPair&& pair) {
-                restrictUsages(pair);
-                callback(WTF::move(pair));
-            },
-            [exceptionCallback = WTF::move(exceptionCallback)] {
-                exceptionCallback(OperationError, ""_s);
-            },
-            context);
-        return;
-    }
-
-    auto result = CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier::ECDH, ecParameters.namedCurve, extractable, usages);
-    if (result.hasException()) {
-        exceptionCallback(result.releaseException().code(), ""_s);
-        return;
-    }
-
-    auto pair = result.releaseReturnValue();
-    restrictUsages(pair);
-    callback(WTF::move(pair));
+    CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier::ECDH, ecParameters.namedCurve, extractable, 0, usages & (CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits), WTF::move(callback), WTF::move(exceptionCallback), context);
 }
 
 void CryptoAlgorithmECDH::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)

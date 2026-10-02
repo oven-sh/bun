@@ -90,34 +90,7 @@ void CryptoAlgorithmECDSA::generateKey(const CryptoAlgorithmParameters& paramete
         return;
     }
 
-    auto restrictUsages = [](CryptoKeyPair& pair) {
-        pair.publicKey->setUsagesBitmap(pair.publicKey->usagesBitmap() & CryptoKeyUsageVerify);
-        pair.privateKey->setUsagesBitmap(pair.privateKey->usagesBitmap() & CryptoKeyUsageSign);
-    };
-
-    if (auto curve = CryptoKeyEC::curveGeneratedOnWorkPool(ecParameters.namedCurve)) {
-        CryptoKeyEC::generatePairOnWorkPool(
-            CryptoAlgorithmIdentifier::ECDSA, *curve, extractable, usages,
-            [restrictUsages, callback = WTF::move(callback)](CryptoKeyPair&& pair) {
-                restrictUsages(pair);
-                callback(WTF::move(pair));
-            },
-            [exceptionCallback = WTF::move(exceptionCallback)] {
-                exceptionCallback(OperationError, ""_s);
-            },
-            context);
-        return;
-    }
-
-    auto result = CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier::ECDSA, ecParameters.namedCurve, extractable, usages);
-    if (result.hasException()) {
-        exceptionCallback(result.releaseException().code(), ""_s);
-        return;
-    }
-
-    auto pair = result.releaseReturnValue();
-    restrictUsages(pair);
-    callback(WTF::move(pair));
+    CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier::ECDSA, ecParameters.namedCurve, extractable, usages & CryptoKeyUsageVerify, usages & CryptoKeyUsageSign, WTF::move(callback), WTF::move(exceptionCallback), context);
 }
 
 void CryptoAlgorithmECDSA::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)

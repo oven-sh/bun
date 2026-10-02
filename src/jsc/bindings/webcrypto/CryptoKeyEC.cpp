@@ -60,44 +60,39 @@ CryptoKeyEC::CryptoKeyEC(CryptoAlgorithmIdentifier identifier, NamedCurve curve,
     ASSERT(platformSupportedCurve(curve));
 }
 
-static CryptoKeyPair createKeyPair(CryptoAlgorithmIdentifier identifier, CryptoKeyEC::NamedCurve curve, bool extractable, CryptoKeyUsageBitmap usages, EvpKeyPair&& keys)
-{
-    auto publicKey = CryptoKeyEC::create(identifier, curve, CryptoKeyType::Public, WTF::move(keys.publicKey), true, usages);
-    auto privateKey = CryptoKeyEC::create(identifier, curve, CryptoKeyType::Private, WTF::move(keys.privateKey), extractable, usages);
-    return CryptoKeyPair { WTF::move(publicKey), WTF::move(privateKey) };
-}
-
-ExceptionOr<CryptoKeyPair> CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier identifier, const String& curve, bool extractable, CryptoKeyUsageBitmap usages)
+void CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier identifier, const String& curve, bool extractable, CryptoKeyUsageBitmap publicKeyUsages, CryptoKeyUsageBitmap privateKeyUsages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context)
 {
     auto namedCurve = toNamedCurve(curve);
-    if (!namedCurve || !platformSupportedCurve(*namedCurve))
-        return Exception { NotSupportedError };
+    if (!namedCurve || !platformSupportedCurve(*namedCurve)) {
+        exceptionCallback(NotSupportedError, ""_s);
+        return;
+    }
 
-    auto keys = platformGeneratePair(*namedCurve);
-    if (!keys)
-        return Exception { OperationError };
+    auto createPair = [identifier, curve = *namedCurve, extractable, publicKeyUsages, privateKeyUsages](EvpKeyPair&& keys) {
+        auto publicKey = CryptoKeyEC::create(identifier, curve, CryptoKeyType::Public, WTF::move(keys.publicKey), true, publicKeyUsages);
+        auto privateKey = CryptoKeyEC::create(identifier, curve, CryptoKeyType::Private, WTF::move(keys.privateKey), extractable, privateKeyUsages);
+        return CryptoKeyPair { WTF::move(publicKey), WTF::move(privateKey) };
+    };
 
-    return createKeyPair(identifier, *namedCurve, extractable, usages, WTF::move(*keys));
-}
+    if (*namedCurve == NamedCurve::P256) {
+        auto keys = platformGeneratePair(*namedCurve);
+        if (!keys) {
+            exceptionCallback(OperationError, ""_s);
+            return;
+        }
+        callback(createPair(WTF::move(*keys)));
+        return;
+    }
 
-std::optional<CryptoKeyEC::NamedCurve> CryptoKeyEC::curveGeneratedOnWorkPool(const String& curve)
-{
-    if (curve == P384)
-        return NamedCurve::P384;
-    if (curve == P521)
-        return NamedCurve::P521;
-    return std::nullopt;
-}
-
-void CryptoKeyEC::generatePairOnWorkPool(CryptoAlgorithmIdentifier identifier, NamedCurve curve, bool extractable, CryptoKeyUsageBitmap usages, KeyPairCallback&& callback, FailureCallback&& failureCallback, ScriptExecutionContext& context)
-{
     generateKeyPairInWorkQueue(
         context,
-        [curve] { return platformGeneratePair(curve); },
-        [identifier, curve, extractable, usages, callback = WTF::move(callback)](EvpKeyPair&& keys) {
-            callback(createKeyPair(identifier, curve, extractable, usages, WTF::move(keys)));
+        [curve = *namedCurve] { return platformGeneratePair(curve); },
+        [createPair, callback = WTF::move(callback)](EvpKeyPair&& keys) {
+            callback(createPair(WTF::move(keys)));
         },
-        WTF::move(failureCallback));
+        [exceptionCallback = WTF::move(exceptionCallback)] {
+            exceptionCallback(OperationError, ""_s);
+        });
 }
 
 RefPtr<CryptoKeyEC> CryptoKeyEC::importRaw(CryptoAlgorithmIdentifier identifier, const String& curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)

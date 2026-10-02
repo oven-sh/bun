@@ -94,7 +94,7 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   // Only the file-descriptor source (child stdio, Bun.spawn, Bun.stdin, Bun.file) has setFlowing. In Node that is a
   // handle stream: a 'data' listener throw is an uncaughtException and the stream reads on. The other sources keep
   // the promise semantics of Node's Readable.fromWeb.
-  stream[kIsHandle] = typeof bunNativePtr.setFlowing === "function";
+  stream[kIsHandle] = typeof bunNativePtr?.setFlowing === "function";
   stream[kDeferredPushes] = 0;
 
   const highWaterMark = options.highWaterMark;

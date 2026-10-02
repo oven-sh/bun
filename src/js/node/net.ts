@@ -497,16 +497,7 @@ function onClientHandshake(self, socket, success, verifyError) {
     self.secureConnecting = false;
     return;
   }
-  // The second argument is "authorized" (handshake + verification +
-  // hostname), matching the public Bun.connect handshake callback. node:tls
-  // decides what to do with verification results in JS via the
-  // rejectUnauthorized / checkServerIdentity handling below, so a
-  // verification-class result (an X509 code such as
-  // UNABLE_TO_VERIFY_LEAF_SIGNATURE, or the native hostname verdict) still
-  // means the TLS session itself was established. Only a fatal TLS protocol
-  // failure tears the socket down here: those arrive as EPROTO carrying the
-  // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
-  // ERR_SSL_* / ERR_OSSL_* code).
+  // `success` says whether the handshake completed. The chain's verdict and the name check are applied below.
   const isProtocolFailure =
     !success &&
     verifyError?.code != null &&

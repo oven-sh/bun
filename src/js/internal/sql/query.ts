@@ -101,7 +101,10 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   #run() {
     const { [_handler]: handler, [_queryStatus]: status } = this;
 
-    if (status & (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.invalidHandle)) {
+    if (
+      status &
+      (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.cancelled | SQLQueryStatus.invalidHandle)
+    ) {
       return;
     }
 
@@ -128,7 +131,10 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   async #runAsync() {
     const { [_handler]: handler, [_queryStatus]: status } = this;
 
-    if (status & (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.invalidHandle)) {
+    if (
+      status &
+      (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.cancelled | SQLQueryStatus.invalidHandle)
+    ) {
       return;
     }
 

@@ -140,7 +140,7 @@ pub struct PostgresSQLConnection {
     pub(crate) js_value: JsCell<crate::jsc::JsRef>,
 
     pub(crate) backend_parameters: JsCell<StringMap>,
-    pub(crate) backend_key_data: JsCell<protocol::BackendKeyData>,
+    pub(crate) backend_key_data: JsCell<Option<protocol::BackendKeyData>>,
     /// What a cancel connection stops, until it writes the CancelRequest or fails.
     cancel_target: JsCell<Option<CancelTarget>>,
 
@@ -1263,8 +1263,11 @@ impl CancelTarget {
     /// `None` when the session is still connected and its backend runs another query by now.
     fn cancel_request(&self) -> Option<[u8; 16]> {
         let session = &*self.session;
-        (session.status.get() != Status::Connected || session.is_running(&self.request))
-            .then(|| session.backend_key_data.get().cancel_request())
+        if session.status.get() == Status::Connected && !session.is_running(&self.request) {
+            return None;
+        }
+        let key = session.backend_key_data.get().as_ref()?;
+        Some(key.cancel_request())
     }
 }
 
@@ -1330,7 +1333,7 @@ impl PostgresSQLConnection {
                 pending_activity_count: AtomicU32::new(0),
                 js_value: JsCell::new(crate::jsc::JsRef::empty()),
                 backend_parameters: JsCell::new(StringMap::init(true)),
-                backend_key_data: JsCell::new(protocol::BackendKeyData::default()),
+                backend_key_data: JsCell::new(None),
                 cancel_target: JsCell::new(cancel),
                 database,
                 user: username,
@@ -1564,7 +1567,7 @@ impl PostgresSQLConnection {
             match request.status.get() {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
                 QueryStatus::Pending => {
-                    self.note_request_written();
+                    self.finish_request(&request);
                     let Some(stmt) = request.statement_mut() else {
                         // The deref/discard at the bottom of the loop is intentionally skipped here.
                         continue;
@@ -1678,10 +1681,44 @@ impl PostgresSQLConnection {
             )
     }
 
+    /// `Query.cancel()` on a request that was dispatched to this connection.
+    pub(crate) fn cancel(&self, request: &PostgresSQLQuery) {
+        let global = self.global();
+        match request.status.get() {
+            QueryStatus::Success | QueryStatus::Fail => {}
+            // Its Bind, Execute or Query is not written, and a request that failed never writes one.
+            QueryStatus::Pending => {
+                let err = postgres_error_to_js(
+                    global,
+                    Some(b"Query cancelled"),
+                    AnyPostgresError::QueryCancelled,
+                );
+                self.finish_request(request);
+                request.on_js_error(err, global);
+            }
+            // A CancelRequest names the backend process, so it stops what the backend runs: the FIFO head.
+            QueryStatus::Binding | QueryStatus::Running | QueryStatus::PartialResponse
+                if self.is_current_request(request) =>
+            {
+                self.send_cancel_request(request);
+            }
+            // Written behind the head: the backend runs it whatever this client does.
+            QueryStatus::Binding | QueryStatus::Running | QueryStatus::PartialResponse => {
+                let err = postgres_error_to_js_with_hint(
+                    global,
+                    Some(b"Query cancelled"),
+                    Some(b"The server already received this query and still runs it. Bun discards the result."),
+                    AnyPostgresError::QueryCancelled,
+                );
+                request.reject_in_flight(err, global);
+            }
+        }
+    }
+
     /// Asks the server, on a second connection like this one, to cancel `request`, which this backend runs.
-    pub(crate) fn send_cancel_request(&self, request: &PostgresSQLQuery) {
-        // No BackendKeyData was ever received, so the server cannot be asked.
-        if self.backend_key_data.get().process_id == 0 {
+    fn send_cancel_request(&self, request: &PostgresSQLQuery) {
+        // A server that sent no BackendKeyData cannot be asked.
+        if self.backend_key_data.get().is_none() {
             return;
         }
         let socket = self.socket.get();
@@ -1784,16 +1821,12 @@ impl PostgresSQLConnection {
             || self.current().is_some()
     }
 
+    /// Counts `request` as queued with its Bind, Execute or Query not written.
     #[inline]
-    pub(crate) fn note_request_pending(&self) {
+    pub(crate) fn note_request_pending(&self, request: &PostgresSQLQuery) {
+        debug_assert!(request.flags.get().counter == RequestCounter::None);
+        request.update_flags(|f| f.counter = RequestCounter::Pending);
         self.pending_requests.set(self.pending_requests.get() + 1);
-    }
-
-    #[inline]
-    pub(crate) fn note_request_written(&self) {
-        let n = self.pending_requests.get();
-        debug_assert!(n > 0, "pending_requests underflow");
-        self.pending_requests.set(n.wrapping_sub(1));
     }
 
     pub(crate) fn can_pipeline(&self) -> bool {
@@ -2002,34 +2035,19 @@ impl PostgresSQLConnection {
         }
     }
 
-    /// Take `item` out of the connection's request accounting. Call it once,
-    /// while `item` still has the status it was counted under.
+    /// Takes `item` out of the connection counter it is in. A second call does nothing.
     pub(crate) fn finish_request(&self, item: &PostgresSQLQuery) {
-        match item.status.get() {
-            QueryStatus::Running | QueryStatus::Binding | QueryStatus::PartialResponse => {
-                let counter = item.flags.get().counter;
-                item.update_flags(|f| f.counter = RequestCounter::None);
-                match counter {
-                    RequestCounter::None => {}
-                    RequestCounter::Nonpipelinable => {
-                        let n = self.nonpipelinable_requests.get();
-                        debug_assert!(n > 0, "nonpipelinable_requests underflow");
-                        self.nonpipelinable_requests.set(n.saturating_sub(1));
-                    }
-                    RequestCounter::Pipelined => {
-                        let n = self.pipelined_requests.get();
-                        debug_assert!(n > 0, "pipelined_requests underflow");
-                        self.pipelined_requests.set(n.saturating_sub(1));
-                    }
-                }
-            }
-            QueryStatus::Pending => {
-                // ErrorResponse on a Parse-in-flight request: it never reached
-                // Binding, so account for it leaving the pending set here.
-                self.note_request_written();
-            }
-            QueryStatus::Success | QueryStatus::Fail => {}
-        }
+        let counter = item.flags.get().counter;
+        item.update_flags(|f| f.counter = RequestCounter::None);
+        let counted = match counter {
+            RequestCounter::None => return,
+            RequestCounter::Pending => &self.pending_requests,
+            RequestCounter::Nonpipelinable => &self.nonpipelinable_requests,
+            RequestCounter::Pipelined => &self.pipelined_requests,
+        };
+        let n = counted.get();
+        debug_assert!(n > 0, "request counter underflow");
+        counted.set(n.saturating_sub(1));
     }
 
     /// What a request rejects with for a row the client cannot decode. `Err`: the VM is stopping.
@@ -2074,6 +2092,10 @@ impl PostgresSQLConnection {
     ) {
         if let Some(err_) = self.global().try_take_exception() {
             req.on_js_error(err_, self.global());
+            return;
+        }
+        // `encode_request` stopped for a request that was already rejected.
+        if req.status.get() == QueryStatus::Fail {
             return;
         }
         if let Some(statement) = new_statement {
@@ -2122,7 +2144,7 @@ impl PostgresSQLConnection {
                     // few paths below that keep it Pending (can't execute yet /
                     // Parse written but not Bind / statement still Parsing) undo
                     // this via note_request_pending() before returning/continuing.
-                    self.note_request_written();
+                    self.finish_request(&req);
                     if req.flags.get().simple {
                         if self.pipelined_requests.get() > 0
                             || !self
@@ -2138,7 +2160,7 @@ impl PostgresSQLConnection {
                                     .contains(ConnectionFlags::IS_READY_FOR_QUERY)
                             );
                             // need to wait for the previous request to finish before starting simple queries
-                            self.note_request_pending();
+                            self.note_request_pending(&req);
                             defer_cleanup!(self);
                             return;
                         }
@@ -2229,6 +2251,7 @@ impl PostgresSQLConnection {
                                         let global = self.global_object;
                                         if let Err(err) = self.encode_request(
                                             &global,
+                                            &req,
                                             EncodeRequest::ParseBindAndExecute {
                                                 query: query_str.slice(),
                                                 statement,
@@ -2256,6 +2279,7 @@ impl PostgresSQLConnection {
                                         let global = self.global_object;
                                         if let Err(err) = self.encode_request(
                                             &global,
+                                            &req,
                                             EncodeRequest::BindAndExecute {
                                                 statement,
                                                 binding_value,
@@ -2303,7 +2327,7 @@ impl PostgresSQLConnection {
                                             "need to wait to finish the pipeline before starting a new query preparation"
                                         );
                                         // need to wait to finish the pipeline before starting a new query preparation
-                                        self.note_request_pending();
+                                        self.note_request_pending(&req);
                                         defer_cleanup!(self);
                                         return;
                                     }
@@ -2335,6 +2359,7 @@ impl PostgresSQLConnection {
                                         let global = self.global_object;
                                         if let Err(err) = self.encode_request(
                                             &global,
+                                            &req,
                                             EncodeRequest::PrepareAndQuery {
                                                 query: query_str.slice(),
                                                 signature: &mut statement.signature,
@@ -2399,6 +2424,7 @@ impl PostgresSQLConnection {
                                         let global = self.global_object;
                                         if let Err(err) = self.encode_request(
                                             &global,
+                                            &req,
                                             EncodeRequest::ParseBindAndExecute {
                                                 query: query_str.slice(),
                                                 statement,
@@ -2469,20 +2495,20 @@ impl PostgresSQLConnection {
                                     statement.status = StatementStatus::Parsing;
                                     // Parse+Describe+Sync written; Bind+Execute deferred to the
                                     // next advance(), so the request is still pending on the wire.
-                                    self.note_request_pending();
+                                    self.note_request_pending(&req);
                                     self.flush_data_and_reset_timeout();
                                     defer_cleanup!(self);
                                     return;
                                 }
                                 StatementStatus::Parsing => {
                                     // we are still parsing, lets wait for it to be prepared or failed
-                                    self.note_request_pending();
+                                    self.note_request_pending(&req);
                                     offset += 1;
                                     continue;
                                 }
                             }
                         } else {
-                            self.note_request_pending();
+                            self.note_request_pending(&req);
                             offset += 1;
                             continue;
                         }
@@ -3171,9 +3197,9 @@ impl PostgresSQLConnection {
             }
             MessageType::BackendKeyData => {
                 self.backend_key_data
-                    .set(protocol::BackendKeyData::decode_internal(
+                    .set(Some(protocol::BackendKeyData::decode_internal(
                         reader.reborrow(),
-                    )?);
+                    )?));
             }
             MessageType::ErrorResponse => {
                 let err = protocol::ErrorResponse::decode_internal(reader.reborrow())?;

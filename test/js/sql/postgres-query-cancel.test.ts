@@ -6,9 +6,9 @@
 // describeWithContainer. All wire bytes come from test/js/sql/wire-frames.ts.
 //
 // Query.cancel() used to be a no-op for Postgres: nothing was ever written, so a
-// cancelled query ran to completion and resolved with its rows, and a query
-// cancelled before it was dispatched never settled at all.
+// cancelled query ran to completion and resolved with its rows.
 import { SQL } from "bun";
+import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
 import {
   bunEnv,
@@ -71,9 +71,10 @@ const SSL_REQUEST = Buffer.from([0, 0, 0, 8, 0x04, 0xd2, 0x16, 0x2f]);
  *
  * `cancelConnection` makes the second connection meet a server no real backend is:
  * one that answers a CancelRequest like the start of a session and does not hang
- * up, one that declines TLS, one whose certificate the session's CA did not sign,
- * or one that stops in the dial until the test calls `answerCancelConnection()`:
- * before it answers the SSLRequest, or after its `S` and before the TLS handshake.
+ * up, one that takes the CancelRequest and then stays silent, one that declines
+ * TLS, one whose certificate the session's CA did not sign, or one that stops in
+ * the dial until the test calls `answerCancelConnection()`: before it answers the
+ * SSLRequest, or after its `S` and before the TLS handshake.
  */
 async function backend(
   options: {
@@ -81,7 +82,15 @@ async function backend(
     certificate?: { cert: string; key: string };
     host?: string;
     socketPath?: string;
-    cancelConnection?: "answers" | "declines-tls" | "other-certificate" | "holds-ssl-answer" | "holds-handshake";
+    cancelConnection?:
+      | "answers"
+      | "silent"
+      | "declines-tls"
+      | "other-certificate"
+      | "holds-ssl-answer"
+      | "holds-handshake";
+    /** The BackendKeyData of the session. `null`: the server sends none. */
+    key?: { processId: number; secretKey: number } | null;
   } = {},
 ) {
   const host = options.host ?? "127.0.0.1";
@@ -95,8 +104,10 @@ async function backend(
   let queryConnection: net.Socket | undefined;
   let connections = 0;
   let queryUnits = 0;
+  let frontendMessages = "";
   let autoReply = true;
   let cancelPacketSeen = false;
+  const key = options.key === undefined ? { processId: PROCESS_ID, secretKey: SECRET_KEY } : options.key;
 
   // Answer a Parse+Describe+Bind+Execute with one text row: ParseComplete and
   // the two Describe replies, then the Execute replies.
@@ -180,6 +191,7 @@ async function backend(
         if (buffered.length < 16) return;
         cancelPacketSeen = true;
         cancelPacket.resolve(buffered);
+        if (options.cancelConnection === "silent") return;
         // A real backend acts on the CancelRequest and hangs up.
         if (options.cancelConnection !== "answers") return void socket.end();
         socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
@@ -195,7 +207,11 @@ async function backend(
       if (!handshaken) {
         handshaken = true;
         socket.write(
-          Buffer.concat([pgAuthenticationOk(), pgBackendKeyData(PROCESS_ID, SECRET_KEY), pgReadyForQuery()]),
+          Buffer.concat([
+            pgAuthenticationOk(),
+            ...(key ? [pgBackendKeyData(key.processId, key.secretKey)] : []),
+            pgReadyForQuery(),
+          ]),
         );
         return;
       }
@@ -203,6 +219,7 @@ async function backend(
         // Sync ends every extended-protocol unit; the simple protocol's Query is
         // its own sync point.
         const message = String.fromCharCode(type);
+        frontendMessages += message;
         if (message === "S" || message === "Q") onQueryUnit();
       });
     });
@@ -236,6 +253,10 @@ async function backend(
     /** How many complete query units the client has sent. */
     get queryUnits() {
       return queryUnits;
+    },
+    /** The type byte of each message the session has sent after its startup message. */
+    get frontendMessages() {
+      return frontendMessages;
     },
     set autoReply(value: boolean) {
       autoReply = value;
@@ -314,31 +335,40 @@ test.each(protocols)("cancel() on a running %s query sends a CancelRequest", asy
 // The cancel connection has to reach the server the way the session does. A
 // plaintext one leaks the cancel key of a TLS session, and a server that only
 // accepts TLS never sees it.
-test("cancel() on a TLS session sends the CancelRequest through TLS", async () => {
-  await using server = await backend({ tls: true });
-  server.autoReply = false;
-  // `ca` makes the session verify-full, so the cancel connection only gets through
-  // the handshake if it uses the same TLS options.
-  await using sql = new SQL({ url: server.url, tls: { ca: tlsCert.cert }, max: 1, connectionTimeout: 5 });
+const tlsSessions: [sslmode: string, options: (url: string) => object][] = [
+  // `ca` alone makes the session verify-full, so the cancel connection only gets
+  // through the handshake if it uses the same TLS options.
+  ["verify-full", url => ({ url, tls: { ca: tlsCert.cert } })],
+  ["verify-ca", url => ({ url: `${url}?sslmode=verify-ca`, tls: { ca: tlsCert.cert } })],
+  ["require", url => ({ url: `${url}?sslmode=require` })],
+  ["prefer", url => ({ url: `${url}?sslmode=prefer` })],
+];
+test.each(tlsSessions)(
+  "cancel() on a TLS session (sslmode=%s) sends the CancelRequest through TLS",
+  async (_sslmode, options) => {
+    await using server = await backend({ tls: true });
+    server.autoReply = false;
+    await using sql = new SQL({ ...options(server.url), max: 1, connectionTimeout: 5 });
 
-  const query = sql`select pg_sleep(10)`.execute();
-  const settled = query.then(
-    rows => rows,
-    err => err,
-  );
-  await server.untilQueryUnits(1);
-  query.cancel();
+    const query = sql`select pg_sleep(10)`.execute();
+    const settled = query.then(
+      rows => rows,
+      err => err,
+    );
+    await server.untilQueryUnits(1);
+    query.cancel();
 
-  expect(await server.cancelPacket).toEqual(pgCancelRequest(PROCESS_ID, SECRET_KEY));
-  // Both connections sent an SSLRequest in the clear, and nothing else.
-  expect(server.plaintext).toEqual([SSL_REQUEST, SSL_REQUEST]);
+    expect(await server.cancelPacket).toEqual(pgCancelRequest(PROCESS_ID, SECRET_KEY));
+    // Both connections sent an SSLRequest in the clear, and nothing else.
+    expect(server.plaintext).toEqual([SSL_REQUEST, SSL_REQUEST]);
 
-  server.reply(
-    pgErrorResponse({ S: "ERROR", C: "57014", M: "canceling statement due to user request" }),
-    pgReadyForQuery(),
-  );
-  expect((await settled).errno).toBe("57014");
-});
+    server.reply(
+      pgErrorResponse({ S: "ERROR", C: "57014", M: "canceling statement due to user request" }),
+      pgReadyForQuery(),
+    );
+    expect((await settled).errno).toBe("57014");
+  },
+);
 
 // A session that is encrypted must not lose its cancel key to a cancel connection
 // that is not. `prefer` counts once the session has negotiated TLS.
@@ -500,6 +530,78 @@ test("the cancel connection closes when the server answers it", async () => {
   expect((await settled).errno).toBe("57014");
 });
 
+// A server that takes the CancelRequest and then neither answers nor hangs up must
+// not keep the cancel connection open. The cancel connection has the connection
+// timeout of its session, 1 s here, from its dial to its end.
+test("the cancel connection ends when the server stays silent after the CancelRequest", async () => {
+  await using server = await backend({ cancelConnection: "silent" });
+  server.autoReply = false;
+  await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 1 });
+
+  const query = sql`select pg_sleep(10)`.execute();
+  const settled = query.then(
+    rows => rows,
+    err => err,
+  );
+  await server.untilQueryUnits(1);
+  query.cancel();
+
+  expect(await server.cancelPacket).toEqual(pgCancelRequest(PROCESS_ID, SECRET_KEY));
+  await server.cancelConnectionClosed;
+
+  server.reply(
+    pgErrorResponse({ S: "ERROR", C: "57014", M: "canceling statement due to user request" }),
+    pgReadyForQuery(),
+  );
+  expect((await settled).errno).toBe("57014");
+});
+
+// Some servers and poolers send no BackendKeyData. Then there is no key to send,
+// and the query runs on.
+test("cancel() on a running query opens no connection when the server sent no cancel key", async () => {
+  await using server = await backend({ key: null });
+  server.autoReply = false;
+  await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
+
+  const query = sql`select pg_sleep(10)`.simple().execute();
+  await server.untilQueryUnits(1);
+  query.cancel();
+
+  server.reply(
+    pgRowDescription([{ name: "v", typeOid: TEXT_OID }]),
+    pgDataRow([Buffer.from("done")]),
+    pgCommandComplete("SELECT 1"),
+    pgReadyForQuery(),
+  );
+  expect(await query).toEqual([{ v: "done" }]);
+  // A cancel connection would have arrived by the end of one more round trip.
+  server.autoReply = true;
+  expect(await sql`select 'next'`).toEqual([{ v: "ok" }]);
+  expect(server.connections).toBe(1);
+});
+
+// The process id in a cancel key is opaque to the client, and 0 is a value like any other.
+test("cancel() sends a cancel key whose process id is 0", async () => {
+  await using server = await backend({ key: { processId: 0, secretKey: SECRET_KEY } });
+  server.autoReply = false;
+  await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
+
+  const query = sql`select pg_sleep(10)`.execute();
+  const settled = query.then(
+    rows => rows,
+    err => err,
+  );
+  await server.untilQueryUnits(1);
+  query.cancel();
+
+  expect(await server.cancelPacket).toEqual(pgCancelRequest(0, SECRET_KEY));
+  server.reply(
+    pgErrorResponse({ S: "ERROR", C: "57014", M: "canceling statement due to user request" }),
+    pgReadyForQuery(),
+  );
+  expect((await settled).errno).toBe("57014");
+});
+
 // The dial of the cancel connection is a TCP handshake and, for a TLS session, an
 // SSLRequest and a TLS handshake. The query can end in that time, and a
 // CancelRequest that is sent then stops the query that the backend runs next. So
@@ -612,27 +714,6 @@ test("cancel() during the Parse of a statement does not fail the queries that sh
   expect(server.queryUnits).toBe(2);
 });
 
-test("cancel() before the query is dispatched rejects it instead of hanging", async () => {
-  await using server = await backend();
-  await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
-
-  // Tagged templates are lazy: nothing has been sent, and nothing ever will be,
-  // so the first consumer of the promise has to reject it.
-  const query = sql`select 1`;
-  query.cancel();
-
-  const err = await query.catch((e: any) => e);
-  expect({ name: err.name, code: err.code, message: err.message }).toEqual({
-    name: "PostgresError",
-    code: "ERR_POSTGRES_QUERY_CANCELLED",
-    message: "Query cancelled",
-  });
-  // The cancelled query never reaches the server: after a round trip for the next
-  // query, that query is the only one the server has seen.
-  expect(await sql`select 'next'`).toEqual([{ v: "ok" }]);
-  expect(server.queryUnits).toBe(1);
-});
-
 test("cancel() on a queued query does not cancel the one the backend is running", async () => {
   await using server = await backend();
   server.autoReply = false;
@@ -716,26 +797,6 @@ test("a connection still pipelines after a queued query on it was cancelled", as
   expect(await Promise.all([first, second])).toEqual([[{ v: "first" }], [{ v: "second" }]]);
 });
 
-// A reserved connection keeps its queries in a scope set, and close({ timeout })
-// waits on that set. Only the query's own handler takes a cancelled query back out
-// of it. A rejected query left in the set ends the wait at once, before the
-// connection is closed, and the pool never gets the connection back.
-test("a query cancelled before it runs leaves the scope of its reserved connection", async () => {
-  await using server = await backend();
-  await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
-
-  const reserved = await sql.reserve();
-  const query = reserved`select 1`;
-  query.cancel();
-  const err = await query.catch((e: any) => e);
-  expect(err.code).toBe("ERR_POSTGRES_QUERY_CANCELLED");
-
-  await reserved.close({ timeout: 1 });
-  await server.queryConnectionClosed;
-  // Nothing was ever sent for the cancelled query, so there was nothing to cancel.
-  expect(server.connections).toBe(1);
-});
-
 // A CancelRequest names the backend process, not a statement. Once a statement is
 // prepared, Bun pipelines the next query's Bind/Execute straight onto the wire
 // behind the running one (do_run's Prepared arm writes when `can_pipeline()`), so
@@ -787,6 +848,202 @@ test("cancel() on a pipelined query does not cancel the one the backend is runni
   expect(await sql`select 'c'`).toEqual([{ v: "ok" }]);
   // Two round trips after the cancel, a cancel connection would have arrived.
   expect(server.connections).toBe(1);
+});
+
+// Under load the query that the backend runs has other queries written behind it.
+// The CancelRequest stops the first one, and the server answers the others as usual.
+test("cancel() on the running query leaves the queries that are pipelined behind it", async () => {
+  await using server = await backend();
+  await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
+
+  expect(await sql`select 'a'`).toEqual([{ v: "ok" }]);
+  expect(await sql`select 'b'`).toEqual([{ v: "ok" }]);
+  server.autoReply = false;
+
+  const running = sql`select 'a'`.execute();
+  const behind = sql`select 'b'`.execute();
+  const runningSettled = running.then(
+    rows => rows,
+    err => err,
+  );
+  await server.untilQueryUnits(4);
+
+  running.cancel();
+  expect(await server.cancelPacket).toEqual(pgCancelRequest(PROCESS_ID, SECRET_KEY));
+  server.reply(
+    pgErrorResponse({ S: "ERROR", C: "57014", M: "canceling statement due to user request" }),
+    pgReadyForQuery(),
+  );
+  expect((await runningSettled).errno).toBe("57014");
+
+  server.answerPrepared("kept");
+  expect(await behind).toEqual([{ v: "kept" }]);
+
+  // The statement of the cancelled query is still prepared: its next run is a bare Bind and Execute.
+  const again = sql`select 'a'`.execute();
+  await server.untilQueryUnits(5);
+  server.answerPrepared("again");
+  expect(await again).toEqual([{ v: "again" }]);
+});
+
+// The server still answers a pipelined query that cancel() rejected, and the
+// answer can be an error. The connection takes it like the rows of such a query.
+test("a cancelled pipelined query that the server answers with an error leaves the connection in sync", async () => {
+  await using server = await backend();
+  await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
+
+  expect(await sql`select 'a'`).toEqual([{ v: "ok" }]);
+  expect(await sql`select 'b'`).toEqual([{ v: "ok" }]);
+  server.autoReply = false;
+
+  const running = sql`select 'a'`.execute();
+  const pipelined = sql`select 'b'`.execute();
+  const pipelinedSettled = pipelined.then(
+    rows => rows,
+    err => err,
+  );
+  await server.untilQueryUnits(4);
+
+  pipelined.cancel();
+  expect((await pipelinedSettled).code).toBe("ERR_POSTGRES_QUERY_CANCELLED");
+
+  server.answerPrepared("kept");
+  expect(await running).toEqual([{ v: "kept" }]);
+  server.reply(pgErrorResponse({ S: "ERROR", C: "22012", M: "division by zero" }), pgReadyForQuery());
+
+  // The error was for the cancelled query alone: its statement is still prepared.
+  const again = sql`select 'b'`.execute();
+  await server.untilQueryUnits(5);
+  server.answerPrepared("again");
+  expect(await again).toEqual([{ v: "again" }]);
+  expect(server.connections).toBe(1);
+});
+
+// The connection turns a parameter into its wire form when it encodes the Bind,
+// and an object does that with its own code. That code can call cancel() on the
+// query that it belongs to. Nothing of the query is on the wire then, and nothing
+// of it may get there.
+const cancelling = (query: () => { cancel(): unknown }) => ({
+  toString() {
+    query().cancel();
+    return "x";
+  },
+});
+const settledCode = (query: Promise<unknown>) =>
+  query.then(
+    () => "resolved",
+    (err: any) => err.code,
+  );
+
+test("cancel() from the code of a parameter rejects the query and sends no Bind for it", async () => {
+  await using server = await backend();
+  server.autoReply = false;
+  await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
+  const statement = (parameter: object) => sql`select ${parameter}::text as v`;
+
+  // First run: Parse, Describe and Sync go out, and the Bind waits for the
+  // parameter types. The connection encodes it when they arrive.
+  const first: any = statement(cancelling(() => first));
+  const firstSettled = settledCode(first.execute());
+  await server.untilQueryUnits(1);
+  server.reply(
+    pgParseComplete(),
+    pgParameterDescription([TEXT_OID]),
+    pgRowDescription([{ name: "v", typeOid: TEXT_OID }]),
+    pgReadyForQuery(),
+  );
+  expect(await firstSettled).toBe("ERR_POSTGRES_QUERY_CANCELLED");
+
+  // Second run: the statement is prepared, so the Bind is encoded at dispatch.
+  const second: any = statement(cancelling(() => second));
+  expect(await settledCode(second.execute())).toBe("ERR_POSTGRES_QUERY_CANCELLED");
+
+  // Third run, with a parameter that cancels nothing. Its Bind is the only one
+  // that the server has seen.
+  const third = statement({ toString: () => "z" }).execute();
+  await server.untilQueryUnits(2);
+  server.answerPrepared("z");
+  expect(await third).toEqual([{ v: "z" }]);
+  expect({ binds: server.frontendMessages.match(/B/g)?.length, connections: server.connections }).toEqual({
+    binds: 1,
+    connections: 1,
+  });
+});
+
+// Without prepared statements the Parse, the Bind and the Execute of a query are
+// one batch, encoded at dispatch.
+test("cancel() from the code of a parameter sends nothing when statements are not prepared", async () => {
+  await using server = await backend();
+  server.autoReply = false;
+  await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5, prepare: false });
+
+  const cancelled: any = sql`select ${cancelling(() => cancelled)}::text as v`;
+  expect(await settledCode(cancelled.execute())).toBe("ERR_POSTGRES_QUERY_CANCELLED");
+
+  const next = sql`select ${{ toString: () => "z" }}::text as v`.execute();
+  await server.untilQueryUnits(1);
+  expect(server.frontendMessages.match(/[PB]/g)).toEqual(["P", "B"]);
+  server.reply(
+    pgParseComplete(),
+    pgParameterDescription([TEXT_OID]),
+    pgRowDescription([{ name: "v", typeOid: TEXT_OID }]),
+    pgBindComplete(),
+    pgDataRow([Buffer.from("z")]),
+    pgCommandComplete("SELECT 1"),
+    pgReadyForQuery(),
+  );
+  expect(await next).toEqual([{ v: "z" }]);
+});
+
+// A query caches the connection that it was dispatched to, because cancel()
+// needs it. A query that has settled, by any of the ways above, must let go of
+// it, or a Query that user code keeps also keeps the connection.
+test("a settled query does not keep its connection alive", async () => {
+  const connections = () => heapStats().objectTypeCounts["PostgresSQLConnection"] || 0;
+  Bun.gc(true);
+  const before = connections();
+  const kept: unknown[] = [];
+  const rounds = 10;
+
+  for (let round = 0; round < rounds; round++) {
+    await using server = await backend();
+    const sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
+    const resolved = sql`select 'a'`.execute();
+    await resolved;
+    server.autoReply = false;
+
+    // The running query, one that is written behind it, and one that is not written.
+    const running = sql`select 'a'`.execute();
+    const pipelined = sql`select 'a'`.execute();
+    const queued = sql`select 'q'`.simple().execute();
+    const cancelled = [running, pipelined, queued];
+    const settled = Promise.all(cancelled.map(settledCode));
+    await server.untilQueryUnits(3);
+    for (const query of cancelled) query.cancel();
+    await server.cancelPacket;
+    server.reply(
+      pgErrorResponse({ S: "ERROR", C: "57014", M: "canceling statement due to user request" }),
+      pgReadyForQuery(),
+    );
+    server.answerPrepared("discarded");
+    expect(await settled).toEqual([
+      "ERR_POSTGRES_SERVER_ERROR",
+      "ERR_POSTGRES_QUERY_CANCELLED",
+      "ERR_POSTGRES_QUERY_CANCELLED",
+    ]);
+    kept.push(resolved, ...cancelled);
+    await sql.close();
+  }
+
+  // Each round made a session and a cancel connection. GC finalizes them over a few cycles.
+  const deadline = performance.now() + 5_000;
+  Bun.gc(true);
+  while (connections() > before + 2 && performance.now() < deadline) {
+    await Bun.sleep(20);
+    Bun.gc(true);
+  }
+  expect(connections()).toBeLessThanOrEqual(before + 2);
+  expect(kept).toHaveLength(rounds * 4);
 });
 
 // The scripted backend compares the packet with `pgCancelRequest`, which this

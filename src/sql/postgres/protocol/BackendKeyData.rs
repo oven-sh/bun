@@ -4,7 +4,6 @@ use crate::postgres::AnyPostgresError;
 /// CancelRequest's stand-in for the protocol version: `(1234 << 16) | 5678`.
 const CANCEL_REQUEST_CODE: u32 = 80877102;
 
-#[derive(Default)]
 pub struct BackendKeyData {
     pub process_id: u32,
     pub secret_key: u32,

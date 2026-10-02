@@ -454,40 +454,53 @@ pub(crate) enum EncodeRequest<'a> {
 }
 
 impl PostgresSQLConnection {
-    /// The only caller of the batch writers above.
+    /// The only caller of the batch writers above. The code of a parameter runs while its Bind is
+    /// encoded. If that code got `request` rejected, nothing of the batch stays in the buffer.
     pub(crate) fn encode_request(
         &self,
         global: &JSGlobalObject,
-        request: EncodeRequest<'_>,
+        request: &PostgresSQLQuery,
+        batch: EncodeRequest<'_>,
     ) -> Result<(), AnyPostgresError> {
-        let writer = self.writer();
-        match request {
-            EncodeRequest::BindAndExecute {
-                statement,
-                binding_value,
-                columns_value,
-            } => bind_and_execute(global, statement, binding_value, columns_value, writer),
-            EncodeRequest::ParseBindAndExecute {
-                query,
-                statement,
-                binding_value,
-                columns_value,
-                include_describe,
-            } => parse_and_bind_and_execute(
-                global,
-                query,
-                statement,
-                binding_value,
-                columns_value,
-                include_describe,
-                writer,
-            ),
-            EncodeRequest::PrepareAndQuery {
-                query,
-                signature,
-                binding_value,
-            } => prepare_and_query_with_signature(global, query, binding_value, writer, signature),
-        }
+        self.writer().atomically(|writer| {
+            match batch {
+                EncodeRequest::BindAndExecute {
+                    statement,
+                    binding_value,
+                    columns_value,
+                } => bind_and_execute(global, statement, binding_value, columns_value, writer),
+                EncodeRequest::ParseBindAndExecute {
+                    query,
+                    statement,
+                    binding_value,
+                    columns_value,
+                    include_describe,
+                } => parse_and_bind_and_execute(
+                    global,
+                    query,
+                    statement,
+                    binding_value,
+                    columns_value,
+                    include_describe,
+                    writer,
+                ),
+                EncodeRequest::PrepareAndQuery {
+                    query,
+                    signature,
+                    binding_value,
+                } => prepare_and_query_with_signature(
+                    global,
+                    query,
+                    binding_value,
+                    writer,
+                    signature,
+                ),
+            }?;
+            if request.is_rejected() {
+                return Err(AnyPostgresError::QueryCancelled);
+            }
+            Ok(())
+        })
     }
 }
 

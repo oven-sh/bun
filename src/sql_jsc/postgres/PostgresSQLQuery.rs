@@ -14,7 +14,7 @@ use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
 use super::Signature;
 use super::command_tag_jsc::CommandTagJsc;
-use super::error_jsc::{postgres_error_to_js, postgres_error_to_js_with_hint};
+use super::error_jsc::postgres_error_to_js;
 use super::postgres_request as PostgresRequest;
 use super::postgres_request::EncodeRequest;
 use super::postgres_sql_connection;
@@ -80,9 +80,9 @@ pub struct Flags {
     pub(crate) simple: bool,
     /// Rejected while in flight: its response is skipped until `ReadyForQuery`.
     pub(crate) discard_response: bool,
-    /// Which connection counter this request's dispatch incremented; reset to
-    /// `None` when `finish_request` consumes that contribution, so the
-    /// decrement is idempotent across its call sites.
+    /// Which connection counter this request is in; reset to `None` when
+    /// `finish_request` takes it out, so the decrement is idempotent across
+    /// its call sites.
     pub(crate) counter: RequestCounter,
     pub(crate) result_mode: PostgresSQLQueryResultMode,
 }
@@ -90,6 +90,8 @@ pub struct Flags {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RequestCounter {
     None,
+    /// `PostgresSQLConnection::pending_requests`
+    Pending,
     /// `PostgresSQLConnection::nonpipelinable_requests`
     Nonpipelinable,
     /// `PostgresSQLConnection::pipelined_requests`
@@ -501,6 +503,12 @@ impl PostgresSQLQuery {
         // is already pending.
         let throw_write_error = |msg: &[u8], err: AnyPostgresError| -> JsError {
             if !global_object.has_exception() {
+                // `cancel()` from the code of a parameter stopped the write. The write did not fail.
+                let msg = if matches!(err, AnyPostgresError::QueryCancelled) {
+                    b"Query cancelled"
+                } else {
+                    msg
+                };
                 return global_object.throw_value(postgres_error_to_js(
                     global_object,
                     Some(msg),
@@ -558,7 +566,7 @@ impl PostgresSQLQuery {
             }
             connection.requests.with_mut(|q| q.push_back(queued));
             if this.status.get() == Status::Pending {
-                connection.note_request_pending();
+                connection.note_request_pending(this);
             }
 
             // Request is enqueued: keep the event loop alive until the server
@@ -604,6 +612,14 @@ impl PostgresSQLQuery {
                 return Err(JsError::Thrown);
             }
         };
+
+        // The code of a binding ran, and it can have called `cancel()`.
+        if this.is_rejected() {
+            return Err(throw_write_error(
+                b"Query cancelled",
+                AnyPostgresError::QueryCancelled,
+            ));
+        }
 
         let has_params = signature.fields.len() > 0;
         let mut did_write = false;
@@ -653,6 +669,7 @@ impl PostgresSQLQuery {
                                 // bindAndExecute will bind + execute, it will change to running after binding is complete
                                 if let Err(err) = connection.encode_request(
                                     global_object,
+                                    this,
                                     EncodeRequest::BindAndExecute {
                                         statement: stmt,
                                         binding_value,
@@ -712,6 +729,7 @@ impl PostgresSQLQuery {
                     // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
                     if let Err(err) = connection.encode_request(
                         global_object,
+                        this,
                         EncodeRequest::PrepareAndQuery {
                             query: query_str.slice(),
                             signature: &mut signature,
@@ -823,7 +841,7 @@ impl PostgresSQLQuery {
 
         connection.requests.with_mut(|q| q.push_back(queued));
         if this.status.get() == Status::Pending {
-            connection.note_request_pending();
+            connection.note_request_pending(this);
         }
         // Request is enqueued: keep the event loop alive until the server
         // responds. See the matching call in the simple-query branch above
@@ -853,48 +871,21 @@ impl PostgresSQLQuery {
 
     pub fn do_cancel(
         this: &Self,
-        global_object: &JSGlobalObject,
+        _global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let this_value = callframe.this();
-        let Some(connection_value) = js::connection_get_cached(this_value) else {
+        // Set from the end of `do_run` until the query settles.
+        let Some(connection_value) = js::connection_get_cached(callframe.this()) else {
+            // Not dispatched, or the code of a parameter called this from inside `do_run`.
+            if this.status.get() == Status::Pending {
+                this.status.set(Status::Fail);
+            }
             return Ok(JSValue::UNDEFINED);
         };
         let Some(connection) = postgres_sql_connection::js::from_js_ref(connection_value) else {
             return Ok(JSValue::UNDEFINED);
         };
-
-        let status = this.status.get();
-        if matches!(status, Status::Success | Status::Fail) {
-            return Ok(JSValue::UNDEFINED);
-        }
-
-        // A CancelRequest names the backend process, not a statement, so it only
-        // ever stops the FIFO head. Anything else is settled locally.
-        if status == Status::Pending {
-            // No Bind, Execute or Query of it is written, and a Fail entry never writes one.
-            let err = postgres_error_to_js(
-                global_object,
-                Some(b"Query cancelled"),
-                AnyPostgresError::QueryCancelled,
-            );
-            connection.finish_request(this);
-            this.on_js_error(err, global_object);
-            return Ok(JSValue::UNDEFINED);
-        }
-        if !connection.is_current_request(this) {
-            // Already on the wire: the backend runs it regardless, so the error says so.
-            let err = postgres_error_to_js_with_hint(
-                global_object,
-                Some(b"Query cancelled"),
-                Some(b"The server already received this query and still runs it. Bun discards the result."),
-                AnyPostgresError::QueryCancelled,
-            );
-            this.reject_in_flight(err, global_object);
-            return Ok(JSValue::UNDEFINED);
-        }
-
-        connection.send_cancel_request(this);
+        connection.cancel(this);
         Ok(JSValue::UNDEFINED)
     }
 }

@@ -7,10 +7,12 @@ import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
   bunExe,
+  expectRssDeltaBelow,
   isWindows,
   readdirSorted,
   runBunInstall,
   runBunUpdate,
+  tempDir,
   toMatchNodeModulesAt,
   VerdaccioRegistry,
 } from "harness";
@@ -2882,4 +2884,49 @@ test.concurrent("a copyfile install over a workspace's hardlinked files does not
   expect(cached).toHaveLength(1);
   expect(readJson(join(cacheDir, cached[0], "package.json"))).toEqual({ name: "no-deps", version: "2.0.0" });
   expect(statSync(join(cacheDir, cached[0], "index.js")).size).toBeGreaterThan(0);
+});
+
+// Each cached workspace package.json owned a mimalloc heap. A heap opens a 64 KiB page for
+// each size class it allocates, and a string with an escape is decoded into its own block,
+// so each script below cost one more page for each workspace.
+test.concurrent("install does not keep a mimalloc heap for each workspace package.json", async () => {
+  const scripts: Record<string, string> = {};
+  for (let length = 8; length <= 1024; length += Math.max(8, length >> 2)) {
+    scripts[`s${length}`] = `"${Buffer.alloc(length - 2, "x").toString()}"`;
+  }
+  const files: Record<string, string> = {
+    "empty/package.json": JSON.stringify({ name: "empty", private: true }),
+    "monorepo/package.json": JSON.stringify({ name: "monorepo", private: true, workspaces: ["packages/*"] }),
+  };
+  for (let i = 0; i < 1000; i++) {
+    files[`monorepo/packages/p${i}/package.json`] = JSON.stringify({ name: `p${i}`, version: "1.0.0", scripts });
+  }
+  using dir = tempDir("workspace-package-json-heaps", files);
+
+  // On Linux a child's maxRSS is never below the peak RSS of the process that spawned it,
+  // so the installs are children of this small script and not of the test runner.
+  const measure = `
+    const [root] = process.argv.slice(1);
+    async function installPeakRSS(project) {
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "install"],
+        cwd: root + "/" + project,
+        env: { ...process.env, BUN_INSTALL_CACHE_DIR: root + "/.cache" },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(stderr);
+      return proc.resourceUsage().maxRSS;
+    }
+    const empty = await installPeakRSS("empty");
+    const monorepo = await installPeakRSS("monorepo");
+    console.log(JSON.stringify({ deltaMiB: (monorepo - empty) / 1024 / 1024 }));
+  `;
+  // An install grows by about 30 MiB here. With a heap for each package.json it grew by
+  // 189 MiB (release) and 240 MiB (debug).
+  await expectRssDeltaBelow(["-e", measure, String(dir)], { release: 80, debug: 96 });
+
+  const lockfile = Bun.JSONC.parse(await file(join(String(dir), "monorepo", "bun.lock")).text()) as any;
+  expect(Object.keys(lockfile.workspaces)).toHaveLength(1001);
 });

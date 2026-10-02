@@ -112,11 +112,17 @@ test("a host too long for the IDNA conversion buffer", async () => {
     import tls from "node:tls";
     import url from "node:url";
 
-    const fits = Buffer.alloc(500_000, "a").toString();
-    const long = Buffer.alloc(600_000, "a").toString();
+    // The most code units that the buffer holds with the synthetic limit at 1 MiB.
+    const limit = 524288;
+    const a = count => Buffer.alloc(count, "a").toString();
+    const long = a(600_000);
+    // ToUnicode changes the label "xn--nxa" to one Greek letter, so the output is 2 code units longer than the rest.
+    const greekAtLimit = "xn--nxa." + a(limit - 2);
+    const greekPastLimit = "xn--nxa." + a(limit - 1);
+    // The ASCII form of U+00E9 is the label "xn--9ca", so that form is 8 code units longer than the rest.
+    const restAtLimit = a(limit - 8);
+    const restPastLimit = a(limit - 7);
     setSyntheticAllocationLimitForTesting(1024 * 1024);
-    // ToUnicode changes this label to one Greek letter, so the output is as long as the rest of the host.
-    const greek = "xn--nxa.";
     // A host needs no buffer for its verdict, so the limit does not apply. The Arabic label needs the BiDi rule
     // and the label with U+200D needs the CONTEXTJ rule, so ICU judges these hosts, not the check before it.
     const arabic = "xn--mgbh0fb.";
@@ -126,16 +132,16 @@ test("a host too long for the IDNA conversion buffer", async () => {
       parsed.hostname = value;
       return parsed.hostname.length;
     };
-    // tls.checkServerIdentity matches a non-ASCII host on its ASCII form, where U+00E9 is the label "xn--9ca".
-    // The certificate names that form, so only a host with no ASCII form does not match it.
+    // tls.checkServerIdentity matches a non-ASCII host on its ASCII form. The certificate names that form, so only
+    // a host with no ASCII form does not match it.
     const identity = rest => {
-      const error = tls.checkServerIdentity("\u00e9." + rest, { subject: {}, subjectaltname: "DNS:xn--9ca." + rest });
+      const error = tls.checkServerIdentity("\\u00e9." + rest, { subject: {}, subjectaltname: "DNS:xn--9ca." + rest });
       return error === undefined ? "match" : error.code;
     };
     const cases = {
       "domainToUnicode, no punycode label": () => url.domainToUnicode(long).length,
-      "domainToUnicode, output fits": () => url.domainToUnicode(greek + fits).length,
-      "domainToUnicode, output too long": () => url.domainToUnicode(greek + long).length,
+      "domainToUnicode, output at the limit": () => url.domainToUnicode(greekAtLimit).length,
+      "domainToUnicode, output one past the limit": () => url.domainToUnicode(greekPastLimit).length,
       "domainToASCII, valid host": () => url.domainToASCII(arabic + long).length,
       "domainToASCII, invalid host": () => url.domainToASCII(joiner + long).length,
       "new URL, valid host": () => new URL("http://" + arabic + long).hostname.length,
@@ -143,8 +149,8 @@ test("a host too long for the IDNA conversion buffer", async () => {
       "URL.canParse, invalid host": () => URL.canParse("http://" + joiner + long),
       "hostname setter, valid host": () => hostnameAfterSet(arabic + long),
       "hostname setter, invalid host": () => hostnameAfterSet(joiner + long),
-      "tls.checkServerIdentity, output fits": () => identity(fits),
-      "tls.checkServerIdentity, output too long": () => identity(long),
+      "tls.checkServerIdentity, ASCII form at the limit": () => identity(restAtLimit),
+      "tls.checkServerIdentity, ASCII form one past the limit": () => identity(restPastLimit),
     };
     // Each case prints its line as soon as it finishes. If a case aborts the process, the diff shows which one.
     for (const [name, run] of Object.entries(cases)) {
@@ -165,8 +171,8 @@ test("a host too long for the IDNA conversion buffer", async () => {
   expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
     stdout: [
       "domainToUnicode, no punycode label: 600000",
-      "domainToUnicode, output fits: 500002",
-      "domainToUnicode, output too long: RangeError: Out of memory",
+      "domainToUnicode, output at the limit: 524288",
+      "domainToUnicode, output one past the limit: RangeError: Out of memory",
       "domainToASCII, valid host: 600012",
       "domainToASCII, invalid host: 0",
       "new URL, valid host: 600012",
@@ -174,8 +180,8 @@ test("a host too long for the IDNA conversion buffer", async () => {
       "URL.canParse, invalid host: false",
       "hostname setter, valid host: 600012",
       "hostname setter, invalid host: 1",
-      "tls.checkServerIdentity, output fits: match",
-      "tls.checkServerIdentity, output too long: ERR_TLS_CERT_ALTNAME_INVALID",
+      "tls.checkServerIdentity, ASCII form at the limit: match",
+      "tls.checkServerIdentity, ASCII form one past the limit: ERR_TLS_CERT_ALTNAME_INVALID",
     ],
     stderr: "",
     exitCode: 0,

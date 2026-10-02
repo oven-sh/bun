@@ -2,7 +2,7 @@
 
 use core::ffi::c_int;
 
-use bun_core::feature_flag;
+use bun_core::{feature_flag, handle_oom};
 use bun_libdeflate_sys::libdeflate as libdeflate_sys;
 use bun_zlib as zlib;
 
@@ -52,6 +52,9 @@ const Z_DEFAULT_COMPRESSION: c_int = 6;
 const Z_DEFAULT_STRATEGY: c_int = 0;
 const Z_DEFAULT_MEM_LEVEL: c_int = 8;
 
+/// Still decodable by an 8-bit peer: deflate's match distances stay <= 512 - MIN_LOOKAHEAD = 250.
+const ZLIB_MIN_RAW_DEFLATE_WINDOW_BITS: u8 = 9;
+
 // Buffer size for compression/decompression operations
 const COMPRESSION_BUFFER_SIZE: usize = 4096;
 
@@ -85,27 +88,26 @@ pub enum CompressError {
 }
 
 impl PerMessageDeflate {
-    pub(crate) fn init(params: Params) -> crate::Result<Box<Self>> {
-        // Initialize compressor (deflate)
-        // We use negative window bits for raw DEFLATE, as required by RFC 7692.
-        let compress_stream = zlib::DeflateEncoder::new(
+    pub(crate) fn init(params: Params) -> Box<Self> {
+        // Negative window bits select raw DEFLATE, as required by RFC 7692.
+        let compress_window_bits = params
+            .client_max_window_bits
+            .max(ZLIB_MIN_RAW_DEFLATE_WINDOW_BITS);
+        let compress_stream = handle_oom(zlib::DeflateEncoder::new(
             Z_DEFAULT_COMPRESSION,
-            -(params.client_max_window_bits as c_int),
+            -(compress_window_bits as c_int),
             Z_DEFAULT_MEM_LEVEL,
             Z_DEFAULT_STRATEGY,
-        )
-        .map_err(|_| crate::Error::DeflateInitFailed)?;
+        ));
+        let decompress_stream = handle_oom(zlib::InflateDecoder::new(
+            -(params.server_max_window_bits as c_int),
+        ));
 
-        // Initialize decompressor (inflate)
-        let decompress_stream =
-            zlib::InflateDecoder::new(-(params.server_max_window_bits as c_int))
-                .map_err(|_| crate::Error::InflateInitFailed)?;
-
-        Ok(Box::new(Self {
+        Box::new(Self {
             params,
             compress_stream,
             decompress_stream,
-        }))
+        })
     }
 
     fn can_use_libdeflate(len: usize) -> bool {

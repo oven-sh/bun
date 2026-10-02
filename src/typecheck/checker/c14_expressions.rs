@@ -76,7 +76,7 @@ impl<'a> Checker<'a> {
         t
     }
 
-    // Returns the type of an expression when it is quick to compute and needs no flow analysis, else nil. The literal case tests the node itself, not the expression without its parentheses.
+    // Returns the type of an expression. Unlike checkExpression, this function is simply concerned with computing the type and may not fully check all contained sub-expressions for errors.
     pub fn get_quick_type_of_expression(&mut self, node: NodeId) -> TypeId {
         if !self.stack_check.is_safe_to_recurse() {
             return self.stack_limit();
@@ -397,7 +397,7 @@ impl<'a> Checker<'a> {
     pub fn check_const_enum_access(&mut self, node: NodeId, t: TypeId) {
         let a = self.ast;
         let parent = a.parent(node);
-        // enum object type for const enums are only permitted in: 'left' in property access, 'object' in indexed access, target in rhs of import statement
+        // enum object type for const enums are only permitted in: 'left' in property access, 'object' in indexed access, target in rhs of import statement. We allow reexporting const enums.
         let ok = is_property_access_expression(a, parent) && a.expression(parent) == node
             || is_element_access_expression(a, parent) && a.expression(parent) == node
             || ((is_identifier(a, node) || is_qualified_name(a, node))
@@ -793,7 +793,7 @@ impl<'a> Checker<'a> {
                 // TS 1.0 SPEC (April 2014): 4.8.1 Super calls are only permitted in constructors of derived classes
                 return is_constructor_declaration(a, container);
             }
-            // TS 1.0 SPEC (April 2014): 'super' property access is allowed in a constructor, instance member function, instance member accessor, or instance member variable initializer where this references a derived class instance, and in a static member function or static member accessor. The topmost container must be something that is directly nested in the class declaration\object literal expression.
+            // TS 1.0 SPEC (April 2014): 'super' property access is allowed in a constructor, instance member function, instance member accessor, or instance member variable initializer where this references a derived class instance, and in a static member function or static member accessor; topmost container must be something that is directly nested in the class declaration\object literal expression
             if is_class_like(a, a.parent(container))
                 || is_object_literal_expression(a, a.parent(container))
             {

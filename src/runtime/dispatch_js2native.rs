@@ -92,4 +92,75 @@ pub(crate) use css::test_with_options as css_jsc_css_internals_test_with_options
 // `bun_jsc`) rather than inventing a JSC edge into the collections crate.
 pub(crate) use crate::linear_fifo_testing::ordered_remove_probe as collections_linear_fifo_testing_ap_is_ordered_remove_probe;
 
+// `bun_resolver` has no JSC edge; these `bun:internal-for-testing` probes
+// read the resolver's process-lifetime parse arenas (leak regression tests).
+pub(crate) fn resolver_resolver_js_package_json_arena_len(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_number(
+        bun_resolver::resolver::package_json_arena_len() as f64,
+    ))
+}
+
+pub(crate) fn resolver_resolver_js_tsconfig_arena_len(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_number(
+        bun_resolver::resolver::tsconfig_arena_len() as f64,
+    ))
+}
+
+pub(crate) fn resolver_resolver_js_package_json_parse_count(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_number(
+        bun_resolver::resolver::package_json_parse_count() as f64,
+    ))
+}
+
+pub(crate) fn resolver_resolver_js_tsconfig_parse_count(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_number(
+        bun_resolver::resolver::tsconfig_parse_count() as f64,
+    ))
+}
+
+/// Bust `dir` and recompute it under a scratch log, as a watcher or router reload
+/// does. Returns the log's message texts, one per line.
+pub(crate) fn resolver_resolver_js_dir_info_diagnostics(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let dir = frame.argument(0).to_utf8(global)?;
+    let dir = bun_paths::strings::paths::without_trailing_slash_windows_path(dir.slice());
+    let vm_ptr = global.bun_vm_ptr();
+    let mut log = bun_ast::Log::init();
+    // SAFETY: `vm_ptr` is the live VM for this global; the resolver outlives
+    // this call. The guard is declared after `log`, so it drops first.
+    let restore = unsafe {
+        bun_resolver::Resolver::scoped_log(
+            core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
+            core::ptr::NonNull::from(&mut log),
+        )
+    };
+    {
+        // SAFETY: JS thread; no other borrow of the VM is live across this block.
+        let resolver = unsafe { &mut (*vm_ptr).transpiler.resolver };
+        let _ = resolver.bust_dir_cache(dir);
+        let _ = resolver.read_dir_info(dir);
+    }
+    drop(restore);
+    let mut lines: Vec<u8> = Vec::new();
+    for msg in &log.msgs {
+        lines.extend_from_slice(&msg.data.text);
+        lines.push(b'\n');
+    }
+    bun_jsc::bun_string_jsc::create_utf8_for_js(global, &lines)
+}
+
 // ported from: generated_js2native.rs

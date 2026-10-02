@@ -2199,6 +2199,15 @@ pub mod cache {
                 },
             }
         }
+
+        /// The bytes as a `Vec`: moved out of `Owned`, copied from every other variant.
+        pub fn into_vec(self) -> Vec<u8> {
+            match self {
+                Contents::Owned(v) => v,
+                Contents::Empty => Vec::new(),
+                other => other.as_slice().to_vec(),
+            }
+        }
     }
 
     impl From<Vec<u8>> for Contents {

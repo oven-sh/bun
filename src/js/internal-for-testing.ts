@@ -877,3 +877,16 @@ export const internalModuleBytecode: {
   (index: number): { name: string; bytecode: Uint8Array; strings: Uint8Array } | null;
   (source: string, name: string): { name: string; bytecode: Uint8Array; strings: Uint8Array };
 } = $newCppFunction("InternalModuleRegistry.cpp", "jsInternalModuleBytecode", 2);
+
+export const resolverInternals = {
+  /** Entries retained by the process-lifetime parsed-package.json arena. */
+  packageJsonArenaLen: $newRustFunction("resolver/resolver.rs", "jsPackageJsonArenaLen", 0) as () => number,
+  /** Entries retained by the process-lifetime merged-tsconfig arena. */
+  tsconfigArenaLen: $newRustFunction("resolver/resolver.rs", "jsTsconfigArenaLen", 0) as () => number,
+  /** Total package.json parses performed (reuse skips these). */
+  packageJsonParseCount: $newRustFunction("resolver/resolver.rs", "jsPackageJsonParseCount", 0) as () => number,
+  /** Total tsconfig parses performed (reuse skips these). */
+  tsconfigParseCount: $newRustFunction("resolver/resolver.rs", "jsTsconfigParseCount", 0) as () => number,
+  /** Bust `dir`, recompute it under a scratch log (as a watcher or router reload does), return the log's message texts, one per line. */
+  dirInfoDiagnostics: $newRustFunction("resolver/resolver.rs", "jsDirInfoDiagnostics", 1) as (dir: string) => string,
+};

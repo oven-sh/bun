@@ -368,8 +368,26 @@ impl PackageJSON {
         package_id: Option<PackageID>,
         include_scripts_: IncludeScripts,
     ) -> Option<PackageJSON> {
-        let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
+        let (package_json_path, entry_contents) = Self::read_for_parse(r, input_path, dirname_fd)?;
+        Self::parse_with_contents::<INCLUDE_DEPENDENCIES>(
+            r,
+            package_json_path,
+            entry_contents,
+            package_id,
+            include_scripts_,
+        )
+        .ok()
+    }
 
+    /// Joins `input_path` + "package.json", interns the joined path, and reads
+    /// the file. Split from [`parse_with_contents`] so the caller can skip the
+    /// parse when the bytes match the interned copy — even a discarded
+    /// re-parse permanently grows the thread-local AST store.
+    pub(crate) fn read_for_parse(
+        r: &mut resolver::Resolver<'_>,
+        input_path: &[u8],
+        dirname_fd: Fd,
+    ) -> Option<(&'static [u8], Box<[u8]>)> {
         // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`
         // (see `Resolver::fs()` note in lib.rs). `fs` and `log` are DISTINCT
         // singletons so the two `&mut` projections below do not alias each other,
@@ -417,16 +435,10 @@ impl PackageJSON {
                 return None;
             }
         };
-        // Reshaped for borrowck — `mem::take` the contents (leaving
-        // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
-        // Immediately convert to owned `Box<[u8]>`: `use_shared_buffer = false`
-        // above guarantees `Contents::Owned`/`Empty`, so the match is exhaustive
-        // in practice (the catch-all copy is unreachable but defensive).
-        let entry_contents: Box<[u8]> = match core::mem::take(&mut entry.contents) {
-            crate::cache::Contents::Owned(v) => v.into_boxed_slice(),
-            crate::cache::Contents::Empty => Box::default(),
-            other => Box::from(other.as_slice()),
-        };
+        // `mem::take` keeps `entry` whole for the close-guard; `use_shared_buffer = false` means `into_vec` moves.
+        let entry_contents: Box<[u8]> = core::mem::take(&mut entry.contents)
+            .into_vec()
+            .into_boxed_slice();
         let _close_guard = scopeguard::guard(entry, |mut e| {
             let _ = e.close_fd();
         });
@@ -437,6 +449,26 @@ impl PackageJSON {
                 bstr::BStr::new(package_json_path)
             ));
         }
+
+        Some((package_json_path, entry_contents))
+    }
+
+    /// `Err` returns the unparseable file's bytes (invalid JSON or non-object
+    /// root) so `Resolver::parse_package_json` can record the failure and skip
+    /// re-parsing the unchanged file on the next dir-cache bust.
+    pub(crate) fn parse_with_contents<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
+        r: &mut resolver::Resolver<'_>,
+        package_json_path: &'static [u8],
+        entry_contents: Box<[u8]>,
+        package_id: Option<PackageID>,
+        include_scripts_: IncludeScripts,
+    ) -> Result<PackageJSON, Box<[u8]>> {
+        let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
+
+        // SAFETY: see `read_for_parse` — same disjoint-singleton contract.
+        let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs() };
+        // SAFETY: see `read_for_parse`.
+        let r_log: &mut bun_ast::Log = unsafe { &mut *r.log() };
 
         // `bun_ast::Source.path` is the lightweight `bun_paths::fs::Path<'static>` (no
         // `pretty`/`is_node_module`); `key_path` is only used for `text`, so init the
@@ -449,7 +481,7 @@ impl PackageJSON {
         // On the success path it is *moved* (not leaked) into
         // `package_json.source_contents` at the bottom of this fn, so the heap
         // allocation lives for the life of the returned `PackageJSON`. On every
-        // early `return None` below `entry_contents` drops and frees normally, after
+        // early `return Err` below `entry_contents` moves out whole, after
         // `json_source` is already dead. `Box<[u8]>` heap address is stable
         // across the move.
         let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
@@ -457,7 +489,7 @@ impl PackageJSON {
 
         let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
             Ok(Some(v)) => v,
-            Ok(None) => return None,
+            Ok(None) => return Err(entry_contents),
             Err(err) => {
                 if cfg!(debug_assertions) {
                     Output::print_error(format_args!(
@@ -466,7 +498,7 @@ impl PackageJSON {
                         bstr::BStr::new(err.name())
                     ));
                 }
-                return None;
+                return Err(entry_contents);
             }
         };
         let json: js_ast::Expr = parsed_json.root;
@@ -474,8 +506,7 @@ impl PackageJSON {
         if !json.is_object() {
             // Invalid package.json in node_modules is noisy.
             // Let's just ignore it.
-            // (allocator.free dropped — entry.contents owned by `entry`)
-            return None;
+            return Err(entry_contents);
         }
 
         let mut package_json = PackageJSON {
@@ -997,7 +1028,7 @@ impl PackageJSON {
         // `mem::forget`, forbidden per docs/PORTING.md §Forbidden patterns).
         package_json.source_contents = entry_contents;
         package_json.json_tape = parsed_json.tape;
-        Some(package_json)
+        Ok(package_json)
     }
 }
 

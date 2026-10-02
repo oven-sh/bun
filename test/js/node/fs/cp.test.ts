@@ -655,6 +655,60 @@ test.skipIf(!isPosix)(
   },
 );
 
+// internal/fs/cp is lazily loaded by the first cp() call and captures
+// fs.promises.stat at that moment, so the subprocess patches it up front to
+// make the options-less stat(destParent) call in pathExists() fail with EIO.
+// cp must reject with that error; an unbound Promise.$reject capture used to
+// turn it into "TypeError: |this| is not an object" with no code/syscall.
+// (The pre-existing dest directory keeps macOS off the clonefile fast path,
+// and checkParentPaths' stat(destParent, { bigint: true }) passes through.)
+test("cp surfaces non-ENOENT stat errors from the dest parent existence check", async () => {
+  using dir = tempDir("cp-parent-stat-error", {
+    "src/a.txt": "hi",
+    "p/out/.keep": "",
+  });
+  const script = `
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const fsp = fs.promises;
+    const realStat = fsp.stat;
+    fsp.stat = function (p, opts) {
+      if (opts === undefined && path.basename(String(p)) === "p") {
+        const err = new Error("EIO: i/o error, stat '" + p + "'");
+        err.code = "EIO";
+        err.errno = -5;
+        err.syscall = "stat";
+        err.path = String(p);
+        return Promise.reject(err);
+      }
+      return realStat(p, opts);
+    };
+    const report = (face, e) => console.log(face + ": " + (e ? e.name + " " + e.code + " " + e.syscall : "no error"));
+    const src = path.resolve("src");
+    const dest = path.resolve("p", "out");
+    fsp
+      .cp(src, dest, { recursive: true })
+      .then(
+        () => report("promises", null),
+        e => report("promises", e),
+      )
+      .then(() => {
+        fs.cp(src, dest, { recursive: true }, e => report("callback", e));
+      });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("promises: Error EIO stat\ncallback: Error EIO stat\n");
+  expect(exitCode).toBe(0);
+});
+
 test.skipIf(!isLinux)("fs.cp and fs.copyFile create the destination with the source file's mode", async () => {
   using dir = tempDir("cp-dest-mode", {});
   const destNames = ["dest-copyFile.bin", "dest-cp.bin"];

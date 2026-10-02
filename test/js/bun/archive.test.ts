@@ -857,9 +857,11 @@ describe("Bun.Archive", () => {
 
         expect({
           filesGlob: await outcome(archive.files("*.txt")),
-          extractGlob: await outcome(archive.extract(String(dir), { glob: "*.txt" })),
+          extract: await outcome(archive.extract(join(String(dir), "all"))),
+          extractGlob: await outcome(archive.extract(join(String(dir), "glob"), { glob: "*.txt" })),
         }).toEqual({
           filesGlob: { rejected: "Truncated tar archive detected while skipping data" },
+          extract: { rejected: "ReadError" },
           extractGlob: { rejected: "ReadError" },
         });
       });
@@ -871,13 +873,15 @@ describe("Bun.Archive", () => {
 
         expect({
           files: await outcome(archive.files()),
-          extractGlob: await outcome(archive.extract(String(dir), { glob: "*.txt" })),
+          extract: await outcome(archive.extract(join(String(dir), "all"))),
+          extractGlob: await outcome(archive.extract(join(String(dir), "glob"), { glob: "*.txt" })),
         }).toEqual({
           files: { rejected: "Truncated tar archive detected while reading data" },
+          extract: { rejected: "ReadError" },
           extractGlob: { rejected: "ReadError" },
         });
-        // The partial "b.txt" does not stay on disk.
-        expect(readdirSync(String(dir))).toEqual(["a.txt"]);
+        // With a glob, the partial "b.txt" does not stay on disk.
+        expect(readdirSync(join(String(dir), "glob"))).toEqual(["a.txt"]);
       });
 
       test("extract() with a glob rejects when libarchive cannot read the data of an entry", async () => {
@@ -898,12 +902,15 @@ describe("Bun.Archive", () => {
 
         expect({
           files: await outcome(archive.files()),
-          extractGlob: await outcome(archive.extract(String(dir), { glob: "*.txt" })),
+          // Without a glob, extract() writes each block at its offset and can read this entry.
+          extract: await outcome(archive.extract(join(String(dir), "all"))),
+          extractGlob: await outcome(archive.extract(join(String(dir), "glob"), { glob: "*.txt" })),
         }).toEqual({
           files: { rejected: "Encountered out-of-order sparse blocks" },
+          extract: { resolved: 3 },
           extractGlob: { rejected: "ReadError" },
         });
-        expect(readdirSync(String(dir))).toEqual(["a.txt"]);
+        expect(readdirSync(join(String(dir), "glob"))).toEqual(["a.txt"]);
       });
 
       // libarchive drops a header block with a bad checksum and reports

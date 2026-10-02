@@ -624,20 +624,33 @@ blockExoticSubdeps = true
       repo = tempDir("block-exotic-git-repo", {
         "package.json": JSON.stringify({ name: "private-thing", version: "9.9.9" }),
       });
+      const gitEnv = {
+        ...bunEnv,
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: join(String(repo), ".gitconfig"),
+        GIT_AUTHOR_NAME: "Test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "Test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      };
       for (const args of [
         ["init", "-q"],
-        ["add", "."],
-        ["-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "init"],
+        ["add", "package.json"],
+        ["commit", "-q", "-m", "init", "--no-gpg-sign"],
       ]) {
         await using git = Bun.spawn({
           cmd: ["git", ...args],
           cwd: String(repo),
-          env: bunEnv,
+          env: gitEnv,
           stdout: "ignore",
           stderr: "pipe",
         });
         const [gitStderr, gitExitCode] = await Promise.all([git.stderr.text(), git.exited]);
-        expect({ args, gitStderr, gitExitCode }).toEqual({ args, gitStderr: "", gitExitCode: 0 });
+        expect({ args, gitStderr, gitExitCode }).toEqual({
+          args,
+          gitStderr: expect.not.stringContaining("fatal:"),
+          gitExitCode: 0,
+        });
       }
       url = `git+${pathToFileURL(String(repo))}`;
     });

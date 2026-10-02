@@ -1368,7 +1368,7 @@ impl<'p> Checker<'p> {
             return false;
         };
         i < args.len()
-            && given.get(i) == Some(&TypeId::ANY)
+            && given.get(i).is_some_and(|given| given.is_any())
             && self.is_error_type_as_written(file, hir.id_at(args, i), 0)
     }
 
@@ -2756,6 +2756,8 @@ impl<'p> Checker<'p> {
                 if most != 0
                     && !is_class_or_interface
                     && flags.contains(SymFlags::TYPE_ALIAS)
+                    // `getIntendedTypeFromJSDocTypeReference` instantiates `Record` for `Object<K, V>` under no alias.
+                    && !self.is_jsdoc_object_with_arguments(file, node)
                     && let Some(host) = self.alias_with_body(file, scope, node)
                 {
                     ty = self.with_hosting_alias(ty, (sym, flags), file, host);

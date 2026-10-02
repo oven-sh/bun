@@ -862,7 +862,7 @@ impl Checker<'_> {
                 let resolved = self.type_of_param(file, p);
                 let is_any = match hir[param.pat].kind {
                     PatKind::Ident(_) if param.flags.contains(Flags::REST) => {
-                        self.array_element(resolved) == Some(TypeId::ANY)
+                        self.array_element(resolved).is_some_and(TypeId::is_any)
                     }
                     PatKind::Ident(_) => resolved.is_any(),
                     _ => true,

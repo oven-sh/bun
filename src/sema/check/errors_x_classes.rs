@@ -271,18 +271,13 @@ impl Checker<'_> {
         } else {
             ClassBase::Nothing
         };
-        // What is in error is not extended.
-        if self.is_rooted_in_error(file, extends) {
+        let constructor = self.type_of_expr(file, extends);
+        // `resolveBaseTypesOfClass`: the error type is no base type.
+        if constructor == TypeId::ERROR {
             return nothing;
         }
-        let constructor = self.type_of_expr(file, extends);
         if !self.is_known(constructor) || self.is_uncertain(file, extends) {
             return ClassBase::Unknown;
-        }
-        // `resolveBaseTypesOfClass`: the error type is no base type. In JavaScript `is_callee_in_error` takes the `anyType` of an
-        // unresolved `require("m")` for it.
-        if constructor.is_any() && !hir.is_js && self.is_callee_in_error(file, extends) {
-            return nothing;
         }
         // A type parameter that is not in scope here is left over from an incomplete resolution.
         let is_generic_here = !class.type_params.is_empty() || self.has_outer_type_parameters(sym);
@@ -555,7 +550,7 @@ impl Checker<'_> {
         if !self.is_known(param.ty) {
             return None;
         }
-        Some(param.ty.is_any() || self.array_element(param.ty) == Some(TypeId::ANY))
+        Some(param.ty.is_any() || self.array_element(param.ty).is_some_and(TypeId::is_any))
     }
 
     /// 2545 2797: a class that extends a value whose type is a type variable. Its static side is `typeof C & T`, whose construct

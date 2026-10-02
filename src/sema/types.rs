@@ -344,12 +344,18 @@ pub struct IndexInfo {
 /// What is in an object type.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub struct Shape {
+    /// `symbol.Declarations[0]` of a made-up type that keeps the symbol of an object literal (`getWidenedTypeOfObjectLiteral`): the
+    /// file and the position. `CompareTypes` orders by it.
+    pub symbol_declared_at: Option<(FileId, u32)>,
     /// In declaration order, own before inherited.
     pub props: Vec<Prop>,
     pub call: Vec<SigId>,
     pub construct: Vec<SigId>,
     pub index: Vec<IndexInfo>,
     pub literal: Literalness,
+    /// `symbol.Declarations[0]` of the properties that are copies (`getSpreadSymbol`, `getAnonymousPartialType`), whose `source`
+    /// is only a type: the name, the file and the position. `getNamedMembers` orders by it.
+    pub declared_at: Vec<(Atom, FileId, u32)>,
 }
 
 /// Whether a made-up object type is still the type of an object literal expression, or what else it was made as that tells.
@@ -641,7 +647,8 @@ fn is_type_local(data: &TypeData, file: FileId) -> bool {
         }
         TypeData::Fns { decls, mapper } => mapper.is_local() || decls.iter().any(|d| d.0 == file),
         TypeData::Synth(shape) => {
-            shape.props.iter().any(|p| is_prop_local(p, file))
+            shape.symbol_declared_at.is_some_and(|at| at.0 == file)
+                || shape.props.iter().any(|p| is_prop_local(p, file))
                 || shape
                     .index
                     .iter()

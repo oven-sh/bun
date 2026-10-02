@@ -343,6 +343,7 @@ impl<'p> Checker<'p> {
                 let cycles_before = self.cycles;
                 let mut new = Shape {
                     literal: shape.literal,
+                    declared_at: shape.declared_at.clone(),
                     ..Shape::default()
                 };
                 for p in &shape.props {
@@ -379,6 +380,7 @@ impl<'p> Checker<'p> {
                     .iter()
                     .map(|&s| self.instantiate_sig(s, mapper))
                     .collect();
+                new.symbol_declared_at = shape.symbol_declared_at;
                 let instantiated = self.synth(new);
                 if self.is_generic_single_signature(shape) {
                     let holds = self.cycles == cycles_before;
@@ -395,7 +397,8 @@ impl<'p> Checker<'p> {
                 // `getConditionalType` returns the error type for a check type that is the error type. The error type is `any`
                 // here, and a tuple type argument instantiates to `any` only as the error type.
                 if self.p.types.mapping(*own).iter().any(|before| {
-                    self.is_tuple(before.1) && self.p.types.map(new, before.0) == Some(TypeId::ANY)
+                    self.is_tuple(before.1)
+                        && self.p.types.map(new, before.0).is_some_and(TypeId::is_any)
                 }) {
                     return TypeId::ANY;
                 }

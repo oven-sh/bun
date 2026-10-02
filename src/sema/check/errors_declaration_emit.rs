@@ -448,6 +448,127 @@ impl<'c, 'p> DeclarationEmit<'c, 'p> {
     }
 }
 
+/// What `getAccessibleSymbolChain`, `getAlternativeContainingModules`, `isDeclarationVisible` and `getSpecifierForModuleSymbol` memoize,
+/// kept between the types that are printed from one enclosing file.
+#[derive(Default)]
+pub(super) struct SymbolChainCache {
+    file: Option<FileId>,
+    visibility: FxHashMap<(FileId, Decl), bool>,
+    statements: FxHashMap<FileId, Rc<Statements>>,
+    chains: FxHashMap<(Sym, FileId, ScopeId, Meaning), Rc<Vec<Sym>>>,
+    containing_modules: FxHashMap<(Sym, FileId), Rc<Vec<Sym>>>,
+    exports: FxHashMap<Sym, Rc<Vec<(Atom, Sym)>>>,
+    global_aliases: Option<Rc<Vec<(Atom, Sym)>>>,
+    specifiers: FxHashMap<(Sym, FileId, ResolutionMode), String>,
+}
+
+impl<'p> Checker<'p> {
+    /// Asks something of `symbolaccessibility.go` with `scope` of `file` for `enclosingDeclaration`.
+    fn with_enclosing_declaration<T>(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        ask: impl FnOnce(&mut DeclarationEmit<'_, 'p>) -> T,
+    ) -> T {
+        let mut cache = std::mem::take(&mut self.symbol_chain_cache);
+        if cache.file != Some(file) {
+            cache = SymbolChainCache::default();
+        }
+        let (result, cache) = {
+            let mut emit = DeclarationEmit::new(self, file);
+            emit.b.enclosing.scope = scope;
+            emit.visibility = cache.visibility;
+            emit.statements = cache.statements;
+            emit.chains = cache.chains;
+            emit.containing_modules = cache.containing_modules;
+            emit.exports = cache.exports;
+            emit.global_aliases = cache.global_aliases;
+            emit.specifiers = cache.specifiers;
+            let result = ask(&mut emit);
+            let cache = SymbolChainCache {
+                file: Some(file),
+                visibility: emit.visibility,
+                statements: emit.statements,
+                chains: emit.chains,
+                containing_modules: emit.containing_modules,
+                exports: emit.exports,
+                global_aliases: emit.global_aliases,
+                specifiers: emit.specifiers,
+            };
+            (result, cache)
+        };
+        self.symbol_chain_cache = cache;
+        result
+    }
+
+    /// `lookupSymbolChain` with `yieldModuleSymbol`, of a symbol that is no type parameter: whether the chain starts with `globalThis`,
+    /// and the rest of it.
+    pub(super) fn lookup_symbol_chain_at(
+        &mut self,
+        symbol: Sym,
+        is_value: bool,
+        file: FileId,
+        scope: ScopeId,
+    ) -> (bool, Vec<Sym>) {
+        let meaning = if is_value {
+            Meaning::Value
+        } else {
+            Meaning::Type
+        };
+        let mut chain = self
+            .with_enclosing_declaration(file, scope, |emit| emit.symbol_chain(symbol, meaning, 0));
+        let starts_with_global_this = chain.len() > 1 && chain[0] == GLOBAL_THIS;
+        if starts_with_global_this {
+            chain.remove(0);
+        }
+        (starts_with_global_this, chain)
+    }
+
+    /// The specifier of the import type `symbolToTypeNode` writes for `module`, and its `resolution-mode` attribute.
+    pub(super) fn import_type_specifier_at(
+        &mut self,
+        module: Sym,
+        file: FileId,
+        scope: ScopeId,
+    ) -> (String, Option<&'static str>) {
+        self.with_enclosing_declaration(file, scope, |emit| {
+            let files = emit.c.files();
+            let is_node = files.options.resolves_like_node;
+            // `GetEmitModuleFormatOfFile`
+            let context_format = files.module(file).implied_format;
+            let target_format = emit
+                .decls_of(module)
+                .into_iter()
+                .find(|d| d.1 == Decl::File)
+                .map(|d| files.module(d.0).implied_format);
+            let mut specifier = String::new();
+            let mut mode = None;
+            if is_node
+                && target_format == Some(ResolutionMode::Import)
+                && context_format != ResolutionMode::Import
+            {
+                specifier = emit.specifier_for_module_symbol(module, ResolutionMode::Import);
+                mode = Some("import");
+            }
+            if specifier.is_empty() {
+                specifier = emit.specifier_for_module_symbol(module, ResolutionMode::None);
+            }
+            if is_node && specifier.contains("/node_modules/") {
+                let (swapped, swapped_mode) = if context_format == ResolutionMode::Import {
+                    (ResolutionMode::Require, "require")
+                } else {
+                    (ResolutionMode::Import, "import")
+                };
+                let other = emit.specifier_for_module_symbol(module, swapped);
+                if !other.contains("/node_modules/") {
+                    return (other, Some(swapped_mode));
+                }
+            }
+            (specifier, mode)
+        })
+    }
+}
+
 // ───────────────────────────── symbols ─────────────────────────────
 
 impl<'p> DeclarationEmit<'_, 'p> {

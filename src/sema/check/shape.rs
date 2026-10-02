@@ -1629,10 +1629,7 @@ impl<'p> Checker<'p> {
         let extends = self.hir(file)[c].extends;
         let constructor = self.type_of_expr(file, extends);
         if constructor.is_any() {
-            // In JavaScript `is_callee_in_error` takes the `anyType` of an unresolved `require("m")` for the error type.
-            return !self.is_uncertain(file, extends)
-                && !self.is_expr_in_error(file, extends)
-                && (self.hir(file).is_js || !self.is_callee_in_error(file, extends));
+            return constructor != TypeId::ERROR && !self.is_uncertain(file, extends);
         }
         // A class makes its instances, or is in error.
         if static_side
@@ -2565,7 +2562,8 @@ impl<'p> Checker<'p> {
         }
         let params = self.sig_params(sig);
         let [param] = &params[..] else { return false };
-        param.rest && (self.is_any(param.ty) || self.array_element(param.ty) == Some(TypeId::ANY))
+        param.rest
+            && (self.is_any(param.ty) || self.array_element(param.ty).is_some_and(TypeId::is_any))
     }
 
     /// `findMixins`: the construct signatures of each member of an intersection, and which members are mixin constructors that
@@ -2815,6 +2813,10 @@ impl<'p> Checker<'p> {
                     self.optional_property(ty)
                 };
                 let flags = PropFlags::OPTIONAL | self.name_flag_of_copy(owner, prop, true);
+                let place = self.order_of_property_in(members.shape(), prop);
+                if place.0 == 0 {
+                    shape.declared_at.push((prop.name, place.1, place.2));
+                }
                 shape.props.push(Prop {
                     name: prop.name,
                     flags,
@@ -2882,6 +2884,11 @@ impl<'p> Checker<'p> {
             ) && self.is_generic(ty))
     }
 
+    /// Whether the symbol of `prop` has `SymbolFlagsFunction`: a function that a module or a namespace exports.
+    fn is_function_symbol_property(&self, prop: &Prop) -> bool {
+        matches!(prop.source, PropSource::Symbol(symbol) if self.files().flags(symbol).contains(SymFlags::FUNCTION))
+    }
+
     /// `getSpreadType`: `{ ...left, ...right }`
     pub fn spread(&mut self, left: TypeId, right: TypeId) -> TypeId {
         let (left, right) = (self.force(left), self.force(right));
@@ -2910,10 +2917,11 @@ impl<'p> Checker<'p> {
             if is_too_complex(self, left, right) {
                 return TypeId::ANY;
             }
+            // `mapType`: in the order of `CompareTypes`. What is made here is ordered by when it was made.
             let spread: Vec<TypeId> = self
-                .parts(left)
-                .iter()
-                .map(|&p| self.spread(p, right))
+                .parts_in_order(left)
+                .into_iter()
+                .map(|p| self.spread(p, right))
                 .collect();
             return self.union(&spread);
         }
@@ -2923,9 +2931,9 @@ impl<'p> Checker<'p> {
                 return TypeId::ANY;
             }
             let spread: Vec<TypeId> = self
-                .parts(right)
-                .iter()
-                .map(|&p| self.spread(left, p))
+                .parts_in_order(right)
+                .into_iter()
+                .map(|p| self.spread(left, p))
                 .collect();
             return self.union(&spread);
         }
@@ -3005,7 +3013,10 @@ impl<'p> Checker<'p> {
             } else {
                 PropFlags::OPTIONAL | PropFlags::METHOD
             };
-            let flags = prop.flags & kept | self.name_flag_of_copy(left, prop, anew);
+            let mut flags = prop.flags & kept | self.name_flag_of_copy(left, prop, anew);
+            if !anew && self.is_function_symbol_property(prop) {
+                flags |= PropFlags::METHOD;
+            }
             b.add(Prop {
                 name: prop.name,
                 flags,
@@ -3072,16 +3083,29 @@ impl<'p> Checker<'p> {
                 } else {
                     PropFlags::OPTIONAL | PropFlags::METHOD
                 };
-                flags = prop.flags & kept | self.name_flag_of_copy(right, prop, anew);
+                let function_flag = if !anew && self.is_function_symbol_property(prop) {
+                    PropFlags::METHOD
+                } else {
+                    PropFlags::empty()
+                };
+                flags =
+                    prop.flags & kept | self.name_flag_of_copy(right, prop, anew) | function_flag;
             }
-            // What comes later goes last.
-            b.remove(prop.name);
-            b.add_new(Prop {
+            let copy = Prop {
                 name: prop.name,
                 flags,
                 source: PropSource::Type(ty),
                 mapper: MapperId::IDENTITY,
-            });
+            };
+            match b.position(prop.name) {
+                // Its first declaration is that of the property on the left (`compareSymbols`).
+                Some(i) if prop.flags.contains(PropFlags::OPTIONAL) => b.shape.props[i] = copy,
+                // What comes later goes last.
+                _ => {
+                    b.remove(prop.name);
+                    b.add_new(copy);
+                }
+            }
         }
         // `getNamedMembers`: in the order they are declared in (`compareSymbols`), if that is known of all. What the right may or may
         // not replace is declared where the left one is.
@@ -3096,17 +3120,27 @@ impl<'p> Checker<'p> {
                     .filter(|right| self.is_spreadable_property(right));
                 match (l.resolved.prop(prop.name), of_right) {
                     (Some(left), Some(right)) if right.flags.contains(PropFlags::OPTIONAL) => {
-                        self.order_of_property(left)
+                        self.order_of_property_in(l.shape(), left)
                     }
-                    (_, Some(right)) => self.order_of_property(right),
-                    (Some(left), None) => self.order_of_property(left),
+                    (_, Some(right)) => self.order_of_property_in(r.shape(), right),
+                    (Some(left), None) => self.order_of_property_in(l.shape(), left),
                     (None, None) => (1, FileId(0), 0),
                 }
             })
             .collect();
-        if places.iter().all(|place| place.0 == 0) {
-            let mut order: Vec<usize> = (0..places.len()).collect();
+        let mut order: Vec<usize> = (0..places.len()).collect();
+        let is_sorted = places.iter().all(|place| place.0 == 0);
+        if is_sorted {
             order.sort_by_key(|&i| places[i]);
+        }
+        b.shape.declared_at = order
+            .iter()
+            .filter(|&&i| {
+                places[i].0 == 0 && matches!(b.shape.props[i].source, PropSource::Type(_))
+            })
+            .map(|&i| (b.shape.props[i].name, places[i].1, places[i].2))
+            .collect();
+        if is_sorted {
             b.shape.props = order
                 .into_iter()
                 .map(|i| b.shape.props[i].clone())
@@ -4015,6 +4049,64 @@ impl<'p> Checker<'p> {
             }
         }
         own
+    }
+
+    /// `getESSymbolLikeTypeForNode` of the declaration `call` initializes: its unique symbol if `isValidESSymbolDeclaration`,
+    /// otherwise `symbol`.
+    pub(super) fn get_es_symbol_like_type_for_node(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+    ) -> TypeId {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        match bound.expr_parent[call.idx()] {
+            Parent::VarInit(d) => {
+                let decl = &hir[d];
+                let stmt = bound.var_stmt[d.idx()];
+                let PatKind::Ident(name) = hir[decl.pat].kind else {
+                    return TypeId::SYMBOL;
+                };
+                if decl.kind != VarKind::Const
+                    || stmt.is_none()
+                    || !matches!(hir[stmt].kind, StmtKind::Var(_))
+                    || matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(parent) if parent.is_some() && matches!(hir[parent].kind, StmtKind::For { init, .. } if init == stmt))
+                {
+                    return TypeId::SYMBOL;
+                }
+                let is_annotated_unique =
+                    decl.ty.is_some() && matches!(hir[decl.ty].kind, TypeNodeKind::UniqueSymbol);
+                let id = if is_annotated_unique {
+                    decl.ty.0
+                } else {
+                    call.0 | 1 << 31
+                };
+                self.intern(TypeData::UniqueSymbol { file, id, name })
+            }
+            Parent::MemberInit(m) if hir[m].init == call => {
+                let member = &hir[m];
+                let Some(name) = member.key.name() else {
+                    return TypeId::SYMBOL;
+                };
+                if member.kind != MemberKind::Property
+                    || !member.flags.contains(Flags::READONLY)
+                    || !member.flags.contains(Flags::STATIC)
+                        && matches!(bound.member_owner[m.idx()], MemberOwner::Class(_))
+                {
+                    return TypeId::SYMBOL;
+                }
+                if member.ty.is_some() && matches!(hir[member.ty].kind, TypeNodeKind::UniqueSymbol)
+                {
+                    let (file, id) = self.unique_symbol_declaration(file, m, name);
+                    return self.intern(TypeData::UniqueSymbol { file, id, name });
+                }
+                self.intern(TypeData::UniqueSymbol {
+                    file,
+                    id: call.0 | 1 << 31,
+                    name,
+                })
+            }
+            _ => TypeId::SYMBOL,
+        }
     }
 
     /// `isSymbolOrSymbolForCall`: `Symbol()` or `Symbol.for()`, of the global value of that name.

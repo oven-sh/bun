@@ -93,8 +93,9 @@ mod tf {
         | STRING_MAPPING;
     pub(super) const INCLUDES_MISSING_TYPE: u32 = TYPE_PARAMETER;
     pub(super) const INCLUDES_EMPTY_OBJECT: u32 = CONDITIONAL;
-    /// Where TypeScript has `TypeFlagsIncludesError`.
     pub(super) const INCLUDES_UNRESOLVED: u32 = 1 << 30;
+    /// `TypeFlagsIncludesError`
+    pub(super) const INCLUDES_ERROR: u32 = 1 << 31;
 }
 
 /// Where something is declared: the libraries first, then by file, then by position. `compareNodes`
@@ -247,6 +248,10 @@ impl<'p> Checker<'p> {
         }
         members.sort_unstable();
         members.dedup();
+        // `TypeFlagsIncludesError`: `any` and `unknown` give way to the error type.
+        if members.first() != Some(&TypeId::UNRESOLVED) && members.contains(&TypeId::ERROR) {
+            return (TypeId::ERROR, true);
+        }
         match members[..] {
             [] => return (TypeId::NEVER, true),
             // What is not known, `any` and `unknown`, in this order, leave nothing of the others. Theirs are the lowest numbers.
@@ -672,7 +677,7 @@ impl<'p> Checker<'p> {
                     // At this rate more than a million comparisons in all: too complex to represent (2590), the error type.
                     if (count / (len - i)) * len > 1_000_000 {
                         self.union_too_complex = true;
-                        return TypeId::ANY;
+                        return TypeId::ERROR;
                     }
                     // TypeScript goes on. Here it is as with the many above.
                     return union;
@@ -906,6 +911,9 @@ impl<'p> Checker<'p> {
                 if ty == TypeId::UNRESOLVED {
                     includes |= tf::INCLUDES_UNRESOLVED;
                 }
+                if ty == TypeId::ERROR {
+                    includes |= tf::INCLUDES_ERROR;
+                }
             } else if self.p.files.options.strict_null_checks || flags & tf::NULLABLE == 0 {
                 let ty = if ty == TypeId::MISSING {
                     includes |= tf::INCLUDES_MISSING_TYPE;
@@ -962,7 +970,11 @@ impl<'p> Checker<'p> {
             return TypeId::NEVER;
         }
         if includes & tf::ANY != 0 {
-            return TypeId::ANY;
+            return if includes & tf::INCLUDES_ERROR != 0 {
+                TypeId::ERROR
+            } else {
+                TypeId::ANY
+            };
         }
         // Without strictNullChecks null and undefined were not taken into the set, and are all that is left of it.
         if !strict && includes & tf::NULLABLE != 0 {
@@ -1098,7 +1110,7 @@ impl<'p> Checker<'p> {
         });
         if size >= 100_000 {
             self.union_too_complex = true;
-            return TypeId::ANY;
+            return TypeId::ERROR;
         }
         // `getCrossProductIntersections`
         let mut intersections: Vec<TypeId> = Vec::with_capacity(size);
@@ -1310,7 +1322,15 @@ impl<'p> Checker<'p> {
             return TypeId::UNKNOWN_EMPTY_OBJECT;
         }
         let filtered = self.filter(ty, |c, m| {
-            !(m.is_undefined() || m.is_null() || (m == TypeId::VOID && c.is_union(ty)))
+            if m.is_undefined() || m.is_null() || (m == TypeId::VOID && c.is_union(ty)) {
+                return false;
+            }
+            // `getTypeFactsWorker`: a type variable has the facts of its base constraint.
+            if !c.is_deferred(m) {
+                return true;
+            }
+            let constraint = c.base_constraint(m);
+            !c.every_type(constraint, |c, part| c.is_nullish(part))
         });
         self.map_type(filtered, |c, m| {
             if c.is_deferred(m) && c.may_be_nullish_when_instantiated(m) {
@@ -1469,6 +1489,9 @@ impl<'p> Checker<'p> {
             TypeData::Fns { ref decls, .. } => decls
                 .first()
                 .and_then(|&(file, func)| at(file, self.hir(file)[func].pos)),
+            TypeData::Synth(ref shape) => shape
+                .symbol_declared_at
+                .and_then(|(file, pos)| at(file, pos)),
             TypeData::TypeParam(file, tp, _) => at(file, self.hir(file)[tp].pos),
             TypeData::Cond { file, node, .. } => at(file, self.hir(file)[node].pos),
             // `id` goes up with the position among those declared the same way. `Symbol.iterator` and the like are of no file.
@@ -1477,6 +1500,11 @@ impl<'p> Checker<'p> {
             }
             _ => None,
         }
+    }
+
+    /// `t.symbol.Declarations[0]` of an object type: the file and the position.
+    pub(super) fn symbol_declaration_of_object_type(&self, ty: TypeId) -> Option<(FileId, u32)> {
+        self.sort_place(ty).map(|place| (place.1, place.2))
     }
 
     /// `compareTypeLists`

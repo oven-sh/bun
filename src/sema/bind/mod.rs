@@ -596,6 +596,8 @@ pub struct Bound {
     /// `UNREACHABLE` for everything else.
     pub expr_flow: Vec<FlowId>,
     pub stmt_parent: Vec<Parent>,
+    /// The scope a statement is written in.
+    pub stmt_scope: Vec<ScopeId>,
     /// The scope a type is written in.
     pub type_scope: Vec<ScopeId>,
     /// `isResolvedByTypeAlias`: between the type node and a type alias there is only what resolves its parts at once.

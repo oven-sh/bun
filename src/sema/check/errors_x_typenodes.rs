@@ -965,7 +965,7 @@ impl Checker<'_> {
             // `getUnionTypeWorker` returns the error type for a union that `removeSubtypes` refuses, so the literal is `any[]`.
             // This call also caches the types of the elements.
             let ty = self.type_of_expr(file, e);
-            if self.array_element(ty) != Some(TypeId::ANY) {
+            if !self.array_element(ty).is_some_and(TypeId::is_any) {
                 continue;
             }
             // The cached type does not record the refusal. Build the union again to observe it.

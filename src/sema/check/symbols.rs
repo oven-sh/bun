@@ -131,6 +131,13 @@ impl<'p> Checker<'p> {
                     let scope = self.bound(file).fns[f.idx()].scope;
                     let parent = self.bound(file).scopes[scope.idx()].parent;
                     mapper = self.identity_mapper(file, parent);
+                    // `checkFunctionExpressionOrObjectLiteralMethod`: the type of a function expression is the type of its symbol.
+                    if matches!(self.bound(file).fns[f.idx()].owner, FnOwner::Expr(_)) {
+                        return self.intern(TypeData::Fns {
+                            decls: Box::new([(file, f)]),
+                            mapper,
+                        });
+                    }
                     break;
                 }
             }
@@ -708,9 +715,9 @@ impl<'p> Checker<'p> {
             Some((_, Some(property))) => property,
             Some((value, None)) if self.is_any(value) => value,
             // `errorNoModuleMemberSymbol` reports the missing member, and the import has the error type.
-            Some((value, None)) if self.is_known(value) => TypeId::ANY,
+            Some((value, None)) if self.is_known(value) => TypeId::ERROR,
             Some(_) => TypeId::UNRESOLVED,
-            None if self.is_alias_in_error(sym) => TypeId::ANY,
+            None if self.is_alias_in_error(sym) => TypeId::ERROR,
             None => TypeId::UNRESOLVED,
         }
     }
@@ -1138,6 +1145,7 @@ impl<'p> Checker<'p> {
             let value = self.regular_object(value);
             shape.index.push(IndexInfo { value, ..*info });
         }
+        shape.symbol_declared_at = self.symbol_declaration_of_object_type(ty);
         let widened = self.synth(shape);
         // What is made up is made after the last there is of the name.
         let mut from = vec![ty];
@@ -1941,10 +1949,23 @@ impl<'p> Checker<'p> {
             } else {
                 self.type_of_prop(prop, members.mapper)
             };
+            let place = self.order_of_property_in(members.shape(), prop);
+            if place.0 == 0 {
+                shape.declared_at.push((prop.name, place.1, place.2));
+            }
             shape.props.push(Prop {
                 name: prop.name,
                 // A copy: what could not be written to in the original can be in it.
-                flags: prop.flags & (PropFlags::OPTIONAL | PropFlags::STRING_NAME),
+                flags: prop.flags
+                    & if prop
+                        .flags
+                        .intersects(PropFlags::WRITE_ONLY | PropFlags::READONLY)
+                    {
+                        PropFlags::OPTIONAL | PropFlags::STRING_NAME
+                    } else {
+                        // `getSpreadSymbol` returns the symbol itself.
+                        PropFlags::OPTIONAL | PropFlags::STRING_NAME | PropFlags::METHOD
+                    },
                 source: PropSource::Type(ty),
                 mapper: MapperId::IDENTITY,
             });
@@ -1957,7 +1978,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `checkNonNullType`, less what it reports: `ty` without `null` and `undefined`. `unknown`, or nothing left, is an error: anything.
-    fn non_null_type(&mut self, ty: TypeId) -> TypeId {
+    pub(super) fn non_null_type(&mut self, ty: TypeId) -> TypeId {
         // Without strictNullChecks `GetNonNullableType` returns its argument, so only `null` and `undefined` themselves are errors.
         if !self.p.files.options.strict_null_checks {
             return if ty.is_undefined() || ty.is_null() {
@@ -2242,7 +2263,18 @@ impl<'p> Checker<'p> {
             return implied;
         }
         if param.flags.contains(Flags::REST) {
-            return self.array_of(TypeId::ANY);
+            let ty = self.array_of(TypeId::ANY);
+            // `assignNonContextualParameterTypes`, `assignParameterType`: only a context sensitive function adds the `?`.
+            let function = &hir[func];
+            return if param.flags.contains(Flags::OPTIONAL)
+                && function.type_params.is_empty()
+                && matches!(function.kind, FnKind::Expr | FnKind::Arrow | FnKind::Method)
+                && matches!(self.bound(file).fns[func.idx()].owner, FnOwner::Expr(_))
+            {
+                self.optional(ty)
+            } else {
+                ty
+            };
         }
         TypeId::ANY
     }

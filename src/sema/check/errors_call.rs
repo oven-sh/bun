@@ -145,8 +145,9 @@ impl Checker<'_> {
         if !self.is_known(apparent) {
             return;
         }
-        // `resolveErrorCall`: of what is in error something has been said already. It is `any`.
-        if self.is_any(called) && self.is_in_error(file, data.callee)
+        // `resolveErrorCall`: `isErrorType(apparentType)`
+        if called == TypeId::ERROR
+            || apparent == TypeId::ERROR
             || self.is_any(apparent) && self.is_constrained_by_error_type(called)
         {
             return;
@@ -168,7 +169,7 @@ impl Checker<'_> {
                 call_sigs.len(),
                 construct_sigs.len(),
             ) {
-                if has_type_args && !self.is_callee_in_error(file, data.callee) {
+                if has_type_args && called != TypeId::ERROR {
                     let node_start = self.start_inside_parentheses(file, e);
                     out.push(Diagnostic {
                         start: node_start,
@@ -238,7 +239,7 @@ impl Checker<'_> {
             return;
         }
         if self.is_any(apparent) {
-            if has_type_args && !self.is_callee_in_error(file, data.callee) {
+            if has_type_args && called != TypeId::ERROR {
                 let node_start = self.start_inside_parentheses(file, e);
                 out.push(Diagnostic {
                     start: node_start,
@@ -920,7 +921,7 @@ impl Checker<'_> {
                             .base_constructor_sigs(sym)
                             .first()
                             .map(|&first| self.sig_return(first));
-                        return instance != Some(TypeId::ANY);
+                        return !instance.is_some_and(TypeId::is_any);
                     }
                     // The base type is the base constructor type, which is the type of the `extends` expression.
                     extends

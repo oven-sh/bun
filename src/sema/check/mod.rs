@@ -8,6 +8,7 @@ mod call;
 mod context;
 mod decl;
 mod decorators;
+mod enclosing_declaration;
 pub mod errors;
 mod errors_access;
 mod errors_assign;
@@ -590,6 +591,8 @@ impl Program {
             held_for_now: FxHashMap::default(),
             trials: FxHashMap::default(),
             named_plain_aliases_of: None,
+            enclosing_declaration: None,
+            symbol_chain_cache: Default::default(),
             explains: false,
             only_syntax: false,
             notes: Default::default(),
@@ -859,6 +862,9 @@ pub struct Checker<'p> {
     trials: FxHashMap<(FileId, ExprId), Trial>,
     /// The file at hand whose type aliases `plain_alias_of` has been filled in for.
     named_plain_aliases_of: Option<FileId>,
+    /// `NodeBuilderContext.enclosingDeclaration` for the next printer, which takes it: the scope names are looked up from.
+    enclosing_declaration: Option<(FileId, crate::bind::ScopeId)>,
+    symbol_chain_cache: errors_declaration_emit::SymbolChainCache,
     /// What is noted of errors is kept: somebody is going to read it.
     explains: bool,
     /// `GetSyntacticDiagnostics`: only what the parser and the scanner say is reported.

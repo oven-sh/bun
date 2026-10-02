@@ -1393,7 +1393,12 @@ impl<'p> Checker<'p> {
         }
         // `instantiate` recognizes the error type among the new type arguments and answers with it (`checkType == c.errorType`).
         if self.p.types.mapping(own).iter().any(|before| {
-            self.is_tuple(before.1) && self.p.types.map(root_mapper, before.0) == Some(TypeId::ANY)
+            self.is_tuple(before.1)
+                && self
+                    .p
+                    .types
+                    .map(root_mapper, before.0)
+                    .is_some_and(TypeId::is_any)
         }) {
             return Err(declared);
         }
@@ -2208,7 +2213,7 @@ impl<'p> Checker<'p> {
     pub(super) fn type_of_mapped_prop(&mut self, of: TypeId, prop: &Prop, strips: bool) -> TypeId {
         let known = self.p.mapped_prop_types.get(&(of, prop.name));
         // The error type stays the error type under every mapper.
-        if known == Some(TypeId::ANY) {
+        if known.is_some_and(TypeId::is_any) {
             return TypeId::ANY;
         }
         let Some((file, node, mapper)) = self.mapped_origin(of) else {

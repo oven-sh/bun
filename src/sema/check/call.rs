@@ -720,7 +720,7 @@ impl<'p> Checker<'p> {
         {
             return ResolvedCall {
                 sig: None,
-                ret: TypeId::ANY,
+                ret: TypeId::ERROR,
             };
         }
         // A method of `A[] | B[]` whose signatures do not come together is called as that of `(A | B)[]`.
@@ -775,15 +775,18 @@ impl<'p> Checker<'p> {
             sigs = self.signatures(callee, false);
         }
         if sigs.is_empty() {
-            // Nothing to call or construct: an error, or an untyped call. Either way anything comes of it.
-            return ResolvedCall {
-                sig: None,
-                ret: if self.is_known(callee) {
-                    TypeId::ANY
-                } else {
-                    TypeId::UNRESOLVED
-                },
+            // `resolveUntypedCall` gives `anySignature`, `resolveErrorCall` gives `unknownSignature`, which returns the error type.
+            let ret = if !self.is_known(callee) {
+                TypeId::UNRESOLVED
+            } else if !is_new && {
+                let apparent = self.apparent_type(callee);
+                self.is_untyped_function_call(callee, apparent, 0, 0)
+            } {
+                TypeId::ANY
+            } else {
+                TypeId::ERROR
             };
+            return ResolvedCall { sig: None, ret };
         }
         let type_args = self.types_from_nodes(file, data.type_args);
         let args = self.effective_args(file, data.args);

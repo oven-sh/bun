@@ -3110,6 +3110,9 @@ impl<'p> Checker<'p> {
         // `isTypePresencePossible`. What every object and every function has is a property like any other.
         let may_be = |c: &mut Self, m: TypeId, present: bool| {
             let apparent = c.apparent_type(m);
+            if c.is_union(apparent) {
+                return c.is_type_presence_possible_in_union(apparent, name, present);
+            }
             let Some(members) = c.members(apparent) else {
                 return !present;
             };
@@ -3128,6 +3131,57 @@ impl<'p> Checker<'p> {
             return self.intersection(&[ty, record]);
         }
         ty
+    }
+
+    /// `isTypePresencePossible`, of a type variable whose apparent type is the union `apparent`: `getPropertyOfType` gives what
+    /// `createUnionOrIntersectionProperty` makes, and `getApplicableIndexInfoForName` goes by `getUnionIndexInfos`.
+    fn is_type_presence_possible_in_union(
+        &mut self,
+        apparent: TypeId,
+        name: Atom,
+        assume_true: bool,
+    ) -> bool {
+        let is_late_bound = self.files().atoms.is_symbol_name(name);
+        let parts = self.parts(apparent);
+        let (mut is_declared, mut is_optional) = (false, false);
+        // `CheckFlagsWritePartial`, `CheckFlagsReadPartial`
+        let (mut is_write_partial, mut is_read_partial) = (false, false);
+        for &part in parts {
+            let part = self.apparent_type(part);
+            if part == TypeId::NEVER {
+                continue;
+            }
+            let Some(members) = self.members(part) else {
+                is_read_partial = true;
+                continue;
+            };
+            if let Some((prop, _)) = self.property_in(&members, name) {
+                is_declared = true;
+                is_optional |= prop.flags.contains(PropFlags::OPTIONAL);
+            } else if !is_late_bound
+                && self
+                    .applicable_index_type_for_name(&members, name)
+                    .is_some()
+                || self.is_closed_object_literal_type(part)
+            {
+                is_write_partial = true;
+            } else {
+                is_read_partial = true;
+            }
+        }
+        if is_declared && !is_read_partial && !self.is_hidden_in_union(parts, name) {
+            return is_optional || is_write_partial || assume_true;
+        }
+        let key = if is_late_bound {
+            TypeId::SYMBOL
+        } else {
+            self.string_literal(name, false)
+        };
+        let infos = self.index_signatures_of(apparent);
+        infos
+            .iter()
+            .any(|&(index_key, _)| self.is_applicable_index_type(key, index_key))
+            || !assume_true
     }
 
     /// `narrowTypeByCallExpression`
@@ -3232,7 +3286,7 @@ impl<'p> Checker<'p> {
         // `getNarrowedTypeWorker`: `any` is not the error type, so it is neither `t == candidate` nor a subset of it.
         if !sense
             && ty.is_any()
-            && predicate.ty == Some(TypeId::ANY)
+            && predicate.ty.is_some_and(TypeId::is_any)
             && self.is_predicate_type_in_error(sig)
         {
             return Some(ty);
@@ -4182,6 +4236,10 @@ impl<'p> Checker<'p> {
             && self.type_with_facts(ty, facts::NE_UNDEFINED_OR_NULL) == TypeId::NEVER
         {
             return declared;
+        }
+        // `checkIdentifier`, `isAutomaticTypeInNonNull`
+        if auto != Auto::No && self.is_operand_of_non_null(file, e) {
+            return self.non_nullable(ty);
         }
         ty
     }
@@ -5648,7 +5706,34 @@ impl<'p> Checker<'p> {
             PatParent::Var(d) if hir[d].init.is_some() => {
                 return Some(self.type_of_declaration_initializer(file, hir[d].init));
             }
-            PatParent::Var(_) | PatParent::Param(_) | PatParent::None => return None,
+            // `getInitialTypeOfVariableDeclaration`
+            PatParent::Var(d) => {
+                let head = bound.var_stmt[d.idx()];
+                if head.is_none() {
+                    return None;
+                }
+                let Parent::Stmt(owner) = bound.stmt_parent[head.idx()] else {
+                    return None;
+                };
+                if owner.is_none() {
+                    return None;
+                }
+                return match hir[owner].kind {
+                    StmtKind::ForIn { left, .. } if left == head => Some(TypeId::STRING),
+                    StmtKind::ForOf {
+                        left,
+                        expr,
+                        is_await,
+                        ..
+                    } if left == head => {
+                        let iterable = self.type_of_expr(file, expr);
+                        let iterable = self.non_nullable_type_if_needed(iterable);
+                        Some(self.checked_iterated_type(iterable, is_await))
+                    }
+                    _ => None,
+                };
+            }
+            PatParent::Param(_) | PatParent::None => return None,
             PatParent::Prop(parent, prop) => {
                 let parent_ty = self.initial_type_of_pat(file, parent)?;
                 if hir[prop].is_rest {
@@ -6367,7 +6452,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── the rest ─────────────────────────────
 
     /// `isInCompoundLikeAssignment`: `x = x + 1` is `x += 1` written out, and a `0` is not held to stay one.
-    fn is_in_compound_like_assignment(&self, file: FileId, target: ExprId) -> bool {
+    pub(super) fn is_in_compound_like_assignment(&self, file: FileId, target: ExprId) -> bool {
         let hir = self.hir(file);
         let crate::bind::Parent::Expr(parent) = self.bound(file).expr_parent[target.idx()] else {
             return false;

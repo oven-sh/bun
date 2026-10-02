@@ -211,7 +211,7 @@ impl Checker<'_> {
     }
 
     /// `ModuleInstanceStateConstEnumOnly`, of a namespace that is instantiated: nothing in it is more of a value than a `const enum`.
-    fn is_const_enum_only_module(&self, file: FileId, m: ModuleId) -> bool {
+    pub(super) fn is_const_enum_only_module(&self, file: FileId, m: ModuleId) -> bool {
         let hir = self.hir(file);
         hir[m].has_body
             && hir.ids(hir[m].body).all(|s| match hir[s].kind {

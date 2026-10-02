@@ -69,6 +69,19 @@ impl Checker<'_> {
         )
     }
 
+    /// `type_to_string_for_baseline` with an `enclosingDeclaration`: the scope of `node.Parent`.
+    pub fn type_to_string_for_baseline_at(
+        &mut self,
+        ty: TypeId,
+        file: FileId,
+        scope: ScopeId,
+    ) -> String {
+        self.enclosing_declaration = Some((file, scope));
+        let text = self.type_to_string_for_baseline(ty);
+        self.enclosing_declaration = None;
+        text
+    }
+
     /// `getTypeNameForErrorDisplay`
     pub fn type_to_string_fully_qualified(&mut self, ty: TypeId) -> String {
         type_to_string_with(self, ty, USE_FULLY_QUALIFIED_TYPE)
@@ -279,6 +292,7 @@ fn with_printer<'p, T>(
         checker.union_too_complex,
     );
     checker.eager.push(checker.stack.len());
+    let enclosing_declaration = checker.enclosing_declaration.take();
     let result = {
         let mut printer = Printer {
             c: &mut *checker,
@@ -292,6 +306,7 @@ fn with_printer<'p, T>(
             mapper: MapperId::IDENTITY,
             depth: 0,
             comparison_depth: 0,
+            enclosing_declaration,
         };
         print(&mut printer)
     };
@@ -478,6 +493,8 @@ struct Printer<'c, 'p> {
     mapper: MapperId,
     depth: u32,
     comparison_depth: u32,
+    /// `enclosingDeclaration`: the scope names are looked up from. `None` in error messages.
+    enclosing_declaration: Option<(FileId, ScopeId)>,
 }
 
 /// `escapeStringWorker`
@@ -1145,6 +1162,11 @@ impl<'p> Printer<'_, 'p> {
             Parent::PatPropDefault(p) => Some(written(hir[p].value)),
             Parent::PatElemDefault(p) => Some(written(hir[p].pat)),
             Parent::Expr(outer) if outer.is_some() => {
+                // `{ a = e }` is a `ShorthandPropertyAssignment`.
+                if matches!(bound.expr_parent[outer.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
+                {
+                    return None;
+                }
                 let left = match hir[outer].kind {
                     ExprKind::Assign { target, value, .. } if value == e => target,
                     ExprKind::Binary { left, right, .. } if right == e => left,
@@ -1295,9 +1317,19 @@ impl<'p> Printer<'_, 'p> {
         type_arguments: Vec<Node>,
     ) -> Node {
         let yields_module = self.flags & USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE == 0;
-        let chain = self.lookup_symbol_chain(symbol, yields_module);
+        let is_type_parameter = self
+            .c
+            .files()
+            .flags(symbol)
+            .contains(SymFlags::TYPE_PARAMETER);
+        let (starts_with_global_this, chain) = match self.enclosing_declaration {
+            Some((file, scope)) if !is_type_parameter => self
+                .c
+                .lookup_symbol_chain_at(symbol, is_type_of, file, scope),
+            _ => (false, self.lookup_symbol_chain(symbol, yields_module)),
+        };
         let mut qualifier = String::new();
-        for &part in &chain[1..] {
+        for &part in &chain[usize::from(!starts_with_global_this)..] {
             let name = self.export_name(part);
             self.approximate_length += name.len() + 1;
             qualifier.push('.');
@@ -1305,15 +1337,19 @@ impl<'p> Printer<'_, 'p> {
         }
         let type_arguments = type_arguments_text(type_arguments);
         let query = if is_type_of { "typeof " } else { "" };
-        if self.is_external_module(chain[0]) {
-            let specifier = self.specifier_of_module(chain[0]);
+        if !starts_with_global_this && self.is_external_module(chain[0]) {
+            let (specifier, attributes) = self.import_type_specifier(chain[0]);
             self.approximate_length += specifier.len() + 10;
             return Node::simple(format!(
-                "{query}import({}){qualifier}{type_arguments}",
+                "{query}import({}{attributes}){qualifier}{type_arguments}",
                 quoted(&specifier, '"', true)
             ));
         }
-        let name = self.name_of_symbol_as_written(chain[0], true);
+        let name = if starts_with_global_this {
+            "globalThis".to_owned()
+        } else {
+            self.name_of_symbol_as_written(chain[0], true)
+        };
         self.approximate_length += 2 * (name.len() + 1);
         if is_type_of {
             return Node::new(format!("typeof {name}{qualifier}"), TYPE_OPERATOR);
@@ -1321,8 +1357,24 @@ impl<'p> Printer<'_, 'p> {
         Node {
             text: format!("{name}{qualifier}{type_arguments}"),
             precedence: NON_ARRAY,
-            reference: (chain.len() == 1).then_some(name),
+            reference: qualifier.is_empty().then_some(name),
         }
+    }
+
+    /// `getSpecifierForModuleSymbol`, and the import attributes `symbolToTypeNode` writes after it.
+    fn import_type_specifier(&mut self, module: Sym) -> (String, String) {
+        if let Some((file, scope)) = self.enclosing_declaration {
+            let (specifier, mode) = self.c.import_type_specifier_at(module, file, scope);
+            // Empty: `paths` or `rootDirs` have a say, which is not worked out.
+            if !specifier.is_empty() {
+                let attributes = match mode {
+                    Some(mode) => format!(", {{ with: {{ \"resolution-mode\": \"{mode}\" }} }}"),
+                    None => String::new(),
+                };
+                return (specifier, attributes);
+            }
+        }
+        (self.specifier_of_module(module), String::new())
     }
 
     // ───────────────────────────── aliases ─────────────────────────────
@@ -2649,7 +2701,17 @@ impl<'p> Printer<'_, 'p> {
         let (declared, _) = self.c.mapped_modifiers_source(file, node)?;
         let modifiers = self.c.instantiate(declared, mapper);
         let modifiers = self.c.apparent_type(modifiers);
-        self.c.prop_of(modifiers, name).map(|found| found.0)
+        self.property_with_declarations(modifiers, name)
+    }
+
+    /// The property `name` of `ty`, for its declarations. `resolveReverseMappedTypeMembers`: a property of a reverse mapped type has those
+    /// of the property of the source it is inferred from.
+    fn property_with_declarations(&mut self, ty: TypeId, name: Atom) -> Option<Prop> {
+        let mut of = ty;
+        while let TypeData::ReverseMapped { source, .. } = *self.c.data(of) {
+            of = source;
+        }
+        self.c.prop_of(of, name).map(|found| found.0)
     }
 
     fn place_of_symbol(&self, symbol: Sym) -> Place {
@@ -2695,7 +2757,14 @@ impl<'p> Printer<'_, 'p> {
                 at(&*self.c, *file, self.c.hir(*file)[*parameter].pos)
             }
             PropSource::Literal(file, written) => {
-                at(&*self.c, *file, self.c.hir(*file)[*written].pos)
+                let hir = self.c.hir(*file);
+                // The nodes of a JSON file have no positions. Its properties are numbered in source order.
+                let pos = if hir.kind == FileKind::Json {
+                    written.0
+                } else {
+                    hir[*written].pos
+                };
+                at(&*self.c, *file, pos)
             }
             PropSource::Symbol(symbol) => self.place_of_symbol(*symbol),
             PropSource::Assigned(file, list) => match list.first() {
@@ -2810,7 +2879,8 @@ impl<'p> Printer<'_, 'p> {
                     let is_string = match hir[declaration].kind {
                         ExprKind::Assign { target, .. } => match hir[target].kind {
                             ExprKind::Index { index, .. } => {
-                                matches!(hir[index].kind, ExprKind::String(_))
+                                let key = self.c.type_of_expr(*file, index);
+                                self.c.is_string_like(key)
                             }
                             _ => false,
                         },
@@ -3113,7 +3183,18 @@ impl<'p> Printer<'_, 'p> {
             let ty = self.c.type_of_prop_for_inference(prop, mapper);
             self.c.remove_missing_type(ty, is_optional)
         };
-        let name = self.property_name(prop);
+        let declared = if reverse_mapped.is_some() {
+            self.property_with_declarations(owner, prop.name)
+        } else {
+            None
+        };
+        let name = match declared {
+            Some(mut declared) => {
+                declared.flags.remove(PropFlags::METHOD);
+                self.property_name(&declared)
+            }
+            None => self.property_name(prop),
+        };
         self.approximate_length += self.c.written_name(prop.name).len() + 1;
         if prop.flags.contains(PropFlags::ACCESSOR) && self.c.is_known(property_type) {
             let write_type = self.c.write_type_of_prop(prop, mapper);
@@ -3274,17 +3355,26 @@ impl<'p> Printer<'_, 'p> {
         };
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let parameters = hir[func].params;
-        // `getImmediatelyInvokedFunctionExpression`: how many arguments a function called where it is written is called with.
-        let given = match bound.fns[func.idx()].owner {
+        // `getImmediatelyInvokedFunctionExpression`: the arguments a function called where it is written is called with.
+        let arguments = match bound.fns[func.idx()].owner {
             FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
                 Parent::Expr(parent) => match hir[parent].kind {
-                    ExprKind::Call(call) if hir[call].callee == e => Some(hir[call].args.len()),
+                    ExprKind::Call(call) if hir[call].callee == e => Some(hir[call].args),
                     _ => None,
                 },
                 _ => None,
             },
             _ => None,
         };
+        let given = arguments.map(|arguments| arguments.len());
+        // `getEffectiveCallArguments`: a tuple that is spread counts for its elements.
+        let effective = arguments.map(|arguments| {
+            let mut count = 0usize;
+            for argument in hir.ids(arguments) {
+                self.c.each_effective_arg(file, argument, |_| count += 1);
+            }
+            count
+        });
         let is_left_out = |i: usize, parameter: &Param| {
             given.is_some_and(|given| i >= given)
                 && parameter.ty.is_none()
@@ -3331,7 +3421,9 @@ impl<'p> Printer<'_, 'p> {
                 || if parameter.default.is_some() {
                     i >= minimum
                 } else {
-                    is_left_out(i, parameter)
+                    effective.is_some_and(|effective| i >= effective)
+                        && parameter.ty.is_none()
+                        && !parameter.flags.contains(Flags::REST)
                 };
             let mut ty = types[i];
             // `requiresAddingImplicitUndefined`: one with an initializer that cannot be left out can be given `undefined`.
@@ -3729,7 +3821,11 @@ impl<'p> Printer<'_, 'p> {
         let expanded = self.expanded_parameters(&declared);
         self.approximate_length += 3;
         let mut type_parameters = Vec::new();
-        for parameter in self.c.sig_type_params(signature) {
+        let mut own_type_parameters = self.c.sig_type_params(signature).into_vec();
+        if own_type_parameters.is_empty() {
+            own_type_parameters = self.type_parameters_taken_from_context(signature);
+        }
+        for parameter in own_type_parameters {
             type_parameters.push(self.type_parameter_declaration(parameter));
         }
         let mut parameters = Vec::with_capacity(expanded.len() + 1);
@@ -3775,6 +3871,16 @@ impl<'p> Printer<'_, 'p> {
                 };
                 format!("{modifier}new {type_parameters}({parameters}) => {returned}")
             }
+        }
+    }
+
+    /// `assignContextualParameterTypes`: `sig.typeParameters = context.typeParameters`
+    fn type_parameters_taken_from_context(&mut self, signature: SigId) -> Vec<TypeId> {
+        match *self.c.p.types.sig(signature) {
+            SigData::WithReturn { sig: inner, .. } => {
+                self.type_parameters_taken_from_context(inner)
+            }
+            _ => self.c.adopted_type_params(signature),
         }
     }
 

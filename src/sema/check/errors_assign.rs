@@ -1294,6 +1294,47 @@ impl Checker<'_> {
         }
     }
 
+    /// `symbol.ValueDeclaration` of the symbol the name `pat` declares. `declareSymbolEx` merges a `var` with the `var`s and the
+    /// parameter of that name. Any other redeclaration gets a symbol of its own.
+    pub(super) fn value_declaration_of_variable_name(
+        &self,
+        file: FileId,
+        pat: PatId,
+    ) -> (FileId, PatId) {
+        use crate::bind::Decl;
+        let own = (file, pat);
+        let id = self.bound(file).pat_symbol[pat.idx()];
+        let Some(written) = self.var_decl_of_pat(file, pat) else {
+            return own;
+        };
+        if id.is_none() || self.hir(file)[written].kind != VarKind::Var {
+            return own;
+        }
+        let sym = self.files().sym(file, id);
+        let is_value_module = self.files().flags(sym).contains(SymFlags::VALUE_MODULE);
+        let is_exported = self.is_exported_var_decl(file, written);
+        let mut first = None;
+        for (of, decl) in self.files().decls(sym) {
+            match decl {
+                Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_) => {}
+                Decl::Module(_) if !is_value_module => {}
+                Decl::Var(name) | Decl::Param(name) => {
+                    let other = self.var_decl_of_pat(of, name);
+                    if other.is_some_and(|d| self.hir(of)[d].kind != VarKind::Var) {
+                        return own;
+                    }
+                    if first.is_none()
+                        && other.is_some_and(|d| self.is_exported_var_decl(of, d)) == is_exported
+                    {
+                        first = Some((of, name));
+                    }
+                }
+                _ => return own,
+            }
+        }
+        first.unwrap_or(own)
+    }
+
     /// The declaration `pat` is the name of, or a part of the name of. `None` for a parameter.
     fn var_decl_of_pat(&self, file: FileId, mut pat: PatId) -> Option<VarDeclId> {
         use crate::bind::PatParent;

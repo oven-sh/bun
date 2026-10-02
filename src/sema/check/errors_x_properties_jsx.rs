@@ -1034,7 +1034,7 @@ impl Checker<'_> {
             return hir[j].tag.is_some() && self.jsx_type(file, known::Element).is_none();
         }
         // `getResolvedSymbol`: the identifier the parser creates for a missing expression resolves to `unknownSymbol`.
-        matches!(hir[e].kind, ExprKind::Missing) || self.is_callee_in_error(file, e)
+        self.type_of_expr(file, e) == TypeId::ERROR
     }
 
     /// `checkJsxFragment`: 17016 17017, whoever says what makes elements has to say what makes fragments.

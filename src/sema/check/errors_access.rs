@@ -1213,7 +1213,7 @@ impl Checker<'_> {
     }
 
     /// `isApplicableIndexType`: whether a signature for `target` covers the key `source`.
-    fn is_applicable_index_type(&mut self, source: TypeId, target: TypeId) -> bool {
+    pub(super) fn is_applicable_index_type(&mut self, source: TypeId, target: TypeId) -> bool {
         self.is_assignable(source, target)
             || target == TypeId::STRING && self.is_assignable(source, TypeId::NUMBER)
             || target == TypeId::NUMBER
@@ -1556,6 +1556,18 @@ impl Checker<'_> {
             _ => None,
         };
         declared.map_or((1, FileId(0), 0), |(file, pos)| (0, file, pos))
+    }
+
+    /// `order_of_property` of `prop`, which is a property of `shape`.
+    pub(super) fn order_of_property_in(&self, shape: &Shape, prop: &Prop) -> (u8, FileId, u32) {
+        match shape
+            .declared_at
+            .iter()
+            .find(|declared| declared.0 == prop.name)
+        {
+            Some(&(_, file, pos)) if matches!(prop.source, PropSource::Type(_)) => (0, file, pos),
+            _ => self.order_of_property(prop),
+        }
     }
 
     /// The first declaration of a method of which only the signatures are kept, because its overloads are declared with type

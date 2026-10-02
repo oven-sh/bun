@@ -91,6 +91,7 @@ impl<'f> Binder<'f> {
         b.expr_parent = vec![Parent::None; f.exprs.len()];
         b.expr_flow = vec![UNREACHABLE; f.exprs.len()];
         b.stmt_parent = vec![Parent::None; f.stmts.len()];
+        b.stmt_scope = vec![ScopeId::NONE; f.stmts.len()];
         b.stmt_flow = vec![UNREACHABLE; f.stmts.len()];
         b.case_fallthrough = vec![FlowId::NONE; f.cases.len()];
         b.type_scope = vec![ScopeId::NONE; f.types.len()];
@@ -1686,6 +1687,7 @@ impl<'f> Binder<'f> {
 
     fn stmt(&mut self, id: StmtId, parent: Parent, all_exported: bool) {
         self.b.stmt_parent[id.idx()] = parent;
+        self.b.stmt_scope[id.idx()] = self.scope;
         self.b.stmt_flow[id.idx()] = self.flow;
         let around_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
         let me = Parent::Stmt(id);
@@ -1947,6 +1949,7 @@ impl<'f> Binder<'f> {
                 self.enter_loop(pre);
                 self.add_edge(post, self.flow);
                 self.b.stmt_parent[left.idx()] = me;
+                self.b.stmt_scope[left.idx()] = self.scope;
                 match self.f[left].kind {
                     StmtKind::Var(decls) => {
                         for d in decls.iter() {

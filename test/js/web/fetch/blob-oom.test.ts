@@ -201,6 +201,43 @@ describe.concurrent.skipIf(!fitsOneChild)("byte sources at the 2 GiB string limi
     expect(result).toEqual(childPrinted([stringTooLong, jsonTooLong]));
   }, 90_000);
 
+  // A typed-array body is stored as an InternalBlob (bytes copied into a Vec),
+  // which converts to a string through Internal::to_string_owned rather than
+  // the Blob store path above, so it exercises a different guard call site.
+  test("Response(typedArray).text() and .json() at 2^31 bytes throw ERR_STRING_TOO_LONG instead of aborting", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const results = [];
+          const report = e => ({ name: e.name, code: e.code, message: e.message });
+          const bytes = new Uint8Array(2 ** 31);
+          await new Response(bytes).text().then(() => results.push("TEXT_UNEXPECTED_SUCCESS"), e => results.push(report(e)));
+          await new Response(bytes).json().then(() => results.push("JSON_UNEXPECTED_SUCCESS"), e => results.push(report(e)));
+          console.log(JSON.stringify(results));
+          `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
+      {
+        name: "Error",
+        code: "ERR_STRING_TOO_LONG",
+        message: "Cannot create a string longer than 2147483647 characters",
+      },
+      {
+        name: "Error",
+        code: "ERR_STRING_TOO_LONG",
+        message: "Cannot parse a JSON string longer than 2147483647 characters",
+      },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("Bun.file().text() at 2^31 bytes throws ERR_STRING_TOO_LONG instead of aborting", async () => {
     using dir = tempDir("blob-2gib", {});
     const file = path.join(String(dir), "big.txt");

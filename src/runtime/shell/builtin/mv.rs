@@ -6,7 +6,9 @@ use bun_ptr::BackRef;
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
-use crate::shell::interpreter::{Interpreter, NodeId, ShellTask, closefd, shell_openat};
+use crate::shell::interpreter::{
+    Interpreter, NodeId, ShellTask, closefd, reject_empty_path, shell_openat,
+};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
@@ -484,6 +486,8 @@ impl ShellMvBatchedTask {
         dst_dir: bun_sys::Fd,
         dst: &ZStr,
     ) -> Result<(), bun_sys::Error> {
+        reject_empty_path(src.as_bytes(), bun_sys::Tag::rename)?;
+        reject_empty_path(dst.as_bytes(), bun_sys::Tag::rename)?;
         match bun_sys::renameat(src_dir, src, dst_dir, dst) {
             Err(e) if e.get_errno() == bun_sys::E::EXDEV => {
                 Self::move_across_devices(src_dir, src, dst_dir, dst).map_err(|e| {

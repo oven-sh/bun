@@ -67,6 +67,46 @@ describe("mv", async () => {
     .stderr("mv: a: Not a directory\n")
     .runAsTest("move dir -> file fails");
 
+  // On Windows the shell's fd-relative open/rename emulation used to resolve an
+  // empty operand to the cwd itself: `mv a ""` moved a into the cwd (a no-op
+  // that exited 0) and `mv "" b` tried to rename the cwd.
+  describe("empty operand", () => {
+    TestBuilder.command`mv a ""`
+      .ensureTempDir()
+      .file("a", "A\n")
+      .exitCode(2 /* ENOENT */)
+      .stderr("mv: No such file or directory\n")
+      .fileEquals("a", "A\n")
+      .runAsTest("as the destination fails");
+
+    TestBuilder.command`mv "" b`
+      .ensureTempDir()
+      .file("a", "A\n")
+      .exitCode(2 /* ENOENT */)
+      .stderr("mv: No such file or directory\n")
+      .fileEquals("a", "A\n")
+      .doesNotExist("b")
+      .runAsTest("as the source fails");
+
+    TestBuilder.command`mkdir d; mv "" d`
+      .ensureTempDir()
+      .file("a", "A\n")
+      .exitCode(2 /* ENOENT */)
+      .stderr("mv: d: No such file or directory\n")
+      .fileEquals("a", "A\n")
+      .runAsTest("as a source moved into a directory fails");
+
+    TestBuilder.command`mv a b ""`
+      .ensureTempDir()
+      .file("a", "A\n")
+      .file("b", "B\n")
+      .exitCode(1)
+      .stderr("mv: : No such file or directory\n")
+      .fileEquals("a", "A\n")
+      .fileEquals("b", "B\n")
+      .runAsTest("as the directory for several sources fails");
+  });
+
   // POSIX `mv` must fall back to copy+unlink when `rename()` returns EXDEV
   // (source and destination on different filesystems). Requires a writable
   // mount on a different device from the harness temp dir.

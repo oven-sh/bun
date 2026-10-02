@@ -931,6 +931,34 @@ describe("bundler", () => {
     },
   });
 
+  // The parser consumes a next-line suppression at the end of the top-level
+  // function it sits in. With cjs and iife output it was not consumed, and
+  // every later component in the file was skipped.
+  for (const format of ["cjs", "iife"] as const) {
+    itBundled(`react-compiler/SuppressionDoesNotLeakToSibling+${format}`, {
+      files: {
+        "/entry.tsx": /* tsx */ `
+          export function Foo() {
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            useState();
+          }
+          export function Component({ name }: { name: string }) {
+            return <div>Hello {name}</div>;
+          }
+        `,
+      },
+      reactCompiler: true,
+      format,
+      backend: "cli",
+      external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("react/compiler-runtime");
+        expect(out).toMatch(/\breact_compiler_runtime\.c\(\d+\)/);
+      },
+    });
+  }
+
   // Stub react packages shared by the unbound-ref regression tests below.
   const stubReact = {
     "/node_modules/react/index.js": /* js */ `

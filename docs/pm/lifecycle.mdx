@@ -71,14 +71,16 @@ Set `trustedDependencies: []` when you want to opt out of the default allow list
 
 Any installed package can declare a `bin` entry with any name, such as `node` or `git`, and Bun links it into `node_modules/.bin`. This does not need a lifecycle script, so `trustedDependencies` does not cover it. When a lifecycle script runs a command, Bun searches these directories in order:
 
-1. The `node_modules/.bin` directories that hold only the package's own dependencies:
-   - For a dependency, the `node_modules/.bin` with the bins of the dependencies that it declares. The isolated linker creates this directory with the package. The hoisted linker fills it before the package's first script runs.
+1. The `node_modules/.bin` directories that belong to the package:
+   - For a dependency, the `node_modules/.bin` with its own bins and the bins of the dependencies that it declares. The isolated linker creates this directory with the package. The hoisted linker fills it before the package's first script runs.
    - For the project and its workspaces, each `node_modules/.bin` from the package directory up to the project root.
 2. Your `PATH`.
 3. The `node-gyp` and `node` shims that Bun provides when they are not installed.
 4. Every other `node_modules/.bin` directory above the package. For a dependency, this includes the one in the project root.
 
 A dependency's `postinstall` that runs `node build.js` therefore runs the `node` on your `PATH`, even when another package has linked a `node` bin into the project's `node_modules/.bin`. A command that only exists in the project's `node_modules/.bin` is still found in step 4.
+
+A dependency that calls `node-gyp` without declaring it gets the one on your `PATH`, or else Bun's shim, which runs the `node-gyp` from the registry with `bunx`. To make dependencies build with a specific copy, set the `npm_config_node_gyp` environment variable to the path of its `bin/node-gyp.js`.
 
 <Note>
   The project's own lifecycle scripts, `bun run`, and `bunx` search the project's `node_modules/.bin` before your

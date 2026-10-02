@@ -457,7 +457,8 @@ impl PackageManager {
     /// inside it, out of PATH once and returns them, so that
     /// `lifecycle_script_path` can put them behind the user's PATH. Any other
     /// `node_modules/.bin` on the user's PATH stays where the user put it.
-    fn demote_inherited_bin_dirs(&mut self) -> Result<&'static [u8], crate::Error> {
+    /// Call it before a lookup of a program that the install itself runs.
+    pub(crate) fn demote_inherited_bin_dirs(&self) -> Result<&'static [u8], crate::Error> {
         static DEMOTED: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
         if let Some(demoted) = DEMOTED.get() {
             return Ok(demoted);

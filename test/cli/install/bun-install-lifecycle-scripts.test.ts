@@ -305,8 +305,9 @@ test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a r
 });
 
 // The `script-path-*` packages come from registry/packages/create-script-path-packages.ts.
-// script-path-plants has no lifecycle script. Its `bin` map claims `node`, `bash` and
-// `script-path-tool`, and each of them appends its own name to `planted.txt`.
+// script-path-plants has no lifecycle script. Its `bin` map claims `node`, `bash`, `node-gyp`,
+// `script-path-tool` and `script-path-self`, and each of them appends its own name to
+// `planted.txt`.
 describe.concurrent("lifecycle script PATH", () => {
   const built = { "built.txt": "preinstall\npostinstall\n" };
   const tool = { "tool.txt": "script-path-tool@1.0.0\n" };
@@ -381,32 +382,35 @@ describe.concurrent("lifecycle script PATH", () => {
     },
   );
 
-  test("a dependency's script runs the bin of its own dependency, not another with the same name", async () => {
+  test.each([
+    ["the bin of its own dependency", "script-path-uses-tool", "script-path-tool", "tool"],
+    ["its own bin", "script-path-self", "script-path-self", "self"],
+  ])("a dependency's script runs %s, not another with the same name", async (_, owner, command, file) => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
-    // script-path-plants sorts before script-path-tool, so its `script-path-tool` bin is
-    // the one in the project's node_modules/.bin.
+    // script-path-plants sorts before the package that has `command`, so its bin is the
+    // one with that name in the project's node_modules/.bin.
     await writeFile(
       ctx.packageJson,
       JSON.stringify({
         name: "foo",
-        dependencies: { "script-path-uses-tool": "1.0.0", "script-path-plants": "1.0.0" },
-        trustedDependencies: ["script-path-uses-tool"],
+        dependencies: { [owner]: "1.0.0", "script-path-plants": "1.0.0" },
+        trustedDependencies: [owner],
       }),
     );
     if (!isWindows) {
       const userBin = join(packageDir, "user-bin");
       await mkdir(userBin);
-      await writeFile(join(userBin, "script-path-tool"), "#!/bin/sh\necho user > user.txt\n", { mode: 0o755 });
+      await writeFile(join(userBin, command), "#!/bin/sh\necho user > user.txt\n", { mode: 0o755 });
       env.PATH = userBin + delimiter + env.PATH;
     }
 
     const { err, exitCode } = await bun(ctx, "install");
-    expect(await written(ctx, "script-path-uses-tool")).toEqual(tool);
+    expect(await written(ctx, owner)).toEqual({ [`${file}.txt`]: `${command}@1.0.0\n` });
     if (!isWindows) {
-      // The tarball has tool.js at 0644. Only the link in the `.bin` of script-path-uses-tool
-      // points at it, and that link makes it executable within the umask.
-      const { mode } = await stat(join(packageDir, "node_modules", "script-path-tool", "tool.js"));
+      // The tarball has the bin file at 0644. Only the link in the `.bin` of `owner` points
+      // at it, and that link makes it executable within the umask.
+      const { mode } = await stat(join(packageDir, "node_modules", command, `${file}.js`));
       expect(mode & 0o777).toBe(0o777 & ~process.umask());
     }
     expect(err).not.toContain("error:");
@@ -438,19 +442,25 @@ describe.concurrent("lifecycle script PATH", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("`bun pm trust` finds the bin of a store entry's own dependency (isolated linker)", async () => {
-    using ctx = await setupTest("isolated");
-    await writeFile(
-      ctx.packageJson,
-      JSON.stringify({ name: "foo", dependencies: { "script-path-uses-tool": "1.0.0" } }),
-    );
-    expect(await bun(ctx, "install")).toMatchObject({ exitCode: 0 });
+  test.each([
+    ["bunfig.toml", "isolated", []],
+    ["--linker", "hoisted", ["--linker", "isolated"]],
+  ] as const)(
+    "`bun pm trust` finds the bin of a store entry's own dependency (isolated by %s)",
+    async (_, linker, flags) => {
+      using ctx = await setupTest(linker);
+      await writeFile(
+        ctx.packageJson,
+        JSON.stringify({ name: "foo", dependencies: { "script-path-uses-tool": "1.0.0" } }),
+      );
+      expect(await bun(ctx, "install", ...flags)).toMatchObject({ exitCode: 0 });
 
-    const { err, exitCode } = await bun(ctx, "pm", "trust", "script-path-uses-tool");
-    expect(await written(ctx, "script-path-uses-tool")).toEqual(tool);
-    expect(err).not.toContain("error:");
-    expect(exitCode).toBe(0);
-  });
+      const { err, exitCode } = await bun(ctx, "pm", "trust", "script-path-uses-tool");
+      expect(await written(ctx, "script-path-uses-tool")).toEqual(tool);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("an install that `bun run` starts", async () => {
     using ctx = await setupTest();
@@ -474,7 +484,45 @@ describe.concurrent("lifecycle script PATH", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The shim runs `bun x node-gyp`, so `bun` on PATH has to be the bun under test.
+  test.skipIf(isWindows)("an install that `bun run` starts does not take `git` from node_modules/.bin", async () => {
+    using ctx = await setupTest();
+    const { packageDir } = ctx;
+    const repo = join(packageDir, "repo");
+    await mkdir(repo);
+    await writeFile(join(repo, "package.json"), JSON.stringify({ name: "git-dep", version: "1.0.0" }));
+    for (const args of [
+      ["init", "-q"],
+      ["add", "-A"],
+      ["-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "init"],
+    ]) {
+      expect(Bun.spawnSync({ cmd: ["git", ...args], cwd: repo, env: baseEnv, stderr: "inherit" }).exitCode).toBe(0);
+    }
+    const bin = join(packageDir, "node_modules", ".bin");
+    await mkdir(bin, { recursive: true });
+    await Promise.all([
+      writeFile(join(bin, "git"), `#!/bin/sh\necho git >> "${join(packageDir, "planted.txt")}"\nexit 1\n`, {
+        mode: 0o755,
+      }),
+      writeFile(
+        ctx.packageJson,
+        JSON.stringify({
+          name: "foo",
+          scripts: { setup: `${bunExe()} install` },
+          dependencies: { "git-dep": `git+file://${repo}` },
+        }),
+      ),
+    ]);
+
+    const { err, exitCode } = await bun(ctx, "run", "setup");
+    expect(await written(ctx)).toEqual({});
+    expect(await exists(join(packageDir, "node_modules", "git-dep", "package.json"))).toBeTrue();
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  // script-path-gyp does not declare node-gyp, so `node-gyp rebuild` goes through bun's shim
+  // while node_modules/.bin has a `node-gyp` and a `node` bin of script-path-plants. The shim
+  // runs `bun x node-gyp`, so `bun` on PATH has to be the bun under test.
   test.skipIf(isWindows)("`node-gyp rebuild` through bun's node-gyp shim", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
@@ -499,15 +547,21 @@ describe.concurrent("lifecycle script PATH", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("the project's scripts and a node_modules/.bin above the project", async () => {
+  test.skipIf(isWindows)("the project's scripts and node_modules/.bin directories outside the project", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
-    const outerBin = join(packageDir, "node_modules", ".bin");
-    await mkdir(outerBin, { recursive: true });
+    const script = (text: string) => `#!/bin/sh\necho ${text}\n`;
+    const above = join(packageDir, "node_modules", ".bin");
+    const other = join(packageDir, "other", "node_modules", ".bin");
+    const userBin = join(packageDir, "user-bin");
+    await Promise.all([above, other, userBin].map(dir => mkdir(dir, { recursive: true })));
     await Promise.all([
-      writeFile(join(outerBin, "node"), "#!/bin/sh\necho node >> planted.txt\n", { mode: 0o755 }),
-      writeFile(join(outerBin, "outer-tool"), "#!/bin/sh\necho outer-tool > outer.txt\n", { mode: 0o755 }),
+      writeFile(join(above, "node"), script("node >> planted.txt"), { mode: 0o755 }),
+      writeFile(join(above, "above-tool"), script("above > above.txt"), { mode: 0o755 }),
+      writeFile(join(other, "user-tool"), script("other > user.txt"), { mode: 0o755 }),
+      writeFile(join(userBin, "user-tool"), script("user-bin > user.txt"), { mode: 0o755 }),
     ]);
+    env.PATH = [other, userBin, env.PATH].join(delimiter);
 
     const project = { ...ctx, packageDir: join(packageDir, "project") };
     await mkdir(project.packageDir);
@@ -518,16 +572,21 @@ describe.concurrent("lifecycle script PATH", () => {
         JSON.stringify({
           name: "foo",
           scripts: {
-            postinstall: `node -e "require('fs').writeFileSync('built.txt', 'postinstall')" && outer-tool`,
+            postinstall: `node -e "require('fs').writeFileSync('built.txt', 'postinstall')" && above-tool && user-tool`,
           },
         }),
       ),
     ]);
 
     const { err, exitCode } = await bun(project, "install");
-    // `node` is on the user's PATH, which comes first. `outer-tool` is only in the
-    // directory above, which stays on PATH behind it.
-    expect(await written(project)).toEqual({ "built.txt": "postinstall", "outer.txt": "outer-tool\n" });
+    // `node` comes from the user's PATH, not from the `.bin` above the project. `above-tool`
+    // is only in that `.bin`, which stays on PATH behind the user's PATH. The `.bin` of
+    // another project on the user's PATH keeps its place ahead of user-bin.
+    expect(await written(project)).toEqual({
+      "above.txt": "above\n",
+      "built.txt": "postinstall",
+      "user.txt": "other\n",
+    });
     expect(err).not.toContain("error:");
     expect(exitCode).toBe(0);
   });

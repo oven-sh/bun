@@ -10,13 +10,15 @@
       "bin": {
         "node": "plant.sh",
         "bash": "plant.sh",
-        "script-path-tool": "plant.sh"
+        "node-gyp": "plant.sh",
+        "script-path-tool": "plant.sh",
+        "script-path-self": "plant.sh"
       },
       "version": "1.0.0",
       "_id": "script-path-plants@1.0.0",
       "dist": {
-        "integrity": "sha512-5hdkY3wpWnSADCWu6NkVicW3RTb6+znBlY1B+WA2BgoOEhF5Ya4VfbJyaGj4aQQ+rO6JmtWM90p6Hu2Bq9Yneg==",
-        "shasum": "261d0eca7fcbc46180e40319ddcdcdf983172043",
+        "integrity": "sha512-lGOwvXo0Y0hm5INfoMiEV2ipzgU45O2G2MMmdM9K/9f72yvU23M4pPgFSLghSimWIzLw0B1SFcoyFl7KO7SWmA==",
+        "shasum": "c48e3493c6bbf544eb3b178bce90a83314b8d409",
         "tarball": "http://localhost:4873/script-path-plants/-/script-path-plants-1.0.0.tgz"
       }
     }

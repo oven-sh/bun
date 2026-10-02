@@ -16,8 +16,8 @@
       "version": "1.0.0",
       "_id": "script-path-uses-tool@1.0.0",
       "dist": {
-        "integrity": "sha512-8v6lhZuLbGPmcpK8fCZu+XPi16LzvVtGJeKvgmFTPg91/o5EazxmLMkQ6RQT1neMhqL0w1DeS4zWxjWMyKtAaw==",
-        "shasum": "0a8ef050cc101f19eb990986a0954e1ff13cc9d5",
+        "integrity": "sha512-AGSQXdG2crZaI04CNJSLE0Vu60zSt2H8u/I/+WQv1rPynzoGL4VDeyWTswltQkpN/jLPgGiRD6sH/0q8UxNA3A==",
+        "shasum": "1c1a02d6ff0be6e03286470ce5f6004892d67b7a",
         "tarball": "http://localhost:4873/script-path-uses-tool/-/script-path-uses-tool-1.0.0.tgz"
       }
     }

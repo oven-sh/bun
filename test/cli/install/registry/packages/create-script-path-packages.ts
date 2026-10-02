@@ -5,7 +5,8 @@
  * file into its working directory, so a test can read which program ran.
  *
  * - script-path-plants          No lifecycle script. Its `bin` map claims the
- *                               names `node`, `bash` and `script-path-tool`.
+ *                               names `node`, `bash`, `node-gyp`,
+ *                               `script-path-tool` and `script-path-self`.
  *                               Each of them appends its own name to
  *                               `planted.txt`.
  * - script-path-carries-plants  Depends on script-path-plants, so that package
@@ -17,6 +18,8 @@
  *                               `tool.txt`.
  * - script-path-uses-tool       Depends on script-path-tool and runs
  *                               `script-path-tool` in `postinstall`.
+ * - script-path-self            `bin`: `script-path-self`, which writes
+ *                               `self.txt`. Its `postinstall` runs it.
  * - script-path-gyp             Ships a `binding.gyp` and no `node-gyp`
  *                               dependency, so `node-gyp rebuild` runs through
  *                               bun's `node-gyp` shim.
@@ -34,7 +37,9 @@ const packages: { pkgJson: Record<string, unknown> & { name: string }; files?: R
   {
     pkgJson: {
       name: "script-path-plants",
-      bin: { node: "plant.sh", bash: "plant.sh", "script-path-tool": "plant.sh" },
+      bin: Object.fromEntries(
+        ["node", "bash", "node-gyp", "script-path-tool", "script-path-self"].map(name => [name, "plant.sh"]),
+      ),
     },
     files: { "plant.sh": plant },
   },
@@ -65,6 +70,16 @@ const packages: { pkgJson: Record<string, unknown> & { name: string }; files?: R
       name: "script-path-uses-tool",
       scripts: { postinstall: "script-path-tool" },
       dependencies: { "script-path-tool": version },
+    },
+  },
+  {
+    pkgJson: {
+      name: "script-path-self",
+      bin: { "script-path-self": "self.js" },
+      scripts: { postinstall: "script-path-self" },
+    },
+    files: {
+      "self.js": `#!/usr/bin/env node\nrequire("fs").writeFileSync("self.txt", "script-path-self@${version}\\n");\n`,
     },
   },
   {

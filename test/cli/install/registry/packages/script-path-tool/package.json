@@ -13,8 +13,8 @@
       "version": "1.0.0",
       "_id": "script-path-tool@1.0.0",
       "dist": {
-        "integrity": "sha512-os4PngtPEiKb4bW+SeaiIhs7kB4KLf3VN0JYa9c8yNqyu+e9p6v3P9pWaaEqwmMtbVQ7YCSIP2N9UCBRM3RhZQ==",
-        "shasum": "7b6454330e1cad3d594792cd56e88a0a9d23b659",
+        "integrity": "sha512-n7mw7VeeZyuCki0A1wFpi9GYP/uCIUgDu5l3/5bWIP7MArItZGlI/9GQ2wt4nssVUnru5F5kwJhpI3zugeaE5g==",
+        "shasum": "0509067134e5c2d8fbb937e7e6b4be4c45d50fb9",
         "tarball": "http://localhost:4873/script-path-tool/-/script-path-tool-1.0.0.tgz"
       }
     }

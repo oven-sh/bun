@@ -99,6 +99,9 @@ pub struct Installer<'a> {
     /// Built before tasks spawn and only read concurrently afterwards.
     pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
+    /// Main-thread only: packages whose blocked scripts are already in `summary`.
+    pub(crate) blocked_script_packages: ArrayHashMap<PackageID, ()>,
+
     /// Absolute path to the global virtual store (`<cache_dir>/links`). When
     /// non-null, npm/git/tarball entries are materialized once into this
     /// directory and `node_modules/.bun/<storepath>` becomes a symlink into
@@ -570,6 +573,39 @@ impl<'a> Installer<'a> {
         let is_duplicate = self.installed.is_set(pkg_id as usize);
         self.summary.success += (!is_duplicate) as u32;
         self.installed.set(pkg_id as usize);
+
+        let blocked_scripts = self.tasks[entry_id.get() as usize].blocked_scripts;
+        self.record_blocked_scripts(entry_id, blocked_scripts);
+    }
+
+    /// Main thread only. Adds to the summary once per package: a package has one store entry per peer set.
+    pub(crate) fn record_blocked_scripts(&mut self, entry_id: StoreEntryId, count: u8) {
+        if count == 0 {
+            return;
+        }
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        if self.blocked_script_packages.insert(pkg_id, ()).is_some() {
+            return;
+        }
+        let lockfile = self.lockfile();
+        let dep_id = self.store.nodes.items_dep_id()[node_id.get() as usize];
+        let dep = &lockfile.buffers.dependencies[dep_id as usize];
+        if self.manager().options.log_level.is_verbose() {
+            let string_buf = lockfile.buffers.string_bytes.as_slice();
+            bun_core::pretty_error!(
+                "Blocked {} scripts for: {}@{}\n",
+                count,
+                bstr::BStr::new(dep.name.slice(string_buf)),
+                lockfile.packages.items_resolution()[pkg_id as usize]
+                    .fmt(string_buf, bun_core::fmt::PathSep::Posix),
+            );
+        }
+        *self
+            .summary
+            .packages_with_blocked_scripts
+            .entry(dep.name_hash as TruncatedPackageNameHash)
+            .or_default() += usize::from(count);
     }
 
     /// Main thread only: `completed` just reached `Step::Done`; re-check every entry waiting on it.
@@ -661,6 +697,8 @@ pub struct Task {
 
     pub(crate) result: Result,
     pub(crate) relink: Relink,
+    /// Set by `Step::RunPreinstall` on the task thread, read by `on_task_complete` like `relink`.
+    pub(crate) blocked_scripts: u8,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`.
@@ -1504,7 +1542,7 @@ impl Task {
                         self.relink = Relink::Changed;
                     } else if installer.entry_uses_global_store(self.entry_id) {
                         match installer.link_project_to_global_store(self.entry_id) {
-                            sys::Result::Ok(()) => {}
+                            sys::Result::Ok(_) => {}
                             sys::Result::Err(err) => {
                                 return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
                             }
@@ -1568,22 +1606,7 @@ impl Task {
 
                 Step::RunPreinstall => {
                     let current_step = Step::RunPreinstall;
-                    if !manager_ref.options.do_.contains(Do::RUN_SCRIPTS)
-                        || self.entry_id == StoreEntryId::ROOT
-                    {
-                        step = self.next_step(current_step);
-                        continue;
-                    }
-
-                    // The eligibility check excludes any package whose
-                    // lifecycle scripts are trusted to run, so a global-store
-                    // entry should never reach script enqueueing. Guard it
-                    // anyway: `meta.hasInstallScript` can be a false negative
-                    // (yarn-migrated lockfiles force it to `.false`), and a
-                    // script running with cwd inside a shared content-
-                    // addressed directory would mutate every other project's
-                    // copy.
-                    if installer.entry_uses_global_store(self.entry_id) {
+                    if self.entry_id == StoreEntryId::ROOT {
                         step = self.next_step(current_step);
                         continue;
                     }
@@ -1611,15 +1634,41 @@ impl Task {
                         break 'brk (false, false);
                     };
 
+                    if !(pkg_res.tag != ResolutionTag::Root
+                        && (pkg_res.tag == ResolutionTag::Workspace || is_trusted))
+                    {
+                        // Before the early returns below, like the hoisted installer.
+                        if pkg_res.tag != ResolutionTag::Root
+                            && pkg_metas[pkg_id as usize].has_install_script()
+                        {
+                            // A global-store entry stays in its staging dir until `Step::Binaries` renames it.
+                            let which = if installer.entry_uses_global_store(self.entry_id) {
+                                Which::Staging
+                            } else {
+                                Which::Final
+                            };
+                            self.blocked_scripts =
+                                installer.count_blocked_scripts(self.entry_id, which);
+                        }
+                        step = self.next_step(current_step);
+                        continue;
+                    }
+
+                    if !manager_ref.options.do_.contains(Do::RUN_SCRIPTS) {
+                        step = self.next_step(current_step);
+                        continue;
+                    }
+
+                    // Trusted entries are never global-store eligible; never run in the shared dir.
+                    if installer.entry_uses_global_store(self.entry_id) {
+                        step = self.next_step(current_step);
+                        continue;
+                    }
+
                     let mut pkg_cwd = AutoAbsPath::init_top_level_dir();
                     installer.append_store_path(&mut pkg_cwd, self.entry_id);
 
                     'enqueue_lifecycle_scripts: {
-                        if !(pkg_res.tag != ResolutionTag::Root
-                            && (pkg_res.tag == ResolutionTag::Workspace || is_trusted))
-                        {
-                            break 'enqueue_lifecycle_scripts;
-                        }
                         let mut pkg_scripts: package::scripts::Scripts =
                             pkg_script_lists[pkg_id as usize];
                         let manager = manager_ref.get();
@@ -2427,6 +2476,41 @@ impl<'a> Installer<'a> {
         Ok(())
     }
 
+    /// Counts an untrusted entry's lifecycle scripts like the hoisted installer; also runs on the task thread.
+    pub(crate) fn count_blocked_scripts(&self, entry_id: StoreEntryId, which: Which) -> u8 {
+        let lockfile = self.lockfile();
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+
+        let mut pkg_dir = AutoAbsPath::init_top_level_dir();
+        self.append_real_store_path(&mut pkg_dir, entry_id, which);
+
+        let mut log = Log::init();
+        match package::scripts::Scripts::installed_script_count(
+            lockfile,
+            &mut log,
+            pkg_id,
+            lockfile.packages.items_resolution()[pkg_id as usize].tag,
+            &mut pkg_dir,
+        ) {
+            Ok(count) => count,
+            Err(err) => {
+                if !self.manager().options.log_level.is_silent() {
+                    let dep_id = self.store.nodes.items_dep_id()[node_id.get() as usize];
+                    let dep_name = lockfile.buffers.dependencies[dep_id as usize]
+                        .name
+                        .slice(lockfile.buffers.string_bytes.as_slice());
+                    Output::err_generic(
+                        "failed to fill lifecycle scripts for <b>{}<r>: {}",
+                        (bstr::BStr::new(dep_name), err.name()),
+                    );
+                    Output::flush();
+                }
+                0
+            }
+        }
+    }
+
     /// True when this entry should live in the shared global virtual store
     /// instead of being materialized under the project's `node_modules/.bun/`.
     /// Root, workspace, folder, symlink, and patched packages always stay
@@ -2554,7 +2638,8 @@ impl<'a> Installer<'a> {
     /// Create the project-level symlink `node_modules/.bun/<storepath>` →
     /// `<cache>/links/<storepath>-<hash>`. This is the only per-install
     /// filesystem write for a warm global-store hit.
-    pub(crate) fn link_project_to_global_store(&self, entry_id: StoreEntryId) -> sys::Result<()> {
+    /// Ok(true) when the link is new, Ok(false) when it replaced an existing link or directory.
+    pub(crate) fn link_project_to_global_store(&self, entry_id: StoreEntryId) -> sys::Result<bool> {
         let mut dest = AutoPath::init_top_level_dir();
         self.append_local_store_entry_path(&mut dest, entry_id);
 
@@ -2578,13 +2663,14 @@ impl<'a> Installer<'a> {
             }
         }
 
-        match do_symlink(dest.slice_z(), target_abs.slice_z()) {
-            sys::Result::Ok(()) => return sys::Result::Ok(()),
+        let created = match do_symlink(dest.slice_z(), target_abs.slice_z()) {
+            sys::Result::Ok(()) => return sys::Result::Ok(true),
             sys::Result::Err(err) => match err.get_errno() {
                 sys::Errno::ENOENT => {
                     if let Some(parent) = dest.dirname() {
                         let _ = Fd::cwd().make_path(parent);
                     }
+                    true
                 }
                 sys::Errno::EEXIST => {
                     // Existing entry from a previous install. If it's a
@@ -2625,11 +2711,12 @@ impl<'a> Installer<'a> {
                     } else {
                         let _ = Fd::cwd().delete_tree(dest.slice());
                     }
+                    false
                 }
                 _ => return sys::Result::Err(err),
             },
-        }
-        do_symlink(dest.slice_z(), target_abs.slice_z())
+        };
+        do_symlink(dest.slice_z(), target_abs.slice_z()).map(|()| created)
     }
 
     pub(crate) fn append_store_node_modules_path(

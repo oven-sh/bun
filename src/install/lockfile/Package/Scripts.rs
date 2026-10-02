@@ -5,12 +5,13 @@ use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
-use bun_install::{Resolution, ResolutionTag, initialize_store};
+use bun_install::{PackageID, Resolution, ResolutionTag, initialize_store};
 use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
 
 use crate::bun_json::{self, Expr};
+use crate::lockfile_real::package::PackageColumns as _;
 // The only concrete builder instantiation in install is the lockfile's,
 // so we take `crate::lockfile_real::StringBuilder` directly (matches Meta.rs).
 use crate::lockfile_real::{Lockfile as RealLockfile, StringBuilder as LockfileStringBuilder};
@@ -394,6 +395,49 @@ impl Scripts {
             resolution_tag,
             add_node_gyp_rebuild_script,
         ))
+    }
+
+    /// How many lifecycle scripts an install of `package_id`, unpacked at `folder_path`, would run; `Meta::has_install_script` alone can be a false positive.
+    pub(crate) fn installed_script_count(
+        lockfile: &Lockfile,
+        log: &mut bun_ast::Log,
+        package_id: PackageID,
+        resolution_tag: ResolutionTag,
+        folder_path: &mut bun_paths::AutoAbsPath,
+    ) -> Result<u8, crate::Error> {
+        debug_assert!(resolution_tag != ResolutionTag::Root);
+        debug_assert!(resolution_tag != ResolutionTag::Workspace);
+        debug_assert!(package_id != 0);
+        let mut scripts = lockfile.packages.items_scripts()[package_id as usize];
+        if !scripts.filled {
+            scripts = Scripts::default();
+            let mut tmp = RealLockfile::init_empty_value();
+            let mut builder = tmp.string_builder();
+            scripts.fill_from_package_json(&mut builder, log, folder_path)?;
+        }
+        debug_assert!(scripts.filled);
+
+        let mut count: u8 = 0;
+        match resolution_tag {
+            ResolutionTag::Git | ResolutionTag::Github | ResolutionTag::Root => {
+                for hook in scripts.hooks() {
+                    count += u8::from(!hook.is_empty());
+                }
+            }
+            _ => {
+                count += u8::from(!scripts.preinstall.is_empty());
+                count += u8::from(!scripts.install.is_empty());
+                count += u8::from(!scripts.postinstall.is_empty());
+            }
+        }
+
+        if scripts.preinstall.is_empty() && scripts.install.is_empty() {
+            let mut save = folder_path.save();
+            let _ = save.append(b"binding.gyp");
+            count += u8::from(bun_sys::exists(save.slice()));
+        }
+
+        Ok(count)
     }
 }
 

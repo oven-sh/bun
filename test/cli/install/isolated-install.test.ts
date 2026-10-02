@@ -2109,6 +2109,308 @@ test("runs lifecycle scripts correctly", async () => {
   expect(allLifecycleScriptsDir).toEqual(["all-lifecycle-scripts"]);
 });
 
+// The lifecycle scripts of a dependency that is not trusted do not run. The install that
+// puts such a package into the project says so, the way the hoisted linker does.
+describe.concurrent("blocked lifecycle scripts", () => {
+  const hint = (scripts: number) =>
+    `Blocked ${scripts} postinstall${scripts === 1 ? "" : "s"}. Run \`bun pm untrusted\` for details.`;
+
+  /** Runs `bun <args>`. `stdout` is split into lines and has no elapsed time. */
+  async function run(cwd: string, env: NodeJS.Dict<string>, ...args: string[]) {
+    await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/), stderr, exitCode };
+  }
+
+  /** What `run()` returns for a run that succeeds and prints `summary` below its version line. */
+  const printed = (...summary: string[]) => ({
+    stdout: [expect.stringMatching(/^bun (install|add) v1\./), "", ...summary, ""],
+    stderr: expect.not.stringContaining("error:"),
+    exitCode: 0,
+  });
+
+  // `lifecycle-postinstall` writes postinstall.txt into its own directory when its script runs.
+  async function postinstallProject(bunfigOpts: { linker: "isolated" | "hoisted"; saveTextLockfile?: boolean }) {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts });
+    await write(
+      packageJson,
+      JSON.stringify({ name: "blocked-scripts", dependencies: { "lifecycle-postinstall": "1.0.0" } }),
+    );
+    return packageDir;
+  }
+  const scriptRan = (packageDir: string) =>
+    existsSync(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt"));
+
+  const globalStoreEnv = (cacheOwner: string) => ({
+    ...bunEnv,
+    BUN_INSTALL_GLOBAL_STORE: "1",
+    BUN_INSTALL_CACHE_DIR: join(cacheOwner, ".bun-cache"),
+  });
+
+  type RegistryPackage = { name: string; version: string; files?: Record<string, string>; [field: string]: unknown };
+
+  /** Serves `packages`, manifests and tarballs, from this process. */
+  async function serveRegistry(packages: RegistryPackage[]) {
+    const tarballs = new Map<string, Uint8Array>();
+    for (const { files, ...packageJson } of packages) {
+      const archive: Record<string, string> = { "package/package.json": JSON.stringify(packageJson) };
+      for (const [path, contents] of Object.entries(files ?? {})) archive[`package/${path}`] = contents;
+      tarballs.set(
+        `${packageJson.name}-${packageJson.version}.tgz`,
+        await new Bun.Archive(archive, { compress: "gzip" }).bytes(),
+      );
+    }
+    return Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const tarball = tarballs.get(pathname.slice(1));
+        if (tarball) return new Response(tarball);
+        const versions = packages.filter(pkg => pkg.name === pathname.slice(1));
+        if (versions.length === 0) return new Response("not found", { status: 404 });
+        return Response.json({
+          name: versions[0].name,
+          "dist-tags": { latest: versions.at(-1)!.version },
+          versions: Object.fromEntries(
+            versions.map(({ files, ...packageJson }) => {
+              const tarballName = `${packageJson.name}-${packageJson.version}.tgz`;
+              const integrity =
+                "sha512-" + new Bun.CryptoHasher("sha512").update(tarballs.get(tarballName)!).digest("base64");
+              return [
+                packageJson.version,
+                {
+                  ...packageJson,
+                  hasInstallScript: packageJson.scripts !== undefined,
+                  dist: { tarball: `${origin}/${tarballName}`, integrity },
+                },
+              ];
+            }),
+          ),
+        });
+      },
+    });
+  }
+
+  // The install fails if this script runs.
+  const blockedScripts = { postinstall: "exit 1" };
+
+  // `peer-host` has a peer dependency on `peer-target`. Each workspace brings its own version of
+  // `peer-target`, so the store holds one entry of `peer-host@1.0.0` per workspace.
+  const servePeerVariants = () =>
+    serveRegistry([
+      { name: "peer-host", version: "1.0.0", peerDependencies: { "peer-target": "*" }, scripts: blockedScripts },
+      { name: "peer-target", version: "1.0.0" },
+      { name: "peer-target", version: "2.0.0" },
+    ]);
+  function peerVariantsProject(registryUrl: URL) {
+    const workspace = (name: string, peerTarget: string) =>
+      JSON.stringify({ name, version: "1.0.0", dependencies: { "peer-host": "1.0.0", "peer-target": peerTarget } });
+    return tempDir("blocked-scripts-peer-variants", {
+      "bunfig.toml": `[install]\nregistry = "${registryUrl}"\nlinker = "isolated"\n`,
+      "package.json": JSON.stringify({ name: "blocked-scripts-peer-variants", workspaces: ["packages/*"] }),
+      "packages/a/package.json": workspace("a", "1.0.0"),
+      "packages/b/package.json": workspace("b", "2.0.0"),
+    });
+  }
+  async function peerHostEntries(packageDir: string) {
+    const entries = await readdirSorted(join(packageDir, "node_modules", ".bun"));
+    return entries.filter(entry => entry.startsWith("peer-host@"));
+  }
+  const twoPeerVariants = [
+    expect.stringMatching(/^peer-host@1\.0\.0\+[0-9a-f]{16}$/),
+    expect.stringMatching(/^peer-host@1\.0\.0\+[0-9a-f]{16}$/),
+  ];
+
+  test("a cold install reports them and does not run them", async () => {
+    const packageDir = await postinstallProject({ linker: "isolated" });
+
+    expect(await run(packageDir, bunEnv, "install")).toEqual(
+      printed("+ lifecycle-postinstall@1.0.0", "", "1 package installed", "", hint(1)),
+    );
+    expect(scriptRan(packageDir)).toBeFalse();
+  });
+
+  // `all-lifecycle-scripts` has a preinstall, an install and a postinstall script. Each writes a file of its name.
+  const installedBoth = ["+ all-lifecycle-scripts@1.0.0", "+ lifecycle-postinstall@1.0.0", "", "2 packages installed"];
+  async function twoScriptPackagesProject(trustedDependencies?: string[]) {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "blocked-scripts",
+        dependencies: { "lifecycle-postinstall": "1.0.0", "all-lifecycle-scripts": "1.0.0" },
+        trustedDependencies,
+      }),
+    );
+    return packageDir;
+  }
+
+  test("a trusted package runs its scripts and is not counted", async () => {
+    const packageDir = await twoScriptPackagesProject(["all-lifecycle-scripts"]);
+
+    expect(await run(packageDir, bunEnv, "install")).toEqual(printed(...installedBoth, "", hint(1)));
+    expect({
+      trustedRan: existsSync(join(packageDir, "node_modules", "all-lifecycle-scripts", "postinstall.txt")),
+      untrustedRan: scriptRan(packageDir),
+    }).toEqual({ trustedRan: true, untrustedRan: false });
+  });
+
+  test("--ignore-scripts still reports them", async () => {
+    const packageDir = await twoScriptPackagesProject();
+
+    expect(await run(packageDir, bunEnv, "install", "--ignore-scripts")).toEqual(
+      printed(...installedBoth, "", hint(4)),
+    );
+    expect(scriptRan(packageDir)).toBeFalse();
+  });
+
+  test("--verbose names the package", async () => {
+    const packageDir = await postinstallProject({ linker: "isolated" });
+
+    const { stderr, exitCode } = await run(packageDir, bunEnv, "install", "--verbose");
+    expect(stderr.split(/\r?\n/).filter(line => line.startsWith("Blocked"))).toEqual([
+      "Blocked 1 scripts for: lifecycle-postinstall@1.0.0",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun add reports them", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(packageJson, JSON.stringify({ name: "blocked-scripts-add" }));
+
+    expect(await run(packageDir, bunEnv, "add", "lifecycle-postinstall@1.0.0")).toEqual(
+      printed("installed lifecycle-postinstall@1.0.0", "", "1 package installed", "", hint(1)),
+    );
+    expect(scriptRan(packageDir)).toBeFalse();
+  });
+
+  test("a package with two peer-variant store entries is counted once", async () => {
+    await using server = await servePeerVariants();
+    using dir = peerVariantsProject(server.url);
+    const packageDir = String(dir);
+
+    expect(
+      await run(packageDir, { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") }, "install"),
+    ).toEqual(printed("3 packages installed", "", hint(1)));
+    expect(await peerHostEntries(packageDir)).toEqual(twoPeerVariants);
+  });
+
+  test("a repeat install with nothing to do does not report them again", async () => {
+    const packageDir = await postinstallProject({ linker: "isolated" });
+
+    expect(await run(packageDir, bunEnv, "install")).toEqual(
+      printed("+ lifecycle-postinstall@1.0.0", "", "1 package installed", "", hint(1)),
+    );
+    expect(await run(packageDir, bunEnv, "install")).toEqual(printed("Done! Checked 2 packages (no changes)"));
+  });
+
+  // bun.lock does not record which packages have install scripts. bun.lockb does.
+  test.each([
+    { lockfile: "bun.lock", reportedAgain: false },
+    { lockfile: "bun.lockb", reportedAgain: true },
+  ])(
+    "a reinstall from $lockfile without node_modules reports what the hoisted linker reports",
+    async ({ lockfile, reportedAgain }) => {
+      async function reinstall(linker: "isolated" | "hoisted") {
+        const packageDir = await postinstallProject({ linker, saveTextLockfile: lockfile === "bun.lock" });
+        const firstInstall = await run(packageDir, bunEnv, "install");
+        expect(existsSync(join(packageDir, lockfile))).toBeTrue();
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        return { firstInstall, reinstall: await run(packageDir, bunEnv, "install") };
+      }
+      const [isolated, hoisted] = await Promise.all([reinstall("isolated"), reinstall("hoisted")]);
+
+      const installed = ["+ lifecycle-postinstall@1.0.0", "", "1 package installed"];
+      const expected = {
+        firstInstall: printed(...installed, "", hint(1)),
+        reinstall: reportedAgain ? printed(...installed, "", hint(1)) : printed(...installed),
+      };
+      expect({ isolated, hoisted }).toEqual({ isolated: expected, hoisted: expected });
+    },
+  );
+
+  // A package from a tarball URL has its scripts in the lockfile. The hoisted linker also counts
+  // the implicit `node-gyp rebuild` of a binding.gyp, with or without a script next to it.
+  test("are counted the way the hoisted linker counts them", async () => {
+    await using server = await serveRegistry([
+      { name: "gyp-only", version: "1.0.0", files: { "binding.gyp": "{}" } },
+      { name: "gyp-and-script", version: "1.0.0", scripts: blockedScripts, files: { "binding.gyp": "{}" } },
+    ]);
+    async function install(linker: "isolated" | "hoisted") {
+      using dir = tempDir(`blocked-scripts-count-${linker}`, {
+        "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
+        "package.json": JSON.stringify({
+          name: "blocked-scripts-count",
+          dependencies: {
+            "gyp-only": `${server.url}gyp-only-1.0.0.tgz`,
+            "gyp-and-script": `${server.url}gyp-and-script-1.0.0.tgz`,
+          },
+        }),
+      });
+      const packageDir = String(dir);
+      return await run(packageDir, { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") }, "install");
+    }
+    const [isolated, hoisted] = await Promise.all([install("isolated"), install("hoisted")]);
+
+    const expected = printed(
+      `+ gyp-and-script@${server.url}gyp-and-script-1.0.0.tgz`,
+      `+ gyp-only@${server.url}gyp-only-1.0.0.tgz`,
+      "",
+      "2 packages installed",
+      "",
+      hint(3),
+    );
+    expect({ isolated, hoisted }).toEqual({ isolated: expected, hoisted: expected });
+  });
+
+  test("a cold global store entry is reported", async () => {
+    const packageDir = await postinstallProject({ linker: "isolated" });
+
+    expect(await run(packageDir, globalStoreEnv(packageDir), "install")).toEqual(
+      printed("+ lifecycle-postinstall@1.0.0", "", "1 package installed", "", hint(1)),
+    );
+    expect(readlinkSync(join(packageDir, "node_modules", ".bun", "lifecycle-postinstall@1.0.0"))).toMatch(
+      /links[\/\\]lifecycle-postinstall@1\.0\.0-[0-9a-f]{16}$/,
+    );
+    expect(scriptRan(packageDir)).toBeFalse();
+  });
+
+  test("a project that links a warm global store entry reports it, once", async () => {
+    const [first, second] = await Promise.all([
+      postinstallProject({ linker: "isolated" }),
+      postinstallProject({ linker: "isolated" }),
+    ]);
+    const env = globalStoreEnv(first);
+
+    expect(await run(first, env, "install")).toEqual(
+      printed("+ lifecycle-postinstall@1.0.0", "", "1 package installed", "", hint(1)),
+    );
+
+    // The entry `first` built is in the store. `second` only links to it.
+    expect(await run(second, env, "install")).toEqual(printed("Done! Checked 2 packages (no changes)", "", hint(1)));
+    expect(readlinkSync(join(second, "node_modules", ".bun", "lifecycle-postinstall@1.0.0"))).toBe(
+      readlinkSync(join(first, "node_modules", ".bun", "lifecycle-postinstall@1.0.0")),
+    );
+    expect(scriptRan(second)).toBeFalse();
+
+    expect(await run(second, env, "install")).toEqual(printed("Done! Checked 2 packages (no changes)"));
+  });
+
+  test("two peer variants linked from a warm global store are counted once", async () => {
+    await using server = await servePeerVariants();
+    using firstDir = peerVariantsProject(server.url);
+    using secondDir = peerVariantsProject(server.url);
+    const [first, second] = [String(firstDir), String(secondDir)];
+    const env = globalStoreEnv(first);
+
+    expect(await run(first, env, "install")).toEqual(printed("3 packages installed", "", hint(1)));
+    expect(await run(second, env, "install")).toEqual(
+      printed("Checked 7 installs across 6 packages (no changes)", "", hint(1)),
+    );
+    expect(await peerHostEntries(second)).toEqual(twoPeerVariants);
+  });
+});
+
 // Self-contained HTTP server that serves package manifests & tarballs
 // directly from the Verdaccio fixtures, with Cache-Control: max-age=300
 // to replicate npmjs.org behavior (fully synchronous on warm cache).

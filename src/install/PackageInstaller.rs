@@ -4,10 +4,10 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
+use bun_paths::resolve_path::{dirname, join_z_buf};
 use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
 use bun_semver::String;
-use bun_sys::{self as Syscall, Dir, Fd};
+use bun_sys::{Dir, Fd};
 
 use crate::bin_real as bin;
 use crate::bin_real::Bin;
@@ -1160,23 +1160,15 @@ impl<'a> PackageInstaller<'a> {
         folder_path: &mut bun_paths::AutoAbsPath,
         log_level: Options::LogLevel,
     ) -> usize {
-        debug_assert!(resolution_tag != resolution::Tag::Root);
-        debug_assert!(resolution_tag != resolution::Tag::Workspace);
-        debug_assert!(package_id != 0);
-        let mut count: usize = 0;
-        let scripts = 'brk: {
-            let scripts = self.lockfile().packages.items_scripts()[package_id as usize];
-            if scripts.filled {
-                break 'brk scripts;
-            }
-
-            let mut temp = PackageScripts::default();
-            let mut temp_lockfile = Lockfile::default();
-            temp_lockfile.init_empty();
-            // `defer temp_lockfile.deinit()` — Lockfile impls Drop.
-            let mut string_builder = temp_lockfile.string_builder();
-            let log = self.manager().log_mut();
-            if let Err(err) = temp.fill_from_package_json(&mut string_builder, log, folder_path) {
+        match PackageScripts::installed_script_count(
+            self.lockfile(),
+            self.manager().log_mut(),
+            package_id,
+            resolution_tag,
+            folder_path,
+        ) {
+            Ok(count) => usize::from(count),
+            Err(err) => {
                 if log_level != Options::LogLevel::Silent {
                     Output::err_generic(
                         "failed to fill lifecycle scripts for <b>{}<r>: {}",
@@ -1188,36 +1180,9 @@ impl<'a> PackageInstaller<'a> {
                     Global::crash();
                 }
 
-                return 0;
-            }
-            break 'brk temp;
-        };
-
-        debug_assert!(scripts.filled);
-
-        match resolution_tag {
-            resolution::Tag::Git | resolution::Tag::Github | resolution::Tag::Root => {
-                // The `FIELD_NAMES` table lists each script field accessor.
-                for &(_, accessor) in PackageScripts::FIELD_NAMES.iter() {
-                    count += (!accessor(&scripts).is_empty()) as usize;
-                }
-            }
-            _ => {
-                count += (!scripts.preinstall.is_empty()) as usize;
-                count += (!scripts.install.is_empty()) as usize;
-                count += (!scripts.postinstall.is_empty()) as usize;
+                0
             }
         }
-
-        if scripts.preinstall.is_empty() && scripts.install.is_empty() {
-            let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
-                self.node_modules.path.as_slice(),
-                &[alias, b"binding.gyp"],
-            );
-            count += Syscall::exists(binding_dot_gyp_path) as usize;
-        }
-
-        count
     }
 
     pub(crate) fn install_package_with_name_and_resolution(

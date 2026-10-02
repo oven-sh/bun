@@ -1993,6 +1993,7 @@ pub(crate) fn install_isolated_packages(
         let pkg_names = pkgs.items_name();
         let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_resolutions = pkgs.items_resolution();
+        let pkg_metas = pkgs.items_meta();
 
         let mut seen_entry_ids: HashMap<store::entry::Id, ()> = HashMap::default();
         seen_entry_ids.reserve(store.entries.len());
@@ -2018,6 +2019,7 @@ pub(crate) fn install_isolated_packages(
                     installer: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
                     result: installer::Result::None,
                     relink: installer::Relink::Off,
+                    blocked_scripts: 0,
                     task: bun_threading::thread_pool::Task {
                         callback: installer::Task::callback,
                         node: Default::default(),
@@ -2053,6 +2055,7 @@ pub(crate) fn install_isolated_packages(
             next_waiter: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
             trusted_dependencies_mutex: Default::default(),
             trusted_dependencies_from_update_requests,
+            blocked_script_packages: Default::default(),
             supported_backend: std::sync::atomic::AtomicU8::new(
                 PackageInstall::supported_method() as u8
             ),
@@ -2304,7 +2307,28 @@ pub(crate) fn install_isolated_packages(
                             // The only per-install work is the project-level
                             // `node_modules/.bun/<storepath>` → global symlink.
                             match installer.link_project_to_global_store(entry_id) {
-                                bun_sys::Result::Ok(()) => {}
+                                bun_sys::Result::Ok(created) => {
+                                    // A warm entry runs no task: report its blocked scripts when this project first links it.
+                                    if created
+                                        && pkg_metas[pkg_id as usize].has_install_script()
+                                        && !(installer
+                                            .trusted_dependencies_from_update_requests
+                                            .contains(&pkg_id)
+                                            || lockfile_ro.has_trusted_dependency(
+                                                lockfile_ro.buffers.dependencies[dep_id as usize]
+                                                    .name
+                                                    .slice(string_buf),
+                                                pkg_name.slice(string_buf),
+                                                &pkg_res,
+                                            ))
+                                    {
+                                        let count = installer.count_blocked_scripts(
+                                            entry_id,
+                                            installer::Which::Final,
+                                        );
+                                        installer.record_blocked_scripts(entry_id, count);
+                                    }
+                                }
                                 bun_sys::Result::Err(err) => {
                                     entry_steps[entry_id.get() as usize]
                                         .store(installer::Step::Done as u32, Ordering::Relaxed);
@@ -2681,79 +2705,6 @@ pub(crate) fn install_isolated_packages(
 
         let mut summary = core::mem::take(&mut installer.summary);
         summary.successfully_installed = Some(core::mem::take(&mut installer.installed));
-
-        // Hoisted fills `packages_with_blocked_scripts` inline in `install_package_with_name_and_resolution`; the worker-thread task here does not, so do it after the fact.
-        if let Some(installed) = summary.successfully_installed.as_ref() {
-            let pkg_metas = pkgs.items_meta();
-            let pkg_script_lists = pkgs.items_scripts();
-            let log_level = installer.manager().options.log_level;
-            let fail_early = installer.manager().options.enable.fail_early();
-            for _entry_id in 0..store.entries.len() {
-                let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
-                let node_id = entry_node_ids[entry_id.get() as usize];
-                let pkg_id = node_pkg_ids[node_id.get() as usize];
-                let dep_id = node_dep_ids[node_id.get() as usize];
-                if dep_id == invalid_dependency_id || !installed.is_set(pkg_id as usize) {
-                    continue;
-                }
-                let pkg_res = pkg_resolutions[pkg_id as usize];
-                if matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
-                    continue;
-                }
-                if !pkg_metas[pkg_id as usize].has_install_script() {
-                    continue;
-                }
-                let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
-                let alias = dep.name.slice(string_buf);
-                let truncated_dep_name_hash = dep.name_hash as crate::TruncatedPackageNameHash;
-                let is_trusted = installer
-                    .trusted_dependencies_from_update_requests
-                    .contains(&pkg_id)
-                    || lockfile_ro.has_trusted_dependency(
-                        alias,
-                        pkg_names[pkg_id as usize].slice(string_buf),
-                        &pkg_res,
-                    );
-                if is_trusted {
-                    continue;
-                }
-                let mut pkg_cwd = AbsPath::init_top_level_dir();
-                installer.append_store_path(&mut pkg_cwd, entry_id);
-                let mut pkg_scripts = pkg_script_lists[pkg_id as usize];
-                let count = match pkg_scripts.get_list(
-                    installer.manager().log_mut(),
-                    lockfile_ro,
-                    &mut pkg_cwd,
-                    alias,
-                    &pkg_res,
-                ) {
-                    Ok(Some(list)) => list.total as usize,
-                    Ok(None) => 0,
-                    Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => 0,
-                    Err(err) => {
-                        if log_level != crate::package_manager::Options::LogLevel::Silent {
-                            Output::err_generic(
-                                "failed to fill lifecycle scripts for <b>{}<r>: {}",
-                                (bstr::BStr::new(alias), err.name()),
-                            );
-                        }
-                        if fail_early {
-                            Global::crash();
-                        }
-                        0
-                    }
-                };
-                if count > 0 {
-                    let entry = summary
-                        .packages_with_blocked_scripts
-                        .get_or_put(truncated_dep_name_hash)?;
-                    if !entry.found_existing {
-                        *entry.value_ptr = 0;
-                    }
-                    *entry.value_ptr += count;
-                }
-            }
-        }
 
         return Ok(summary);
     }

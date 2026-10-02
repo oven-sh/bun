@@ -401,8 +401,8 @@ impl<'a> Checker<'a> {
         // We had to pick apart the constraintType to potentially map/filter it - compare the final resulting list with the original constraintType, so we can return the union that preserves aliases/origin data if possible.
         let result = if index_flags.intersects(IndexFlags::NO_INDEX_SIGNATURES) {
             let union = self.get_union_type(List::from_slice(&key_types));
-            self.filter_type(union, &mut |c, t| {
-                !c.types[t]
+            self.filter_type(union, &mut |c, u| {
+                !c.types[u]
                     .flags
                     .intersects(TypeFlags::ANY | TypeFlags::STRING)
             })
@@ -923,7 +923,9 @@ impl<'a> Checker<'a> {
                                 let mut diagnostic = DiagnosticId::NIL;
                                 if index_type_flags.intersects(TypeFlags::ENUM_LITERAL) {
                                     let index_text = self.type_to_string_exported(index_type);
-                                    let name = [b"[".as_slice(), &index_text, b"]"].concat();
+                                    let name =
+                                        [b"[".as_slice(), index_text.as_slice(), b"]".as_slice()]
+                                            .concat();
                                     let object_text = self.type_to_string_exported(object_type);
                                     diagnostic = self.new_diagnostic_for_node(
                                         access_expression,
@@ -932,9 +934,14 @@ impl<'a> Checker<'a> {
                                     );
                                 } else if index_type_flags.intersects(TypeFlags::UNIQUE_ES_SYMBOL) {
                                     let index_symbol = self.types[index_type].symbol;
-                                    let symbol_name = self
+                                    let qualified_name = self
                                         .get_fully_qualified_name(index_symbol, access_expression);
-                                    let name = [b"[".as_slice(), &symbol_name, b"]"].concat();
+                                    let name = [
+                                        b"[".as_slice(),
+                                        qualified_name.as_slice(),
+                                        b"]".as_slice(),
+                                    ]
+                                    .concat();
                                     let object_text = self.type_to_string_exported(object_type);
                                     diagnostic = self.new_diagnostic_for_node(
                                         access_expression,

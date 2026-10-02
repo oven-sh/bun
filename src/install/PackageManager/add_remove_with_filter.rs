@@ -10,7 +10,7 @@ use bun_core::{Global, Output, strings};
 use bun_install::dependency;
 use bun_install::{Lockfile, PackageID, PackageNameHash};
 use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{self, Platform, join_abs_string_buf, platform};
+use bun_paths::resolve_path::{self, Platform, join_abs_string, platform};
 use bun_sys::{Fd, File};
 
 use super::add_catalog;
@@ -38,10 +38,7 @@ pub(crate) struct WorkspaceTarget {
 
 pub(crate) fn root_package_json_path() -> Box<[u8]> {
     let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
-    let mut buf = path_buffer_pool::get();
-    let path: Box<[u8]> =
-        join_abs_string_buf::<platform::Auto>(top_level, &mut buf.0, &[b"package.json"]).into();
-    path
+    join_abs_string::<platform::Auto>(top_level, &[b"package.json"]).into()
 }
 
 fn print_log_and_crash(
@@ -159,16 +156,11 @@ pub(crate) fn select_targets(
         members,
     } = load_workspace_members(manager);
 
-    let mut path_buf = path_buffer_pool::get();
     let patterns = manager.options.filter_patterns;
 
     let root_subject: Box<[u8]> =
-        strings::without_trailing_slash(join_abs_string_buf::<platform::Posix>(
-            top_level,
-            &mut path_buf.0,
-            &[b"."],
-        ))
-        .into();
+        strings::without_trailing_slash(join_abs_string::<platform::Posix>(top_level, &[b"."]))
+            .into();
     let mut candidates: Vec<(WorkspaceTarget, Box<[u8]>)> = Vec::with_capacity(members.count() + 1);
     candidates.push((
         WorkspaceTarget {
@@ -179,23 +171,17 @@ pub(crate) fn select_targets(
         root_subject,
     ));
 
-    let mut package_json_buf = path_buffer_pool::get();
     for (rel, entry) in members.keys().iter().zip(members.values()) {
         let rel: &[u8] = rel;
         let subject: Box<[u8]> =
-            strings::without_trailing_slash(join_abs_string_buf::<platform::Posix>(
-                top_level,
-                &mut path_buf.0,
-                &[rel],
-            ))
-            .into();
+            strings::without_trailing_slash(join_abs_string::<platform::Posix>(top_level, &[rel]))
+                .into();
         candidates.push((
             WorkspaceTarget {
                 name: entry.name.clone(),
                 name_hash: Some(bun_semver::string::Builder::string_hash(&entry.name)),
-                package_json_path: join_abs_string_buf::<platform::Auto>(
+                package_json_path: join_abs_string::<platform::Auto>(
                     top_level,
-                    &mut package_json_buf.0,
                     &[rel, b"package.json"],
                 )
                 .into(),
@@ -360,10 +346,8 @@ fn spell_relative_to(
     prefix: &[u8],
     abs: &[u8],
 ) -> Vec<u8> {
-    let mut buf = path_buffer_pool::get();
     let target_dir = resolve_path::dirname::<platform::Auto>(&target.package_json_path);
-    let rel =
-        resolve_path::relative_platform_buf::<platform::Auto, true>(&mut buf.0, target_dir, abs);
+    let rel = resolve_path::relative_platform::<platform::Auto, true>(target_dir, abs);
     let mut positional = Vec::with_capacity(request.name.len() + prefix.len() + rel.len() + 3);
     if request.is_aliased {
         positional.extend_from_slice(request.name);
@@ -392,7 +376,6 @@ fn assign_requests(
         Shared(PackageNameHash),
         PerTarget(Vec<Vec<u8>>),
     }
-    let mut buf = path_buffer_pool::get();
     let mut requests: Vec<UpdateRequest> = Vec::with_capacity(updates.len());
     let mut slots: Vec<Slot> = Vec::with_capacity(updates.len());
     for request in updates {
@@ -401,8 +384,7 @@ fn assign_requests(
             requests.push(request);
             continue;
         };
-        let abs: Box<[u8]> =
-            join_abs_string_buf::<platform::Auto>(original_cwd, &mut buf.0, &[path]).into();
+        let abs: Box<[u8]> = join_abs_string::<platform::Auto>(original_cwd, &[path]).into();
         slots.push(Slot::PerTarget(
             targets
                 .iter()

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -464,6 +464,49 @@ test("multi-entry build writes each entry point into the output directory", asyn
   const b = await Bun.file(path.join(String(dir), "dist", "b.js")).text();
   expect(a).toContain('"A"');
   expect(b).toContain('"B"');
+});
+
+async function readUntil(stream: ReadableStream<Uint8Array>, needle: string): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  try {
+    while (!output.includes(needle)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`stream closed before ${JSON.stringify(needle)} appeared. Output:\n${output}`);
+      output += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return output;
+}
+
+// `bun build --watch` busts the resolver's directory cache after a failed
+// resolution too, through the same join the dev server uses.
+test("--watch reports an unresolved import longer than a path buffer and keeps watching", async () => {
+  // Past a path buffer, and past the 4 KiB thread-local join buffers, on every platform.
+  const specifier = "./" + Buffer.alloc(Math.max(MAX_PATH_BYTES, 4096) + 1024, "a").toString();
+  using dir = tempDir("build-watch-long-specifier", {
+    "entry.ts": `import "${specifier}";\nconsole.log("entry");`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--watch", "entry.ts", "--outdir", "dist"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  await readUntil(proc.stderr, `error: Could not resolve: "${specifier}"`);
+  expect(proc.exitCode).toBeNull();
+
+  // The failed build left the watcher running: fixing the file triggers a rebuild.
+  await Bun.write(path.join(String(dir), "entry.ts"), `console.log("fixed");`);
+  expect(await readUntil(proc.stdout, "entry.js")).toContain("Bundled 1 module");
+  expect(await Bun.file(path.join(String(dir), "dist", "entry.js")).text()).toContain("fixed");
 });
 
 // https://github.com/oven-sh/bun/issues/9859

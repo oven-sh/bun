@@ -573,6 +573,62 @@ describe.concurrent("browser map with a key longer than 1024 bytes", () => {
   });
 });
 
+// Every "sideEffects" entry is joined onto the package directory when its
+// package.json is parsed. The join wrote into a fixed 4 KB threadlocal buffer
+// without a bounds check, so an entry longer than that aborted the process
+// (`panic: range end index 100072 out of range for slice of length 4095`) as
+// soon as the package was resolved. Longer than a path buffer on every
+// platform, including Windows (32767 UTF-16 code units).
+describe.concurrent("sideEffects entries longer than the path buffers", () => {
+  const longName = Buffer.alloc(100_000, "e").toString();
+  const sideEffects = [`./${longName}.js`, `./${longName}/*.js`, "./effect.js"];
+
+  it("does not crash resolving the package at runtime", async () => {
+    using dir = tempDir("resolver-side-effects-long-entry-runtime", {
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "index.js", sideEffects }),
+      "node_modules/dep/index.js": "module.exports = 1;",
+      "index.js": `console.log(require("dep"));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // On Windows no sideEffects entry matches anything yet (#30320).
+  it.skipIf(isWindows)("still applies the other entries when bundling", async () => {
+    using dir = tempDir("resolver-side-effects-long-entry-build", {
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", sideEffects }),
+      "node_modules/dep/effect.js": `console.log("effect kept");`,
+      "node_modules/dep/pure.js": `console.log("pure dropped");`,
+      "entry.js": `import "dep/effect.js"; import "dep/pure.js";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain("effect kept");
+    expect(stdout).not.toContain("pure dropped");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // ESModule.Package.parse scanned the entire specifier for an `@` to split off a
 // version. For wildcard `exports` maps the matched substring can contain `@`
 // (e.g. `ember-source/@ember/renderer/...`, `pkg/@scope/sub`) — those `@`s

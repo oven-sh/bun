@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isMusl, isWindows, MAX_PATH_BYTES, mkdirToLength, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -342,6 +342,126 @@ describe("bun", () => {
       expect(stdout).toBe("");
       expect(stderr).toContain("Could not get current working directory");
       expect(exitCode).toBe(1);
+    });
+
+    // One byte longer than a path buffer. The kernel would refuse a path below it.
+    const tooLong = "/" + Buffer.alloc(MAX_PATH_BYTES, "a").toString();
+
+    test("skips a $BUN_INSTALL and a $HOME that do not fit a path when it installs the bunx symlink", async () => {
+      using dir = tempDir("completions-bunx-long", {
+        "bin": {},
+        "empty-path": {},
+        "home-bun": { ".bun": { bin: {} } },
+      });
+      // A private hardlink of the executable, as above. Its directory already has the link, so
+      // every run falls through to the directories that the environment names.
+      const exe = join(String(dir), "bin", "bun");
+      try {
+        fs.linkSync(fs.realpathSync(bunExe()), exe);
+      } catch {
+        fs.copyFileSync(bunExe(), exe);
+      }
+      const exeRealpath = fs.realpathSync(exe);
+      fs.symlinkSync(exeRealpath, join(String(dir), "bin", bunxName));
+
+      async function installBunx(env: Record<string, string | undefined>) {
+        await using proc = Bun.spawn({
+          cmd: [exe, "completions"],
+          env: { ...bunEnv, PATH: join(String(dir), "empty-path"), SHELL: undefined, BUN_INSTALL: undefined, ...env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("");
+        expect(stderr).toContain("Unknown or unsupported shell");
+        expect(exitCode).toBe(1);
+      }
+
+      // $BUN_INSTALL/bin does not fit, so $HOME/.bun/bin is next.
+      await installBunx({ HOME: join(String(dir), "home-bun"), BUN_INSTALL: tooLong });
+      expect(fs.readlinkSync(join(String(dir), "home-bun", ".bun", "bin", bunxName))).toBe(exeRealpath);
+
+      // Neither $HOME/.bun/bin nor $HOME/.local/bin fits, so nothing is installed.
+      await installBunx({ HOME: tooLong });
+    });
+
+    test("zsh: looks for the startup file past a $ZDOTDIR and a $HOME that do not fit a path", async () => {
+      using dir = tempDir("completions-zsh-long", {
+        "bin": { [bunxName]: "" },
+        "out": {},
+        "home": { ".zshrc": "# mine\n" },
+      });
+      // bunx is on PATH, so this run does not install the symlink.
+      fs.chmodSync(join(String(dir), "bin", bunxName), 0o755);
+      const completions = join(String(dir), "out", "_bun");
+
+      async function install(env: Record<string, string | undefined>) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "completions", join(String(dir), "out")],
+          // IS_BUN_AUTO_UPDATE installs the file even though stdout is a pipe.
+          env: {
+            ...bunEnv,
+            PATH: join(String(dir), "bin"),
+            SHELL: "/bin/zsh",
+            IS_BUN_AUTO_UPDATE: "true",
+            BUN_INSTALL: undefined,
+            ZDOTDIR: undefined,
+            ...env,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("");
+        expect(stderr).toContain(`Installed completions to ${completions}`);
+        expect(exitCode).toBe(0);
+        return stderr;
+      }
+
+      // $ZDOTDIR/.zshrc does not fit, so $HOME/.zshrc is next.
+      expect(await install({ ZDOTDIR: tooLong, HOME: join(String(dir), "home") })).toContain(
+        "Enabled loading bun's completions in .zshrc",
+      );
+      expect(fs.readFileSync(join(String(dir), "home", ".zshrc"), "utf8")).toBe(
+        `# mine\n\n# bun completions\n[ -s "${completions}" ] && source "${completions}"\n`,
+      );
+
+      // Neither $HOME/.zshrc nor $HOME/.zshenv fits, so the command prints the line to add.
+      expect(await install({ HOME: tooLong })).toContain(
+        `To enable completions, add this to your .zshrc:\n      [ -s "${completions}" ] && source "${completions}"`,
+      );
+    });
+
+    test("zsh: installs into a directory whose completions file does not fit a path", async () => {
+      using dir = tempDir("completions-zsh-deep", {
+        "bin": { [bunxName]: "" },
+        "home": {},
+      });
+      fs.chmodSync(join(String(dir), "bin", bunxName), 0o755);
+      // The directory opens. `<directory>/_bun` is two bytes longer than a path buffer.
+      const out = mkdirToLength(fs.realpathSync(String(dir)), MAX_PATH_BYTES - 3);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "completions", out],
+        env: {
+          ...bunEnv,
+          PATH: join(String(dir), "bin"),
+          SHELL: "/bin/zsh",
+          IS_BUN_AUTO_UPDATE: "true",
+          BUN_INSTALL: undefined,
+          ZDOTDIR: undefined,
+          HOME: join(String(dir), "home"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("");
+      expect(stderr).toContain(`[ -s "${out}/_bun" ] && source "${out}/_bun"`);
+      expect(stderr).toContain(`Installed completions to ${out}/_bun`);
+      expect(fs.readdirSync(out)).toEqual(["_bun"]);
+      expect(exitCode).toBe(0);
     });
   });
   describe("--help preserves <placeholder> text", () => {

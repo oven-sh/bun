@@ -2213,14 +2213,15 @@ impl<'a> PackageInstall<'a> {
                 Err(err) => return InstallResult::fail(err.into(), Step::LinkingDependency, None),
             };
 
-            let target = path::resolve_path::relative(dest_dir_path, to_path);
-            // `symlinkat` takes `&ZStr` for both target and dest; build NUL-terminated
-            // copies in stack buffers.
             let mut target_buf = bun_paths::path_buffer_pool::get();
-            target_buf[..target.len()].copy_from_slice(target);
-            target_buf[target.len()] = 0;
-            // SAFETY: NUL written above.
-            let target_z = ZStr::from_buf(&target_buf, target.len());
+            let Some(target_z) = path::resolve_path::relative_buf_z_checked(
+                &mut target_buf[..],
+                dest_dir_path,
+                to_path,
+            ) else {
+                let err = crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG);
+                return InstallResult::fail(err, Step::LinkingDependency, None);
+            };
             let mut dest_name_buf = [0u8; 512];
             dest_name_buf[..dest.len()].copy_from_slice(dest);
             // SAFETY: zero-initialized; NUL at [dest.len()].

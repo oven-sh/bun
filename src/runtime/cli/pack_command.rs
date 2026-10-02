@@ -1460,12 +1460,14 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     let mut bins: Vec<BinInfo> = Vec::new();
 
     let mut path_buf = bun_paths::path_buffer_pool::get();
+    let mut path_spill: Vec<u8> = Vec::new();
 
     if let Some(bin) = json.as_property(b"bin") {
         if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
-            let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
+            let normalized = resolve_path::normalize_buf_spill::<resolve_path::platform::Posix>(
+                &mut path_buf[..],
+                &mut path_spill,
                 bin_str,
-                &mut path_buf,
             );
             if !bin_path_escapes_root(normalized) {
                 bins.push(BinInfo {
@@ -1484,9 +1486,10 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
             for bin_prop in bin_obj.properties.slice() {
                 if let Some(bin_prop_value) = &bin_prop.value {
                     if let Some(bin_str) = bin_prop_value.as_string(pack_bump()) {
-                        let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
-                            bin_str,
-                            &mut path_buf,
+                        let normalized = resolve_path::normalize_buf_spill::<
+                            resolve_path::platform::Posix,
+                        >(
+                            &mut path_buf[..], &mut path_spill, bin_str
                         );
                         if !bin_path_escapes_root(normalized) {
                             bins.push(BinInfo {
@@ -1506,9 +1509,10 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
         if let ExprData::EObject(directories_obj) = &directories.expr.data {
             if let Some(bin) = directories_obj.as_property(b"bin") {
                 if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
-                    let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
-                        bin_str,
-                        &mut path_buf,
+                    let normalized = resolve_path::normalize_buf_spill::<
+                        resolve_path::platform::Posix,
+                    >(
+                        &mut path_buf[..], &mut path_spill, bin_str
                     );
                     if !bin_path_escapes_root(normalized) {
                         bins.push(BinInfo {
@@ -1942,12 +1946,13 @@ pub(crate) fn published_files(
                     let mut excludes: Vec<Pattern> = Vec::new();
 
                     let mut path_buf = bun_paths::path_buffer_pool::get();
+                    let mut path_spill: Vec<u8> = Vec::new();
                     while let Some(files_entry) = files_array.next() {
                         if let Some(file_entry_str) = files_entry.as_string(bump) {
-                            let normalized = resolve_path::normalize_buf::<
+                            let normalized = resolve_path::normalize_buf_spill::<
                                 resolve_path::platform::Posix,
                             >(
-                                file_entry_str, &mut path_buf
+                                &mut path_buf[..], &mut path_spill, file_entry_str
                             );
                             let Some(parsed) = Pattern::from_utf8(normalized)? else {
                                 continue;
@@ -3037,11 +3042,24 @@ fn tarball_destination<'a>(
         return (ZStr::from_buf(&dest_buf[..], tarball_name_len - 1), 0);
     } else {
         let (dir_len_trimmed, dir_len_full) = {
-            let tarball_destination_dir = resolve_path::join_abs_string_buf::<
+            let Some(tarball_destination_dir) = resolve_path::join_abs_string_buf_checked::<
                 resolve_path::platform::Auto,
             >(
                 abs_workspace_path, dest_buf, &[pack_destination]
-            );
+            ) else {
+                Output::err_generic(
+                    "archive destination name too long: \"{}/{}\"",
+                    (
+                        bstr::BStr::new(strings::without_trailing_slash(pack_destination)),
+                        fmt_tarball_filename(
+                            package_name,
+                            package_version,
+                            TarballNameStyle::Normalize,
+                        ),
+                    ),
+                );
+                Global::crash();
+            };
             (
                 strings::without_trailing_slash(tarball_destination_dir).len(),
                 tarball_destination_dir.len(),

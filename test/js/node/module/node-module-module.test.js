@@ -1,7 +1,7 @@
 import "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -185,6 +185,50 @@ describe.concurrent("node-module-module", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("shapes-ok");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // A relative cache dir is joined onto cwd. A value that does not fit the
+  // path buffer after the join used to abort the process. A Windows
+  // environment variable holds at most 32767 characters, which fits the
+  // Windows path buffer, so the env var form cannot reach the overflow path
+  // there. The API test below covers Windows.
+  test.skipIf(isWindows)("NODE_COMPILE_CACHE with an over-long relative path does not crash startup", async () => {
+    using dir = tempDir("compile-cache-long-env", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log("user code ran")`],
+      env: { ...bunEnv, NODE_COMPILE_CACHE: Buffer.alloc(8000, "A").toString() },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("user code ran");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("module.enableCompileCache reports FAILED for an over-long relative path", async () => {
+    using dir = tempDir("compile-cache-long-api", {});
+    // 100000 bytes exceeds the path buffer on every platform (the Windows
+    // buffer holds 32767 * 3 + 1 bytes).
+    const code = `
+      const Module = require("module");
+      const dir = Buffer.alloc(100000, "A").toString();
+      const r = Module.enableCompileCache(dir);
+      console.log(JSON.stringify({ status: r.status, message: r.message }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      status: Module.constants.compileCacheStatus.FAILED,
+      message: "Cannot create cache directory: path too long",
+    });
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
@@ -442,6 +486,30 @@ console.log("survived", require("./late.js"));`,
     );
   });
 
+  // A directory gets "noop.js" joined to it. That join used two path buffers with no length
+  // test, so a legal directory within 7 bytes of the limit aborted the process.
+  test.each([
+    ["a legal directory near the path buffer size", Math.floor((MAX_PATH_BYTES - 8) / 2)],
+    ["a directory longer than a path buffer", MAX_PATH_BYTES],
+  ])("createRequire trailing slash, %s", async (_, segments) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const dir = "/" + Buffer.alloc(${segments} * 2, "d/").toString();
+         const req = require("node:module").createRequire(dir);
+         try { req.resolve("./x"); } catch (e) { console.log(dir.length, typeof req, e.code); }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`${1 + segments * 2} function MODULE_NOT_FOUND\n`);
+    expect(exitCode).toBe(0);
+  });
+
   test("createRequire trailing slash file url", () => {
     const req = createRequire(Bun.pathToFileURL(import.meta.dir + "/"));
     expect(req.resolve("./node-module-module.test.js")).toBe(
@@ -485,6 +553,55 @@ console.log("survived", require("./late.js"));`,
     // dropped rather than producing an extra ".../<sep>/node_modules" entry.
     expect(_nodeModulePaths("/a/b/c/d/")).toEqual(_nodeModulePaths("/a/b/c/d"));
     expect(_nodeModulePaths(ospath("/a/b/c/d") + path.sep)).toEqual(_nodeModulePaths("/a/b/c/d"));
+  });
+
+  test("_nodeModulePaths() accepts paths longer than PATH_MAX", async () => {
+    // Like Node's, this is string manipulation: the input never has to exist
+    // or fit a path buffer. It used to be resolved into a fixed-size buffer,
+    // which crashed the process, so this runs in a child. The inputs are built
+    // on both sides rather than passed through argv (too long for Windows').
+    function inputs() {
+      return {
+        single: Buffer.alloc(100_000, "a").toString(),
+        segments: Array.from({ length: 100 }, (_, i) => `seg${i}-` + Buffer.alloc(56, "s").toString()),
+        relative: Buffer.alloc(5000, "r").toString(),
+      };
+    }
+    const { single, segments, relative } = inputs();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const m = require("module");
+         ${inputs}
+         const { single, segments, relative } = inputs();
+         process.stdout.write(JSON.stringify({
+           single: m._nodeModulePaths("/" + single),
+           segments: m._nodeModulePaths("/" + segments.join("/")),
+           relative: m._nodeModulePaths(relative),
+           dot: m._nodeModulePaths("."),
+         }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { dot, ...results } = JSON.parse(stdout);
+
+    const root = path.resolve("/");
+    expect(results).toEqual({
+      single: [path.join(root, single, "node_modules"), path.join(root, "node_modules")],
+      segments: [
+        ...segments.map((_, i) => path.join(root, ...segments.slice(0, segments.length - i), "node_modules")),
+        path.join(root, "node_modules"),
+      ],
+      // A relative input resolves against the cwd, so its lookup chain is the
+      // cwd's own chain with one more entry in front.
+      relative: [path.join(path.dirname(dot[0]), relative, "node_modules"), ...dot],
+    });
+    expect(exitCode).toBe(0);
   });
 
   test("_nodeModulePaths() is stable across process.chdir()", async () => {

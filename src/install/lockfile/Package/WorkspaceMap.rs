@@ -231,19 +231,20 @@ fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
     )
 }
 
+/// `None` when the relative path does not fit `buf`.
 fn relative_workspace_path<'b>(
     buf: &'b mut [u8],
     root_dir: &[u8],
     abs_workspace_dir: &[u8],
-) -> &'b [u8] {
-    let len = resolve_path::relative_platform_buf::<path::platform::Auto, true>(
+) -> Option<&'b [u8]> {
+    let len = resolve_path::relative_platform_buf_checked::<path::platform::Auto, true>(
         buf,
         root_dir,
         abs_workspace_dir,
-    )
+    )?
     .len();
     resolve_path::platform_to_posix_in_place::<u8>(&mut buf[..len]);
-    &buf[..len]
+    Some(&buf[..len])
 }
 
 impl WorkspaceMap {
@@ -327,15 +328,15 @@ impl WorkspaceMap {
                             MissingWorkspace::Skip => true,
                             MissingWorkspace::Error => false,
                             MissingWorkspace::SkipIfInLockfile(lockfile) => abs_package_json_path
-                                .is_some_and(|abs| {
-                                    pruned_workspaces::lockfile_lists_workspace_path(
-                                        lockfile,
-                                        relative_workspace_path(
-                                            &mut rel_path_buf.0,
-                                            root_dir,
-                                            workspace_dir_of(abs),
-                                        ),
+                                .and_then(|abs| {
+                                    relative_workspace_path(
+                                        &mut rel_path_buf.0,
+                                        root_dir,
+                                        workspace_dir_of(abs),
                                     )
+                                })
+                                .is_some_and(|rel| {
+                                    pruned_workspaces::lockfile_lists_workspace_path(lockfile, rel)
                                 }),
                         };
                         if tolerated {
@@ -382,11 +383,18 @@ impl WorkspaceMap {
                 continue;
             }
 
-            let rel_input_path = relative_workspace_path(
+            let Some(rel_input_path) = relative_workspace_path(
                 &mut rel_path_buf.0,
                 root_dir,
                 workspace_dir_of(abs_package_json_path),
-            );
+            ) else {
+                let _ = log.add_error_fmt(
+                    Some(source),
+                    arr.item_loc(source, i),
+                    format_args!("Workspace path \"{}\" is too long", BStr::new(input_path)),
+                );
+                continue;
+            };
 
             if let Some(builder) = string_builder.as_deref_mut() {
                 builder.count(&workspace_entry.name);
@@ -578,11 +586,18 @@ impl WorkspaceMap {
                         continue;
                     }
 
-                    let workspace_path: &[u8] = relative_workspace_path(
+                    let Some(workspace_path) = relative_workspace_path(
                         &mut rel_path_buf.0,
                         root_dir,
                         workspace_dir_of(abs_package_json_path),
-                    );
+                    ) else {
+                        let _ = log.add_error_fmt(
+                            Some(source),
+                            bun_ast::Loc::EMPTY,
+                            format_args!("Workspace path \"{}\" is too long", BStr::new(entry_dir)),
+                        );
+                        continue;
+                    };
 
                     if let Some(builder) = string_builder.as_deref_mut() {
                         builder.count(&workspace_entry.name);

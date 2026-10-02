@@ -315,6 +315,26 @@ describe("bun <file.md>", () => {
     expect(out).toMatchSnapshot();
   });
 
+  test("local image whose path exceeds PATH_MAX falls back to alt text on a kitty terminal", async () => {
+    // Resolving `![..](./<5000 bytes>.png)` against the cwd wrote past the
+    // 4 KiB thread-local join buffer and aborted the process.
+    const src = "./" + Buffer.alloc(5000, "a").toString() + ".png";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdout.write(Bun.markdown.ansi(${JSON.stringify(`![my image](${src})\n`)}, { kittyGraphics: true }))`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // stderr intentionally not asserted: ASAN builds emit a warning there.
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("my image");
+    expect(exitCode).toBe(0);
+  });
+
   // Regression: the row-wrapper's word-break refinement used a raw byte
   // scan for the last space inside the cut, which found spaces inside an
   // OSC 8 URL (e.g. `[text](<https://host/my file.png>)`) and truncated

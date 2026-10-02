@@ -395,10 +395,11 @@ impl Lookup {
             // `platform::Auto` is
             // cfg-selected (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
+            // `name` is unbounded source map data; a path too long to fit is too long to open.
+            let path = bun_paths::resolve_path::join_abs_string_buf_checked::<
                 bun_paths::platform::Loose,
-            >(dir, &mut buf, &[name]);
-            match bun_sys::File::read_from(bun_sys::Fd::cwd(), normalized) {
+            >(dir, &mut buf[..], &[name])?;
+            match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
                 Ok(r) => break 'bytes r,
                 Err(_) => return None,
             }

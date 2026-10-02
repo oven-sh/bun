@@ -701,10 +701,20 @@ pub(crate) fn compute_chunks(
                     bun_sys::O::PATH | bun_sys::O::DIRECTORY,
                     0,
                 ) else {
-                    break 'dir &*resolve_path::normalize_buf::<bun_paths::platform::Auto>(
-                        dir_path,
-                        &mut real_path_buf.0,
-                    );
+                    let Some(normalized) = resolve_path::normalize_buf_checked::<
+                        bun_paths::platform::Auto,
+                    >(dir_path, &mut real_path_buf.0) else {
+                        this.log_disjoint().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "ENAMETOOLONG: Failed to get full path for directory '{}'",
+                                bstr::BStr::new(dir_path)
+                            ),
+                        );
+                        return Err(crate::Error::BuildFailed);
+                    };
+                    break 'dir &*normalized;
                 };
 
                 match dir_file.get_path(&mut real_path_buf) {

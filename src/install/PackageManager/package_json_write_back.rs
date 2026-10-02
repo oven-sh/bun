@@ -1,8 +1,7 @@
 use bun_collections::DynamicBitSet;
 use bun_collections::bit_set::Range as BitRange;
 use bun_core::{Global, strings};
-use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
+use bun_paths::resolve_path::{join_abs_string, platform};
 use bun_sys::{Fd, File};
 
 use crate::bun_fs::FileSystem;
@@ -122,7 +121,6 @@ fn edit_update_targets(
         let resolutions = lockfile.packages.items_resolution();
         let name_hashes = lockfile.packages.items_name_hash();
         let names = lockfile.packages.items_name();
-        let mut path_buf = path_buffer_pool::get();
         for pkg_id in 0..resolutions.len() {
             let res = resolutions[pkg_id];
             let (name_hash, rel): (Option<PackageNameHash>, &[u8]) = match res.tag {
@@ -140,9 +138,8 @@ fn edit_update_targets(
             selected.push(WorkspaceTarget {
                 name: Box::from(name),
                 name_hash,
-                package_json_path: join_abs_string_buf::<platform::Auto>(
+                package_json_path: join_abs_string::<platform::Auto>(
                     top_level,
-                    &mut path_buf.0,
                     &[rel, b"package.json"],
                 )
                 .into(),

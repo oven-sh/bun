@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { cp, readdir } from "fs/promises";
-import { bunEnv, bunExe, isCI, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { cp, mkdir, readdir } from "fs/promises";
+import { bunEnv, bunExe, isCI, isWindows, MAX_PATH_BYTES, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 async function getServerUrl(process: Subprocess<any, "pipe", any>, all = { text: "" }) {
@@ -354,6 +354,40 @@ export default function Component() {
   expect(installLine).toBeDefined();
   expect(installLine).toContain(" install -- ");
 });
+
+// The generator names the component by its path from the working directory, so each level of
+// the working directory adds `../`. Only a 1024-byte path buffer overflows at a depth that
+// `fs.rm` removes in under a second: a 4096-byte one needs 1366 levels.
+test.skipIf(MAX_PATH_BYTES > 1024)(
+  "reports a component whose path from the working directory does not fit a path",
+  async () => {
+    using dir = tempDir("create-deep-cwd", {
+      "Component.tsx": "export default function Component() {\n  return null;\n}\n",
+    });
+    const component = path.join(String(dir), "Component.tsx");
+    const cwd = path.join(String(dir), ...Array(Math.ceil(MAX_PATH_BYTES / 3)).fill("d"));
+    await mkdir(cwd, { recursive: true });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "create", component],
+      cwd,
+      env: {
+        ...bunEnv,
+        // Unreachable registry so that no run of this test can install anything.
+        BUN_CONFIG_REGISTRY: "http://localhost:1/",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(`ENAMETOOLONG: the path from the current directory to "${component}" is too long`);
+    expect(await readdir(cwd)).toEqual([]);
+    expect(exitCode).toBe(1);
+  },
+);
 
 function normalizeHTMLFn(development: boolean = true) {
   return (html: string) =>

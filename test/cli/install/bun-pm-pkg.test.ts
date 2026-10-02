@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
 import { join } from "path";
 
 async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
@@ -607,6 +607,32 @@ describe.concurrent("bun pm pkg", () => {
 
       expect((await readPkg(dir)).scripts).toEqual({ test: "jest", build: "webpack" });
     });
+
+    // The walk up from the cwd joins "package.json" onto each directory. The
+    // cwd is legal here, but that first candidate does not fit a path buffer,
+    // and joining it used to abort the process. Windows cannot build a tree
+    // this deep.
+    it.skipIf(isWindows)("should find package.json from a cwd a few bytes short of PATH_MAX", async () => {
+      using dir = tempDir("pm-pkg-deep-cwd", {
+        "package.json": JSON.stringify({ name: "root-package", version: "1.0.0" }, null, 2),
+      });
+
+      let deepDir = String(dir);
+      const target = MAX_PATH_BYTES - 8;
+      while (Buffer.byteLength(deepDir) < target) {
+        // Bytes left after the separator. Unless this is the last component,
+        // keep two of them for the separator and first byte of the next one.
+        const remaining = target - Buffer.byteLength(deepDir) - 1;
+        const size = remaining <= 255 ? remaining : Math.min(255, remaining - 2);
+        deepDir = join(deepDir, Buffer.alloc(size, "d").toString());
+        mkdirSync(deepDir);
+      }
+      expect(Buffer.byteLength(deepDir)).toBe(target);
+
+      const { output, code } = await runPmPkg(["get", "name"], deepDir);
+      expect(output.trim()).toBe('"root-package"');
+      expect(code).toBe(0);
+    });
   });
 
   describe("npm pkg compatibility tests", () => {
@@ -916,6 +942,25 @@ describe.concurrent("bun pm pkg", () => {
       expect(error).toContain("No bin file found at ./nonexistent2.js");
       expect(code).toBe(0);
       expect((await readPkg(multiIssueDir)).name).toBe("multiple-issues-package");
+    });
+
+    // On Windows the path buffer is larger than a package.json is likely to be.
+    it.skipIf(isWindows)("should warn instead of crashing on a bin path longer than the path buffer", async () => {
+      // Valid components, so only the total length is too long.
+      const binPath =
+        "./" +
+        Array(Math.ceil(MAX_PATH_BYTES / 200) + 1)
+          .fill(Buffer.alloc(200, "a").toString())
+          .join("/") +
+        ".js";
+      using longBinDir = tempDir("pm-pkg-long-bin", {
+        "package.json": JSON.stringify({ name: "LONG-BIN-PACKAGE", version: "1.0.0", bin: { b: binPath } }, null, 2),
+      });
+
+      const { error, code } = await runPmPkg(["fix"], longBinDir);
+      expect(error).toContain(`bin path is too long: ${binPath}`);
+      expect((await readPkg(longBinDir)).name).toBe("long-bin-package");
+      expect(code).toBe(0);
     });
 
     it("should not crash on empty bin object", async () => {

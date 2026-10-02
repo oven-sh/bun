@@ -14,8 +14,7 @@ use bun_install::{
     Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageNameHash, resolution,
 };
 use bun_install_types::DependencyGroup;
-use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
+use bun_paths::resolve_path::{join_abs_string, platform};
 
 use crate::bun_fs::FileSystem;
 
@@ -342,7 +341,6 @@ fn collect_root_entries(root: &Expr, group: &[u8], out: &mut Vec<RootEntry>) {
 
 fn member_targets(ws: &WorkspaceMembers) -> Vec<WorkspaceTarget> {
     let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
-    let mut buf = path_buffer_pool::get();
     ws.members
         .keys()
         .iter()
@@ -352,9 +350,8 @@ fn member_targets(ws: &WorkspaceMembers) -> Vec<WorkspaceTarget> {
             WorkspaceTarget {
                 name: entry.name.clone(),
                 name_hash: Some(bun_semver::string::Builder::string_hash(&entry.name)),
-                package_json_path: join_abs_string_buf::<platform::Auto>(
+                package_json_path: join_abs_string::<platform::Auto>(
                     top_level,
-                    &mut buf.0,
                     &[rel, b"package.json"],
                 )
                 .into(),

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { MAX_PATH_BYTES, tempDir } from "harness";
 import { statSync } from "node:fs";
 
 // Type definitions for metafile structure
@@ -797,6 +797,33 @@ describe("Bun.build metafile option variants", () => {
     const metafile = result.metafile as Metafile;
     expect(metafile.inputs).toBeDefined();
     expect(metafile.outputs).toBeDefined();
+  });
+
+  // An abort in the child fails this test: it prints no JSON and exits with a signal.
+  test("a metafile path longer than a path buffer does not stop the build", async () => {
+    using dir = tempDir("metafile-long-path", {
+      "index.js": `console.log("hi");`,
+      "build.js": `
+        const long = Buffer.alloc(${MAX_PATH_BYTES} + 104, "m").toString() + ".json";
+        const result = await Bun.build({
+          entrypoints: ["./index.js"],
+          outdir: "./dist",
+          metafile: { json: long },
+        });
+        console.log(JSON.stringify({ success: result.success, inputs: Object.keys(result.metafile.inputs) }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(JSON.parse(stdout)).toEqual({ success: true, inputs: ["index.js"] });
+    expect(exitCode).toBe(0);
   });
 
   test("metafile is lazily parsed", async () => {

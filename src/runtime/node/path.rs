@@ -1358,13 +1358,23 @@ unsafe extern "C" fn Bun__Node__Path_joinWTF(
 ) -> bun_core::String {
     // SAFETY: caller passes a valid slice from C++.
     let rhs = unsafe { bun_core::ffi::slice(rhs_ptr, rhs_len) };
-    let mut buf = [0u8; path_size::<u8>()];
-    let mut buf2 = [0u8; path_size::<u8>()];
     let lhs = lhs.to_utf8();
+    let paths: [&[u8]; 2] = [lhs.slice(), rhs];
+    let buf_len = join_buf_len::<u8>(cfg!(windows), &paths);
+    let mut fixed = [0u8; path_size::<u8>() * 2];
+    let mut spill = Vec::new();
+    // The fixed buffers hold any join that fits a path buffer. A longer one goes to the heap.
+    let scratch: &mut [u8] = if buf_len * 2 <= fixed.len() {
+        &mut fixed
+    } else {
+        spill.resize(buf_len * 2, 0);
+        &mut spill
+    };
+    let (buf, buf2) = scratch.split_at_mut(buf_len);
     #[cfg(windows)]
-    let joined = join_windows_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2);
+    let joined = join_windows_t::<u8>(&paths, buf, buf2);
     #[cfg(not(windows))]
-    let joined = join_posix_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2);
+    let joined = join_posix_t::<u8>(&paths, buf, buf2);
     bun_core::String::clone_utf8(joined)
 }
 
@@ -1491,12 +1501,8 @@ fn join_windows_js_t<T: PathCharCwd>(
     create_js_string_t::<T>(global_object, join_windows_t(paths, buf, buf2))
 }
 
-fn join_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    pool: &mut RarePathBuf,
-    is_windows: bool,
-    paths: &[&[T]],
-) -> JsResult<JSValue> {
+/// Units each of the two buffers of `join_posix_t` / `join_windows_t` needs for `paths`.
+fn join_buf_len<T: PathCharCwd>(is_windows: bool, paths: &[&[T]]) -> usize {
     // Adding 8 bytes when Windows for the possible UNC root.
     let mut buf_len: usize = if is_windows { 8 } else { 0 };
     for path in paths {
@@ -1506,7 +1512,16 @@ fn join_js_t<T: PathCharCwd>(
             path.len()
         };
     }
-    buf_len = buf_len.max(path_size::<T>());
+    buf_len.max(path_size::<T>())
+}
+
+fn join_js_t<T: PathCharCwd>(
+    global_object: &JSGlobalObject,
+    pool: &mut RarePathBuf,
+    is_windows: bool,
+    paths: &[&[T]],
+) -> JsResult<JSValue> {
+    let buf_len = join_buf_len::<T>(is_windows, paths);
     let mut scratch = PathScratch::<T>::new(pool, buf_len * 2);
     let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
     if is_windows {

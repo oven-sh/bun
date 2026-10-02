@@ -1,7 +1,8 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "fs";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, isIPv6, tempDir } from "harness";
+import { MAX_PATH_BYTES, VerdaccioRegistry, bunExe, bunEnv as env, isIPv6, isWindows, tempDir } from "harness";
 import { join } from "path";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -221,6 +222,99 @@ registry = http://localhost:${registry.port}/
       using dir = tempDir("npmrc-xdg-empty", { ...pkg, "home/.npmrc": npmrc(1) });
       const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: "" });
       expect(result).toEqual(usesRegistry(1));
+    });
+
+    // The candidate paths are built in a path buffer (on Windows it is larger than any
+    // environment variable can be), so the longest directory whose "/.npmrc" and NUL terminator
+    // still fit is MAX_PATH_BYTES - 8 bytes. A longer directory cannot contain an openable
+    // .npmrc and counts as having none.
+    describe.skipIf(isWindows)("$HOME longer than the path buffer", () => {
+      const LONGEST_HOME = MAX_PATH_BYTES - 8;
+
+      // xdg/ has no .npmrc, so the lookup falls through to $HOME. The global bunfig.toml lookup
+      // starts at $XDG_CONFIG_HOME too; the bunfig there keeps it away from the oversized $HOME,
+      // which is not what is under test here.
+      const xdg = { "xdg/.bunfig.toml": "" };
+      const envWith = (dir: string, home: string) => ({ XDG_CONFIG_HOME: join(dir, "xdg"), HOME: home });
+
+      // An absolute path of exactly `length` bytes. Nothing exists there.
+      const missingHome = (length: number) => "/" + Buffer.alloc(length - 1, "a").toString();
+
+      it.concurrent("reads $HOME/.npmrc from the longest $HOME that fits", async () => {
+        using dir = tempDir("npmrc-home-longest", { ...pkg, ...xdg });
+        // Pad `<dir>/home/` out to exactly LONGEST_HOME bytes with nested directories of 200
+        // bytes each (NAME_MAX is 255); the last byte is never a separator.
+        const prefix = join(String(dir), "home") + "/";
+        const padding = Buffer.alloc(LONGEST_HOME - Buffer.byteLength(prefix), "a");
+        for (let i = 200; i < padding.length - 1; i += 201) padding[i] = "/".charCodeAt(0);
+        const home = prefix + padding.toString();
+        expect(Buffer.byteLength(home)).toBe(LONGEST_HOME);
+        mkdirSync(home, { recursive: true });
+        writeFileSync(join(home, ".npmrc"), npmrc(1));
+
+        const result = await publishDryRun(String(dir), envWith(String(dir), home));
+        expect(result).toEqual(usesRegistry(1));
+      });
+
+      // The project .npmrc is the only one left, and shows the command still ran normally.
+      it.concurrent("skips a $HOME one byte longer than fits", async () => {
+        using dir = tempDir("npmrc-home-one-too-long", { ...pkg, ...xdg, "pkg/.npmrc": npmrc(3) });
+        const result = await publishDryRun(String(dir), envWith(String(dir), missingHome(LONGEST_HOME + 1)));
+        expect(result).toEqual(usesRegistry(3));
+      });
+
+      it.concurrent("skips a $HOME longer than the whole buffer", async () => {
+        using dir = tempDir("npmrc-home-too-long", { ...pkg, ...xdg, "pkg/.npmrc": npmrc(3) });
+        const result = await publishDryRun(String(dir), envWith(String(dir), missingHome(MAX_PATH_BYTES + 1000)));
+        expect(result).toEqual(usesRegistry(3));
+      });
+    });
+  });
+
+  // A relative `cafile` is resolved against the directory the command ran in.
+  describe("cafile that does not fit the path buffer", () => {
+    // A relative path of single-letter directories, so only its total length is too long.
+    const cafileOfLength = (bytes: number) => "./" + Buffer.alloc(bytes, "c/").toString() + "ca.pem";
+
+    // The cache is empty, so `no-deps` has to come from the registry: the HTTP thread starts
+    // and loads the CA file.
+    async function install(dir: string, args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd: dir,
+        env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    const files = (npmrc: string) => ({
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+      ".npmrc": `registry=${registry.registryUrl()}\n${npmrc}`,
+    });
+
+    // A Windows command line is shorter than a Windows path buffer.
+    it.concurrent.skipIf(isWindows)("--cafile", async () => {
+      using dir = tempDir("cafile-flag-too-long", files(""));
+      const cafile = cafileOfLength(MAX_PATH_BYTES + 1000);
+
+      const { stdout, stderr, exitCode } = await install(String(dir), [`--cafile=${cafile}`]);
+
+      expect(stderr).toContain("HTTPThread: could not find CA file: '");
+      expect(stdout).not.toContain("installed");
+      expect(exitCode).toBe(1);
+    });
+
+    it.concurrent(".npmrc cafile", async () => {
+      using dir = tempDir("cafile-npmrc-too-long", files(`cafile=${cafileOfLength(MAX_PATH_BYTES + 1000)}\n`));
+
+      const { stdout, stderr, exitCode } = await install(String(dir), []);
+
+      expect(stderr).toContain("HTTPThread: could not find CA file: '");
+      expect(stdout).not.toContain("installed");
+      expect(exitCode).toBe(1);
     });
   });
 

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, MAX_PATH_BYTES, tempDir } from "harness";
 import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { ESBUILD, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -451,4 +452,259 @@ describe("bundler", () => {
       expect(exitCode).toBe(0);
     });
   }
+});
+
+// Output paths rendered from a naming template used to be copied into fixed-size
+// path buffers unchecked, so a template that rendered too long aborted the
+// process instead of failing the build. Every case spawns bun because the old
+// behavior was a crash.
+describe("bundler naming templates that render long output paths", () => {
+  // Output paths also have to fit with a ".map" / ".jsc" sidecar extension appended.
+  const maxOutputPathLen = MAX_PATH_BYTES - 1 - ".map".length;
+  // Templates start with "./" so they render to exactly their own length.
+  const templateOfLength = (length: number) => "./" + Buffer.alloc(length - 2, "a").toString();
+  // `length` bytes of 200-byte directory names, so that a filesystem accepts each of them.
+  const components = (length: number, char: string) => {
+    const parts: string[] = [];
+    let remaining = length;
+    while (remaining > 201) {
+      parts.push(Buffer.alloc(200, char).toString());
+      remaining -= 201;
+    }
+    parts.push(Buffer.alloc(remaining, char).toString());
+    return parts.join("/");
+  };
+
+  interface BuildReport {
+    success: boolean;
+    logs: { message: string; notes: string[] }[];
+    outputs: { kind: string; path: string; text: string }[];
+  }
+
+  async function build(configSource: string): Promise<BuildReport> {
+    using dir = tempDir("naming-long-output-path", {
+      "asset.txt": "hello",
+      "app.js": `import f from "./asset.txt" with { type: "file" }; console.log(f);`,
+      "plain.js": `console.log(1);`,
+      "dynamic.js": `import("./shared.js").then(m => console.log(m.x));`,
+      "shared.js": `export const x = 1;`,
+      "build.ts": `
+        const result = await Bun.build({ throw: false, ...(${configSource}) });
+        const outputs = [];
+        for (const output of result.outputs) {
+          outputs.push({ kind: output.kind, path: output.path.replaceAll("\\\\", "/"), text: await output.text() });
+        }
+        console.log(JSON.stringify({
+          success: result.success,
+          logs: result.logs.map(log => ({ message: log.message, notes: (log.notes ?? []).map(note => note.message) })),
+          outputs,
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  /** The asset path printed into the entry point: its first string literal. */
+  function reference(report: BuildReport): string {
+    const entry = report.outputs.find(output => output.kind === "entry-point")!;
+    return entry.text.match(/"([^"]*)"/)![1];
+  }
+
+  test.concurrent("asset naming rendering past the limit fails the build", async () => {
+    const template = templateOfLength(MAX_PATH_BYTES + 100) + "-[name].[ext]";
+    const report = await build(`{ entrypoints: ["./app.js"], naming: { asset: ${JSON.stringify(template)} } }`);
+    expect(report).toEqual({
+      success: false,
+      logs: [
+        {
+          message: `Output path for "asset.txt" is too long (${template.length + "asset.txt".length - "[name].[ext]".length} bytes, the limit on this platform is ${maxOutputPathLen})`,
+          notes: [`naming template is ${JSON.stringify(template)}`],
+        },
+      ],
+      outputs: [],
+    });
+  });
+
+  test.concurrent("chunk naming rendering past the limit fails the build", async () => {
+    const template = templateOfLength(MAX_PATH_BYTES + 100) + "-[name]-[hash].[ext]";
+    const report = await build(
+      `{ entrypoints: ["./dynamic.js"], splitting: true, naming: { chunk: ${JSON.stringify(template)} } }`,
+    );
+    expect(report.outputs).toEqual([]);
+    expect(report.logs.length).toBeGreaterThan(0);
+    for (const log of report.logs) {
+      expect(log.message).toMatch(
+        /^Output path for ".+" is too long \(\d+ bytes, the limit on this platform is \d+\)$/,
+      );
+      expect(log.notes).toEqual([`naming template is ${JSON.stringify(template)}`]);
+    }
+    expect(report.success).toBe(false);
+  });
+
+  test.concurrent("entry naming rendering past the limit fails the build", async () => {
+    const template = templateOfLength(MAX_PATH_BYTES + 100) + "-[name].[ext]";
+    const report = await build(`{ entrypoints: ["./plain.js"], naming: { entry: ${JSON.stringify(template)} } }`);
+    expect(report).toEqual({
+      success: false,
+      logs: [
+        {
+          message: `Output path for "plain.js" is too long (${template.length + "plain.js".length - "[name].[ext]".length} bytes, the limit on this platform is ${maxOutputPathLen})`,
+          notes: [`naming template is ${JSON.stringify(template)}`],
+        },
+      ],
+      outputs: [],
+    });
+  });
+
+  test.concurrent("one byte past the limit is rejected", async () => {
+    const template = templateOfLength(maxOutputPathLen + 1);
+    const report = await build(`{ entrypoints: ["./app.js"], naming: { asset: ${JSON.stringify(template)} } }`);
+    expect(report).toEqual({
+      success: false,
+      logs: [
+        {
+          message: `Output path for "asset.txt" is too long (${maxOutputPathLen + 1} bytes, the limit on this platform is ${maxOutputPathLen})`,
+          notes: [`naming template is ${JSON.stringify(template)}`],
+        },
+      ],
+      outputs: [],
+    });
+  });
+
+  // These paths fit, but resolving them against the cwd while computing the import
+  // specifier did not fit in a path buffer.
+  test.concurrent("an output path exactly at the limit builds", async () => {
+    const template = templateOfLength(maxOutputPathLen);
+    const report = await build(`{ entrypoints: ["./app.js"], naming: { asset: ${JSON.stringify(template)} } }`);
+    expect(report.logs).toEqual([]);
+    expect(report.outputs.map(output => [output.kind, output.path])).toEqual([
+      ["entry-point", "./app.js"],
+      ["asset", template],
+    ]);
+    expect(reference(report)).toBe(template);
+    expect(report.success).toBe(true);
+  });
+
+  test.concurrent("a chunk in a subdirectory can reference an output path at the limit", async () => {
+    const template = templateOfLength(maxOutputPathLen);
+    const report = await build(
+      `{ entrypoints: ["./app.js"], naming: { entry: "./deep/[name].[ext]", asset: ${JSON.stringify(template)} } }`,
+    );
+    expect(report.logs).toEqual([]);
+    expect(reference(report)).toBe("../" + template.slice("./".length));
+    expect(report.success).toBe(true);
+  });
+
+  test.concurrent("an import() of a chunk whose path is at the limit is printed in full", async () => {
+    // "shared" and the default 8-character hash render to the same lengths as their placeholders.
+    const suffix = "-[name]-[hash].[ext]";
+    const rendered = "-shared-01234567.js";
+    const template = templateOfLength(maxOutputPathLen - rendered.length) + suffix;
+    const report = await build(
+      `{ entrypoints: ["./dynamic.js"], splitting: true, naming: { chunk: ${JSON.stringify(template)} } }`,
+    );
+    expect(report.logs).toEqual([]);
+    const entry = report.outputs.find(output => output.kind === "entry-point")!;
+    const chunk = report.outputs.find(output => output.kind === "chunk")!;
+    expect(chunk.path).toHaveLength(maxOutputPathLen);
+    expect(chunk.path).toStartWith(template.slice(0, -suffix.length) + "-shared-");
+    expect(entry.text.match(/import\("([^"]*)"\)/)![1]).toBe(chunk.path);
+    expect(report.success).toBe(true);
+  });
+
+  test.concurrent("an import specifier longer than a path buffer is printed in full", async () => {
+    // The chunk path fits; the "../" per directory needed to get back out of it does not.
+    const depth = Math.floor(MAX_PATH_BYTES * 0.4);
+    const entry = "./" + Buffer.alloc(depth * 2, "a/").toString() + "[name].[ext]";
+    const report = await build(
+      `{ entrypoints: ["./app.js"], naming: { entry: ${JSON.stringify(entry)}, asset: "./[name].[ext]" } }`,
+    );
+    expect(report.logs).toEqual([]);
+    const specifier = reference(report);
+    expect(specifier).toBe(Buffer.alloc(depth * 3, "../").toString() + "asset.txt");
+    expect(specifier.length).toBeGreaterThan(MAX_PATH_BYTES);
+    expect(report.success).toBe(true);
+  });
+
+  // A template this long does not fit in a Windows command line, so the placeholders do the expanding.
+  for (const [flag, extension, entry] of [
+    ["--asset-naming", "txt", (name: string) => `import f from "./${name}.txt" with { type: "file" }; console.log(f);`],
+    ["--chunk-naming", "js", (name: string) => `import("./${name}.js").then(m => console.log(m.x));`],
+  ] as const) {
+    test.concurrent(`bun build --splitting ${flag} reports placeholders that expand past the limit`, async () => {
+      const name = Buffer.alloc(100, "b").toString();
+      const template =
+        Buffer.alloc("[name]".length * Math.ceil((MAX_PATH_BYTES + 100) / name.length), "[name]").toString() +
+        "-[hash].[ext]";
+      using dir = tempDir("naming-long-output-path-cli", {
+        [`${name}.${extension}`]: extension === "js" ? "export const x = 1;" : "hello",
+        "app.js": entry(name),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./app.js", "--splitting", "--outdir", "./out", flag, template],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(`Output path for "${name}.${extension}" is too long (`);
+      // The CLI roots a naming template at "./".
+      expect(stderr).toContain(`naming template is "./${template}"`);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+  }
+
+  // Each piece is a legal path on its own; only outdir + "/" + the rendered name passes
+  // PATH_MAX. The bundler writes the file relative to the open outdir, so it exists.
+  // macOS cannot open an outdir this long in the first place.
+  test.skipIf(!isLinux)("BuildArtifact.path of an output whose absolute path is longer than PATH_MAX", async () => {
+    using dir = tempDir("naming-long-absolute-output-path", { "e.js": "export default 1;" });
+    const cwd = String(dir);
+    const outdir = join(cwd, "o", components(2600 - cwd.length - 3, "d"));
+    const nameDir = components(1587, "n");
+    const expectedPath = join(outdir, nameDir, "e.js");
+    expect(expectedPath.length).toBeGreaterThan(MAX_PATH_BYTES);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { readdirSync } from "node:fs";
+        const result = await Bun.build(${JSON.stringify({
+          entrypoints: [join(cwd, "e.js")],
+          outdir,
+          naming: nameDir + "/[name].[ext]",
+          throw: false,
+        })});
+        // The absolute path is too long for a syscall, so list the directory from inside the outdir.
+        process.chdir(${JSON.stringify(outdir)});
+        console.log(JSON.stringify({
+          success: result.success,
+          logs: result.logs.map(log => log.message),
+          paths: result.outputs.map(output => output.path),
+          written: readdirSync(${JSON.stringify(nameDir)}),
+        }));`,
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ success: true, logs: [], paths: [expectedPath], written: ["e.js"] });
+    expect(exitCode).toBe(0);
+  });
 });

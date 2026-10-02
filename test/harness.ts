@@ -13,7 +13,7 @@ import { ChildProcess, execSync, fork } from "child_process";
 import { readdir, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
-import { dirname, isAbsolute, join } from "path";
+import { dirname, isAbsolute, join, sep } from "path";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -2397,4 +2397,22 @@ export function readElf64ProgramHeaders(path: string): Elf64ProgramHeader[] {
   } finally {
     closeSync(fd);
   }
+}
+
+/** Size of a Bun path buffer (`bun_core::MAX_PATH_BYTES`): `PATH_MAX` on POSIX, a 32767-unit path as UTF-8 on Windows. */
+export const MAX_PATH_BYTES = isWindows ? 32767 * 3 + 1 : isLinux || isAndroid ? 4096 : 1024;
+
+/** Creates directories below `root` until the path is exactly `bytes` long, and returns that path. */
+export function mkdirToLength(root: string, bytes: number): string {
+  let dir = root;
+  for (let pad = bytes - Buffer.byteLength(root); pad > 0; ) {
+    // A component is a separator and 1 to 255 bytes. Do not leave a lone separator for the last one.
+    const size = pad > 257 ? 256 : pad === 257 ? 255 : pad;
+    if (size < 2) throw new Error(`cannot pad ${JSON.stringify(root)} by one byte`);
+    dir += sep + Buffer.alloc(size - 1, "a").toString();
+    pad -= size;
+  }
+  if (Buffer.byteLength(dir) !== bytes) throw new Error(`${JSON.stringify(root)} is longer than ${bytes} bytes`);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
 }

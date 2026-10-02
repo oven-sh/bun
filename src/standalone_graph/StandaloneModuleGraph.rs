@@ -1699,14 +1699,20 @@ pub(crate) fn to_bytes(
                 options::write_sanitized_parent_dirs(&mut dump_rel, dest_path)
                     .expect("write to Vec<u8>");
                 let mut path_buf = bun_paths::path_buffer_pool::get();
-                let dest_z = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                    dump_code_dir,
-                    &mut path_buf[..],
-                    &[&dump_rel],
-                );
 
                 // Scoped block to handle dump failures without skipping module emission
                 'dump: {
+                    let Some(dest_z) = path::resolve_path::join_abs_string_buf_z_checked::<
+                        path::platform::Auto,
+                    >(
+                        dump_code_dir, &mut path_buf[..], &[&dump_rel]
+                    ) else {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r><d>:<r> failed to open {}: ENAMETOOLONG",
+                            bstr::BStr::new(dest_path),
+                        );
+                        break 'dump;
+                    };
                     let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
                     let file = match bun_sys::File::make_open(dest_z.as_bytes(), flags, 0o664) {
                         Ok(file) => file,
@@ -2050,17 +2056,22 @@ pub(crate) struct Injected<'a> {
 impl<'a> Injected<'a> {
     /// `zname` was opened relative to `cwd` (or is already absolute); pin it in
     /// `temp_path_buf` so a later `chdir` cannot retarget the rename/unlink.
-    fn new(fd: Fd, cwd: &[u8], zname: &ZStr, temp_path_buf: &'a mut PathBuffer) -> Injected<'a> {
-        let len = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+    fn new(
+        fd: Fd,
+        cwd: &[u8],
+        zname: &ZStr,
+        temp_path_buf: &'a mut PathBuffer,
+    ) -> Option<Injected<'a>> {
+        let len = path::resolve_path::join_abs_string_buf_z_checked::<path::platform::Auto>(
             cwd,
             &mut temp_path_buf[..],
             &[zname.as_bytes()],
-        )
+        )?
         .len();
-        Injected {
+        Some(Injected {
             fd,
             temp_path: ZStr::from_buf(&temp_path_buf[..], len),
-        }
+        })
     }
 }
 
@@ -2118,6 +2129,15 @@ pub(crate) fn inject<'a>(
         let _ = Syscall::unlink(name);
     };
 
+    // Renamed by its absolute path later: a `cwd/zname` that does not fit one starts in the tmpdir.
+    #[cfg(not(windows))]
+    let fits_in_cwd = path::resolve_path::join_abs_string_buf_z_checked::<path::platform::Auto>(
+        cwd,
+        &mut temp_path_buf[..],
+        &[zname.as_bytes()],
+    )
+    .is_some();
+
     let cloned_executable_fd: Fd = 'brk: {
         #[cfg(windows)]
         {
@@ -2168,7 +2188,7 @@ pub(crate) fn inject<'a>(
         {
             // if we're on a mac, use clonefile() if we can
             // failure is okay, clonefile is just a fast path.
-            if let bun_sys::Result::Ok(()) = Syscall::clonefile(self_exe, zname) {
+            if fits_in_cwd && Syscall::clonefile(self_exe, zname).is_ok() {
                 if let bun_sys::Result::Ok(res) =
                     Syscall::open(zname, bun_sys::O::RDWR | bun_sys::O::CLOEXEC, 0)
                 {
@@ -2183,12 +2203,23 @@ pub(crate) fn inject<'a>(
         let fd: Fd = 'brk2: {
             let mut tried_changing_abs_dir = false;
             for retry in 0..3 {
-                match Syscall::open(
-                    zname,
-                    bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL,
-                    // Not 0: WSL2 DrvFS re-checks the mode on ftruncate() (#40111).
-                    0o600,
-                ) {
+                let opened = if retry == 0 && !fits_in_cwd {
+                    Err(bun_sys::Error::from_code(
+                        E::ENAMETOOLONG,
+                        bun_sys::Tag::open,
+                    ))
+                } else {
+                    Syscall::open(
+                        zname,
+                        bun_sys::O::CLOEXEC
+                            | bun_sys::O::RDWR
+                            | bun_sys::O::CREAT
+                            | bun_sys::O::EXCL,
+                        // Not 0: WSL2 DrvFS re-checks the mode on ftruncate() (#40111).
+                        0o600,
+                    )
+                };
+                match opened {
                     Ok(res) => break 'brk2 res,
                     Err(err) => {
                         if retry < 2 {
@@ -2291,6 +2322,14 @@ pub(crate) fn inject<'a>(
     };
     let _ = (&mut zname_owned, &mut zname);
 
+    let Some(injected) = Injected::new(cloned_executable_fd, cwd, zname, temp_path_buf) else {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r><d>:<r> failed to get temporary file name: ENAMETOOLONG"
+        );
+        cleanup(zname, cloned_executable_fd);
+        return None;
+    };
+
     match target.os {
         CompileTargetOs::Mac => {
             let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
@@ -2356,12 +2395,7 @@ pub(crate) fn inject<'a>(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected::new(
-                cloned_executable_fd,
-                cwd,
-                zname,
-                temp_path_buf,
-            ));
+            return Some(injected);
         }
         CompileTargetOs::Windows => {
             let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
@@ -2422,12 +2456,7 @@ pub(crate) fn inject<'a>(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected::new(
-                cloned_executable_fd,
-                cwd,
-                zname,
-                temp_path_buf,
-            ));
+            return Some(injected);
         }
         CompileTargetOs::Linux | CompileTargetOs::Freebsd => {
             // ELF section approach: find .bun section and expand it
@@ -2485,12 +2514,7 @@ pub(crate) fn inject<'a>(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected::new(
-                cloned_executable_fd,
-                cwd,
-                zname,
-                temp_path_buf,
-            ));
+            return Some(injected);
         }
         _ => {
             let total_byte_count: usize;
@@ -2569,12 +2593,7 @@ pub(crate) fn inject<'a>(
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
 
-            return Some(Injected::new(
-                cloned_executable_fd,
-                cwd,
-                zname,
-                temp_path_buf,
-            ));
+            return Some(injected);
         }
     }
 }
@@ -2771,7 +2790,17 @@ pub fn target_executable(
         let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
 
         let mut needs_download: bool = true;
-        let dest_z = target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download);
+        let dest_z =
+            match target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download) {
+                Ok(dest) => dest,
+                Err(_) => {
+                    return Err(CompileError::fmt(format_args!(
+                        "Cache directory for '{}' is too long (File name too long): {}",
+                        target,
+                        bstr::BStr::new(&bun_sys::fetch_cache_directory_path())
+                    )));
+                }
+            };
 
         if needs_download {
             if let Err(e) = download_to_path(target, env, dest_z) {
@@ -3011,12 +3040,11 @@ pub fn to_executable(
     #[cfg(not(windows))]
     {
         let temp_posix = injected.temp_path;
-        let outfile_basename = bun_paths::basename(outfile);
-        let mut outfile_posix_buf = bun_paths::path_buffer_pool::get();
-        let outfile_posix = path::resolve_path::z(outfile_basename, &mut outfile_posix_buf);
+        // `resolve_path::z` would turn a too-long name into "" and the rename would report ENOENT.
+        let outfile_posix = bun_core::ZBox::from_bytes(bun_paths::basename(outfile));
 
         if let Err(e) =
-            bun_sys::move_file_z_with_handle(fd, Fd::cwd(), temp_posix, root_dir, outfile_posix)
+            bun_sys::move_file_z_with_handle(fd, Fd::cwd(), temp_posix, root_dir, &outfile_posix)
         {
             fd.close();
 

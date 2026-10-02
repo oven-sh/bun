@@ -633,17 +633,17 @@ impl ShellMvBatchedTask {
         buf: &mut PathBuffer,
     ) -> Result<(), bun_sys::Error> {
         let base = resolve_path::basename(src.as_bytes());
-        let len =
-            resolve_path::normalize_buf::<bun_paths::platform::Auto>(base, &mut buf[..]).len();
-        if len + 1 >= bun_paths::MAX_PATH_BYTES {
-            return Err(bun_sys::Error::from_code(
+        let result = match resolve_path::normalize_buf_z_checked::<bun_paths::platform::Auto>(
+            base,
+            &mut buf[..],
+        ) {
+            Some(path_in_dir) => Self::do_rename(cwd, src, target_fd, path_in_dir),
+            None => Err(bun_sys::Error::from_code(
                 bun_sys::E::ENAMETOOLONG,
                 bun_sys::Tag::rename,
-            ));
-        }
-        buf[len] = 0;
-        let path_in_dir = ZStr::from_buf(buf.as_slice(), len);
-        Self::do_rename(cwd, src, target_fd, path_in_dir).map_err(|e| {
+            )),
+        };
+        result.map_err(|e| {
             // Surface `target/basename(src)` as the failing path.
             let joined = resolve_path::join_z::<bun_paths::platform::Auto>(&[target, base]);
             e.with_path(joined.as_bytes())

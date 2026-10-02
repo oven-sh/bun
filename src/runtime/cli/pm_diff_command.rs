@@ -25,8 +25,6 @@ use crate::cli::pm_diff_normalize as normalize;
 use crate::cli::pm_diff_semantic::Operation;
 use crate::cli::pm_diff_semantic::{self as semantic, Op};
 
-use bun_core::fmt::buf_print_infallible as buf_print;
-
 #[derive(Clone, Copy)]
 pub(crate) struct DiffFlags {
     /// Compare bytes, not the canonical re-print of JS/CSS/JSON.
@@ -703,24 +701,18 @@ fn fetch_registry_tree(
     let bump = Bump::new();
     let scope = pm.scope_for_package_name(name);
 
-    let mut url_buf = bun_paths::path_buffer_pool::get();
-    let encoded_name = buf_print(
-        url_buf.0.as_mut_slice(),
-        format_args!("{}", bun_fmt::dependency_url(name)),
-    );
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let manifest_url = buf_print(
-        path_buf.0.as_mut_slice(),
-        format_args!(
-            "{}/{}",
-            BStr::new(strings::without_trailing_slash(scope.url.href())),
-            BStr::new(encoded_name)
-        ),
+    // The name is a command operand and the registry is configuration: neither has a length limit.
+    let mut manifest_url: Vec<u8> = Vec::new();
+    let _ = write!(
+        &mut manifest_url,
+        "{}/{}",
+        BStr::new(strings::without_trailing_slash(scope.url.href())),
+        bun_fmt::dependency_url(name),
     );
     let body = registry_get(
         pm,
         scope,
-        URL::parse(manifest_url),
+        URL::parse(&manifest_url),
         // The abbreviated packument has versions + dist, all this needs; full ones run to tens of MB.
         b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
         Some((name, version)),

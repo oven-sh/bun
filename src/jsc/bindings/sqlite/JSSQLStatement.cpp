@@ -80,7 +80,8 @@ static inline int lazyLoadSQLite()
 #define ENABLE_SQLITE_FAST_MALLOC (BENABLE(MALLOC_SIZE) && BENABLE(MALLOC_GOOD_SIZE))
 #endif
 
-static std::atomic<int64_t> sqlite_malloc_amount = 0;
+// Read as a delta across one synchronous call, so per-thread is enough.
+static thread_local int64_t sqlite_malloc_amount = 0;
 
 static void enableFastMallocForSQLite()
 {
@@ -135,6 +136,11 @@ extern "C" void Bun__initializeSQLite()
 {
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
+        // Off, SQLite skips its process-wide mutex in every malloc and free.
+        int returnCode = sqlite3_config(SQLITE_CONFIG_MEMSTATUS, 0);
+        ASSERT_WITH_MESSAGE(returnCode == SQLITE_OK, "Unable to disable SQLite memory statistics");
+        UNUSED_PARAM(returnCode);
+
         enableFastMallocForSQLite();
     });
 }
@@ -1730,8 +1736,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
 
     sqlite3_stmt* statement = nullptr;
 
-    // This is inherently somewhat racy if using Worker
-    // but that should be okay.
     int64_t currentMemoryUsage = sqlite_malloc_amount;
 
     int rc = SQLITE_OK;

@@ -2889,3 +2889,54 @@ it.skipIf(!sqliteAllowsMoreThan65535Parameters)(
     expect(db.query("SELECT a FROM t").all()).toEqual([{ a: 7 }]);
   },
 );
+
+// SQLite memory statistics are off (SQLITE_CONFIG_MEMSTATUS=0, like Node's
+// SQLITE_DEFAULT_MEMSTATUS=0). With them on, every sqlite3Malloc/sqlite3_free
+// takes one process-wide mutex, so Workers with private connections serialize
+// on it. The only JS-visible effect of the setting is that the heap-limit
+// pragmas have nothing to count: with statistics on, a limit of 1 byte fails
+// the next allocation with SQLITE_NOMEM. Each case runs in its own process
+// because the limit is process-global. On macOS the system libsqlite3 already
+// ships DEFAULT_MEMSTATUS=0, so only the bundled build (Linux, Windows) can
+// fail this without the runtime config.
+describe.concurrent("memory statistics are off", () => {
+  const inserts = `
+    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, s TEXT)");
+    const insert = db.prepare("INSERT INTO t (s) VALUES (?)");
+    const row = Buffer.alloc(4096, "x").toString();
+    for (let i = 0; i < 200; i++) insert.run(row);
+    console.log(JSON.stringify(db.prepare("SELECT count(*) AS n FROM t").get()));
+  `;
+
+  it.each([
+    [
+      "bun:sqlite",
+      `
+      const { Database } = require("bun:sqlite");
+      const db = new Database(":memory:");
+      db.run("PRAGMA hard_heap_limit = 1");
+      ${inserts}
+      `,
+    ],
+    [
+      "node:sqlite",
+      `
+      const { DatabaseSync } = require("node:sqlite");
+      const db = new DatabaseSync(":memory:");
+      db.exec("PRAGMA hard_heap_limit = 1");
+      ${inserts}
+      `,
+    ],
+  ])("%s: PRAGMA hard_heap_limit does not fail allocations", async (_, code) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(JSON.stringify({ n: 200 }));
+    expect(exitCode).toBe(0);
+  });
+});

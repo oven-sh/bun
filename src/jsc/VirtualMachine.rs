@@ -216,8 +216,6 @@ pub struct VirtualMachine {
     /// (`exit_tears_down_napi_envs`). The list is never walked again, so a hook
     /// pushed after this (a finalizer deferred from the final collection) would only leak.
     pub(crate) has_run_cleanup_hooks: bool,
-    /// An `onResolve` or `onLoad` was registered in the current global.
-    pub has_plugins: bool,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
 
@@ -504,13 +502,6 @@ pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
         *entry_offset = found_entry_offset;
     }
     true
-}
-
-/// Module loader resolve hook: whether `onResolve` plugins could claim a specifier before the builtin/standalone fast paths.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__hasPlugins(vm: *mut VirtualMachine) -> bool {
-    // SAFETY: `vm` is the live per-thread VM the C++ global object holds.
-    unsafe { (*vm).has_plugins }
 }
 
 #[unsafe(no_mangle)]
@@ -3526,7 +3517,7 @@ impl VirtualMachine {
             let global_ref = self.global();
             let promise = if !self.main_is_html_entrypoint {
                 let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
-                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&name))
+                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
                     .map(NonNull::as_ptr)
                     .ok_or(crate::CrateError::JSError)?
             } else {
@@ -3545,10 +3536,9 @@ impl VirtualMachine {
             self.entry_evaluation_started = false;
             let global = self.global;
             let main_str = bun_core::String::from_bytes(self.main());
-            let promise =
-                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?;
+            let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str)
+                .map(NonNull::as_ptr)
+                .ok_or(crate::CrateError::JSError)?;
             self.set_pending_internal_promise(Some(promise));
             Ok(promise)
         }
@@ -5227,7 +5217,7 @@ impl VirtualMachine {
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
-        if global.bun_vm().has_plugins {
+        if global.has_plugins() {
             match run_on_resolve(global, specifier, source)? {
                 None => {}
                 Some(Err(error)) => return Ok(Err(error)),
@@ -5298,7 +5288,8 @@ impl VirtualMachine {
 
         // Bare/`node:` builtins: answer from the alias table before paying for UTF-8 copies and the resolver.
         // (Alias names are ASCII, so the Latin-1 bytes are the UTF-8 bytes whenever they can match.)
-        if !jsc_vm.has_plugins && specifier.is_8bit() {
+        let has_plugins = global.has_plugins();
+        if !has_plugins && specifier.is_8bit() {
             if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
                 specifier.latin1(),
                 bun_ast::Target::Bun,
@@ -5336,7 +5327,7 @@ impl VirtualMachine {
             return Ok(Ok(specifier.clone()));
         }
 
-        if jsc_vm.has_plugins {
+        if has_plugins {
             let namespace = ModuleLoader::extract_namespace(&specifier_utf8);
             // (One letter is a Windows drive.)
             if namespace.len() > 1
@@ -5598,20 +5589,19 @@ impl VirtualMachine {
         // Note: reshaped for borrowck.
         let global = self.global;
         let main_str = bun_core::String::from_bytes(self.main());
-        let promise =
-            match jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str)) {
-                Some(promise) => promise.as_ptr(),
-                // Not resolving is this file's failure, like not loading.
-                None => {
-                    let rejected = crate::JSPromise::rejected_promise_with_caught_exception(
-                        self.global(),
-                        jsc::JsError::Thrown,
-                    )?;
-                    // Like the loader's: whoever loads the file reports it, not the rejection tracker.
-                    rejected.set_handled();
-                    std::ptr::from_mut(rejected)
-                }
-            };
+        let promise = match jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str) {
+            Some(promise) => promise.as_ptr(),
+            // Not resolving is this file's failure, like not loading.
+            None => {
+                let rejected = crate::JSPromise::rejected_promise_with_caught_exception(
+                    self.global(),
+                    jsc::JsError::Thrown,
+                )?;
+                // Like the loader's: whoever loads the file reports it, not the rejection tracker.
+                rejected.set_handled();
+                std::ptr::from_mut(rejected)
+            }
+        };
         self.set_pending_internal_promise(Some(promise));
         Ok(promise)
     }
@@ -5857,8 +5847,6 @@ impl VirtualMachine {
         self.main_hash = 0;
         self.main_resolved_path = bun_core::String::EMPTY;
         self.unhandled_error_counter = 0;
-        // The finished file's plugins are dropped with its global.
-        self.has_plugins = false;
 
         let old_global = self.global;
         // `old_global` valid for VM lifetime (safe ZST-handle deref);
@@ -5920,8 +5908,7 @@ impl VirtualMachine {
     ) -> Option<*mut JSInternalPromise> {
         let path_str = bun_core::String::from_bytes(entry_path);
         let promise =
-            jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, Some(&path_str))?
-                .as_ptr();
+            jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, &path_str)?.as_ptr();
         let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         Some(promise)
     }
@@ -7666,7 +7653,6 @@ fn run_on_resolve(
         &bun_core::String::from_bytes(if namespace == b"file" { b"" } else { namespace }),
         &bun_core::String::borrow_utf8(path),
         &bun_core::String::borrow_utf8(importer),
-        crate::BunPluginTarget::Bun,
     )?
     else {
         return Ok(None);

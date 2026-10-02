@@ -1057,8 +1057,6 @@ pub struct ValidateObjectOpts {
     pub(crate) nullable: bool,
 }
 
-pub use self::js_global_object::BunPluginTarget;
-
 // ──────────────────────────────────────────────────────────────────────────
 // JSObject (real module in JSObject.rs).
 // ──────────────────────────────────────────────────────────────────────────

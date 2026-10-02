@@ -4219,7 +4219,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             (
                 (*jsc_vm).has_loaded,
                 (*jsc_vm).is_in_preload,
-                (*jsc_vm).has_plugins,
+                (*jsc_vm).global().has_plugins(),
                 (*jsc_vm).transpiler_store.enabled,
             )
         };

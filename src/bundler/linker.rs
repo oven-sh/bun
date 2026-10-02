@@ -1,7 +1,5 @@
 // This file is the old linker, used by Bun.Transpiler.
 
-use std::io::Write as _;
-
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_paths::{self, SEP};
@@ -119,18 +117,12 @@ pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
     // by construction.
     unsafe { ImportPathsList::append(relative_paths_list_ptr(), &src).expect("OOM") }
 }
-#[inline]
-fn intern(buf: Vec<u8>) -> &'static [u8] {
-    let r = dupe(buf.as_slice());
-    drop(buf);
-    r
-}
 impl Linker {
     // ── raw-pointer field accessors ──────────────────────────────────────
     // The pointer fields are self-referential backrefs into the owning
     // `Transpiler` (sibling fields), wired in `configure_linker*`. They are
     // briefly null between `Transpiler::init` and `configure_linker`, but the
-    // contract is that no `link()`/`generate_import_path()`/`enqueue_*` call
+    // contract is that no `link()`/`enqueue_*` call
     // happens before `configure_linker` runs. Centralize the deref + invariant
     // here so call sites are safe-Rust.
 
@@ -307,9 +299,7 @@ impl Linker {
     ///
     /// `import_path_format` is a runtime arg rather than a const generic —
     /// `options::ImportPathFormat` doesn't derive `ConstParamTy`, and the
-    /// crate doesn't enable `adt_const_params`. All callers pass a literal,
-    /// and the inner `generate_import_path` body is a single `match` either
-    /// way, so codegen is equivalent.
+    /// crate doesn't enable `adt_const_params`.
     pub fn link<const IGNORE_RUNTIME: bool, const IS_BUN: bool>(
         &mut self,
         file_path: &Fs::Path<'_>,
@@ -318,16 +308,13 @@ impl Linker {
         import_path_format: ImportPathFormat,
     ) -> crate::Result<()> {
         // Copy out the two scalar config values we read so the `&self` borrow
-        // from `options()` doesn't overlap later `&mut self` calls
-        // (`generate_import_path`, `log_mut`).
+        // from `options()` doesn't overlap the later `&mut self` call (`log_mut`).
         let (target, rewrite_jest_for_tests) = {
             let opts = self.options();
             (opts.target, opts.rewrite_jest_for_tests)
         };
 
         let source_dir = file_path.source_dir();
-        let mut externals: Vec<u32> = Vec::new();
-        let mut had_resolve_errors = false;
 
         let is_deferred = !result.pending_imports.is_empty();
 
@@ -358,22 +345,29 @@ impl Linker {
 
                     if !IGNORE_RUNTIME {
                         if import_record.path.namespace == b"runtime" {
-                            if import_path_format == ImportPathFormat::AbsoluteUrl {
-                                import_record.path = PFs::Path::init_with_namespace(
+                            let relative_name =
+                                bun_paths::resolve_path::relative(source_dir, RUNTIME_SOURCE_PATH);
+                            import_record.path = match import_path_format {
+                                ImportPathFormat::AbsoluteUrl => PFs::Path::init_with_namespace(
                                     dupe(&origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?),
                                     b"bun",
-                                );
-                            } else {
-                                import_record.path = self.generate_import_path(
-                                    source_dir,
+                                ),
+                                ImportPathFormat::AbsolutePath => PFs::Path::init_with_pretty(
                                     RUNTIME_SOURCE_PATH,
-                                    false,
-                                    b"bun",
-                                    origin,
-                                    import_path_format,
-                                )?;
-                            }
-
+                                    dupe(relative_name),
+                                ),
+                                ImportPathFormat::Relative => {
+                                    let text = if relative_name.len() > 1
+                                        && !(relative_name[0] == SEP || relative_name[0] == b'.')
+                                    {
+                                        dupe(&strings::concat(&[b"./", relative_name]))
+                                    } else {
+                                        dupe(relative_name)
+                                    };
+                                    PFs::Path::init_with_pretty(text, text)
+                                }
+                                ImportPathFormat::PackagePath => unreachable!(),
+                            };
                             continue;
                         }
                     }
@@ -401,14 +395,12 @@ impl Linker {
                         if strings::starts_with(import_record.path.text, b"node:") {
                             // if a module is not found here, it is not found at
                             // all so we can just disable it
-                            had_resolve_errors = Self::when_module_not_found::<IS_BUN>(
+                            if Self::when_module_not_found::<IS_BUN>(
                                 self.log_mut(),
                                 target,
                                 import_record,
                                 source,
-                            )?;
-
-                            if had_resolve_errors {
+                            )? {
                                 return Err(crate::Error::ResolveMessage);
                             }
                             continue;
@@ -425,11 +417,6 @@ impl Linker {
 
             _ => {}
         }
-        if had_resolve_errors {
-            return Err(crate::Error::ResolveMessage);
-        }
-        // Vec drop at scope end frees.
-        externals.clear();
         Ok(())
     }
 
@@ -504,119 +491,6 @@ impl Linker {
             );
         }
         Ok(true)
-    }
-
-    pub(crate) fn generate_import_path(
-        &mut self,
-        source_dir: &[u8],
-        source_path: &'static [u8],
-        use_hashed_name: bool,
-        namespace: &'static [u8],
-        origin: &URL<'_>,
-        import_path_format: ImportPathFormat,
-    ) -> crate::Result<PFs::Path<'static>> {
-        match import_path_format {
-            ImportPathFormat::AbsolutePath => {
-                if namespace == b"node" {
-                    return Ok(PFs::Path::init_with_namespace(source_path, b"node"));
-                }
-
-                if namespace == b"bun" || namespace == b"file" || namespace.is_empty() {
-                    // `linker.fs.relative` is a thin wrapper over
-                    // `bun.path.relative`; the inline `bun_resolver::fs`
-                    // module doesn't expose it yet, so call the path layer
-                    // directly. The threadlocal-buffer result must be
-                    // dup'd to outlive this call.
-                    let relative_name =
-                        dupe(bun_paths::resolve_path::relative(source_dir, source_path));
-                    Ok(PFs::Path::init_with_pretty(source_path, relative_name))
-                } else {
-                    Ok(PFs::Path::init_with_namespace(source_path, namespace))
-                }
-            }
-            ImportPathFormat::Relative => {
-                let relative_name = bun_paths::resolve_path::relative(source_dir, source_path);
-
-                let text: &'static [u8];
-                let pretty: &'static [u8];
-                if use_hashed_name {
-                    let basepath = PFs::Path::init(source_path);
-                    let basename = self.get_hashed_filename(&basepath, None)?;
-                    let name = basepath.name();
-                    let dir = name.dir_with_trailing_slash();
-                    let mut hashed: Vec<u8> =
-                        Vec::with_capacity(dir.len() + basename.len() + name.ext.len());
-                    hashed.extend_from_slice(dir);
-                    hashed.extend_from_slice(basename);
-                    hashed.extend_from_slice(name.ext);
-                    text = intern(hashed);
-                    pretty = dupe(relative_name);
-                } else {
-                    if relative_name.len() > 1
-                        && !(relative_name[0] == SEP || relative_name[0] == b'.')
-                    {
-                        text = dupe(&strings::concat(&[b"./", relative_name]));
-                    } else {
-                        text = dupe(relative_name);
-                    }
-                    pretty = text;
-                }
-
-                Ok(PFs::Path::init_with_pretty(text, pretty))
-            }
-
-            ImportPathFormat::AbsoluteUrl => {
-                if namespace == b"node" {
-                    debug_assert!(&source_path[0..5] == b"node:");
-
-                    let mut buf: Vec<u8> = Vec::new();
-                    // assumption: already starts with "node:"
-                    write!(
-                        &mut buf,
-                        "{}/{}",
-                        bstr::BStr::new(strings::without_trailing_slash(origin.href)),
-                        bstr::BStr::new(bun_paths::strings::without_leading_slash(source_path)),
-                    )
-                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
-                    Ok(PFs::Path::init(dupe(&buf)))
-                } else {
-                    let mut absolute_pathname = PFs::PathName::init(source_path);
-
-                    let opts = self.options();
-                    if !opts.preserve_extensions {
-                        if let Some(ext) = opts.out_extensions.get(absolute_pathname.ext) {
-                            absolute_pathname.ext = *ext;
-                        }
-                    }
-
-                    let top_level_dir = self.fs().top_level_dir;
-                    let mut base: &[u8] =
-                        bun_paths::resolve_path::relative(top_level_dir, source_path);
-                    if let Some(dot) = strings::last_index_of_char(base, b'.') {
-                        base = &base[0..dot];
-                    }
-
-                    let dirname = bun_core::dirname(base).unwrap_or(b"");
-
-                    let mut basename: &[u8] = bun_paths::basename(base);
-
-                    if use_hashed_name {
-                        let basepath = PFs::Path::init(source_path);
-                        basename = self.get_hashed_filename(&basepath, None)?;
-                    }
-
-                    Ok(PFs::Path::init(dupe(&origin.join_alloc(
-                        b"",
-                        dirname,
-                        basename,
-                        absolute_pathname.ext,
-                        source_path,
-                    )?)))
-                }
-            }
-
-            ImportPathFormat::PackagePath => unreachable!(),
-        }
     }
 
     pub(crate) fn resolve_result_hash_key(&self, resolve_result: &resolver::Result) -> u64 {

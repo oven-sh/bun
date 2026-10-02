@@ -710,12 +710,10 @@ impl JSGlobalObject {
         &self,
         namespace_: &BunString,
         path: &BunString,
-        target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
         let ns = (namespace_.length() > 0).then_some(namespace_);
-        let result =
-            crate::from_js_host_call(self, || Bun__runOnLoadPlugins(self, ns, path, target))?;
+        let result = crate::from_js_host_call(self, || Bun__runOnLoadPlugins(self, ns, path))?;
         if result.is_undefined_or_null() {
             return Ok(None);
         }
@@ -727,17 +725,20 @@ impl JSGlobalObject {
         namespace_: &BunString,
         path: &BunString,
         source: &BunString,
-        target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
         let ns = (namespace_.length() > 0).then_some(namespace_);
-        let result = crate::from_js_host_call(self, || {
-            Bun__runOnResolvePlugins(self, ns, path, source, target)
-        })?;
+        let result =
+            crate::from_js_host_call(self, || Bun__runOnResolvePlugins(self, ns, path, source))?;
         if result.is_undefined_or_null() {
             return Ok(None);
         }
         Ok(Some(result))
+    }
+
+    /// Whether an `onResolve` or `onLoad` is registered.
+    pub fn has_plugins(&self) -> bool {
+        Bun__hasPlugins(self)
     }
 
     /// The key of the `build.module()` or `mock.module()` module that `specifier` names.
@@ -1391,21 +1392,6 @@ impl JSGlobalObject {
 // see one nominal type (the previous local duplicate diverged from lib.rs).
 pub use crate::GregorianDateTime;
 
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum BunPluginTarget {
-    Bun = 0,
-    Node = 1,
-    Browser = 2,
-}
-
-// Crosses FFI by-value to `JSBundlerPlugin__create` / `Bun__runOn*Plugins`
-// (C++: `typedef uint8_t BunPluginTarget`, `headers-handwritten.h`). NB: the
-// C++ header's *named* constants (`BunPluginTargetBrowser = 1`, `Node = 2`)
-// disagree with the Rust enum (`Node = 1`, `Browser = 2`). The width (`u8`)
-// is what matters at the ABI.
-bun_core::assert_ffi_discr!(BunPluginTarget, u8; Bun = 0, Node = 1, Browser = 2);
-
 // No `Default` derive — `code` has no default (only `errno`/`name` are
 // optional). Callers must always supply `code`.
 pub struct SysErrOptions {
@@ -1526,15 +1512,14 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         namespace_: Option<&BunString>,
         path: &BunString,
-        target: BunPluginTarget,
     ) -> JSValue;
     safe fn Bun__runOnResolvePlugins(
         global: &JSGlobalObject,
         namespace_: Option<&BunString>,
         path: &BunString,
         source: &BunString,
-        target: BunPluginTarget,
     ) -> JSValue;
+    safe fn Bun__hasPlugins(global: &JSGlobalObject) -> bool;
     safe fn Bun__resolveVirtualModule(
         global: &JSGlobalObject,
         specifier: &BunString,

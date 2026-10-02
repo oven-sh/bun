@@ -443,24 +443,54 @@ test("--outdir build succeeds when the output directory already exists with prio
   expect(out).not.toContain("stale");
 });
 
-// mkdir on a dangling symlink reports EEXIST, mkdir below it reports ENOENT.
-// The recursive mkdir behind --outdir used to retry that pair forever.
-test("--outdir fails with ENOENT when a parent of the output directory is a dangling symlink", async () => {
-  using dir = tempDir("build-outdir-dangling-symlink", {
-    "entry.ts": `console.log("built");`,
-  });
-  fs.symlinkSync(path.join(String(dir), "does-not-exist"), path.join(String(dir), "dangling"));
+// The recursive mkdir behind the output directory used to retry forever when
+// a parent exists but cannot hold children: mkdir on it reports EEXIST, mkdir
+// below it reports ENOENT. A child that still spins is killed by the spawn
+// timeout, so `signalCode` tells a hang from an exit.
+describe.concurrent("output directory below a parent that is not a directory", () => {
+  async function build(files: Record<string, string>, args: string[], dangling?: string) {
+    using dir = tempDir("build-outdir-parent", { "entry.ts": `console.log("built");`, ...files });
+    if (dangling) fs.symlinkSync(path.join(String(dir), "does-not-exist"), path.join(String(dir), dangling));
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "entry.ts", "--outdir", path.join("dangling", "out")],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("Failed to create output directory ENOENT");
-  expect(exitCode).toBe(1);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, signalCode: proc.signalCode, exitCode };
+  }
+
+  test("--outdir below a dangling symlink fails with ENOENT", async () => {
+    expect(await build({}, ["--outdir", path.join("dangling", "out")], "dangling")).toEqual({
+      stderr: expect.stringContaining("Failed to create output directory ENOENT"),
+      signalCode: null,
+      exitCode: 1,
+    });
+  }, 30_000);
+
+  test("--compile --outfile below a dangling symlink fails with ENOENT", async () => {
+    const result = await build({}, ["--compile", "--outfile", path.join("dangling", "out", "app")], "dangling");
+    expect(result.stderr).toContain("ENOENT");
+    expect(result).toEqual({
+      stderr: expect.stringContaining("could not open output directory"),
+      signalCode: null,
+      exitCode: 1,
+    });
+  }, 30_000);
+
+  // POSIX mkdir says ENOTDIR here. NtCreateFile says the path was not found.
+  test("--outdir two levels below a regular file says that it is a file", async () => {
+    expect(await build({ "blocked": "a file" }, ["--outdir", path.join("blocked", "sub", "out")])).toEqual({
+      stderr: expect.stringContaining("is a file"),
+      signalCode: null,
+      exitCode: 1,
+    });
+  }, 30_000);
 });
 
 test("multi-entry build writes each entry point into the output directory", async () => {

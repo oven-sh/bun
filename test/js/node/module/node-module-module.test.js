@@ -216,6 +216,52 @@ console.log("survived", require("./late.js"));`,
     },
   );
 
+  test("compile cache under a dangling symlink is reported as FAILED, not retried forever", async () => {
+    // mkdir on the link reports EEXIST, mkdir below it reports ENOENT. The
+    // recursive mkdir used to bounce between the two forever, so a bad
+    // NODE_COMPILE_CACHE hung every process before any user code ran.
+    using dir = tempDir("compile-cache-dangling", {
+      "main.js": `
+        const Module = require("node:module");
+        const r = Module.enableCompileCache(process.env.CACHE_DIR);
+        console.log(r.status === Module.constants.compileCacheStatus.FAILED, r.message);
+      `,
+    });
+    const link = path.join(String(dir), "dangling");
+    fs.symlinkSync(path.join(String(dir), "does-not-exist"), link);
+    const cacheDir = path.join(link, "cc");
+    const env = { ...bunEnv };
+    delete env.NODE_COMPILE_CACHE;
+
+    // A child that still spins is killed by the spawn timeout. The runner does
+    // not kill the children of a concurrent test that times out.
+    async function run(cmd, extraEnv) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        env: { ...env, ...extraEnv },
+        cwd: String(dir),
+        stderr: "pipe",
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, signalCode: proc.signalCode, exitCode };
+    }
+
+    expect(await run(["-e", "console.log('started')"], { NODE_COMPILE_CACHE: cacheDir })).toEqual({
+      stdout: "started\n",
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
+    expect(await run(["main.js"], { CACHE_DIR: cacheDir })).toEqual({
+      stdout: "true Cannot create cache directory: ENOENT\n",
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
+  }, 30_000);
+
   test.skipIf(!isWindows)("enableCompileCache default dir prefers TEMP over TMP like os.tmpdir", async () => {
     using dir = tempDir("compile-cache-tmporder", {});
     const temp = path.join(String(dir), "from-temp");
@@ -1017,51 +1063,4 @@ console.log("survived", require("./late.js"));`,
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
-});
-
-// Not in the concurrent block: when this test times out, its child spins until
-// something kills it, and the runner only kills the children of a test that
-// runs alone.
-test("compile cache under a dangling symlink is reported as FAILED, not retried forever", async () => {
-  // mkdir on the link reports EEXIST, mkdir below it reports ENOENT. The
-  // recursive mkdir used to bounce between the two forever, so a bad
-  // NODE_COMPILE_CACHE hung every process before any user code ran.
-  using dir = tempDir("compile-cache-dangling", {
-    "main.js": `
-      const Module = require("node:module");
-      const r = Module.enableCompileCache(process.env.CACHE_DIR);
-      console.log(r.status === Module.constants.compileCacheStatus.FAILED, r.message);
-    `,
-  });
-  const link = path.join(String(dir), "dangling");
-  fs.symlinkSync(path.join(String(dir), "does-not-exist"), link);
-  const cacheDir = path.join(link, "cc");
-  const env = { ...bunEnv };
-  delete env.NODE_COMPILE_CACHE;
-
-  {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", "console.log('started')"],
-      env: { ...env, NODE_COMPILE_CACHE: cacheDir },
-      cwd: String(dir),
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("started\n");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  }
-
-  {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.js"],
-      env: { ...env, CACHE_DIR: cacheDir },
-      cwd: String(dir),
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("true Cannot create cache directory: ENOENT\n");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  }
 });

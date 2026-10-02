@@ -514,6 +514,45 @@ test("can install folder dependencies", async () => {
   ).toBe("module.exports = 'hello from pkg-1';");
 });
 
+// https://github.com/oven-sh/bun/issues/44286
+// mkdir on the dangling link reports EEXIST and mkdir below it reports ENOENT.
+// The recursive mkdir for the store used to retry that pair forever.
+test("a dangling node_modules symlink fails the install instead of hanging it", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-dangling-node-modules",
+      dependencies: {
+        "folder-dep": "file:./pkg-1",
+      },
+    }),
+  );
+  await write(join(packageDir, "pkg-1", "package.json"), JSON.stringify({ name: "folder-dep", version: "1.0.0" }));
+  await symlink(join(packageDir, "missing"), join(packageDir, "node_modules"));
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // A child that still spins is killed here, and `signalCode` shows it.
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+    stdout: expect.any(String),
+    stderr: expect.stringContaining("ENOENT"),
+    signalCode: null,
+    exitCode: 1,
+  });
+  expect(existsSync(join(packageDir, "missing"))).toBe(false);
+}, 30_000);
+
 test("can install folder dependencies on root package", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 

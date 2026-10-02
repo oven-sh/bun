@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
@@ -644,6 +644,40 @@ describe("Bun.Archive", () => {
       expect(JSON.parse(stdout)).toEqual({ count: 3, dir: true, inner: "inner", top: "top" });
       expect(exitCode).toBe(0);
     });
+
+    // mkdir on the dangling link reports EEXIST and mkdir below it reports
+    // ENOENT. The recursive mkdir for the destination used to retry that pair
+    // forever, with and without a glob.
+    test("rejects when the destination is below a dangling symlink", async () => {
+      using dir = tempDir("archive-extract-dest-dangling", {
+        "extract.ts": `
+          const archive = new Bun.Archive({ "a.txt": "x" });
+          const settle = (p: Promise<number>) => p.then(count => "resolved " + count, () => "rejected");
+          console.log(await settle(archive.extract("dangling/out")));
+          console.log(await settle(archive.extract("dangling/out", { glob: "**" })));
+        `,
+      });
+      symlinkSync(join(String(dir), "nowhere"), join(String(dir), "dangling"));
+
+      // In a child process: the failure mode is a spinning thread of the work
+      // pool. The spawn timeout kills such a child, and `signalCode` shows it.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "extract.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("rejected\nrejected\n");
+      expect(stderr).toBe("");
+      expect(proc.signalCode).toBeNull();
+      expect(exitCode).toBe(0);
+      expect(existsSync(join(String(dir), "nowhere"))).toBe(false);
+    }, 30_000);
   });
 
   describe("corrupted archives", () => {
@@ -1902,39 +1936,47 @@ describe("Bun.Archive", () => {
     // the recursive mkdir for the next entry's parents used to retry that pair
     // forever. Windows does not extract symlink entries, so the link never
     // exists there.
-    test.skipIf(isWindows)("skips an entry below a dangling symlink from the same archive", async () => {
-      const tarball = Buffer.concat([
-        ustarHeader("link", 0, "2", { linkname: "nowhere" }),
-        ustarEntry("link/a/b.txt", Buffer.from("x")),
-        Buffer.alloc(1024),
-      ]);
+    test.skipIf(isWindows)(
+      "skips an entry below a dangling symlink from the same archive",
+      async () => {
+        const tarball = Buffer.concat([
+          ustarHeader("link", 0, "2", { linkname: "nowhere" }),
+          ustarEntry("link/a/b.txt", Buffer.from("x")),
+          Buffer.alloc(1024),
+        ]);
 
-      using dir = tempDir("archive-glob-dangling-symlink", {
-        "input.tar": tarball,
-        "extract.ts": `
+        using dir = tempDir("archive-glob-dangling-symlink", {
+          "input.tar": tarball,
+          "extract.ts": `
           const fs = require("node:fs");
           const archive = new Bun.Archive(new Uint8Array(fs.readFileSync("input.tar")));
           const count = await archive.extract("out", { glob: "**" });
           console.log(JSON.stringify({ count, nowhere: fs.existsSync("out/nowhere") }));
         `,
-      });
+        });
 
-      // In a child process: an extraction that never settles keeps a thread of
-      // the work pool spinning, which must not happen inside the test runner.
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "extract.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // In a child process: an extraction that never settles keeps a thread of
+        // the work pool spinning. The spawn timeout kills such a child, and
+        // `signalCode` shows it.
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "extract.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 10_000,
+          killSignal: "SIGKILL",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // Only the symlink counts. Nothing is created through it.
-      expect(stdout).toBe(JSON.stringify({ count: 1, nowhere: false }) + "\n");
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-    });
+        // Only the symlink counts. Nothing is created through it.
+        expect(stdout).toBe(JSON.stringify({ count: 1, nowhere: false }) + "\n");
+        expect(stderr).toBe("");
+        expect(proc.signalCode).toBeNull();
+        expect(exitCode).toBe(0);
+      },
+      30_000,
+    );
   });
 
   describe("concurrent operations", () => {

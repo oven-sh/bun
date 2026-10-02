@@ -167,6 +167,32 @@ describe.if(isWindows)("compile --outfile with subdirectories", () => {
     expect(stderr.toLowerCase()).toContain("notdir");
   });
 
+  // With a directory to create between the file and the executable,
+  // NtCreateFile says the path was not found, and the recursive mkdir used
+  // to retry forever. A child that still spins is killed by the spawn timeout.
+  test("fails gracefully when a file is two levels above the executable", async () => {
+    using dir = tempDir("compile-file-two-levels-up", {
+      "app.js": `console.log("Won't compile!");`,
+      "blocked": "This is a file, not a directory",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", "blocked/sub/app.exe"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr.toLowerCase()).toContain("notdir");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
+  }, 30_000);
+
   test("works with . and .. in paths", async () => {
     using dir = tempDir("compile-relative-paths", {
       "src/app.js": `console.log("Relative paths work!");`,

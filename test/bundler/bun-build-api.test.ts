@@ -686,12 +686,16 @@ describe("Bun.build", () => {
       env: bunEnv,
       cwd: String(dir),
       stderr: "pipe",
+      // A child that still spins is killed here, and `signalCode` shows it.
+      timeout: 10_000,
+      killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toContain("false Failed to create output directory ENOENT");
     expect(stderr).toBe("");
+    expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 
   test("BuildArtifact properties", async () => {
     Bun.gc(true);

@@ -2214,14 +2214,16 @@ impl<'a> PackageInstall<'a> {
             };
 
             let target = path::resolve_path::relative(dest_dir_path, to_path);
-            // `symlinkat` takes `&ZStr` for both target and dest; build NUL-terminated copies.
+            // `symlinkat` takes `&ZStr` for both target and dest; build NUL-terminated
+            // copies in stack buffers.
             let mut target_buf = bun_paths::path_buffer_pool::get();
             target_buf[..target.len()].copy_from_slice(target);
             target_buf[target.len()] = 0;
+            // SAFETY: NUL written above.
             let target_z = ZStr::from_buf(&target_buf, target.len());
-            let mut dest_name_buf = bun_paths::path_buffer_pool::get();
+            let mut dest_name_buf = [0u8; 512];
             dest_name_buf[..dest.len()].copy_from_slice(dest);
-            dest_name_buf[dest.len()] = 0;
+            // SAFETY: zero-initialized; NUL at [dest.len()].
             let dest_z = ZStr::from_buf(&dest_name_buf, dest.len());
             if let Err(err) = sys::symlinkat(target_z, dest_dir.fd(), dest_z) {
                 return InstallResult::fail(err.into(), Step::LinkingDependency, None);

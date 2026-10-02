@@ -167,26 +167,6 @@ impl CopyFile {
         )
     }
 
-    /// Empties a regular destination. Returns `true`, and empties nothing, when it is `source`'s file.
-    fn empty_destination(&mut self, source: &Stat) -> bun_sys::Result<bool> {
-        let dest = bun_sys::fstat(self.destination_fd)?;
-        if !bun_sys::S::ISREG(dest.st_mode as _) {
-            return Ok(false);
-        }
-        // An inode number of 0 means the file system reports no identity.
-        if dest.st_ino != 0 && dest.st_dev == source.st_dev && dest.st_ino == source.st_ino {
-            // `max_length` may be a stale cached size: never cut the file here.
-            self.read_len = SizeType::try_from(dest.st_size).expect("int cast");
-            return Ok(true);
-        }
-        // Also for a size of 0: a network mount can report a stale size.
-        match bun_sys::ftruncate(self.destination_fd, 0) {
-            // ceph-fuse refuses this on a file that was just created read-only. libuv ignores it too.
-            Err(err) if dest.st_size != 0 || err.get_errno() != bun_sys::E::EACCES => Err(err),
-            _ => Ok(false),
-        }
-    }
-
     pub(crate) fn do_close(&mut self) {
         let close_input = !matches!(
             self.destination_file_store.pathlike,
@@ -633,7 +613,33 @@ impl CopyFile {
         Ok(())
     }
 
+    /// Whether `dest` is the file that `source` describes.
+    fn is_same_file(source: &Stat, dest: &bun_sys::Result<Stat>) -> bool {
+        // An inode number of 0 means the file system reports no identity.
+        matches!(dest, bun_sys::Result::Ok(dest)
+            if source.st_ino != 0 && dest.st_dev == source.st_dev && dest.st_ino == source.st_ino)
+    }
+
+    /// Whether the destination path names the regular file that `source` describes.
+    fn destination_is_source(&self, source: &Stat) -> bool {
+        if !bun_sys::S::ISREG(source.st_mode as _) {
+            return false;
+        }
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let path = self
+            .destination_file_store
+            .pathlike
+            .path()
+            .slice_z(&mut path_buf);
+        Self::is_same_file(source, &bun_sys::stat_no_path(path))
+    }
+
     pub(crate) fn run_async(&mut self) {
+        #[cfg(target_os = "macos")]
+        let mut stat_: Option<Stat> = None;
+        #[cfg(not(target_os = "macos"))]
+        let stat_: Option<Stat> = None;
+
         if let PathOrFileDescriptor::Fd(fd) = &self.destination_file_store.pathlike {
             self.destination_fd = *fd;
         }
@@ -642,8 +648,8 @@ impl CopyFile {
             self.source_fd = *fd;
         }
 
-        // Do we need to open both files?
-        if self.destination_fd == Fd::INVALID && self.source_fd == Fd::INVALID {
+        // The source comes first: the destination is compared with it before it is opened.
+        if self.source_fd == Fd::INVALID {
             // First, we attempt to clonefile() on macOS
             // This is the fastest way to copy a file.
             #[cfg(target_os = "macos")]
@@ -663,13 +669,15 @@ impl CopyFile {
 
                         // stat the output file, make sure it:
                         // 1. Exists
-                        let stat_size = match bun_sys::stat(
+                        match bun_sys::stat(
                             self.source_file_store
                                 .pathlike
                                 .path()
                                 .slice_z(&mut path_buf),
                         ) {
                             bun_sys::Result::Ok(result) => {
+                                stat_ = Some(result);
+
                                 if bun_sys::S::ISDIR(result.st_mode as u32) {
                                     self.system_error = Some(unsupported_directory_error());
                                     return;
@@ -678,18 +686,17 @@ impl CopyFile {
                                 if !bun_sys::S::ISREG(result.st_mode as u32) {
                                     break 'do_clonefile;
                                 }
-
-                                result.st_size
                             }
                             bun_sys::Result::Err(err) => {
                                 // If we can't stat it, we also can't copy it.
                                 self.system_error = Some(err.to_system_error());
                                 return;
                             }
-                        };
+                        }
 
                         match self.do_clonefile() {
                             Ok(()) => {
+                                let stat_size = stat_.unwrap().st_size;
                                 if self.max_length != MAX_SIZE
                                     && self.max_length
                                         < SizeType::try_from(stat_size).expect("int cast")
@@ -742,29 +749,6 @@ impl CopyFile {
                 }
             }
 
-            if self.do_open_file::<{ IOWhich::Both }>().is_err() {
-                return;
-            }
-            // Do we need to open only one file?
-        } else if self.destination_fd == Fd::INVALID {
-            self.source_fd = self.source_file_store.pathlike.fd();
-
-            if self.do_open_file::<{ IOWhich::Destination }>().is_err() {
-                return;
-            }
-            // The caller closed its source fd, and the open above reused the number.
-            if self.destination_fd == self.source_fd {
-                self.system_error = Some(
-                    bun_sys::Error::from_code(bun_sys::E::EBADF, bun_sys::Tag::fstat)
-                        .to_system_error(),
-                );
-                self.do_close();
-                return;
-            }
-            // Do we need to open only one file?
-        } else if self.source_fd == Fd::INVALID {
-            self.destination_fd = self.destination_file_store.pathlike.fd();
-
             if self.do_open_file::<{ IOWhich::Source }>().is_err() {
                 return;
             }
@@ -774,7 +758,6 @@ impl CopyFile {
             return;
         }
 
-        debug_assert!(self.destination_fd.is_valid());
         debug_assert!(self.source_fd.is_valid());
 
         if matches!(
@@ -784,14 +767,16 @@ impl CopyFile {
             // nothing to do for the Fd case
         }
 
-        // From the opened fd: the source path can name another file by now.
-        let stat: Stat = match bun_sys::fstat(self.source_fd) {
-            bun_sys::Result::Ok(result) => result,
-            bun_sys::Result::Err(err) => {
-                self.system_error = Some(err.to_system_error());
-                self.do_close();
-                return;
-            }
+        let stat: Stat = match stat_ {
+            Some(s) => s,
+            None => match bun_sys::fstat(self.source_fd) {
+                bun_sys::Result::Ok(result) => result,
+                bun_sys::Result::Err(err) => {
+                    self.do_close();
+                    self.system_error = Some(err.to_system_error());
+                    return;
+                }
+            },
         };
 
         if bun_sys::S::ISDIR(stat.st_mode as _) {
@@ -800,27 +785,26 @@ impl CopyFile {
             return;
         }
 
-        // No O_TRUNC at open: it would empty a destination that is also the source.
-        if matches!(
-            self.destination_file_store.pathlike,
-            PathOrFileDescriptor::Path(_)
-        ) {
-            match self.empty_destination(&stat) {
-                bun_sys::Result::Ok(false) => {}
-                bun_sys::Result::Ok(true) => {
-                    self.do_close();
-                    return;
+        if self.destination_fd == Fd::INVALID {
+            if self.destination_is_source(&stat) {
+                // A copy of a file onto itself: nothing to open, empty or write.
+                self.read_len = SizeType::try_from(stat.st_size).expect("int cast");
+                if let Some(mode) = self.destination_mode {
+                    if let bun_sys::Result::Err(err) = bun_sys::fchmod(self.source_fd, mode) {
+                        self.system_error = Some(err.to_system_error());
+                    }
                 }
-                bun_sys::Result::Err(err) => {
-                    self.system_error = Some(
-                        err.with_path(self.destination_file_store.pathlike.path().slice())
-                            .to_system_error(),
-                    );
-                    self.do_close();
-                    return;
-                }
+                self.do_close();
+                return;
+            }
+
+            if self.do_open_file::<{ IOWhich::Destination }>().is_err() {
+                self.do_close();
+                return;
             }
         }
+
+        debug_assert!(self.destination_fd.is_valid());
 
         // BSD fstat on a pipe reports bytes currently buffered in st_size;
         // only a regular-file st_size is a length.
@@ -842,6 +826,8 @@ impl CopyFile {
                 )
                 && self.max_length > PREALLOCATE_LENGTH
                 && self.max_length != MAX_SIZE
+                // A rename after the compare can make the source the destination: do not zero-fill it.
+                && !Self::is_same_file(&stat, &bun_sys::fstat(self.destination_fd))
             {
                 let _ = bun_sys::preallocate_file(
                     self.destination_fd.native(),
@@ -904,7 +890,7 @@ impl CopyFile {
         #[cfg(target_os = "macos")]
         {
             // fcopyfile rewrites dest from offset 0 and the slice trim is
-            // ftruncate; both are only safe for a dest Bun opened and emptied.
+            // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
             if matches!(
                 self.destination_file_store.pathlike,
                 PathOrFileDescriptor::Path(_)
@@ -1065,7 +1051,8 @@ const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "a
 const PREALLOCATE_LENGTH: SizeType = 2048 * 1024;
 
 #[cfg(not(windows))]
-const OPEN_DESTINATION_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY;
+const OPEN_DESTINATION_FLAGS: i32 =
+    bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC;
 #[cfg(not(windows))]
 const OPEN_SOURCE_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::RDONLY;
 

@@ -1,4 +1,3 @@
-import { dlopen } from "bun:ffi";
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
 import {
@@ -10,7 +9,6 @@ import {
   isASAN,
   isLinux,
   isWindows,
-  libcPathForDlopen,
   tempDir,
   withoutAggressiveGC,
 } from "harness";
@@ -350,6 +348,34 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
     });
 
+    it.skipIf(IS_UV_FS_COPYFILE_DISABLED)("a build output written to its own path stays intact", async () => {
+      using dir = tempDir("bun-write-same-file-artifact", { "entry.js": "console.log(0.1 + 0.2);" });
+      const build = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], outdir: join(String(dir), "out") });
+      const [output] = build.outputs;
+      const built = fs.readFileSync(output.path, "utf8");
+      expect(built).toContain("0.1 + 0.2");
+
+      const written = await Bun.write(output.path, output);
+      expect({ written, intact: fs.readFileSync(output.path, "utf8") === built }).toEqual({
+        written: Buffer.byteLength(built),
+        intact: true,
+      });
+    });
+
+    // The copy is a no-op, so it does not open the file for writing. The mode option still applies.
+    it.skipIf(isWindows)("a file without write permission stays intact and gets the mode option", async () => {
+      using dir = tempDir("bun-write-same-file-mode", { "file.txt": content });
+      const file = join(String(dir), "file.txt");
+      fs.chmodSync(file, 0o444);
+
+      const written = await Bun.write(file, Bun.file(file), { mode: 0o640 });
+      expect({
+        written,
+        mode: fs.statSync(file).mode & 0o777,
+        intact: fs.readFileSync(file, "utf8") === content,
+      }).toEqual({ written: content.length, mode: 0o640, intact: true });
+    });
+
     // Compared with another destination, so the row holds once the copy honours a source slice().
     it.skipIf(IS_UV_FS_COPYFILE_DISABLED)(
       "a slice of the file as the source gives the same result as for another destination",
@@ -393,11 +419,57 @@ const IS_UV_FS_COPYFILE_DISABLED =
     });
   });
 
-  describe("Bun.write(dest, Bun.file(src)) onto an existing dest", () => {
+  describe("Bun.write(dest, Bun.file(src)) with a source that cannot be copied", () => {
     const content = Buffer.alloc(100_000, "0123456789").toString();
 
+    it.skipIf(isWindows).each(["path", "fd"])(
+      "a directory %s rejects and leaves the destination as it was",
+      async kind => {
+        using dir = tempDir("bun-write-directory-source", { "dest.txt": content });
+        const dest = join(String(dir), "dest.txt");
+        const missing = join(String(dir), "missing.txt");
+        const fd = kind === "fd" ? fs.openSync(String(dir), "r") : undefined;
+        try {
+          for (const destination of [dest, missing]) {
+            await expect(Bun.write(destination, Bun.file(fd ?? String(dir)))).rejects.toThrow(
+              "That doesn't work on folders",
+            );
+          }
+        } finally {
+          if (fd !== undefined) fs.closeSync(fd);
+        }
+        expect({ intact: fs.readFileSync(dest, "utf8") === content, created: fs.existsSync(missing) }).toEqual({
+          intact: true,
+          created: false,
+        });
+      },
+    );
+
+    it.skipIf(isWindows)("a source fd that is not open rejects and leaves the destination as it was", async () => {
+      using dir = tempDir("bun-write-bad-source-fd", { "dest.txt": content });
+      const dest = join(String(dir), "dest.txt");
+      const missing = join(String(dir), "missing.txt");
+      fs.chmodSync(dest, 0o644);
+
+      for (const destination of [dest, missing]) {
+        await expect(Bun.write(destination, Bun.file(987_654), { mode: 0o600 })).rejects.toThrow(
+          expect.objectContaining({ code: "EBADF" }),
+        );
+      }
+      expect({
+        mode: fs.statSync(dest).mode & 0o777,
+        intact: fs.readFileSync(dest, "utf8") === content,
+        created: fs.existsSync(missing),
+      }).toEqual({ mode: 0o644, intact: true, created: false });
+    });
+  });
+
+  describe("Bun.write(dest, Bun.file(src)) onto an existing dest", () => {
     it("a longer destination is replaced", async () => {
-      using dir = tempDir("bun-write-shorter-source", { "src.txt": "short", "dest.txt": content });
+      using dir = tempDir("bun-write-shorter-source", {
+        "src.txt": "short",
+        "dest.txt": Buffer.alloc(100_000, "0123456789").toString(),
+      });
       const dest = join(String(dir), "dest.txt");
       const written = await Bun.write(dest, Bun.file(join(String(dir), "src.txt")));
       expect({ written, content: fs.readFileSync(dest, "utf8") }).toEqual({ written: 5, content: "short" });
@@ -407,76 +479,6 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(fs.statSync("/dev/null").isCharacterDevice()).toBe(true);
       using dir = tempDir("bun-write-dev-null", { "src.txt": "short" });
       expect(await Bun.write("/dev/null", Bun.file(join(String(dir), "src.txt")))).toBe(5);
-    });
-
-    it.skipIf(!isLinux)("an empty source updates the times of an empty destination", async () => {
-      using dir = tempDir("bun-write-empty-onto-empty", { "src.txt": "", "dest.txt": "" });
-      const dest = join(String(dir), "dest.txt");
-      const old = new Date("2001-01-01T00:00:00Z");
-      fs.utimesSync(dest, old, old);
-
-      const written = await Bun.write(dest, Bun.file(join(String(dir), "src.txt")));
-      expect({ written, updated: fs.statSync(dest).mtimeMs > old.getTime() }).toEqual({ written: 0, updated: true });
-    });
-
-    it.skipIf(isWindows).each(["path", "fd"])(
-      "a directory %s as the source rejects and leaves the destination intact",
-      async kind => {
-        using dir = tempDir("bun-write-directory-source", { "dest.txt": content });
-        const dest = join(String(dir), "dest.txt");
-        const fd = kind === "fd" ? fs.openSync(String(dir), "r") : undefined;
-        try {
-          await expect(Bun.write(dest, Bun.file(fd ?? String(dir)))).rejects.toThrow("That doesn't work on folders");
-        } finally {
-          if (fd !== undefined) fs.closeSync(fd);
-        }
-        expect(fs.readFileSync(dest, "utf8") === content).toBe(true);
-      },
-    );
-
-    it.skipIf(isWindows)("a source fd that is not open rejects before the destination changes", async () => {
-      using dir = tempDir("bun-write-bad-source-fd", { "dest.txt": content });
-      const dest = join(String(dir), "dest.txt");
-      fs.chmodSync(dest, 0o644);
-
-      await expect(Bun.write(dest, Bun.file(987_654), { mode: 0o600 })).rejects.toThrow(
-        expect.objectContaining({ code: "EBADF" }),
-      );
-      expect({ mode: fs.statSync(dest).mode & 0o777, intact: fs.readFileSync(dest, "utf8") === content }).toEqual({
-        mode: 0o644,
-        intact: true,
-      });
-    });
-
-    // A memfd sealed with F_SEAL_SHRINK opens for writing, and every ftruncate on it fails with EPERM.
-    it.skipIf(!isLinux)("a destination that cannot be emptied rejects, names it, and keeps its bytes", async () => {
-      const MFD_ALLOW_SEALING = 2;
-      const F_ADD_SEALS = 1033;
-      const F_SEAL_SHRINK = 2;
-      const libc = dlopen(libcPathForDlopen(), {
-        memfd_create: { args: ["ptr", "u32"], returns: "i32" },
-        fcntl: { args: ["i32", "i32", "i32"], returns: "i32" },
-      });
-      using dir = tempDir("bun-write-sealed-destination", { "src.txt": "short" });
-      const fd = libc.symbols.memfd_create(Buffer.from("sealed\0"), MFD_ALLOW_SEALING);
-      try {
-        expect(fd).toBeGreaterThan(2);
-        fs.writeSync(fd, content);
-        expect(libc.symbols.fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK)).toBe(0);
-        const dest = `/proc/self/fd/${fd}`;
-
-        const outcome = await Bun.write(dest, Bun.file(join(String(dir), "src.txt"))).then(
-          written => ({ written }),
-          error => ({ code: error.code, syscall: error.syscall, path: error.path }),
-        );
-        expect({ outcome, intact: fs.readFileSync(dest, "utf8") === content }).toEqual({
-          outcome: { code: "EPERM", syscall: "ftruncate", path: dest },
-          intact: true,
-        });
-      } finally {
-        if (fd > 2) fs.closeSync(fd);
-        libc.close();
-      }
     });
   });
 

@@ -455,12 +455,10 @@ const pingPongRenegotiationServer = /* js */ `
 
 // Renegotiates 4 times in a row when the first request arrives, so the client refuses the last one while it waits
 // for an answer. An HTTP request gets its response after the 4 renegotiations. A RESP command (Valkey) gets none.
-// For "/response-first" a complete keep-alive response leaves ahead of request 4. The process prints three ports:
+// For "/response-first" a complete keep-alive response leaves ahead of request 4. The process prints two ports:
 // 1. The server.
-// 2. A TCP relay to the server.
-// 3. An HTTP CONNECT proxy to the server.
-// The relay and the proxy forward whole records, and they give the client that response and request 4 in one write,
-// so one read holds both.
+// 2. A TCP relay to the server. It forwards whole records, and it gives the client that response and request 4 in
+//    one write, so one read holds both.
 const backToBackRenegotiationServer = /* js */ `
   const net = require("net");
   const tls = require("tls");
@@ -495,12 +493,12 @@ const backToBackRenegotiationServer = /* js */ `
 
   const APPLICATION_DATA = 23;
   const CHANGE_CIPHER_SPEC = 20;
-  function pipeToServer(client, first) {
+  const relay = net.createServer(client => {
     const upstream = net.connect(server.address().port, "127.0.0.1");
+    client.on("error", () => {});
     upstream.on("error", () => {});
     client.on("close", () => upstream.destroy());
     upstream.on("close", () => client.destroy());
-    upstream.write(first);
     client.on("data", chunk => upstream.write(chunk));
     // The server finished 4 handshakes when its 4th ChangeCipherSpec passed. The application data record after
     // that is the response. It waits here for the record behind it.
@@ -524,30 +522,10 @@ const backToBackRenegotiationServer = /* js */ `
         }
       }
     });
-  }
-  const relay = net.createServer(client => {
-    client.on("error", () => {});
-    pipeToServer(client, "");
-  });
-  const proxy = net.createServer(client => {
-    client.on("error", () => {});
-    let request = Buffer.alloc(0);
-    client.on("data", function onConnect(chunk) {
-      request = Buffer.concat([request, chunk]);
-      const end = request.indexOf("\\r\\n\\r\\n");
-      if (end === -1) return;
-      client.off("data", onConnect);
-      client.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
-      pipeToServer(client, request.subarray(end + 4));
-    });
   });
 
   server.listen(0, "127.0.0.1", () =>
-    relay.listen(0, "127.0.0.1", () =>
-      proxy.listen(0, "127.0.0.1", () =>
-        console.log(server.address().port, relay.address().port, proxy.address().port),
-      ),
-    ),
+    relay.listen(0, "127.0.0.1", () => console.log(server.address().port, relay.address().port)),
   );
 `;
 
@@ -598,29 +576,27 @@ let sameReadPort: number;
 let afterEndPort: number;
 let backToBackPort: number;
 let responseFirstRelayPort: number;
-let responseFirstProxyPort: number;
 let stalledUploadPort: number;
 const refusalServers: Subprocess[] = [];
 beforeAll(async () => {
-  [
-    [pingPongPort, sameReadPort, afterEndPort],
-    [backToBackPort, responseFirstRelayPort, responseFirstProxyPort],
-    [stalledUploadPort],
-  ] = await Promise.all(
-    [pingPongRenegotiationServer, backToBackRenegotiationServer, stalledUploadRenegotiationServer].map(async source => {
-      const server = Bun.spawn({
-        cmd: ["node", "-e", source],
-        stdout: "pipe",
-        stderr: "inherit",
-        stdin: "ignore",
-        env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
-      });
-      refusalServers.push(server);
-      const { value, done } = await server.stdout.getReader().read();
-      if (done) throw new Error("the server exited before it printed its ports");
-      return new TextDecoder().decode(value).trim().split(" ").map(Number);
-    }),
-  );
+  [[pingPongPort, sameReadPort, afterEndPort], [backToBackPort, responseFirstRelayPort], [stalledUploadPort]] =
+    await Promise.all(
+      [pingPongRenegotiationServer, backToBackRenegotiationServer, stalledUploadRenegotiationServer].map(
+        async source => {
+          const server = Bun.spawn({
+            cmd: ["node", "-e", source],
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "ignore",
+            env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+          });
+          refusalServers.push(server);
+          const { value, done } = await server.stdout.getReader().read();
+          if (done) throw new Error("the server exited before it printed its ports");
+          return new TextDecoder().decode(value).trim().split(" ").map(Number);
+        },
+      ),
+    );
 });
 afterAll(() => {
   for (const server of refusalServers) server.kill();
@@ -863,22 +839,26 @@ it("fetch does not report a certificate error when the client refuses a renegoti
 });
 
 // The response of "/response-first" and request 4 arrive in one read. The response is complete, so each fetch
-// succeeds. The refusal then closes the connection: it must not serve the next fetch from the pool. The relay is the
-// path of a socket, the proxy is the path of a tunnel. In a child process: a report to a tunnel in the pool uses
-// freed memory, which only a sanitizer build shows.
-it.concurrent.each(["a TCP relay", "a CONNECT proxy"])(
-  "fetch through %s gets the response that arrives in the same read as a refused renegotiation",
-  async via => {
-    const proxied = via === "a CONNECT proxy";
+// succeeds. The refusal then closes the connection: it must not serve the next fetch from the pool, so the proxy sees
+// one CONNECT for each fetch. Direct is the path of a socket, the proxy is the path of a tunnel. In a child process:
+// a report to a tunnel in the pool uses freed memory, which only a sanitizer build shows.
+it.concurrent.each(["direct", "through a CONNECT proxy"])(
+  "fetch (%s) gets the response that arrives in the same read as a refused renegotiation",
+  async route => {
+    using proxy = route === "direct" ? undefined : await startRecordingProxy();
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
+          // The environment must not choose the route.
+          const proxy = process.env.PROXY_PORT
+            ? { url: "http://127.0.0.1:" + process.env.PROXY_PORT, respectNoProxy: false }
+            : false;
           for (let i = 0; i < 2; i++) {
             const res = await fetch("https://localhost:" + process.env.SERVER_PORT + "/response-first", {
               tls: { ca: process.env.SERVER_CERT },
-              ...(process.env.PROXY_PORT && { proxy: "http://127.0.0.1:" + process.env.PROXY_PORT }),
+              proxy,
             });
             console.log(res.status, await res.text());
           }
@@ -886,11 +866,9 @@ it.concurrent.each(["a TCP relay", "a CONNECT proxy"])(
       ],
       env: {
         ...bunEnv,
-        SERVER_PORT: String(proxied ? backToBackPort : responseFirstRelayPort),
-        PROXY_PORT: proxied ? String(responseFirstProxyPort) : "",
+        SERVER_PORT: String(responseFirstRelayPort),
+        PROXY_PORT: proxy ? String(proxy.port) : "",
         SERVER_CERT: tls.cert,
-        // An ambient NO_PROXY applies to an explicit `proxy` option too and would send the request direct.
-        ...(proxied && { NO_PROXY: "", no_proxy: "" }),
         ASAN_OPTIONS: ((bunEnv.ASAN_OPTIONS ?? "") + ":symbolize=0").replace(/^:/, ""),
       },
       stdout: "pipe",
@@ -898,10 +876,18 @@ it.concurrent.each(["a TCP relay", "a CONNECT proxy"])(
       stdin: "ignore",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode, signalCode: proc.signalCode, stderr }).toEqual({
+    const connect = `CONNECT localhost:${responseFirstRelayPort} HTTP/1.1`;
+    expect({
+      stdout,
+      exitCode,
+      signalCode: proc.signalCode,
+      tunnels: proxy?.requests.map(request => request.requestLine),
+      stderr,
+    }).toEqual({
       stdout: "200 ok\n200 ok\n",
       exitCode: 0,
       signalCode: null,
+      tunnels: proxy && [connect, connect],
       stderr: expect.any(String),
     });
   },

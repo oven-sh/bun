@@ -1155,3 +1155,141 @@ it.concurrent(
     });
   },
 );
+
+// The loader makes a module from one source never, once, or more than once, and an object module reads its exports
+// object each time. `allocate` makes objects of the size of that exports object, which take its cell if it was freed.
+describe.concurrent("object loader: the exports object lives as long as its source", () => {
+  const setup = `
+    const exports = () => ({ exports: { v: 1, list: [1, 2, 3] }, loader: "object" });
+    const register = id => Bun.plugin({ name: "virtual", setup(build) { build.module(id, exports); } });
+    const allocate = () => Array.from({ length: 1000 }, (_, i) => ({ other: i, object: [i] }));
+  `;
+
+  async function run(entry: string) {
+    using dir = tempDir("plugin-object-loader-source", { "entry.ts": setup + entry });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // An import() that joined a loaded module gets that module's source again when the module is removed before the
+  // import() settles.
+  it.each([
+    ["delete require.cache", `delete require.cache["virtual:x"]`],
+    ["a second build.module()", `register("virtual:x")`],
+  ])("import() in flight while %s removes the module", async (_, remove) => {
+    expect(
+      await run(`
+        register("virtual:x");
+        const seen = new Set();
+        for (let round = 0; round < 10; round++) {
+          await import("virtual:x");
+          const inFlight = import("virtual:x");
+          ${remove};
+          Bun.gc(true);
+          const others = allocate();
+          seen.add(JSON.stringify(await inFlight));
+          others.length = 0;
+        }
+        console.log([...seen].join("\\n"));
+      `),
+    ).toEqual({ stdout: `{"list":[1,2,3],"v":1}\n`, stderr: "", exitCode: 0 });
+  });
+
+  // require() of a module whose import() has fetched its source and not made its module yet makes the module at
+  // once, and the import() makes it again. How many microtasks that takes is the loader's business, so try a few.
+  it("require() of the module while its import() is in flight", async () => {
+    expect(
+      await run(`
+        const seen = new Set();
+        for (let microtasks = 0; microtasks < 4; microtasks++) {
+          for (let round = 0; round < 3; round++) {
+            const id = "virtual:" + microtasks + ":" + round;
+            register(id);
+            const inFlight = import(id);
+            let wait = Promise.resolve();
+            for (let i = 0; i < microtasks; i++) wait = wait.then(() => {});
+            let required, others;
+            const later = wait.then(() => {
+              Bun.gc(true);
+              others = allocate();
+              required = require(id);
+            });
+            const imported = await inFlight;
+            await later;
+            seen.add(JSON.stringify([imported, required]));
+            others.length = 0;
+          }
+        }
+        console.log([...seen].join("\\n"));
+      `),
+    ).toEqual({ stdout: `[{"list":[1,2,3],"v":1},{"list":[1,2,3],"v":1}]\n`, stderr: "", exitCode: 0 });
+  });
+
+  // A source that never becomes a module, or whose module cannot be made, must not keep its exports object forever.
+  it.each([
+    [
+      "two import() of the module at once",
+      `register("virtual:x");`,
+      `
+        for (let round = 0; round < 20; round++) {
+          await Promise.all([import("virtual:x"), import("virtual:x")]);
+          delete require.cache["virtual:x"];
+        }
+      `,
+      "",
+    ],
+    [
+      "import() and then require() of the module",
+      `for (let round = 0; round < 20; round++) register("virtual:" + round);`,
+      `
+        for (let round = 0; round < 20; round++) {
+          await import("virtual:" + round);
+          require("virtual:" + round);
+        }
+      `,
+      "",
+    ],
+    [
+      "an exports object whose ownKeys trap throws",
+      `
+        Bun.plugin({
+          name: "throws",
+          setup(build) {
+            build.module("virtual:throws", () => ({
+              exports: new Proxy({}, { ownKeys() { throw new Error("ownKeys threw"); } }),
+              loader: "object",
+            }));
+          },
+        });
+      `,
+      `
+        const errors = new Set();
+        for (let round = 0; round < 20; round++) {
+          await import("virtual:throws").then(() => errors.add("no error"), error => errors.add(error.message));
+          delete require.cache["virtual:throws"];
+        }
+        console.log([...errors].join("\\n"));
+      `,
+      "ownKeys threw\n",
+    ],
+  ])("%s leaves nothing protected", async (_, prepare, rounds, output) => {
+    expect(
+      await run(`
+        import { heapStats } from "bun:jsc";
+        ${prepare}
+        Bun.gc(true);
+        const before = heapStats().protectedObjectCount;
+        ${rounds}
+        Bun.gc(true);
+        console.log("protected:", heapStats().protectedObjectCount - before);
+      `),
+    ).toEqual({ stdout: output + "protected: 0\n", stderr: "", exitCode: 0 });
+  });
+});

@@ -281,6 +281,8 @@ pub(crate) fn modifier_error(
 /// What `Builder::parse_parameter_list` read.
 struct ParameterList {
     params: Vec<Param>,
+    /// `node.Modifiers()` of each.
+    modifiers: Vec<Span<ModifierId>>,
     /// Where the comma right before the closing token is.
     trailing_comma: Option<u32>,
     /// Where the `...` of the first parameter is, if it has `Flags::REST`.
@@ -1586,7 +1588,7 @@ impl<'a> Builder<'a> {
             {
                 self.check_index_signature_parameters(&list, member.pos);
             }
-            let params = self.file.add_params(&list.params);
+            let params = self.add_parameter_list(&list);
             member.kind = MemberKind::IndexSignature;
             member.ty = ret;
             member.func = self.file.add_fn(Func {
@@ -1949,13 +1951,22 @@ impl<'a> Builder<'a> {
         }
         self.expect(T::TOpenParen)?;
         let list = self.parse_parameter_list(T::TCloseParen)?;
-        Ok(self.file.add_params(&list.params))
+        Ok(self.add_parameter_list(&list))
+    }
+
+    fn add_parameter_list(&mut self, list: &ParameterList) -> Span<ParamId> {
+        let params = self.file.add_params(&list.params);
+        for (param, &modifiers) in params.iter().zip(&list.modifiers) {
+            self.file.set_param_modifiers(param, modifiers);
+        }
+        params
     }
 
     /// `parseDelimitedList(PCParameters, parseParameter)` and then `close`. The opening token has been consumed.
     fn parse_parameter_list(&mut self, close: T) -> R<ParameterList> {
         let mut list = ParameterList {
             params: Vec::new(),
+            modifiers: Vec::new(),
             trailing_comma: None,
             first_rest: 0,
             first_question: 0,
@@ -2014,6 +2025,7 @@ impl<'a> Builder<'a> {
         if !modifiers.is_empty() {
             self.check_modifiers(&modifiers, Modified::Parameter, false, false, start);
         }
+        list.modifiers.push(self.add_modifier_list(&modifiers));
         if !flags.is_empty() {
             flags |= Flags::PARAMETER_PROPERTY;
         }

@@ -1406,7 +1406,11 @@ impl<'p> Printer<'_, 'p> {
         if self.c.enum_type_of_member(member) == ty {
             return parent_name;
         }
-        let name = self.text(self.c.files().symbol(member).name);
+        let name = match self.c.files().symbol(member).name {
+            // `InternalSymbolNamePrefix` is no UTF-8.
+            known::missing => "\u{FFFD}missing".to_owned(),
+            name => self.text(name),
+        };
         if is_identifier_text(&name) {
             return Node::simple(format!("{}.{name}", parent_name.text));
         }

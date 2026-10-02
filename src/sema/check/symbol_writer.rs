@@ -827,9 +827,6 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 .resolve_without_export_value(e, name, symbol)
                 .map(Found::Symbol),
             None => match name {
-                known::undefined | known::globalThis => {
-                    Some(Found::Undeclared(self.c.atom_text(name)))
-                }
                 known::arguments if bound.is_arguments_object(e) => {
                     Some(Found::Undeclared(self.c.atom_text(name)))
                 }

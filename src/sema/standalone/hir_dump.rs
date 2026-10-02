@@ -85,6 +85,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         text: _,
         unclosed_literals: _,
         expr_ends: _,
+        modifiers_of_params: _,
         body,
         references,
         suppressed,
@@ -986,14 +987,14 @@ impl Dump<'_> {
             pos,
             loc,
         } = node!(self, depth, label, params, id);
-        put!(
-            self,
-            depth,
-            label,
+        let mut head = format!(
             "Param flags={flags:?} pos={pos} loc={}..{}",
-            loc.pos,
-            loc.end
+            loc.pos, loc.end
         );
+        for modifier in self.file.modifier_list(self.file.param_modifiers(id)) {
+            head += &format!(" {:?}@{}", modifier.kind, modifier.pos);
+        }
+        self.line(depth, label, &head);
         let d = depth + 1;
         self.pat(d, "pat", pat);
         self.ty(d, "ty", ty);

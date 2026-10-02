@@ -260,7 +260,7 @@ impl Builder<'_> {
                 self.file.specifier_uses.push(SpecifierUse {
                     spec,
                     pos: pos(specifier_loc),
-                    kind: SpecifierKind::Import,
+                    kind: SpecifierKind::ImportType,
                     mode,
                 });
                 if let Some(loc) = assert_keyword_loc {
@@ -566,6 +566,15 @@ impl Builder<'_> {
         for (param, id) in params.iter().zip(cloned.iter()) {
             if let Some(default) = self.ts[param].default {
                 self.pending.push(PendingPart::ParamDefault(id, default));
+            }
+            let written = self.ts[param].modifiers;
+            let modifiers: smallvec::SmallVec<[(Flags, u32); 4]> = self.ts[written]
+                .iter()
+                .map(|modifier| (flags(modifier.flag), pos(modifier.loc)))
+                .collect();
+            if !modifiers.is_empty() {
+                let list = self.add_modifier_list(&modifiers);
+                self.file.set_param_modifiers(id, list);
             }
         }
         cloned

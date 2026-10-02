@@ -1654,6 +1654,16 @@ impl<'f> Binder<'f> {
                             Decl::EnumMember(m),
                             symbol,
                         )
+                    } else if is_private_name_at(self.f, self.f[m].pos)
+                        || is_bigint_literal_at(self.f, self.f[m].pos)
+                    {
+                        // `getDeclarationName`: neither is a name. `declareSymbolEx` puts what has none in no table.
+                        self.new_symbol(
+                            known::missing,
+                            SymFlags::ENUM_MEMBER,
+                            Decl::EnumMember(m),
+                            symbol,
+                        )
                     } else {
                         self.declare_in(
                             exports,

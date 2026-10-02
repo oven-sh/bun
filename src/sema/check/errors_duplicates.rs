@@ -118,7 +118,6 @@ impl Checker<'_> {
         self.check_duplicate_umd_globals(file, out);
         self.check_duplicate_members(file, out);
         self.check_static_property_name_conflicts(file, out);
-        self.check_exported_twice(file, out);
         self.check_redeclared_exports(file, out);
         self.check_redeclared_namespace_exports(file, out);
         self.report_redeclarations(file, out);
@@ -353,7 +352,8 @@ impl Checker<'_> {
             args: Vec::new(),
         };
         // Each report: where, with which code, and what goes with it.
-        let mut reports: Vec<((u32, u32, bool), u32, Vec<Related>)> = Vec::new();
+        let mut reports: Vec<((u32, u32, bool), u32, Vec<Related>, bool)> = Vec::new();
+        let is_export_equals = |at: Decl| matches!(at, Decl::ExportExpr(statement) if matches!(self.hir(file)[statement].kind, StmtKind::ExportAssign(_)));
         for refusal in bound.redeclarations.iter() {
             let (symbol, code) = (refusal.symbol, refusal.code);
             let Some(new) = self.range_of_declaration_name(file, refusal.decl) else {
@@ -374,9 +374,9 @@ impl Checker<'_> {
                     another.push(related_at(new, if index == 0 { 2753 } else { 6204 }));
                     firsts.push(related_at(range, 2752));
                 }
-                reports.push((range, code, another));
+                reports.push((range, code, another, is_export_equals(at)));
             }
-            reports.push((new, code, firsts));
+            reports.push((new, code, firsts, is_export_equals(refusal.decl)));
         }
         out.extend(reports.iter().map(|report| Diagnostic {
             start: report.0.0,
@@ -391,7 +391,11 @@ impl Checker<'_> {
                 related.sort_by_key(|r| (r.at, r.code));
                 related.dedup();
             }
-            if !is_token {
+            if same[0].3 {
+                // `getDisplayName`: `export = e` has no name, so `getDeclarationName`.
+                let end = if is_token { 0 } else { end };
+                self.note(start, end, code, vec!["export=".to_owned()]);
+            } else if !is_token {
                 self.note(start, end, code, Vec::new());
             }
             if !related.is_empty() {
@@ -1243,83 +1247,6 @@ impl Checker<'_> {
                     continue;
                 };
                 clash(self, name, includes, excludes, (of, member.pos));
-            }
-        }
-    }
-
-    /// One name in two `export { }`, `export * as` or `export import`, and `export =` twice: what a module exports has one entry for each.
-    fn check_exported_twice(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let hir = self.hir(file);
-        if hir.exports.is_empty()
-            && !hir.stmts.iter().any(|s| {
-                matches!(
-                    s.kind,
-                    StmtKind::ExportAssign(_) | StmtKind::ExportStar { .. }
-                )
-            })
-        {
-            return;
-        }
-        for body in std::iter::once(hir.body).chain(hir.modules.iter().map(|m| m.body)) {
-            let mut names: Vec<(Atom, u32)> = Vec::new();
-            // Where each `export =` is reported, and the statement if that is what it is reported on.
-            let mut equals: Vec<(u32, StmtId)> = Vec::new();
-            for s in hir.ids(body) {
-                match hir[s].kind {
-                    StmtKind::ExportNamed(x) => {
-                        names.extend(
-                            hir[x]
-                                .items
-                                .iter()
-                                .filter(|&i| hir[i].exported != known::default)
-                                .map(|i| (hir[i].exported, hir[i].pos)),
-                        );
-                    }
-                    // `declareModuleMember`: an alias like the others.
-                    StmtKind::ImportEquals(i) if hir[i].flags.contains(Flags::EXPORT) => {
-                        names.push((hir[i].name, hir[i].name_pos))
-                    }
-                    // `bindExportDeclaration`
-                    StmtKind::ExportStar {
-                        alias, alias_pos, ..
-                    } if alias.is_some() && alias != known::default => {
-                        names.push((alias, alias_pos));
-                    }
-                    StmtKind::ExportAssign(e) => {
-                        equals.push(if matches!(hir[e].kind, ExprKind::Ident(_)) {
-                            (hir[e].pos, StmtId::NONE)
-                        } else {
-                            (hir[s].pos, s)
-                        })
-                    }
-                    _ => {}
-                }
-            }
-            if equals.len() > 1 {
-                out.extend(
-                    equals
-                        .iter()
-                        .map(|&(start, _)| Diagnostic { start, code: 2300 }),
-                );
-                for &(start, statement) in &equals {
-                    let end = if statement.is_some() {
-                        self.end_of_stmt(file, statement)
-                    } else {
-                        0
-                    };
-                    self.note(start, end, 2300, vec!["export=".to_owned()]);
-                }
-            }
-            let mut sorted: Vec<Atom> = names.iter().map(|n| n.0).collect();
-            sorted.sort_unstable();
-            if !sorted.windows(2).any(|pair| pair[0] == pair[1]) {
-                continue;
-            }
-            for &(name, start) in &names {
-                let first = sorted.partition_point(|&other| other < name);
-                if sorted.get(first + 1) == Some(&name) {
-                    out.push(Diagnostic { start, code: 2300 });
-                }
             }
         }
     }

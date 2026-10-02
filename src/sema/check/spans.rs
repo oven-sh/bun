@@ -1320,44 +1320,6 @@ impl<'a> Spans<'a> {
         }
     }
 
-    // ───────────────────────────── JSX ─────────────────────────────
-
-    /// `name`, `name="v"`, `name={e}`, `{...e}`
-    fn jsx_attr(self, p: PropId) -> usize {
-        let Some(prop) = self.hir.props.get(p.idx()) else {
-            return 0;
-        };
-        if prop.end != 0 {
-            return prop.end as usize;
-        }
-        if prop.kind == PropKind::Spread {
-            return self.close(self.expr(prop.value).max(prop.pos as usize), b'}');
-        }
-        let name_end = jsx_name_end(self.text, prop.pos as usize);
-        let equals = self.eat(name_end, b"=");
-        if equals == name_end {
-            return name_end;
-        }
-        let value = self.skip_trivia(equals);
-        match self.byte(value) {
-            b'"' | b'\'' => jsx_string_end(self.text, value),
-            b'{' => {
-                let is_written = self
-                    .hir
-                    .exprs
-                    .get(prop.value.idx())
-                    .is_some_and(|e| !matches!(e.kind, ExprKind::Missing));
-                if is_written {
-                    self.close(self.expr(prop.value).max(value + 1), b'}')
-                } else {
-                    self.bracket(value)
-                }
-            }
-            b'<' => self.expr(prop.value),
-            _ => equals,
-        }
-    }
-
     // ───────────────────────────── types ─────────────────────────────
 
     /// Where `node` starts. The `new` of a constructor type is not counted in where it is said to be.
@@ -1930,11 +1892,7 @@ impl Checker<'_> {
 
     /// `node.End()` of the property `p` of an object literal, or of the JSX attribute `p`.
     pub(super) fn end_of_prop(&self, file: FileId, p: PropId) -> u32 {
-        if self.is_jsx_attr(file, p) {
-            self.spans(file).jsx_attr(p) as u32
-        } else {
-            self.spans(file).prop(p) as u32
-        }
+        self.spans(file).prop(p) as u32
     }
 
     /// `node.End()` of the name of the property `p` of an object literal, `[computed]` included, or of the JSX attribute `p`.
@@ -1955,11 +1913,6 @@ impl Checker<'_> {
     }
 
     // ───────────────────────────── JSX ─────────────────────────────
-
-    /// `node.End()` of the attribute `p` of a JSX element: `name`, `name="v"`, `name={e}`, `{...e}`.
-    pub(super) fn end_of_jsx_attr(&self, file: FileId, p: PropId) -> u32 {
-        self.spans(file).jsx_attr(p) as u32
-    }
 
     /// `node.End()` of the name of the attribute `p` of a JSX element.
     pub(super) fn end_of_jsx_attr_name(&self, file: FileId, p: PropId) -> u32 {

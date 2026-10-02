@@ -2039,9 +2039,6 @@ impl<'p> Checker<'p> {
         };
         let Some(sym) = found else {
             return match name {
-                // `undefinedSymbol` is no variable: 2539.
-                known::undefined if self.is_written(file, e) => TypeId::ERROR,
-                known::undefined => TypeId::UNDEFINED,
                 // In a property initializer or a static block the arguments object is an error (2815).
                 known::arguments
                     if self.bound(file).is_arguments_object(e)

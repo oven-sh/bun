@@ -1328,7 +1328,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     1109,
                 );
                 let missing_loc = p.lexer.full_start_of(close_paren_loc.start as usize);
-                let missing = p.new_expr_ending_at(E::Missing {}, missing_loc, missing_loc);
+                let missing = p.new_expr(E::Missing {}, missing_loc);
                 let ends = [missing_loc, missing_loc];
                 value = p.join_with_commas_keeping_missing(&[value, missing], &ends);
             }
@@ -1346,8 +1346,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 1109,
             );
-            let end = p.lexer.full_start_of(close_paren_loc.start as usize);
-            let value = p.new_expr_ending_at(E::Missing {}, close_paren_loc, end);
+            let value = p.new_expr(E::Missing {}, close_paren_loc);
             p.mark_paren(&value, loc);
             return Ok(value);
         }

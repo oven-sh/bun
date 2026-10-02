@@ -1046,12 +1046,26 @@ pub enum ResolutionMode {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SpecifierKind {
-    /// `import x from "m"`, `export x from "m"`, `import("m").T`
+    /// `import x from "m"`, `export x from "m"`
     Import,
     /// `import x = require("m")`
     Require,
     /// `import "m"`
     SideEffect,
+    /// `import("m").T`
+    ImportType,
+    /// `import("m")`
+    ImportCall,
+    /// `require("m")`, in JavaScript
+    RequireCall,
+}
+
+impl SpecifierKind {
+    /// Whether it is the argument of a call expression.
+    #[inline]
+    pub fn is_call(self) -> bool {
+        matches!(self, SpecifierKind::ImportCall | SpecifierKind::RequireCall)
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1432,6 +1446,10 @@ pub struct File {
     /// This is NOT tsgo's data model, where every node has an `end`, and that is on purpose: an `end` on every expression is paid by
     /// every program, and only recovery needs it.
     pub expr_ends: Vec<u32>,
+    /// `node.Modifiers()` of a parameter, by `ParamId`: see `param_modifiers`. No longer than the last parameter that has any needs,
+    /// and empty in most files. A column and not a field of `Param`, on purpose: few parameters have a modifier, and a field is paid
+    /// by all of them.
+    pub modifiers_of_params: Vec<Span<ModifierId>>,
     /// The array and object literals whose closing bracket the parser missed: where they open, and where they end, which is where the
     /// last token they took does (`finishNode`). Sorted.
     pub unclosed_literals: Few<(u32, u32)>,
@@ -1570,6 +1588,23 @@ arenas! {
 }
 
 impl File {
+    /// `node.Modifiers()` of the parameter `p`: keywords and decorators, in source order.
+    #[inline]
+    pub fn param_modifiers(&self, p: ParamId) -> Span<ModifierId> {
+        self.modifiers_of_params
+            .get(p.idx())
+            .copied()
+            .unwrap_or(Span::EMPTY)
+    }
+    pub fn set_param_modifiers(&mut self, p: ParamId, list: Span<ModifierId>) {
+        if list.is_empty() {
+            return;
+        }
+        if self.modifiers_of_params.len() <= p.idx() {
+            self.modifiers_of_params.resize(p.idx() + 1, Span::EMPTY);
+        }
+        self.modifiers_of_params[p.idx()] = list;
+    }
     #[inline]
     pub fn set_expr_end(&mut self, e: ExprId, end: u32) {
         if self.expr_ends.len() <= e.idx() {
@@ -1862,6 +1897,16 @@ pub fn start_inside_parentheses(hir: &File, mut e: ExprId) -> u32 {
 #[inline]
 pub fn is_private_name_at(hir: &File, pos: u32) -> bool {
     hir.text.get(pos as usize) == Some(&b'#')
+}
+
+/// `IsBigIntLiteral`, of what is written at `pos`: a number that ends in `n`.
+pub fn is_bigint_literal_at(hir: &File, pos: u32) -> bool {
+    let written = hir.text.get(pos as usize..).unwrap_or_default();
+    let end = written
+        .iter()
+        .position(|b| !b.is_ascii_alphanumeric() && *b != b'_')
+        .unwrap_or(written.len());
+    written.first().is_some_and(u8::is_ascii_digit) && written[..end].ends_with(b"n")
 }
 
 /// `GetFirstIdentifier`: `a` of `a.b.c`.

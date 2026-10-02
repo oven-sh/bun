@@ -448,8 +448,15 @@ impl<'p> Printer<'_, 'p> {
                 None => Node::simple("any"),
             },
             Pseudo::Inferred { of, .. } => self.inferred_pseudo_type_to_node(file, *of),
-            // Only the error type is equivalent to it.
-            Pseudo::NoResult(_) => Node::simple("any"),
+            // Only an error type is equivalent to it. What is written is the type of the declaration's own symbol.
+            Pseudo::NoResult(node) => match self.c.iso_fn_of_node(file, *node) {
+                Some(func)
+                    if !matches!(self.c.hir(file)[func].kind, FnKind::Getter | FnKind::Setter) =>
+                {
+                    self.inferred_return_type_to_node(file, func)
+                }
+                _ => self.inferred_type_of_declaration_to_node(file, *node),
+            },
             Pseudo::MaybeConst {
                 at,
                 constant,

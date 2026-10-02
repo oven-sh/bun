@@ -113,10 +113,13 @@ impl Checker<'_> {
         let module = self.files().module(file);
         let path = module.path.as_str();
         let sorted;
-        let uses: &[SpecifierUse] = if hir.specifier_uses.is_sorted_by_key(|u| u.pos) {
+        let has_calls = hir.specifier_uses.iter().any(|u| u.kind.is_call());
+        let uses: &[SpecifierUse] = if !has_calls && hir.specifier_uses.is_sorted_by_key(|u| u.pos)
+        {
             &hir.specifier_uses
         } else {
             let mut uses = hir.specifier_uses.clone();
+            uses.retain(|u| !u.kind.is_call());
             uses.sort_unstable_by_key(|u| u.pos);
             sorted = uses;
             &sorted

@@ -281,9 +281,12 @@ impl Checker<'_> {
                         || d.code == 1184 && is_before_namespace_export(hir, d.start)
                 });
             }
-            if self.is_plain_js(file) {
+            let is_plain_js = self.is_plain_js(file);
+            if is_plain_js {
                 out.retain(|d| errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_ok());
-            } else {
+            }
+            self.include_processor_diagnostics(file, &mut out);
+            if !is_plain_js {
                 // `JSDocDiagnostics`
                 out.extend(
                     hir.jsdoc_errors
@@ -607,6 +610,9 @@ impl Checker<'_> {
                 kind,
                 mode,
             } = hir.specifier_uses[i];
+            if kind.is_call() {
+                continue;
+            }
             if unchecked.iter().any(|&(_, written)| written == pos) {
                 continue;
             }
@@ -789,7 +795,7 @@ impl Checker<'_> {
             let written = hir
                 .specifier_uses
                 .iter()
-                .filter(|u| u.pos >= s.pos)
+                .filter(|u| u.pos >= s.pos && !u.kind.is_call())
                 .min_by_key(|u| u.pos)
                 .filter(|u| spec.is_some() && u.spec == spec)
                 .map_or(u32::MAX, |u| u.pos);
@@ -993,7 +999,6 @@ impl Checker<'_> {
                 ..
             } = hir[s];
             if self.files().resolve_name(file, scope, name, all).is_some()
-                || matches!(name, known::undefined | known::globalThis)
                 // 2661, which `check_exports` says.
                 || matches!(self.files().atoms.bytes(name), b"any" | b"string" | b"number" | b"boolean" | b"never" | b"unknown")
                 // `export { "a" }`: not a name.
@@ -1919,7 +1924,6 @@ impl Checker<'_> {
                 continue;
             }
             if bound.is_unchecked(e.idx())
-                || matches!(name, known::undefined | known::globalThis)
                 // What another declaration of the namespace or the enum around exports, in whichever file, is in scope too.
                 || matches!(
                     self.files()
@@ -3306,9 +3310,8 @@ pub(super) fn is_close(name: &[u8], candidate: &[u8]) -> bool {
     let allowed_difference = 2.max(name.len() * 34 / 100);
     if name.len().abs_diff(candidate.len()) > allowed_difference
         || candidate == name
-        || candidate.first() == Some(&b'"')
-        // `InternalSymbolNamePrefix`: ours end in `=`.
-        || candidate.last() == Some(&b'=')
+        // `getCandidateName`: the name of a module, `InternalSymbolNamePrefix`.
+        || matches!(candidate.first(), Some(b'"' | 0xFE))
     {
         return false;
     }
@@ -4276,6 +4279,7 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             let specifier = hir
                 .specifier_uses
                 .iter()
+                .filter(|used| !used.kind.is_call())
                 .map(|used| used.pos)
                 .filter(|&pos| pos > start)
                 .min();
@@ -5698,10 +5702,7 @@ impl Checker<'_> {
 
     /// Why the name `e` cannot be given a value, if it cannot. `checkIdentifier`
     fn why_not_assignable(&self, file: FileId, e: ExprId, name: Atom) -> Option<u32> {
-        let Some(sym) = self.symbol_of_identifier(file, e, name) else {
-            // `undefinedSymbol` is made as a property: a name, but of no variable.
-            return (name == known::undefined).then_some(2539);
-        };
+        let sym = self.symbol_of_identifier(file, e, name)?;
         let flags = self.files().flags(sym);
         if flags.intersects(SymFlags::VARIABLE) {
             return flags.contains(SymFlags::CONST).then_some(2588);

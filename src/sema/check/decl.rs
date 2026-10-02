@@ -2632,7 +2632,7 @@ impl<'p> Checker<'p> {
                     && flags.contains(SymFlags::TYPE_ALIAS)
                     && !flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE)
                 {
-                    return self.type_from_type_alias_reference(file, node, sym, false, &args);
+                    return self.type_from_type_alias_reference(file, node, sym, &args);
                 }
                 self.written_type_reference(sym, &args)
             }
@@ -2693,7 +2693,7 @@ impl<'p> Checker<'p> {
                     // `getIntendedTypeFromJSDocTypeReference` instantiates `Record` for `Object<K, V>` under no alias.
                     && !self.is_jsdoc_object_with_arguments(file, node)
                 {
-                    self.type_from_type_alias_reference(file, node, sym, found != sym, &args)
+                    self.type_from_type_alias_reference(file, node, sym, &args)
                 } else {
                     self.written_type_reference(sym, &args)
                 };
@@ -2897,13 +2897,12 @@ impl<'p> Checker<'p> {
     }
 
     /// `getTypeFromTypeAliasReference`, of the generic alias `sym`, past the count of the type arguments. `args`: those written at
-    /// `node`. `is_imported`: the name is that of an import, an export or a re-export.
+    /// `node`.
     fn type_from_type_alias_reference(
         &mut self,
         file: FileId,
         node: TypeNodeId,
         sym: Sym,
-        is_imported: bool,
         args: &[TypeId],
     ) -> TypeId {
         let scope = self.bound(file).type_scope[node.idx()];
@@ -2912,13 +2911,41 @@ impl<'p> Checker<'p> {
             Some(alias) if self.is_local_type_alias(sym) || !self.is_local_type_alias(alias.0) => {
                 Some(alias)
             }
-            _ if is_imported => Some((sym, SmallVec::from_slice(args))),
-            _ => None,
+            // "refers to an alias import/export/reexport"
+            _ => self
+                .resolve_type_reference_name_as_alias(file, scope, node)
+                .and_then(|alias| self.files().resolve_alias(alias))
+                .filter(|&resolved| self.files().flags(resolved).contains(SymFlags::TYPE_ALIAS))
+                .map(|resolved| (resolved, SmallVec::from_slice(args))),
         };
         let new_alias = new_alias
             .as_ref()
             .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
         self.type_reference_type(sym, args, new_alias)
+    }
+
+    /// `resolveTypeReferenceName(node, SymbolFlagsAlias, ignoreErrors)`, if `IsTypeReferenceType(node)`. It is `Resolve` with `isUse`: what is
+    /// found counts as read, whatever it stands for.
+    fn resolve_type_reference_name_as_alias(
+        &self,
+        file: FileId,
+        scope: ScopeId,
+        node: TypeNodeId,
+    ) -> Option<Sym> {
+        let hir = self.hir(file);
+        let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
+            return None;
+        };
+        let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
+        let files = self.files();
+        let alias = files.resolve_entity(file, scope, &names, SymFlags::ALIAS)?;
+        // Of `a.b` the first name is looked up as a namespace, as it was before.
+        if names.len() == 1 {
+            for &part in files.parts(alias).iter() {
+                self.p.symbol_reference_links.insert(part, ());
+            }
+        }
+        Some(alias)
     }
 
     /// `type_reference`, for a reference that is written out.

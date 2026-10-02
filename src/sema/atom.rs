@@ -42,6 +42,8 @@ macro_rules! known_atoms {
             /// holds their first byte.
             pub const sym_iterator: Atom = Atom(TEXTS.len() as u32);
             pub const sym_async_iterator: Atom = Atom(TEXTS.len() as u32 + 1);
+            /// `InternalSymbolNameGlobal`
+            pub const global_augmentation: Atom = Atom(TEXTS.len() as u32 + 2);
         }
     };
     (@consts $n:expr; $name:ident, $($rest:ident,)*) => {
@@ -152,7 +154,6 @@ known_atoms! {
     React = "React",
     r#const = "const",
     global = "global",
-    global_augmentation = "global=",
     intrinsic = "intrinsic",
     Disposable = "Disposable",
     freeze = "freeze",
@@ -166,6 +167,7 @@ known_atoms! {
     object_literal = "object=",
     computed = "computed=",
     assignment_declaration = "assignment=",
+    missing = "missing=",
 }
 
 /// What the name of a property that a symbol names starts with: `InternalSymbolNamePrefix` and `@`. No text has the byte 0xFE in
@@ -289,6 +291,7 @@ impl Interner {
             this.symbol_name(b"asyncIterator"),
             known::sym_async_iterator
         );
+        assert_eq!(this.intern(b"\xFEglobal"), known::global_augmentation);
         this
     }
 

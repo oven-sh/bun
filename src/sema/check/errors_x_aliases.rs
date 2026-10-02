@@ -106,7 +106,7 @@ impl Checker<'_> {
         self.hir(file)
             .specifier_uses
             .iter()
-            .filter(|u| u.spec == spec && u.pos >= pos)
+            .filter(|u| u.spec == spec && u.pos >= pos && !u.kind.is_call())
             .map(|u| u.pos)
             .min()
     }
@@ -229,6 +229,48 @@ impl Checker<'_> {
             }],
             None => Vec::new(),
         }
+    }
+
+    // ───────────────────────────── what is reported when the output is written ─────────────────────────────
+
+    /// `MarkLinkedReferencesRecursively`, which `ImportElisionTransformer` runs before a file is written: whether it reports anything
+    /// the check does not. `markIdentifierAliasReferenced` asks `getResolvedSymbol` of every identifier that is emitted as an
+    /// expression. The check has asked nearly all of them. Not the `q` of `export import r = q`, which it resolves as a namespace:
+    /// where `q` is no value, that is 2708, 2693 or 2304. tsgo's test harness counts them (TS-1). Nothing else shows them.
+    pub fn mark_linked_references_recursively(&self, file: FileId) -> bool {
+        let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
+        let (options, module) = (&files.options, files.module(file));
+        // `emitJSFile`, `sourceFileMayBeEmitted`, `importElisionEnabled`, `canCollectSymbolAliasAccessibilityData`
+        if options.no_emit
+            || options.emit_declaration_only
+            || options.verbatim_module_syntax
+            || !matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
+            || hir.is_js
+            || module.is_lib
+            || module.is_from_external_library
+        {
+            return false;
+        }
+        hir.import_equals.iter().enumerate().any(|(i, import)| {
+            let ImportEqualsTarget::Entity(names) = import.target else {
+                return false;
+            };
+            // `NodeFlagsAmbient`
+            let is_ambient = import.flags.contains(Flags::AMBIENT)
+                || matches!(bound.stmt_parent[import.stmt.idx()], Parent::Module(m) if hir[m].flags.contains(Flags::AMBIENT));
+            let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
+            import.flags.contains(Flags::EXPORT)
+                && names.len() == 1
+                && !is_ambient
+                && files
+                    .resolve_name(
+                        file,
+                        bound.import_equals_scope[i],
+                        hir.id_at(names, 0),
+                        meaning,
+                    )
+                    .is_none()
+        })
     }
 
     // ───────────────────────────── what a module exports ─────────────────────────────
@@ -1185,6 +1227,9 @@ impl Checker<'_> {
                 mode,
             } in &hir.specifier_uses
             {
+                if kind.is_call() {
+                    continue;
+                }
                 // `getModeForUsageLocation`
                 let mode = if mode != ResolutionMode::None {
                     mode

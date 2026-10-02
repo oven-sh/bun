@@ -217,23 +217,6 @@ fn is_plain_object(data: &TypeData) -> bool {
     }
 }
 
-/// Whether a `;` comes right before what is at `pos`, modifiers aside. After a body it is an element or a statement of its own,
-/// which is not kept.
-fn follows_a_semicolon(text: &[u8], pos: u32) -> bool {
-    let mut before = text.get(..pos as usize).unwrap_or(&[]).trim_ascii_end();
-    loop {
-        let word = before
-            .iter()
-            .rev()
-            .take_while(|c| c.is_ascii_alphabetic() || **c == b'*')
-            .count();
-        if word == 0 {
-            return before.ends_with(b";");
-        }
-        before = before[..before.len() - word].trim_ascii_end();
-    }
-}
-
 /// Collects properties by name, in the order they are first seen.
 #[derive(Default)]
 struct Builder {
@@ -1789,17 +1772,18 @@ impl<'p> Checker<'p> {
         sigs
     }
 
-    /// `getSignaturesOfSymbol`, of two methods of one name or two constructors: whether `m` has a body and comes right after
-    /// `previous` in the same class. It implements what is declared before it then, and is no signature itself.
+    /// `getSignaturesOfSymbol`, of two methods of one name or two constructors: whether `m` is "the implementation of an overloaded
+    /// function", which is no signature itself. It "has a body and the previous node is of the same kind and immediately precedes"
+    /// it: "has the same parent and ends where the implementation starts", or is made of an `@overload` tag.
     fn is_implementation_after(&self, file: FileId, previous: MemberId, m: MemberId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         has_body(&hir[hir[m].func])
-            && previous.idx() + 1 == m.idx()
             && bound.member_owner[previous.idx()] == bound.member_owner[m.idx()]
-            && !(has_body(&hir[hir[previous].func]) && follows_a_semicolon(&hir.text, hir[m].pos))
+            && (hir[m].loc.pos == hir[previous].loc.end
+                || hir[previous].flags.contains(Flags::REPARSED))
     }
 
-    /// Whether the declaration of the function `f` is the statement right after that of `previous`, in one list of statements.
+    /// The same of two declarations of a function, but for the body.
     fn is_next_statement(&self, file: FileId, previous: FnId, f: FnId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (FnOwner::Stmt(before), FnOwner::Stmt(s)) =
@@ -1807,32 +1791,9 @@ impl<'p> Checker<'p> {
         else {
             return false;
         };
-        let list = match bound.stmt_parent[s.idx()] {
-            Parent::File => hir.body,
-            Parent::Module(m) => hir[m].body,
-            Parent::FnBody(around) => match hir[around].body {
-                FnBody::Block(list) => list,
-                _ => return false,
-            },
-            Parent::Stmt(around) if around.is_some() => match hir[around].kind {
-                StmtKind::Block(list) => list,
-                // The clause it is in.
-                StmtKind::Switch { cases, .. } => match cases
-                    .iter()
-                    .map(|c| hir[c].body)
-                    .find(|&body| hir.ids(body).any(|x| x == s))
-                {
-                    Some(list) => list,
-                    None => return false,
-                },
-                _ => return false,
-            },
-            _ => return false,
-        };
-        let mut statements = hir.ids(list);
-        statements.any(|x| x == before)
-            && statements.next() == Some(s)
-            && !(has_body(&hir[previous]) && follows_a_semicolon(&hir.text, hir[s].pos))
+        bound.stmt_parent[before.idx()] == bound.stmt_parent[s.idx()]
+            && (hir[s].loc.pos == hir[before].loc.end
+                || hir[previous].flags.contains(Flags::REPARSED))
     }
 
     /// Whether `ty` is an instantiation of `sym`, whichever, or extends one: `class C<T> extends C<T[]>` extends nothing.
@@ -2461,13 +2422,6 @@ impl<'p> Checker<'p> {
                         });
                     }
                 }
-                // `undefinedSymbol`
-                b.add(Prop {
-                    name: known::undefined,
-                    flags: PropFlags::empty(),
-                    source: PropSource::Type(TypeId::UNDEFINED),
-                    mapper: MapperId::IDENTITY,
-                });
             }
             Origin::Mapped(..) => {}
         }
@@ -3930,7 +3884,22 @@ impl<'p> Checker<'p> {
         self.type_of_prop(prop, outer)
     }
 
+    /// `getTypeOfSymbol(member.Symbol)`, as far as this file declares it, if `member` is the first declaration of its symbol: that
+    /// is what `member_types` keeps a type by. Of a later declaration, what that alone says.
     pub(super) fn type_of_member_declaration(&mut self, file: FileId, member: MemberId) -> TypeId {
+        use crate::bind::MemberDeclaration;
+        let declaration = MemberDeclaration::Member(member);
+        let all = self.bound(file).declarations_of_member(&declaration);
+        if all.len() > 1 && all[0] == declaration {
+            let members: SmallVec<[(FileId, MemberId); 4]> = all
+                .iter()
+                .filter_map(|of_symbol| match *of_symbol {
+                    MemberDeclaration::Member(m) => Some((file, m)),
+                    _ => None,
+                })
+                .collect();
+            return self.type_of_members(&members);
+        }
         self.type_of_members(&[(file, member)])
     }
 
@@ -4680,7 +4649,7 @@ impl<'p> Checker<'p> {
     /// `getPropertyOfTypeEx`: whether `ty` is the object of a module that has `name` only through `export type *`. It is listed
     /// among the properties, but it is not there for the asking, and nothing stands in for it.
     #[inline]
-    fn is_type_only_member(&self, ty: TypeId, name: Atom) -> bool {
+    pub(super) fn is_type_only_member(&self, ty: TypeId, name: Atom) -> bool {
         matches!(*self.data(ty), TypeData::Anon { origin: Origin::Module(module) | Origin::Namespace { module, .. }, .. } if self.files().is_type_only_star_export(module, name))
     }
 

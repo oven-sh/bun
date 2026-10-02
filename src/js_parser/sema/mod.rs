@@ -757,15 +757,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
     #[cold]
     #[inline(never)]
     pub(crate) fn note_expr_end(&mut self, expr: &Expr, end: bun_ast::Loc) {
-        let is_noted = match expr.data {
-            // `createMissingNode`: it takes no room.
-            ExprData::EMissing(_) => true,
+        let is_after_start = end.start > expr.loc.start;
+        let end = match expr.data {
+            // `createMissingNode`: it takes no room, where the token before it ends, however late it is made.
+            ExprData::EMissing(_) if is_after_start => {
+                self.lexer.full_start_of(expr.loc.start.max(0) as usize)
+            }
+            ExprData::EMissing(_) => end,
             // `parse_jsx_element` returns before the last ">" is taken, and text is no trivia: `hir::Jsx::end`.
-            ExprData::EJsxElement(_) => false,
+            ExprData::EJsxElement(_) => return,
             // A literal is made before its token is taken.
-            _ => end.start > expr.loc.start,
+            _ if !is_after_start => return,
+            _ => end,
         };
-        if is_noted && let Some(syntax) = &mut self.type_syntax {
+        if let Some(syntax) = &mut self.type_syntax {
             syntax.expr_ends.push((ExprKey::of(expr), end.start));
         }
     }

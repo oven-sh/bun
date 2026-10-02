@@ -1606,18 +1606,10 @@ impl Checker<'_> {
             return;
         }
         // It is said of the attributes together, which start where the first does.
-        let start = match hir[first].kind {
-            PropKind::Spread => brace_before(hir, self.start_of(file, hir[first].value), true),
-            _ => Some(hir[first].pos),
-        };
-        if let Some(start) = start {
-            out.push(Diagnostic { start, code: 2710 });
-            let end = match jsx.attrs.iter().next_back() {
-                Some(last) => self.end_of_jsx_attr(file, last),
-                None => 0,
-            };
-            self.explain_to(start, end, 2710, |c| vec![c.atom_text(name)]);
-        }
+        let start = hir[first].start;
+        out.push(Diagnostic { start, code: 2710 });
+        let end = jsx.attrs.iter().next_back().map_or(0, |last| hir[last].end);
+        self.explain_to(start, end, 2710, |c| vec![c.atom_text(name)]);
     }
 
     /// `checkSpreadPropOverrides`: 2783, what is written only to be overwritten by what is spread after it.
@@ -1677,10 +1669,7 @@ impl Checker<'_> {
                     let is_said = out.iter().any(|d| d.start == start && d.code == 2783);
                     out.push(Diagnostic { start, code: 2783 });
                     // `GetErrorRangeForNode`: a method is pointed at by its name, anything else as a whole.
-                    let owner = self.bound(file).prop_owner[overwritten.idx()];
-                    let end = if owner.is_some() && matches!(hir[owner].kind, ExprKind::Jsx(_)) {
-                        self.end_of_jsx_attr(file, overwritten)
-                    } else if hir[overwritten].kind == PropKind::Method {
+                    let end = if hir[overwritten].kind == PropKind::Method {
                         self.end_of_prop_name(file, overwritten)
                     } else {
                         self.end_of_prop(file, overwritten)
@@ -1690,15 +1679,8 @@ impl Checker<'_> {
                     }
                     self.relate(start, 2783, |c| {
                         // The spread starts at its `...`, that of an attribute at the `{`.
-                        let value = c.start_of(file, prop.value);
-                        let from = if owner.is_some() && matches!(hir[owner].kind, ExprKind::Jsx(_))
-                        {
-                            brace_before(hir, value, true)
-                        } else {
-                            dots_before(hir, value)
-                        };
                         vec![super::explain::Related {
-                            at: Some((file, from.unwrap_or(value), c.end_of_prop(file, p))),
+                            at: Some((file, prop.start, c.end_of_prop(file, p))),
                             code: 2785,
                             args: Vec::new(),
                         }]
@@ -1977,10 +1959,4 @@ fn brace_before(hir: &hir::File, start: u32, is_spread: bool) -> Option<u32> {
         before = trim_trivia_end(before.strip_suffix(b"...")?);
     }
     before.ends_with(b"{").then(|| before.len() as u32 - 1)
-}
-
-/// Where the `...` before what starts at `start` is.
-fn dots_before(hir: &hir::File, start: u32) -> Option<u32> {
-    let before = trim_trivia_end(hir.text.get(..start as usize)?);
-    before.ends_with(b"...").then(|| before.len() as u32 - 3)
 }

@@ -762,7 +762,7 @@ impl Checker<'_> {
             let Some(members) = self.members(part) else {
                 return false;
             };
-            if self.property_in(&members, name).is_some() {
+            if !self.is_type_only_member(part, name) && self.property_in(&members, name).is_some() {
                 is_declared = true;
                 continue;
             }
@@ -1511,7 +1511,7 @@ impl Checker<'_> {
                 // A bigint is no name for a property, whatever it reads as.
                 let is_bigint = code == 2339
                     && matches!(prop.key, PropKey::Name(_))
-                    && is_bigint_literal(&hir.text, at);
+                    && is_bigint_literal_at(hir, at);
                 let code = if is_bigint { 2538 } else { code };
                 out.push(Diagnostic { start: at, code });
                 let end = match prop.key {
@@ -2422,16 +2422,6 @@ fn properties_intersected<'a>(prop: &'a Prop, out: &mut SmallVec<[&'a Prop; 4]>)
 /// Whether the private name written at `pos` is `#constructor`.
 fn is_private_constructor_name(text: &[u8], pos: u32) -> bool {
     text.get(pos as usize) == Some(&b'#') && is_word_at(text, pos as usize + 1, b"constructor")
-}
-
-/// Whether what is written at `at` is a bigint literal: a number that ends in `n`.
-fn is_bigint_literal(text: &[u8], at: u32) -> bool {
-    let written = text.get(at as usize..).unwrap_or_default();
-    let end = written
-        .iter()
-        .position(|b| !b.is_ascii_alphanumeric() && *b != b'_')
-        .unwrap_or(written.len());
-    written.first().is_some_and(u8::is_ascii_digit) && written[..end].ends_with(b"n")
 }
 
 /// `SymbolName`: a `#x` as it is written, without what tells it from the `#x` of another class.

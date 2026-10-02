@@ -15,6 +15,7 @@ const VALUE: u8 = 1;
 const TYPE: u8 = 2;
 const NAMESPACE: u8 = 4;
 const ALL: u8 = 7;
+const ALIAS: u8 = 8;
 
 struct Unused<'a> {
     files: &'a Files,
@@ -145,6 +146,13 @@ impl Checker<'_> {
         );
         let index = self.exprs_by_kind(file);
         u.note_references(&index);
+        let links = &self.p.symbol_reference_links;
+        for (i, kinds) in u.referenced.iter_mut().enumerate() {
+            let id = SymbolId(i as u32);
+            if links.get(&Sym { file, id }).is_some() {
+                *kinds |= ALIAS;
+            }
+        }
         // `Resolve` notes the use before `OnPropertyWithInvalidInitializer` makes it return nil, and the binder has no symbol for the name.
         if !self.p.files.options.emit_standard_class_fields {
             for &(e, scope) in &bound.free_idents {

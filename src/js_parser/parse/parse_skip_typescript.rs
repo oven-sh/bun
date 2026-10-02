@@ -1288,6 +1288,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Index into `TypeSyntax::type_stack` where the pending union and intersection start. `usize::MAX` if there is none.
         let mut union_base = usize::MAX;
         let mut intersection_base = usize::MAX;
+        // A "|" led the type, an "&" its first intersection.
+        let mut has_leading_bar = false;
+        let mut has_leading_ampersand = false;
         // Saw "abstract" directly before "new".
         let mut is_abstract = false;
         // Offset of the "typeof" directly before "import".
@@ -1301,8 +1304,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.finish_union_and_intersection(
                         &mut intersection_base,
                         intersection_start,
+                        &mut has_leading_ampersand,
                         &mut union_base,
                         start,
+                        &mut has_leading_bar,
                     );
                 }
                 return Ok(());
@@ -1469,7 +1474,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             self.fn_type_after_operator_error(leading_operator == Some(T::TBar));
                     }
                     if KEEP && leading_operator == Some(T::TBar) {
+                        has_leading_bar = true;
                         intersection_start = self.token_start();
+                    } else if KEEP {
+                        has_leading_ampersand = true;
                     }
                     continue;
                 }
@@ -2255,7 +2263,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     if KEEP {
-                        self.finish_intersection(&mut intersection_base, intersection_start);
+                        self.finish_intersection(
+                            &mut intersection_base,
+                            intersection_start,
+                            &mut has_leading_ampersand,
+                        );
                     }
                     self.lexer.next()?;
                     if self.lexer.tolerant {
@@ -2535,8 +2547,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.finish_union_and_intersection(
                             &mut intersection_base,
                             intersection_start,
+                            &mut has_leading_ampersand,
                             &mut union_base,
                             start,
+                            &mut has_leading_bar,
                         );
                     }
                     self.lexer.next()?;

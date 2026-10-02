@@ -313,7 +313,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
             // Where the first decorator or modifier starts, and whether a modifier keyword is among them.
             let mut modifiers: Option<(bun_ast::Loc, bool)> = None;
+            let mut modifiers_base = 0;
             if takes_any_modifiers {
+                modifiers_base = p.pushed_modifiers();
                 modifiers = p.parse_parameter_modifiers(
                     old_fn_or_arrow_data.allow_await,
                     &mut ts_decorators,
@@ -322,6 +324,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Skip over "this" type annotations
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TThis {
                 if takes_any_modifiers {
+                    let this_loc = p.lexer.loc();
+                    p.end_parameter_modifiers(modifiers_base, this_loc);
                     let is_first = args.is_empty() && !has_this_parameter;
                     has_this_parameter = true;
                     let first_modifier = modifiers.map(|(start, _)| start);
@@ -376,6 +380,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut text = p.lexer.identifier;
             let name_start = p.lexer.loc();
             let mut arg = p.parse_binding(name_of_parameter)?;
+            if modifiers.is_some() {
+                p.end_parameter_modifiers(modifiers_base, arg.loc);
+            }
             let mut ts_metadata = bun_ast::ts::Metadata::default();
 
             // `parseNameOfParameter`: a modifier keyword that is neither a modifier nor a name is skipped.
@@ -603,6 +610,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break;
                 }
                 has_static |= p.lexer.is_contextual_keyword(b"static");
+                let (flag, loc) = (p.modifier_flag_here(), p.lexer.loc());
+                p.push_statement_modifier(flag, loc);
                 p.lexer.next()?;
                 has_trailing_modifier |= has_trailing_decorator;
                 has_keyword = true;

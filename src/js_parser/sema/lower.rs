@@ -677,16 +677,22 @@ impl<'p, 'a> Lower<'p, 'a> {
         id
     }
 
-    /// Gives the statement `id`, which the parser says is at `loc`, the modifiers the parser took for it.
-    fn statement_modifiers(&mut self, loc: ast::Loc, id: StmtId) {
+    /// The modifiers the parser took for the statement or the parameter it says is at `loc`.
+    fn modifier_list_at(&self, loc: ast::Loc) -> Option<ts::Span<ts::Modifier>> {
         let after = self
             .modifier_lists
             .partition_point(|list| list.0 <= loc.start);
-        let list = match after.checked_sub(1).map(|last| self.modifier_lists[last]) {
-            Some((at, list)) if at == loc.start => list,
+        let (at, list) = self.modifier_lists[after.checked_sub(1)?];
+        (at == loc.start).then_some(list)
+    }
+
+    /// Gives the statement `id`, which the parser says is at `loc`, the modifiers the parser took for it.
+    fn statement_modifiers(&mut self, loc: ast::Loc, id: StmtId) {
+        let list = match self.modifier_list_at(loc) {
+            Some(list) => list,
             // A class has its decorators all the same.
-            _ if matches!(self.b.file[id].kind, StmtKind::Class(_)) => ts::Span::EMPTY,
-            _ => return,
+            None if matches!(self.b.file[id].kind, StmtKind::Class(_)) => ts::Span::EMPTY,
+            None => return,
         };
         let mut modifiers = Vec::with_capacity(list.len());
         for modifier in list.iter() {
@@ -1340,6 +1346,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     fn params(&mut self, args: &[G::Arg], has_rest: bool) -> Span<ParamId> {
         let base = self.list_params.len();
         let mut decorators: Vec<(usize, ExprId)> = Vec::new();
+        let mut modifier_lists: Vec<(usize, Span<ModifierId>)> = Vec::new();
         // `(... /* comment */ a)`
         let last_is_rest =
             has_rest && !args.iter().any(|arg| self.has_dots_before(arg.binding.loc));
@@ -1375,55 +1382,33 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             // 1187 or 1317
             let mut parameter_property_error = None;
+            let mut modifiers: Vec<(Flags, u32)> = Vec::new();
             if arg.is_typescript_ctor_field {
                 const PROPERTY_MODIFIERS: Flags = Flags::PUBLIC
                     .union(Flags::PRIVATE)
                     .union(Flags::PROTECTED)
                     .union(Flags::READONLY)
                     .union(Flags::OVERRIDE);
-                // Which modifiers it has: the words before it.
-                let mut before = self.b.lexer.contents[..pos as usize].trim_ascii_end();
-                let mut modifiers: Vec<(Flags, u32)> = Vec::new();
-                let mut seen = Flags::empty();
-                loop {
-                    let word_start = before
-                        .iter()
-                        .rposition(|b| !b.is_ascii_alphabetic())
-                        .map_or(0, |i| i + 1);
-                    let modifier = match &before[word_start..] {
-                        b"public" => Flags::PUBLIC,
-                        b"private" => Flags::PRIVATE,
-                        b"protected" => Flags::PROTECTED,
-                        b"readonly" => Flags::READONLY,
-                        b"override" => Flags::OVERRIDE,
-                        b"static" => Flags::STATIC,
-                        b"declare" => Flags::AMBIENT,
-                        b"async" => Flags::ASYNC,
-                        b"abstract" => Flags::ABSTRACT,
-                        b"accessor" => Flags::ACCESSOR,
-                        b"export" => Flags::EXPORT,
-                        _ => break,
-                    };
-                    // The end of a longer name or of a decorator: `@a.static`.
-                    if before[..word_start].last().is_some_and(|&c| {
-                        c.is_ascii_digit() || matches!(c, b'_' | b'$' | b'@' | b'.') || c >= 0x80
-                    }) {
-                        break;
-                    }
-                    seen |= modifier;
-                    pos = word_start as u32;
-                    modifiers.push((modifier, pos));
-                    before = before[..word_start].trim_ascii_end();
+                let written = self
+                    .modifier_list_at(arg.binding.loc)
+                    .unwrap_or(ts::Span::EMPTY);
+                modifiers.extend(written.iter().map(|modifier| {
+                    let ts::Modifier { flag, loc, .. } = self.b.ts[modifier];
+                    (Flags::from_bits_retain(flag.bits()), pos_of(loc))
+                }));
+                let seen = modifiers
+                    .iter()
+                    .fold(Flags::empty(), |seen, modifier| seen | modifier.0);
+                if let Some(first) = modifiers.first() {
+                    pos = first.1;
                 }
                 // The other modifiers mean nothing on a parameter. They are only objected to.
                 flags |= seen & PROPERTY_MODIFIERS;
-                // None was found: a comment is in the way.
-                if seen.is_empty() || seen.intersects(PROPERTY_MODIFIERS) {
+                if seen.intersects(PROPERTY_MODIFIERS) {
                     flags |= Flags::PARAMETER_PROPERTY;
                 }
                 let errors_before = self.b.file.early_errors.len();
                 if modifiers.len() > 1 || !PROPERTY_MODIFIERS.contains(seen) {
-                    modifiers.reverse();
                     self.b.check_modifiers(
                         &modifiers,
                         Modified::Parameter,
@@ -1451,13 +1436,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             };
             let default = self.optional_expr(arg.default.as_ref());
             // It starts with what decorates it.
-            if let Some(first) = arg.ts_decorators.first()
-                && let Some(at) = bun_core::strings::last_index_of_char(
-                    &self.b.lexer.contents[..pos_of(first.loc) as usize],
-                    b'@',
-                )
-            {
-                pos = at as u32;
+            if let Some(first) = arg.ts_decorators.first() {
+                pos = pos.min(self.b.at_sign_before(pos_of(first.loc)));
             }
             if let Some(code) = parameter_property_error {
                 self.b.file.early_errors.push((pos, code));
@@ -1480,12 +1460,26 @@ impl<'p, 'a> Lower<'p, 'a> {
                     end: end.copied().unwrap_or(0),
                 },
             });
+            let first_decorator = decorators.len();
             for decorator in arg.ts_decorators.iter() {
                 decorators.push((i, self.expr(decorator)));
+            }
+            if !modifiers.is_empty() || decorators.len() > first_decorator {
+                let keywords = self.b.add_modifier_list(&modifiers);
+                let of_parameter: Vec<(ExprId, u32)> = decorators[first_decorator..]
+                    .iter()
+                    .zip(arg.ts_decorators.iter())
+                    .map(|(&(_, e), written)| (e, self.b.at_sign_before(pos_of(written.loc))))
+                    .collect();
+                let list = self.b.modifiers_with_decorators(keywords, &of_parameter);
+                modifier_lists.push((i, list));
             }
         }
         let params = self.b.file.add_params(&self.list_params[base..]);
         self.list_params.truncate(base);
+        for (i, list) in modifier_lists {
+            self.b.file.set_param_modifiers(params.at(i), list);
+        }
         for (i, e) in decorators {
             self.b
                 .file
@@ -1970,6 +1964,27 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
+    /// `collectDynamicImportOrRequireOrJsDocImportCalls`: `argument` is what `import()` or `require()` is given, a string or a
+    /// template without substitutions.
+    fn call_specifier(&mut self, argument: ExprId, kind: SpecifierKind) {
+        let hir::Expr {
+            kind: literal, pos, ..
+        } = self.b.file[argument];
+        let spec = match literal {
+            ExprKind::String(text) => text,
+            ExprKind::Template { exprs, texts } if exprs.is_empty() => {
+                self.b.file.ids(texts).next().unwrap_or(Atom::NONE)
+            }
+            _ => return,
+        };
+        self.b.file.specifier_uses.push(SpecifierUse {
+            spec,
+            pos,
+            kind,
+            mode: ResolutionMode::None,
+        });
+    }
+
     fn exprs<'e>(&mut self, exprs: impl Iterator<Item = &'e Expr>) -> IdList<ExprId> {
         let base = self.list_ids.len();
         for e in exprs {
@@ -2310,7 +2325,20 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             Data::ECall(e) => {
                 let callee = self.expr(&e.target);
+                // `IsRequireCall`. `File::parens` is not in order yet: what was lowered last is at its end.
+                let is_require = self.b.is_js
+                    && matches!(
+                        self.b.file[callee].kind,
+                        ExprKind::Ident(bun_sema::atom::known::require)
+                    )
+                    && self.b.file.parens.last().is_none_or(|p| p.0 != callee);
                 let args = self.exprs(e.args.iter());
+                if is_require && args.len() == 1 {
+                    let argument = self.b.file.id_at(args, 0);
+                    if self.b.file.parens.last().is_none_or(|p| p.0 != argument) {
+                        self.call_specifier(argument, SpecifierKind::RequireCall);
+                    }
+                }
                 ExprKind::Call(self.call(
                     callee,
                     args,
@@ -2359,6 +2387,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                 let options = (!matches!(e.options.data, Data::EMissing(_))).then_some(&e.options);
                 let kept = self.kept_expressions(expr.loc);
                 let args = self.exprs(std::iter::once(&e.expr).chain(options).chain(&kept));
+                let specifier = self.b.file.id_at(args, 0);
+                if matches!(self.b.file[specifier].kind, ExprKind::String(_)) {
+                    self.call_specifier(specifier, SpecifierKind::ImportCall);
+                }
                 if let Some(close) = self.mark(expr.loc, Mark::DeferredImportClose) {
                     let specifier = self.b.file.id_at(args, 0);
                     self.b.file.deferred_import_calls.push((specifier, close));

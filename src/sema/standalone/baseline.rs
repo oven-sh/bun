@@ -67,6 +67,9 @@ const SKIPPED: &[&str] = &[
 ];
 
 /// `harnessCommandLineOptions`, in lower case, and what else is no compiler option.
+/// Among the lines about types: `Emit` adds an error to those of the check (`Checker::mark_linked_references_recursively`).
+const EMIT_ADDS_ERRORS: &str = "#emit adds errors\n";
+
 const HARNESS_OPTIONS: &[&str] = &[
     "usecasesensitivefilenames",
     "baselinefile",
@@ -1194,6 +1197,9 @@ fn run_one(
                 found.type_text
             ));
         }
+        if checker.mark_linked_references_recursively(file) {
+            lines.push_str(EMIT_ADDS_ERRORS);
+        }
         types.lock().unwrap().push_str(&lines);
         let Some(symbols) = symbols else { return };
         let mut lines = String::new();
@@ -1386,7 +1392,10 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                         {
                             let mut lines = types.into_inner().unwrap();
                             // `typeWriterWalker.hadErrorBaseline`: the error type goes by its intrinsic name only in a test without errors.
-                            let had_error_baseline = !report.diagnostics.is_empty();
+                            // `compileFilesWithHost` adds one, TS-1, where `Emit` has.
+                            let had_error_baseline =
+                                !report.diagnostics.is_empty() || lines.contains(EMIT_ADDS_ERRORS);
+                            lines = lines.replace(EMIT_ADDS_ERRORS, "");
                             let marked =
                                 format!("\t{}\t", bun_sema::check::type_writer::ERROR_TYPE_TEXT);
                             let name = if had_error_baseline {

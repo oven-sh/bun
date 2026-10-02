@@ -439,18 +439,14 @@ impl Checker<'_> {
             for s in export.items.iter() {
                 let name = hir[s].local;
                 let all = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE | SymFlags::ALIAS;
-                let is_global =
-                    match self
-                        .files()
-                        .resolve_name(file, bound.export_scope[x], name, all)
-                    {
-                        Some(found) => {
-                            found == self.files().global_this_symbol
-                                || self.is_first_declared_in_global_source_file(found)
-                        }
-                        // `undefinedSymbol`
-                        None => name == known::undefined,
-                    };
+                let is_global = self
+                    .files()
+                    .resolve_name(file, bound.export_scope[x], name, all)
+                    .is_some_and(|found| {
+                        found == self.files().undefined_symbol
+                            || found == self.files().global_this_symbol
+                            || self.is_first_declared_in_global_source_file(found)
+                    });
                 let text = self.files().atoms.bytes(name);
                 let is_primitive = matches!(
                     text,

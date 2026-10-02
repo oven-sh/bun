@@ -195,6 +195,10 @@ impl<'p> Checker<'p> {
     }
 
     fn type_of_symbol_uncached(&mut self, sym: Sym) -> TypeId {
+        // `c.valueSymbolLinks.Get(c.undefinedSymbol).resolvedType = c.undefinedWideningType`
+        if sym == self.files().undefined_symbol {
+            return TypeId::UNDEFINED;
+        }
         let mut flags = self.files().flags(sym);
         // `mergeSymbol` keeps a declaration from another file out of the symbol when the flags conflict. `Files::merge_symbols`
         // merges it anyway, so drop the value kinds that lost the name.
@@ -483,7 +487,7 @@ impl<'p> Checker<'p> {
             _ => return None,
         };
         match hir[e].kind {
-            // `undefinedSymbol`, `globalThisSymbol` and `argumentsSymbol` have no `Sym`. Any other undeclared name is `unknownSymbol`.
+            // `argumentsSymbol` has no `Sym`. Any other undeclared name is `unknownSymbol`.
             ExprKind::Ident(name) if self.symbol_of_identifier(file, e, name).is_none() => {
                 Some(self.type_of_expr(file, e))
             }
@@ -542,11 +546,14 @@ impl<'p> Checker<'p> {
 
     /// `getSymbol`
     fn get_symbol(&mut self, held: Option<Sym>, meaning: SymFlags) -> Option<Sym> {
-        let symbol = held.filter(|&symbol| self.files().means(symbol, meaning))?;
-        (meaning.intersects(SymFlags::VALUE)
-            || self.files().flags(symbol).intersects(meaning)
-            || self.get_symbol_flags(symbol).intersects(meaning))
-        .then_some(symbol)
+        let files = self.files();
+        let symbol = held.filter(|&symbol| files.means(symbol, meaning))?;
+        // On the tables it ends nowhere, which passes for everything. It is a property.
+        let is_only_a_property = !meaning.contains(SymFlags::PROPERTY)
+            && !files.flags(symbol).intersects(meaning)
+            && files.symbol_flags(symbol) == SymFlags::all()
+            && self.is_alias_of_property(symbol);
+        (!is_only_a_property).then_some(symbol)
     }
 
     /// `resolveName`
@@ -957,11 +964,8 @@ impl<'p> Checker<'p> {
                 Decl::ImportSpec(_) | Decl::ExportSpec(_) => {
                     match files.external_module_member_of(file, decl) {
                         Some((spec, mode, name)) => (spec, name, mode),
-                        // `getTargetOfExportSpecifier` without a module: `resolveEntityName` finds nothing. `undefinedSymbol` has
-                        // no `Sym`.
-                        None => {
-                            return matches!(decl, Decl::ExportSpec(s) if hir[s].local != known::undefined);
-                        }
+                        // `getTargetOfExportSpecifier` without a module: `resolveEntityName` finds nothing.
+                        None => return matches!(decl, Decl::ExportSpec(_)),
                     }
                 }
                 Decl::ImportEquals(i) => match hir[i].target {

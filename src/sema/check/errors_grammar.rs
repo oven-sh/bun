@@ -9,7 +9,12 @@ use crate::bind::{ClassOwner, FnOwner, MemberOwner, Parent, PatParent, ScopeId, 
 use crate::resolve::ModuleKind;
 
 impl Checker<'_> {
-    pub(super) fn check_grammar(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    /// `GetIncludeProcessorDiagnostics`
+    pub(super) fn include_processor_diagnostics(
+        &mut self,
+        file: FileId,
+        out: &mut Vec<Diagnostic>,
+    ) {
         for &(start, code) in &self.files().module(file).missing_references {
             let code = self.note_missing_reference(file, start, code);
             out.push(Diagnostic { start, code });
@@ -32,6 +37,9 @@ impl Checker<'_> {
                     .collect()
             });
         }
+    }
+
+    pub(super) fn check_grammar(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
         // A JSON file has no statements of its own: its `export =` is the binder's.
         if hir.has_errors || hir.kind == FileKind::Json {

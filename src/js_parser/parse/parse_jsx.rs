@@ -133,10 +133,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             value,
                             ..Default::default()
                         });
+                        p.mark_end(key_range.loc, crate::sema::Mark::MemberEnd);
                         i += 1;
                     }
                     T::TOpenBrace => {
                         // This arm must increment `i` once before exiting.
+                        let open_brace = p.lexer.loc();
                         // Use Next() not ExpectInsideJSXElement() so we can parse "..."
                         p.lexer.next()?;
 
@@ -256,6 +258,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             Self::rescan_inside_jsx_element(p)?;
                         } else {
                             p.lexer.next_inside_jsx_element()?;
+                        }
+                        // `JsxSpreadAttribute`
+                        if let Some(&G::Property {
+                            key: None,
+                            value: Some(Expr { loc: from, .. }),
+                            ..
+                        }) = props.last()
+                        {
+                            p.mark_type_syntax(from, crate::sema::Mark::MemberStart, open_brace);
+                            p.mark_end(from, crate::sema::Mark::MemberEnd);
                         }
                         i += 1;
                     }

@@ -761,12 +761,7 @@ impl EnumValues<'_, '_> {
             self.error_at_name(file, pos, 1164);
             return;
         }
-        let token_len = source
-            .iter()
-            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.'))
-            .count();
-        let is_bigint =
-            source.first().is_some_and(u8::is_ascii_digit) && source[token_len - 1] == b'n';
+        let is_bigint = is_bigint_literal_at(hir, pos);
         let is_numeric = name.is_some()
             && self.c.is_numeric_name(name)
             && !matches!(

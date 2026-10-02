@@ -321,6 +321,8 @@ pub struct Files {
     pub globals: FxHashMap<Atom, Sym>,
     /// `globalThisSymbol`: a module no file declares, which is in `globals` and whose `Exports` they are. A symbol of the first file.
     pub global_this_symbol: Sym,
+    /// `undefinedSymbol`: a property no file declares. It is in `globals` unless a file declares the name there.
+    pub undefined_symbol: Sym,
     ambient_modules: FxHashMap<Atom, Sym>,
     /// `declare module "*.svg"`
     ambient_patterns: Vec<(String, String, Sym)>,
@@ -1003,6 +1005,7 @@ fn reference_locations(
     }
     // `file.Imports()`: the specifiers of statements, then those of `import()`, the call and the type.
     let mut uses = hir.specifier_uses.clone();
+    uses.retain(|u| !u.kind.is_call());
     uses.sort_by_key(|u| u.pos);
     let mut dynamic = Vec::new();
     for u in &uses {
@@ -1017,11 +1020,7 @@ fn reference_locations(
             continue;
         };
         let location = (target, 1393, u.pos, end_of_string_literal(text, u.pos));
-        let before = text
-            .get(..u.pos as usize)
-            .unwrap_or_default()
-            .trim_ascii_end();
-        if u.kind == SpecifierKind::Import && before.ends_with(b"(") {
+        if u.kind == SpecifierKind::ImportType {
             dynamic.push(location);
         } else {
             locations.push(location);
@@ -1911,6 +1910,10 @@ impl Files {
                 file: FileId(0),
                 id: SymbolId::NONE,
             },
+            undefined_symbol: Sym {
+                file: FileId(0),
+                id: SymbolId::NONE,
+            },
             ambient_modules: FxHashMap::default(),
             ambient_patterns: Vec::new(),
             pattern_augmentations: FxHashMap::default(),
@@ -2280,7 +2283,7 @@ impl Files {
             let written = hir
                 .specifier_uses
                 .iter()
-                .filter(|u| u.spec == spec)
+                .filter(|u| u.spec == spec && !u.kind.is_call())
                 .map(|u| {
                     if u.mode != ResolutionMode::None {
                         u.mode
@@ -2731,6 +2734,12 @@ impl Files {
                 .map(|e| &mut e.1)
                 .for_each(stands_in);
         }
+        // `addUndefinedToGlobalsOrErrorOnRedeclaration`
+        if !self.modules.is_empty() {
+            self.globals
+                .entry(known::undefined)
+                .or_insert(self.undefined_symbol);
+        }
         self.merged_exports
             .insert(self.global_this_symbol, self.globals.clone());
         // What an alias was found to stand for while symbols were being put together may be a part of something by now.
@@ -2857,26 +2866,34 @@ impl Files {
         &mut self.modules[sym.file.idx()].bound.symbols[sym.id.idx()]
     }
 
-    /// `c.globalThisSymbol = c.newSymbolEx(ast.SymbolFlagsModule, "globalThis", ..)`, `c.globalThisSymbol.Exports = c.globals`
-    fn make_global_this_symbol(&mut self) {
-        if self.modules.is_empty() {
-            return;
-        }
+    /// `newSymbol`: a symbol of the first file.
+    fn new_symbol(&mut self, flags: SymFlags, name: Atom) -> Sym {
         let symbols = &mut self.modules[0].bound.symbols;
-        let global_this = Sym {
-            file: FileId(0),
-            id: SymbolId(symbols.len() as u32),
-        };
         symbols.push(Symbol {
-            name: known::globalThis,
-            flags: SymFlags::MODULE | SymFlags::MERGED | SymFlags::TRANSIENT,
+            name,
+            flags: flags | SymFlags::TRANSIENT,
             decls: bind::Decls::Many(Box::default()),
             parent: SymbolId::NONE,
             exports: bind::TableId::NONE,
             export_symbol: SymbolId::NONE,
         });
-        self.globals.insert(known::globalThis, global_this);
-        self.global_this_symbol = global_this;
+        Sym {
+            file: FileId(0),
+            id: SymbolId(symbols.len() as u32 - 1),
+        }
+    }
+
+    /// `NewChecker`: `c.undefinedSymbol = c.newSymbol(ast.SymbolFlagsProperty, "undefined")`,
+    /// `c.globalThisSymbol = c.newSymbolEx(ast.SymbolFlagsModule, "globalThis", ..)`, `c.globalThisSymbol.Exports = c.globals`
+    fn make_global_this_symbol(&mut self) {
+        if self.modules.is_empty() {
+            return;
+        }
+        self.undefined_symbol = self.new_symbol(SymFlags::PROPERTY, known::undefined);
+        self.global_this_symbol =
+            self.new_symbol(SymFlags::MODULE | SymFlags::MERGED, known::globalThis);
+        self.globals
+            .insert(known::globalThis, self.global_this_symbol);
     }
 
     /// `target.Exports`, of a transient symbol, while symbols are put together.

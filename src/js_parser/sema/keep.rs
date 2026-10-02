@@ -254,8 +254,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         list
     }
 
-    /// Closes the pending intersection, if any.
-    pub(crate) fn finish_intersection(&mut self, from: &mut usize, pos: u32) {
+    /// Closes the pending intersection, if any. `has_leading_operator`: an `&` came before its first member, which makes an
+    /// intersection of a single member too (`parseUnionOrIntersectionType`).
+    pub(crate) fn finish_intersection(
+        &mut self,
+        from: &mut usize,
+        pos: u32,
+        has_leading_operator: &mut bool,
+    ) {
+        if std::mem::take(has_leading_operator) {
+            self.begin_type_list(from);
+        }
         if *from != usize::MAX {
             match self.finish_type_list(std::mem::replace(from, usize::MAX)) {
                 Some(members) => self.emit_type(TypeData::Intersection(members), pos),
@@ -270,10 +279,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         intersection_base: &mut usize,
         intersection_pos: u32,
+        has_leading_ampersand: &mut bool,
         union_base: &mut usize,
         pos: u32,
+        has_leading_bar: &mut bool,
     ) {
-        self.finish_intersection(intersection_base, intersection_pos);
+        self.finish_intersection(intersection_base, intersection_pos, has_leading_ampersand);
+        if std::mem::take(has_leading_bar) {
+            self.begin_type_list(union_base);
+        }
         if *union_base != usize::MAX {
             match self.finish_type_list(std::mem::replace(union_base, usize::MAX)) {
                 Some(members) => self.emit_type(TypeData::Union(members), pos),
@@ -1219,6 +1233,43 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc,
                 decorator: None,
             });
+        }
+    }
+
+    /// `ModifierToFlag`, of the modifier keyword at the current token (`is_modifier_kind`).
+    pub(crate) fn modifier_flag_here(&self) -> Flags {
+        match self.lexer.token {
+            T::TConst => Flags::CONST,
+            T::TDefault => Flags::DEFAULT,
+            T::TExport => Flags::EXPORT,
+            T::TIn => Flags::IN,
+            _ if self.lexer.raw() == b"out" => Flags::OUT,
+            _ => PropertyModifierKeyword::find(self.lexer.raw())
+                .and_then(modifier_flag)
+                .unwrap_or(Flags::empty()),
+        }
+    }
+
+    /// How many modifiers are pushed. Pass it to `end_parameter_modifiers`.
+    pub(crate) fn pushed_modifiers(&self) -> usize {
+        match &self.type_syntax {
+            Some(syntax) => syntax.statement_modifiers.len(),
+            None => 0,
+        }
+    }
+
+    /// Those pushed since there were `base` are the modifiers of the parameter whose name is at `loc`.
+    pub(crate) fn end_parameter_modifiers(&mut self, base: usize, loc: Loc) {
+        if !self.should_keep_types() {
+            return;
+        }
+        let syntax = self.type_syntax_mut();
+        if syntax.statement_modifiers.len() > base {
+            let list = syntax
+                .ast
+                .add_modifiers(&syntax.statement_modifiers[base..]);
+            syntax.modifier_lists.push((loc.start, list));
+            syntax.statement_modifiers.truncate(base);
         }
     }
 

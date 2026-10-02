@@ -1043,11 +1043,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // read that carried the request. So when bytes follow the head in
           // that read, the emit waits until uWS has parsed them, and the
           // upgradeHead is what follows the body in it. Not for a request that
-          // shouldUpgradeCallback made flow: it would end before its 'upgrade'.
+          // shouldUpgradeCallback began to read or paused: the events of its
+          // reader would come before its 'upgrade'.
           const emitWhenReadParsed = socketHandle.upgradeToTunnel(
             hasBody,
             handle,
-            connectHead !== undefined && !socket.destroyed && http_req.readableFlowing !== true,
+            connectHead !== undefined && !socket.destroyed && http_req.readableFlowing === null,
           );
           socket[kHandoffResponse] = handle;
           socket[kEnableStreaming](true);

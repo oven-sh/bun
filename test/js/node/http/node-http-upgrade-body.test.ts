@@ -152,38 +152,49 @@ describe("the 'upgrade' event of a request with a body", () => {
     });
   });
 
-  test.concurrent("a request that shouldUpgradeCallback paused still gets its 'upgrade'", async () => {
-    const shouldUpgradeCallback = (req: IncomingMessage) => {
-      req.pause();
-      return true;
-    };
-    // Nothing resumes the request, so the listener gets no body.
-    expect(await upgrade(false, inOneRead(fixed + "HELLOAFTER"), { shouldUpgradeCallback })).toEqual({
-      ...wholeBodyAndMore,
-      body: "",
-    });
-  });
-
-  test.concurrent("a request that shouldUpgradeCallback reads gets its 'upgrade' before its 'end'", async () => {
-    const order: string[] = [];
-    const shouldUpgradeCallback = (req: IncomingMessage) => {
-      req.on("data", chunk => order.push(`data ${chunk}`));
-      req.on("end", () => order.push("end"));
-      return true;
-    };
-    const seen = await upgrade(false, inOneRead(fixed + "HELLOAFTER"), {
-      shouldUpgradeCallback,
-      onUpgrade: () => order.push("upgrade"),
-    });
-    // Not as Node.js here. A request that flows ends inside its read, so its 'upgrade' does not wait for that read:
-    // the listener gets no head, and the bytes behind the body reach the socket. Node.js: head "AFTER", complete.
-    expect({ order, head: seen.head, complete: seen.complete, tunnel: seen.tunnel }).toEqual({
-      order: ["upgrade", "data HELLO", "end"],
-      head: "",
-      complete: false,
-      tunnel: "AFTER",
-    });
-  });
+  // Not as Node.js here. A request that shouldUpgradeCallback pauses or begins to read has a reader before its
+  // 'upgrade', and that reader would get the end of the request inside the read. So the event does not wait for the
+  // read: the listener gets no head, and the bytes behind the body reach the socket. Node.js: head "AFTER", complete.
+  const readers: [string, (req: IncomingMessage, order: string[]) => void, string[]][] = [
+    ["pauses", req => void req.pause(), ["upgrade", "end"]],
+    [
+      "reads with 'data'",
+      (req, order) => void req.on("data", chunk => order.push(`data ${chunk}`)),
+      ["upgrade", "data HELLO", "end"],
+    ],
+    [
+      "reads with 'readable'",
+      (req, order) =>
+        void req.on("readable", () => {
+          const chunk = req.read();
+          if (chunk !== null) order.push(`readable ${chunk}`);
+        }),
+      ["upgrade", "readable HELLO", "end"],
+    ],
+  ];
+  test.concurrent.each(readers)(
+    "a request that shouldUpgradeCallback %s gets its 'upgrade' first",
+    async (_what, read, expected) => {
+      const order: string[] = [];
+      const shouldUpgradeCallback = (req: IncomingMessage) => {
+        read(req, order);
+        req.on("end", () => order.push("end"));
+        return true;
+      };
+      const onUpgrade = () => void order.push("upgrade");
+      const seen = await upgrade(false, inOneRead(fixed + "HELLOAFTER"), { shouldUpgradeCallback, onUpgrade });
+      // A read of the upgrade socket resumes the paused request.
+      expect({ order, ...seen }).toEqual({
+        order: expected,
+        head: "",
+        complete: false,
+        readableLength: 0,
+        trailers: {},
+        body: "HELLO",
+        tunnel: "AFTER",
+      });
+    },
+  );
 
   test.concurrent("a request that shouldUpgradeCallback destroyed gets its 'upgrade' once", async () => {
     const upgrades: object[] = [];

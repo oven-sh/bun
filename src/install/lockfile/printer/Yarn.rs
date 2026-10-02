@@ -15,11 +15,12 @@ use bun_install::lockfile::package;
 // `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
 // column accessors are an extension trait (hand-expanded per Package.rs).
 use crate::integrity;
-use crate::lockfile_real::Printer;
+use crate::lockfile_real::{MetaHash, Printer};
 
 pub(crate) fn print(
     this: &mut Printer,
     writer: &mut impl bun_io::Write,
+    meta_hash: MetaHash,
 ) -> Result<(), crate::Error> {
     // internal for debugging, print the lockfile as custom json
     // limited to debug because we don't want people to rely on this format.
@@ -43,7 +44,7 @@ pub(crate) fn print(
           # yarn lockfile v1\n\
           # bun ./bun.lockb --hash:",
     )?;
-    write!(writer, " {}\n\n", this.lockfile.fmt_meta_hash())?;
+    write!(writer, " {}\n\n", meta_hash)?;
 
     packages(this, writer)
 }

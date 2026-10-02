@@ -12,7 +12,8 @@ use bun_install::lockfile::{
     tree,
 };
 use bun_install::package_manager_real::{
-    PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, update_lockfile_if_needed,
+    PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, save_lockfile_without_install,
+    update_lockfile_if_needed,
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
@@ -631,17 +632,11 @@ impl TrustCommand {
             }
         }
 
-        // Reshaped for borrowck — `save_to_disk` needs `&mut Lockfile`
-        // and `&LoadResult` simultaneously, but `LoadResultOk.lockfile` already
-        // holds the only `&mut`. Same projection pattern as `migrate` in
-        // `package_manager_command.rs`.
         // SAFETY: `load_lockfile` is `Ok` (errors exited in
-        // `handle_load_lockfile_errors`). `save_to_disk` reads `load_result`
-        // only for `save_format()` (scalar `format`/`migrated` fields).
-        unsafe {
-            let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-            (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
-        }
+        // `handle_load_lockfile_errors`). The save reads it only for its
+        // scalar `format`/`migrated` fields, so the lockfile it reaches
+        // through `pm_raw` is the sole live mutable view of the heap lockfile.
+        save_lockfile_without_install(unsafe { &mut *pm_raw }, &load_lockfile)?;
 
         let mut buffer_writer = bun_js_printer::BufferWriter::init();
         buffer_writer.buffer.list.reserve(

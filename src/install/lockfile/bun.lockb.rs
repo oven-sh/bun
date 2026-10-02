@@ -11,7 +11,7 @@ use bun_io::Write as _;
 use super::PatchedDep;
 use super::override_map::ScopedOverride;
 use super::{
-    FormatVersion, Lockfile, Scratch, Stream, StringPool, buffers, package,
+    FormatVersion, Lockfile, MetaHash, Scratch, Stream, StringPool, buffers, package,
     package_index as PackageIndex,
 };
 use crate::ALIGNMENT_BYTES_TO_REPEAT_BUFFER;
@@ -169,6 +169,7 @@ impl<'a, 'b> bun_collections::array_hash_map::ArrayHashAdapter<SemverString, Sem
 pub(crate) fn save(
     this: &mut Lockfile,
     options: &PackageManagerOptions,
+    meta_hash: MetaHash,
     bytes: &mut Vec<u8>,
     total_size: &mut usize,
     end_pos: &mut usize,
@@ -183,7 +184,7 @@ pub(crate) fn save(
     stream.write_all(HEADER_BYTES)?;
     stream.write_int_le::<u32>(this.format.0)?;
 
-    stream.write_all(&this.meta_hash)?;
+    stream.write_all(&meta_hash.0)?;
 
     *end_pos = stream.get_pos()?;
     stream.write_int_le(0u64)?;
@@ -279,10 +280,6 @@ pub(crate) fn save(
     }
 
     if this.patched_dependencies.count() > 0 {
-        for patched_dep in this.patched_dependencies.values() {
-            debug_assert!(!patched_dep.patchfile_hash_is_null);
-        }
-
         stream.write_all(&HAS_PATCHED_DEPENDENCIES_TAG.to_ne_bytes())?;
 
         write_array::<PackageNameAndVersionHash>(
@@ -424,7 +421,8 @@ pub(crate) fn load(
     lockfile.format = FormatVersion::current();
     // `lockfile.allocator = allocator;` dropped — global mimalloc.
 
-    let _ = stream.read_all(&mut lockfile.meta_hash)?;
+    let mut stored_meta_hash = [0u8; 32];
+    let _ = stream.read_all(&mut stored_meta_hash)?;
 
     let total_buffer_size = stream.read_int_le::<u64>()?;
     if total_buffer_size > stream.buffer.len() as u64 {
@@ -435,6 +433,10 @@ pub(crate) fn load(
         package::serializer::load(stream, total_buffer_size as usize, migrate_from_v2)?;
 
     lockfile.packages = packages_load_result.list;
+    // All zero is the hash of a lockfile with one package. On a longer one
+    // nothing computed the hash before the save.
+    lockfile.loaded_meta_hash = (stored_meta_hash != [0u8; 32] || lockfile.packages.len() <= 1)
+        .then_some(MetaHash(stored_meta_hash));
 
     // `meta.id` is memcpy'd verbatim from disk with no range validation; a
     // corrupt `bun.lockb` can make it garbage and trip `panic_bounds_check`

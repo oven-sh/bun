@@ -6,11 +6,13 @@ use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 use bun_install::dependency::Dependency;
-use bun_install::lockfile::{LoadResult, LoadStep, Lockfile, package::PackageColumns as _, tree};
+use bun_install::lockfile::{
+    LoadResult, LoadStep, Lockfile, MetaHashScripts, package::PackageColumns as _, tree,
+};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
-    package_manager_options::LogLevel, setup_global_dir,
+    package_manager_options::LogLevel, save_lockfile_without_install, setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, migration};
 use bun_paths as Path;
@@ -136,7 +138,7 @@ impl PackageManagerCommand {
 
         Output::flush();
         Output::disable_buffering();
-        Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
+        Output::writer().print(format_args!("{}", pm.lockfile.stored_meta_hash()))?;
         Output::enable_buffering();
         Global::exit(0);
     }
@@ -401,13 +403,15 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
             // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
             let pm = unsafe { &mut *pm_ptr };
-            let _ = pm
-                .lockfile
-                .has_meta_hash_changed(false, pm.lockfile.packages.len())?;
+            let meta_hash = pm.lockfile.generate_meta_hash(
+                MetaHashScripts::Omit,
+                false,
+                pm.lockfile.packages.len(),
+            );
 
             Output::flush();
             Output::disable_buffering();
-            Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
+            Output::writer().print(format_args!("{}", meta_hash))?;
             Output::enable_buffering();
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"hash-print") {
@@ -417,7 +421,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
             Output::flush();
             Output::disable_buffering();
-            Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
+            Output::writer().print(format_args!("{}", pm.lockfile.stored_meta_hash()))?;
             Output::enable_buffering();
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"hash-string") {
@@ -427,9 +431,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
             // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
             let pm = unsafe { &mut *pm_ptr };
-            let _ = pm
-                .lockfile
-                .has_meta_hash_changed(true, pm.lockfile.packages.len())?;
+            let _ = pm.lockfile.generate_meta_hash(
+                MetaHashScripts::Omit,
+                true,
+                pm.lockfile.packages.len(),
+            );
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"cache") {
             if pm.options.positionals.len() > 1
@@ -727,7 +733,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             // cannot alias. `detect_and_load_other_lockfile` reads
             // `manager.options`/`manager.log` only and never re-projects
             // `manager.lockfile`.
-            let mut load_lockfile = unsafe {
+            let load_lockfile = unsafe {
                 let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
                 let log: *mut bun_ast::Log = (*pm_raw).log;
                 migration::detect_and_load_other_lockfile(
@@ -742,21 +748,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Global::exit(1);
             }
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            // Reshaped for borrowck — `save_to_disk` needs
-            // `&mut Lockfile` (self) and `&LoadResult` simultaneously, but
-            // `LoadResultOk.lockfile` already holds the only `&mut` into the
-            // boxed lockfile. Project that field to a raw pointer (no second
-            // Box-deref) so both arguments share one Stacked-Borrows lineage.
-            let lf: *mut Lockfile = &raw mut *load_lockfile.ok_mut().lockfile;
-            // SAFETY: `load_lockfile` is `Ok` (errors exited above). `lf` is a
-            // reborrow of `ok.lockfile`; `save_to_disk` reads `load_result` only
-            // for `save_format()` / `loaded_from_binary_lockfile()` (scalar
-            // `format`/`migrated` fields) and never dereferences `ok.lockfile`,
-            // so `&mut *lf` remains the sole live mutable view of the heap
-            // lockfile. `options` is read via `pm_raw` (disjoint allocation).
-            unsafe {
-                (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
-            }
+            // SAFETY: `load_lockfile` is `Ok` (errors exited above). The save
+            // reads it only for its scalar `format`/`migrated` fields and never
+            // dereferences `ok.lockfile`, so the lockfile it reaches through
+            // `pm_raw` is the sole live mutable view of the heap lockfile.
+            save_lockfile_without_install(unsafe { &mut *pm_raw }, &load_lockfile)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"version") {
             let positionals: &[&[u8]] = pm.options.positionals;

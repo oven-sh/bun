@@ -1923,8 +1923,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         this.verify_data()?;
     }
 
-    this.meta_hash = this.generate_meta_hash(false, this.packages.len())?;
-
     let result = LoadResult::Ok(lockfile::LoadResultOk {
         lockfile: this,
         migrated: lockfile::Migrated::Yarn,

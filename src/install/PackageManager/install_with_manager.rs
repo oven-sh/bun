@@ -722,8 +722,7 @@ pub fn install_with_manager(
         }
     }
 
-    // append scripts to lockfile before generating new metahash
-    manager.load_root_lifecycle_scripts(&root);
+    let root_node_gyp_rebuild = manager.load_root_lifecycle_scripts(&root);
     // `List.package_name` is `Box<[u8]>`, so dropping the whole `Option<List>`
     // at scope exit frees it. Route through a raw provenance root because
     // `manager: &mut` is reborrowed many times below; the guard fires once on
@@ -737,52 +736,20 @@ pub fn install_with_manager(
         unsafe { (*mgr_for_root_scripts_cleanup).root_lifecycle_scripts = None };
     };
 
-    if let Some(root_scripts) = &manager.root_lifecycle_scripts {
-        root_scripts.append_to_lockfile(&mut manager.lockfile);
-    }
-    {
-        // reshaped for borrowck — shared slices into the
-        // resolution/meta/scripts columns are held while pushing into
-        // `manager.lockfile.scripts`. Field-level split borrow keeps the two
-        // disjoint columns alive simultaneously without raw-pointer routing.
-        let lockfile = &mut *manager.lockfile;
-        let packages = &lockfile.packages;
-        let string_bytes = lockfile.buffers.string_bytes.as_slice();
-        let lockfile_scripts = &mut lockfile.scripts;
-        for pkg_i in 0..packages.len() {
-            let resolution = packages.items_resolution()[pkg_i];
-            if resolution.tag != ResolutionTag::Workspace {
-                continue;
-            }
-            let meta = packages.items_meta()[pkg_i];
-            if !meta.has_install_script() {
-                continue;
-            }
-            let scripts = packages.items_scripts()[pkg_i];
-            let add_node_gyp = !scripts.has_any();
-            let (first_index, _, entries) =
-                scripts.get_script_entries(string_bytes, ResolutionTag::Workspace, add_node_gyp);
-
-            debug_assert!(first_index != -1);
-
-            // In the `add_node_gyp` arm the assert already guarantees
-            // `first_index != -1`, so a single guarded loop covers
-            // both paths exactly.
-            if first_index != -1 {
-                for (i, maybe_entry) in entries.into_iter().enumerate() {
-                    if let Some(entry) = maybe_entry {
-                        lockfile_scripts.hook_mut(i).push(entry);
-                    }
-                }
-            }
-        }
-    }
-
     if manager.options.global {
         setup_global_dir(manager, &ctx)?;
     }
 
     let packages_len_before_install = manager.lockfile.packages.len();
+    let hash_scripts = lockfile::MetaHashScripts::Derive {
+        root_node_gyp_rebuild,
+    };
+    let print_hash_string =
+        PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string();
+    let mut meta_hash = lockfile::MetaHashForSave {
+        root_node_gyp_rebuild: Some(root_node_gyp_rebuild),
+        computed: None,
+    };
 
     if manager.options.enable.frozen_lockfile()
         && !matches!(load_result, lockfile::LoadResult::NotFound)
@@ -790,23 +757,29 @@ pub fn install_with_manager(
         'frozen_lockfile: {
             let changed_section = frozen_changed_section(manager, root_package_json_path);
             if changed_section.is_none() {
-                if load_result.loaded_from_text_lockfile() {
-                    if bun_core::handle_oom(Lockfile::eql(
+                let unchanged = match loaded_meta_hash(
+                    manager,
+                    &load_result,
+                    &lockfile_before_clean,
+                    hash_scripts,
+                ) {
+                    Some(loaded) => {
+                        let fresh = manager.lockfile.generate_meta_hash(
+                            hash_scripts,
+                            print_hash_string,
+                            packages_len_before_install,
+                        );
+                        meta_hash.computed = Some((fresh, packages_len_before_install));
+                        loaded == fresh
+                    }
+                    // A text lockfile, or a bun.lockb that stores no hash.
+                    None => bun_core::handle_oom(Lockfile::eql(
                         &manager.lockfile,
                         &lockfile_before_clean,
                         lockfile_before_clean.loaded_package_count as usize,
-                    )) {
-                        break 'frozen_lockfile;
-                    }
-                } else if !(manager
-                    .lockfile
-                    .has_meta_hash_changed(
-                        PackageManager::verbose_install()
-                            || manager.options.do_.print_meta_hash_string(),
-                        packages_len_before_install,
-                    )
-                    .unwrap_or(false))
-                {
+                    )),
+                };
+                if unchanged {
                     break 'frozen_lockfile;
                 }
             }
@@ -830,24 +803,17 @@ pub fn install_with_manager(
         }
     }
 
-    // BACKREF: `manager.lockfile` is a `Box<Lockfile>` whose allocation is
-    // never replaced for the remainder of this function (only its fields
-    // mutate). Wrap once as `ParentRef` so the two `save_lockfile` read sites
-    // below deref through the safe abstraction instead of per-site raw deref.
-    let lockfile_before_install = bun_ptr::ParentRef::<Lockfile>::new(&*manager.lockfile);
-
     let save_format = load_result.save_format(&manager.options);
 
     if manager.options.lockfile_only {
-        // save the lockfile and exit. make sure metahash is generated for binary lockfile
         return save_lockfile_only(
             manager,
             ctx,
             &load_result,
             save_format,
             had_any_diffs,
-            lockfile_before_install,
-            packages_len_before_install,
+            hash_scripts,
+            meta_hash,
             log_level,
         );
     }
@@ -925,18 +891,33 @@ pub fn install_with_manager(
 
     let did_meta_hash_change =
         // If the lockfile was frozen, we already checked it
-        !manager.options.enable.frozen_lockfile()
-            && if load_result.loaded_from_text_lockfile() {
-                !manager.lockfile.eql(
+        !manager.options.enable.frozen_lockfile() && {
+            let packages_len = packages_len_before_install.min(manager.lockfile.packages.len());
+            let mut fresh_meta_hash = |print_name_version_string| {
+                let fresh = manager.lockfile.generate_meta_hash(
+                    hash_scripts,
+                    print_name_version_string,
+                    packages_len,
+                );
+                meta_hash.computed = Some((fresh, packages_len));
+                fresh
+            };
+            match loaded_meta_hash(manager, &load_result, &lockfile_before_clean, hash_scripts) {
+                Some(loaded) => loaded != fresh_meta_hash(print_hash_string),
+                None if load_result.loaded_from_text_lockfile() => !manager.lockfile.eql(
                     &lockfile_before_clean,
                     lockfile_before_clean.loaded_package_count as usize,
-                )?
-            } else {
-                manager.lockfile.has_meta_hash_changed(
-                    PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),
-                    packages_len_before_install.min(manager.lockfile.packages.len()),
-                )?
-            };
+                )?,
+                // No lockfile, or a bun.lockb that stores no hash. Any package besides the
+                // root is a change.
+                None => {
+                    if print_hash_string {
+                        fresh_meta_hash(true);
+                    }
+                    packages_len > 1
+                }
+            }
+        };
 
     // It's unnecessary work to re-save the lockfile if there are no changes.
     // A loaded text lockfile is never re-saved just to bump its version: an
@@ -960,8 +941,7 @@ pub fn install_with_manager(
             &load_result,
             save_format,
             had_any_diffs,
-            lockfile_before_install.get(),
-            packages_len_before_install,
+            meta_hash,
             log_level,
         )?;
     }
@@ -974,7 +954,7 @@ pub fn install_with_manager(
     }
 
     if manager.options.do_.save_yarn_lock() {
-        write_yarn_lock_with_progress(manager, log_level)?;
+        write_yarn_lock_with_progress(manager, meta_hash, log_level)?;
     }
 
     if manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global {
@@ -1414,6 +1394,36 @@ pub(crate) fn get_workspace_filters(
     let filters = vec![WorkspaceFilter::from_ids(ids)];
     let install_root_dependencies = WorkspaceFilter::is_selected(&filters, 0);
     Ok((filters, install_root_dependencies))
+}
+
+/// The meta hash of the lockfile as it was loaded, to compare with the one
+/// after the resolve. `None` when the loaded lockfile has none.
+fn loaded_meta_hash(
+    manager: &PackageManager,
+    load_result: &lockfile::LoadResult,
+    lockfile_before_clean: &Lockfile,
+    scripts: lockfile::MetaHashScripts,
+) -> Option<lockfile::MetaHash> {
+    if let Some(stored) = manager.lockfile.loaded_meta_hash {
+        return Some(stored);
+    }
+    match load_result {
+        // package-lock.json and yarn.lock store no hash. Theirs is the hash of the packages
+        // the migration produced.
+        lockfile::LoadResult::Ok(ok)
+            if matches!(
+                ok.migrated,
+                lockfile::Migrated::Npm | lockfile::Migrated::Yarn
+            ) =>
+        {
+            Some(lockfile_before_clean.generate_meta_hash(
+                scripts,
+                false,
+                lockfile_before_clean.loaded_package_count as usize,
+            ))
+        }
+        _ => None,
+    }
 }
 
 fn frozen_changed_section(
@@ -2183,8 +2193,8 @@ fn save_lockfile_only(
     load_result: &lockfile::LoadResult,
     save_format: lockfile::Format,
     had_any_diffs: bool,
-    lockfile_before_install: bun_ptr::ParentRef<Lockfile>,
-    packages_len_before_install: usize,
+    hash_scripts: lockfile::MetaHashScripts,
+    mut meta_hash: lockfile::MetaHashForSave,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     if (manager.options.enable.frozen_lockfile()
@@ -2195,19 +2205,23 @@ fn save_lockfile_only(
         return Ok(());
     }
 
-    // save the lockfile and exit. make sure metahash is generated for binary lockfile
-    manager.lockfile.meta_hash = manager.lockfile.generate_meta_hash(
-        PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),
-        packages_len_before_install,
-    )?;
+    // `--verbose` prints the hash string for a text lockfile too.
+    if PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string() {
+        let packages_len = manager.lockfile.packages.len();
+        meta_hash.computed = Some((
+            manager
+                .lockfile
+                .generate_meta_hash(hash_scripts, true, packages_len),
+            packages_len,
+        ));
+    }
 
     let saved = save_lockfile(
         manager,
         load_result,
         save_format,
         had_any_diffs,
-        lockfile_before_install.get(),
-        packages_len_before_install,
+        meta_hash,
         log_level,
     )?;
 
@@ -2248,6 +2262,7 @@ fn save_lockfile_only(
 #[inline(never)]
 fn write_yarn_lock_with_progress(
     manager: &mut PackageManager,
+    meta_hash: lockfile::MetaHashForSave,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     // reshaped for borrowck — `Progress::start` returns
@@ -2264,7 +2279,7 @@ fn write_yarn_lock_with_progress(
         Output::flush();
     }
 
-    write_yarn_lock(manager)?;
+    write_yarn_lock(manager, meta_hash)?;
     if log_level.show_progress() {
         if node_started {
             manager.progress.root.complete_one();

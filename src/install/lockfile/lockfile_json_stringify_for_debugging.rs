@@ -191,7 +191,7 @@ where
     w.object_field(b"meta_hash")?;
     {
         let mut hex = [0u8; 64];
-        let n = bun_fmt::bytes_to_hex_lower(&this.meta_hash, &mut hex);
+        let n = bun_fmt::bytes_to_hex_lower(&this.stored_meta_hash().0, &mut hex);
         w.write(&hex[..n])?;
     }
 

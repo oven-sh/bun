@@ -125,8 +125,58 @@ pub(crate) type PatchedDependenciesMap =
 
 pub(crate) type StringPool = bun_semver::string::StringPool;
 
-pub(crate) type MetaHash = [u8; 32]; // Sha512T256.digest_length
-const ZERO_HASH: MetaHash = [0u8; 32];
+/// SHA-512/256 of a lockfile's sorted `name@resolution` lines and its lifecycle
+/// script lines. Only [`Lockfile::generate_meta_hash`] and the `bun.lockb`
+/// reader produce one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct MetaHash([u8; 32]); // Sha512T256.digest_length
+
+impl MetaHash {
+    /// The hash of a lockfile with no package other than the root.
+    const ZERO: MetaHash = MetaHash([0u8; 32]);
+}
+
+impl fmt::Display for MetaHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Alternating uppercase/lowercase hex groups; `HexBytes` emits two
+        // digits per byte, contiguous, no separators.
+        write!(
+            f,
+            "{}-{}-{}-{}",
+            bun_core::fmt::HexBytes::<false>(&self.0[0..8]),
+            bun_core::fmt::HexBytes::<true>(&self.0[8..16]),
+            bun_core::fmt::HexBytes::<false>(&self.0[16..24]),
+            bun_core::fmt::HexBytes::<true>(&self.0[24..32]),
+        )
+    }
+}
+
+/// The lifecycle scripts a meta hash covers.
+#[derive(Clone, Copy)]
+pub enum MetaHashScripts {
+    /// None. `bun pm hash` and `bun pm hash-string` print this hash.
+    Omit,
+    /// The scripts `bun install` runs for the root package and for each
+    /// workspace with an install script. `bun.lockb` stores this hash.
+    Derive {
+        /// The root gets the default `node-gyp rebuild` install script
+        /// ([`package::Scripts::wants_default_node_gyp`]).
+        root_node_gyp_rebuild: bool,
+    },
+}
+
+/// What an install pass already knows about the meta hash a `bun.lockb`
+/// stores. The default knows nothing, and the writer derives all of it.
+#[derive(Clone, Copy, Default)]
+pub struct MetaHashForSave {
+    /// The root gets the default `node-gyp rebuild` install script.
+    /// `None`: the writer looks for the root's `binding.gyp` itself.
+    pub root_node_gyp_rebuild: Option<bool>,
+    /// The hash the comparison before the save computed, with the number of
+    /// packages it covers. The writer takes it only when it covers every
+    /// package it writes.
+    pub computed: Option<(MetaHash, usize)>,
+}
 
 // The stream owns its backing `Vec<u8>` — every load path hands the file
 // contents to the stream anyway,
@@ -166,7 +216,10 @@ pub struct Lockfile {
 
     pub(crate) text_lockfile_version: bun_lock::Version,
 
-    pub(crate) meta_hash: MetaHash,
+    /// The meta hash the `bun.lockb` this lockfile was loaded from stores.
+    /// `None` when no `bun.lockb` was loaded, or when it stores no hash.
+    /// Only for comparison: the writer derives the hash it stores.
+    pub(crate) loaded_meta_hash: Option<MetaHash>,
 
     pub packages: PackageList,
     pub buffers: Buffers,
@@ -177,7 +230,6 @@ pub struct Lockfile {
     pub string_pool: StringPool,
     pub(crate) scratch: Scratch,
 
-    pub(crate) scripts: Scripts,
     pub(crate) workspace_paths: NameHashMap,
     pub workspace_versions: VersionHashMap,
     /// Name hashes of the self-contained workspaces, from the manifests. Not saved.
@@ -248,15 +300,7 @@ impl<'a> DepSorter<'a> {
 // Scripts
 // ────────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
-pub struct Scripts {
-    pub(crate) preinstall: Vec<Box<[u8]>>,
-    pub(crate) install: Vec<Box<[u8]>>,
-    pub(crate) postinstall: Vec<Box<[u8]>>,
-    pub(crate) preprepare: Vec<Box<[u8]>>,
-    pub(crate) prepare: Vec<Box<[u8]>>,
-    pub(crate) postprepare: Vec<Box<[u8]>>,
-}
+pub struct Scripts;
 
 impl Scripts {
     pub(crate) const NAMES: [&'static str; 6] = [
@@ -267,36 +311,7 @@ impl Scripts {
         "prepare",
         "postprepare",
     ];
-
-    /// Indexed mutable access matching `NAMES` order.
-    pub(crate) fn hook_mut(&mut self, i: usize) -> &mut Vec<Box<[u8]>> {
-        match i {
-            0 => &mut self.preinstall,
-            1 => &mut self.install,
-            2 => &mut self.postinstall,
-            3 => &mut self.preprepare,
-            4 => &mut self.prepare,
-            5 => &mut self.postprepare,
-            _ => unreachable!(),
-        }
-    }
-
-    /// (name, &entries) in `NAMES` order — single source of truth for the name half.
-    /// The field-ref half stays hand-listed (no field-by-name reflection),
-    /// but the string half is derived from `NAMES` so the literals exist exactly once.
-    fn fields(&self) -> [(&'static str, &Vec<Box<[u8]>>); 6] {
-        [
-            (Self::NAMES[0], &self.preinstall),
-            (Self::NAMES[1], &self.install),
-            (Self::NAMES[2], &self.postinstall),
-            (Self::NAMES[3], &self.preprepare),
-            (Self::NAMES[4], &self.prepare),
-            (Self::NAMES[5], &self.postprepare),
-        ]
-    }
 }
-
-// `deinit` becomes `Drop` — body only frees owned fields → delete entirely; Vec<Box<[u8]>> drops automatically.
 
 // ────────────────────────────────────────────────────────────────────────────
 // LoadResult
@@ -682,7 +697,6 @@ impl Lockfile {
         let mut stream = Stream::new(buf);
 
         self.format = FormatVersion::current();
-        self.scripts = Scripts::default();
         self.trusted_dependencies = None;
         self.workspace_paths = NameHashMap::default();
         self.workspace_versions = VersionHashMap::default();
@@ -1028,7 +1042,6 @@ impl Lockfile {
         };
 
         let old_trusted_dependencies = old.trusted_dependencies.take();
-        let old_scripts = core::mem::take(&mut old.scripts);
         // We will only shrink the number of packages here.
         // never grow
 
@@ -1200,8 +1213,7 @@ impl Lockfile {
         drop(cloner);
 
         new.trusted_dependencies = old_trusted_dependencies;
-        new.scripts = old_scripts;
-        new.meta_hash = old.meta_hash;
+        new.loaded_meta_hash = old.loaded_meta_hash;
         // Carry the on-disk format version over from the lockfile we loaded so a
         // re-save preserves it (a fresh `new` defaults to the current version).
         new.text_lockfile_version = old.text_lockfile_version;
@@ -1268,46 +1280,12 @@ fn clean_migrate_patched_dependencies_cold(
         .iter()
         .zip(old.patched_dependencies.values().iter())
     {
-        debug_assert!(!v.patchfile_hash_is_null);
         let mut patchdep = *v;
         patchdep.path = builder
             .append::<SemverString>(patchdep.path.slice(old.buffers.string_bytes.as_slice()));
         new.patched_dependencies.put(*k, patchdep)?;
     }
     Ok(())
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// MetaHashFormatter
-// ────────────────────────────────────────────────────────────────────────────
-
-pub struct MetaHashFormatter<'a> {
-    pub(crate) meta_hash: &'a MetaHash,
-}
-
-impl<'a> fmt::Display for MetaHashFormatter<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let remain: &[u8] = &self.meta_hash[..];
-
-        // Alternating uppercase/lowercase hex groups; `HexBytes` emits two
-        // digits per byte, contiguous, no separators.
-        write!(
-            f,
-            "{}-{}-{}-{}",
-            bun_core::fmt::HexBytes::<false>(&remain[0..8]),
-            bun_core::fmt::HexBytes::<true>(&remain[8..16]),
-            bun_core::fmt::HexBytes::<false>(&remain[16..24]),
-            bun_core::fmt::HexBytes::<true>(&remain[24..32]),
-        )
-    }
-}
-
-impl Lockfile {
-    pub fn fmt_meta_hash(&self) -> MetaHashFormatter<'_> {
-        MetaHashFormatter {
-            meta_hash: &self.meta_hash,
-        }
-    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1830,7 +1808,10 @@ impl<'a> Printer<'a> {
         let mut writer = writer;
         match format {
             PrinterFormat::Yarn => {
-                printer::Yarn::print(&mut printer, &mut writer)?;
+                let meta_hash = lockfile
+                    .loaded_meta_hash
+                    .unwrap_or_else(|| lockfile.meta_hash_for_save(MetaHashForSave::default()));
+                printer::Yarn::print(&mut printer, &mut writer, meta_hash)?;
             }
         }
         Ok(())
@@ -1888,10 +1869,11 @@ impl Lockfile {
     }
 
     /// Returns false when the lockfile on disk already had exactly these bytes and was left untouched.
-    pub fn save_to_disk(
+    pub(crate) fn save_to_disk(
         &mut self,
         load_result: &LoadResult<'_>,
         options: &PackageManagerOptions,
+        meta_hash: MetaHashForSave,
     ) -> bool {
         let save_format = load_result.save_format(options);
         if cfg!(debug_assertions) {
@@ -1927,11 +1909,17 @@ impl Lockfile {
 
             let mut bytes: Vec<u8> = Vec::new();
 
+            let meta_hash = self.meta_hash_for_save(meta_hash);
             let mut total_size: usize = 0;
             let mut end_pos: usize = 0;
-            if let Err(e) =
-                Serializer::save(self, options, &mut bytes, &mut total_size, &mut end_pos)
-            {
+            if let Err(e) = Serializer::save(
+                self,
+                options,
+                meta_hash,
+                &mut bytes,
+                &mut total_size,
+                &mut end_pos,
+            ) {
                 Output::err(e, "failed to serialize lockfile", format_args!(""));
                 Global::crash();
             }
@@ -2112,14 +2100,13 @@ impl Lockfile {
             package_index: PackageIndexMap::default(),
             string_pool: StringPool::default(),
             scratch: Scratch::init(),
-            scripts: Scripts::default(),
             trusted_dependencies: None,
             workspace_paths: NameHashMap::default(),
             workspace_versions: VersionHashMap::default(),
             self_contained_workspaces: ArrayHashMap::default(),
             overrides: OverrideMap::default(),
             catalogs: CatalogMap::default(),
-            meta_hash: ZERO_HASH,
+            loaded_meta_hash: None,
             patched_dependencies: PatchedDependenciesMap::default(),
             saved_config_version: None,
             // Fresh lockfile (no load): every package appended later is
@@ -3043,27 +3030,94 @@ impl Lockfile {
         Ok(true)
     }
 
-    pub fn has_meta_hash_changed(
-        &mut self,
-        print_name_version_string: bool,
-        packages_len: usize,
-    ) -> Result<bool, BunError> {
-        let previous_meta_hash = self.meta_hash;
-        self.meta_hash = self.generate_meta_hash(print_name_version_string, packages_len)?;
-        Ok(!strings::eql_long(
-            &previous_meta_hash,
-            &self.meta_hash,
-            false,
-        ))
+    /// The hash `bun pm hash-print` and `bun bun.lockb --hash` show: the one
+    /// the loaded `bun.lockb` stores, all zero when there is none.
+    pub fn stored_meta_hash(&self) -> MetaHash {
+        self.loaded_meta_hash.unwrap_or(MetaHash::ZERO)
     }
 
-    pub(crate) fn generate_meta_hash(
+    /// The hash a `bun.lockb` written from this lockfile stores.
+    pub(crate) fn meta_hash_for_save(&self, meta_hash: MetaHashForSave) -> MetaHash {
+        let packages_len = self.packages.len();
+        if packages_len <= 1 {
+            return MetaHash::ZERO;
+        }
+        let derive = || {
+            let root_node_gyp_rebuild = meta_hash.root_node_gyp_rebuild.unwrap_or_else(|| {
+                self.packages.items_scripts()[0]
+                    .wants_default_node_gyp(FileSystem::instance().top_level_dir())
+            });
+            self.generate_meta_hash(
+                MetaHashScripts::Derive {
+                    root_node_gyp_rebuild,
+                },
+                false,
+                packages_len,
+            )
+        };
+        match meta_hash.computed {
+            Some((computed, covered)) if covered == packages_len => {
+                if cfg!(debug_assertions) && computed != derive() {
+                    Output::panic(format_args!(
+                        "Lockfile metahash non-deterministic after saving"
+                    ));
+                }
+                computed
+            }
+            _ => derive(),
+        }
+    }
+
+    /// The lifecycle scripts the meta hash covers, per hook: the root's first,
+    /// then those of each workspace with an install script, in package order.
+    fn meta_hash_script_entries(
         &self,
+        scripts: MetaHashScripts,
+        packages_len: usize,
+    ) -> Vec<[Option<&[u8]>; Scripts::NAMES.len()]> {
+        let MetaHashScripts::Derive {
+            root_node_gyp_rebuild,
+        } = scripts
+        else {
+            return Vec::new();
+        };
+        let bytes = self.buffers.string_bytes.as_slice();
+        let resolutions = &self.packages.items_resolution()[..packages_len];
+        let metas = &self.packages.items_meta()[..packages_len];
+        let package_scripts = &self.packages.items_scripts()[..packages_len];
+
+        let mut entries = Vec::new();
+        let root = package_scripts[0].script_entries(
+            bytes,
+            ResolutionTag::Root,
+            root_node_gyp_rebuild,
+        );
+        if root.iter().any(Option::is_some) {
+            entries.push(root);
+        }
+        for ((resolution, meta), scripts) in resolutions.iter().zip(metas).zip(package_scripts) {
+            if resolution.tag != ResolutionTag::Workspace || !meta.has_install_script() {
+                continue;
+            }
+            let workspace =
+                scripts.script_entries(bytes, ResolutionTag::Workspace, !scripts.has_any());
+            if workspace.iter().any(Option::is_some) {
+                entries.push(workspace);
+            }
+        }
+        entries
+    }
+
+    /// Hashes the first `packages_len` packages. The result depends only on
+    /// the package columns and on `scripts`.
+    pub fn generate_meta_hash(
+        &self,
+        scripts: MetaHashScripts,
         print_name_version_string: bool,
         packages_len: usize,
-    ) -> Result<MetaHash, BunError> {
+    ) -> MetaHash {
         if packages_len <= 1 {
-            return Ok(ZERO_HASH);
+            return MetaHash::ZERO;
         }
 
         let mut string_builder = bun_core::StringBuilder::default();
@@ -3106,18 +3160,12 @@ impl Lockfile {
 
         const SCRIPTS_BEGIN: &[u8] = b"\n-- BEGIN SCRIPTS --\n";
         const SCRIPTS_END: &[u8] = b"\n-- END SCRIPTS --\n";
-        let mut has_scripts = false;
+        let script_entries = self.meta_hash_script_entries(scripts, packages_len);
+        let has_scripts = !script_entries.is_empty();
 
-        for (field_name, scripts) in self.scripts.fields() {
-            for script in scripts.iter() {
-                if !script.is_empty() {
-                    string_builder.fmt_count(format_args!(
-                        "{}: {}\n",
-                        field_name,
-                        bstr::BStr::new(script)
-                    ));
-                    has_scripts = true;
-                }
+        for (hook, name) in Scripts::NAMES.iter().enumerate() {
+            for script in script_entries.iter().filter_map(|entries| entries[hook]) {
+                string_builder.fmt_count(format_args!("{}: {}\n", name, bstr::BStr::new(script)));
             }
         }
 
@@ -3150,15 +3198,10 @@ impl Lockfile {
 
         if has_scripts {
             let _ = string_builder.append(SCRIPTS_BEGIN);
-            for (field_name, scripts) in self.scripts.fields() {
-                for script in scripts.iter() {
-                    if !script.is_empty() {
-                        let _ = string_builder.fmt(format_args!(
-                            "{}: {}\n",
-                            field_name,
-                            bstr::BStr::new(script)
-                        ));
-                    }
+            for (hook, name) in Scripts::NAMES.iter().enumerate() {
+                for script in script_entries.iter().filter_map(|entries| entries[hook]) {
+                    let _ = string_builder
+                        .fmt(format_args!("{}: {}\n", name, bstr::BStr::new(script)));
                 }
             }
             let _ = string_builder.append(SCRIPTS_END);
@@ -3177,7 +3220,7 @@ impl Lockfile {
             Output::enable_buffering();
         }
 
-        let mut digest = ZERO_HASH;
+        let mut digest = [0u8; 32];
         // SAFETY: engine is null (default).
         unsafe {
             Crypto::SHA512_256::hash(
@@ -3187,7 +3230,7 @@ impl Lockfile {
             )
         };
 
-        Ok(digest)
+        MetaHash(digest)
     }
 
     pub(crate) fn resolve_package_from_name_and_version(

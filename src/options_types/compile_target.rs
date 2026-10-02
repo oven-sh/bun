@@ -244,6 +244,19 @@ impl CompileTarget {
         }
     }
 
+    /// Mirrors the `-baseline` entries of `platforms` in packages/bun-release/src/platform.ts.
+    fn has_baseline_package(&self) -> bool {
+        self.arch == Architecture::X64
+            && match self.os {
+                OperatingSystem::Linux => match self.libc {
+                    Libc::Default | Libc::Musl => true,
+                    Libc::Android => false,
+                },
+                OperatingSystem::Mac | OperatingSystem::Windows => true,
+                OperatingSystem::Freebsd | OperatingSystem::Wasm => false,
+            }
+    }
+
     pub fn try_from(input_: &[u8]) -> Result<CompileTarget, ParseError> {
         let mut this = CompileTarget::default();
         let input = strings::trim(input_, b" \t\r");
@@ -329,8 +342,7 @@ impl CompileTarget {
             let _ = found_arch;
         }
 
-        // there is no baseline arm64.
-        if this.baseline && this.arch == Architecture::Arm64 {
+        if this.baseline && !this.has_baseline_package() {
             this.baseline = false;
         }
 

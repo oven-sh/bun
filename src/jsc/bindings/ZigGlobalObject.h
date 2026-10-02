@@ -196,9 +196,6 @@ public:
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters>, const JSC::SourceOrigin&, bool deferred);
     static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap);
-    // The key of a specifier. What Bun loads itself (a preload, a test file) has no referrer, and goes through here
-    // before the loader gets it: the loader takes the name of a top-level load for its key.
-    static JSC::Identifier resolveModule(Zig::GlobalObject*, JSC::JSValue specifier, JSC::JSValue referrer);
     static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, const WTF::String& referrer, RefPtr<JSC::ScriptFetchParameters>, RefPtr<JSC::ScriptFetcher>);
     static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, RefPtr<JSC::ScriptFetcher>);
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSValue key, JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher>, JSValue sentValue, JSValue resumeMode);

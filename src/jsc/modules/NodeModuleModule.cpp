@@ -806,9 +806,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* name = callFrame->argument(0).toString(globalObject);
+    auto name = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto key = Zig::GlobalObject::resolveModule(defaultGlobalObject(globalObject), name, jsUndefined());
+    // loadAndEvaluateModule() takes a key.
+    auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, name), JSC::Identifier(), nullptr, /* useImportMap */ true);
     RETURN_IF_EXCEPTION(scope, {});
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);

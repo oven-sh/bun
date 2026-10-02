@@ -3502,21 +3502,18 @@ extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPluginRunner(void*);
-JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
-    JSModuleLoader*, JSValue key,
-    JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
+JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
+    JSModuleLoader* loader, JSValue key,
+    JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap)
 {
-    // Without a referrer the loader asks about a key it was handed: the name of a top-level load, or what import()
-    // or require() resolved. Resolving a key again can give another one: a symlink, a plugin's onResolve.
-    if (!referrer || referrer.isUndefined())
-        return key.toPropertyKey(globalObject);
-    return resolveModule(static_cast<Zig::GlobalObject*>(globalObject), key, referrer);
-}
-
-JSC::Identifier GlobalObject::resolveModule(Zig::GlobalObject* globalObject, JSValue key, JSValue referrer)
-{
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // How the loader says that this is resolved already: it asks again about the key of every top-level load.
+    // A browser parses the URL once more. Here the answer could be another key: a symlink, a plugin's onResolve.
+    if (!useImportMap)
+        RELEASE_AND_RETURN(scope, key.toPropertyKey(globalObject));
 
     WTF::String keyString;
     if (key.isString()) {
@@ -4110,7 +4107,7 @@ static void collectStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleLo
             // Embedded modules import each other by final key, so most edges dedup without a resolve.
             Identifier key = request.m_specifier;
             if (!closure.records.contains(key.impl())) {
-                key = StandaloneGlobalObject::moduleLoaderResolve(globalObject, loader, identifierToJSValue(vm, request.m_specifier), identifierToJSValue(vm, closure.modules[index].key), nullptr, false);
+                key = StandaloneGlobalObject::moduleLoaderResolve(globalObject, loader, identifierToJSValue(vm, request.m_specifier), identifierToJSValue(vm, closure.modules[index].key), nullptr, /* useImportMap */ true);
                 RETURN_IF_EXCEPTION(scope, void());
             }
             resolved[i] = key;

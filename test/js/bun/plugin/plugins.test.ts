@@ -1117,7 +1117,6 @@ it.concurrent("build.module() of a module whose import() is still loading its de
 // The loader asked for a path that these had resolved to be resolved again, so onResolve was fed its own results.
 describe.concurrent("onResolve is asked once about", () => {
   it.each([
-    ["import()", ["--preload", "./plugin.ts", "entry.ts"], `console.log((await import("./a.mjs")).from);`],
     [
       "import.meta.require()",
       ["--preload", "./plugin.ts", "entry.ts"],

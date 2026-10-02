@@ -3415,10 +3415,7 @@ extern "C" JSC::JSPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto key = Zig::GlobalObject::resolveModule(defaultGlobalObject(globalObject), jsString(vm, moduleNameStr->toWTFString()), jsUndefined());
-    if (scope.exception()) [[unlikely]]
-        return nullptr;
-    auto* promise = JSC::importModule(globalObject, key, JSC::Identifier(), nullptr, nullptr);
+    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), JSC::Identifier(), nullptr, nullptr);
 
     EXCEPTION_ASSERT(!!scope.exception() == !promise);
     return promise;
@@ -3811,7 +3808,8 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto key = Zig::GlobalObject::resolveModule(defaultGlobalObject(globalObject), jsString(vm, arg1->toWTFString()), jsUndefined());
+    // loadAndEvaluateModule() takes a key.
+    auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, arg1->toWTFString()), JSC::Identifier(), nullptr, /* useImportMap */ true);
     if (scope.exception()) [[unlikely]]
         return nullptr;
 

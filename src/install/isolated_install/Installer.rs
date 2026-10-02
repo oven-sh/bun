@@ -1742,8 +1742,7 @@ impl Task {
                     }
 
                     let bin = pkg_bins[pkg_id as usize];
-                    // The entry's own folder is named by the package, not by a dependent's name for it.
-                    // A workspace or `link:` package has no such folder, and a nameless package has no command name.
+                    // A tarball with no package name has no folder name and no command name.
                     let Some(own_name) = (bin.tag != bin::Tag::None)
                         .then(|| {
                             installer.entry_store_node_modules_package_name(

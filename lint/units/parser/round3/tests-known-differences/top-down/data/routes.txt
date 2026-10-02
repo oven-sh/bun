@@ -1,0 +1,107 @@
+What a lint parse needs, after R1, to read each of the 366 rows as tsc 6.0.2 reads it. Column "needs in a lint parse" of rows.table.tsv.
+head = 23a20afa7e (round 1, shared grammar). main = f4d755a9cf. Paths are under src/js_parser/. "free" = allowed by parser3.md: no added
+branch for a parse without lint, or one test of the side-table option after a token test that only TypeScript syntax passes.
+Row numbers are the index of rows.table.tsv (0..365, the order of the four test files).
+
+FACTS THAT DECIDE THE ROUTES (each read in the code, none run)
+F1. Parser::parse_for_lint answers Err when the log holds any error (parse/parse_entry.rs:586), so a message that a restored skipper
+    function logs past a backtracked attempt (H3) fails a lint parse.
+F2. main already tests the side-table option in three places, for Parser::parse_only: parse/mod.rs:224 (after each class member),
+    parse/mod.rs:1594 (first statement of parse_async_prefix_expr, which has `flags`), parse_fn.rs:568 (parse_arrow_body, before an
+    expression body). Code inside those arms costs a parse without lint nothing.
+F3. bun --lint does not call a lint parse: src/runtime/cli/lint_command.rs:241-246 runs Parser::parse_only for js and jsx and
+    Parser::parse for TypeScript, with features.standard_decorators = true (:230).
+F4. In head a lint parse still reads three kinds of type syntax with the Discard sink (G1, G2, G3 below). Today that is the grammar of
+    round 1. After R1 it is main's skipper, unless the site gets a function of the lint grammar.
+
+BUILD   203 rows (104 T + 99 M). The type of the row, read alone with the Build sink: crate::type_sink_tests::type_read
+        (P::build_type_script_type, parse/type_sink.rs:1394), read_from + P::build_typescript_return_type (:1413),
+        type_parameters_read (P::build_type_script_type_parameters, :1460). No site is involved: these assertions hold whatever
+        the routes below become. For a metadata row this is the whole assertion: the tree that gives the value of tsc.
+
+Routes that head has and that call only functions of the lint grammar (whole-source rows that pass when R1 keeps the branch):
+V       30 T rows. `: T` of a variable, class property, parameter: P::lint_type_annotation (parse/attached.rs:474) from
+        parse/mod.rs:1945, parse_property.rs:832-839, parse_fn.rs:336-349, parse_stmt.rs:435.
+AS      13 T rows. `as T`, `satisfies T`: sfx_typescript_as_for_lint (parse/parse_suffix.rs:69) from :29.
+TP      10 T rows. type parameters of a function: P::lint_type_parameters (parse/attached.rs:504) from parse_fn.rs:70 and :569.
+RT      1 T row. return type of a function: P::lint_return_type (parse/attached.rs:524) from parse_fn.rs:434-442.
+EXT     1 T row. type arguments after `extends` of a class: P::lint_class_extends (parse/attached.rs:535) from parse/mod.rs:177.
+IMPL    1 O-class row (117). `implements a()`: P::lint_class_implements (parse/generics.rs:403) from parse/mod.rs:199. The branch
+        stands after `p.lexer.is_contextual_keyword(b"implements")` inside IS_TYPESCRIPT_ENABLED: free. The else branch must be
+        main's loop (skip_type_script_type), not skip_class_implements_entry (parse/mod.rs:371, round 1).
+TSX-ARROW 5 T rows (79, 92, 93, 240, 241). `<out, T>(x) => x` in a .tsx file: is_ts_arrow_fn_jsx (typescript.rs:44, unchanged from
+        main) decides, then P::lint_type_parameters (parse/parse_prefix.rs:996-1013).
+
+Routes that head lacks or that lean on the skipper (R1 must add a function of the lint grammar, else the rows fail in a lint parse):
+G1      15 T rows (17-20, 22, 24, 27, 29, 30, 41, 44, 52, 54, 55, 57) and the 14 O-stmt rows `type as = ...`. The right side of a
+        type alias: skip_type_script_type_stmt calls skip_type_script_type, Discard, also in a lint parse
+        (parse/parse_skip_typescript.rs:3081; callers parse_stmt.rs:967 and :2140). The side table keeps ErasedData::TypeAlias(Name)
+        only (parse/erased.rs:81). Site: after `type` + identifier in a TypeScript file: free for one option test.
+G2      3 T rows (43, 45, 46) and the O-stmt and X rows `interface as ...`. Heritage and members of an interface:
+        skip_type_script_interface_stmt calls parse_heritage_clauses and parse_object_type_members, Discard
+        (parse/parse_skip_typescript.rs:3109-3110; caller parse_stmt.rs:2183). ErasedData::Interface(Name) only. Free as G1.
+G3      4 O-member rows (112-115). `[k: string]: T,` in a class: skip_class_index_signature (parse/parse_property.rs:317, round 1)
+        reads with Discard for both parses. main's arm is parse_property.rs:301-313 (`p.lexer.token == T::TColon && was_identifier
+        && opts.is_class` inside IS_TYPESCRIPT_ENABLED): free for one option test, then a reader of the lint grammar.
+D1      22 T rows (70-74, 80-91, 233-237). `<out>x`, `<out>(x)`, `<out>(x) => x`, `async <out = A>() => 0`: the lint functions
+        pfx_t_less_than_for_lint (parse/parse_prefix.rs:1071, call at :1082), pfx_type_before_paren_for_lint (:1170, call at :1202),
+        lint_skip_type_parameters_again (parse/generics.rs:299, call at :305) and lint_try_async_type_parameters (:333, call at
+        :340) ask the SKIPPER
+        try_skip_type_script_type_parameters_then_open_paren_with_backtracking what stands after `<`. main's version
+        (parse_skip_typescript.rs:1633 -> :1145) reads `out` and `in` as variance modifiers: for `<out>(x) => x` it answers
+        DidNotSkipAnything and leaves `The modifier "out" is not valid here` in the log (F1). The lint grammar needs its own
+        decision function (the one of round 1). Rows 86-88 (`<if>x`) get DidNotSkipAnything from main too and no message.
+D2      no row. P::lint_type_metadata (parse/parse_fn.rs:498) reads with TypeSink::DecoratorMetadata first: after R1 that is main's
+        skipper. An Err is dropped with its messages (:513-521); an Ok that logged is not. It runs only with
+        features.emit_decorator_metadata, which bun --lint does not set.
+TWIN    9 T rows (31-33, 70-74, 97) and 22 O-expr rows. parse_paren_expr_for_lint (parse/mod.rs:920): types of arrow parameters
+        (lint_type_annotation), the return type (lint_arrow_return_type :1144, called at :1044), `level.lte(Level::Assign)`
+        before a `:` counts as a return type (:997-1001), and the flags of the body (:1060-1076, TWIN-BODY-FLAGS:
+        parse_arrow_body_with_flags, parse_fn.rs:647, which a parse without lint loses again).
+P1      13 rows (T 31, 32, 33, 97; O-expr 109, 214-220, 232). The twin is reached from `(` only through
+        `if !SCAN_ONLY && p.is_lint_parse()` in pfx_t_open_paren (parse/parse_prefix.rs:50), a test that JavaScript runs today.
+        Whether a lint parse keeps a way from `(` to the twin is the decision of the unit that owns parse_paren_expr. Without it
+        these rows, and every record of an arrow parameter type, are gone.
+E-LT    21 O-expr rows. `<T>(b)` after `?`, after an operator or after `case`: pfx_t_less_than (main parse_prefix.rs:892, the arm at :960) is
+        TypeScript-only syntax in a .ts file: free for one option test. The lint function (head parse_prefix.rs:1071) passes
+        `flags == EFlags::AfterQuestionAndBeforeColon` to the twin; main has `flags` in hand and calls parse_paren_expr with
+        `ParenExprOpts { force_arrow_fn, ..Default::default() }` (main parse_prefix.rs:969-977). 8 of them also need
+        TWIN-BODY-FLAGS.
+E-ASYNC 16 O-expr rows. `async(b)`, `async<T>(b)`, `async <T>(y: T) => (b)`, `async y => (b)`, `async => (b)`: the arm of F2 at
+        parse/mod.rs:1594 (main) is free and has `level` and `flags`. 5 of them also need TWIN-BODY-FLAGS.
+E-IDENT-ARROW 14 O-expr rows (108, 111, 201-209, 212, 213, 231). `a ? y => (b) : c => d`: the arrow function with one name is made in
+        pfx_t_identifier (main parse_prefix.rs:128, the arrow at :258-278; it has `flags` and hands parse_arrow_body none), which JavaScript runs, and parse_arrow_body
+        (main parse_fn.rs:520) reads the body with EFlags::None. No token test that only TypeScript passes stands between the `?`
+        and the body. Free places: the arm of F2 in parse_arrow_body (it knows the offset of the body, not that a `?` is open)
+        and main's error `p.lexer.expect(T::TColon)` in sfx_t_question (main parse_suffix.rs:466). A lint parse can only note the
+        offset at the error and start again. Without that: NOT READ by a lint parse (main's error, `Expected ":" but found ";"`).
+S-AS    50 rows (39 O-stmt, 11 X). `type as = 1`, `interface as {}`, `namespace as {}`: main reads the statement as an expression
+        first (main parse_stmt.rs:1728), so the cast `type as ...` is read before the keyword arm (main :1747-1756). Round 1 tests
+        `TypescriptStmtKeyword::from_bytes(name)` before every statement that starts with a name (head parse_stmt.rs:1848): not
+        free. Free places: sfx_typescript_as_for_lint (lint only, it holds the operand), the Err of parse_expr_or_let_stmt, and
+        the arms of parse_stmt_fallthrough_ts_keyword (main :1776, #[cold], TypeScript only). Each has to put the lexer back
+        after the keyword and take back the wrapper record. For the 7 X rows that tsc takes, main does not fail: only the first
+        and the third place see them. Rows 302-307: tsc rejects the second statement, a lint parse must fail.
+S-ABS   5 rows. `abstract declare class`: the arm TsStmtAbstract (main parse_stmt.rs:1830) is TypeScript only: free.
+S-ENUM  15 rows. `enum E { ["x"] }`: main's last arm of the member name is `p.lexer.expect(T::TIdentifier)?` (main
+        parse_typescript.rs:645), which always fails: free.
+S-NSIMPORT 8 rows. `namespace N { import("x"); }`: main parse_stmt.rs:1410-1413 is `p.lexer.expected(T::TIdentifier)?` for every
+        token that is no identifier: free.
+S-WITH  8 rows. `import A from "x"<line break>with { type: "json" }`. main parse/mod.rs:1356 `if !p.lexer.has_newline_before && (...)`:
+        a test of `with` on the line-break side is a branch for every import without a semicolon, in JavaScript too: not free.
+        Free place: main's error in the `with` statement, `p.lexer.expect(T::TOpenParen)` (main parse_stmt.rs:309), after the import
+        statement and its record are made. tsc: rows 124, 296, 300 (js) valid; 297 TS2857 from the checker; 298, 299, 301 rejected
+        (a line break before `with` of an export); 308 rejected. Without the fix-up: NOT READ (main's error for the valid four).
+P-MOD   2 rows (59, 116). `function f(public a: A) {}`: main parse_fn.rs:251 `if is_identifier && opts.is_constructor` runs for every
+        parameter: not free. Free place: the error at `p.lexer.expect(T::TCloseParen)` (main parse_fn.rs:365), after `public` was
+        read as the binding. tsc reports TS2369 from its checker for both rows.
+P-REST  4 rows (60-63). `declare class C { m(...a,): void; }`: main parse_fn.rs:331-338, the else of `opts.is_typescript_declare` is
+        `p.lexer.expect(T::TCloseParen)` at a comma: always fails: free.
+M-ACC   6 rows (118-123), loader ts with experimentalDecorators. main parse_property.rs:464-476 takes `accessor` as a modifier only
+        with features.standard_decorators. bun --lint sets it (F3), so a lint parse with the options of the command reads the
+        rows with main's code. With standard_decorators off it fails as main does, unless the arm also takes the option.
+
+Counts of whole-source rows by what they need (deps.txt has the table): T: V 30, AS 13, TP 10, RT 1, EXT 1, TSX-ARROW 5, G1 15, G2 3,
+D1 17, D1+TWIN 5, TWIN+P1 4. O-expr: E-LT 13, E-LT+body flags 8, E-ASYNC 11, E-ASYNC+body flags 5, P1+body flags 9, E-IDENT-ARROW 14.
+O-stmt: S-AS 39 (14 with G1, 12 with G2), S-ENUM 15, S-NSIMPORT 8, S-WITH 8, S-ABS 5. O-member: G3 4, M-ACC 6. O-param: P-MOD 2,
+P-REST 4. O-class: IMPL 1. X: S-AS 11 (6 with G2). M: BUILD 99.

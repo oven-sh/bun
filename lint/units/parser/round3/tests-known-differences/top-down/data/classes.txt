@@ -1,0 +1,27 @@
+class	rows	distinct (loader, source)	main rejects	valid for tsc	family
+M	99	63	0	90	metadata
+O-class	1	1	1	1	a class implements an expression
+O-expr	16	14	16	16	a colon follows an operand that ends with a parenthesis
+O-expr	44	39	44	44	a colon follows parentheses between ? and : of a conditional
+O-member	4	4	4	4	a comma ends an index signature of a class
+O-member	6	6	6	6	accessor is a modifier without standard decorators
+O-param	4	4	4	4	a comma follows the rest parameter of a signature of a declared class
+O-param	1	1	1	1	a modifier before a parameter of a function
+O-param	1	1	1	1	a modifier before a parameter of a method
+O-stmt	5	5	5	5	abstract declare class
+O-stmt	39	39	39	37	as or satisfies names a declaration
+O-stmt	15	15	15	15	enum member name in brackets
+O-stmt	8	8	8	3	import attributes on the next line
+O-stmt	8	8	8	8	import expression in a namespace
+T	6	6	6	6	a binding pattern of a signature has a hole
+T	8	5	8	8	a comparison follows the type after as and satisfies
+T	2	2	2	2	a modifier stands before a parameter of a signature
+T	8	8	8	8	a parameter of a signature has an initializer
+T	4	4	4	4	a reserved word is the label of a rest element of a tuple
+T	26	26	26	26	a reserved word is the name of a type reference
+T	9	9	9	9	an import type takes type arguments and an expression in an attribute
+T	2	2	2	2	an interface extends an expression
+T	34	27	34	34	out or in names a type or a type parameter
+T	5	5	5	5	the type of an assertion predicate starts on the next line
+X	11	11	0	7	other output: cast read where tsc reads a declaration
+{'T': 104, 'O-stmt': 75, 'O-param': 6, 'O-expr': 60, 'O-member': 10, 'O-class': 1, 'X': 11, 'M': 99} 366

@@ -1,0 +1,224 @@
+# Sources that main f4d755a9cf rejects with the ts loader and that are valid for tsc 6.0.2 (no parse diagnostic, no grammar error of its checker),
+# over testrows (301), valid.plain (153), targeted (2,405), targeted09 (1,547) and small-sub (7,089). 2043 distinct sources, 1250 that round 1 accepted.
+# A family that starts with 'ruling:' is a source for which tsc reports a rule of syntax outside its grammar checks: not valid as a whole.
+## an interface extends, or a class implements, an expression
+   292 sources; round 1 accepted 201, rejected 47, not run 44; other codes of tsc: TS2304x67, TS2499x115, TS2500x131, TS2503x15
+   "interface I extends a() {}"  =>  Expected "{" but found "(" (1:22) +1
+   "interface I extends a.b() {}"  =>  Expected "{" but found "(" (1:24) +1
+   "class C implements a() {}"  =>  Expected "{" but found "(" (1:21) +1
+   "class C extends B implements a() {}"  =>  Expected "{" but found "(" (1:31) +1
+   "class C implements a.b() {}"  =>  Expected "{" but found "(" (1:23) +1
+   "class C extends B implements a.b() {}"  =>  Expected "{" but found "(" (1:33) +1
+## ruling: tsc reports a rule of syntax outside its grammar checks TS1228
+   283 sources; round 1 accepted 0, rejected 283, not run 0; other codes of tsc: TS1228x283, TS2304x169, TS2564x24, TS7006x8, TS7008x1
+   "class C { @d a: asserts b }"  =>  Expected ";" but found "b" (1:25)
+   "type X = [asserts a];"  =>  Expected "]" but found "a" (1:19) +1
+   "let x: [asserts a];"  =>  Expected "]" but found "a" (1:17) +1
+   "class C { @d x: [asserts a]; }"  =>  Expected "]" but found "a" (1:26) +1
+   "class C { @d m(a: [asserts a]) {} }"  =>  Expected "]" but found "a" (1:28) +3
+   "@d class C { constructor(a: [asserts a]) {} }"  =>  Expected "]" but found "a" (1:38) +3
+## a parameter of a signature has an initializer
+   233 sources; round 1 accepted 176, rejected 39, not run 18; other codes of tsc: TS2304x195, TS2371x233, TS2564x13, TS7006x26
+   "type X = { a(b = 1): A };"  =>  Expected ")" but found "=" (1:16) +1
+   "let x: { a(b = 1): A };"  =>  Expected ")" but found "=" (1:14) +1
+   "interface I { (a = 1): A }"  =>  Expected ")" but found "=" (1:18) +1
+   "let g: (a = 1) => void;"  =>  Expected ")" but found "=" (1:11) +2
+   "let x: ({ a = 1 }) => void;"  =>  Unexpected = (1:13)
+   "let x: A<(a = 1) => void>;"  =>  Expected ")" but found "=" (1:13) +2
+## a reserved word is the name of a type reference
+   214 sources; round 1 accepted 185, rejected 26, not run 3; other codes of tsc: TS2304x208, TS2503x15, TS2564x3, TS2660x1, TS7006x21
+   "let x: if;"  =>  Unexpected if (1:8)
+   "let x: class;"  =>  Unexpected class (1:8)
+   "let x: function;"  =>  Unexpected function (1:8)
+   "let x: in;"  =>  Unexpected in (1:8)
+   "let x: extends;"  =>  Unexpected extends (1:8) +2
+   "let x: super;"  =>  Unexpected super (1:8)
+## a reserved word is the label of a rest element of a tuple
+   205 sources; round 1 accepted 201, rejected 0, not run 4; other codes of tsc: TS2304x169, TS2564x14, TS7006x16
+   "type X = [...const: A[]];"  =>  Unexpected "const" (1:14)
+   "type X = [...in: A[]];"  =>  Unexpected in (1:14)
+   "type X = [...class: A[]];"  =>  Unexpected class (1:14)
+   "type X = [...if: A[]];"  =>  Unexpected if (1:14)
+   "type X = [...class: A];"  =>  Unexpected class (1:14)
+   "type X = [...if: A];"  =>  Unexpected if (1:14)
+## a modifier stands before a parameter that is no parameter property
+   173 sources; round 1 accepted 108, rejected 26, not run 39; other codes of tsc: TS2304x142, TS2369x173, TS2564x8, TS7006x87
+   "type X = { a(public b: B): A };"  =>  Expected ")" but found "b" (1:21) +1
+   "let x: (public a: A) => void;"  =>  Expected ")" but found "a" (1:16) +3
+   "function f(public a: A) {}"  =>  Expected ")" but found "a" (1:19) +1
+   "class C { m(public a: A) {} }"  =>  Expected ")" but found "a" (1:20) +2
+   "type X = (public a: A) => R;"  =>  Expected ")" but found "a" (1:18) +3
+   "type X = { m(public a: A): R };"  =>  Expected ")" but found "a" (1:21) +1
+## valid TypeScript that no entry above names [tsc also: nothing]
+   123 sources; round 1 accepted 25, rejected 77, not run 21; other codes of tsc: TS2304x96, TS2307x72, TS2339x1, TS2564x3, TS7006x13
+   "type X = [function];"  =>  Expected ":" but found "]" (1:19) +1
+   "type X = [...function];"  =>  Expected ":" but found "]" (1:22) +1
+   "f<[function]>(x);"  =>  Expected "(" but found "]" (1:12) +4
+   "let f = (a): [function] => a;"  =>  Expected ";" but found ":" (1:12) +5
+   "let v = x as [function];"  =>  Expected ":" but found "]" (1:23) +1
+   "type X = { [+1]: A };"  =>  Unexpected + (1:13) +1
+## ruling: tsc reports a rule of syntax outside its grammar checks TS1141
+   92 sources; round 1 accepted 0, rejected 92, not run 0; other codes of tsc: TS1141x92, TS2304x66, TS2503x15, TS2749x1, TS7006x12
+   "import A = require(a);"  =>  Expected string but found "a" (1:20)
+   "type X = import(`x`);"  =>  Expected string but found "`x`" (1:17)
+   "let x: import(`x`);"  =>  Expected string but found "`x`" (1:15)
+   "class C { @d x: import(`x`); }"  =>  Expected string but found "`x`" (1:24)
+   "class C { @d m(a: import(`x`)) {} }"  =>  Expected string but found "`x`" (1:26)
+   "@d class C { constructor(a: import(`x`)) {} }"  =>  Expected string but found "`x`" (1:36)
+## a binding pattern of a signature is read as a binding pattern
+   82 sources; round 1 accepted 58, rejected 12, not run 12; other codes of tsc: TS2304x79, TS2564x4, TS2842x41, TS7006x8, TS7031x9
+   "let x: ([a, , b]) => void;"  =>  Unexpected , (1:13) +2
+   "type X = ([a, , b]) => void;"  =>  Unexpected , (1:15) +2
+   "let x: new ([a, , b]) => A;"  =>  Unexpected , (1:17) +1
+   "type X = { ([a, , b]): void };"  =>  Unexpected , (1:17)
+   "type X = { new ([a, , b]): A };"  =>  Unexpected , (1:21)
+   "type X = A<([a, , b]) => void>;"  =>  Unexpected , (1:17) +2
+## an import type takes type arguments and an expression in an attribute; .< stands before type arguments
+   68 sources; round 1 accepted 43, rejected 25, not run 0; other codes of tsc: TS2304x41, TS2307x52, TS2502x4, TS2635x1, TS7006x8
+   "let x: typeof import(\"x\")<C>;"  =>  Expected ";" but found "<" (1:26) +1
+   "type X = typeof import(\"x\")<C>;"  =>  Expected ";" but found "<" (1:28) +1
+   "let x: import(\"x\")<T>;"  =>  Expected ";" but found "<" (1:19) +1
+   "type X = import(\"x\")<T>;"  =>  Expected ";" but found "<" (1:21) +1
+   "let x: import(\"x\", { with: { a: \"b\" } })<T>;"  =>  Expected ";" but found "<" (1:41) +1
+   "let x: import(\"x\", { with: { a: \"b\" + \"c\" } });"  =>  Unexpected + (1:37)
+## out or in names a type or a type parameter
+   63 sources; round 1 accepted 63, rejected 0, not run 0; other codes of tsc: TS2304x48, TS2318x1, TS2503x1, TS2564x2, TS2693x1, TS7006x12
+   "function f<out>() {}"  =>  The modifier "out" is not valid here (1:12)
+   "const f = function <out>() {};"  =>  The modifier "out" is not valid here (1:21)
+   "function f<out = A>() {}"  =>  The modifier "out" is not valid here (1:12)
+   "const f = function <out = A>() {};"  =>  The modifier "out" is not valid here (1:21)
+   "function f<const out>() {}"  =>  The modifier "out" is not valid here (1:18)
+   "const f = function <const out>() {};"  =>  The modifier "out" is not valid here (1:27)
+## asserts is T is the assertion about a parameter named is
+   53 sources; round 1 accepted 52, rejected 1, not run 0; other codes of tsc: TS1225x53, TS2304x53, TS2564x2, TS7006x15
+   "class C { @d m(): asserts is A { return x; } }"  =>  Expected ";" but found "A" (1:30) +3
+   "function f(): asserts is A { return x; }"  =>  Expected ";" but found "A" (1:26)
+   "let f = (a): asserts is A => a;"  =>  Expected ";" but found ":" (1:12) +1
+   "let v = a ? (b): asserts is A => c : d;"  =>  Expected ";" but found "is" (1:26) +1
+   "type X = (a: A) => asserts  is B;"  =>  Expected ";" but found "B" (1:32)
+   "let x: (a: A) => asserts  is B;"  =>  Expected ";" but found "B" (1:30)
+## as or satisfies names a type alias, an interface or a namespace
+   37 sources; round 1 accepted 37, rejected 0, not run 0; other codes of tsc: TS1540x2, TS2304x3
+   "type as = 1"  =>  Unexpected = (1:9)
+   "declare type as = 1"  =>  Unexpected = (1:17) +1
+   "type satisfies = 1"  =>  Unexpected = (1:16)
+   "interface as {}"  =>  Expected identifier but found end of file (1:15)
+   "export interface as {}"  =>  Expected identifier but found end of file (1:22)
+   "interface satisfies {}"  =>  Expected identifier but found end of file (1:22)
+## a colon follows parentheses between ? and : of a conditional
+   37 sources; round 1 accepted 37, rejected 0, not run 0; other codes of tsc: TS2304x37, TS2318x4, TS2695x2, TS7006x37, TS7019x1, TS7031x1
+   "x = a ? <T>(b) : c => d;"  =>  Expected ":" but found ";" (1:24) +1
+   "x = a ? y => (b) : c => d;"  =>  Expected ":" but found ";" (1:26) +1
+   "x = a ? (y) => (b) : c => d;"  =>  Expected ":" but found ";" (1:28) +1
+   "x = a ? <T>(y: T) => (b) : c => d;"  =>  Expected ":" but found ";" (1:34) +1
+   "x = a ? y => ({ y }) : z => ({ z });"  =>  Expected ":" but found ";" (1:36) +1
+   "x = a ? <T>(b, c) : d => e;"  =>  Expected ":" but found ";" (1:27) +1
+## a string in brackets names an enum member
+   15 sources; round 1 accepted 15, rejected 0, not run 0; other codes of tsc: 
+   "enum E { [\"x\"] }"  =>  Expected identifier but found "[" (1:10)
+   "enum E { [\"x\"] = 1 }"  =>  Expected identifier but found "[" (1:10)
+   "enum E { ['x'] = 1, B = E.x }"  =>  Expected identifier but found "[" (1:10)
+   "enum E { [`x`] = 1 }"  =>  Expected identifier but found "[" (1:10)
+   "enum E { [\"x\"], [\"y\"] }"  =>  Expected identifier but found "[" (1:10)
+   "enum E { [ \"x\" ] = 1, }"  =>  Expected identifier but found "[" (1:10)
+## a colon follows an operand that ends with a parenthesis
+   13 sources; round 1 accepted 13, rejected 0, not run 0; other codes of tsc: TS2304x13, TS7006x2
+   "x = a ? 1 + async(b) : c;"  =>  Unexpected : (1:22)
+   "x = a ? -<T>(b) : c;"  =>  Unexpected : (1:17)
+   "x = a ? -async(b) : c;"  =>  Unexpected : (1:19)
+   "x = a ? y || async(b) : c;"  =>  Unexpected : (1:23)
+   "x = a ? typeof async() : c => d;"  =>  Unexpected : (1:24)
+   "x = a ? 1 + async<T>(b) : c;"  =>  Unexpected : (1:25)
+## the type of an assertion predicate starts on the next line
+   9 sources; round 1 accepted 9, rejected 0, not run 0; other codes of tsc: TS1225x3, TS2304x9, TS2322x3, TS7006x6
+   "type X = (a) => asserts a\nis B;"  =>  Expected ";" but found "B" (2:4)
+   "const f = (a): (a) => asserts a\nis B => 0;"  =>  Expected ";" but found ":" (1:14) +3
+   "const f = (a): asserts a\nis B => 0;"  =>  Expected ";" but found ":" (1:14) +3
+   "const f = (a): asserts this\nis B => 0;"  =>  Expected ";" but found ":" (1:14) +3
+   "function f(): asserts this\nis B { throw 0 }"  =>  Expected ";" but found "B" (2:4)
+   "class C { @d m(): asserts a\nis A { return x; } }"  =>  Expected ";" but found "A" (2:4) +3
+## a comma ends an index signature of a class
+   9 sources; round 1 accepted 4, rejected 0, not run 5; other codes of tsc: TS2304x9
+   "class C { [k: string]: T, }"  =>  Expected ";" but found "," (1:25)
+   "abstract class C extends B { [k: string]: T, }"  =>  Expected ";" but found "," (1:44)
+   "const c = class { [k: string]: T, };"  =>  Expected ";" but found "," (1:33)
+   "declare class C { [k: string]: T, }"  =>  Expected ";" but found "," (1:33)
+   "class C { [k: string]: A, }"  =>  Expected ";" but found "," (1:25)
+   "class C { [k: string]: A, [l: number]: B }"  =>  Expected ";" but found "," (1:25)
+## import starts an expression in a namespace
+   7 sources; round 1 accepted 7, rejected 0, not run 0; other codes of tsc: TS2304x1, TS2307x5, TS2318x7, TS2339x1, TS2711x5
+   "namespace N { import(\"x\"); }"  =>  Expected identifier but found "(" (1:21)
+   "namespace N { import.meta; }"  =>  Expected identifier but found "." (1:21)
+   "namespace N { import(\"x\").then(f); }"  =>  Expected identifier but found "(" (1:21)
+   "namespace N { import\n(\"x\"); }"  =>  Expected identifier but found "(" (2:1)
+   "namespace N { import.meta.url; }"  =>  Expected identifier but found "." (1:21)
+   "namespace N.M { import(\"x\"); }"  =>  Expected identifier but found "(" (1:23)
+## a comparison follows the type after as and satisfies
+   5 sources; round 1 accepted 5, rejected 0, not run 0; other codes of tsc: TS2304x5
+   "const v = x as T <= y;"  =>  Unexpected = (1:19)
+   "x as T <= y;"  =>  Unexpected = (1:9)
+   "const v = x satisfies T <= y;"  =>  Unexpected = (1:26)
+   "f(x as T <= y);"  =>  Unexpected = (1:11) +2
+   "const v = [x as T <= y];"  =>  Unexpected = (1:20) +2
+## a comma follows the rest parameter of a signature of a declared class
+   4 sources; round 1 accepted 4, rejected 0, not run 0; other codes of tsc: TS2304x2, TS7019x2
+   "declare class C { m(...a,): void; }"  =>  Expected ")" but found "," (1:25)
+   "declare class C { constructor(...a,); }"  =>  Expected ")" but found "," (1:35)
+   "declare class C { m(...a: A[],): void; }"  =>  Expected ")" but found "," (1:30)
+   "declare class C { constructor(...a: A[],); }"  =>  Expected ")" but found "," (1:40)
+## abstract stands before declare
+   4 sources; round 1 accepted 4, rejected 0, not run 0; other codes of tsc: TS2304x1
+   "abstract declare class C {}"  =>  Expected ";" but found "declare" (1:10)
+   "export abstract declare class C {}"  =>  Expected ";" but found "declare" (1:17)
+   "abstract declare class C { m(): void }"  =>  Expected ";" but found "declare" (1:10)
+   "@d abstract declare class C {}"  =>  Expected "class" but found "declare" (1:13) +2
+## the attributes of an import start on the next line
+   3 sources; round 1 accepted 3, rejected 0, not run 0; other codes of tsc: TS2307x2, TS2318x3, TS2882x1
+   "import A from \"x\"\nwith { type: \"json\" };"  =>  Expected "(" but found "{" (2:6) +2
+   "import \"x\"\nwith { type: \"json\" };"  =>  Expected "(" but found "{" (2:6) +2
+   "import A from \"x\"\nwith { type: \"json\" }; A;"  =>  Expected "(" but found "{" (2:6) +2
+## ruling: tsc reports a rule of syntax outside its grammar checks TS1194
+   3 sources; round 1 accepted 0, rejected 3, not run 0; other codes of tsc: TS1194x3, TS2303x1
+   "namespace N { export {} }"  =>  Unexpected { (1:22)
+   "namespace N { export { a } }"  =>  Unexpected { (1:22)
+   "namespace N { export * from 'a' }"  =>  Unexpected * (1:22)
+## ruling: tsc reports a rule of syntax outside its grammar checks TS1102
+   2 sources; round 1 accepted 0, rejected 0, not run 2; other codes of tsc: TS1102x2, TS2499x1, TS2500x1
+   "class C implements [delete A] {}"  =>  Unexpected delete (1:21) +1
+   "interface I extends [delete A] {}"  =>  Unexpected delete (1:22) +1
+## ruling: tsc reports a rule of syntax outside its grammar checks TS2452
+   2 sources; round 1 accepted 0, rejected 2, not run 0; other codes of tsc: TS2452x2
+   "enum E { 1 = 1 }"  =>  Expected identifier but found "1" (1:10)
+   "enum E { 1n = 1 }"  =>  Expected identifier but found "1n" (1:10)
+## valid TypeScript that no entry above names [tsc also: TS2670]
+   2 sources; round 1 accepted 0, rejected 2, not run 0; other codes of tsc: TS2670x2
+   "global {}"  =>  Expected ";" but found "{" (1:8) +1
+   "global { interface Window {} }"  =>  Expected ";" but found "{" (1:8) +1
+## valid TypeScript that no entry above names [tsc also: TS2567]
+   2 sources; round 1 accepted 0, rejected 2, not run 0; other codes of tsc: TS2567x2
+   "enum E {} class E {}"  =>  "E" has already been declared (1:17)
+   "enum E {} let E;"  =>  "E" has already been declared (1:15)
+## valid TypeScript that no entry above names [tsc also: TS7032]
+   1 sources; round 1 accepted 0, rejected 0, not run 1; other codes of tsc: TS7006x1, TS7032x1
+   "type X = { set #a(v) };"  =>  Unexpected #a (1:16)
+## valid TypeScript that no entry above names [tsc also: TS2660]
+   1 sources; round 1 accepted 0, rejected 1, not run 0; other codes of tsc: TS2660x1
+   "super.a!;"  =>  Unexpected "super" (1:1)
+## ruling: tsc reports a rule of syntax outside its grammar checks TS2730
+   1 sources; round 1 accepted 0, rejected 1, not run 0; other codes of tsc: TS2304x1, TS2730x1
+   "(this: A) => a;"  =>  Invalid binding pattern (1:2)
+## ruling: tsc reports a rule of syntax outside its grammar checks TS1213
+   1 sources; round 1 accepted 0, rejected 1, not run 0; other codes of tsc: TS1213x1
+   "let x = class implements {};"  =>  Expected "{" but found ";" (1:28) +1
+## ruling: tsc reports a rule of syntax outside its grammar checks TS1164
+   1 sources; round 1 accepted 0, rejected 1, not run 0; other codes of tsc: TS1164x1
+   "enum E { [a] = 1 }"  =>  Expected identifier but found "[" (1:10)
+## ruling: tsc reports a rule of syntax outside its grammar checks TS18024
+   1 sources; round 1 accepted 0, rejected 1, not run 0; other codes of tsc: TS18024x1
+   "enum E { #a = 1 }"  =>  Expected identifier but found "#a" (1:10)
+## ruling: tsc reports a rule of syntax outside its grammar checks TS1147
+   1 sources; round 1 accepted 0, rejected 1, not run 0; other codes of tsc: TS1147x1
+   "namespace N { import a from 'a' }"  =>  Expected "=" but found "from" (1:24) +1
+## valid TypeScript that no entry above names [tsc also: TS2300]
+   1 sources; round 1 accepted 0, rejected 1, not run 0; other codes of tsc: TS2300x1
+   "namespace N { export const a = 1 } let N;"  =>  "N" has already been declared (1:40)

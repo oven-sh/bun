@@ -1,0 +1,103 @@
+# Decorator metadata of main f4d755a9cf (loader ts, experimentalDecorators, emitDecoratorMetadata) that differs from tsc 6.0.2 with strictNullChecks off,
+# over the same corpora. Tags as probes/metadata.mjs makes them: Ref(a.b) is a guarded reference.
+## metadata: the branches of a conditional type merge as the operands of | do | valid for tsc as a whole: True | round 1 gave the value of tsc: True | 130 values in 130 sources
+   "class C { @d p: X extends Y ? number : never; }"  design:type: main undefined | tsc Number
+   "class C { @d p: X extends Y ? K : K; }"  design:type: main Ref(K) | tsc Object
+   "class C { @d p: (X extends Y ? string : unknown); }"  design:type: main String | tsc Object
+   "class C { @d p: X extends infer U extends V ? string : never; }"  design:type: main undefined | tsc String
+   "class C { @d p: X extends Y ? never : A.B; }"  design:type: main undefined | tsc Object
+   "class C { @d p: X extends Y ? A<B> : null; }"  design:type: main Ref(A) | tsc Object
+## metadata: other type, the value of tsc | valid for tsc as a whole: True | round 1 gave the value of tsc: False | 125 values in 122 sources
+   "class C { @d a: N.T } namespace N { export type T = 1 }"  design:type: main Ref(N.T) | tsc Number
+   "class C { @d a: I } interface I {}"  design:type: main Ref(I) | tsc Object
+   "class C { @d a: T } type T = string;"  design:type: main Ref(T) | tsc String
+   "class C { @d a: T } type T = D; class D {}"  design:type: main Ref(T) | tsc Object
+   "class C { @d a: T<D> } type T<U> = U; class D {}"  design:type: main Ref(T) | tsc Object
+   "class C { @d a: E } enum E { A }"  design:type: main Ref(E) | tsc Number
+## metadata: other type, the value of tsc | valid for tsc as a whole: False | round 1 gave the value of tsc: False | 71 values in 71 sources
+   "class C { m(@d().e a) {} }"  design:returntype: main Object | tsc undefined
+   "class C { m(@d()() a) {} }"  design:returntype: main Object | tsc undefined
+   "class C { m(@d`t` a) {} }"  design:returntype: main Object | tsc undefined
+   "class C { m(@d.e`t` a) {} }"  design:returntype: main Object | tsc undefined
+   "class C { m(@d<A>`t` a) {} }"  design:returntype: main Object | tsc undefined
+   "class C { m(@(d.e)() a) {} }"  design:returntype: main Object | tsc undefined
+## metadata: a type predicate is Boolean, an assertion predicate is undefined | valid for tsc as a whole: True | round 1 gave the value of tsc: True | 64 values in 64 sources
+   "class C { @d p: this is B; }"  design:type: main Object | tsc Boolean
+   "class C { @d m(): a is B { throw 0 } }"  design:returntype: main Ref(a) | tsc Boolean
+   "class C { @d m(): a is B | C { throw 0 } }"  design:returntype: main Ref(a) | tsc Boolean
+   "class C { @d m(): string is B { throw 0 } }"  design:returntype: main String | tsc Boolean
+   "class C { @d m(): asserts a { throw 0 } }"  design:returntype: main Object | tsc undefined
+   "class C { @d m(): asserts a is B { throw 0 } }"  design:returntype: main Object | tsc undefined
+## metadata: keyof, readonly and unique end before extends | valid for tsc as a whole: True | round 1 gave the value of tsc: True | 16 values in 16 sources
+   "class C { @d p: keyof A extends B ? string : never; }"  design:type: main Object | tsc String
+   "class C { @d p: readonly A[] extends B ? string : number; }"  design:type: main Array | tsc Object
+   "class C { @d m(a: keyof A extends B ? () => void : () => void) {} }"  design:paramtypes: main [Object] | tsc [Function]
+   "class C { @d m(): readonly A[] extends B ? unknown : string { throw 0 } }"  design:returntype: main Array | tsc Object
+   "class C { @d p: keyof A extends B ? () => void : () => void; }"  design:type: main Object | tsc Function
+   "class C { @d p: readonly A[] extends B ? unknown : string; }"  design:type: main Array | tsc Object
+## metadata: an import type and unique symbol are Object | valid for tsc as a whole: True | round 1 gave the value of tsc: True | 12 values in 12 sources
+   "class C { @d p: import(\"x\") | A; }"  design:type: main Ref(A) | tsc Object
+   "class C { @d p: import(\"x\")[\"y\"]; }"  design:type: main Array | tsc Object
+   "class C { @d p: A | import(\"x\"); }"  design:type: main Ref(A) | tsc Object
+   "class C { @d a: import('a').B | null }"  design:type: main undefined | tsc Object
+   "class C { @d x: import('x')['a']; }"  design:type: main Array | tsc Object
+   "class C { @d m(a: import('x')['a']) {} }"  design:paramtypes: main [Array] | tsc [Object]
+## metadata: | and & operands are the check type of a conditional type | valid for tsc as a whole: True | round 1 gave the value of tsc: True | 10 values in 10 sources
+   "class C { @d p: number | A extends B ? string : never; }"  design:type: main Number | tsc String
+   "class C { @d p: K & A extends B ? string : never; }"  design:type: main undefined | tsc String
+   "class C { @d p: K | A extends B ? string[] : number[]; }"  design:type: main Object | tsc Array
+   "class C { @d p: string | A extends B ? () => void : () => void; }"  design:type: main Object | tsc Function
+   "class C { @d p: K | A extends B ? null : K; }"  design:type: main Ref(K) | tsc Object
+   "class C { @d m(a: number | A extends B ? string : string) {} }"  design:paramtypes: main [Object] | tsc [String]
+## metadata: unique takes the whole type after it | valid for tsc as a whole: False | round 1 gave the value of tsc: True | 10 values in 10 sources
+   "class C { @d p: unique symbol[]; }"  design:type: main Array | tsc Object
+   "class C { @d p: unique [A]; }"  design:type: main Array | tsc Object
+   "class C { @d x: unique symbol[]; }"  design:type: main Array | tsc Object
+   "class C { @d m(a: unique symbol[]) {} }"  design:paramtypes: main [Array] | tsc [Object]
+   "@d class C { constructor(a: unique symbol[]) {} }"  design:paramtypes: main [Array] | tsc [Object]
+   "class C { @d m(): unique symbol[] { return x; } }"  design:returntype: main Array | tsc Object
+## metadata: the type after the colon of a conditional type takes | and & | valid for tsc as a whole: True | round 1 gave the value of tsc: True | 8 values in 8 sources
+   "class C { @d p: A extends B ? string : never | number; }"  design:type: main Number | tsc Object
+   "class C { @d p: A extends B ? unknown : string & string; }"  design:type: main String | tsc Object
+   "class C { @d p: X extends Y ? A : (A | null); }"  design:type: main Ref(A) | tsc Object
+   "class C { @d p: A extends B ? never : string | number; }"  design:type: main undefined | tsc Object
+   "class C { @d p: A extends B ? string : unknown | null; }"  design:type: main String | tsc Object
+   "class C { @d p: A extends B ? string : never & K; }"  design:type: main undefined | tsc Object
+## metadata: an operand of | and & counts as what it serializes to | valid for tsc as a whole: True | round 1 gave the value of tsc: True | 7 values in 7 sources
+   "class C { @d p: string | (never | never); }"  design:type: main String | tsc Object
+   "class C { @d p: (null | undefined) | string; }"  design:type: main String | tsc Object
+   "class C { @d p: A.B | C.D; }"  design:type: main Ref(C.D) | tsc Object
+   "class C { @d m(a: A.B & A.C) {} }"  design:paramtypes: main [Ref(A.C)] | tsc [Object]
+   "class C { @d p: string | never & string; }"  design:type: main String | tsc Object
+   "class C { @d p: string & (unknown & unknown); }"  design:type: main String | tsc Object
+## metadata: an import type and unique symbol are Object | valid for tsc as a whole: False | round 1 gave the value of tsc: True | 7 values in 7 sources
+   "class C { @d p: A | unique symbol; }"  design:type: main Ref(A) | tsc Object
+   "class C { @d p: unique symbol & A; }"  design:type: main Ref(A) | tsc Object
+   "class C { @d a: unique symbol | null }"  design:type: main undefined | tsc Object
+   "class C { @d x: unique symbol | A; }"  design:type: main Ref(A) | tsc Object
+   "class C { @d m(a: unique symbol | A) {} }"  design:paramtypes: main [Ref(A)] | tsc [Object]
+   "@d class C { constructor(a: unique symbol | A) {} }"  design:paramtypes: main [Ref(A)] | tsc [Object]
+## metadata: a keyword before a dot is the first name of a type reference | valid for tsc as a whole: True | round 1 gave the value of tsc: True | 6 values in 6 sources
+   "class C { @d p: any.b; }"  design:type: main Object | tsc Ref(any.b)
+   "class C { @d p: string.b; }"  design:type: main String | tsc Ref(string.b)
+   "class C { @d p: bigint.b<T>; }"  design:type: main BigInt | tsc Ref(bigint.b)
+   "class C { @d p: undefined.b; }"  design:type: main undefined | tsc Object
+   "class C { @d m(a: never.b) {} }"  design:paramtypes: main [undefined] | tsc [Ref(never.b)]
+   "class C { @d p: never.b; }"  design:type: main undefined | tsc Ref(never.b)
+## metadata: an operand of | and & counts as what it serializes to | valid for tsc as a whole: True | round 1 gave the value of tsc: False | 6 values in 6 sources
+   "class C { @d a: E | null } enum E { A }"  design:type: main Ref(E) | tsc Number
+   "class C<T> { @d a: T | null }"  design:type: main Ref(T) | tsc Object
+   "class C { @d x: asserts | A; }"  design:type: main Ref(A) | tsc Object
+   "class C { @d m(a: asserts | A) {} }"  design:paramtypes: main [Ref(A)] | tsc [Object]
+   "@d class C { constructor(a: asserts | A) {} }"  design:paramtypes: main [Ref(A)] | tsc [Object]
+   "class C { @d m(): asserts | A { return x; } }"  design:returntype: main Ref(A) | tsc Object
+## metadata: an import type and unique symbol are Object | valid for tsc as a whole: False | round 1 gave the value of tsc: False | 5 values in 5 sources
+   "class C { m(@import('m') a) {} }"  design:returntype: main Object | tsc undefined
+   "class C { @d x: readonly unique symbol; }"  design:type: main Array | tsc Object
+   "class C { @d m(a: readonly unique symbol) {} }"  design:paramtypes: main [Array] | tsc [Object]
+   "@d class C { constructor(a: readonly unique symbol) {} }"  design:paramtypes: main [Array] | tsc [Object]
+   "class C { @d m(): readonly unique symbol { return x; } }"  design:returntype: main Array | tsc Object
+## metadata: keyof, readonly and unique end before extends | valid for tsc as a whole: False | round 1 gave the value of tsc: True | 1 values in 1 sources
+   "class C { @d p: unique symbol extends B ? string : never; }"  design:type: main undefined | tsc String
+## metadata: a type predicate is Boolean, an assertion predicate is undefined | valid for tsc as a whole: True | round 1 gave the value of tsc: False | 1 values in 1 sources
+   "class C { @d x: asserts\na; }"  design:type: main Object | tsc Ref(asserts)

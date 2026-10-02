@@ -1,0 +1,2 @@
+366 rows; differences: {'source': 0, 'main': 0, 'valid': 0, 'class': 0}
+{ total: 262, same: 250, differ: 0, missing: 12, extra: 48 }

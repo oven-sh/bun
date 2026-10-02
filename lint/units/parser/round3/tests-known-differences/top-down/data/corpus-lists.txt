@@ -1,0 +1,75 @@
+## valid TypeScript that main rejects: records by corpus, api
+216	216 sources	testrows	t.ts.plain
+180	180 sources	testrows	t.tsx.plain
+222	222 sources	testrows	t.ts.exp
+222	222 sources	testrows	t.ts.deco
+153	153 sources	valid-plain	t.ts.plain
+153	153 sources	valid-plain	t.tsx.plain
+153	153 sources	valid-plain	t.ts.exp
+153	153 sources	valid-plain	t.ts.deco
+44	44 sources	targeted	t.ts.plain
+42	42 sources	targeted	t.tsx.plain
+54	54 sources	targeted	t.ts.exp
+54	54 sources	targeted	t.ts.deco
+7	7 sources	targeted09	t.ts.exp
+7	7 sources	targeted09	t.ts.deco
+1663	1663 sources	small-sub	t.ts.plain
+1567	1567 sources	small-sub	t.tsx.plain
+1663	1663 sources	small-sub	t.ts.exp
+1663	1663 sources	small-sub	t.ts.deco
+
+## t.ts.plain by family (distinct sources over all corpora; head A/R)
+292	head A 201 R 47	an interface extends, or a class implements, an expression	e.g. "interface I extends a() {}" -> "Expected \"{\" but found \"(\""
+283	head A 0 R 283	ruling: tsc reports a rule of syntax outside its grammar checks TS1228	e.g. "class C { @d a: asserts b }" -> "Expected \";\" but found \"b\""
+233	head A 176 R 39	a parameter of a signature has an initializer	e.g. "type X = { a(b = 1): A };" -> "Expected \")\" but found \"=\""
+214	head A 185 R 26	a reserved word is the name of a type reference	e.g. "let x: if;" -> "Unexpected if"
+205	head A 201 R 0	a reserved word is the label of a rest element of a tuple	e.g. "type X = [...const: A[]];" -> "Unexpected \"const\""
+173	head A 108 R 26	a modifier stands before a parameter that is no parameter property	e.g. "type X = { a(public b: B): A };" -> "Expected \")\" but found \"b\""
+123	head A 25 R 77	valid TypeScript that no entry above names [tsc also: nothing]	e.g. "type X = [function];" -> "Expected \":\" but found \"]\""
+92	head A 0 R 92	ruling: tsc reports a rule of syntax outside its grammar checks TS1141	e.g. "import A = require(a);" -> "Expected string but found \"a\""
+82	head A 58 R 12	a binding pattern of a signature is read as a binding pattern	e.g. "let x: ([a, , b]) => void;" -> "Unexpected ,"
+68	head A 43 R 25	an import type takes type arguments and an expression in an attribute; .< stands before type arguments	e.g. "let x: typeof import(\"x\")<C>;" -> "Expected \";\" but found \"<\""
+63	head A 63 R 0	out or in names a type or a type parameter	e.g. "function f<out>() {}" -> "The modifier \"out\" is not valid here"
+53	head A 52 R 1	asserts is T is the assertion about a parameter named is	e.g. "class C { @d m(): asserts is A { return x; } }" -> "Expected \";\" but found \"A\""
+37	head A 37 R 0	as or satisfies names a type alias, an interface or a namespace	e.g. "type as = 1" -> "Unexpected ="
+37	head A 37 R 0	a colon follows parentheses between ? and : of a conditional	e.g. "x = a ? <T>(b) : c => d;" -> "Expected \":\" but found \";\""
+15	head A 15 R 0	a string in brackets names an enum member	e.g. "enum E { [\"x\"] }" -> "Expected identifier but found \"[\""
+13	head A 13 R 0	a colon follows an operand that ends with a parenthesis	e.g. "x = a ? 1 + async(b) : c;" -> "Unexpected :"
+9	head A 9 R 0	the type of an assertion predicate starts on the next line	e.g. "type X = (a) => asserts a\nis B;" -> "Expected \";\" but found \"B\""
+9	head A 4 R 0	a comma ends an index signature of a class	e.g. "class C { [k: string]: T, }" -> "Expected \";\" but found \",\""
+7	head A 7 R 0	import starts an expression in a namespace	e.g. "namespace N { import(\"x\"); }" -> "Expected identifier but found \"(\""
+5	head A 5 R 0	a comparison follows the type after as and satisfies	e.g. "const v = x as T <= y;" -> "Unexpected ="
+4	head A 4 R 0	abstract stands before declare	e.g. "abstract declare class C {}" -> "Expected \";\" but found \"declare\""
+4	head A 4 R 0	a comma follows the rest parameter of a signature of a declared class	e.g. "declare class C { m(...a,): void; }" -> "Expected \")\" but found \",\""
+2	head A 0 R 0	ruling: tsc reports a rule of syntax outside its grammar checks TS1102	e.g. "class C implements [delete A] {}" -> "Unexpected delete"
+3	head A 3 R 0	the attributes of an import start on the next line	e.g. "import A from \"x\"\nwith { type: \"json\" };" -> "Expected \"(\" but found \"{\""
+3	head A 0 R 3	ruling: tsc reports a rule of syntax outside its grammar checks TS1194	e.g. "namespace N { export {} }" -> "Unexpected {"
+2	head A 0 R 2	ruling: tsc reports a rule of syntax outside its grammar checks TS2452	e.g. "enum E { 1 = 1 }" -> "Expected identifier but found \"1\""
+2	head A 0 R 2	valid TypeScript that no entry above names [tsc also: TS2670]	e.g. "global {}" -> "Expected \";\" but found \"{\""
+2	head A 0 R 2	valid TypeScript that no entry above names [tsc also: TS2567]	e.g. "enum E {} class E {}" -> "\"E\" has already been declared"
+1	head A 0 R 0	valid TypeScript that no entry above names [tsc also: TS7032]	e.g. "type X = { set #a(v) };" -> "Unexpected #a"
+1	head A 0 R 1	valid TypeScript that no entry above names [tsc also: TS2660]	e.g. "super.a!;" -> "Unexpected \"super\""
+1	head A 0 R 1	ruling: tsc reports a rule of syntax outside its grammar checks TS2730	e.g. "(this: A) => a;" -> "Invalid binding pattern"
+1	head A 0 R 1	ruling: tsc reports a rule of syntax outside its grammar checks TS1213	e.g. "let x = class implements {};" -> "Expected \"{\" but found \";\""
+1	head A 0 R 1	ruling: tsc reports a rule of syntax outside its grammar checks TS1164	e.g. "enum E { [a] = 1 }" -> "Expected identifier but found \"[\""
+1	head A 0 R 1	ruling: tsc reports a rule of syntax outside its grammar checks TS18024	e.g. "enum E { #a = 1 }" -> "Expected identifier but found \"#a\""
+1	head A 0 R 1	ruling: tsc reports a rule of syntax outside its grammar checks TS1147	e.g. "namespace N { import a from 'a' }" -> "Expected \"=\" but found \"from\""
+1	head A 0 R 1	valid TypeScript that no entry above names [tsc also: TS2300]	e.g. "namespace N { export const a = 1 } let N;" -> "\"N\" has already been declared"
+
+## metadata differs: by family (distinct sources)
+130	metadata: the branches of a conditional type merge as the operands of | do	valid=true	headSame=true	e.g. "class C { @d p: X extends Y ? number : never; }" design:type: main undefined tsc Number
+122	metadata: other type, the value of tsc	valid=true	headSame=false	e.g. "class C { @d a: N.T } namespace N { export type T = 1 }" design:type: main Ref(N.T) tsc Number
+71	metadata: other type, the value of tsc	valid=false	headSame=false	e.g. "class C { m(@d().e a) {} }" design:returntype: main Object tsc undefined
+64	metadata: a type predicate is Boolean, an assertion predicate is undefined	valid=true	headSame=true	e.g. "class C { @d p: this is B; }" design:type: main Object tsc Boolean
+16	metadata: keyof, readonly and unique end before extends	valid=true	headSame=true	e.g. "class C { @d p: keyof A extends B ? string : never; }" design:type: main Object tsc String
+12	metadata: an import type and unique symbol are Object	valid=true	headSame=true	e.g. "class C { @d p: import(\"x\") | A; }" design:type: main Ref(A) tsc Object
+10	metadata: | and & operands are the check type of a conditional type	valid=true	headSame=true	e.g. "class C { @d p: number | A extends B ? string : never; }" design:type: main Number tsc String
+10	metadata: unique takes the whole type after it	valid=false	headSame=true	e.g. "class C { @d p: unique symbol[]; }" design:type: main Array tsc Object
+8	metadata: the type after the colon of a conditional type takes | and &	valid=true	headSame=true	e.g. "class C { @d p: A extends B ? string : never | number; }" design:type: main Number tsc Object
+7	metadata: an operand of | and & counts as what it serializes to	valid=true	headSame=true	e.g. "class C { @d p: string | (never | never); }" design:type: main String tsc Object
+7	metadata: an import type and unique symbol are Object	valid=false	headSame=true	e.g. "class C { @d p: A | unique symbol; }" design:type: main Ref(A) tsc Object
+6	metadata: a keyword before a dot is the first name of a type reference	valid=true	headSame=true	e.g. "class C { @d p: any.b; }" design:type: main Object tsc Ref(any.b)
+6	metadata: an operand of | and & counts as what it serializes to	valid=true	headSame=false	e.g. "class C { @d a: E | null } enum E { A }" design:type: main Ref(E) tsc Number
+5	metadata: an import type and unique symbol are Object	valid=false	headSame=false	e.g. "class C { m(@import('m') a) {} }" design:returntype: main Object tsc undefined
+1	metadata: keyof, readonly and unique end before extends	valid=false	headSame=true	e.g. "class C { @d p: unique symbol extends B ? string : never; }" design:type: main undefined tsc String
+1	metadata: a type predicate is Boolean, an assertion predicate is undefined	valid=true	headSame=false	e.g. "class C { @d x: asserts\na; }" design:type: main Object tsc Ref(asserts)

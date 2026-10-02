@@ -1,0 +1,42 @@
+tests-known-differences, top-down. Round 3, R4 (research, 2026-10-02, 04:45 to 06:40 UTC). Nothing here is in the worktree, nothing
+was committed by this pass, no build ran and no Rust was compiled. The bottom-up pass of the same unit is ../bottom-up/: it holds
+the generator of the Rust test (gen/rust.mjs, grammar_rows_tests.rs.draft), the paste source of API.md (api-known-differences.txt)
+and the rows for `bun --lint` (lint-command-rows.json). This pass checked its data from the other side and adds what decides
+which rows a lint parse can read after R1 (data/routes.txt).
+Binaries: main = /workspace/base/bun.f4d755a9c; round 1 = /workspace/wt/parser/build/release/bun (23a20afa7e). typescript 6.0.2.
+Scratch was /tmp/r4 (volatile): run.sh makes it again in about three minutes.
+
+run.sh                       every step in order
+tools/testrows.mjs           the 366 rows of test/bundler/transpiler/typescript-grammar*.test.ts (from check/testrows.mjs of round 2)
+tools/rows-run.mjs           <bun> rows-run.mjs testrows.json out.json: output or errors of each row, and the design value as the tests read it
+tools/rows-tsc.mjs           tsc for each row: parse diagnostics in the dialect of the row, grammar errors of the checker, other codes, metadata
+tools/classify.py            class (T, O-stmt, O-member, O-param, O-class, O-expr, M, X) and family of each row
+tools/sites.mjs              where the TypeScript syntax of a row stands in the tree of tsc (variable annotation, type alias, interface, ...)
+tools/deps.py                data/rows.table.tsv and data/deps.txt: what a lint parse needs to read the row (the keys of data/routes.txt)
+tools/lists.mjs              over five corpora: what main rejects and tsc takes, the metadata that differs, by the causes of round 2
+tools/lintbase.py            index of the lint parse of be1ebe5295 over the corpora of round 2 (17 of the 313 row sources are in it, all ok)
+tools/outline-check.mjs      the outline of every type root, made from the source of the row, against ../bottom-up/rows.facts.json
+tools/crosscheck.py          this pass against ../bottom-up/rows.classified.json
+
+data/testrows.json           the 366 rows as tools/testrows.mjs read them from the four test files (file, describe, group, loader, src, expected, key)
+data/rows.table.tsv          one line per row: file, group, loader, class, family, source, main, tsc, other codes, tsc metadata, sites, needs
+data/classes.txt             rows, distinct sources, rejected by main, valid for tsc: by class and family
+data/routes.txt              the keys of the column "needs": the function or the site, with file:line in head and in main, and whether it is free
+data/deps.txt                counts by class and key, and the rows of each key
+data/list.rejected.families.txt   valid TypeScript that main rejects, by cause, over the corpora (2,043 sources; 1,250 that round 1 accepted)
+data/list.metadata.families.txt   metadata of main that differs from tsc, by cause, over the corpora
+data/corpus-lists.txt        what lists.mjs printed
+data/crosscheck.txt          366 rows: 0 differences to the bottom-up pass in source, result of main, validity, class; 250 outlines equal
+
+Results in one place:
+- 366 rows = 104 T + 152 O (75 statements, 60 expressions, 10 class members, 6 parameters, 1 class header) + 99 M + 11 X. 313 distinct
+  (loader, source), 301 distinct sources. main f4d755a9cf rejects 256 rows and accepts 110 with another value (99) or output (11).
+  Round 1 passes 366. The installed release 367d939d9 differs from main in two messages (`Backtrack` for rows 54 and 55).
+- tsc: 346 rows valid (no parse diagnostic, no grammar error of the checker), 10 with a parse diagnostic (298, 299, 301-308),
+  10 with a grammar error of the checker (297 TS2857; nine metadata rows with `unique`: TS1335 or TS1005). Of the 346, tsc reports
+  another rule of syntax for 35: TS2371 (8), TS2369 (4), TS2499 (2), TS2500 (1), TS1540 (2), TS1228 (7), TS1225 (11). Only 64 rows
+  have no diagnostic of tsc at all in a program of one file without a library.
+- main f4d755a9cf and e3566be889 (the base of round 2) give the same 3,144,420 records on corpus.small: every count of round 2 holds
+  for main. All 153 sources of valid.plain.txt are rejected by main and valid for tsc.
+- The eight older test files of parser.md P1.6 are byte-identical to main at 23a20afa7e (git diff f4d755a9cf HEAD is empty for each).
+  No file of the repository names the four typescript-grammar test files.

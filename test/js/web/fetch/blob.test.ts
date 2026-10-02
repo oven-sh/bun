@@ -198,6 +198,41 @@ describe("Blob text()/json() decoding does not depend on what was read before", 
   });
 });
 
+// bytes() rejects a Blob that is larger than one Uint8Array may be. The read
+// that was refused must leave the caller's Blob as it was.
+test("a Blob keeps its bytes after bytes() rejected it for its size", async () => {
+  const script = `
+    const blob = new Blob([new Uint8Array(500_000).fill(65)]);
+    const refused = await blob.bytes().then(
+      () => "resolved",
+      e => e.name + ": " + e.message,
+    );
+    console.log(
+      JSON.stringify({
+        refused,
+        size: blob.size,
+        head: await blob.slice(0, 5).text(),
+        arrayBuffer: (await blob.arrayBuffer()).byteLength,
+      }),
+    );
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: "100000" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    refused: "RangeError: Out of memory",
+    size: 500_000,
+    head: "AAAAA",
+    arrayBuffer: 500_000,
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("new Blob", () => {
   var blob = new Blob(["Bun", "Foo"], { type: "text/foo" });
   expect(blob.size).toBe(6);

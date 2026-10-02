@@ -2754,7 +2754,6 @@ impl BlobExt for Blob {
                 if TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
                     // ArrayBuffer doesn't have this limit.
                     if buf_len > jsc::virtual_machine::synthetic_allocation_limit() {
-                        self.detach();
                         return Err(global.throw_out_of_memory());
                     }
                 }

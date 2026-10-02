@@ -118,6 +118,8 @@ Ref<SourceProvider> SourceProvider::create(
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         auto origin = getSourceOrigin();
         if (resolvedSource.is_in_static_heap) {
+            if (getenv("BUN_AOT_VERBOSE")) [[unlikely]]
+                fprintf(stderr, "[aot] module: %s\n", byteCast<char>(sourceURLString.utf8().data()));
             JSC::SourceProvider* made = nullptr;
             void* place = JSC::StaticHeap::takePlaceForSourceProvider(globalObject->vm(), resolvedSource.bytecode_cache_entry_offset, sizeof(SourceProvider), made);
             if (made && !resolvedSource.module_info)
@@ -590,7 +592,7 @@ extern "C" void Bun__StaticHeap__map(const uint8_t* bytes, size_t length, int fi
     auto codeRange = JSC::aotImageCodeRange({ bytes, length });
     off_t offsetOfCodeImage = *fileOffset - static_cast<off_t>(*sizeOfCodeImage);
     bool ok = codeRange && !(codeRange->first % WTF::pageSize())
-        && Region::map(Region::Arena::Image, Region::Access::Read, fd, offsetOfCodeImage, codeRange->first);
+        && Region::map(Region::Arena::Image, fd, offsetOfCodeImage, codeRange->first);
     s_tablesOfImageAreAtTheirAddress = ok;
     ok = ok && JSC::StaticHeap::map(image, fd, *fileOffset);
     if (isInExecutable)

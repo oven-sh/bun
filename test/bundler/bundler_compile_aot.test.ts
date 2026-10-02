@@ -439,6 +439,10 @@ describe.skipIf(!supported)("Bun.ModuleGraph in an executable that was compiled 
         export function* each() { while (true) yield count(); }
         export async function later() { await 1; return count(); }
         export class Counter { get next() { return count(); } }
+        export class Empty {}
+        export class Derived extends Empty { field = count(); }
+        export function tagInLoop() { let all = ""; for (let i = 0; i < 3; i++) all += tag; return all; }
+        export const tagsViaBuiltin = () => [1, 2].map(() => tag).join("");
         export function disposeAndGoOn(graph: { dispose(): void }) {
           graph.dispose();
           Bun.gc(true);
@@ -522,6 +526,36 @@ describe.skipIf(!supported)("Bun.ModuleGraph in an executable that was compiled 
         return (await graph.import(url)).disposeAndGoOn(graph);
       `),
     ).toEqual(everywhere([1, "2,3,4"]));
+  });
+
+  test.concurrent("classes without a constructor", async () => {
+    expect(
+      await run(`
+        const host = await import(url);
+        const a = await new Bun.ModuleGraph().import(url);
+        const b = await new Bun.ModuleGraph().import(url);
+        return [
+          ...[host, a, b].map(ns => [new ns.Empty() instanceof ns.Empty, new ns.Derived().field, new ns.Derived().field]),
+          [a.Empty === b.Empty, new a.Derived() instanceof host.Empty, new a.Counter().next, new host.Counter().next],
+        ];
+      `),
+    ).toEqual(
+      everywhere([
+        [true, 1, 2],
+        [true, 1, 2],
+        [true, 1, 2],
+        [false, false, 4, 3],
+      ]),
+    );
+  });
+
+  test.concurrent("names that a graph's globals supply", async () => {
+    expect(
+      await run(`
+        const [x, y] = await Promise.all(["x", "y"].map(tag => new Bun.ModuleGraph({ globals: { tag } }).import(url)));
+        return [x.tagInLoop(), y.tagInLoop(), x.tagInLoop(), x.tagsViaBuiltin(), y.tagsViaBuiltin(), typeof tag];
+      `),
+    ).toEqual(everywhere(["xxx", "yyy", "xxx", "xx", "yy", "undefined"]));
   });
 
   test.concurrent("600 graphs at once", async () => {
@@ -947,4 +981,190 @@ test("--compile-aot requires --compile", async () => {
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("--compile-aot requires --compile");
   expect(exitCode).not.toBe(0);
+});
+
+describe.skipIf(!supported)("what an executable was built with is shared by its threads", () => {
+  async function run(files: Record<string, string>, entryPoints: string[], env: Record<string, string> = {}) {
+    using dir = tempDir("compile-aot-threads", files);
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", ...entryPoints, "--outfile", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+    await using proc = Bun.spawn({
+      cmd: [join(String(dir), "out")],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const churn = `
+    let n = 0;
+    const kept: unknown[] = [];
+    class Node { next?: Node; constructor(public value: number) {} }
+    class Empty {}
+    export function churn(rounds: number) {
+      let head: Node | undefined;
+      for (let i = 0; i < rounds; i++) {
+        const node = new Node(i);
+        node.next = i % 50 ? head : undefined;
+        head = node;
+        if (/(\\d)5$/.test(String(i))) kept.push({ i, text: "t" + i, empty: new Empty(), f: () => n + i });
+        if (kept.length > 200) kept.length = 0;
+        n += [i, i + 1].map(x => x & 3).reduce((a, b) => a + b, 0);
+      }
+      return n;
+    }
+    export function spin(turns: Int32Array) { for (;;) turns[0]++; }
+  `;
+
+  test.concurrent("a Worker that is busy in compiled code can be terminated", async () => {
+    expect(
+      await run(
+        {
+          "entry.ts": `
+            import { spin } from "./app.ts";
+            if (Bun.isMainThread) {
+              const turns = new Int32Array(new SharedArrayBuffer(4));
+              const worker = new Worker(import.meta.url);
+              worker.postMessage(turns);
+              while (Atomics.load(turns, 0) < 100000) await new Promise(done => setImmediate(done));
+              const closed = new Promise(done => worker.addEventListener("close", done));
+              worker.terminate();
+              await closed;
+              const afterwards = Atomics.load(turns, 0);
+              await new Promise(done => setImmediate(done));
+              console.log("terminated", afterwards === Atomics.load(turns, 0));
+            } else onmessage = event => spin(event.data);
+          `,
+          "app.ts": churn,
+        },
+        ["entry.ts"],
+      ),
+    ).toEqual({ stdout: "terminated true\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("120 Workers, one after another, each with three graphs", async () => {
+    expect(
+      await run(
+        {
+          "entry.ts": `
+            const url = new URL("./app.js", import.meta.url).href;
+            if (Bun.isMainThread) {
+              const results = new Set();
+              for (let i = 0; i < 120; i++) {
+                const worker = new Worker(import.meta.url);
+                results.add(await new Promise(done => (worker.onmessage = e => done(e.data))));
+                const closed = new Promise(done => worker.addEventListener("close", done));
+                worker.terminate();
+                await closed;
+              }
+              console.log(JSON.stringify([...results]));
+            } else {
+              const graphs = await Promise.all([1, 2, 3].map(() => new Bun.ModuleGraph().import(url)));
+              postMessage(graphs.map(ns => ns.churn(2000)).join());
+            }
+          `,
+          "app.ts": churn,
+        },
+        ["entry.ts", "app.ts"],
+      ),
+    ).toEqual({ stdout: `["6000,6000,6000"]\n`, stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent(
+    "graphs in three Workers, with a collection every 20 allocations that take the slow path",
+    async () => {
+      expect(
+        await run(
+          {
+            "entry.ts": `
+            const url = new URL("./app.js", import.meta.url).href;
+            if (Bun.isMainThread) {
+              const workers = [1, 2, 3].map(() => new Worker(import.meta.url));
+              const results = await Promise.all(workers.map(worker => new Promise(done => (worker.onmessage = e => done(e.data)))));
+              workers.forEach(worker => worker.terminate());
+              console.log(JSON.stringify([...new Set(results)]));
+            } else {
+              let out = [];
+              for (let round = 0; round < 6; round++) {
+                const graphs = await Promise.all([1, 2, 3, 4].map(() => new Bun.ModuleGraph().import(url)));
+                out = graphs.map(ns => ns.churn(30000));
+              }
+              postMessage(out.join());
+            }
+          `,
+            "app.ts": churn,
+          },
+          ["entry.ts", "app.ts"],
+          { BUN_JSC_slowPathAllocsBetweenGCs: "20" },
+        ),
+      ).toEqual({ stdout: `["90000,90000,90000,90000"]\n`, stderr: "", exitCode: 0 });
+    },
+  );
+
+  const inEightWorkers = (work: string) => ({
+    "entry.ts": `
+      import { work } from "./work.ts";
+      if (Bun.isMainThread) {
+        const workers = Array.from({ length: 8 }, () => new Worker(import.meta.url));
+        const results = await Promise.all(workers.map(worker => new Promise(done => (worker.onmessage = e => done(e.data)))));
+        workers.forEach(worker => worker.terminate());
+        console.log(JSON.stringify([...new Set(results)]), work() === results[0]);
+      } else postMessage(work());
+    `,
+    "work.ts": work,
+  });
+
+  test.concurrent("regular expression literals, used first and at once by eight Workers", async () => {
+    expect(
+      await run(
+        inEightWorkers(`
+          const sticky = /a+/y;
+          export function work() {
+            let out = "";
+            for (let i = 0; i < 20000; i++) {
+              const text = "x" + i + "-aab-" + (i % 7) + "Z";
+              out = [
+                /(\\d+)-(a+)b/.exec(text)![2], text.replace(/[0-9]/g, "#").length, /z$/i.test(text), text.split(/-/).length,
+                text.match(/(?<n>\\d)Z/)!.groups!.n, text.search(/aab/), (sticky.lastIndex = 0, sticky.test("aaa"), sticky.lastIndex),
+                [...text.matchAll(/a/g)].length, /^(?:red|green|blue)$/.test(["red", "pink"][i & 1]),
+              ].join();
+            }
+            return out;
+          }
+        `),
+        ["entry.ts"],
+      ),
+    ).toEqual({ stdout: `["aa,13,true,3,0,7,3,2,false"] true\n`, stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("functions, classes, templates and literals, used first and at once by eight Workers", async () => {
+    expect(
+      await run(
+        inEightWorkers(`
+          const tag = (strings: TemplateStringsArray, ...values: unknown[]) => strings.raw.join("|") + values.length;
+          class Base { static made = 0; #secret = 1; get secret() { return this.#secret; } constructor() { Base.made++; } }
+          class Derived extends Base { field = [1, 2, 3]; method(x = 2) { return this.field.map(v => v * x).join("") + super.secret; } }
+          function* each(n: number) { for (let i = 0; i < n; i++) yield { i, big: 12345678901234567890n, text: \`t\${i}\` }; }
+          const site = () => tag\`a\${1}b\`;
+          export function work() {
+            let out = "";
+            for (let i = 0; i < 3000; i++) {
+              const last = [...each(3)].at(-1)!;
+              out = [new Derived().method(), last.text, last.big % 97n, site(), site() === site(), { a: 1, b: [i & 1], c: { d: null } }.b[0]].join();
+            }
+            return out + "," + Base.made;
+          }
+        `),
+        ["entry.ts"],
+      ),
+    ).toEqual({ stdout: `["2461,t2,3,a|b1,true,1,3000"] true\n`, stderr: "", exitCode: 0 });
+  });
 });

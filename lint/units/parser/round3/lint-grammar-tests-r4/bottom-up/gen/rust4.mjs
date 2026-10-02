@@ -72,7 +72,7 @@ for (const r of rows) {
   if (r.main[0] === "e") without = "None";
   else if (r.class === "M") without = `Some(${list(r.facts.kept)})`;
   else without = `Some(${list(keptOfOutput(r.main[1]))})`;
-  const group = `${r.file.replace(".test.ts", "")}: ${r.describe}: ${r.group.replace(/: %s( %j)?$/, "").replace(/: %j passes design:%s$/, "")}`;
+  const group = `${r.file}\0${r.describe}: ${r.group.replace(/: %s( %j)?$/, "").replace(/: %j passes design:%s$/, "")}`;
   const isNotRead = notRead.includes(String(r.i)) || notRead.includes(family) || kept_.has(String(r.i));
   if (kept_.has(String(r.i))) without = `Some(${list(kept_.get(String(r.i)))})`;
   if (isNotRead) notReadKeys.add(r.loader + "\0" + r.src);
@@ -84,7 +84,7 @@ for (const e of entries) if (!seen.has(e.key)) seen.set(e.key, e);
 
 const out = [];
 const emit = line => out.push(line);
-emit(`//! The sources of the tests that the type grammar had for a parse without lint, read by a lint parse: each expectation is what tsc 6.0.2 builds for the source.
+emit(`//! TypeScript that a lint parse reads with its own grammar and at its own sites: each expectation is what tsc 6.0.2 makes of the source.
 
 use bun_alloc::Arena;
 use bun_ast::walk::{self, Visitor};
@@ -410,11 +410,11 @@ emit(`#[rustfmt::skip]`);
 emit(`const KNOWN_DIFFERENCES: &[(Dialect, &[u8], Option<&[&str]>)] = &[`);
 for (const e of notReadRows) emit(`    (Dialect::${e.dialect}, ${bytes(e.text)}, ${e.without}),`);
 emit(`];\n`);
-emit(`/// Every case of the four test files, in their order.`);
+emit(`/// The cases in groups, each group after the line that names it: a source, how it is read, and what tsc makes of it.`);
 emit(`#[rustfmt::skip]`);
 emit(`const ROWS: &[Row] = &[`);
 for (const e of entries) {
-  if (e.group) emit(`    // ${e.group}`);
+  if (e.group) emit(`    // ${e.group.split("\0")[1]}`);
   emit(`    Row { family: ${str(e.family)}, dialect: Dialect::${e.dialect}, text: ${bytes(e.text)}, want: ${e.want} },`);
 }
 emit(`];\n`);
@@ -424,7 +424,7 @@ if (notReadRows.length === 0) {
   // Every source is read: no table, no predicate, no fifth test.
   const drop = (from, to) => { const a = text.indexOf(from); const b = text.indexOf(to, a); if (a < 0 || b < 0) throw new Error("no " + from); text = text.slice(0, a) + text.slice(b); };
   drop("/// Whether `row` is a source that a lint parse does not read as tsc does.", "/// Each text starts with a type of a row");
-  drop("/// The sources that a lint parse does not read as tsc does", "/// Every case of the four test files");
+  drop("/// The sources that a lint parse does not read as tsc does", "/// The cases in groups, each group after the line");
   text = text.replace("    for row in ROWS.iter().filter(|row| !is_known_difference(row)) {", "    for row in ROWS {");
 }
 const outPath = process.env.OUT ?? here + "grammar_rows_tests.rs.out";

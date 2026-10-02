@@ -45,6 +45,9 @@ seam z (variants/z.diff, the proposal): cases 209 and 212 fail (E-IDENT-ARROW: t
 E  z and main's `if !p.lexer.has_newline_before` in parse_path, file made with --as-without-lint=209,212,124,296,297,300,308: the four
    tests of the file pass. The 3 exports are TS1005 at the `{` as in tsc; the 7 cases are the text and the offset of main's first error.
    The same file on the tree that still reads the 7 (HEAD with the fix): those 7 fail, as they must.
+W  HEAD, the fix of the import type, main's `if !p.lexer.has_newline_before` in parse_path, and the file made with
+   --as-without-lint=124,296,297,300,308, no cap on the lints: 74 passed, 0 failed. This is the tree of a first commit that takes the
+   four test files out: 308 sources read as tsc reads them, 5 (an import with `with` on the next line) as main reads them.
 
 Not done: no variant for the statement, member and parameter sites (S-AS, S-ABS, S-ENUM, S-NSIMPORT, P-MOD, P-REST, M-ACC, G1, G2, G3):
 they are R1's to write. What a lint parse does there without a branch is what main does (runs/main.*.json), which is what

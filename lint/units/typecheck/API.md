@@ -3643,3 +3643,88 @@ upstream names with upstream's parameter order: `create_promise_like_type(promis
 `create_generator_type(yield_type, return_type, next_type, is_async_generator)` (20548) of `c34`, and the method
 `get_this_container(node, include_arrow_functions, include_class_computed_property_name)` (12279) of `c18`. The three
 came with their files, with these parameters.
+
+## Checker: the return type of a function body, promise and generator types, inferred type predicates (`checker/c34_return_types.rs`)
+
+Commits `46bd58dfba` (the head comment and the imports) and `d1235f559f` (the functions), both written by the job that
+commits the worktree. The file now holds `checker.go` 20115-20727 whole, in upstream order (layers T-SIGDECL,
+T-RETINFER, T-WIDEN and T-SIGINST): the 13 functions that it had, and the 15 of layer T-RETINFER, which are 20240-20564
+(`getReturnTypeFromBody` to `createGeneratorType`) and 20649-20720 (`getTypePredicateFromBody` to
+`checkIfExpressionRefinesParameter`). No function is a stand-in. PORT_STATUS.md has the row.
+
+NOT compiled: when the 15 were written cargo stopped at unresolved imports of other files, and no other compiler has
+seen them. "Verified" below says what was checked instead.
+
+### How a caller writes the calls
+
+- `get_return_type_from_body(func, check_mode) -> TypeId`: the error type for a function without body.
+- `check_and_aggregate_return_expression_types(func, check_mode) -> (Vec<TypeId>, bool)` and
+  `check_and_aggregate_yield_operand_types(func, check_mode) -> (Vec<TypeId>, Vec<TypeId>)`: the lists are local
+  vectors, empty where upstream's are nil.
+- `function_has_implicit_return(func) -> bool`. `may_return_never(a, func) -> bool` is the free function.
+- `create_promise_type(promised_type)`, `create_promise_like_type(promised_type)` and
+  `create_promise_return_type(func, promised_type)` answer a `TypeId`; `func` is the function or the import call that
+  an error is reported at.
+- `unwrap_return_type(return_type, function_flags: FunctionFlags) -> TypeId`: `TypeId::NIL` is upstream's nil (the
+  awaited type of the return type of an async generator can be nil).
+- `get_widened_literal_like_type_for_contextual_return_type_if_needed(t, contextual_signature_return_type, is_async)`
+  and `get_widened_literal_like_type_for_contextual_iteration_type_if_needed(t, contextual_signature_return_type, kind,
+  is_async_generator)`: a nil `t` comes back as nil, and a nil contextual type is no contextual type.
+- `create_generator_type(yield_type, return_type, next_type, is_async_generator) -> TypeId`.
+- `get_type_predicate_from_body(func) -> TypePredicateId`,
+  `check_if_expression_refines_any_parameter(func, expr) -> TypePredicateId` and
+  `check_if_expression_refines_parameter(func, expr, param, init_type) -> TypeId`: nil for none.
+- Every one is a method with `&mut self` but `may_return_never`.
+
+### Differences from upstream
+
+- Stack test, the first statement of `create_promise_type` (the one entry of the range in
+  `checker-expressions-calls-flow/top-down/data/tested_entries.tsv`): `StackLimit` and the error type.
+- The three flow nodes that `checkIfExpressionRefinesParameter` makes (20705, 20707, 20714) are flow nodes of the open
+  store of the checker (`Ast::new_flow_node`). They stay in the store after the call, where upstream leaves them to the
+  collector. A signature asks for its predicate once, so a parameter is tried once. When the store has no id left,
+  `Ast::new_flow_node` records the fault and answers the nil flow node: as an antecedent the flow functions read it as
+  the zero flow node, and as the start of the walk `get_flow_type_of_reference_ex` takes the flow node of the parameter
+  name instead, as it does for every nil argument.
+- The closures of `ast.ForEachReturnStatement` (20378, 20665) and of `forEachYieldExpression` (20438) are closures that
+  borrow the checker and the locals that upstream's closures write. `core.AppendIfUnique` inside them takes the vector
+  out of its variable and puts the result back.
+- `checkMode & ^CheckModeSkipGenericFunctions` (20254, 20395, 20441) is `check_mode.without(...)`.
+- `c.asyncIterationTypesResolver` and `c.syncIterationTypesResolver` (20549) are the two values of
+  `IterationTypesResolverKind`, whose methods take the checker.
+- The operands of `&&` that need the checker mutably are blocks (20293, 20390), in upstream's order of evaluation. The
+  `switch` statements of 20252, 20320 and 20524 are `if` chains in upstream's order, and those of 20427 and 20650 a
+  `match`.
+- `fn.Symbol().ValueDeclaration` of a function without symbol (20391) reads the zero symbol, where upstream dies. The
+  binder gives every function with a body a symbol.
+- `fn` is `func`. Comments: a comment of several lines is one line.
+
+### Verified
+
+No compiler has seen the 15 functions, and nothing ran one. What was checked, on the tree of `d1235f559f`:
+
+- `rustfmt --check --edition 2024`: exit 0.
+- `python3 round2-layer7-checker/ranges.py c34_return_types`: 28 of the 28 functions of the range have a `fn` of their
+  name in the file.
+- `python3 round2-layer7-checker/c34-callseq.py`: the 28 functions are in upstream's order; each of the 15 calls the
+  same methods of the checker as upstream's body, the same number of times (two of the 13 older functions call a method
+  once more, which upstream passes as a method value to `core.Map` and to `core.Some`); each of the 59 imported names is
+  used; no two comment lines are adjacent; no `unwrap`, `expect`, `panic`, `todo`, `unimplemented`, `unreachable`,
+  `unsafe` or `allow(`; the 9 messages are constants of `diagnostics/diagnostics_generated.rs`.
+- Read at their definitions in the tree, name, receiver, parameter order and types, and result: the methods of the
+  checker that the 15 call (`c02_program_checker.rs`, `c03`, `c12`, `c14`, `c17`, `c20`, `c21`, `c22`, `c28`, `c31`,
+  `c33`, `c36`, `c40`, `c41`, `c42`, `c43`, `c47`, `c48`, `c50`, `c51`, `flow.rs`, `relater.rs`), the free functions of
+  `ast/`, `checker/` (`c42`, `c43`, `c45`, `flow.rs`, `utilities.rs`) and `core/core.rs`, the accessors of `Ast`, and
+  the fields, records and flags of the data model. A script counted the arguments of the 260 calls of the file against
+  the definitions of the tree, and it reports three faults that were put into a copy: no call of the file differs.
+- The 19 calls that 8 other files make into the 15 (`c07` 570, 585 and 640, `c08` 548, `c14` 1477, 1552 and 1556,
+  `c16` 113, 247 and 276, `c31` 1394, `c38` 331, `c48` 515, 618, 683, 686 and 713, `relater.rs` 1404 and 3588) match
+  the signatures by name, number and kind of arguments, and by what they do with the result.
+- Not checked: types, borrows and lints by a compiler (no rustc, no clippy), and any result against upstream's
+  baselines.
+
+### What this file expects and the tree does not have
+
+- Nothing at `d1235f559f`: every name that the file uses has a definition in the tree.
+  `get_yielded_type_of_yield_expression(node, expression_type, sent_type, is_async) -> TypeId` (11108, `c17`) had none
+  when the 15 were written and came beside them in `46bd58dfba`, with the signature that the file calls.

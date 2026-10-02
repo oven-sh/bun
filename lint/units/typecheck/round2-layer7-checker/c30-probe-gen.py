@@ -112,6 +112,18 @@ pub mod hash {
         h ^ (h >> 29)
     }
 }
+
+// The functions of bun_core that clippy.toml names: clippy warns about a path of its table that names nothing.
+pub mod output {
+    pub fn pretty_fmt_rt() {}
+    pub fn pretty_fmt_args() {}
+    pub fn pretty_fmt_runtime() {}
+    pub fn pretty() {}
+    pub fn prettyln() {}
+    pub fn pretty_errorln() {}
+    pub fn warn() {}
+    pub fn debug_warn() {}
+}
 ''')
 
 out = []

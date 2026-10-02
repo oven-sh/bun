@@ -2144,3 +2144,145 @@ of the tree write them:
 - `inference.rs` (no file): `add_intra_expression_inference_site(context: InferenceContextId, node, t)`
   (`inference.go` 1285).
 - `crate::core::Map` as the contract has it (`get` and `set` with its `bool`), for `pattern_for_type`.
+
+## Checker: calls and overload resolution (`checker/c15_calls.rs`)
+
+Commit `609c902233` (written by the job that commits the worktree). The 52 functions of `checker.go` 8407-10131 that
+the file did not have (layer E-CALL), each at its upstream place among the seven that it had (E-DECOR, T-SIGSHAPE),
+and `CallState` of 8920: the 59 functions of the range are in the file, in upstream order. PORT_STATUS.md has the row.
+
+NOT compiled by cargo when it was written: the checker did not compile yet. "Verified" below says what was checked
+instead.
+
+### How a caller writes the calls
+
+- `check_call_expression(node, check_mode)` and `check_tagged_template_expression(node)` answer a `TypeId`.
+- `*[]*Signature` is `Option<&mut Vec<SignatureId>>`: `get_resolved_signature(node, candidates_out_array, check_mode)`,
+  `resolve_signature`, `resolve_call_expression`, `resolve_new_expression`, `resolve_tagged_template_expression` and
+  `resolve_instanceof_expression` (the same three parameters), and
+  `resolve_call(node, signatures, candidates_out_array, check_mode, call_chain_flags, head_message)`. A nil message is
+  `MessageId::NIL`.
+- A `[]*ast.Node`, `[]*Signature`, `[]*ast.Symbol` or `[]*Type` that a function only reads is `List<'_, T>`, so
+  `List::from_slice(&local)` fits: the `signatures` of `resolve_call` and `reorder_candidates`,
+  `has_correct_arity(node, args, signature, signature_help_trailing_comma)`,
+  `has_correct_type_argument_arity(signature, type_arguments)`,
+  `is_signature_applicable(node, args, signature, relation: RelationKind, check_mode, report_errors, diagnostic_output: Option<&mut Vec<DiagnosticId>>)`,
+  `infer_type_arguments(node, signature, args, check_mode, context: InferenceContextId) -> List<'a, TypeId>`,
+  `check_type_arguments(signature, type_argument_nodes, report_errors, head_message) -> List<'a, TypeId>` (the nil
+  list when a constraint fails), `get_longest_candidate_index(candidates, args_count) -> isize`,
+  `get_type_arguments_from_nodes(type_argument_nodes, type_parameters) -> List<'a, TypeId>`,
+  `create_union_of_signatures_for_overload_failure(candidates)`, `create_combined_symbol_from_types(sources, types)`,
+  `create_combined_symbol_for_overload_failure(sources, t)`,
+  `get_argument_arity_error(node, signatures, args, head_message) -> DiagnosticId` and
+  `get_type_argument_arity_error(node, signatures, type_arguments, head_message) -> DiagnosticId`.
+  `infer_signature_instantiation_for_overload_failure(node, type_parameters: List<'a, TypeId>, candidate, args, check_mode)`
+  keeps its type parameters in the inference context.
+- The list that `pickLongestCandidateSignature` writes is `&mut [SignatureId]`:
+  `get_candidate_for_overload_failure(node, candidates, args, has_candidates_out_array, check_mode)` and
+  `pick_longest_candidate_signature(node, candidates, args, check_mode)`. `reorder_candidates` answers a
+  `Vec<SignatureId>`.
+- `CallState<'a>` has upstream's ten fields: `type_arguments` is the `List<'a, NodeId>` of the node, `args` a
+  `Vec<NodeId>`, `candidates` and `candidates_for_argument_error` a `Vec<SignatureId>`, and the two single candidates
+  for an error are ids (nil for none). `choose_overload(&mut CallState, relation) -> SignatureId` answers nil for no
+  candidate; `report_call_resolution_errors(node, &CallState, signatures, head_message)` and
+  `add_implementation_success_elaboration(&CallState, failed, diagnostic)` only read the state.
+- `invocation_error(error_target, apparent_type, kind, related_information: DiagnosticId)`: nil for none.
+  `invocation_error_details(error_target, apparent_type, kind) -> DiagnosticId` and
+  `invocation_error_recovery(apparent_type, kind, diagnostic)` as the callers of the tree had them.
+- `is_untyped_function_call(func_type, apparent_func_type, num_call_signatures: isize, num_construct_signatures: isize)`.
+- `add_deprecated_suggestion_with_signature(location, declaration, deprecated_entity: &[u8], signature_string: &[u8])`.
+- `report_cannot_invoke_possibly_null_or_undefined_error(node, facts)` is what `resolve_call_expression` passes to
+  `check_non_null_type_with_reporter`, as `Self::report_cannot_invoke_possibly_null_or_undefined_error`.
+- Free functions, `pub` at column 0: `some_signature(c, signatures, &mut dyn FnMut(&mut Checker, SignatureId) -> bool)`,
+  `signature_has_literal_types(c, s)`, `accepts_void(c, t)` and `get_error_node_for_call_node(a, node)`. Only this
+  file names them and `CallState`, and `checker/mod.rs` has no glob for the file.
+- These only read and take `&self`: `get_this_argument_of_call`, `get_effective_check_node`,
+  `get_diagnostic_head_message_for_decorator_resolution`, `get_legacy_decorator_argument_count`. Every other method
+  takes `&mut self`.
+
+### Differences from upstream
+
+- `*candidatesOutArray = s.candidates` (8950) shares the list with the caller, and `chooseOverload` (9191) and
+  `pickLongestCandidateSignature` (9627) write into it afterwards. `resolve_call` keeps the candidates in its
+  `CallState` and moves them into the caller's vector at its one exit: the statements after 8950 are a labeled block,
+  and each `return` of upstream is a `break` out of it. Nothing reads the vector of the caller before that exit
+  (`reportErrors` is false when there is one).
+- The stack test of `checker-expressions-calls-flow/top-down/data/tested_entries.tsv` for this range is the first
+  statement of `type_has_protected_accessible_base`: `StackLimit`, and true (false would report TS2674).
+- Panics, asserts and indexes are faults with a fallback, as `fallbacks.tsv` and `fallbacks_additions.tsv` of that
+  research have them: 8558 (`Panic` with the kind as detail, the unknown signature, which `get_resolved_signature`
+  stores as any other result); 9318 (assert for a type argument past the type parameters, the loop stops and the
+  type argument types are returned); 9612 and 9627 (`candidates[-1]`: `Panic`, the unknown signature); 8638
+  (`text[...]`: a checked read, no line break outside the text); 9092 (`slices.Insert` outside the list: `Panic`, the
+  signature is appended); 9896 (`args[maxCount]` outside the arguments: `Panic`, the diagnostic is the one of the
+  guard of 9888, at the error node); 10120 with a nil context: the write of the flag lands in the scratch record of
+  the store, which counts it. `mixinFlags[i]` reads false outside the list. `constructSignatures[0]`,
+  `s.candidates[0]`, `candidates[0]`, `node.Arguments()[0]` and `args[i]` are guarded reads (`at`, `first_or_nil`)
+  that give the nil id without a fault.
+- `localState := *s` (9784) is a new `CallState` written field by field with the candidate and the flag of the
+  implementation; its `candidates_for_argument_error` starts empty, because `chooseOverload` resets the three
+  candidates for an error before it reads them. The arguments are copied.
+- `someSignature`, `signatureHasLiteralTypes` and `acceptsVoid` take the checker, since a signature and a type are
+  ids; the callback of `some_signature` gets the checker, as the callback of `some_type` does.
+- `core.Some`, `core.Every` and `core.Find` with a method of the checker are `iter().any`, `iter().all` and
+  `iter().find` over the list; `core.MapNonNil` and `core.Map` over the candidates are `core::map_non_nil` and
+  `core::map` into a vector; `core.Filter` of 9764 is `core::filter` over the slice, so nothing is allocated in the
+  arena of the checker for a list that is only counted and passed on.
+- `getTypeArgumentsFromNodes`: the result is the nil list only for nil nodes when nothing is appended (`core.Map`
+  gives nil for nil).
+- `s.argCheckMode != 0` (9170) is `!= CheckMode::NONE`. `math.MaxInt` and `math.MinInt` (9800-9803, 9961-9962) are
+  `isize::MAX` and `isize::MIN`; `strconv.Itoa` is the private `itoa`.
+- `s.args` is copied out of what `get_effective_call_arguments` answers (`as_slice().to_vec()`), which fits a `Vec`
+  and a `List`.
+- The switch of `hasCorrectArity` and the switches over `true` of 8589, 9206, 9440, 9462, 9740, 9824, 9838, 9852 and
+  9872 are `if` chains in upstream's order of cases.
+- Comments: the examples that upstream writes on lines of their own are folded into the sentence before them, and
+  the three references to an issue number (8955, 9078, 9384) are not carried over.
+
+### Verified
+
+No compiler has seen the file, and nothing ran a function of it. What was checked:
+
+- `rustfmt --check --edition 2024`: exit 0 (the file parses and is formatted).
+- Scripts over the file: the 59 functions have upstream's names in upstream's order; each of the 106 imported names
+  is used and no free function is called without an import; no two comment lines are adjacent; no `unwrap`,
+  `expect`, `panic`, `unsafe`, and no index into a slice (every `[...]` is the index of a store of the checker); the
+  57 diagnostic messages of the range exist by name in `diagnostics/diagnostics_generated.rs`.
+- The 279 shapes of calls that the file makes were compared by name and number of arguments with the definitions
+  of the tree of `609c902233`: every callee that the tree defines matches. Read at their definitions for the types
+  of parameters and results: the callees in `c03`, `c05`, `c06`, `c14`, `c21`, `c22`, `c23`, `c24`, `c28`, `c29`, `c31`,
+  `c33`, `c34`, `c35`, `c36`, `c37`, `c38`, `c40`, `c41`, `c43`, `c45`, `c47`, `c49`, `c51`, `flow.rs`, `grammarchecks.rs`,
+  `jsx.rs`, `mapper.rs`, `printer.rs`, `relater.rs`, `utilities.rs`, the accessors and predicates of `ast/`,
+  `DiagnosticStore`, `core/core.rs`, `core/text.rs`, `scanner` (`skip_trivia`, `skip_trivia_ex`, `SkipTriviaOptions`,
+  `get_text_of_node`), `stringutil::is_line_break`, and the fields, records, flags, link stores and helpers of the
+  data model (`c01_data.rs`, `c02_program_checker.rs`, `types.rs`, `core/linkstore.rs`). `Map` and `LiveList` are used as
+  the contract has them.
+- The calls that other files of the tree make into these functions (`c05`, `c08`, `c11`, `c14`, `jsx.rs`,
+  `relater.rs`, `flow.rs`, 24 sites by the look-ahead) match the signatures by name and number of arguments, and
+  `jsx.rs` 1071 and 1093 by the types of what they pass.
+- Not checked: types and borrows (no compiler), clippy, and any result against upstream's baselines.
+
+### What this file expects and the tree does not have
+
+At `609c902233`, 18 callees, each called by its upstream name with upstream's parameter order:
+
+- `inference.rs` (no file), as the contract has them: `new_inference_context(type_parameters: List<'a, TypeId>,
+  signature, flags, TypeComparer) -> InferenceContextId` (1251, `TypeComparer::Nil` for nil),
+  `clone_inference_context(n, extra_flags) -> InferenceContextId` (1258),
+  `clone_inferred_part_of_context(n) -> InferenceContextId` (1265), `get_inferred_types(n) -> List<'a, TypeId>` (1406),
+  `get_mapper_from_context(n) -> TypeMapperId` (1414), `create_outer_return_mapper(context) -> TypeMapperId` (1423),
+  `infer_types(inferences: LiveList, source, target, priority, contravariant)` (53) and the free function
+  `has_inference_candidates(c, info)` (1650).
+- `c50` (no file): `is_context_sensitive(node) -> bool` (31020), `get_inference_context(node) -> InferenceContextId`
+  (31088).
+- `c49`: `get_effective_call_arguments(node)` (30165; a `Vec<NodeId>` and a `List<'a, NodeId>` both fit),
+  `get_spread_argument_index(args: List<'_, NodeId>) -> isize` (30231), the free function
+  `is_spread_argument(a, arg) -> bool` (30235) and
+  `create_synthetic_expression(parent, t, is_spread, tuple_name_source) -> NodeId` (30239), a node of the open store,
+  whose range `is_signature_applicable` writes with `Ast::set_loc`.
+- `c48`: `get_contextual_type(node, context_flags) -> TypeId` (29466) and
+  `get_spread_argument_type(args: List<'_, NodeId>, index: isize, arg_count: isize, rest_type, context: InferenceContextId, check_mode) -> TypeId`
+  (29623).
+- `c47`: `get_optional_expression_type(expr_type, expression) -> TypeId` (29187).
+- `c18` (no file): `is_node_within_class(node, class_declaration) -> bool` (12051).
+- `crate::core::Map` as the contract has it (`get` and `set` with its `bool`), for `cached_signatures`.

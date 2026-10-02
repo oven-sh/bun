@@ -3221,17 +3221,6 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessArgv, (JSGlobalObject * globalObject, Encoded
     return true;
 }
 
-extern "C" EncodedJSValue Bun__Process__getExecArgv(JSGlobalObject* lexicalGlobalObject)
-{
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto* process = globalObject->processObject();
-    if (!process) {
-        return JSValue::encode(jsUndefined());
-    }
-
-    return JSValue::encode(process->getExecArgv(globalObject));
-}
-
 JSC_DEFINE_CUSTOM_GETTER(processExecArgv, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
     Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));

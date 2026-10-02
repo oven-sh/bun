@@ -22,10 +22,8 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
-    /// Latched true once `next()` has armed a `ReadDirectoryChangesW` on
-    /// `self.watcher.overlapped`; while set, `stop()` must leak the handles
-    /// (the kernel's cancellation write would land in freed memory).
-    pub(crate) armed: bool,
+    /// The kernel owns `watcher.buf` and `watcher.overlapped` while this is set.
+    read_pending: bool,
 }
 
 impl Default for WindowsWatcher {
@@ -39,7 +37,7 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::ZEROED,
             base_idx: 0,
-            armed: false,
+            read_pending: false,
         }
     }
 }
@@ -299,11 +297,14 @@ impl WindowsWatcher {
 
     /// wait until new events are available
     fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
-        if let Err(err) = self.watcher.prepare() {
-            bun_core::scoped_log!(watcher, "prepare() returned error");
-            return Err(err);
+        // A poll that timed out left its read with the kernel.
+        if !self.read_pending {
+            if let Err(err) = self.watcher.prepare() {
+                bun_core::scoped_log!(watcher, "prepare() returned error");
+                return Err(err);
+            }
+            self.read_pending = true;
         }
-        self.armed = true;
 
         let mut nbytes: w::DWORD = 0;
         let mut key: w::ULONG_PTR = 0;
@@ -325,11 +326,9 @@ impl WindowsWatcher {
                 if err == w::Win32Error::TIMEOUT || err == w::Win32Error(258) {
                     return Ok(None);
                 } else {
-                    // GQCS returning FALSE with `*lpOverlapped != NULL`
-                    // dequeued a failed-I/O completion; nothing remains
-                    // outstanding on our OVERLAPPED in that case.
-                    if overlapped == &mut self.watcher.overlapped as *mut w::OVERLAPPED {
-                        self.armed = false;
+                    // With an OVERLAPPED this dequeued the packet of a failed read.
+                    if overlapped == &raw mut self.watcher.overlapped {
+                        self.read_pending = false;
                     }
                     bun_core::scoped_log!(watcher, "GetQueuedCompletionStatus failed: {}", err.0);
                     return Err(bun_sys::Error::from_win32(err, bun_sys::Tag::watch));
@@ -341,9 +340,7 @@ impl WindowsWatcher {
                 if overlapped != &mut self.watcher.overlapped as *mut w::OVERLAPPED {
                     continue;
                 }
-                // Our completion was dequeued; nothing is pending on
-                // `overlapped` until the next successful `prepare()`.
-                self.armed = false;
+                self.read_pending = false;
                 if nbytes == 0 {
                     // ReadDirectoryChangesW internal change-buffer overflow — too many
                     // events arrived between drain and re-arm. This is NOT a shutdown
@@ -361,7 +358,7 @@ impl WindowsWatcher {
                     if let Err(err) = self.watcher.prepare() {
                         return Err(err);
                     }
-                    self.armed = true;
+                    self.read_pending = true;
                     continue;
                 }
                 return Ok(Some(EventIterator {
@@ -370,37 +367,70 @@ impl WindowsWatcher {
                     has_next: true,
                 }));
             } else {
-                bun_core::scoped_log!(
-                    watcher,
-                    "GetQueuedCompletionStatus returned no overlapped event"
-                );
-                return Err(bun_sys::Error {
-                    errno: bun_sys::SystemErrno::EINVAL as _,
-                    syscall: bun_sys::Tag::watch,
-                    ..Default::default()
-                });
+                // Posted by `wake()`; `watch_loop` re-checks `running`.
+                return Ok(None);
             }
         }
     }
 
     pub(crate) fn stop(&mut self) {
-        if self.armed {
-            // See `armed`. Proper fix: `CancelIoEx` + IOCP drain before
-            // `heap::take`; until then leak the two handles.
-            return;
+        if self.read_pending {
+            self.cancel_read();
         }
-        // SAFETY: handles were opened in init() and are valid until stop() is called once.
-        unsafe {
-            w::CloseHandle(self.watcher.dir_handle);
-            w::CloseHandle(self.iocp);
+        if self.watcher.dir_handle != w::INVALID_HANDLE_VALUE {
+            // SAFETY: opened in init(); cleared below so this runs at most once.
+            let _ = unsafe { w::CloseHandle(self.watcher.dir_handle) };
+            self.watcher.dir_handle = w::INVALID_HANDLE_VALUE;
+        }
+        if self.iocp != w::INVALID_HANDLE_VALUE {
+            // SAFETY: created in init(); cleared below so this runs at most once.
+            let _ = unsafe { w::CloseHandle(self.iocp) };
+            self.iocp = w::INVALID_HANDLE_VALUE;
         }
     }
 
-    /// No-op: `next()` keeps a `ReadDirectoryChangesW` pending on
-    /// `self.watcher.overlapped`, so freeing `self` after waking would race
-    /// the kernel's cancellation write. The thread stays parked in
-    /// `GetQueuedCompletionStatus` until process exit (see `armed`).
-    pub(crate) fn wake(&self) {}
+    /// Takes the buffer back from the kernel: cancels the outstanding read and
+    /// dequeues its packet. A cancelled or completed read always posts one.
+    fn cancel_read(&mut self) {
+        // SAFETY: dir_handle is the open directory handle from init() and
+        // `overlapped` is the OVERLAPPED of the outstanding read.
+        let _ = unsafe {
+            w::kernel32::CancelIoEx(self.watcher.dir_handle, &mut self.watcher.overlapped)
+        };
+        let mut nbytes: w::DWORD = 0;
+        let mut key: w::ULONG_PTR = 0;
+        loop {
+            let mut overlapped: *mut w::OVERLAPPED = ptr::null_mut();
+            // SAFETY: iocp is a valid IOCP handle; out-params are valid stack locals.
+            let rc = unsafe {
+                w::kernel32::GetQueuedCompletionStatus(
+                    self.iocp,
+                    &mut nbytes,
+                    &mut key,
+                    &mut overlapped,
+                    w::INFINITE,
+                )
+            };
+            if overlapped == &raw mut self.watcher.overlapped {
+                self.read_pending = false;
+                return;
+            }
+            if rc == 0 && overlapped.is_null() {
+                // The port itself failed; no packet can arrive.
+                return;
+            }
+        }
+    }
+
+    /// Runs under `Watcher.mutex`, like `stop()` on the hand-back path.
+    pub(crate) fn wake(&self) {
+        if self.iocp == w::INVALID_HANDLE_VALUE {
+            return;
+        }
+        // SAFETY: iocp is a live port; `next()` reads a null OVERLAPPED as the wakeup.
+        let _ =
+            unsafe { w::kernel32::PostQueuedCompletionStatus(self.iocp, 0, 0, ptr::null_mut()) };
+    }
 }
 
 #[repr(u32)]

@@ -7356,6 +7356,38 @@ pub fn kevent(
     }
 }
 
+/// `kevent64()` — slice-wrapped Maybe form of [`kevent`]. Retries on EINTR.
+/// XNU rejects `kevent()` on a kqueue that `kevent64()` has touched (EINVAL),
+/// so a kqueue that carries an `EVFILT_MACHPORT` wakeup uses this everywhere.
+#[cfg(target_os = "macos")]
+pub fn kevent64(
+    fd: Fd,
+    changelist: &[libc::kevent64_s],
+    eventlist: &mut [libc::kevent64_s],
+    timeout: Option<&libc::timespec>,
+) -> Maybe<usize> {
+    loop {
+        // SAFETY: fd is a valid kqueue; slices give exact (ptr,len); timeout
+        // is either null or a valid timespec.
+        let rc = unsafe {
+            libc::kevent64(
+                fd.native(),
+                changelist.as_ptr(),
+                changelist.len() as c_int,
+                eventlist.as_mut_ptr(),
+                eventlist.len() as c_int,
+                0,
+                timeout.map_or(core::ptr::null(), std::ptr::from_ref),
+            )
+        };
+        match get_errno(rc) {
+            E::SUCCESS => return Ok(rc as usize),
+            E::EINTR => continue,
+            e => return Err(Error::from_code(e, Tag::kevent).with_fd(fd)),
+        }
+    }
+}
+
 // ── getFdPath ──
 
 /// Cached probe of `/proc/version` for "freebsd"

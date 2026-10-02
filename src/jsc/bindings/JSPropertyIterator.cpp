@@ -113,6 +113,11 @@ extern "C" size_t Bun__JSPropertyIterator__getLongestPropertyName(JSPropertyIter
     return longest;
 }
 
+extern "C" bool Bun__JSPropertyIterator__isSymbol(JSPropertyIterator* iter, size_t i)
+{
+    return iter->properties->propertyNameVector()[i].isSymbol();
+}
+
 static EncodedJSValue getOwnProxyObject(JSPropertyIterator* iter, JSObject* object, const JSC::Identifier& prop, BunString* propertyName)
 {
     auto& vm = iter->vm;
@@ -168,17 +173,23 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValueNonObservable(
     }
 
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, vm.ptr());
-    auto has = object->getNonIndexPropertySlot(globalObject, prop, slot);
+    // Not getNonIndexPropertySlot: it asserts on an index name, and the names can include one.
+    auto has = object->getPropertySlot(globalObject, prop, slot);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!has) {
-        return {};
-    }
-    if (slot.isAccessor() || slot.isCustom()) {
+    if (!has || slot.isCustom()) {
         return {};
     }
 
-    JSValue result = slot.getPureResult();
-    RETURN_IF_EXCEPTION(scope, {});
+    // An accessor is reported as its GetterSetter cell (printed as [Getter]) and never runs.
+    // getPureResult is null for a slot without a structure offset (an index), so read in place.
+    JSValue result;
+    if (slot.isAccessor()) {
+        result = slot.getterSetter();
+    } else if (slot.isValue()) {
+        result = slot.getValue(globalObject, prop);
+    } else {
+        return {};
+    }
 
     *propertyName = Bun::toString(prop.impl());
     return JSValue::encode(result);

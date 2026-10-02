@@ -18,7 +18,7 @@ pub(crate) fn to_match(
         return Err(global.throw_invalid_arguments(format_args!("toMatch() requires 1 argument")));
     }
 
-    let mut formatter = super::make_formatter(global);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global);
 
     let expected_value = arguments[0];
     if !expected_value.is_string() && !expected_value.is_reg_exp() {
@@ -55,7 +55,7 @@ pub(crate) fn to_match(
     // handle failure
     // Each `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper, so
     // we need a second Formatter for the second value (matches toContain.rs / toBe.rs).
-    let mut formatter2 = super::make_formatter(global);
+    let mut formatter2 = bun_jsc::Formatter::matcher_message(global);
     let expected_fmt = expected_value.to_fmt(&mut formatter);
     let value_fmt = value.to_fmt(&mut formatter2);
 

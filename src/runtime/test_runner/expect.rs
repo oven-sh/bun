@@ -18,7 +18,7 @@ use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
-use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
+use super::expect::JSValueTestExt;
 use crate::expect_throw as throw;
 
 use bun_jsc::js_error_to_write_error;
@@ -502,7 +502,7 @@ impl Expect {
                             Promise::Resolves => {}
                             Promise::Rejects => {
                                 if !silent {
-                                    let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
+                                    let mut formatter = ConsoleObject::Formatter::matcher_message(global_this);
                                     return Err(Self::throw_promise_matcher_error(
                                         global_this, custom_label, matcher_name, matcher_params, flags,
                                         "Expected promise that rejects",
@@ -518,7 +518,7 @@ impl Expect {
                             Promise::Rejects => {}
                             Promise::Resolves => {
                                 if !silent {
-                                    let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
+                                    let mut formatter = ConsoleObject::Formatter::matcher_message(global_this);
                                     return Err(Self::throw_promise_matcher_error(
                                         global_this, custom_label, matcher_name, matcher_params, flags,
                                         "Expected promise that resolves",
@@ -537,7 +537,7 @@ impl Expect {
                     Ok(new_value)
                 } else {
                     if !silent {
-                        let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
+                        let mut formatter = ConsoleObject::Formatter::matcher_message(global_this);
                         return Err(Self::throw_promise_matcher_error(
                             global_this, custom_label, matcher_name, matcher_params, flags,
                             "Expected promise",
@@ -1140,7 +1140,7 @@ impl Expect {
             if !value.jest_deep_match(prop_matchers, global_this, true)? {
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
-                let mut formatter = ConsoleObject::Formatter::new(global_this);
+                let mut formatter = ConsoleObject::Formatter::message(global_this);
                 return throw!(
                     self, global_this, signature,
                     "\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
@@ -1210,7 +1210,7 @@ impl Expect {
                         global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing"))
                     }
                     _ => {
-                        let mut formatter = ConsoleObject::Formatter::new(global_this);
+                        let mut formatter = ConsoleObject::Formatter::message(global_this);
                         global_this.throw(format_args!("Failed to snapshot value: {}", value.to_fmt(&mut formatter)))
                     }
                 });
@@ -1399,7 +1399,7 @@ impl Expect {
         matcher_name: &bun_core::String,
         result: JSValue,
     ) -> JsError {
-        let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
+        let mut formatter = ConsoleObject::Formatter::matcher_message(global_this);
 
         // The template has no `<tag>` markers so the colors branch is a no-op anyway.
         let err = global_this.create_error_instance(format_args!(
@@ -1638,7 +1638,7 @@ impl Expect {
         let expected: JSValue = arguments[0];
 
         if !expected.is_number() {
-            let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
+            let mut fmt = ConsoleObject::Formatter::matcher_message(global_this);
             return Err(global_this.throw(format_args!(
                 "Expected value must be a non-negative integer: {}",
                 expected.to_fmt(&mut fmt),
@@ -1652,7 +1652,7 @@ impl Expect {
             || expected_assertions < 0.0
             || expected_assertions > u32::MAX as f64
         {
-            let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
+            let mut fmt = ConsoleObject::Formatter::matcher_message(global_this);
             return Err(global_this.throw(format_args!(
                 "Expected value must be a non-negative integer: {}",
                 expected.to_fmt(&mut fmt),
@@ -1993,7 +1993,7 @@ impl Expect {
         if pred(value) != not {
             return Ok(JSValue::UNDEFINED);
         }
-        let mut formatter = make_formatter(global);
+        let mut formatter = bun_jsc::Formatter::matcher_message(global);
         let signature = Self::get_signature(matcher_name, "", not);
         throw!(
             this, global, signature,
@@ -2058,8 +2058,8 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let mut f1 = make_formatter(global);
-        let mut f2 = make_formatter(global);
+        let mut f1 = bun_jsc::Formatter::matcher_message(global);
+        let mut f2 = bun_jsc::Formatter::matcher_message(global);
         let signature = Self::get_signature(matcher_name, "<green>expected<r>", not);
         if not {
             throw!(
@@ -2179,8 +2179,8 @@ impl Expect {
         }
 
         let received = outcome.received_override.unwrap_or(value);
-        let mut f1 = make_formatter(global);
-        let mut f2 = make_formatter(global);
+        let mut f1 = bun_jsc::Formatter::matcher_message(global);
+        let mut f2 = bun_jsc::Formatter::matcher_message(global);
         let signature = Self::get_signature(matcher_name, "<green>expected<r>", not);
         if not {
             throw!(
@@ -2743,7 +2743,7 @@ impl ExpectMatcherUtils {
             }
         }
 
-        let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
+        let mut formatter = ConsoleObject::Formatter::matcher_message(global_this);
         formatter.format_value::<false>(value, &mut mutable_string)?;
 
         if color_or_null.is_some() {
@@ -2974,7 +2974,7 @@ pub(crate) mod mock {
                 MockKind::Returns => JSMockFunction__getReturns(global, value)?,
             };
             if !arr.js_type().is_array() {
-                let mut formatter = make_formatter(global);
+                let mut formatter = bun_jsc::Formatter::matcher_message(global);
                 return Err(match kind {
                     MockKind::CallsWithSig => throw!(
                         this, global,
@@ -3005,7 +3005,7 @@ pub(crate) mod mock {
                 }
             }
         }
-        let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
+        let mut formatter = ConsoleObject::Formatter::matcher_message(global_this);
         Err(global_this.throw(format_args!(
             "Expected value must be a mock function with returns: {}",
             value.to_fmt(&mut formatter),

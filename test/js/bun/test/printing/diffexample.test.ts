@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
 function cleanOutput(output: string) {
   return output
@@ -899,4 +899,846 @@ test("large diffs are exact rather than abandoned part-way", () => {
   expect(message.slice(0, 120)).toContain("\n  [\n-   0,\n+   1,\n    1,\n");
   expect(message.slice(-400)).toContain("\n-   49994,\n+   49995,\n    49995,\n");
   expect(message.slice(-120).trimEnd()).toEndWith(`\n\n- Expected  - ${changed}\n+ Received  + ${changed}`);
+});
+
+test("a difference after the first 1 MiB of a value without shared references is reported", () => {
+  // 1.1 MB per side in 1,100 lines.
+  const line = Buffer.alloc(1000, "x").toString();
+  const text = (last: string) => Array.from({ length: 1_100 }, (_, i) => line + i).join("\n") + "\n" + last;
+
+  let message = "";
+  try {
+    expect(text("LAST-A")).toBe(text("LAST-B"));
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  expect(message.slice(-120)).toContain('\n- LAST-B"\n+ LAST-A"\n\n- Expected  - 1\n+ Received  + 1');
+});
+
+test("a plain Event prints its properties, not [Circular]", () => {
+  let message = "";
+  try {
+    expect(new Event("close")).toEqual(1);
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  expect(message).not.toContain("[Circular]");
+  expect(message).toContain('+ Event {\n+   "isTrusted": false,\n+ }');
+});
+
+// https://github.com/oven-sh/bun/issues/34178
+// The formatter prints [Circular] only for a cycle, so it prints a value that is reachable N ways
+// N times. In this graph each level holds the level below twice: 16 levels reach the leaf 65,536
+// times and print 64 MB, and the 34 levels of the issue allocate until the machine dies.
+describe.concurrent("a value that reaches the same objects many times", () => {
+  const graph = `
+    let o: any = { s: Buffer.alloc(1024, "x").toString() };
+    for (let i = 0; i < 16; i++) o = { a: o, b: o };
+  `;
+
+  async function run(source: string, ...args: string[]) {
+    using dir = tempDir("diff-shared-references", { "graph.test.ts": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args, "graph.test.ts"],
+      env: { ...bunEnv, FORCE_COLOR: "0" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    ["received side", "expect(o).toEqual(1)"],
+    ["expected side", "expect(1).toEqual(o)"],
+    ["asymmetric matcher", "expect({}).toEqual(expect.objectContaining(o))"],
+  ])("diff, %s: repeated values print as [Object] after 1 MiB", async (_name, assertion) => {
+    const { stderr, exitCode } = await run(`
+      import { expect, test } from "bun:test";
+      ${graph}
+      test("graph", () => {
+        ${assertion};
+      });
+    `);
+    expect(stderr.length).toBeLessThan(3 * 1024 * 1024);
+    expect(stderr).toContain("expect(received).toEqual(expected)");
+    expect(stderr).toContain('"b": [Object],');
+    expect(stderr).toContain(
+      "note: [Array], [Object], [Map] and [Set] stand for values that are printed in full earlier",
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("diff: repeated React elements print as [Object] after 1 MiB", async () => {
+    // React elements print through their own arm of the formatter, not the Object one.
+    // 10 levels reach the 8 KB leaf 1,024 times and print 8 MB without the budget.
+    const { stderr, exitCode } = await run(`
+      import { expect, test } from "bun:test";
+      const el = (children: any) => ({
+        $$typeof: Symbol.for("react.element"),
+        type: "div",
+        key: null,
+        ref: null,
+        props: { children },
+      });
+      let o: any = el(Buffer.alloc(8192, "x").toString());
+      for (let i = 0; i < 10; i++) o = el([o, o]);
+      test("tree", () => {
+        expect(o).toEqual(1);
+      });
+    `);
+    expect(stderr.length).toBeLessThan(3 * 1024 * 1024);
+    expect(stderr).toContain("expect(received).toEqual(expected)");
+    // An abbreviated child of an element is a line of its own, with no comma.
+    expect(stderr).toMatch(/^\+\s+\[Object\]$/m);
+    expect(stderr).toContain(
+      "note: [Array], [Object], [Map] and [Set] stand for values that are printed in full earlier",
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("snapshot: a value that prints more than 64 MiB for repeated values is an error", async () => {
+    const { stderr, exitCode } = await run(
+      `
+      import { expect, test } from "bun:test";
+      const shared = { s: Buffer.alloc(1024 * 1024, "x").toString() };
+      test("small", () => {
+        expect(Array.from({ length: 3 }, () => shared)).toMatchSnapshot();
+      });
+      test("large", () => {
+        expect(Array.from({ length: 80 }, () => shared)).toMatchSnapshot();
+      });
+    `,
+      "--update-snapshots",
+    );
+    expect(stderr).toContain("(pass) small");
+    expect(stderr).toContain(
+      "error: Snapshot value is too large to serialize: the objects that it references more than once print more than 64 MiB. Snapshot a smaller part of the value.",
+    );
+    expect(stderr).toContain("(fail) large");
+    expect(exitCode).toBe(1);
+  });
+});
+
+function failure(fails: () => void): string {
+  try {
+    fails();
+  } catch (error) {
+    return Bun.stripANSI((error as Error).message);
+  }
+  throw new Error("did not throw");
+}
+
+test("every call in a list of mock calls gets the whole budget for repeated values", () => {
+  const fn = mock();
+  const argument = Object.fromEntries(
+    Array.from({ length: 400 }, (_, i) => ["k" + i, Buffer.alloc(20, "v").toString()]),
+  );
+  for (let i = 0; i < 100; i++) fn(argument);
+  const message = failure(() => expect(fn).toHaveBeenCalledWith("other"));
+  expect(message).not.toContain("[Object ...]");
+  expect(message.match(/k399:/g)).toHaveLength(100);
+});
+
+// What a hook returns dies once it is printed, and after a collection a new object can have its
+// address. It has not been printed before. Too many hook calls for a debug build.
+test.skipIf(isDebug)("an object at the address of a collected one is not a repeated value", () => {
+  class Row {
+    pad = Buffer.alloc(60, "x").toString();
+    [Symbol.for("nodejs.util.inspect.custom")]() {
+      return { ...this, tags: [1, 2, 3].map(x => ({ x })) };
+    }
+  }
+  const rows = Object.fromEntries(Array.from({ length: 40_000 }, (_, i) => ["k" + i, new Row()]));
+  const message = failure(() => expect(rows).toBeNull());
+  expect(message).not.toMatch(/\[(?:Object|Array) \.\.\.\]/);
+  expect(message.match(/pad:/g)).toHaveLength(40_000);
+});
+
+test("values that are not equal and print the same say so", () => {
+  const note = "note: the values are not equal, but they print the same.";
+  const proxy = new Proxy({ a: 1 }, { get: (target, key) => (key === "a" ? 42 : Reflect.get(target, key)) });
+  expect(failure(() => expect(proxy).toEqual({ a: 1 }))).toContain(note);
+  expect(failure(() => expect({ a: 1 }).toEqual({ a: 2 }))).not.toContain(note);
+  expect(failure(() => expect({ a: 1 }).not.toEqual({ a: 1 }))).not.toContain(note);
+});
+
+test("a note is about a side that is shown", () => {
+  const big = () => ({ text: Buffer.alloc(128 * 1024, "v").toString() });
+  const shared = Array(12).fill(big());
+  const copies = Array.from({ length: 12 }, big);
+  // `.not` shows `expected` only, and it repeats nothing.
+  expect(failure(() => expect(shared).not.toEqual(copies))).not.toContain("note:");
+  expect(failure(() => expect(copies).not.toEqual(shared))).toContain(
+    "note: [Array], [Object], [Map] and [Set] stand for",
+  );
+});
+
+test("an object that one side shares and the other has copies of does not differ", () => {
+  const big = () => ({ text: Buffer.alloc(128 * 1024, "v").toString() });
+  const shared = Array(12).fill(big());
+  const copies = Array.from({ length: 12 }, big);
+  for (const message of [
+    failure(() => expect(shared).toEqual([...copies, 1])),
+    failure(() => expect([...copies, 1]).toEqual(shared)),
+  ]) {
+    expect(message).toMatch(/- Expected  - [01]\n\+ Received  \+ [01]\n/);
+    expect(message).not.toContain("note:");
+  }
+  // Next to something small, it is abbreviated, and printed once.
+  let printed = 0;
+  const date = Object.assign(new Date(0), { toJSON: () => (printed++, "date") });
+  expect(failure(() => expect([date, ...shared]).toEqual(1))).toContain(
+    "note: [Array], [Object], [Map] and [Set] stand for",
+  );
+  expect(printed).toBe(1);
+});
+
+// A snapshot prints these the way the stored ones have them (snapshot.test.ts). A diff is not stored.
+test("what a diff prints that a snapshot does not", () => {
+  const el = ($$typeof: string, type: string, props: object) => ({
+    $$typeof: Symbol.for($$typeof),
+    type,
+    key: null,
+    ref: null,
+    props,
+  });
+  function args(..._: unknown[]) {
+    return arguments;
+  }
+  const revoked = Proxy.revocable({}, {});
+  revoked.revoke();
+  expect(
+    failure(() =>
+      expect({
+        proxy: new Proxy({ a: 1, b: [2] }, {}),
+        proxyOfArray: new Proxy([1, 2], {}),
+        proxyOfFunction: new Proxy(function f() {}, {}),
+        proxyOfClass: new Proxy(class C {}, {}),
+        revokedProxy: revoked.proxy,
+        arguments: args(1, "two"),
+        noArguments: args(),
+        mapIterator: new Map([[1, 2]]).entries(),
+        setIterator: new Set([1]).values(),
+        arrayIterator: [1][Symbol.iterator](),
+        react18: el("react.element", "input", { type: "text", value: "foo" }),
+        react18ManyProps: el("react.element", "input", { a: "1", b: 2, c: true, d: null, e: { x: 1 }, f: [1] }),
+        react19: el("react.transitional.element", "div", { id: "x" }),
+        holes: [1, , , , , , , , , , , 2],
+        response: new Response("body"),
+      }).toEqual(1),
+    ),
+  ).toMatchInlineSnapshot(`
+    "expect(received).toEqual(expected)
+
+    - 1
+    + {
+    +   "arguments": Arguments [
+    +     1,
+    +     "two",
+    +   ],
+    +   "arrayIterator": Array Iterator {},
+    +   "holes": [
+    +     1,
+    +     10 x empty items,
+    +     2,
+    +   ],
+    +   "mapIterator": Map Iterator {},
+    +   "noArguments": Arguments [],
+    +   "proxy": {
+    +     "a": 1,
+    +     "b": [
+    +       2,
+    +     ],
+    +   },
+    +   "proxyOfArray": [
+    +     1,
+    +     2,
+    +   ],
+    +   "proxyOfClass": [class C],
+    +   "proxyOfFunction": [Function: f],
+    +   "react18": <input type="text" value="foo" />,
+    +   "react18ManyProps": <input a="1" b=2 c=true d=null e={
+    +       "x": 1,
+    +     }
+    +     f=[
+    +       1,
+    +     ] />,
+    +   "react19": <div id="x" />,
+    +   "response": Response (4 bytes) {
+    +     ok: true,
+    +     url: "",
+    +     status: 200,
+    +     statusText: "",
+    +     headers: Headers {},
+    +     redirected: false,
+    +     bodyUsed: false,
+    +     Blob (4 bytes)
+    +   },
+    +   "revokedProxy": <Revoked Proxy>,
+    +   "setIterator": Set Iterator {},
+    + }
+
+    - Expected  - 1
+    + Received  + 46
+    "
+  `);
+});
+
+// A matcher diff has to cost what the arrays store, not the `length` they
+// claim: a long run of holes is one line, and the formatter finds the end of
+// the run in the array's storage. Without that, an array of length 2**32 - 1
+// needs about 56 GB of text per side and the child below never finishes.
+async function diffArrayHoles(group: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), import.meta.dir + "/diff-array-holes.fixture.ts", group],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Kill switch, so a formatter that walks every claimed index fails the
+    // assertions below instead of hanging the test runner.
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, signalCode: proc.signalCode, exitCode };
+}
+
+test.concurrent("a run of more than 8 array holes is one line in a matcher diff", async () => {
+  const { stdout, stderr, signalCode, exitCode } = await diffArrayHoles("runs");
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "## 8 holes keep one line each
+    expect(received).toEqual(expected)
+
+      [
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+    -   2,
+    +   1,
+      ]
+
+    - Expected  - 1
+    + Received  + 1
+
+
+    ## 9 holes are one line
+    expect(received).toEqual(expected)
+
+      [
+        9 x empty items,
+    -   2,
+    +   1,
+      ]
+
+    - Expected  - 1
+    + Received  + 1
+
+
+    ## [1, , 3] is unchanged
+    expect(received).toEqual(expected)
+
+      [
+        1,
+    -   2,
+    +   undefined,
+        3,
+      ]
+
+    - Expected  - 1
+    + Received  + 1
+
+
+    ## leading, middle and trailing runs
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   20 x empty items,
+    +   "a",
+    +   30 x empty items,
+    +   "b",
+    +   40 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 7
+
+
+    ## nested
+    expect(received).toEqual(expected)
+
+      {
+        "list": [
+          [
+            12 x empty items,
+    -       2,
+    +       1,
+          ],
+        ],
+      }
+
+    - Expected  - 1
+    + Received  + 1
+
+
+    ## a long run against explicit undefined
+    expect(received).toStrictEqual(expected)
+
+      [
+    -   undefined,
+    -   undefined,
+    -   undefined,
+    -   undefined,
+    -   undefined,
+    -   undefined,
+    -   undefined,
+    -   undefined,
+    -   undefined,
+    +   9 x empty items,
+        1,
+      ]
+
+    - Expected  - 9
+    + Received  + 1
+
+
+    ## class extends Array
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   50 x empty items,
+    +   "x",
+    +   49 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 5
+
+
+    ## frozen
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   10 x empty items,
+    +   1,
+    + ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## circular
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   10 x empty items,
+    +   [Circular],
+    + ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## an own index accessor runs once
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   1,
+    +   15 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 8
+
+
+    ## indices in the sparse map
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   1000000 x empty items,
+    +   0,
+    +   19 x empty items,
+    +   1,
+    +   19 x empty items,
+    +   2,
+    +   19 x empty items,
+    +   3,
+    +   19 x empty items,
+    +   4,
+    + ]
+
+    - Expected  - 1
+    + Received  + 12
+
+
+    ## a Promise after 9 holes
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   9 x empty items,
+    +   
+    +   Promise {},
+    + ]
+
+    - Expected  - 1
+    + Received  + 5
+
+
+    ## a Promise after 9 undefined
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   
+    +   Promise {},
+    + ]
+
+    - Expected  - 1
+    + Received  + 13
+
+
+    "
+  `);
+  expect(signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a matcher diff of an array of length 2**32 - 1 follows what the array stores", async () => {
+  const { stdout, stderr, signalCode, exitCode } = await diffArrayHoles("longest");
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "## toEqual, index 0 differs
+    expect(received).toEqual(expected)
+
+      [
+    -   2,
+    +   1,
+        4294967294 x empty items,
+      ]
+
+    - Expected  - 1
+    + Received  + 1
+
+
+    ## toEqual, other type
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   4294967294 x empty items,
+    +   1,
+    + ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## not.toEqual
+    expect(received).not.toEqual(expected)
+
+    Expected: not [
+      4294967294 x empty items,
+      1,
+    ]
+
+
+    ## toStrictEqual, other length
+    expect(received).toStrictEqual(expected)
+
+    - []
+    + [
+    +   4294967295 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 3
+
+
+    ## toMatchObject
+    expect(received).toMatchObject(expected)
+
+      {
+    -   "a": 0,
+    +   "a": [
+    +     4294967294 x empty items,
+    +     1,
+    +   ],
+      }
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## toHaveProperty
+    expect(received).toHaveProperty(path, value)
+
+    - 0
+    + [
+    +   4294967294 x empty items,
+    +   1,
+    + ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## toHaveBeenCalledWith
+    expect(received).toHaveBeenCalledWith(...expected)
+
+      [
+    -   0,
+    +   [
+    +     4294967294 x empty items,
+    +     1,
+    +   ],
+      ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## matcherHint
+    expect(received).toBeZero()
+
+    expect(received).toBeZero(expected)
+
+    - 0
+    + [
+    +   4294967294 x empty items,
+    +   1,
+    + ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## frozen class extends Array
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   "x",
+    +   4294967287 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 11
+
+
+    ## an index accessor that throws
+    thrown by the accessor
+
+    "
+  `);
+  expect(signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a matcher diff of an array that changes while it prints", async () => {
+  const { stdout, stderr, signalCode, exitCode } = await diffArrayHoles("mutation");
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "## an accessor stores a later index
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   10 x empty items,
+    +   "getter",
+    +   999989 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 5
+
+
+    ## an accessor deletes a later index
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   10 x empty items,
+    +   "getter",
+    +   599989 x empty items,
+    +   "kept",
+    +   399999 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 7
+
+
+    ## an accessor swaps one later index for another
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   10 x empty items,
+    +   "getter",
+    +   599989 x empty items,
+    +   "kept",
+    +   399999 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 7
+
+
+    ## an accessor shrinks the array
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   10 x empty items,
+    +   "getter",
+    +   999989 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 5
+
+
+    ## an accessor grows the vector past the length
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   "getter",
+    +   26 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 7
+
+
+    ## an accessor stores a sparse index past the length
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   "getter",
+    +   999996 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 7
+
+
+    "
+  `);
+  expect(signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a matcher diff prints an index that only Array.prototype has as a hole", async () => {
+  const { stdout, stderr, signalCode, exitCode } = await diffArrayHoles("prototype");
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "## an index only Array.prototype has is a hole
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   0,
+    +   4294967294 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    "
+  `);
+  expect(signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a matcher diff reads every way an array can store its elements", async () => {
+  const { stdout, stderr, signalCode, exitCode } = await diffArrayHoles("storage");
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "## int32
+    as its own keys say
+
+    ## double
+    as its own keys say
+
+    ## contiguous
+    as its own keys say
+
+    ## no elements
+    as its own keys say
+
+    ## array storage, in the vector
+    as its own keys say
+
+    ## array storage, in the sparse map
+    as its own keys say
+
+    ## array storage, in both
+    as its own keys say
+
+    ## frozen
+    as its own keys say
+
+    ## runs of 8 and 9
+    as its own keys say
+
+    "
+  `);
+  expect(signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+// Not concurrent: it measures time.
+test("a matcher diff of a sparse array takes time that follows what the array stores", async () => {
+  const { stdout, stderr, signalCode, exitCode } = await diffArrayHoles("scale");
+  expect(stderr).toBe("");
+  const { baseline, ms } = JSON.parse(stdout);
+  // Measured for 20,000 sparse entries against a dense array of 20,000 elements.
+  // A machine too slow for `limit` still passes within 20x of the dense array.
+  const limit = isDebug || isASAN ? 5_000 : 500;
+  expect(ms).toBeLessThan(Math.max(limit, 20 * baseline));
+  expect(signalCode).toBeNull();
+  expect(exitCode).toBe(0);
 });

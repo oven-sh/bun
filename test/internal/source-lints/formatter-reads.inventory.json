@@ -1,0 +1,13 @@
+{
+  "src/jsc/ConsoleObject.rs": {
+    "call into script": 2,
+    "conversion that can run toString, valueOf or Symbol.toPrimitive": 13,
+    "iterator protocol": 1,
+    "property read that can run a getter or a Proxy trap": 12
+  },
+  "src/jsc/formatter/jest.rs": {
+    "call into script": 1,
+    "conversion that can run toString, valueOf or Symbol.toPrimitive": 2,
+    "property read that can run a getter or a Proxy trap": 9
+  }
+}

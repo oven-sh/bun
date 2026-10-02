@@ -66,8 +66,8 @@ pub(crate) fn to_have_nth_returned_with(
     }
 
     // Handle failure
-    let mut formatter = super::make_formatter(global);
-    let mut formatter2 = super::make_formatter(global);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global);
+    let mut formatter2 = bun_jsc::Formatter::matcher_message(global);
 
     let signature = get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
 

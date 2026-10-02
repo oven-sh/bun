@@ -27,16 +27,13 @@ macro_rules! pfmt {
 use super::s3_client;
 use super::s3_stat::S3Stat;
 
-pub(crate) fn write_format<F, W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
+pub(crate) fn write_format<const ENABLE_ANSI_COLORS: bool>(
     s3: &blob::store::S3,
-    formatter: &mut F,
-    writer: &mut W,
+    formatter: &mut bun_jsc::Formatter<'_>,
+    writer: &mut dyn bun_io::Write,
     content_type: &[u8],
     offset: u64,
-) -> core::fmt::Result
-where
-    F: bun_jsc::ConsoleFormatter,
-{
+) -> bun_jsc::CrateResult<()> {
     writer.write_str(pfmt!("<r>S3Ref<r>", ENABLE_ANSI_COLORS))?;
     let credentials = s3.get_credentials();
     // detect virtual host style bucket name
@@ -75,7 +72,7 @@ where
             bstr::BStr::new(content_type),
         )?;
 
-        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+        formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
         if offset > 0 {
             writer.write_str("\n")?;
         }
@@ -92,9 +89,9 @@ where
             offset
         )?;
 
-        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+        formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
     }
-    s3_client::write_format_credentials::<F, W, ENABLE_ANSI_COLORS>(
+    s3_client::write_format_credentials::<ENABLE_ANSI_COLORS>(
         &**credentials,
         s3.options,
         s3.acl,

@@ -7,8 +7,8 @@ use bun_jsc::{AbortSignal, GlobalRef};
 use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
-    BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
-    JsResult, StringJsc as _,
+    BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsRef, JsResult,
+    StringJsc as _,
 };
 use bun_core::Output;
 use bun_core::{String as BunString, Utf8Bytes};
@@ -631,21 +631,11 @@ impl Response {
 }
 
 impl Response {
-    pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
-        formatter: &mut F,
-        writer: &mut W,
-    ) -> core::fmt::Result
-    where
-        F: bun_jsc::ConsoleFormatter,
-        W: core::fmt::Write,
-    {
-        // return type narrowed to `core::fmt::Result`. The trait
-        // methods produce `fmt::Error`/`JsError`/`crate::Error`; none of
-        // those convert into the others, so funnel everything through
-        // `fmt::Error`.
-        let js_err = |_: JsError| core::fmt::Error;
-
+        formatter: &mut bun_jsc::Formatter<'_>,
+        writer: &mut dyn bun_io::Write,
+    ) -> bun_jsc::CrateResult<()> {
         writeln!(
             writer,
             "Response ({}) {{",
@@ -661,15 +651,13 @@ impl Response {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>ok<d>:<r> ")
             )?;
-            formatter
-                .print_as::<_, ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatAs::Boolean,
-                    writer,
-                    JSValue::from(self.is_ok()),
-                    bun_jsc::JSType::BooleanObject,
-                )
-                .map_err(js_err)?;
-            formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
+            formatter.print_as::<ENABLE_ANSI_COLORS>(
+                bun_jsc::FormatAs::Boolean,
+                writer,
+                JSValue::from(self.is_ok()),
+                bun_jsc::JSType::BooleanObject,
+            )?;
+            formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
@@ -680,7 +668,7 @@ impl Response {
             )?;
             bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<r><b>{}<r>", self.url.get())?;
             writer.write_str("\"")?;
-            formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
+            formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
@@ -689,15 +677,13 @@ impl Response {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>status<d>:<r> ")
             )?;
-            formatter
-                .print_as::<_, ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatAs::Double,
-                    writer,
-                    JSValue::js_number(self.init.get().status_code as f64),
-                    bun_jsc::JSType::NumberObject,
-                )
-                .map_err(js_err)?;
-            formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
+            formatter.print_as::<ENABLE_ANSI_COLORS>(
+                bun_jsc::FormatAs::Double,
+                writer,
+                JSValue::js_number(self.init.get().status_code as f64),
+                bun_jsc::JSType::NumberObject,
+            )?;
+            formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
@@ -712,7 +698,7 @@ impl Response {
                 "<r>\"<b>{}<r>\"",
                 &self.init.get().status_text
             )?;
-            formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
+            formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
@@ -721,16 +707,14 @@ impl Response {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> ")
             )?;
-            let headers_js = Self::get_headers(self, formatter.global_this()).map_err(js_err)?;
-            formatter
-                .print_as::<_, ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatAs::Private,
-                    writer,
-                    headers_js,
-                    bun_jsc::JSType::DOMWrapper,
-                )
-                .map_err(js_err)?;
-            formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
+            let headers_js = Self::get_headers(self, formatter.global_this)?;
+            formatter.print_as::<ENABLE_ANSI_COLORS>(
+                bun_jsc::FormatAs::Private,
+                writer,
+                headers_js,
+                bun_jsc::JSType::DOMWrapper,
+            )?;
+            formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
@@ -739,22 +723,20 @@ impl Response {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>redirected<d>:<r> ")
             )?;
-            formatter
-                .print_as::<_, ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatAs::Boolean,
-                    writer,
-                    JSValue::from(self.redirected.get()),
-                    bun_jsc::JSType::BooleanObject,
-                )
-                .map_err(js_err)?;
-            formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
+            formatter.print_as::<ENABLE_ANSI_COLORS>(
+                bun_jsc::FormatAs::Boolean,
+                writer,
+                JSValue::from(self.redirected.get()),
+                bun_jsc::JSType::BooleanObject,
+            )?;
+            formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.reset_line();
             // SAFETY: R-2 `JsCell` escape hatch — `Body::write_format` takes
             // `&mut self`; single-JS-thread invariant.
             unsafe { self.body.get_mut() }
-                .write_format::<F, W, ENABLE_ANSI_COLORS>(&mut *formatter, writer)?;
+                .write_format::<ENABLE_ANSI_COLORS>(&mut *formatter, writer)?;
         }
         writer.write_str("\n")?;
         formatter.write_indent(writer)?;

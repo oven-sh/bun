@@ -21,7 +21,7 @@ pub(crate) fn to_have_length(
     let expected: JSValue = arguments[0];
 
     if !value.is_object() && !value.is_string() {
-        let mut fmt = super::make_formatter(global);
+        let mut fmt = bun_jsc::Formatter::matcher_message(global);
         return Err(global.throw(format_args!(
             "Received value does not have a length property: {}",
             value.to_fmt(&mut fmt),
@@ -29,7 +29,7 @@ pub(crate) fn to_have_length(
     }
 
     if !expected.is_number() {
-        let mut fmt = super::make_formatter(global);
+        let mut fmt = bun_jsc::Formatter::matcher_message(global);
         return Err(global.throw(format_args!(
             "Expected value must be a non-negative integer: {}",
             expected.to_fmt(&mut fmt),
@@ -42,7 +42,7 @@ pub(crate) fn to_have_length(
         || expected_length.is_nan()
         || expected_length < 0.0
     {
-        let mut fmt = super::make_formatter(global);
+        let mut fmt = bun_jsc::Formatter::matcher_message(global);
         return Err(global.throw(format_args!(
             "Expected value must be a non-negative integer: {}",
             expected.to_fmt(&mut fmt),
@@ -54,7 +54,7 @@ pub(crate) fn to_have_length(
     let actual_length = value.get_length_if_property_exists_internal(global)?;
 
     if actual_length == f64::INFINITY {
-        let mut fmt = super::make_formatter(global);
+        let mut fmt = bun_jsc::Formatter::matcher_message(global);
         return Err(global.throw(format_args!(
             "Received value does not have a length property: {}",
             value.to_fmt(&mut fmt),

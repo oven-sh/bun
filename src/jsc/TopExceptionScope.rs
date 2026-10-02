@@ -178,16 +178,7 @@ impl TopExceptionScope {
     /// stack redzones make the local/return-slot mismatch observable).
     ///
     /// Prefer [`top_scope!`](crate::top_scope) (RAII) over calling this directly.
-    #[track_caller]
-    pub(crate) fn init<'a>(
-        storage: &'a mut core::mem::MaybeUninit<Self>,
-        global: &JSGlobalObject,
-    ) -> &'a mut Self {
-        Self::init_at(storage, global, SourceLocation::from_caller())
-    }
-
-    /// Like [`init`](Self::init) but with an explicit [`SourceLocation`] — used by the
-    /// [`top_scope!`](crate::top_scope) macro to forward `file!()`/`line!()` literals.
+    /// The macro forwards its `file!()`/`line!()` literals as `src`.
     #[inline]
     pub(crate) fn init_at<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
@@ -444,7 +435,7 @@ impl Drop for ExceptionValidationScopeGuard<'_> {
 }
 
 impl ExceptionValidationScope {
-    /// See [`TopExceptionScope::init`] for the storage-passing rationale.
+    /// See [`TopExceptionScope::init_at`] for the storage-passing rationale.
     #[track_caller]
     pub(crate) fn init<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,

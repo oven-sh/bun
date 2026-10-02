@@ -1,5 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use super::make_formatter;
 
 use super::Expect;
 use super::get_signature;
@@ -23,7 +22,7 @@ pub(crate) fn to_be_valid_date(
         return Ok(this_value);
     }
 
-    let mut formatter = make_formatter(global);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global);
     // `defer formatter.deinit()` → handled by Drop
     let received = value.to_fmt(&mut formatter);
 

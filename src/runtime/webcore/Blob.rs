@@ -184,14 +184,11 @@ pub(crate) trait BlobExt {
         Self: Sized;
     fn content_type(&self) -> &[u8];
     fn is_detached(&self) -> bool;
-    fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+    fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
-        formatter: &mut F,
-        writer: &mut W,
-    ) -> core::fmt::Result
-    where
-        F: jsc::ConsoleFormatter,
-        W: core::fmt::Write;
+        formatter: &mut bun_jsc::Formatter<'_>,
+        writer: &mut dyn bun_io::Write,
+    ) -> bun_jsc::CrateResult<()>;
     fn get_stream(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_stream_with_cache(
         &self,
@@ -967,15 +964,11 @@ impl BlobExt for Blob {
     fn is_detached(&self) -> bool {
         self.store.get().is_none()
     }
-    fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+    fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
-        formatter: &mut F,
-        writer: &mut W,
-    ) -> core::fmt::Result
-    where
-        F: jsc::ConsoleFormatter,
-        W: core::fmt::Write,
-    {
+        formatter: &mut bun_jsc::Formatter<'_>,
+        writer: &mut dyn bun_io::Write,
+    ) -> bun_jsc::CrateResult<()> {
         if self.is_detached() {
             // A blob with no store and size > 0 was genuinely detached (e.g. after
             // transferring its contents). An empty `new Blob([])` or `new File([])`
@@ -997,21 +990,20 @@ impl BlobExt for Blob {
                 }
                 return Ok(());
             }
-            write_format_for_size::<W, ENABLE_ANSI_COLORS>(self.is_jsdom_file.get(), 0, writer)?;
+            write_format_for_size::<ENABLE_ANSI_COLORS>(self.is_jsdom_file.get(), 0, writer)?;
         } else {
             let content_type = self.content_type_slice();
             let offset = self.offset.get();
             let store = self.store().expect("infallible: store present");
             match Store::data_mut(store) {
                 store::Data::S3(s3) => {
-                    S3File::write_format::<F, W, ENABLE_ANSI_COLORS>(
+                    S3File::write_format::<ENABLE_ANSI_COLORS>(
                         s3,
                         formatter,
                         writer,
                         content_type,
                         offset as u64,
-                    )
-                    .map_err(|_| core::fmt::Error)?;
+                    )?;
                 }
                 store::Data::File(file) => {
                     bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<r>FileRef<r>")?;
@@ -1060,7 +1052,7 @@ impl BlobExt for Blob {
                     }
                 }
                 store::Data::Bytes(_) => {
-                    write_format_for_size::<W, ENABLE_ANSI_COLORS>(
+                    write_format_for_size::<ENABLE_ANSI_COLORS>(
                         self.is_jsdom_file.get(),
                         self.size.get() as usize,
                         writer,
@@ -1084,7 +1076,7 @@ impl BlobExt for Blob {
         {
             writer.write_str(" {\n")?;
             {
-                formatter.indent_inc();
+                let mut formatter = formatter.indented();
 
                 if show_name {
                     formatter.write_indent(writer)?;
@@ -1098,7 +1090,7 @@ impl BlobExt for Blob {
                         || self.offset.get() > 0
                         || self.last_modified.get() != 0.0
                     {
-                        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+                        formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
                     }
                     writer.write_str("\n")?;
                 }
@@ -1112,7 +1104,7 @@ impl BlobExt for Blob {
                         bstr::BStr::new(self.content_type_slice()),
                     )?;
                     if self.offset.get() > 0 || self.last_modified.get() != 0.0 {
-                        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+                        formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
                     }
                     writer.write_str("\n")?;
                 }
@@ -1126,7 +1118,7 @@ impl BlobExt for Blob {
                         self.offset.get(),
                     )?;
                     if self.last_modified.get() != 0.0 {
-                        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+                        formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
                     }
                     writer.write_str("\n")?;
                 }
@@ -1140,8 +1132,6 @@ impl BlobExt for Blob {
                         self.last_modified.get(),
                     )?;
                 }
-
-                formatter.indent_dec();
             }
             formatter.write_indent(writer)?;
             writer.write_str("}")?;
@@ -4000,11 +3990,11 @@ pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
 // writeFormat
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn write_format_for_size<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
+pub(crate) fn write_format_for_size<const ENABLE_ANSI_COLORS: bool>(
     is_jdom_file: bool,
     size: usize,
-    writer: &mut W,
-) -> core::fmt::Result {
+    writer: &mut dyn bun_io::Write,
+) -> bun_jsc::CrateResult<()> {
     if is_jdom_file {
         bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<r>File<r>")?;
     } else {
@@ -4015,7 +4005,8 @@ pub(crate) fn write_format_for_size<W: core::fmt::Write, const ENABLE_ANSI_COLOR
         ENABLE_ANSI_COLORS,
         " (<yellow>{f}<r>)",
         bun_core::fmt::size(size, Default::default()),
-    )
+    )?;
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

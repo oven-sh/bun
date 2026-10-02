@@ -2073,7 +2073,7 @@ fn handle_ipc_message(
     #[cfg(debug_assertions)]
     {
         // The `Formatter` runs its deinit in `Drop`.
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
+        let mut formatter = jsc::ConsoleObject::Formatter::message(global_this);
         match &message {
             DecodedIPCMessage::Version(version) => {
                 log!("received ipc message: version: {}", version)

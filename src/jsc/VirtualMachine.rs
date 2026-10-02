@@ -12,6 +12,7 @@ use bun_io as Async;
 use bun_uws as uws;
 
 use crate::bun_string_jsc;
+use crate::console_object::formatter::Entered;
 use crate::counters::Counters;
 use crate::event_loop::EventLoop;
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
@@ -5510,7 +5511,7 @@ impl VirtualMachine {
         writer: &mut bun_core::io::Writer,
         allow_side_effects: bool,
     ) {
-        let mut formatter = crate::console_object::Formatter::new(self.global());
+        let mut formatter = crate::console_object::Formatter::error_handler(self.global());
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         self.print_errorlike_object(
             exception.value(),
@@ -5899,11 +5900,83 @@ impl VirtualMachine {
         &mut self,
         value: JSValue,
         exception: Option<&Exception>,
+        exception_list: Option<&mut ExceptionList>,
+        formatter: &mut crate::console_object::Formatter,
+        writer: &mut bun_core::io::Writer,
+        allow_ansi_color: bool,
+        allow_side_effects: bool,
+    ) {
+        self.print_errorlike_object_with_header(
+            value,
+            exception,
+            exception_list,
+            formatter,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+            AggregateErrorHeader::Omitted,
+        );
+    }
+
+    fn print_errorlike_object_with_header(
+        &mut self,
+        value: JSValue,
+        exception: Option<&Exception>,
+        exception_list: Option<&mut ExceptionList>,
+        formatter: &mut crate::console_object::Formatter,
+        writer: &mut bun_core::io::Writer,
+        allow_ansi_color: bool,
+        allow_side_effects: bool,
+        header: AggregateErrorHeader,
+    ) {
+        if !is_error_instance(value) {
+            // The formatter guards any other value under its own tag.
+            return self.print_entered_errorlike_object(
+                None,
+                value,
+                exception,
+                exception_list,
+                formatter,
+                writer,
+                allow_ansi_color,
+                allow_side_effects,
+                header,
+            );
+        }
+        let entered = formatter.with_error_entered(
+            writer,
+            value,
+            allow_ansi_color,
+            |formatter, entered, writer| {
+                self.print_entered_errorlike_object(
+                    Some(entered),
+                    value,
+                    exception,
+                    exception_list,
+                    formatter,
+                    writer,
+                    allow_ansi_color,
+                    allow_side_effects,
+                    header,
+                );
+            },
+        );
+        // A stack overflow stays pending for the sink that asked to have it thrown.
+        debug_assert!(entered.is_ok() || self.global().has_exception());
+    }
+
+    /// The token is `None` only for a value that is not an `Error`.
+    pub(crate) fn print_entered_errorlike_object(
+        &mut self,
+        _: Option<&Entered>,
+        value: JSValue,
+        exception: Option<&Exception>,
         mut exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
         writer: &mut bun_core::io::Writer,
         allow_ansi_color: bool,
         allow_side_effects: bool,
+        header: AggregateErrorHeader,
     ) {
         // Note: the post-print stack/exception_list block is handled at the
         // tail instead of via a drop guard (the body has no early-`?` returns
@@ -5924,7 +5997,7 @@ impl VirtualMachine {
         if let Some(errors) = errors {
             let members_past_cap =
                 formatter.depth.saturating_add(1) > formatter.error_chain_max_depth();
-            if members_past_cap {
+            if members_past_cap || header == AggregateErrorHeader::First {
                 self.print_error_from_maybe_private_data(
                     value,
                     exception_list.as_deref_mut(),
@@ -5933,6 +6006,10 @@ impl VirtualMachine {
                     allow_ansi_color,
                     allow_side_effects,
                 );
+                // A stack overflow, which the walk below would clear.
+                if formatter.failed || global_ref.has_exception() {
+                    return;
+                }
             }
             // Note: `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
@@ -5943,6 +6020,7 @@ impl VirtualMachine {
                 formatter: *mut crate::console_object::Formatter<'a>,
                 writer: *mut bun_core::io::Writer,
                 exception_list: *mut ExceptionList,
+                holder: JSValue,
                 allow_ansi_color: bool,
                 allow_side_effects: bool,
                 printed_member: bool,
@@ -5970,20 +6048,27 @@ impl VirtualMachine {
                 // SAFETY: `ctx.writer` borrows the caller's stack local,
                 // live across the synchronous `for_each` call.
                 let writer = unsafe { &mut *ctx.writer };
+                macro_rules! marker {
+                    ($text:literal) => {
+                        let _ = writer.write_all(if ctx.allow_ansi_color {
+                            bun_core::pretty_fmt!($text, true).as_bytes()
+                        } else {
+                            bun_core::pretty_fmt!($text, false).as_bytes()
+                        });
+                    };
+                }
+                if next_value == ctx.holder {
+                    return;
+                }
+                if formatter.is_on_path(next_value) {
+                    // Does not stand in for the AggregateError, which still prints.
+                    marker!("<r><cyan>[Circular]<r>\n");
+                    return;
+                }
                 ctx.printed_member = true;
                 formatter.depth = formatter.depth.saturating_add(1);
-                if formatter.depth > formatter.error_chain_max_depth()
-                    || !formatter.stack_check.is_safe_to_recurse()
-                {
-                    let _ = if ctx.allow_ansi_color {
-                        writer.write_all(
-                            bun_core::pretty_fmt!("<r><cyan>[Error ...]<r>\n", true).as_bytes(),
-                        )
-                    } else {
-                        writer.write_all(
-                            bun_core::pretty_fmt!("<r><cyan>[Error ...]<r>\n", false).as_bytes(),
-                        )
-                    };
+                if formatter.depth > formatter.error_chain_max_depth() {
+                    marker!("<r><cyan>[Error ...]<r>\n");
                 } else {
                     vm.print_errorlike_object(
                         next_value,
@@ -5997,23 +6082,57 @@ impl VirtualMachine {
                 }
                 formatter.depth = formatter.depth.saturating_sub(1);
             }
+            // Members too deep for the native stack are cut short, for every sink.
+            let can_throw_stack_overflow =
+                core::mem::replace(&mut formatter.can_throw_stack_overflow, false);
             let mut ctx = AggCtx {
                 formatter: std::ptr::from_mut(&mut *formatter),
                 writer: std::ptr::from_mut(&mut *writer),
                 exception_list: exception_list
                     .as_deref_mut()
                     .map_or(core::ptr::null_mut(), std::ptr::from_mut::<ExceptionList>),
+                holder: value,
                 allow_ansi_color,
                 allow_side_effects,
                 printed_member: false,
             };
-            if errors
-                .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
-                .is_err()
-            {
-                global_ref.clear_exception();
+            // `errors` is user-assigned, so its iterator can be endless.
+            const UNSIZED_ERRORS_BUDGET: u32 = 100;
+            use crate::console_object::formatter::reader;
+            let ctx_ptr = (&raw mut ctx).cast::<c_void>();
+
+            let truncated = if errors.is_cell() && errors.js_type().is_array() {
+                reader::for_each_element(errors, global_ref, |_, member| {
+                    agg_iter(core::ptr::null_mut(), global_ref, ctx_ptr, member);
+                    if global_ref.has_exception() {
+                        return Err(crate::JsError::Thrown);
+                    }
+                    Ok(())
+                })
+                .map(|()| false)
+            } else {
+                reader::for_each_limited(
+                    errors,
+                    global_ref,
+                    UNSIZED_ERRORS_BUDGET,
+                    ctx_ptr,
+                    agg_iter,
+                )
+            };
+            formatter.can_throw_stack_overflow = can_throw_stack_overflow;
+            match truncated {
+                Ok(true) => {
+                    let marker = if allow_ansi_color {
+                        bun_core::pretty_fmt!("<r><d>... more errors<r>\n", true)
+                    } else {
+                        bun_core::pretty_fmt!("<r><d>... more errors<r>\n", false)
+                    };
+                    let _ = writer.write_all(marker.as_bytes());
+                }
+                Ok(false) => {}
+                Err(_) => global_ref.clear_exception(),
             }
-            if ctx.printed_member || members_past_cap {
+            if ctx.printed_member || members_past_cap || header == AggregateErrorHeader::First {
                 return;
             }
             // `errors` is empty or not iterable: print the AggregateError itself.
@@ -6637,12 +6756,11 @@ impl VirtualMachine {
         allow_side_effects: bool,
         allow_ansi_color: bool,
     ) -> crate::CrateResult<()> {
-        let mut default_formatter = crate::console_object::Formatter::new(self.global());
+        let mut default_formatter = crate::console_object::Formatter::error_handler(self.global());
         let f = formatter.unwrap_or(&mut default_formatter);
         self.print_error_instance_body(
             zig_exception,
             JSValue::ZERO,
-            None,
             f,
             writer,
             allow_ansi_color,
@@ -6688,10 +6806,7 @@ impl VirtualMachine {
             .stack_check
             .is_safe_to_recurse_with_extra(extra_headroom)
         {
-            formatter.failed = true;
-            if formatter.can_throw_stack_overflow {
-                let _ = self.global().throw_stack_overflow();
-            }
+            let _ = formatter.stack_overflow();
             return Ok(());
         }
 
@@ -6722,8 +6837,6 @@ impl VirtualMachine {
             // SAFETY: see above.
             unsafe { &mut *exception },
             error_instance,
-            None, // Note: `exception_list` was already
-            // consumed by `remap_zig_exception` above (only writer).
             formatter,
             writer,
             allow_ansi_color,
@@ -6733,6 +6846,40 @@ impl VirtualMachine {
         drop(source_code_slice);
         exception_holder.deinit(self);
         result
+    }
+
+    /// Outlined so that a level of a `cause` chain does not carry the closure
+    /// in the frame of [`Self::print_error_instance_body`].
+    #[inline(never)]
+    fn print_queued_error(
+        &mut self,
+        error: JSValue,
+        formatter: &mut crate::console_object::Formatter,
+        writer: &mut bun_core::io::Writer,
+        allow_ansi_color: bool,
+        allow_side_effects: bool,
+    ) -> crate::CrateResult<()> {
+        let printed = formatter.with_error_entered(
+            writer,
+            error,
+            allow_ansi_color,
+            |formatter, _, writer| {
+                self.print_error_instance_js(
+                    error,
+                    None,
+                    formatter,
+                    writer,
+                    allow_ansi_color,
+                    allow_side_effects,
+                )
+            },
+        );
+        match printed {
+            Ok(printed) => printed.unwrap_or(Ok(())),
+            // A stack overflow stays pending for the sink that asked to have it
+            // thrown. The caller clears what comes back as a `JSError`.
+            Err(_) => Ok(()),
+        }
     }
 
     /// Shared error-printer body for both the JS-value
@@ -6745,7 +6892,6 @@ impl VirtualMachine {
         &mut self,
         exception: &mut ZigException,
         error_instance: JSValue,
-        exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
         writer: &mut bun_core::io::Writer,
         allow_ansi_color: bool,
@@ -6753,7 +6899,7 @@ impl VirtualMachine {
     ) -> crate::CrateResult<()> {
         use crate::JSType;
         use crate::console_object::formatter::TagOptions;
-        use crate::console_object::{self, Tag, TagPayload};
+        use crate::console_object::{Tag, TagPayload};
 
         let prev_had_errors = self.had_errors;
         self.had_errors = true;
@@ -7084,19 +7230,34 @@ impl VirtualMachine {
             let longest_name = iterator.get_longest_property_name().min(10);
             let mut is_first_property = true;
             while let Some((field, value)) = iterator.next()? {
-                if field.eq_ascii(b"message") || field.eq_ascii(b"name") || field.eq_ascii(b"stack")
-                {
+                // A symbol is yielded as its description.
+                let is_symbol = iterator.is_symbol();
+                let is_named = |name: &[u8]| !is_symbol && field.eq_ascii(name);
+                if is_named(b"message") || is_named(b"name") || is_named(b"stack") {
                     continue;
                 }
-                if field.eq_ascii(b"code") && code.is_some() {
+                if is_named(b"code") && code.is_some() {
                     continue;
                 }
 
                 let kind = value.js_type();
-                if kind == JSType::ErrorInstance && !prev_had_errors {
-                    if field.eq_ascii(b"cause") {
-                        saw_cause = true;
-                    }
+                // Its members are errors of their own, not a property.
+                if kind.is_array()
+                    && is_named(b"errors")
+                    && error_instance.is_aggregate_error(global_ref)
+                {
+                    continue;
+                }
+                // An own `cause` is queued at every level, like one from the
+                // constructor. Printed in place, the fallback below would
+                // queue it again and each level would double the renders.
+                let is_cause = is_named(b"cause");
+                // Printed in place, `[Circular]` names the key that closes the cycle.
+                let circular = kind == JSType::ErrorInstance && formatter.is_on_path(value);
+                if is_cause && kind == JSType::ErrorInstance {
+                    saw_cause = true;
+                }
+                if kind == JSType::ErrorInstance && !circular && (is_cause || !prev_had_errors) {
                     value.protect();
                     errors_to_append.push(value);
                 } else if kind.is_object()
@@ -7187,19 +7348,38 @@ impl VirtualMachine {
                 )?;
             }
 
-            if !is_first_property {
-                writer.write_all(b"\n")?;
-            }
-
             // "cause" is not enumerable, so the above loop won't see it.
             if !saw_cause {
                 let key = bun_core::String::static_("cause");
-                if let Some(cause) = error_instance.get_own(global_ref, &key)? {
+                let cause = match error_instance.get_own(global_ref, &key) {
+                    Ok(cause) => cause,
+                    Err(err) => {
+                        if !is_first_property {
+                            writer.write_all(b"\n")?;
+                        }
+                        return Err(err.into());
+                    }
+                };
+                if let Some(cause) = cause {
                     if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
-                        cause.protect();
-                        errors_to_append.push(cause);
+                        if formatter.is_on_path(cause) {
+                            let pad_left = longest_name.saturating_sub(b"cause".len());
+                            is_first_property = false;
+                            splat_space(writer, pad_left as u64)?;
+                            pretty_write!(
+                                writer,
+                                " cause<r><d>:<r> <r><cyan>[Circular]<r><r><d>,<r>\n"
+                            )?;
+                        } else {
+                            cause.protect();
+                            errors_to_append.push(cause);
+                        }
                     }
                 }
+            }
+
+            if !is_first_property {
+                writer.write_all(b"\n")?;
             }
         } else if error_instance != JSValue::ZERO {
             // If you do `reportError([1,2,3])` we should still show something.
@@ -7209,11 +7389,11 @@ impl VirtualMachine {
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
             )?;
             if !matches!(tag.tag, TagPayload::NativeCode) {
-                let _ = if allow_ansi_color {
-                    formatter.format::<true>(tag, writer, error_instance, global_ref)
+                if allow_ansi_color {
+                    formatter.format::<true>(tag, writer, error_instance, global_ref)?;
                 } else {
-                    formatter.format::<false>(tag, writer, error_instance, global_ref)
-                };
+                    formatter.format::<false>(tag, writer, error_instance, global_ref)?;
+                }
                 writer.write_all(b"\n")?;
             }
         }
@@ -7228,35 +7408,28 @@ impl VirtualMachine {
             )?;
         }
 
-        let mut exception_list = exception_list;
         for &err in &errors_to_append {
-            // Circular-ref guard for cause chains.
-            if formatter.map_node.is_none() {
-                let mut node = NonNull::new(console_object::formatter::visited::Pool::get_node())
-                    .expect("ObjectPool::get_node always returns a valid heap node");
-                let data = console_object::formatter::visited::node_data_mut(&mut node);
-                data.clear();
-                formatter.map = core::mem::take(data);
-                formatter.map_node = Some(node);
-            }
-
-            let entry = formatter.map.get_or_put(err).expect("unreachable");
-            if entry.found_existing {
-                writer.write_all(b"\n")?;
-                pretty_write!(writer, "<r><cyan>[Circular]<r>")?;
-                continue;
-            }
-
             writer.write_all(b"\n")?;
             let prev_depth = formatter.depth;
             formatter.depth = formatter.depth.saturating_add(1);
             let over_cap = formatter.depth > formatter.error_chain_max_depth();
             let result: crate::CrateResult<()> = if over_cap {
                 pretty_write!(writer, "<r><cyan>[Error ...]<r>").map_err(Into::into)
-            } else {
-                self.print_error_instance_js(
+            } else if err.is_aggregate_error(global_ref) {
+                self.print_errorlike_object_with_header(
                     err,
-                    exception_list.as_deref_mut(),
+                    None,
+                    None,
+                    formatter,
+                    writer,
+                    allow_ansi_color,
+                    allow_side_effects,
+                    AggregateErrorHeader::First,
+                );
+                Ok(())
+            } else {
+                self.print_queued_error(
+                    err,
                     formatter,
                     writer,
                     allow_ansi_color,
@@ -7264,7 +7437,6 @@ impl VirtualMachine {
                 )
             };
             formatter.depth = prev_depth;
-            let _ = formatter.map.remove(&err);
             result?;
         }
 
@@ -7723,4 +7895,17 @@ impl Drop for ContextScope<'_> {
             Bun__ModuleGraph__leaveContext(unsafe { &*self.entered }, self.previous);
         }
     }
+}
+
+/// Whether an AggregateError prints itself when it has members to print.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum AggregateErrorHeader {
+    /// Its members stand in for it.
+    Omitted,
+    /// Itself, then its members.
+    First,
+}
+
+fn is_error_instance(value: JSValue) -> bool {
+    value.is_cell() && value.js_type() == crate::JSType::ErrorInstance
 }

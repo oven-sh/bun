@@ -38,6 +38,8 @@
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/DirectArguments.h"
+#include "JavaScriptCore/ScopedArguments.h"
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -4289,6 +4291,38 @@ bool JSC__JSValue__isIterable(JSC::EncodedJSValue JSValue, JSC::JSGlobalObject* 
     return JSC::hasIteratorMethod(global, JSC::JSValue::decode(JSValue));
 }
 
+// Like hasIteratorMethod, but false for an array (IsArray, so a Proxy around
+// an array too) and for anything that iterates with the intrinsic Array
+// iterator (Array.prototype.values): an `arguments` object, a plain
+// array-like. That iterator trusts the `length` the object reports and never
+// checks that an element exists, so a caller that wants one step per existing
+// element walks the object's own properties instead.
+extern "C" [[ZIG_EXPORT(check_slow)]] bool Bun__JSValue__isNonArrayIterable(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isObject())
+        return false;
+    bool isArray = JSC::isArray(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (isArray)
+        return false;
+
+    JSC::CallData callData;
+    JSC::JSValue method = asObject(value)->getMethod(globalObject, callData, vm.propertyNames->iteratorSymbol, "Symbol.iterator property should be callable"_s);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (method.isUndefined())
+        return false;
+
+    auto* function = dynamicDowncast<JSC::JSFunction>(method);
+    if (function && function == function->globalObject()->arrayProtoValuesFunctionConcurrently())
+        return false;
+
+    return true;
+}
+
 void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, void* ctx, void (*ArgFn3)(JSC::VM* arg0, JSC::JSGlobalObject* arg1, void* arg2, JSC::EncodedJSValue JSValue3))
 {
     JSC::forEachInIterable(
@@ -5371,8 +5405,50 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
     throwStackOverflowError(globalObject, scope);
 }
 
-template<bool nonIndexedOnly>
-static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+// How the value formatter lists the properties of an object. Mirrors `PropertyWalk` in src/jsc/formatter/reader.rs.
+enum class PropertyWalk : uint8_t {
+    // Own properties, then those of up to five prototypes.
+    Chain,
+    // Own properties, without the indexes and `length` of an array.
+    OwnNonIndexed,
+    // Own properties, sorted by key. Stored snapshots hold what it lists, which is why it
+    // differs from the other two in three places.
+    OwnSorted,
+};
+
+using PropertyWalkCallback = void (*)(JSC::JSGlobalObject*, void* ctx, EncodedSlice* key, JSC::EncodedJSValue value, bool isSymbol, bool isPrivateSymbol);
+
+static bool isNeverListed(JSC::VM& vm, const UniquedStringImpl* key)
+{
+    return key == vm.propertyNames->constructor.impl() || key == WebCore::builtinNames(vm).bunNativePtrPrivateName().impl();
+}
+
+// A class or a compiled module brands itself with the non-enumerable form of these.
+// An enumerable one was put there by a literal or an assignment, and is user data.
+template<PropertyWalk walk>
+static bool isHiddenBrand(JSC::VM& vm, const UniquedStringImpl* key, unsigned attributes)
+{
+    if (!(attributes & PropertyAttribute::DontEnum))
+        return false;
+    return key == vm.propertyNames->underscoreProto.impl() || key == vm.propertyNames->toStringTagSymbol.impl() || (walk != PropertyWalk::OwnSorted && key == vm.propertyNames->__esModule.impl());
+}
+
+// An accessor is listed as what it is and does not run.
+template<PropertyWalk walk>
+static JSC::JSValue listedValueOfSlot(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName property, JSC::PropertySlot& slot)
+{
+    // `getPureResult` is null for an accessor that cannot be cached: one on an index, or on a dictionary.
+    if (slot.isAccessor())
+        return walk == PropertyWalk::OwnSorted || slot.isCacheableGetter() ? slot.getPureResult() : JSC::JSValue(slot.getterSetter());
+    if (!(slot.attributes() & PropertyAttribute::DontEnum) || (slot.attributes() & PropertyAttribute::BuiltinOrFunction) || slot.isCustom() || slot.isValue())
+        return slot.getValue(globalObject, property);
+    if (object->getOwnPropertySlot(object, globalObject, property, slot))
+        return slot.getValue(globalObject, property);
+    return jsUndefined();
+}
+
+template<PropertyWalk walk>
+static void forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, PropertyWalkCallback iter)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -5380,19 +5456,14 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
     if (!object)
         return;
 
+    // No stack check: `Formatter::enter` made it on the way in, and knows whether to throw or to stop.
     auto& vm = JSC::getVM(globalObject);
-    auto throwScopeForStackOverflowException = DECLARE_THROW_SCOPE(vm);
-
-    if (!vm.isSafeToRecurse()) [[unlikely]] {
-        throwStackOverflowError(globalObject, throwScopeForStackOverflowException);
-        return;
-    }
 
     size_t prototypeCount = 0;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::Structure* structure = object->structure();
-    bool fast = !nonIndexedOnly && canPerformFastPropertyEnumerationForIterationBun(structure);
+    bool fast = walk == PropertyWalk::Chain && canPerformFastPropertyEnumerationForIterationBun(structure);
     JSValue prototypeObject = value;
 
     if (fast) {
@@ -5410,8 +5481,6 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
             }
         }
     }
-    auto* propertyNames = vm.propertyNames;
-    auto& builtinNames = WebCore::builtinNames(vm);
     JSC::IdentifierSet visitedProperties;
 
 restart:
@@ -5433,18 +5502,13 @@ restart:
         // slots mark prototype properties that are fetched after the walk.
         MarkedArgumentBuffer snapshotValues;
 
-        structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        auto snapshotProperty = [&](const PropertyTableEntry& entry) -> bool {
             if ((entry.attributes() & (PropertyAttribute::Function)) == 0 && (entry.attributes() & (PropertyAttribute::Builtin)) != 0) {
                 return true;
             }
             auto* prop = entry.key();
 
-            if (prop == propertyNames->constructor
-                || prop == propertyNames->underscoreProto
-                || prop == propertyNames->toStringTagSymbol || (objectToUse != object && prop == propertyNames->__esModule))
-                return true;
-
-            if (builtinNames.bunNativePtrPrivateName() == prop)
+            if (isNeverListed(vm, prop) || isHiddenBrand<walk>(vm, prop, entry.attributes()))
                 return true;
 
             if (!visitedProperties.add(prop).isNewEntry)
@@ -5460,7 +5524,23 @@ restart:
             snapshot.append({ Identifier::fromUid(vm, prop), entry.attributes() });
             snapshotValues.appendWithCrashOnOverflow(propertyValue);
             return true;
+        };
+
+        // The table interleaves string and symbol keys in insertion order. List the
+        // strings first, like getOwnPropertyNames below (OrdinaryOwnPropertyKeys).
+        bool hasSymbolKeys = false;
+        structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+            if (entry.key()->isSymbol()) {
+                hasSymbolKeys = true;
+                return true;
+            }
+            return snapshotProperty(entry);
         });
+        if (hasSymbolKeys) {
+            structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                return !entry.key()->isSymbol() || snapshotProperty(entry);
+            });
+        }
 
         for (size_t i = 0; i < snapshot.size(); i++) {
             const auto& snapshotted = snapshot[i];
@@ -5516,24 +5596,37 @@ restart:
 
         JSObject* iterating = prototypeObject.getObject();
 
-        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
-            if constexpr (nonIndexedOnly) {
+        auto endsTheChain = [&](JSObject* candidate) -> bool {
+            return candidate == globalObject->objectPrototype() || candidate == globalObject->functionPrototype() || (candidate->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(candidate)->target() != globalObject);
+        };
+
+        while (iterating && (walk == PropertyWalk::OwnSorted || !endsTheChain(iterating)) && prototypeCount++ < 5) {
+            if constexpr (walk == PropertyWalk::OwnNonIndexed) {
                 iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
+            } else if constexpr (walk == PropertyWalk::OwnSorted) {
+                // Not the class's own: a module namespace and a global proxy list nothing.
+                JSC::JSObject::getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
             } else {
                 iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
             }
-
             RETURN_IF_EXCEPTION(scope, void());
+
+            if constexpr (walk == PropertyWalk::OwnSorted) {
+                auto& names = properties.data()->propertyNameVector();
+                std::sort(names.begin(), names.end(), [](const Identifier& a, const Identifier& b) -> bool {
+                    return codePointCompare(a.impl(), b.impl()) < 0;
+                });
+            }
+
             for (auto& property : properties) {
                 if (property.isNull()) [[unlikely]]
                     continue;
 
-                // ignore constructor
-                if (property == propertyNames->constructor || builtinNames.bunNativePtrPrivateName() == property)
+                if (isNeverListed(vm, property.impl()))
                     continue;
 
-                if constexpr (nonIndexedOnly) {
-                    if (property == propertyNames->length) {
+                if constexpr (walk == PropertyWalk::OwnNonIndexed) {
+                    if (property == vm.propertyNames->length) {
                         continue;
                     }
                 }
@@ -5545,47 +5638,17 @@ restart:
                 if (!hasProperty)
                     continue;
 
-                if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if (property == propertyNames->underscoreProto
-                        || property == propertyNames->toStringTagSymbol || property == propertyNames->__esModule)
+                if (isHiddenBrand<walk>(vm, property.impl(), slot.attributes()))
+                    continue;
+
+                if constexpr (walk == PropertyWalk::Chain) {
+                    if (!visitedProperties.add(property.impl()).isNewEntry)
                         continue;
                 }
 
-                if (!visitedProperties.add(property.impl()).isNewEntry)
-                    continue;
+                EncodedSlice key = toEncodedSlice(property.impl());
 
-                EncodedSlice key = toEncodedSlice(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string());
-
-                JSC::JSValue propertyValue = jsUndefined();
-
-                if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                        // If we can't use getPureResult, let's at least say it was a [Getter]
-                        if (!slot.isCacheableGetter()) {
-                            propertyValue = slot.getterSetter();
-                        } else {
-                            propertyValue = slot.getPureResult();
-                        }
-                    } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
-                        propertyValue = slot.getValue(globalObject, property);
-                    } else if (slot.isCustom()) {
-                        propertyValue = slot.getValue(globalObject, property);
-                    } else if (slot.isValue()) {
-                        propertyValue = slot.getValue(globalObject, property);
-                    } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
-                        RETURN_IF_EXCEPTION(scope, );
-                        propertyValue = slot.getValue(globalObject, property);
-                    }
-                } else if (slot.isAccessor()) {
-                    // If we can't use getPureResult, let's at least say it was a [Getter]
-                    if (!slot.isCacheableGetter()) {
-                        propertyValue = slot.getterSetter();
-                    } else {
-                        propertyValue = slot.getPureResult();
-                    }
-                } else {
-                    propertyValue = slot.getValue(globalObject, property);
-                }
+                JSC::JSValue propertyValue = listedValueOfSlot<walk>(globalObject, object, property, slot);
 
                 // Ignore exceptions from getters.
                 if (scope.exception()) [[unlikely]] {
@@ -5605,7 +5668,7 @@ restart:
                 // Propagate exceptions from callbacks.
                 RETURN_IF_EXCEPTION(scope, void());
             }
-            if constexpr (nonIndexedOnly) {
+            if constexpr (walk != PropertyWalk::Chain) {
                 break;
             }
 
@@ -5626,14 +5689,16 @@ restart:
     properties.releaseData();
 }
 
-[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+extern "C" void Bun__FormatterReads__forEachProperty(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject, PropertyWalk walk, void* ctx, PropertyWalkCallback callback)
 {
-    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter);
-}
-
-extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
-{
-    JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter);
+    switch (walk) {
+    case PropertyWalk::Chain:
+        return forEachPropertyImpl<PropertyWalk::Chain>(value, globalObject, ctx, callback);
+    case PropertyWalk::OwnNonIndexed:
+        return forEachPropertyImpl<PropertyWalk::OwnNonIndexed>(value, globalObject, ctx, callback);
+    case PropertyWalk::OwnSorted:
+        return forEachPropertyImpl<PropertyWalk::OwnSorted>(value, globalObject, ctx, callback);
+    }
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInUInt64Range(JSC::EncodedJSValue value, uint64_t max, uint64_t min)
@@ -5662,88 +5727,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
         return false;
     auto high = bigInt->compare(bigInt, max);
     return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
-}
-
-[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
-
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    JSC::JSObject* object = value.getObject();
-    if (!object)
-        return;
-
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-    JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    {
-
-        JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
-        RETURN_IF_EXCEPTION(scope, );
-    }
-
-    auto vector = properties.data()->propertyNameVector();
-    std::sort(vector.begin(), vector.end(), [&](Identifier a, Identifier b) -> bool {
-        const WTF::StringImpl* aImpl = a.isSymbol() && !a.isPrivateName() ? a.impl() : a.string().impl();
-        const WTF::StringImpl* bImpl = b.isSymbol() && !b.isPrivateName() ? b.impl() : b.string().impl();
-        return codePointCompare(aImpl, bImpl) < 0;
-    });
-    auto clientData = WebCore::clientData(vm);
-
-    for (auto property : vector) {
-        if (property.isNull()) [[unlikely]]
-            continue;
-
-        // ignore constructor
-        if (property == vm.propertyNames->constructor || clientData->builtinNames().bunNativePtrPrivateName() == property)
-            continue;
-
-        JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-        bool hasProperty = object->getPropertySlot(globalObject, property, slot);
-        (void)scope.tryClearException();
-        if (!hasProperty) {
-            continue;
-        }
-
-        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-            if (property == vm.propertyNames->underscoreProto
-                || property == vm.propertyNames->toStringTagSymbol)
-                continue;
-        }
-
-        JSC::JSValue propertyValue = jsUndefined();
-        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-            if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                propertyValue = slot.getPureResult();
-            } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
-                propertyValue = slot.getValue(globalObject, property);
-            } else if (slot.isCustom()) {
-                propertyValue = slot.getValue(globalObject, property);
-            } else if (slot.isValue()) {
-                propertyValue = slot.getValue(globalObject, property);
-            } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
-                RETURN_IF_EXCEPTION(scope, );
-                propertyValue = slot.getValue(globalObject, property);
-            }
-        } else if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-            propertyValue = slot.getPureResult();
-        } else {
-            propertyValue = slot.getValue(globalObject, property);
-        }
-
-        if (scope.exception()) [[unlikely]] {
-            (void)scope.tryClearException();
-            propertyValue = jsUndefined();
-        }
-
-        const WTF::StringImpl* name = property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string().impl();
-        EncodedSlice key = toEncodedSlice(name);
-
-        JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), property.isPrivateName());
-        RETURN_IF_EXCEPTION(scope, );
-    }
-    properties.releaseData();
 }
 
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isConstructor(JSC::EncodedJSValue JSValue0)
@@ -7103,70 +7086,156 @@ extern "C" bool Bun__JSArray__contiguousVectorIsStillValid(
     return reinterpret_cast<const JSC::EncodedJSValue*>(butterfly->contiguous().data()) == expected;
 }
 
-// Smallest own present index of a JSArray that is >= `start`, or UINT64_MAX
-// when every index from `start` to the end of the array is a hole. Mirrors the
-// butterfly walk in JSObject::getOwnIndexedPropertyNames so the caller can skip
-// a run of holes without probing each index of a huge sparse array.
-extern "C" uint64_t Bun__JSArray__nextPresentIndex(
-    JSC::EncodedJSValue encodedValue,
-    uint32_t start)
+static constexpr uint64_t noPresentIndex = std::numeric_limits<uint64_t>::max();
+
+// Mirrors the butterfly walk in JSObject::getOwnIndexedPropertyNames, without the sparse map of an ArrayStorage.
+static uint64_t nextPresentVectorIndex(JSC::JSObject* object, uint32_t start)
 {
-    static constexpr uint64_t notFound = std::numeric_limits<uint64_t>::max();
-
-    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue).asCell());
-
-    switch (array->indexingType()) {
+    switch (object->indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
     case ALL_UNDECIDED_INDEXING_TYPES:
-        return notFound;
+        return noPresentIndex;
 
     case ALL_INT32_INDEXING_TYPES:
     case ALL_CONTIGUOUS_INDEXING_TYPES: {
-        JSC::Butterfly* butterfly = array->butterfly();
+        JSC::Butterfly* butterfly = object->butterfly();
         unsigned usedLength = butterfly->publicLength();
         for (unsigned i = start; i < usedLength; ++i) {
-            if (butterfly->contiguous().at(array, i))
+            if (butterfly->contiguous().at(object, i))
                 return i;
         }
-        return notFound;
+        return noPresentIndex;
     }
 
     case ALL_DOUBLE_INDEXING_TYPES: {
-        JSC::Butterfly* butterfly = array->butterfly();
+        JSC::Butterfly* butterfly = object->butterfly();
         unsigned usedLength = butterfly->publicLength();
         for (unsigned i = start; i < usedLength; ++i) {
-            double value = butterfly->contiguousDouble().at(array, i);
+            double value = butterfly->contiguousDouble().at(object, i);
             // In DoubleShape storage the hole is NaN. A real NaN element can
             // never be stored there: JSObject::putByIndex / putDirectIndex
-            // convert the array to ContiguousShape first.
+            // convert the object to ContiguousShape first.
             if (value == value)
                 return i;
         }
-        return notFound;
+        return noPresentIndex;
     }
 
     case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
-        JSC::ArrayStorage* storage = array->butterfly()->arrayStorage();
+        JSC::ArrayStorage* storage = object->butterfly()->arrayStorage();
         unsigned usedVectorLength = std::min(storage->length(), storage->vectorLength());
         for (unsigned i = start; i < usedVectorLength; ++i) {
             if (storage->m_vector[i])
                 return i;
         }
 
-        uint64_t result = notFound;
-        if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
-            for (const auto& entry : *map) {
-                if (entry.index() >= start && entry.index() < result)
-                    result = entry.index();
-            }
-        }
-        return result;
+        return noPresentIndex;
     }
 
     default:
         ASSERT_NOT_REACHED();
         return start;
     }
+}
+
+static JSC::SparseArrayValueMap* sparseMapOf(JSC::JSObject* object)
+{
+    if (!object || !hasAnyArrayStorage(object->indexingType()))
+        return nullptr;
+    return object->butterfly()->arrayStorage()->m_sparseMap.get();
+}
+
+// The arguments live outside the butterfly. Mirrors GenericArgumentsImpl::getOwnPropertyNames.
+template<typename Arguments>
+static uint64_t nextMappedArgumentIndex(Arguments* arguments, uint32_t start)
+{
+    for (unsigned i = start; i < arguments->internalLength(); ++i) {
+        if (arguments->isMappedArgument(i))
+            return i;
+    }
+    return noPresentIndex;
+}
+
+// Smallest own present index >= `start` outside the sparse map, or UINT64_MAX.
+extern "C" uint64_t Bun__JSObject__nextPresentVectorIndex(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t start)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
+    if (!object)
+        return noPresentIndex;
+    uint64_t result = nextPresentVectorIndex(object, start);
+
+    switch (object->type()) {
+    case JSC::DirectArgumentsType:
+        return std::min(result, nextMappedArgumentIndex(uncheckedDowncast<JSC::DirectArguments>(object), start));
+    case JSC::ScopedArgumentsType:
+        return std::min(result, nextMappedArgumentIndex(uncheckedDowncast<JSC::ScopedArguments>(object), start));
+    default:
+        return result;
+    }
+}
+
+// Smallest own present index >= `start`, or UINT64_MAX when every index from `start` on is a hole.
+//
+// Walks the whole sparse map on every call. A caller that asks once per run of holes, with no
+// bound on the runs, uses the vector half above and Bun__JSObject__copySortedSparseIndexes.
+extern "C" uint64_t Bun__JSObject__nextPresentIndex(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t start)
+{
+    uint64_t result = Bun__JSObject__nextPresentVectorIndex(encodedValue, start);
+    if (JSC::SparseArrayValueMap* map = sparseMapOf(JSC::JSValue::decode(encodedValue).getObject())) {
+        for (const auto& entry : *map) {
+            if (entry.index() >= start && entry.index() < result)
+                result = entry.index();
+        }
+    }
+    return result;
+}
+
+// One past the largest own present index, or 0. One pass over the vector and one over the sparse map.
+extern "C" uint64_t Bun__JSObject__endOfPresentIndexes(JSC::EncodedJSValue encodedValue)
+{
+    uint64_t end = 0;
+    while (true) {
+        uint64_t present = Bun__JSObject__nextPresentVectorIndex(encodedValue, static_cast<uint32_t>(end));
+        if (present == noPresentIndex)
+            break;
+        end = present + 1;
+    }
+    if (JSC::SparseArrayValueMap* map = sparseMapOf(JSC::JSValue::decode(encodedValue).getObject())) {
+        for (const auto& entry : *map)
+            end = std::max<uint64_t>(end, static_cast<uint64_t>(entry.index()) + 1);
+    }
+    return end;
+}
+
+// Copies the indexes in `start..end` that the sparse map holds into `out`, ascending, and returns
+// how many there are. Nothing is sorted when they do not fit in `capacity`: ask again with room.
+extern "C" uint32_t Bun__JSObject__copySortedSparseIndexes(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t start,
+    uint32_t end,
+    uint32_t* out,
+    uint32_t capacity)
+{
+    JSC::SparseArrayValueMap* map = sparseMapOf(JSC::JSValue::decode(encodedValue).getObject());
+    if (!map)
+        return 0;
+
+    uint32_t count = 0;
+    for (const auto& entry : *map) {
+        uint32_t index = entry.index();
+        if (index < start || index >= end)
+            continue;
+        if (count < capacity)
+            out[count] = index;
+        ++count;
+    }
+    if (count <= capacity)
+        std::sort(out, out + count);
+    return count;
 }
 
 extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }

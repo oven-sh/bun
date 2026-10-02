@@ -43,7 +43,7 @@ pub(crate) fn to_be_array_of_size(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let mut formatter = super::make_formatter(global);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global);
     let received = value.to_fmt(&mut formatter);
 
     if not {

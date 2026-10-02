@@ -1,5 +1,5 @@
 import { describe, expect, jest, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 test("error.cause", () => {
   const err = new Error("error 1");
@@ -10,7 +10,7 @@ test("error.cause", () => {
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
 "1 | import { describe, expect, jest, test } from "bun:test";
-2 | import { bunEnv, bunExe, tempDir } from "harness";
+2 | import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 3 | 
 4 | test("error.cause", () => {
 5 |   const err = new Error("error 1");
@@ -20,7 +20,7 @@ error: error 2
       at <anonymous> ([dir]/inspect-error.test.js:6:20)
 
 1 | import { describe, expect, jest, test } from "bun:test";
-2 | import { bunEnv, bunExe, tempDir } from "harness";
+2 | import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 3 | 
 4 | test("error.cause", () => {
 5 |   const err = new Error("error 1");
@@ -235,6 +235,154 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   expect(() => {
     throw err;
   }).toThrow();
+});
+
+// Debug builds verify JSC exception checks in the printer under this flag;
+// release builds compile the verification out and ignore it.
+const validateExceptionChecksEnv = { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" };
+
+describe.concurrent("error.message getter that throws", () => {
+  // The printer reads `message` through a real [[Get]]. The getter's exception
+  // must not stay pending while the printer goes on to read other properties.
+  // Each sink runs in its own process: the failure mode is an abort.
+  const code = sink =>
+    [
+      `class E extends Error { get message() { throw new RangeError("from the getter"); } }`,
+      sink,
+      `console.log("after");`,
+    ].join("\n");
+
+  async function run(sink) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code(sink)],
+      env: validateExceptionChecksEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: normalizeBunSnapshot(stderr), exitCode };
+  }
+
+  test("console.error", async () => {
+    const { stdout, stderr, exitCode } = await run(`console.error(new E());`);
+    expect(stderr).toMatchInlineSnapshot(`
+      "1 | class E extends Error { get message() { throw new RangeError("from the getter"); } }
+      2 | console.error(new E());
+                        ^
+      Error: 
+            at <cwd>/[eval]:2:15"
+    `);
+    expect(stdout).toBe("after\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.inspect", async () => {
+    const { stdout, stderr, exitCode } = await run(`console.error(Bun.inspect(new E()));`);
+    expect(stderr).toMatchInlineSnapshot(`
+      "1 | class E extends Error { get message() { throw new RangeError("from the getter"); } }
+      2 | console.error(Bun.inspect(new E()));
+                                    ^
+      Error: 
+            at <cwd>/[eval]:2:27"
+    `);
+    expect(stdout).toBe("after\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("uncaught exception", async () => {
+    const { stdout, stderr, exitCode } = await run(`throw new E();`);
+    expect(stderr).toMatchInlineSnapshot(`
+      "1 | class E extends Error { get message() { throw new RangeError("from the getter"); } }
+      2 | throw new E();
+                ^
+      Error: 
+            at <cwd>/[eval]:2:7
+
+      Bun v<bun-version>"
+    `);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("unhandled rejection", async () => {
+    const { stdout, stderr, exitCode } = await run(`Promise.reject(new E());`);
+    expect(stderr).toMatchInlineSnapshot(`
+      "1 | class E extends Error { get message() { throw new RangeError("from the getter"); } }
+      2 | Promise.reject(new E());
+                         ^
+      Error: 
+            at <cwd>/[eval]:2:16
+
+      Bun v<bun-version>"
+    `);
+    expect(stdout).toBe("after\n");
+    expect(exitCode).toBe(1);
+  });
+
+  // A worker formats its uncaught error on the worker thread before it
+  // dispatches the error to the parent. The parent gets a clone of the error
+  // (worker_threads) or an ErrorEvent (Web Worker); nothing is printed.
+  const workerSource = JSON.stringify(code(`throw new E();`).replace(`console.log("after");`, ""));
+
+  test("uncaught in a worker_threads Worker", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      [
+        `const worker = new (require("node:worker_threads").Worker)(${workerSource}, { eval: true });`,
+        `worker.on("error", e => console.log("error event:", e.constructor.name, JSON.stringify(e.message)));`,
+        `worker.on("exit", code => console.log("exit event:", code));`,
+      ].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`after\nerror event: Error ""\nexit event: 1\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("uncaught in a Web Worker", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      [
+        `const url = URL.createObjectURL(new Blob([${workerSource}], { type: "application/javascript" }));`,
+        `const worker = new Worker(url);`,
+        `worker.onerror = ev => console.log("error event:", ev.constructor.name);`,
+        `worker.addEventListener("close", ev => console.log("close event:", ev.code));`,
+      ].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`after\nerror event: ErrorEvent\nclose event: 1\n`);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// The header the printer renders for each kind of `message`. A value that
+// cannot be read as a string prints like an empty message.
+describe.concurrent.each([
+  ["a number", `e.message = 42;`, "error: 42"],
+  ["a Symbol", `e.message = Symbol("sym");`, "Error: "],
+  ["an object with toString", `e.message = { toString() { return "from toString"; } };`, "error: from toString"],
+  ["an object whose toString throws", `e.message = { toString() { throw new RangeError("ts"); } };`, "Error: "],
+  [
+    "found through a Proxy whose has trap throws",
+    `delete e.message; Object.setPrototypeOf(e, new Proxy(Error.prototype, { has() { throw new RangeError("has"); } }));`,
+    "Error: ",
+  ],
+])("error.message that is %s", (_, setup, header) => {
+  test("prints the header and the stack", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        [`const e = new Error("boom");`, setup, `console.error(e);`, `console.log("after");`].join("\n"),
+      ],
+      env: validateExceptionChecksEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr)).toBe(
+      [`1 | const e = new Error("boom");`, `                  ^`, header, `      at <cwd>/[eval]:1:15`].join("\n"),
+    );
+    expect(stdout).toBe("after\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("source map remapping of the printed stack", () => {
@@ -509,4 +657,329 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(stderr).toContain("across 2 files");
     expect(exitCode).toBe(1);
   });
+});
+
+// The printer renders an error once and prints `[Circular]` where the error
+// comes back, under the key that holds it. Each entry of the printer must do
+// the same: the uncaught entries, the console, `Bun.inspect` and `bun test`.
+describe.concurrent("an error that reaches itself", () => {
+  const shapes = {
+    "through an own property": {
+      source: 'const e = new Error("x"); e.self = e;',
+      lines: ["error: x", " self: [Circular],"],
+    },
+    "through cause and through errors": {
+      source: 'const e = new Error("cyc"); e.cause = e; e.errors = [e];',
+      lines: ["error: cyc", "  cause: [Circular],", " errors: [", "  [Circular]", "],"],
+    },
+    "through an error inside an array property": {
+      source: 'const e = new Error("a"), b = new Error("b"); e.x = [b]; b.y = b;',
+      lines: ["error: a", " x: [", "error: b", " y: [Circular],", "],"],
+    },
+    "through the cause of its cause": {
+      source: 'const e = new Error("a"), b = new Error("b"); e.cause = b; b.cause = e;',
+      lines: ["error: a", "error: b", " cause: [Circular],"],
+    },
+    // The constructor makes `cause` a property that is not enumerable.
+    "through a cause from the constructor": {
+      source: 'const e = new Error("x", { cause: 0 }); e.cause = e;',
+      lines: ["error: x", " cause: [Circular],"],
+    },
+    "through the cause of a cause from the constructor": {
+      source: 'const e = new Error("a", { cause: 0 }), b = new Error("b", { cause: e }); e.cause = b;',
+      lines: ["error: a", "error: b", " cause: [Circular],"],
+    },
+  };
+  const expected = Object.fromEntries(Object.entries(shapes).map(([name, { lines }]) => [name, lines]));
+
+  // Drops the source preview, the frames and the version banner of an
+  // uncaught error: what is left is one line per rendered error, its
+  // properties and the markers.
+  function rendered(text) {
+    return text
+      .split("\n")
+      .filter(line => !/^\s*\d+ \| /.test(line) && !/^\s*\^\s*$/.test(line) && !/^\s+at /.test(line))
+      .filter(line => line.trim() !== "" && !line.startsWith("Bun v"));
+  }
+
+  async function run(cmd, { files, env } = {}) {
+    using dir = tempDir("inspect-error-cycle", files ?? {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: String(dir),
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // These entries return, so one process prints every shape.
+  const entries = {
+    "console.log": { log: "console.log", print: "console.log(e)", stream: "stdout", exitCode: 0 },
+    "console.error": { log: "console.error", print: "console.error(e)", stream: "stderr", exitCode: 0 },
+    "Bun.inspect": { log: "console.log", print: "console.log(Bun.inspect(e))", stream: "stdout", exitCode: 0 },
+    "reportError": { log: "console.error", print: "reportError(e)", stream: "stderr", exitCode: 1 },
+  };
+  for (const [entry, { log, print, stream, exitCode }] of Object.entries(entries)) {
+    test(entry, async () => {
+      const source = Object.entries(shapes)
+        .map(([name, shape]) => `{ ${log}(${JSON.stringify("shape: " + name)}); ${shape.source} ${print}; }`)
+        .join("\n");
+      const result = await run(["-e", source]);
+      const seen = {};
+      let lines;
+      for (const line of rendered(result[stream])) {
+        if (line.startsWith("shape: ")) seen[line.slice("shape: ".length)] = lines = [];
+        else lines.push(line);
+      }
+      expect({ seen, exitCode: result.exitCode }).toEqual({ seen: expected, exitCode });
+    });
+  }
+
+  // These entries end the process.
+  for (const [name, { source, lines }] of Object.entries(shapes)) {
+    test(`throw: ${name}`, async () => {
+      const { stderr, exitCode } = await run(["-e", `${source} throw e;`]);
+      expect({ lines: rendered(stderr), exitCode }).toEqual({ lines, exitCode: 1 });
+    });
+  }
+
+  test("Promise.reject", async () => {
+    const { source, lines } = shapes["through cause and through errors"];
+    const { stderr, exitCode } = await run(["-e", `${source} Promise.reject(e);`]);
+    expect({ lines: rendered(stderr), exitCode }).toEqual({ lines, exitCode: 1 });
+  });
+
+  test("bun test: a test that rejects with it is printed once and the next test runs", async () => {
+    const { stderr, exitCode } = await run(["test", "./cycle.test.js"], {
+      files: {
+        "cycle.test.js": `
+          import { test } from "bun:test";
+          test("rejects", async () => {
+            ${shapes["through cause and through errors"].source}
+            throw e;
+          });
+          test("next", () => {});
+        `,
+      },
+    });
+    expect(rendered(stderr).filter(line => /^\s*(error: |cause: |errors: |\[Circular\]|\],)/.test(line))).toEqual(
+      shapes["through cause and through errors"].lines,
+    );
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("throw: as a member of an AggregateError that it holds", async () => {
+    const { stderr, exitCode } = await run([
+      "-e",
+      'const e = new Error("x"); e.list = [new AggregateError([e, new Error("y")], "agg")]; throw e;',
+    ]);
+    expect({ lines: rendered(stderr), exitCode }).toEqual({
+      lines: ["error: x", " list: [", "  [Circular]", "error: y", "],"],
+      exitCode: 1,
+    });
+  });
+
+  test("throw: one GitHub annotation", async () => {
+    const { stderr, exitCode } = await run(["-e", `${shapes["through cause and through errors"].source} throw e;`], {
+      env: { GITHUB_ACTIONS: "true" },
+    });
+    expect(stderr.split("\n").filter(line => line.startsWith("::error")).length).toBe(1);
+    expect(exitCode).toBe(1);
+  });
+
+  test("an error that is printed twice without a cycle is rendered in full each time", async () => {
+    const { stdout, exitCode } = await run([
+      "-e",
+      'const e = new Error("twice"); e.meta = {}; console.log([e, e]); console.log(e, e); console.log({ a: e, b: { c: e } });',
+    ]);
+    const lines = rendered(stdout);
+    expect({
+      renders: lines.filter(line => line.trim() === "error: twice").length,
+      circular: lines.filter(line => line.includes("[Circular]")),
+      exitCode,
+    }).toEqual({ renders: 6, circular: [], exitCode: 0 });
+  });
+});
+
+// An Error-valued `cause` is printed after the error that holds it, once,
+// for a `cause` that was assigned and for a `cause` from the constructor.
+describe.concurrent("an assigned cause", () => {
+  const assigned = n =>
+    `let e = new Error("leaf"); for (let i = 0; i < ${n}; i++) { const x = new Error("l" + i); x.cause = e; e = x; }`;
+  const constructed = n =>
+    `let e = new Error("leaf"); for (let i = 0; i < ${n}; i++) { e = new Error("l" + i, { cause: e }); }`;
+
+  async function run(source) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const renders = text =>
+    text
+      .split("\n")
+      .filter(line => /^\s*error: /.test(line))
+      .map(line => line.trim());
+  const chain = n => [...Array.from({ length: n }, (_, i) => "error: l" + (n - 1 - i)), "error: leaf"];
+
+  test("Bun.inspect renders each error of the chain once", async () => {
+    const { stdout, exitCode } = await run(
+      [3, 6, 10]
+        .map(n => `{ ${assigned(n)} console.log("chain of " + ${n}); console.log(Bun.inspect(e, { depth: 100 })); }`)
+        .join("\n"),
+    );
+    const seen = {};
+    let current;
+    for (const line of stdout.split("\n")) {
+      if (line.startsWith("chain of ")) seen[line] = current = [];
+      else if (/^\s*error: /.test(line)) current.push(line.trim());
+    }
+    expect({ seen, exitCode }).toEqual({
+      seen: { "chain of 3": chain(3), "chain of 6": chain(6), "chain of 10": chain(10) },
+      exitCode: 0,
+    });
+  });
+
+  const errorLines = text =>
+    text
+      .split("\n")
+      .filter(line => /^\s*(error: |AggregateError: |\[Error \.\.\.\])/.test(line))
+      .map(line => line.trim());
+
+  // The queue prints an AggregateError itself, then its members.
+  test("an AggregateError in the queue prints its members once", async () => {
+    const shapes = {
+      "the cause of a cause, assigned": `
+        const mid = new Error("mid");
+        mid.cause = new AggregateError([new Error("member")], "agg");
+        throw new Error("top", { cause: mid });`,
+      "the cause, from the constructor": `
+        throw new Error("top", { cause: new AggregateError([new Error("member")], "agg") });`,
+      "an own property that is not the cause": `
+        const top = new Error("top");
+        top.other = new AggregateError([new Error("member")], "agg");
+        throw top;`,
+      "errors is enumerable": `
+        const agg = new AggregateError([new Error("member")], "agg");
+        Object.defineProperty(agg, "errors", { enumerable: true });
+        throw new Error("top", { cause: agg });`,
+      "no members": `
+        throw new Error("top", { cause: new AggregateError([], "agg") });`,
+    };
+    const names = Object.keys(shapes);
+    const results = await Promise.all(names.map(name => run(shapes[name])));
+    const seen = Object.fromEntries(
+      names.map((name, i) => [name, { renders: errorLines(results[i].stderr), exitCode: results[i].exitCode }]),
+    );
+    const withMember = { renders: ["error: top", "AggregateError: agg", "error: member"], exitCode: 1 };
+    expect(seen).toEqual({
+      "the cause of a cause, assigned": {
+        renders: ["error: top", "error: mid", "AggregateError: agg", "error: member"],
+        exitCode: 1,
+      },
+      "the cause, from the constructor": withMember,
+      "an own property that is not the cause": withMember,
+      "errors is enumerable": withMember,
+      "no members": { renders: ["error: top", "AggregateError: agg"], exitCode: 1 },
+    });
+  });
+
+  test("console.log and Bun.inspect print the same lines as for a cause from the constructor", async () => {
+    const aggregate = `new AggregateError([new Error("member")], "agg")`;
+    const values = {
+      "assigned, chain of 4": `(() => { ${assigned(4)} return e; })()`,
+      "constructed, chain of 4": `(() => { ${constructed(4)} return e; })()`,
+      "assigned, AggregateError": `Object.assign(new Error("top"), { cause: ${aggregate} })`,
+      "constructed, AggregateError": `new Error("top", { cause: ${aggregate} })`,
+    };
+    const { stdout, exitCode } = await run(
+      Object.entries(values)
+        .map(
+          ([name, value]) => `{
+            const value = ${value};
+            console.log(${JSON.stringify("console.log: " + name)});
+            console.log(value);
+            console.log(${JSON.stringify("Bun.inspect: " + name)});
+            console.log(Bun.inspect(value));
+          }`,
+        )
+        .join("\n"),
+    );
+    const seen = {};
+    let current;
+    for (const line of stdout.split("\n")) {
+      if (/^(console\.log|Bun\.inspect): /.test(line)) seen[line] = current = [];
+      else current?.push(...errorLines(line));
+    }
+    const capped = ["error: l3", "error: l2", "error: l1", "[Error ...]"];
+    const withMember = ["error: top", "AggregateError: agg", "error: member"];
+    expect({ seen, exitCode }).toEqual({
+      seen: {
+        "console.log: assigned, chain of 4": capped,
+        "Bun.inspect: assigned, chain of 4": chain(4),
+        "console.log: constructed, chain of 4": capped,
+        "Bun.inspect: constructed, chain of 4": chain(4),
+        "console.log: assigned, AggregateError": withMember,
+        "Bun.inspect: assigned, AggregateError": withMember,
+        "console.log: constructed, AggregateError": withMember,
+        "Bun.inspect: constructed, AggregateError": withMember,
+      },
+      exitCode: 0,
+    });
+  });
+
+  test("throw prints the same lines as for a cause from the constructor", async () => {
+    const [a, c] = await Promise.all([run(`${assigned(4)} throw e;`), run(`${constructed(4)} throw e;`)]);
+    const lines = text =>
+      text.split("\n").filter(line => !/^\s*\d+ \| /.test(line) && !/^\s*\^\s*$/.test(line) && !/^\s+at /.test(line));
+    expect({ lines: lines(a.stderr), renders: renders(a.stderr), exitCode: a.exitCode }).toEqual({
+      lines: lines(c.stderr),
+      renders: chain(4),
+      exitCode: 1,
+    });
+  });
+});
+
+test("a stack overflow in a cause chain reaches the caller of Bun.inspect", () => {
+  let chain;
+  for (let i = 0; i < 20_000; i++) chain = new Error("e" + i, chain && { cause: chain });
+  const overflow = "Maximum call stack size exceeded.";
+  expect(() => Bun.inspect(chain, { depth: Infinity })).toThrow(overflow);
+  expect(() => Bun.inspect([chain], { depth: Infinity })).toThrow(overflow);
+  // Its members print after the chain, and listing them must not clear the exception.
+  const throughMembers = new Error("top", { cause: new AggregateError([new Error("m")], "agg", { cause: chain }) });
+  expect(() => Bun.inspect(throughMembers, { depth: Infinity })).toThrow(overflow);
+});
+
+test("an AggregateError whose members are all circular still prints", () => {
+  const a = new AggregateError([], "a");
+  const b = new AggregateError([a], "b");
+  a.errors.push(b);
+  const headers = text => text.split("\n").filter(line => /^(\[Circular\]|\w*[eE]rror: )/.test(line));
+  expect(headers(Bun.inspect(a))).toEqual(["[Circular]", "AggregateError: b"]);
+
+  const request = new Error("request");
+  request.failure = new AggregateError([request], "all mirrors failed");
+  expect(headers(Bun.inspect(request))).toEqual(["error: request", "AggregateError: all mirrors failed", "[Circular]"]);
+});
+
+test("a symbol described as cause or errors is a property like any other", () => {
+  const middle = new Error("middle", { cause: new Error("the cause") });
+  middle[Symbol("cause")] = new Error("under the symbol");
+  const text = Bun.inspect(new Error("top", { cause: middle }));
+  expect(text).toContain("error: the cause");
+  expect(text).toContain("error: under the symbol");
+
+  const aggregate = new AggregateError([], "aggregate");
+  aggregate[Symbol("errors")] = [1, 2];
+  expect(Bun.inspect(aggregate)).toContain("errors: [ 1, 2 ]");
 });

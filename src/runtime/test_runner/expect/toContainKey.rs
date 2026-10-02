@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome, make_formatter};
+use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -7,7 +7,7 @@ impl Expect {
         self.contain_matcher(global, frame, "toContainKey", ExpectedArray::None, ContainMsgs::CONTAIN,
             |g, value, expected| {
                 if !value.is_object() {
-                    let mut f = make_formatter(g);
+                    let mut f = bun_jsc::Formatter::matcher_message(g);
                     return Err(g.throw_invalid_arguments(format_args!(
                         "Expected value must be an object\nReceived: {}", value.to_fmt(&mut f))));
                 }

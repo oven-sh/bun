@@ -76,10 +76,10 @@ pub(crate) fn to_be_type_of(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let mut formatter = super::make_formatter(global);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global);
     // ZigFormatter borrows &mut Formatter for its lifetime; need a second formatter
     // so `received` and `expected_str` can coexist in one format_args!.
-    let mut formatter2 = super::make_formatter(global);
+    let mut formatter2 = bun_jsc::Formatter::matcher_message(global);
     // `defer formatter.deinit()` — handled by Drop.
     let received = value.to_fmt(&mut formatter);
     let expected_str = expected.to_fmt(&mut formatter2);

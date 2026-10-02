@@ -363,3 +363,261 @@ console.log("calls=" + calls);`,
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: box("1") + "calls=1\n", stderr: "", exitCode: 0 });
   });
 });
+
+// Reading a cell runs user code (getters, Proxy traps, custom inspect). An
+// exception thrown there must surface from console.table itself, exactly as
+// it does from Bun.inspect.table, rather than being swallowed by the printer.
+describe("console.table propagates exceptions thrown while reading cells", () => {
+  test("a throwing getter on a row", () => {
+    const boom = new Error("getter boom");
+    const row = {};
+    Object.defineProperty(row, "x", {
+      get() {
+        throw boom;
+      },
+      enumerable: true,
+    });
+    expect(() => console.table([row])).toThrow(boom);
+  });
+
+  test("a throwing Proxy trap on the tabular data", () => {
+    const boom = new Error("proxy boom");
+    const data = new Proxy(
+      { a: 1 },
+      {
+        ownKeys() {
+          throw boom;
+        },
+      },
+    );
+    expect(() => console.table(data)).toThrow(boom);
+  });
+
+  test("a throwing custom inspect in a cell", () => {
+    const boom = new Error("inspect boom");
+    const cell = {
+      [Bun.inspect.custom]() {
+        throw boom;
+      },
+    };
+    expect(() => console.table([{ x: cell }])).toThrow(boom);
+  });
+
+  test("nothing is printed and the error is uncaught in a script", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.table([{ get x() { throw new Error("table getter boom"); } }]);
+console.log("unreachable");`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("table getter boom");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// The rows of an array or array-like are the elements that exist, like Node's
+// console.table (Object.keys). The Array iterator instead trusts whatever
+// `length` the object reports and yields `undefined` for every missing index,
+// so a Proxy that lies about `length`, or a sparse array, would produce one
+// row per reported index (up to 2^32 - 1 of them).
+describe("console.table rows come from the elements that exist, not from length", () => {
+  const table = (...lines: string[]) =>
+    `┌───┬───┐\n│   │ a │\n├───┼───┤\n${lines.map(l => l + "\n").join("")}└───┴───┘\n`;
+
+  test("a Proxy that reports a length far beyond its elements", () => {
+    const proxy = new Proxy([{ a: 1 }, { a: 2 }], {
+      get(t, p, r) {
+        return p === "length" ? 1_000 : Reflect.get(t, p, r);
+      },
+    });
+    expect(Bun.inspect.table(proxy)).toBe(table("│ 0 │ 1 │", "│ 1 │ 2 │"));
+  });
+
+  test("a Proxy around an array still reads its cells through the get trap", () => {
+    const proxy = new Proxy([{ a: 1 }], {
+      get(t, p, r) {
+        return p === "0" ? { a: 2 } : Reflect.get(t, p, r);
+      },
+    });
+    expect(Bun.inspect.table(proxy)).toBe(table("│ 0 │ 2 │"));
+  });
+
+  test("a sparse array shows only the indices that hold an element", () => {
+    const sparse = [{ a: 1 }, , { a: 2 }];
+    sparse.length = 1_000;
+    expect(Bun.inspect.table(sparse)).toBe(table("│ 0 │ 1 │", "│ 2 │ 2 │"));
+  });
+
+  test("an array with only holes is an empty table", () => {
+    expect(Bun.inspect.table(new Array(1_000))).toBe(Bun.inspect.table([]));
+  });
+
+  test("a properties filter applies to the elements that exist", () => {
+    const sparse = [{ a: 1, b: 2 }, , { a: 3, b: 4 }];
+    expect(Bun.inspect.table(sparse, ["a"])).toBe(table("│ 0 │ 1 │", "│ 2 │ 3 │"));
+  });
+
+  // Object.freeze moves every element of an array into its sparse map.
+  test("a frozen array with a hole", () => {
+    const frozen = Object.freeze([{ a: 1 }, , { a: 2 }]);
+    expect(Bun.inspect.table(frozen)).toBe(table("│ 0 │ 1 │", "│ 2 │ 2 │"));
+  });
+
+  test("an array is walked like an object: its named properties are rows too", () => {
+    const arr = Object.assign([{ a: 1 }], { foo: { a: 2 } });
+    expect(Bun.inspect.table(arr)).toBe(Bun.inspect.table({ 0: { a: 1 }, foo: { a: 2 } }));
+    expect(Bun.inspect.table(new Proxy(arr, {}))).toBe(Bun.inspect.table(arr));
+  });
+
+  test("an Array subclass with its own iterator is still walked by its elements", () => {
+    class Rows extends Array {
+      *[Symbol.iterator]() {
+        yield { a: "from the iterator" };
+      }
+    }
+    expect(Bun.inspect.table(Rows.from([{ a: 1 }]))).toBe(table("│ 0 │ 1 │"));
+  });
+
+  test("console.table", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const proxy = new Proxy([{ a: 1 }, { a: 2 }], {
+  get(t, p, r) {
+    return p === "length" ? 1_000 : Reflect.get(t, p, r);
+  },
+});
+console.table(proxy);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: table("│ 0 │ 1 │", "│ 1 │ 2 │"), stderr: "", exitCode: 0 });
+  });
+});
+
+// Rows that come from an iterator end when user code says so. A collection
+// gives a replaced iterator as many steps as it reports elements. Any other
+// iterable gets a budget of 1000 rows.
+describe("console.table reads a bounded number of rows from an iterator", () => {
+  function* rows(count: number) {
+    for (let i = 0; i < count; i++) yield { n: i };
+  }
+  const lastLines = (text: string, count: number) => text.split("\n").slice(-count);
+
+  test("a generator past the budget is cut and marked", () => {
+    expect(lastLines(Bun.inspect.table(rows(1001)), 4)).toEqual([
+      "│ 999 │ 999 │",
+      "└─────┴─────┘",
+      "... more rows",
+      "",
+    ]);
+  });
+
+  test("a generator that ends at the budget is not marked", () => {
+    expect(lastLines(Bun.inspect.table(rows(1000)), 3)).toEqual(["│ 999 │ 999 │", "└─────┴─────┘", ""]);
+  });
+
+  test("an array, a typed array, a Map and a Set print every row", () => {
+    const dataRows = (table: string) => table.split("\n").length - 5;
+    expect({
+      array: dataRows(Bun.inspect.table(Array.from(rows(1500)))),
+      typedArray: dataRows(Bun.inspect.table(new Uint8Array(1500))),
+      map: dataRows(Bun.inspect.table(new Map(Array.from({ length: 1500 }, (_, i) => [i, i])))),
+      set: dataRows(Bun.inspect.table(new Set(Array.from({ length: 1500 }, (_, i) => i)))),
+    }).toEqual({ array: 1500, typedArray: 1500, map: 1500, set: 1500 });
+  });
+
+  // Each child counts what its iterator hands out and exits with 2 well past
+  // the budget, so a printer without one fails at once and does not run until
+  // memory is gone.
+  const endless = `let yielded = 0;
+function* endless() {
+  for (;;) {
+    if (++yielded > 5000) process.exit(2);
+    yield { t: 1 };
+  }
+}`;
+
+  async function run(source: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `${endless}\n${source}\nconsole.log("yielded=" + yielded);`],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { lines: stdout.split("\n"), stderr, exitCode };
+  }
+
+  test.concurrent("an iterator that never ends", async () => {
+    const { lines, stderr, exitCode } = await run(`console.table({ host: "db1", [Symbol.iterator]: endless });`);
+    expect(stderr).toBe("");
+    // One read past the budget tells a cut table from one that ends there.
+    expect(lines.slice(-5)).toEqual(["│ 999 │ 1 │", "└─────┴───┘", "... more rows", "yielded=1001", ""]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Only user code can make these iterable, so only the budget bounds the walk.
+  test.concurrent.each([
+    ["a WeakMap", `WeakMap.prototype[Symbol.iterator] = endless;\nconsole.table(new WeakMap());`],
+    ["a WeakSet", `WeakSet.prototype[Symbol.iterator] = endless;\nconsole.table(new WeakSet());`],
+    ["an ArrayBuffer", `ArrayBuffer.prototype[Symbol.iterator] = endless;\nconsole.table(new ArrayBuffer(1 << 20));`],
+  ])("%s that user code made iterable", async (_, source) => {
+    const { lines, stderr, exitCode } = await run(source);
+    expect(stderr).toBe("");
+    // Three header lines, the rows, the bottom border, then the three lines below.
+    expect({ rows: lines.length - 7, tail: lines.slice(-3) }).toEqual({
+      rows: 1000,
+      tail: ["... more rows", "yielded=1001", ""],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The rows of an array are its own properties, so its iterator does not run.
+  test.concurrent("an array whose iterator was replaced", async () => {
+    const { lines, stderr, exitCode } = await run(
+      `Array.prototype[Symbol.iterator] = endless;\nconsole.table([{ a: 1 }, { a: 2 }]);`,
+    );
+    expect(stderr).toBe("");
+    expect(lines).toEqual([
+      "┌───┬───┐",
+      "│   │ a │",
+      "├───┼───┤",
+      "│ 0 │ 1 │",
+      "│ 1 │ 2 │",
+      "└───┴───┘",
+      "yielded=0",
+      "",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a Map whose iterator was replaced", async () => {
+    const { lines, stderr, exitCode } = await run(
+      `Map.prototype[Symbol.iterator] = function* () { for (const row of endless()) yield ["k", row.t]; };
+console.table(new Map([["a", 1], ["b", 2]]));`,
+    );
+    expect(stderr).toBe("");
+    // Two entries, so two steps, then one more to learn that the iterator had more.
+    expect(lines).toEqual([
+      "┌───┬─────┬────────┐",
+      "│   │ Key │ Values │",
+      "├───┼─────┼────────┤",
+      "│ 0 │ k   │ 1      │",
+      "│ 1 │ k   │ 1      │",
+      "└───┴─────┴────────┘",
+      "... more rows",
+      "yielded=3",
+      "",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+});

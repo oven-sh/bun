@@ -133,6 +133,7 @@ macro_rules! throw_pretty_static {
 
 cfg_jsc! {
     #[path = "bun_test.rs"]       pub(crate) mod bun_test;
+    #[path = "asymmetric_matcher_format.rs"] pub(crate) mod asymmetric_matcher_format;
     #[path = "Collection.rs"]     pub(crate) mod collection;
     #[path = "debug.rs"]          pub(crate) mod debug;
     #[path = "diff_format.rs"]    pub(crate) mod diff_format;
@@ -140,7 +141,6 @@ cfg_jsc! {
     #[path = "Execution.rs"]      pub(crate) mod execution;
     #[path = "jest.rs"]           pub(crate) mod jest;
     #[path = "Order.rs"]          pub(crate) mod order;
-    #[path = "pretty_format.rs"]  pub(crate) mod pretty_format;
     #[path = "ScopeFunctions.rs"] pub(crate) mod scope_functions;
     #[path = "snapshot.rs"]       pub(crate) mod snapshot;
 
@@ -218,24 +218,8 @@ pub(crate) mod expect {
     impl JSValueTestExt for JSValue {
         #[inline]
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
-            use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
-            let fmt_options = FormatOptions {
-                enable_colors: false,
-                add_newline: false,
-                flush: false,
-                quote_strings: true,
-            };
-            JestPrettyFormat::format(
-                MessageLevel::Debug,
-                global,
-                core::slice::from_ref(&self),
-                1,
-                out,
-                fmt_options,
-            )?;
-            // `FormatOptions.flush` is false, so the formatter does not flush
-            // internally; a buffered `out` would otherwise drop trailing
-            // snapshot bytes.
+            Formatter::snapshot(global).format_value::<false>(self, out)?;
+            // A buffered `out` would otherwise drop trailing snapshot bytes.
             out.flush().map_err(|e| global.throw_error(e, "snapshot writer flush failed"))?;
             Ok(())
         }
@@ -273,17 +257,6 @@ pub(crate) mod expect {
     /// Result of `JSValue::as_big_int_compare`.
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub(crate) enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
-
-    /// `super::make_formatter(global_this)`
-    /// is the universal matcher pattern; `Formatter` has no `Default` (it
-    /// borrows `global_this`), so provide the constructor every matcher
-    /// expected.
-    #[inline]
-    pub(crate) fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
-        let mut f = Formatter::new(global);
-        f.quote_strings = true;
-        f
-    }
 
     // ── numeric ordering matchers (toBe{Greater,Less}Than[OrEqual]) ───────
     // The four matchers are near-identical; collapse to one body
@@ -392,8 +365,8 @@ pub(crate) mod expect {
             if pass { return Ok(JSValue::UNDEFINED); }
 
             // failure path — two formatters because `to_fmt` borrows `&mut`.
-            let mut f1 = make_formatter(global);
-            let mut f2 = make_formatter(global);
+            let mut f1 = bun_jsc::Formatter::matcher_message(global);
+            let mut f2 = bun_jsc::Formatter::matcher_message(global);
             let value_fmt = value.to_fmt(&mut f1);
             let expected_fmt = other_value.to_fmt(&mut f2);
             let glyph = rel.glyph();
@@ -411,18 +384,6 @@ pub(crate) mod expect {
                 glyph, expected_fmt, value_fmt,
             )
         }
-    }
-
-    /// Builder-style `.with_quote_strings(bool)` shim — `bun_jsc::Formatter`
-    /// exposes `quote_strings` as a public field, not a chained setter. A
-    /// handful of matcher modules write
-    /// `Formatter::new(g).with_quote_strings(true)`.
-    pub(crate) trait FormatterTestExt: Sized {
-        fn with_quote_strings(self, b: bool) -> Self;
-    }
-    impl<'a> FormatterTestExt for Formatter<'a> {
-        #[inline]
-        fn with_quote_strings(mut self, b: bool) -> Self { self.quote_strings = b; self }
     }
 
     // ── matcher modules ───────────────────────────────────────────────

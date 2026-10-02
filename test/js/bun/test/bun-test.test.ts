@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 test("Bun.version", () => {
   expect(process.versions.bun).toBe(Bun.version);
@@ -81,5 +81,88 @@ test("toBeWithin() with missing or non-number arguments fails the test without c
   expect(stderr).toContain("toBeWithin() requires the first argument to be a number");
   expect(stderr).toContain("toBeWithin() requires the second argument to be a number");
   expect(stderr).toContain("4 fail");
+  expect(exitCode).toBe(1);
+});
+
+// A test or a hook rejects with a value whose formatting throws. Left pending on the
+// VM, that second exception aborts the runner in the next test callback, or has it
+// reported as passed without running its body. A boxed primitive or a RegExp prints
+// from its internal slot, so its hooks do not run. The `size` getter of a Map subclass does.
+test.concurrent("a rejection whose toString/Symbol.toPrimitive throws does not break later tests", async () => {
+  using dir = tempDir("test-hostile-rejection", {
+    "hostile.test.js": `
+      import { test, describe, afterEach } from "bun:test";
+
+      const hooks = { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } };
+      class Sub extends String {}
+
+      for (const [name, make] of [
+        ["String", () => new String("q")],
+        ["Number", () => new Number(1)],
+        ["Boolean", () => new Boolean(true)],
+        ["RegExp", () => /re/],
+        ["String subclass", () => new Sub("q")],
+        ["Map subclass", () => new (class extends Map { get size() { throw 1; } })()],
+      ]) {
+        test(name, async () => {
+          throw Object.assign(make(), hooks);
+        });
+      }
+
+      describe("hook", () => {
+        afterEach(async () => {
+          throw Object.assign(new String("q"), hooks);
+        });
+        test("afterEach rejects", () => {});
+      });
+
+      test("runs after the rejections", () => {
+        console.log("last test body ran");
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "hostile.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    last test body ran"
+  `);
+  expect(normalizeBunSnapshot(stderr, dir)).toMatchInlineSnapshot(`
+    "hostile.test.js:
+    error
+    [String: "q"]
+    (fail) String
+    error
+    [Number: 1]
+    (fail) Number
+    error
+    [Boolean: true]
+    (fail) Boolean
+    error
+    /re/
+    (fail) RegExp
+    error
+    [String: "q"]
+    (fail) String subclass
+    error
+    (fail) Map subclass
+    error
+    [String: "q"]
+    (fail) hook > afterEach rejects
+    (pass) runs after the rejections
+
+     1 pass
+     7 fail
+    Ran 8 tests across 1 file."
+  `);
+  expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
 });

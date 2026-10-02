@@ -2,18 +2,21 @@ use core::fmt;
 use std::borrow::Cow;
 
 use bun_core::Output;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{Formatter, JSGlobalObject, JSValue, JsResult};
 
 use super::diff::print_diff::{print_diff_main, DiffConfig};
-use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
-/// Renders a Jest-style diff of two already-formatted values. Formatting a JS value runs user code
-/// (getters, Proxy traps) and can throw, so it happens up front in [`DiffFormatter::new`], never
-/// inside `Display::fmt`.
+/// Renders a Jest-style diff of two already-formatted values. Formatting a JS value can throw, so it
+/// happens up front in [`DiffFormatter::new`], never inside `Display::fmt`.
 pub(crate) struct DiffFormatter<'a> {
     pub(crate) received_string: Cow<'a, [u8]>,
     pub(crate) expected_string: Cow<'a, [u8]>,
     pub(crate) not: bool,
+    /// A side printed `[Object]` for a value it had already printed in full, past this many bytes
+    /// of repeats.
+    abbreviated: Option<usize>,
+    /// A side nests deeper than the native stack allows.
+    stopped_early: bool,
 }
 
 impl<'a> DiffFormatter<'a> {
@@ -23,34 +26,55 @@ impl<'a> DiffFormatter<'a> {
         expected: JSValue,
         not: bool,
     ) -> JsResult<DiffFormatter<'static>> {
-        let fmt_options = FormatOptions {
-            enable_colors: false,
-            add_newline: false,
-            flush: false,
-            quote_strings: true,
+        struct Side {
+            text: Vec<u8>,
+            abbreviated: Option<usize>,
+            stopped_early: bool,
+        }
+        let side = |value: JSValue, repeats: Option<usize>| -> JsResult<Side> {
+            let mut text: Vec<u8> = Vec::new();
+            let mut formatter = Formatter::diff(global_this);
+            if let Some(bytes) = repeats {
+                formatter.raise_shared_reference_budget(bytes);
+            }
+            formatter.format_value::<false>(value, &mut text)?;
+            Ok(Side {
+                text: trim_one_newline(text),
+                abbreviated: formatter.abbreviated_shared_references(),
+                stopped_early: formatter.stopped_early(),
+            })
         };
-        let mut received_buf: Vec<u8> = Vec::new();
-        JestPrettyFormat::format(
-            MessageLevel::Debug,
-            global_this,
-            core::slice::from_ref(&received),
-            1,
-            &mut received_buf,
-            fmt_options,
-        )?;
-        let mut expected_buf: Vec<u8> = Vec::new();
-        JestPrettyFormat::format(
-            MessageLevel::Debug,
-            global_this,
-            core::slice::from_ref(&expected),
-            1,
-            &mut expected_buf,
-            fmt_options,
-        )?;
+        let mut expected_side = side(expected, None)?;
+        if not {
+            // Only `expected` is shown.
+            return Ok(DiffFormatter {
+                received_string: Cow::Borrowed(b""),
+                expected_string: Cow::Owned(expected_side.text),
+                not,
+                abbreviated: expected_side.abbreviated,
+                stopped_early: expected_side.stopped_early,
+            });
+        }
+        let mut received_side = side(received, None)?;
+        // One side shares an object where the other has copies of it. Abbreviated on one side
+        // only, every line of it would differ. What the other side printed in full bounds this.
+        let gets_more = |side: &Side, other: &Side| {
+            other.abbreviated.is_none()
+                && side
+                    .abbreviated
+                    .is_some_and(|budget| other.text.len() > budget)
+        };
+        if gets_more(&received_side, &expected_side) {
+            received_side = side(received, Some(expected_side.text.len()))?;
+        } else if gets_more(&expected_side, &received_side) {
+            expected_side = side(expected, Some(received_side.text.len()))?;
+        }
         Ok(DiffFormatter {
-            received_string: Cow::Owned(trim_one_newline(received_buf)),
-            expected_string: Cow::Owned(trim_one_newline(expected_buf)),
+            received_string: Cow::Owned(received_side.text),
+            expected_string: Cow::Owned(expected_side.text),
             not,
+            abbreviated: received_side.abbreviated.or(expected_side.abbreviated),
+            stopped_early: received_side.stopped_early || expected_side.stopped_early,
         })
     }
 
@@ -59,6 +83,8 @@ impl<'a> DiffFormatter<'a> {
             received_string: Cow::Borrowed(received),
             expected_string: Cow::Borrowed(expected),
             not,
+            abbreviated: None,
+            stopped_early: false,
         }
     }
 }
@@ -83,7 +109,21 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
             &self.expected_string,
             f,
             &diff_config,
-        )
+        )?;
+        if !self.not && self.received_string == self.expected_string {
+            f.write_str("\n\nnote: the values are not equal, but they print the same.")?;
+        }
+        if let Some(limit) = self.abbreviated {
+            write!(
+                f,
+                "\n\nnote: [Array], [Object], [Map] and [Set] stand for values that are printed in full earlier in the same output. The output for repeated values is limited to {} MiB.",
+                limit / (1024 * 1024)
+            )?;
+        }
+        if self.stopped_early {
+            f.write_str("\n\nnote: a value is nested too deeply to print in full.")?;
+        }
+        Ok(())
     }
 }
 

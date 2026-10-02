@@ -33,7 +33,7 @@ impl Expect {
         }
 
         // handle failure
-        let mut formatter = super::make_formatter(global_this);
+        let mut formatter = bun_jsc::Formatter::matcher_message(global_this);
         // formatter cleanup handled by Drop
 
         // The bool is only used to select a literal format string.
@@ -86,9 +86,9 @@ impl Expect {
 
         // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters
         // cannot alias the same backing formatter. Use a second formatter for the
-        // received value — `make_formatter` is a trivial struct init with no shared
+        // received value — `Formatter::matcher_message` is a trivial struct init with no shared
         // state between values.
-        let mut formatter2 = super::make_formatter(global_this);
+        let mut formatter2 = bun_jsc::Formatter::matcher_message(global_this);
         return throw!(
             this,
             global_this,

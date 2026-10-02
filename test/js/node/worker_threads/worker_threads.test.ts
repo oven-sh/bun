@@ -696,6 +696,28 @@ describe("environmentData", () => {
 });
 
 describe("error event", () => {
+  // The worker renders its uncaught error to text before it reports the error.
+  // The render of each cause must not render the rest of the chain twice.
+  test("is fired for an error with a chain of 30 assigned causes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const worker = new Worker(
+           'let e = new Error("leaf"); for (let i = 0; i < 30; i++) { const x = new Error("l" + i); x.cause = e; e = x; } throw e;',
+           { eval: true },
+         );
+         worker.on("error", error => console.log(error.name + ": " + error.message));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Error: l29\n", stderr: "", exitCode: 0 });
+  });
+
   test("is fired with a copy of the error value", async () => {
     const worker = new Worker("throw new TypeError('oh no')", { eval: true });
     const [err] = await once(worker, "error");
@@ -714,6 +736,34 @@ describe("error event", () => {
     const [err] = await once(worker, "error");
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
+  });
+
+  // The worker renders its uncaught error to text before it reports the error.
+  test("is fired with an error that reaches itself", async () => {
+    using dir = tempDir("worker-error-cycle", {
+      "parent.cjs": `
+        const { Worker } = require("node:worker_threads");
+        const seen = [];
+        const worker = new Worker("const e = new Error('cyc'); e.cause = e; e.errors = [e]; throw e;", { eval: true });
+        worker.on("error", error => seen.push(error === null ? "null" : error.name + ": " + error.message));
+        worker.on("exit", code => {
+          seen.push("exit " + code);
+          console.log(JSON.stringify(seen));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: JSON.stringify(["Error: cyc", "exit 1"]),
+      exitCode: 0,
+    });
   });
 });
 

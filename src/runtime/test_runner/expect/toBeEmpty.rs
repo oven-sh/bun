@@ -13,7 +13,7 @@ pub(crate) fn to_be_empty(
 ) -> JsResult<JSValue> {
     let (_this, value, not) = this.matcher_prelude(global, frame.this(), "toBeEmpty", "")?;
     let mut pass;
-    let mut formatter = super::make_formatter(global);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global);
     // `defer formatter.deinit()` — handled by Drop.
 
     let actual_length = value.get_length_if_property_exists_internal(global)?;

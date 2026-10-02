@@ -1230,9 +1230,7 @@ fn print_exception(
         let exception = unsafe { &*exception };
         vm_ref.print_exception(exception, exception_list, writer, true);
     } else {
-        let mut formatter = bun_jsc::console_object::Formatter::new(global);
-        // `Formatter::new` already
-        // defaults `error_display_level` to `Full` (ConsoleObject.rs:1176).
+        let mut formatter = bun_jsc::console_object::Formatter::error_handler(global);
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         vm_ref.print_errorlike_object(
             value,
@@ -1911,6 +1909,17 @@ fn console_print_runtime_object<'a, 'f>(
     }
 }
 
+/// `pretty_fmt!` for the `C` of the function it is used in.
+macro_rules! pf {
+    ($s:literal) => {
+        if C {
+            ::bun_core::pretty_fmt!($s, true)
+        } else {
+            ::bun_core::pretty_fmt!($s, false)
+        }
+    };
+}
+
 fn console_print_runtime_object_inner<const C: bool>(
     formatter: &mut bun_jsc::Formatter<'_>,
     writer_: &mut dyn bun_io::Write,
@@ -1919,57 +1928,52 @@ fn console_print_runtime_object_inner<const C: bool>(
     use crate::api::BuildArtifact;
     use crate::api::archive::Archive;
     use crate::webcore::{Blob, Request, Response, S3Client};
-    use core::fmt::Write as _;
-
-    macro_rules! pf {
-        ($s:literal) => {
-            if C {
-                ::bun_core::pretty_fmt!($s, true)
-            } else {
-                ::bun_core::pretty_fmt!($s, false)
-            }
-        };
-    }
 
     // SAFETY: `as_` returns a non-null `*mut T` only when `value` wraps a
     // live `T` cell; conservative stack scan keeps `value` alive for the
     // duration of each branch.
     if let Some(response) = value.as_::<Response>() {
-        let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut Response` to the live native
         // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
-        let _ = unsafe { &mut *response }.write_format::<_, _, C>(formatter, &mut w);
-        return Ok(true);
+        let printed = unsafe { &mut *response }.write_format::<C>(formatter, writer_);
+        formatter.printed(printed)?;
+        // A stored snapshot goes on to print it as an object too: `Response {}`.
+        return Ok(!formatter.is_stored_snapshot());
     }
     if let Some(request) = value.as_::<Request>() {
-        let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut Request` to the live native
         // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
-        let _ = unsafe { &mut *request }.write_format::<_, _, C>(value, formatter, &mut w);
+        let printed = unsafe { &mut *request }.write_format::<C>(value, formatter, writer_);
+        formatter.printed(printed)?;
         return Ok(true);
     }
     if let Some(build) = value.as_::<BuildArtifact>() {
-        let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut BuildArtifact` to the live
         // native wrapper backing `value`; GC keeps it alive (see above).
-        let _ = unsafe { &*build }.write_format::<_, _, C>(value, formatter, &mut w);
-        return Ok(true);
+        let printed = unsafe { &*build }.write_format::<C>(value, formatter, writer_);
+        formatter.printed(printed)?;
+        // Like `Response`: `BuildArtifact {}`.
+        return Ok(!formatter.is_stored_snapshot());
     }
     if let Some(blob) = value.as_::<Blob>() {
-        let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut Blob` to the live native
         // wrapper backing `value`; GC keeps it alive (see above).
-        let _ = unsafe { &mut *blob }.write_format::<_, _, C>(formatter, &mut w);
+        let printed = unsafe { &mut *blob }.write_format::<C>(formatter, writer_);
+        formatter.printed(printed)?;
         return Ok(true);
     }
+    // Snapshots and diffs print these three as `Name {}`.
+    if formatter.style() == bun_jsc::console_object::formatter::Style::Jest {
+        return console_print_shared_runtime_object::<C>(formatter, writer_, value);
+    }
     if let Some(s3client) = value.as_class_ref::<S3Client>() {
-        let mut w = AsFmt::new(writer_);
-        let _ = s3client.write_format::<_, _, C>(formatter, &mut w);
+        let printed = s3client.write_format::<C>(formatter, writer_);
+        formatter.printed(printed)?;
         return Ok(true);
     }
     if let Some(archive) = value.as_class_ref::<Archive>() {
-        let mut w = AsFmt::new(writer_);
-        let _ = archive.write_format::<_, _, C>(formatter, &mut w);
+        let printed = archive.write_format::<C>(formatter, writer_);
+        formatter.printed(printed)?;
         return Ok(true);
     }
     if bun_jsc::FetchHeaders::cast_(value, formatter.global_this.vm()).is_some() {
@@ -1979,14 +1983,9 @@ fn console_print_runtime_object_inner<const C: bool>(
             let result = to_json_function.call(formatter.global_this, value, &[])?;
             let prev_quote_keys = formatter.quote_keys;
             formatter.quote_keys = true;
-            let mut w = AsFmt::new(writer_);
-            // UFCS — `Formatter` has an inherent `print_as` (const-generic
-            // `FORMAT`, `&mut dyn bun_io::Write`); we need the trait's
-            // runtime-tag overload that accepts our `core::fmt::Write` adapter.
-            let r = bun_jsc::ConsoleFormatter::print_as::<_, C>(
-                formatter,
+            let r = formatter.print_as::<C>(
                 bun_jsc::FormatTag::Object,
-                &mut w,
+                writer_,
                 result,
                 bun_jsc::JSType::Object,
             );
@@ -1996,6 +1995,16 @@ fn console_print_runtime_object_inner<const C: bool>(
         }
         // Spec falls through (no `return`) when `toJSON` is absent.
     }
+    console_print_shared_runtime_object::<C>(formatter, writer_, value)
+}
+
+fn console_print_shared_runtime_object<const C: bool>(
+    formatter: &mut bun_jsc::Formatter<'_>,
+    writer_: &mut dyn bun_io::Write,
+    value: JSValue,
+) -> JsResult<bool> {
+    use core::fmt::Write as _;
+
     if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
         let internals = &timer.internals;
         let id = internals.id;
@@ -2059,19 +2068,9 @@ fn console_print_runtime_object_inner<const C: bool>(
         let _ = resolve_log.msg.write_format::<C>(&mut w);
         return Ok(true);
     }
-    {
-        use crate::test_runner::pretty_format::{JestPrettyFormat, WrappedWriter};
-        // `writer_` is `&mut dyn bun_io::Write`; wrap once more so the
-        // (sized) `&mut dyn bun_io::Write` satisfies `WrappedWriter<W>`'s
-        // `W: bun_io::Write` bound via the blanket `impl Write for &mut W`.
-        let mut sink: &mut dyn bun_io::Write = &mut *writer_;
-        let mut wrapped = WrappedWriter::new(&mut sink);
-        if JestPrettyFormat::print_asymmetric_matcher::<_, _, C>(formatter, &mut wrapped, value)? {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
+    crate::test_runner::asymmetric_matcher_format::print_asymmetric_matcher::<C>(
+        formatter, writer_, value,
+    )
 }
 
 // ════════════════════════════════════════════════════════════════════════════

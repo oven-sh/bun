@@ -204,139 +204,35 @@ pub use self::rare_data as RareData;
 pub use self::system_error::SystemError;
 pub use self::task::Taskable;
 
-/// Trait surface for `write_format`-style hooks on runtime types
-/// (`Response::write_format`, `Request::write_format`, `S3File::write_format`,
-/// …). Callers only ever touch `globalThis` and `printAs`, so the trait
-/// exposes just those two and the `bun_jsc::Formatter` struct provides the
-/// canonical impl.
-pub trait ConsoleFormatter {
-    fn global_this(&self) -> &JSGlobalObject;
-    fn print_as<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
-        tag: FormatTag,
-        writer: &mut W,
-        value: JSValue,
-        cell: JSType,
-    ) -> JsResult<()>;
+/// Indents a [`Formatter`] for the block it lives in. `Deref`s to the
+/// formatter, so it can shadow the binding, and restores the indent on every
+/// exit path, `?` included.
+pub struct IndentScope<'a, 'f>(&'a mut Formatter<'f>);
 
-    /// `formatter.indent += 1` — bump nesting level for the duration of a
-    /// `{ … }` block. Paired with [`indent_dec`]. Prefer [`IndentScope`] over
-    /// calling this pair manually when the indented region contains `?` early
-    /// returns.
-    fn indent_inc(&mut self);
-    /// Saturating decrement of the nesting level.
-    fn indent_dec(&mut self);
-    /// Shorthand for [`IndentScope::new`]. Shadow the binding for the indented
-    /// block; the guard `Deref`s to `&mut Self` so method calls auto-deref, and
-    /// `Drop` restores the indent on every exit path (including `?`).
+impl<'a, 'f> IndentScope<'a, 'f> {
     #[inline]
-    fn indented(&mut self) -> IndentScope<'_, Self> {
-        IndentScope::new(self)
-    }
-    /// `Formatter.writeIndent(Writer, writer)` — emit `2 * indent` spaces.
-    fn write_indent<W: core::fmt::Write>(&self, writer: &mut W) -> core::fmt::Result;
-    /// `Formatter.resetLine()` — reset `estimated_line_length` to current
-    /// indent so wrap heuristics start fresh on the next line.
-    fn reset_line(&mut self);
-    /// `Formatter.printComma(Writer, writer, enable_ansi_colors)` — dim `,`.
-    fn print_comma<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
-        writer: &mut W,
-    ) -> core::fmt::Result;
-}
-
-/// RAII indent guard for [`ConsoleFormatter`].
-///
-/// Increments on construction, decrements on `Drop`. `Deref`s to the wrapped
-/// formatter so the guard can shadow the original binding for the indented
-/// block:
-///
-/// ```ignore
-/// {
-///     let mut formatter = IndentScope::new(&mut *formatter);
-///     formatter.write_indent(writer)?;   // auto-derefs to &mut F
-///     // …
-/// } // indent restored here, even on `?` early-return
-/// ```
-pub struct IndentScope<'a, F: ConsoleFormatter + ?Sized>(&'a mut F);
-
-impl<'a, F: ConsoleFormatter + ?Sized> IndentScope<'a, F> {
-    #[inline]
-    pub fn new(f: &'a mut F) -> Self {
-        f.indent_inc();
-        Self(f)
+    pub fn new(formatter: &'a mut Formatter<'f>) -> Self {
+        formatter.indent += 1;
+        Self(formatter)
     }
 }
-impl<F: ConsoleFormatter + ?Sized> core::ops::Deref for IndentScope<'_, F> {
-    type Target = F;
+impl<'f> core::ops::Deref for IndentScope<'_, 'f> {
+    type Target = Formatter<'f>;
     #[inline]
-    fn deref(&self) -> &F {
+    fn deref(&self) -> &Formatter<'f> {
         self.0
     }
 }
-impl<F: ConsoleFormatter + ?Sized> core::ops::DerefMut for IndentScope<'_, F> {
+impl<'f> core::ops::DerefMut for IndentScope<'_, 'f> {
     #[inline]
-    fn deref_mut(&mut self) -> &mut F {
+    fn deref_mut(&mut self) -> &mut Formatter<'f> {
         self.0
     }
 }
-impl<F: ConsoleFormatter + ?Sized> Drop for IndentScope<'_, F> {
+impl Drop for IndentScope<'_, '_> {
     #[inline]
     fn drop(&mut self) {
-        self.0.indent_dec();
-    }
-}
-
-impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
-    #[inline]
-    fn global_this(&self) -> &JSGlobalObject {
-        self.global_this
-    }
-    #[inline]
-    fn indent_inc(&mut self) {
-        self.indent += 1;
-    }
-    #[inline]
-    fn indent_dec(&mut self) {
-        self.indent = self.indent.saturating_sub(1);
-    }
-    #[inline]
-    fn reset_line(&mut self) {
-        self::console_object::Formatter::reset_line(self)
-    }
-    fn write_indent<W: core::fmt::Write>(&self, writer: &mut W) -> core::fmt::Result {
-        // Inherent `Formatter::write_indent` takes `&mut dyn bun_io::Write`;
-        // bridge the `core::fmt::Write` sink the same way `print_as` does.
-        let mut sink = bun_io::FmtAdapter::new(writer);
-        self::console_object::Formatter::write_indent(self, &mut sink).map_err(|_| core::fmt::Error)
-    }
-    fn print_comma<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
-        writer: &mut W,
-    ) -> core::fmt::Result {
-        let mut sink = bun_io::FmtAdapter::new(writer);
-        self::console_object::Formatter::print_comma::<ENABLE_ANSI_COLORS>(self, &mut sink)
-            .map_err(|_| core::fmt::Error)
-    }
-    fn print_as<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
-        tag: FormatTag,
-        writer: &mut W,
-        value: JSValue,
-        cell: JSType,
-    ) -> JsResult<()> {
-        // Downstream `write_format` hooks (Response/Request/S3Client/…) hold a
-        // `core::fmt::Write`; the formatter body is byte-oriented
-        // (`dyn bun_io::Write`). Bridge via `FmtAdapter`, then route through
-        // the runtime-tag dispatcher (`Formatter::format`) which fans out to
-        // the const-generic `print_as::<{ Tag::… }, …>` arms.
-        let mut sink = bun_io::FmtAdapter::new(writer);
-        let result = self::console_object::formatter::TagResult {
-            tag: tag.into(),
-            cell,
-        };
-        let global = self.global_this;
-        self.format::<ENABLE_ANSI_COLORS>(result, &mut sink, value, global)
+        self.0.indent = self.0.indent.saturating_sub(1);
     }
 }
 
@@ -946,7 +842,7 @@ pub enum BuiltinName {
 #[allow(non_upper_case_globals)]
 impl BuiltinName {
     // PascalCase aliases for downstream callers (Response.rs / Request.rs /
-    // streams.rs / fetch.rs / TextDecoder.rs / pretty_format.rs use these).
+    // streams.rs / fetch.rs / TextDecoder.rs use these).
     pub const Method: Self = Self::method;
     pub const Headers: Self = Self::headers;
     pub const Url: Self = Self::url;
@@ -1559,6 +1455,8 @@ pub fn to_js_time(sec: isize, nsec: isize) -> JSTimeType {
 
 pub const MAX_SAFE_INTEGER: i64 = 9007199254740991;
 pub const MIN_SAFE_INTEGER: i64 = -9007199254740991;
+/// JSC's `MAX_ARRAY_INDEX`: the largest index that indexed storage can hold.
+pub(crate) const MAX_ARRAY_INDEX: u32 = 0xFFFF_FFFE;
 
 unsafe extern "C" {
     fn JSCInitialize(

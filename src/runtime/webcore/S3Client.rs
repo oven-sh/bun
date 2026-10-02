@@ -6,7 +6,7 @@ use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
-use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult};
 
 use super::s3_file as S3File;
 
@@ -99,17 +99,23 @@ fn opt_js(v: JSValue) -> Option<JSValue> {
     }
 }
 
-pub(crate) fn write_format_credentials<F, W, const ENABLE_ANSI_COLORS: bool>(
+fn displayed_endpoint(credentials: &S3Credentials) -> &[u8] {
+    if !credentials.endpoint.is_empty() {
+        &credentials.endpoint
+    } else if credentials.virtual_hosted_style {
+        b"https://<bucket>.s3.<region>.amazonaws.com"
+    } else {
+        b"https://s3.<region>.amazonaws.com"
+    }
+}
+
+pub(crate) fn write_format_credentials<const ENABLE_ANSI_COLORS: bool>(
     credentials: &S3Credentials,
     options: MultiPartUploadOptions,
     acl: Option<ACL>,
-    formatter: &mut F,
-    writer: &mut W,
-) -> core::fmt::Result
-where
-    F: ConsoleFormatter,
-    W: core::fmt::Write,
-{
+    formatter: &mut bun_jsc::Formatter<'_>,
+    writer: &mut dyn bun_io::Write,
+) -> bun_jsc::CrateResult<()> {
     writer.write_str("\n")?;
 
     {
@@ -117,15 +123,9 @@ where
         // `?` early-return below still leaves the formatter at its original
         // depth (observable when `print_as` throws and the caller continues
         // formatting).
-        let mut formatter = bun_jsc::IndentScope::new(&mut *formatter);
+        let mut formatter = formatter.indented();
 
-        let endpoint: &[u8] = if !credentials.endpoint.is_empty() {
-            &credentials.endpoint
-        } else if credentials.virtual_hosted_style {
-            b"https://<bucket>.s3.<region>.amazonaws.com"
-        } else {
-            b"https://s3.<region>.amazonaws.com"
-        };
+        let endpoint = displayed_endpoint(credentials);
 
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>endpoint<d>:<r> \"", ENABLE_ANSI_COLORS))?;
@@ -135,7 +135,7 @@ where
             "<r><b>{s}<r>\"",
             BStr::new(endpoint),
         )?;
-        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+        formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
         writer.write_str("\n")?;
 
         let region: &[u8] = if !credentials.region.is_empty() {
@@ -151,7 +151,7 @@ where
             "<r><b>{s}<r>\"",
             BStr::new(region),
         )?;
-        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+        formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
         writer.write_str("\n")?;
 
         // PS: We don't want to print the credentials if they are empty just signal that they are there without revealing them
@@ -161,7 +161,7 @@ where
                 "<r>accessKeyId<d>:<r> \"<r><b>[REDACTED]<r>\"",
                 ENABLE_ANSI_COLORS
             ))?;
-            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
 
             writer.write_str("\n")?;
         }
@@ -172,7 +172,7 @@ where
                 "<r>secretAccessKey<d>:<r> \"<r><b>[REDACTED]<r>\"",
                 ENABLE_ANSI_COLORS
             ))?;
-            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
 
             writer.write_str("\n")?;
         }
@@ -183,7 +183,7 @@ where
                 "<r>sessionToken<d>:<r> \"<r><b>[REDACTED]<r>\"",
                 ENABLE_ANSI_COLORS
             ))?;
-            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
 
             writer.write_str("\n")?;
         }
@@ -197,48 +197,42 @@ where
                 "<r><b>{s}<r>\"",
                 BStr::new(acl_value.to_string()),
             )?;
-            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
 
             writer.write_str("\n")?;
         }
 
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>partSize<d>:<r> ", ENABLE_ANSI_COLORS))?;
-        formatter
-            .print_as::<W, ENABLE_ANSI_COLORS>(
-                FormatTag::Double,
-                writer,
-                JSValue::js_number(options.part_size as f64),
-                JSType::NumberObject,
-            )
-            .map_err(|_| core::fmt::Error)?;
-        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+        formatter.print_as::<ENABLE_ANSI_COLORS>(
+            FormatTag::Double,
+            writer,
+            JSValue::js_number(options.part_size as f64),
+            JSType::NumberObject,
+        )?;
+        formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
 
         writer.write_str("\n")?;
 
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>queueSize<d>:<r> ", ENABLE_ANSI_COLORS))?;
-        formatter
-            .print_as::<W, ENABLE_ANSI_COLORS>(
-                FormatTag::Double,
-                writer,
-                JSValue::js_number(options.queue_size as f64),
-                JSType::NumberObject,
-            )
-            .map_err(|_| core::fmt::Error)?;
-        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+        formatter.print_as::<ENABLE_ANSI_COLORS>(
+            FormatTag::Double,
+            writer,
+            JSValue::js_number(options.queue_size as f64),
+            JSType::NumberObject,
+        )?;
+        formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
         writer.write_str("\n")?;
 
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>retry<d>:<r> ", ENABLE_ANSI_COLORS))?;
-        formatter
-            .print_as::<W, ENABLE_ANSI_COLORS>(
-                FormatTag::Double,
-                writer,
-                JSValue::js_number(options.retry as f64),
-                JSType::NumberObject,
-            )
-            .map_err(|_| core::fmt::Error)?;
+        formatter.print_as::<ENABLE_ANSI_COLORS>(
+            FormatTag::Double,
+            writer,
+            JSValue::js_number(options.retry as f64),
+            JSType::NumberObject,
+        )?;
         writer.write_str("\n")?;
     }
 
@@ -294,15 +288,11 @@ impl S3Client {
         }))
     }
 
-    pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
-        formatter: &mut F,
-        writer: &mut W,
-    ) -> core::fmt::Result
-    where
-        F: ConsoleFormatter,
-        W: core::fmt::Write,
-    {
+        formatter: &mut bun_jsc::Formatter<'_>,
+        writer: &mut dyn bun_io::Write,
+    ) -> bun_jsc::CrateResult<()> {
         writer.write_str(pfmt!("<r>S3Client<r>", ENABLE_ANSI_COLORS))?;
         // detect virtual host style bucket name
         let bucket_name: &[u8] =
@@ -323,7 +313,7 @@ impl S3Client {
             writer.write_str(" {")?;
         }
 
-        write_format_credentials::<F, W, ENABLE_ANSI_COLORS>(
+        write_format_credentials::<ENABLE_ANSI_COLORS>(
             &self.credentials,
             self.options,
             self.acl,

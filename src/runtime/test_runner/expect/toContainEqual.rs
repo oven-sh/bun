@@ -106,8 +106,8 @@ pub(crate) fn to_contain_equal(
     // handle failure
     // Two live `&mut formatter` borrows cannot coexist, so allocate a second
     // Formatter for the expected value.
-    let mut formatter = super::make_formatter(global);
-    let mut formatter2 = super::make_formatter(global);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global);
+    let mut formatter2 = bun_jsc::Formatter::matcher_message(global);
     let value_fmt = value.to_fmt(&mut formatter);
     let expected_fmt = expected.to_fmt(&mut formatter2);
     if not {

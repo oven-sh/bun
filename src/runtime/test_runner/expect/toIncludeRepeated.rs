@@ -82,11 +82,11 @@ impl Expect {
         }
 
         // `to_fmt` takes `&mut Formatter` and the returned adapter holds that borrow live, so
-        // three concurrent adapters need three formatters. `make_formatter` is a trivial struct
+        // three concurrent adapters need three formatters. `Formatter::matcher_message` is a trivial struct
         // init with no shared state between values.
-        let mut formatter = super::make_formatter(global);
-        let mut formatter2 = super::make_formatter(global);
-        let mut formatter3 = super::make_formatter(global);
+        let mut formatter = bun_jsc::Formatter::matcher_message(global);
+        let mut formatter2 = bun_jsc::Formatter::matcher_message(global);
+        let mut formatter3 = bun_jsc::Formatter::matcher_message(global);
         // formatter cleanup handled by Drop
         let expect_string_fmt = expect_string.to_fmt(&mut formatter);
         let substring_fmt = substring.to_fmt(&mut formatter2);

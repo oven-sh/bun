@@ -66,46 +66,37 @@ impl Archive {
     }
 
     /// Pretty-print for console.log
-    pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
-        formatter: &mut F,
-        writer: &mut W,
-    ) -> crate::Result<()>
-    where
-        F: bun_jsc::ConsoleFormatter,
-        W: core::fmt::Write,
-    {
+        formatter: &mut bun_jsc::Formatter<'_>,
+        writer: &mut dyn bun_io::Write,
+    ) -> bun_jsc::CrateResult<()> {
         let data = self.store.shared_view();
-        let fmt_err = |_: core::fmt::Error| crate::Error::FormatError;
 
         writeln!(
             writer,
             "Archive ({}) {{",
             bun_core::fmt::size(data.len(), bun_core::fmt::SizeFormatterOptions::default()),
-        )
-        .map_err(fmt_err)?;
+        )?;
 
         {
             let mut formatter = formatter.indented();
-            formatter.write_indent(writer).map_err(fmt_err)?;
+            formatter.write_indent(writer)?;
             write!(
                 writer,
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>files<d>:<r> "),
-            )
-            .map_err(fmt_err)?;
-            formatter
-                .print_as::<W, ENABLE_ANSI_COLORS>(
-                    jsc::FormatTag::Double,
-                    writer,
-                    JSValue::js_number(f64::from(count_files_in_archive(data))),
-                    jsc::JSType::NumberObject,
-                )
-                .map_err(|_| crate::Error::JSError)?;
+            )?;
+            formatter.print_as::<ENABLE_ANSI_COLORS>(
+                jsc::FormatTag::Double,
+                writer,
+                JSValue::js_number(f64::from(count_files_in_archive(data))),
+                jsc::JSType::NumberObject,
+            )?;
         }
-        writer.write_str("\n").map_err(fmt_err)?;
-        formatter.write_indent(writer).map_err(fmt_err)?;
-        writer.write_str("}").map_err(fmt_err)?;
+        writer.write_str("\n")?;
+        formatter.write_indent(writer)?;
+        writer.write_str("}")?;
         formatter.reset_line();
         Ok(())
     }

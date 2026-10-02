@@ -395,7 +395,9 @@ pub fn summarize(
     atoms: &bun_sema::atom::Interner,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
-) -> bun_sema::hir::File {
+) -> (bun_sema::hir::File, core::time::Duration) {
+    // How long `parse_stmts_up_to` took. The rest is lowering.
+    let parsing = core::cell::Cell::new(core::time::Duration::ZERO);
     // `GetDeclarationFileExtension`
     let base = &path[path
         .iter()
@@ -430,7 +432,9 @@ pub fn summarize(
         let mut log = bun_ast::Log::init();
         let (file, awaited) = match crate::Parser::init(options, &mut log, &source, &define, &arena)
         {
-            Ok(parser) => parser.parse_for_sema(atoms, is_declaration_file, await_is_a_name),
+            Ok(parser) => {
+                parser.parse_for_sema(atoms, is_declaration_file, await_is_a_name, &parsing)
+            }
             Err(_) => (
                 bun_sema::hir::File {
                     has_errors: true,
@@ -464,7 +468,7 @@ pub fn summarize(
         file.jsx_pragmas = bun_sema::hir::JsxPragmas::scan(text, atoms);
     }
     file.shrink_to_fit();
-    file
+    (file, parsing.get())
 }
 
 /// `getCommentPragmas`, `extractPragmas`, for `ts-check` and `ts-nocheck`: looked for in the comments before the first token.

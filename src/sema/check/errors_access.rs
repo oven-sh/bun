@@ -1450,8 +1450,10 @@ impl Checker<'_> {
                 .first()
                 .map(|&assignment| (*file, self.hir(*file)[assignment].pos)),
             // Not by the number of the symbol: the binder declares the functions of a block before the rest of it.
-            PropSource::Symbol(symbol) => super::errors::place_of_first_declaration(self, *symbol)
-                .map(|(_, file, pos)| (file, pos)),
+            PropSource::Symbol(symbol) => {
+                super::errors::place_of_first_declaration(self.files(), *symbol)
+                    .map(|(_, file, pos)| (file, pos))
+            }
             PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _)
                 if !parts.is_empty() =>
             {

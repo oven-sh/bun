@@ -16,7 +16,7 @@ pub fn parse(
     atoms: &Interner,
     experimental_decorators: bool,
 ) -> hir::File {
-    bun_js_parser::sema::summarize(path.as_bytes(), text, atoms, experimental_decorators, false)
+    bun_js_parser::sema::summarize(path.as_bytes(), text, atoms, experimental_decorators, false).0
 }
 
 pub const STACK: usize = 256 << 20;
@@ -87,6 +87,7 @@ impl bun_sema::resolve::Host for Disk {
             options.experimental_decorators,
             every_file_is_a_module,
         )
+        .0
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         for_each_parallel(self.threads, count, work);

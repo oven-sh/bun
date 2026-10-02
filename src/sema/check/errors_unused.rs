@@ -1579,11 +1579,6 @@ impl Unused<'_> {
     fn report_locals_and_parameters(&self, scope: ScopeId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir, self.bound);
         let s = &bound.scopes[scope.idx()];
-        let exports = if s.symbol.is_some() {
-            bound.symbols[s.symbol.idx()].exports
-        } else {
-            crate::bind::TableId::NONE
-        };
         let mut var_stmts: Vec<StmtId> = Vec::new();
         let mut fns: Vec<FnId> = Vec::new();
         let mut imports: Vec<(ImportId, u32)> = Vec::new();
@@ -1603,7 +1598,6 @@ impl Unused<'_> {
             if !is_type_parameter
                 && (kinds != 0
                     || symbol.export_symbol.is_some()
-                    || bound.lookup(exports, name) == Some(local)
                     || symbol.flags.contains(SymFlags::MODULE_EXPORTS))
             {
                 continue;

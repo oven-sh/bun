@@ -913,9 +913,11 @@ impl Checker<'_> {
             if codes[local.idx()] == NOT_LOOKED_INTO {
                 let sym = self.files().sym(file, local);
                 // `getSymbol`: an alias that leads nowhere goes for a value as for anything else.
-                let is_value = match self.files().resolve_alias(sym) {
-                    Some(target) => self.files().flags(target).intersects(SymFlags::VALUE),
-                    None => self.is_alias_in_error(sym),
+                let flags = self.files().symbol_flags(sym);
+                let is_value = if flags == SymFlags::all() {
+                    self.is_alias_in_error(sym)
+                } else {
+                    flags.intersects(SymFlags::VALUE)
                 };
                 codes[local.idx()] = match is_value.then(|| self.type_only_alias_declaration(sym)) {
                     Some(Some(true)) => 1362,

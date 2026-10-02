@@ -1020,7 +1020,7 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// `enterNewScope`, of the function-like `f`. What it returns is for `leave_scope`.
-    fn enter_scope_of_function(&mut self, file: FileId, f: FnId) -> (usize, usize, usize, usize) {
+    fn enter_scope_of_function(&mut self, file: FileId, f: FnId) -> OuterScope {
         let function = self.c.hir(file)[f];
         let parameters: Vec<Option<(FileId, ParamId)>> =
             function.params.iter().map(|p| Some((file, p))).collect();
@@ -1448,11 +1448,7 @@ impl<'p> Printer<'_, 'p> {
         };
         let found = files.resolve_entity(file, scope, names, meaning)?;
         // `resolveEntityName`: an alias that has not the meaning itself is followed.
-        let symbol = if files.flags(found).intersects(meaning) {
-            found
-        } else {
-            files.resolve_alias(found).unwrap_or(found)
-        };
+        let symbol = files.resolve_alias_as(found, meaning).unwrap_or(found);
         if !self.c.is_symbol_accessible_at(symbol, meaning, false, at) {
             return None;
         }

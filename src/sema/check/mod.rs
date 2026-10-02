@@ -2211,11 +2211,7 @@ impl<'p> Checker<'p> {
     pub fn regular(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
             TypeData::Union(members) if members.iter().any(|&m| self.is_fresh_literal(m)) => {
-                let members: Vec<TypeId> = members
-                    .iter()
-                    .map(|&m| self.with_freshness(m, false))
-                    .collect();
-                self.union(&members)
+                self.map_type(ty, |c, m| c.with_freshness(m, false))
             }
             _ => self.with_freshness(ty, false),
         }
@@ -2241,11 +2237,7 @@ impl<'p> Checker<'p> {
             {
                 self.enum_type_of_member(*symbol)
             }
-            TypeData::Union(members) => {
-                let members: Vec<TypeId> =
-                    members.iter().map(|&m| self.base_of_literal(m)).collect();
-                self.union(&members)
-            }
+            TypeData::Union(_) => self.map_type(ty, |c, m| c.base_of_literal(m)),
             _ => ty,
         }
     }
@@ -2257,8 +2249,7 @@ impl<'p> Checker<'p> {
                 if !members.iter().any(|&m| self.is_fresh_literal(m)) {
                     return ty;
                 }
-                let members: Vec<TypeId> = members.iter().map(|&m| self.widen_literal(m)).collect();
-                self.union(&members)
+                self.map_type(ty, |c, m| c.widen_literal(m))
             }
             _ if self.is_fresh_literal(ty) => self.base_of_literal(ty),
             _ => ty,

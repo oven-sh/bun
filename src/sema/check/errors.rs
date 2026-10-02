@@ -1219,7 +1219,7 @@ impl Checker<'_> {
                 .iter()
                 .filter(|&&(_, s)| files.flags(s).intersects(module_member))
                 .map(|&(other, s)| (files.atoms.bytes(other), Meant::Symbol(s)));
-            return match closest(self, text, candidates) {
+            return match closest(files, text, candidates) {
                 Some(Meant::Symbol(meant)) => (2724, Some(meant)),
                 _ => (2724, None),
             };
@@ -2972,24 +2972,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `getCandidateName` of `getSpellingSuggestionForName`. An alias that leads nowhere is `unknownSymbol`, which is made with
-    /// `SymbolFlagsProperty`: a value, and nothing else.
-    fn is_spelling_candidate(&self, sym: Sym, meaning: SymFlags) -> bool {
-        let flags = self.files().flags(sym);
-        if flags.intersects(meaning) {
-            return true;
-        }
-        if !flags.contains(SymFlags::ALIAS) {
-            return false;
-        }
-        let target = self.files().symbol_flags(sym);
-        if target == SymFlags::all() {
-            meaning.contains(SymFlags::VALUE)
-        } else {
-            target.intersects(meaning)
-        }
-    }
-
     /// `start`: where `name` is written, which is where the error goes.
     fn not_found(
         &mut self,
@@ -3535,7 +3517,7 @@ fn word_at(c: &Checker<'_>, file: FileId, start: u32) -> String {
 
 /// What may have been meant by a name that nothing goes by.
 #[derive(Copy, Clone)]
-enum Meant {
+pub(crate) enum Meant {
     Symbol(Sym),
     /// What has no declaration: the name of a primitive type, `undefined`, `globalThis`.
     Word(&'static str),
@@ -3561,16 +3543,16 @@ pub(super) fn edit_distance(a: &[u8], b: &[u8]) -> f64 {
 }
 
 /// Where the first declaration of `sym` is: the libraries first, then by file, then by position. `compareSymbols`, `compareNodes`
-pub(super) fn place_of_first_declaration(c: &Checker<'_>, sym: Sym) -> Option<(bool, FileId, u32)> {
-    let (file, decl) = c.files().decls_of(sym).first().copied()?;
-    let pos = c.start_of_declaration(file, decl);
-    Some((!c.files().module(file).is_lib, file, pos))
+pub(super) fn place_of_first_declaration(files: &Files, sym: Sym) -> Option<(bool, FileId, u32)> {
+    let (file, decl) = files.decls_of(sym).first().copied()?;
+    let pos = files.start_of_declaration(file, decl);
+    Some((!files.module(file).is_lib, file, pos))
 }
 
 /// `GetSpellingSuggestion`: which of `candidates` is closest to `name`, of those that are close. Of two that are as close, the one
 /// declared first (`compareSymbols`).
 fn closest<'a>(
-    c: &Checker<'_>,
+    files: &Files,
     name: &[u8],
     candidates: impl Iterator<Item = (&'a [u8], Meant)>,
 ) -> Option<Meant> {
@@ -3581,7 +3563,7 @@ fn closest<'a>(
         }
         let distance = edit_distance(name, text);
         let place = match meant {
-            Meant::Symbol(sym) => place_of_first_declaration(c, sym),
+            Meant::Symbol(sym) => place_of_first_declaration(files, sym),
             Meant::Word(_) => None,
         };
         let is_better = best.is_none_or(|(least, first, first_text, _)| {
@@ -3621,87 +3603,126 @@ fn similar_in_scope_and_where(
     name: Atom,
     meaning: SymFlags,
 ) -> Option<(Meant, bool)> {
-    let (files, bound) = (c.files(), c.bound(file));
-    let text = files.atoms.bytes(name);
-    let (mut word, mut is_among_locals) = (None, false);
-    // `getSuggestionForSymbolNameLookup`
-    let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
-        is_among_locals = matches!(table, SymbolTable::Locals(..));
-        if let Some(found) = held.filter(|&sym| files.means(sym, meaning)) {
-            return Some(found);
-        }
-        let fits = |&(candidate, sym): &(Atom, Sym)| {
-            is_close(text, files.atoms.bytes(candidate)) && c.is_spelling_candidate(sym, meaning)
-        };
-        let named =
-            |(candidate, sym): (Atom, Sym)| (files.atoms.bytes(candidate), Meant::Symbol(sym));
-        let meant = match table {
-            SymbolTable::Locals(file, scope) => {
-                let s = &bound.scopes[scope.idx()];
-                // `IsGlobalSourceFile`: what a script declares is among the globals.
-                if s.kind == ScopeKind::File && s.symbol.is_none() {
-                    return None;
+    let files = c.files();
+    let try_resolve_alias = &mut |sym| Some(files.symbol_flags(sym));
+    files.suggested_symbol_for_nonexistent_symbol(file, scope, name, meaning, try_resolve_alias)
+}
+
+impl Files {
+    /// `getSuggestedSymbolForNonexistentSymbol`, and whether what it finds is among the locals of a block that exports it.
+    /// `try_resolve_alias`: the flags of `tryResolveAlias(candidate)`, all of them for `unknownSymbol`. `None`: nil.
+    pub(crate) fn suggested_symbol_for_nonexistent_symbol(
+        &self,
+        file: FileId,
+        scope: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+        try_resolve_alias: &mut dyn FnMut(Sym) -> Option<SymFlags>,
+    ) -> Option<(Meant, bool)> {
+        let (files, bound) = (self, self.bound(file));
+        let text = files.atoms.bytes(name);
+        let (mut word, mut is_among_locals) = (None, false);
+        // `getSuggestionForSymbolNameLookup`
+        let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
+            is_among_locals = matches!(table, SymbolTable::Locals(..));
+            if let Some(found) = held.filter(|&sym| files.means(sym, meaning)) {
+                return Some(found);
+            }
+            // `GetSpellingSuggestion` asks for the name of every candidate, and then how far off it is.
+            let fits = |&(candidate, sym): &(Atom, Sym)| {
+                files.is_spelling_candidate(sym, meaning, &mut *try_resolve_alias)
+                    && is_close(text, files.atoms.bytes(candidate))
+            };
+            let named =
+                |(candidate, sym): (Atom, Sym)| (files.atoms.bytes(candidate), Meant::Symbol(sym));
+            let meant = match table {
+                SymbolTable::Locals(file, scope) => {
+                    let s = &bound.scopes[scope.idx()];
+                    // `IsGlobalSourceFile`: what a script declares is among the globals.
+                    if s.kind == ScopeKind::File && s.symbol.is_none() {
+                        return None;
+                    }
+                    let locals = bound.table(s.locals).iter();
+                    let locals = locals.map(|&(candidate, id)| (candidate, files.sym(file, id)));
+                    closest(files, text, locals.filter(fits).map(named))
                 }
-                let locals = bound.table(s.locals).iter();
-                let locals = locals.map(|&(candidate, id)| (candidate, files.sym(file, id)));
-                closest(c, text, locals.filter(fits).map(named))
-            }
-            SymbolTable::Exports(container) => closest(
-                c,
-                text,
-                files.each_export(container).filter(fits).map(named),
-            ),
-            SymbolTable::Globals => {
-                // `getPrimitiveTypeAliasSuggestions`. `undefinedSymbol` and `globalThisSymbol` are entries of `globals`.
-                let primitives: [(&'static str, Atom); 6] = [
-                    ("string", known::String),
-                    ("number", known::Number),
-                    ("boolean", known::Boolean),
-                    ("object", known::Object),
-                    ("bigint", known::BigInt),
-                    ("symbol", known::Symbol),
-                ];
-                let words = primitives
-                    .into_iter()
-                    .filter(|&(_, wrapper)| {
-                        meaning.intersects(SymFlags::TYPE_ALIAS)
-                            && files.globals.contains_key(&wrapper)
-                    })
-                    .map(|(primitive, _)| primitive)
-                    .chain(
-                        meaning
-                            .intersects(SymFlags::VARIABLE)
-                            .then_some("undefined"),
-                    )
-                    .chain(meaning.intersects(SymFlags::MODULE).then_some("globalThis"))
-                    .map(|word| (word.as_bytes(), Meant::Word(word)));
-                let globals = files
-                    .globals
-                    .iter()
-                    .map(|(&candidate, &sym)| (candidate, sym));
-                closest(c, text, globals.filter(fits).map(named).chain(words))
+                SymbolTable::Exports(container) => closest(
+                    files,
+                    text,
+                    files.each_export(container).filter(fits).map(named),
+                ),
+                SymbolTable::Globals => {
+                    // `getPrimitiveTypeAliasSuggestions`. `undefinedSymbol` and `globalThisSymbol` are entries of `globals`.
+                    let primitives: [(&'static str, Atom); 6] = [
+                        ("string", known::String),
+                        ("number", known::Number),
+                        ("boolean", known::Boolean),
+                        ("object", known::Object),
+                        ("bigint", known::BigInt),
+                        ("symbol", known::Symbol),
+                    ];
+                    let words = primitives
+                        .into_iter()
+                        .filter(|&(_, wrapper)| {
+                            meaning.intersects(SymFlags::TYPE_ALIAS)
+                                && files.globals.contains_key(&wrapper)
+                        })
+                        .map(|(primitive, _)| primitive)
+                        .chain(
+                            meaning
+                                .intersects(SymFlags::VARIABLE)
+                                .then_some("undefined"),
+                        )
+                        .chain(meaning.intersects(SymFlags::MODULE).then_some("globalThis"))
+                        .map(|word| (word.as_bytes(), Meant::Word(word)));
+                    let globals = files
+                        .globals
+                        .iter()
+                        .map(|(&candidate, &sym)| (candidate, sym));
+                    closest(files, text, globals.filter(fits).map(named).chain(words))
+                }
+            };
+            match meant? {
+                Meant::Symbol(sym) => Some(sym),
+                Meant::Word(meant) => {
+                    word = Some(meant);
+                    None
+                }
             }
         };
-        match meant? {
-            Meant::Symbol(sym) => Some(sym),
-            Meant::Word(meant) => {
-                word = Some(meant);
-                None
-            }
+        let found = files.resolve_with(file, scope, name, meaning, false, lookup);
+        if let Some(word) = word {
+            return Some((Meant::Word(word), false));
         }
-    };
-    let found = files.resolve_with(file, scope, name, meaning, false, lookup);
-    if let Some(word) = word {
-        return Some((Meant::Word(word), false));
+        let sym = found.ok()??;
+        let declared = files.symbol(sym);
+        let leads_to_export = is_among_locals
+            && declared.export_symbol.is_some()
+            && !declared.flags.intersects(SymFlags::VALUE);
+        Some((Meant::Symbol(sym), leads_to_export))
     }
-    let sym = found.ok()??;
-    let declared = files.symbol(sym);
-    let leads_to_export = is_among_locals
-        && (declared.export_symbol.is_some()
-            || sym.file == file && bound.refused_exports.contains(&sym.id)
-            || declared.parent.is_some()
-                && files.export(files.sym(sym.file, declared.parent), declared.name) == Some(sym));
-    Some((Meant::Symbol(sym), leads_to_export))
+
+    /// `getCandidateName` of `getSpellingSuggestionForName`. `unknownSymbol` is made with `SymbolFlagsProperty`: a value, and nothing
+    /// else.
+    fn is_spelling_candidate(
+        &self,
+        sym: Sym,
+        meaning: SymFlags,
+        try_resolve_alias: &mut dyn FnMut(Sym) -> Option<SymFlags>,
+    ) -> bool {
+        let flags = self.flags(sym);
+        if flags.intersects(meaning) {
+            return true;
+        }
+        if !flags.contains(SymFlags::ALIAS) {
+            return false;
+        }
+        match try_resolve_alias(sym) {
+            Some(target) if target == SymFlags::all() => meaning.contains(SymFlags::VALUE),
+            Some(target) => target.intersects(meaning),
+            None => false,
+        }
+    }
 }
 
 /// `symbolToString` of `getSuggestedSymbolForNonexistentSymbol`: the name that may have been meant by `name`, which nothing that is a
@@ -3742,8 +3763,13 @@ pub(super) fn relate_name_meant(
     start: u32,
 ) {
     c.relate(start, did_you_mean(meaning), |c| {
+        let asked = if is_expression {
+            meaning | SymFlags::EXPORT_VALUE
+        } else {
+            meaning
+        };
         let Some((Meant::Symbol(sym), leads_to_export)) =
-            similar_in_scope_and_where(c, file, scope, name, meaning)
+            similar_in_scope_and_where(c, file, scope, name, asked)
         else {
             return Vec::new();
         };
@@ -4455,7 +4481,7 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             // `GetSpellingSuggestion` counts code points. One byte for each will do: the keywords are ASCII, and the first byte of a
             // longer code point is none of their letters.
             let letters: Vec<u8> = word.bytes().filter(|byte| byte & 0xC0 != 0x80).collect();
-            let suggestion = match closest(c, &letters, keywords) {
+            let suggestion = match closest(c.files(), &letters, keywords) {
                 Some(Meant::Word(keyword)) => keyword.to_owned(),
                 // `getSpaceSuggestion`
                 _ => match VIABLE_KEYWORD_SUGGESTIONS
@@ -5378,16 +5404,18 @@ impl Checker<'_> {
 
     /// Where `e` starts as it is written.
     pub(super) fn start_of(&self, file: FileId, e: ExprId) -> u32 {
-        self.start_from(file, e, false)
+        start_from(self.hir(file), e, false)
     }
 
     /// Where `e` starts, not counting parentheses around the whole of it.
     pub(super) fn start_inside_parentheses(&self, file: FileId, e: ExprId) -> u32 {
-        self.start_from(file, e, true)
+        start_from(self.hir(file), e, true)
     }
+}
 
+impl Files {
     /// `GetTokenPosOfNode`, of a declaration: where its first token is, decorators and modifiers included.
-    pub(super) fn start_of_declaration(&self, file: FileId, decl: Decl) -> u32 {
+    pub(crate) fn start_of_declaration(&self, file: FileId, decl: Decl) -> u32 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match decl {
             Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => {
@@ -5417,42 +5445,39 @@ impl Checker<'_> {
                 StmtKind::ExportStar { star_pos, .. } => star_pos,
                 _ => hir[statement].start,
             },
-            Decl::ModuleExports(e) | Decl::ExportsProperty(e) => {
-                self.start_inside_parentheses(file, e)
-            }
+            Decl::ModuleExports(e) | Decl::ExportsProperty(e) => start_from(hir, e, true),
             Decl::File | Decl::CommonJsVariable => 0,
         }
     }
+}
 
-    fn start_from(&self, file: FileId, mut e: ExprId, mut inside: bool) -> u32 {
-        let hir = self.hir(file);
-        loop {
-            if !std::mem::take(&mut inside)
-                && let Some(open) = open_parenthesis(hir, e)
-            {
-                return open;
-            }
-            // It starts where what it starts with starts.
-            e = match hir[e].kind {
-                ExprKind::Binary { left, .. } => left,
-                ExprKind::Assign { target, .. } => target,
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-                ExprKind::Call(c) | ExprKind::TaggedTemplate(c) => hir[c].callee,
-                ExprKind::Cond { test, .. } => test,
-                // `x as T`. `<T>x` and `<const>x` are put at the `<` they start with.
-                ExprKind::As { expr, ty } if hir[ty].pos > hir[expr].pos => expr,
-                ExprKind::AsConst(x) if hir[e].pos < hir[x].pos => return hir[e].pos,
-                ExprKind::NonNull(x)
-                | ExprKind::AsConst(x)
-                | ExprKind::Satisfies { expr: x, .. }
-                | ExprKind::Instantiation { expr: x, .. } => x,
-                ExprKind::Unary {
-                    op: UnOp::PostInc | UnOp::PostDec,
-                    operand,
-                } => operand,
-                _ => return hir[e].pos,
-            };
+fn start_from(hir: &hir::File, mut e: ExprId, mut inside: bool) -> u32 {
+    loop {
+        if !std::mem::take(&mut inside)
+            && let Some(open) = open_parenthesis(hir, e)
+        {
+            return open;
         }
+        // It starts where what it starts with starts.
+        e = match hir[e].kind {
+            ExprKind::Binary { left, .. } => left,
+            ExprKind::Assign { target, .. } => target,
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+            ExprKind::Call(c) | ExprKind::TaggedTemplate(c) => hir[c].callee,
+            ExprKind::Cond { test, .. } => test,
+            // `x as T`. `<T>x` and `<const>x` are put at the `<` they start with.
+            ExprKind::As { expr, ty } if hir[ty].pos > hir[expr].pos => expr,
+            ExprKind::AsConst(x) if hir[e].pos < hir[x].pos => return hir[e].pos,
+            ExprKind::NonNull(x)
+            | ExprKind::AsConst(x)
+            | ExprKind::Satisfies { expr: x, .. }
+            | ExprKind::Instantiation { expr: x, .. } => x,
+            ExprKind::Unary {
+                op: UnOp::PostInc | UnOp::PostDec,
+                operand,
+            } => operand,
+            _ => return hir[e].pos,
+        };
     }
 }
 

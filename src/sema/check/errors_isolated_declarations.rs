@@ -2276,7 +2276,7 @@ impl<'p> Checker<'p> {
         let scope = self.bound(tx.file).fns[func.idx()].scope;
         if scope.is_some() {
             tx.around.scope = scope;
-            tx.around.is_fake_scope = true;
+            tx.around.fake_scope = 1;
         }
         saved
     }
@@ -4016,7 +4016,7 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         let saved = self.iso_enter_scope(tx, f);
         tx.around.variable = VarDeclId::NONE;
-        tx.around.is_fake_scope = false;
+        tx.around.fake_scope = 0;
         self.iso_visit_type_params(tx, hir[f].type_params);
         self.iso_update_param_list(tx, f);
         if !matches!(hir[f].kind, FnKind::Constructor | FnKind::Setter) {

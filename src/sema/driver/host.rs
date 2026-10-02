@@ -4,10 +4,12 @@
 
 use bun_sema::atom::Interner;
 use bun_sema::hir;
-use bun_sema::resolve::{Host, ModuleDetection, Options};
+use bun_sema::resolve::{Host, ModuleDetection, Options, Phase, Spent};
 use bun_sema::util::ShardedMap;
 use std::borrow::Cow;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 /// Where TypeScript's `lib.*.d.ts` are for a project in `dir`: in the `typescript` package it has installed, which is also what its
 /// editor reads them from. TypeScript 7 keeps them in a package for the platform. Last, in what is installed globally.
@@ -135,6 +137,8 @@ pub struct Disk {
     reading: Option<bun_threading::Semaphore>,
     /// Readers that are not in use, least recently used first.
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
+    /// `Host::times`, in nanoseconds.
+    times: [AtomicU64; 8],
 }
 
 /// Reusable state for reading files. Owned by the [`Disk`], so every directory handle is closed when it is dropped.
@@ -242,6 +246,7 @@ impl Disk {
                 places
             }),
             idle_readers: bun_threading::Guarded::new(Vec::new()),
+            times: Default::default(),
         }
     }
 
@@ -477,7 +482,15 @@ fn is_file_system_case_sensitive() -> bool {
 }
 
 impl Host for Disk {
+    fn spent(&self, phase: Phase, time: Duration) {
+        self.times[phase as usize].fetch_add(time.as_nanos() as u64, Ordering::Relaxed);
+    }
+    fn times(&self) -> [Duration; 8] {
+        Phase::ALL
+            .map(|phase| Duration::from_nanos(self.times[phase as usize].load(Ordering::Relaxed)))
+    }
     fn read(&self, path: &str) -> Option<Cow<'static, [u8]>> {
+        let _reading = Spent::on(self, Phase::Read);
         let (parent, name) = split(path);
         if name.is_empty() || Self::is_above_listings(parent) {
             return std::fs::read(to_native(path)).ok().map(decoded);
@@ -540,13 +553,17 @@ impl Host for Disk {
         self.case_sensitive
     }
     fn parse(&self, path: &str, text: &[u8], atoms: &Interner, options: &Options) -> hir::File {
-        bun_js_parser::sema::summarize(
+        let began = Instant::now();
+        let (file, parsing) = bun_js_parser::sema::summarize(
             path.as_bytes(),
             text,
             atoms,
             options.experimental_decorators,
             options.module_detection == ModuleDetection::Force,
-        )
+        );
+        self.spent(Phase::Parse, parsing);
+        self.spent(Phase::Lower, began.elapsed().saturating_sub(parsing));
+        file
     }
     fn threads(&self) -> usize {
         self.threads

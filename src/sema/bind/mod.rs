@@ -712,16 +712,8 @@ pub struct Bound {
     /// `declare global { }` at the top of a module, or right in an ambient module at the top of a script: symbols whose exports are
     /// global.
     pub global_augmentations: Few<SymbolId>,
-    /// `local.ExportSymbol` of `declareModuleMember`: the exported values that what is exported under their names refuses. In the block
-    /// it is written in each is what its name means as a value all the same: it is among the locals there, without being local.
-    pub refused_exports: Few<SymbolId>,
     /// `declareSymbolEx`: the declarations that the symbol they are listed with refused. Each has a symbol of its own.
     pub refused_declarations: Few<(SymbolId, Decl)>,
-    /// `local.Declarations` of `declareModuleMember`, of the names that a block of a module or a namespace both exports and keeps to
-    /// itself: each declaration, with whether it is exported. By each of the symbols those declarations have here.
-    pub local_declarations: FxHashMap<SymbolId, SmallVec<[(Decl, bool); 2]>>,
-    /// `local.ExportSymbol` of `declareModuleMember` where the exports refused it, with the locals `local` is in.
-    pub refused_export_symbols: Few<(TableId, SymbolId)>,
     /// `export as namespace N`
     pub umd_globals: Few<(Atom, SymbolId)>,
     /// `file.Imports()`: the module specifiers in the file that are looked for, in the order they are first mentioned.
@@ -1216,25 +1208,12 @@ impl Bound {
         Some((class, is_static, name))
     }
 
-    /// `symbol.Declarations`. Where `symbol` stands for the local symbol of `declareModuleMember` and for `local.ExportSymbol`:
-    /// of the first if `as_local`, otherwise of the second.
-    pub fn declarations_of_symbol(&self, symbol: SymbolId, as_local: bool) -> SmallVec<[Decl; 4]> {
-        let local = self.local_declarations.get(&symbol);
-        let exported: SmallVec<[Decl; 4]> = self.symbols[symbol.idx()]
-            .decls
-            .iter()
-            .copied()
-            .filter(|&decl| {
-                !local.is_some_and(|local| local.contains(&(decl, false)))
-                    && !self.refused_declarations.contains(&(symbol, decl))
-            })
-            .collect();
-        match local {
-            Some(local) if as_local || exported.is_empty() => {
-                local.iter().map(|declaration| declaration.0).collect()
-            }
-            _ => exported,
-        }
+    /// `symbol.Declarations`
+    pub fn declarations_of_symbol(&self, symbol: SymbolId) -> SmallVec<[Decl; 4]> {
+        let listed = self.symbols[symbol.idx()].decls.iter().copied();
+        listed
+            .filter(|&decl| !self.refused_declarations.contains(&(symbol, decl)))
+            .collect()
     }
 
     /// Those of one side of `class`.
@@ -1427,6 +1406,18 @@ impl Bound {
                 && self.is_seen_from(from, self.symbols[symbol.idx()].flags, meaning)
             {
                 return Some((symbol, scope));
+            }
+            // "First see if the module has an export default and if the local name of that export default matches."
+            if s.symbol.is_some()
+                && name != crate::atom::known::default
+                && let Some(default) = self.lookup(
+                    self.symbols[s.symbol.idx()].exports,
+                    crate::atom::known::default,
+                )
+                && self.symbols[default.idx()].name == name
+                && self.symbols[default.idx()].flags.intersects(meaning)
+            {
+                return Some((default, scope));
             }
             // `Resolve`: nothing goes by the name `default` where it is exported. Of an enum and a namespace that are one symbol, the
             // enum sees the members only and the namespace all but the members.

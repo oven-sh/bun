@@ -3126,7 +3126,9 @@ impl<'p> Checker<'p> {
         };
         self.mapped_decl(file, node).name_ty.is_none()
             && self.is_generic(ty)
-            && self.homomorphic_type_variable(file, node).is_some()
+            && self
+                .homomorphic_type_variable(file, node, MapperId::IDENTITY)
+                .is_some()
     }
 
     /// What `...c` in the target of a destructuring assignment stands for, where `c` is a `target`, which is not like an array

@@ -1518,13 +1518,7 @@ impl Checker<'_> {
             let wanted = SymFlags::VALUE | SymFlags::NAMESPACE;
             let nearest = files
                 .resolve_name(cx.file, scope, path[0], wanted)
-                .and_then(|found| {
-                    if files.flags(found).intersects(wanted) {
-                        Some(found)
-                    } else {
-                        files.resolve_alias(found)
-                    }
-                });
+                .and_then(|found| files.resolve_alias_as(found, wanted));
             if let Some(nearest) = nearest
                 && !files.flags(nearest).intersects(SymFlags::NAMESPACE)
                 && let Some(start) = after_equals(cx.text, import.name_pos)

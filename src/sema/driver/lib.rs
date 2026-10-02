@@ -13,7 +13,7 @@ use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{FileId, Files};
-use bun_sema::resolve::{Host, join, parent_dir};
+use bun_sema::resolve::{Host, Phase, join, parent_dir};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -202,6 +202,8 @@ pub struct Report {
     pub projects_checked: usize,
     pub load_time: Duration,
     pub check_time: Duration,
+    /// `load_time`, by what it went on: in the order of `Phase::ALL`.
+    pub load_phases: [Duration; 8],
     /// The most stack any file took, in bytes.
     pub deepest_stack: usize,
 }
@@ -222,6 +224,9 @@ impl Report {
         self.files_loaded += other.files_loaded;
         self.files_checked += other.files_checked;
         self.check_time += other.check_time;
+        for (phase, more) in self.load_phases.iter_mut().zip(other.load_phases) {
+            *phase += more;
+        }
         self.deepest_stack = self.deepest_stack.max(other.deepest_stack);
     }
 }
@@ -696,10 +701,16 @@ fn check_what_is_named(
 
     project.options.drops_what_nothing_refers_to = !request.keeps_everything;
     project.options.has_project_references = !project.references.is_empty();
+    let before = host.times();
+    host.spent(Phase::Discover, started.elapsed());
     let files = Files::load(host, project.options, &project.files);
     let program = Program::new(files);
     report.files_loaded = program.files.modules.len();
     report.load_time = started.elapsed();
+    let after = host.times();
+    for (i, phase) in report.load_phases.iter_mut().enumerate() {
+        *phase = after[i] - before[i];
+    }
     if let Some(loaded) = request.loaded {
         loaded(&program);
     }
@@ -790,6 +801,15 @@ fn check_what_is_named(
     }
     let is_taken: Vec<AtomicBool> = to_check.iter().map(|_| AtomicBool::new(false)).collect();
     let goes_first: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+    // The text of the default library is not kept.
+    let text_of = |file: FileId| {
+        let module = &program.files.modules[file.idx()];
+        if module.hir.text.is_empty() {
+            host.read(&module.path).unwrap_or_default()
+        } else {
+            std::borrow::Cow::Borrowed(&module.hir.text[..])
+        }
+    };
     let check_file = |file: FileId, only_syntax: bool| {
         // Dropped last, after all that was found out about the file.
         let _at_hand = program.files.bring_in(host, file);
@@ -818,7 +838,7 @@ fn check_what_is_named(
         if errors.is_empty() {
             return;
         }
-        let text = &module.hir.text;
+        let text = &text_of(file)[..];
         let starts = compute_ecma_line_starts(text);
         let shown: Vec<Diagnostic> = errors
             .into_iter()
@@ -840,14 +860,7 @@ fn check_what_is_named(
                             return located(&module.path, text, &starts, start, end, said);
                         }
                         let other = &program.files.modules[of.idx()];
-                        // The text of the default library is not kept.
-                        let read;
-                        let text = if other.hir.text.is_empty() {
-                            read = host.read(&other.path).unwrap_or_default();
-                            &read[..]
-                        } else {
-                            &other.hir.text[..]
-                        };
+                        let text = &text_of(of)[..];
                         located(
                             &other.path,
                             text,

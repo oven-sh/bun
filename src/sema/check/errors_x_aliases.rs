@@ -185,7 +185,7 @@ impl Checker<'_> {
     fn xa_alias_node_start(&self, file: FileId, decl: Decl) -> u32 {
         match decl {
             Decl::ImportNamespace(import) => self.hir(file)[import].namespace_pos,
-            _ => self.start_of_declaration(file, decl),
+            _ => self.files().start_of_declaration(file, decl),
         }
     }
 
@@ -656,6 +656,15 @@ impl Checker<'_> {
                 if self.xa_has_meaning(sym, meaning, links) {
                     return Some(sym);
                 }
+            }
+            // "First see if the module has an export default and if the local name of that export default matches."
+            if s.symbol.is_some()
+                && name != known::default
+                && let Some(default) = files.export(files.sym(file, s.symbol), known::default)
+                && files.symbol(default).name == name
+                && files.flags(default).intersects(meaning)
+            {
+                return Some(default);
             }
             if s.symbol.is_some()
                 && let Some(sym) = files.export(files.sym(file, s.symbol), name)

@@ -1050,28 +1050,23 @@ impl<'p> Checker<'p> {
             let value = self.force(value);
             // `getConditionalTypeInstantiation`: an intersection nothing can be is not there to be gone through.
             let value = self.reduced(value);
-            let is_distributed = (value == TypeId::NEVER || self.is_union(value))
-                && self.is_distributive_conditional(file, node);
-            if is_distributed && value == TypeId::NEVER {
-                return TypeId::NEVER;
-            }
-            if is_distributed && let TypeData::Union(parts) = self.data(value) {
-                let mut results: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(parts.len());
-                for &part in parts.iter() {
-                    let mut pairs = self.p.types.mapping(mapper).to_vec();
+            if (value == TypeId::NEVER || self.is_union(value))
+                && self.is_distributive_conditional(file, node)
+            {
+                return self.map_type(value, |c, part| {
+                    let mut pairs = c.p.types.mapping(mapper).to_vec();
                     for p in &mut pairs {
                         if p.0 == check_declared {
                             p.1 = part;
                         }
                     }
-                    let one = self.p.types.mapper(pairs);
-                    results.push(if for_constraint {
-                        self.resolve_conditional(file, node, one, true)
+                    let one = c.p.types.mapper(pairs);
+                    if for_constraint {
+                        c.resolve_conditional(file, node, one, true)
                     } else {
-                        self.conditional_type(file, node, one)
-                    });
-                }
-                return self.union(&results);
+                        c.conditional_type(file, node, one)
+                    }
+                });
             }
         }
         self.resolve_conditional(file, node, mapper, for_constraint)
@@ -1430,13 +1425,14 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getHomomorphicTypeVariable`: the `T` of a mapped type whose declared constraint type is `keyof T`, however that is written.
+    /// `getHomomorphicTypeVariable`: the `T` of a mapped type whose constraint type is `keyof T`, however that is written.
     pub(super) fn homomorphic_type_variable(
         &mut self,
         file: FileId,
         node: TypeNodeId,
+        mapper: MapperId,
     ) -> Option<TypeId> {
-        let constraint = self.constraint_of_mapped_param(file, node)?;
+        let constraint = self.mapped_constraint(file, node, mapper);
         let TypeData::Keyof(target) = *self.data(constraint) else {
             return None;
         };
@@ -1453,7 +1449,7 @@ impl<'p> Checker<'p> {
         else {
             return ty;
         };
-        let Some(source) = self.homomorphic_type_variable(file, node) else {
+        let Some(source) = self.homomorphic_type_variable(file, node, MapperId::IDENTITY) else {
             return ty;
         };
         if self.mapped_decl(file, node).name_ty.is_some() {
@@ -1511,7 +1507,7 @@ impl<'p> Checker<'p> {
                 mapper,
             })
         };
-        let Some(source) = self.homomorphic_type_variable(file, node) else {
+        let Some(source) = self.homomorphic_type_variable(file, node, MapperId::IDENTITY) else {
             return anon(self);
         };
         let Some(value) = self.p.types.map(mapper, source) else {

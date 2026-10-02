@@ -676,6 +676,7 @@ impl<'p> Checker<'p> {
             ..Mentioned::default()
         };
         self.collect_mentions(file, node, &mut mentioned);
+        self.collect_mentions_of_extends_types_around(file, node, &mut mentioned);
         let mapper =
             self.identity_mapper_of_mentioned(file, scope, self.hir(file)[node].pos, &mentioned);
         // `getIntersectionType`: the alias and all its type arguments are part of the identity of the type (`getAliasKey`). Where the
@@ -707,12 +708,38 @@ impl<'p> Checker<'p> {
         };
         for &(f, func) in decls {
             self.collect_fn_mentions(f, func, &mut mentioned);
+            let bound = self.bound(f);
+            if let crate::bind::FnOwner::Member(member) = bound.fns[func.idx()].owner
+                && let crate::bind::MemberOwner::TypeLiteral(literal) =
+                    bound.member_owner[member.idx()]
+            {
+                self.collect_mentions_of_extends_types_around(f, literal, &mut mentioned);
+            }
         }
         let pos = decls
             .iter()
             .find(|d| d.0 == file)
             .map_or(0, |&(f, func)| self.hir(f)[func].pos);
         self.identity_mapper_of_mentioned(file, scope, pos, &mentioned)
+    }
+
+    /// `isTypeParameterPossiblyReferenced`, `IsConditionalTypeNode(n) && ForEachChild(n.ExtendsType, containsReference)` on the way
+    /// up from `node`: what a conditional type checks against is in the substitution types below it.
+    fn collect_mentions_of_extends_types_around(
+        &self,
+        file: FileId,
+        mut node: TypeNodeId,
+        out: &mut Mentioned,
+    ) {
+        let parents = self.type_parents(file);
+        while let Some(&parent) = parents.get(node.idx())
+            && parent.is_some()
+        {
+            if let TypeNodeKind::Cond { extends, .. } = self.hir(file)[parent].kind {
+                self.collect_mentions(file, extends, out);
+            }
+            node = parent;
+        }
     }
 
     fn collect_fn_mentions(&self, file: FileId, func: FnId, out: &mut Mentioned) {
@@ -851,7 +878,9 @@ impl<'p> Checker<'p> {
                         ScopeKind::Class(c) => decls.contains(&Decl::Class(c)),
                         _ => false,
                     };
-                    if is_its_own || bound.lookup(s.locals, name) == Some(symbol) {
+                    let local = bound.lookup(s.locals, name);
+                    let local = local.map(|it| bound.export_symbol_of_value_symbol_if_exported(it));
+                    if is_its_own || local == Some(symbol) {
                         break;
                     }
                     scope = s.parent;
@@ -2806,7 +2835,7 @@ impl<'p> Checker<'p> {
         };
         if host_symbol.is_none()
             // `instantiateMappedType`: an instantiation of a homomorphic mapped type keeps the alias of the mapped type.
-            || self.homomorphic_type_variable(of, node).is_some()
+            || self.homomorphic_type_variable(of, node, MapperId::IDENTITY).is_some()
         {
             return ty;
         }

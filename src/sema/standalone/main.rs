@@ -133,7 +133,6 @@ fn print_loaded_sizes(program: &bun_sema::check::Program) {
             "bound.global_augmentations",
             &m.bound.global_augmentations,
         );
-        add(&mut rows, "bound.refused_exports", &m.bound.refused_exports);
         add(&mut rows, "bound.umd_globals", &m.bound.umd_globals);
         add(&mut rows, "bound.specifiers", &m.bound.specifiers);
         add(
@@ -639,6 +638,12 @@ fn main() {
                     report.check_time.as_secs_f64(),
                     bun_sema_standalone::peak_memory() as f64 / (1u64 << 30) as f64
                 );
+                // Discover, link and merge are the wall time of one thread. The others are summed over all threads.
+                let phases = bun_sema::resolve::Phase::ALL.iter().zip(report.load_phases);
+                let phases: Vec<String> = phases
+                    .map(|(phase, time)| format!("{phase:?} {:.3}", time.as_secs_f64()))
+                    .collect();
+                eprintln!("load: {}", phases.join(", ").to_lowercase());
                 let (instructions, cycles) = bun_sema_standalone::instructions_and_cycles();
                 eprintln!(
                     "instructions {:.2} G, cycles {:.2} G",

@@ -1442,7 +1442,7 @@ impl<'p> Checker<'p> {
         } else {
             (sym.file, files.symbol(sym).decls.first().copied()?)
         };
-        let pos = self.start_of_declaration(file, decl);
+        let pos = self.files().start_of_declaration(file, decl);
         Some((!files.module(file).is_lib, file, pos))
     }
 

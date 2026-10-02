@@ -24,8 +24,10 @@ const GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS: u32 = 1 << 5;
 const IN_OBJECT_TYPE_LITERAL: u32 = 1 << 6;
 const ALLOW_ANONYMOUS_IDENTIFIER: u32 = 1 << 7;
 const ALLOW_NODE_MODULES_RELATIVE_PATHS: u32 = 1 << 8;
+const ALLOW_THIS_IN_OBJECT_LITERAL: u32 = 1 << 9;
 /// `FlagsIgnoreErrors`, which `typeToStringEx`, `symbolToStringEx` and `signatureToStringEx` add.
-const IGNORE_ERRORS: u32 = ALLOW_ANONYMOUS_IDENTIFIER | ALLOW_NODE_MODULES_RELATIVE_PATHS;
+const IGNORE_ERRORS: u32 =
+    ALLOW_ANONYMOUS_IDENTIFIER | ALLOW_NODE_MODULES_RELATIVE_PATHS | ALLOW_THIS_IN_OBJECT_LITERAL;
 /// Not of `nodebuilder.Flags`: the type that is asked about has no `alias`. What it is made of goes by what it goes by.
 const WRITTEN_OUT: u32 = 1 << 16;
 
@@ -324,6 +326,12 @@ fn with_printer<'p, T>(
             tracker: tracker.map(|tracker| tracker as &mut dyn SymbolTracker<'p>),
             boundaries: Vec::new(),
             suppress_report_inference_fallback: false,
+            reported_diagnostic: false,
+            encountered_error: false,
+            tracked_symbols: Vec::new(),
+            serialized_types: FxHashMap::default(),
+            has_fake_scope: [false; 2],
+            fake_scope_count: 0,
             type_parameter_names: Vec::new(),
             type_parameter_name_counts: Vec::new(),
             fake_scope_type_parameters: Vec::new(),
@@ -344,6 +352,7 @@ fn with_printer<'p, T>(
 }
 
 /// A type node as the printer writes it.
+#[derive(Clone)]
 struct Node {
     text: String,
     /// `GetTypeNodePrecedence`
@@ -477,6 +486,7 @@ pub(super) trait SymbolTracker<'p> {
 }
 
 /// `TrackedSymbolArgs`
+#[derive(Copy, Clone)]
 struct TrackedSymbolArgs {
     symbol: Sym,
     enclosing_declaration: Option<Enclosing>,
@@ -490,6 +500,28 @@ struct RecoveryBoundary {
     had_error: bool,
     tracked_symbols: Vec<TrackedSymbolArgs>,
     deferred_reports: Vec<Report>,
+    old_tracked_symbols: Vec<TrackedSymbolArgs>,
+    old_encountered_error: bool,
+}
+
+/// `SerializedTypeEntry`
+#[derive(Clone)]
+struct SerializedTypeEntry {
+    node: Node,
+    truncating: bool,
+    added_length: usize,
+    tracked_symbols: Vec<TrackedSymbolArgs>,
+}
+
+/// What `enterNewScope` gives back, to leave the scope by.
+#[derive(Copy, Clone)]
+struct OuterScope {
+    type_parameter_names: usize,
+    type_parameter_name_counts: usize,
+    fake_scope_type_parameters: usize,
+    fake_scope_parameters: usize,
+    enclosing_declaration: Option<Enclosing>,
+    has_fake_scope: [bool; 2],
 }
 
 struct Printer<'c, 'p> {
@@ -512,6 +544,16 @@ struct Printer<'c, 'p> {
     boundaries: Vec<RecoveryBoundary>,
     /// `suppressReportInferenceFallback`
     suppress_report_inference_fallback: bool,
+    reported_diagnostic: bool,
+    encountered_error: bool,
+    tracked_symbols: Vec<TrackedSymbolArgs>,
+    /// `links.serializedTypes`, of every enclosing declaration there is while this printer runs.
+    serialized_types: FxHashMap<(TypeId, u32, Enclosing), SerializedTypeEntry>,
+    /// Whether a block for the parameters, and one for the type parameters, is among the enclosing declarations
+    /// (`fakeScopeForSignatureDeclaration`).
+    has_fake_scope: [bool; 2],
+    /// How many blocks have been made up.
+    fake_scope_count: u32,
     /// `typeParameterNames` and `typeParameterNamesByText`. A later entry hides an earlier one, here and in the next two.
     type_parameter_names: Vec<(TypeId, String)>,
     /// `typeParameterNamesByTextNextNameCount`
@@ -653,18 +695,32 @@ impl<'p> Printer<'_, 'p> {
         match self.boundaries.last_mut() {
             Some(boundary) => boundary.tracked_symbols.push(tracked),
             None => {
-                tracker.track_symbol(
+                if tracker.track_symbol(
                     self.c,
                     tracked.symbol,
                     tracked.enclosing_declaration,
                     tracked.meaning,
-                );
+                ) {
+                    self.reported_diagnostic = true;
+                    return;
+                }
             }
+        }
+        // Type parameters have no part in what is painted late.
+        if !self
+            .c
+            .files()
+            .flags(tracked.symbol)
+            .contains(SymFlags::TYPE_PARAMETER)
+        {
+            self.tracked_symbols.push(tracked);
         }
     }
 
     /// What `wrappingTracker` and `SymbolTrackerImpl` do with the calls `Report` stands for.
     fn report(&mut self, report: Report) {
+        // `onDiagnosticReported`
+        self.reported_diagnostic = true;
         // `markError`
         if let Some(boundary) = self.boundaries.last_mut() {
             boundary.had_error = true;
@@ -709,7 +765,12 @@ impl<'p> Printer<'_, 'p> {
 
     /// `createRecoveryBoundary`
     fn create_recovery_boundary(&mut self) {
-        self.boundaries.push(RecoveryBoundary::default());
+        let old_tracked_symbols = std::mem::take(&mut self.tracked_symbols);
+        self.boundaries.push(RecoveryBoundary {
+            old_tracked_symbols,
+            old_encountered_error: self.encountered_error,
+            ..RecoveryBoundary::default()
+        });
     }
 
     /// `finalizeBoundary`. `had_error`: the visitor came back with `None`.
@@ -717,6 +778,8 @@ impl<'p> Printer<'_, 'p> {
         let Some(boundary) = self.boundaries.pop() else {
             return !had_error;
         };
+        self.tracked_symbols = boundary.old_tracked_symbols;
+        self.encountered_error = boundary.old_encountered_error;
         for report in boundary.deferred_reports {
             self.report(report);
         }
@@ -729,18 +792,21 @@ impl<'p> Printer<'_, 'p> {
         true
     }
 
-    /// `startRecoveryScope`: `unreportedErrorsTop`
-    fn start_recovery_scope(&self) -> usize {
-        self.boundaries
+    /// `startRecoveryScope`: `trackedSymbolsTop`, `unreportedErrorsTop`
+    fn start_recovery_scope(&self) -> (usize, usize) {
+        let unreported_errors_top = self
+            .boundaries
             .last()
-            .map_or(0, |boundary| boundary.deferred_reports.len())
+            .map_or(0, |boundary| boundary.deferred_reports.len());
+        (self.tracked_symbols.len(), unreported_errors_top)
     }
 
     /// `endRecoveryScope`. The symbols it drops are those of the context, not those of the boundary, which stay tracked.
-    fn end_recovery_scope(&mut self, unreported_errors_top: usize) {
+    fn end_recovery_scope(&mut self, state: (usize, usize)) {
+        self.tracked_symbols.truncate(state.0);
         if let Some(boundary) = self.boundaries.last_mut() {
             boundary.had_error = false;
-            boundary.deferred_reports.truncate(unreported_errors_top);
+            boundary.deferred_reports.truncate(state.1);
         }
     }
 
@@ -889,6 +955,9 @@ impl<'p> Printer<'_, 'p> {
             }
             TypeData::ThisParam(_) => {
                 if self.flags & IN_OBJECT_TYPE_LITERAL != 0 {
+                    if self.flags & ALLOW_THIS_IN_OBJECT_LITERAL == 0 {
+                        self.encountered_error = true;
+                    }
                     self.report(Report::InaccessibleThis);
                 }
                 self.approximate_length += 4;
@@ -972,13 +1041,11 @@ impl<'p> Printer<'_, 'p> {
                 Node::new(format!("{}[{}]", object.emit(POSTFIX), index.text), POSTFIX)
             }
             TypeData::Cond { file, node, .. } => {
-                let identity = Some(Identity::Conditional(*file, *node));
-                let Some(depth) = self.enter_type(ty, identity) else {
-                    return self.elided_information_placeholder();
-                };
-                let result = self.conditional_type_to_node(ty, *file, *node);
-                self.leave_type(ty, identity, depth);
-                result
+                let (file, node) = (*file, *node);
+                let identity = Some(Identity::Conditional(file, node));
+                self.visit_and_transform_type(ty, identity, |printer, ty| {
+                    printer.conditional_type_to_node(ty, file, node)
+                })
             }
             // Written above.
             _ => Node::simple("any"),
@@ -1041,8 +1108,27 @@ impl<'p> Printer<'_, 'p> {
         Node::simple(text)
     }
 
-    /// The first half of `visitAndTransformType`. `None`: it is too deep in instantiations of the same thing.
-    fn enter_type(&mut self, ty: TypeId, identity: Option<Identity>) -> Option<u32> {
+    /// `visitAndTransformType`
+    fn visit_and_transform_type(
+        &mut self,
+        ty: TypeId,
+        identity: Option<Identity>,
+        transform: impl FnOnce(&mut Self, TypeId) -> Node,
+    ) -> Node {
+        let key = self
+            .enclosing_declaration
+            .map(|enclosing_declaration| (ty, self.flags, enclosing_declaration));
+        if let Some(key) = &key
+            && let Some(cached) = self.serialized_types.get(key)
+        {
+            let cached = cached.clone();
+            for tracked in cached.tracked_symbols {
+                self.track(tracked);
+            }
+            self.truncating |= cached.truncating;
+            self.approximate_length += cached.added_length;
+            return cached.node;
+        }
         let mut depth = 0;
         if let Some(identity) = identity {
             match self
@@ -1053,7 +1139,7 @@ impl<'p> Printer<'_, 'p> {
                 Some(entry) => {
                     depth = entry.1;
                     if depth > 10 {
-                        return None;
+                        return self.elided_information_placeholder();
                     }
                     entry.1 = depth + 1;
                 }
@@ -1061,11 +1147,26 @@ impl<'p> Printer<'_, 'p> {
             }
         }
         self.visited_types.push(ty);
-        Some(depth)
-    }
-
-    /// The second half.
-    fn leave_type(&mut self, ty: TypeId, identity: Option<Identity>, depth: u32) {
+        let previous_tracked_symbols = std::mem::take(&mut self.tracked_symbols);
+        let start_length = self.approximate_length;
+        let node = transform(self, ty);
+        let added_length = self.approximate_length.saturating_sub(start_length);
+        let tracked_symbols =
+            std::mem::replace(&mut self.tracked_symbols, previous_tracked_symbols);
+        if let Some(key) = key
+            && !self.reported_diagnostic
+            && !self.encountered_error
+        {
+            self.serialized_types.insert(
+                key,
+                SerializedTypeEntry {
+                    node: node.clone(),
+                    truncating: self.truncating,
+                    added_length,
+                    tracked_symbols,
+                },
+            );
+        }
         self.visited_types.retain(|&visited| visited != ty);
         if let Some(identity) = identity
             && let Some(entry) = self
@@ -1075,6 +1176,7 @@ impl<'p> Printer<'_, 'p> {
         {
             entry.1 = depth;
         }
+        node
     }
 
     // ───────────────────────────── enums ─────────────────────────────
@@ -1632,6 +1734,7 @@ impl<'p> Printer<'_, 'p> {
                 && attributes.is_empty()
                 && specifier.contains("/node_modules/")
             {
+                self.encountered_error = true;
                 let name = self.export_name(symbol);
                 self.report(Report::LikelyUnsafeImportRequired(specifier.clone(), name));
             }
@@ -2054,14 +2157,19 @@ impl<'p> Printer<'_, 'p> {
         type_parameters: &[TypeId],
         original_parameters: Option<&[Option<(FileId, ParamId)>]>,
         is_instantiated: bool,
-    ) -> (usize, usize, usize, usize) {
-        let outer = (
-            self.type_parameter_names.len(),
-            self.type_parameter_name_counts.len(),
-            self.fake_scope_type_parameters.len(),
-            self.fake_scope_parameters.len(),
-        );
+    ) -> OuterScope {
+        let outer = OuterScope {
+            type_parameter_names: self.type_parameter_names.len(),
+            type_parameter_name_counts: self.type_parameter_name_counts.len(),
+            fake_scope_type_parameters: self.fake_scope_type_parameters.len(),
+            fake_scope_parameters: self.fake_scope_parameters.len(),
+            enclosing_declaration: self.enclosing_declaration,
+            has_fake_scope: self.has_fake_scope,
+        };
         // `pushFakeScope("params", ..)`, which lies around that of the type parameters.
+        if expanded_parameters.iter().any(Option::is_some) {
+            self.push_fake_scope(0);
+        }
         if self.enclosing_declaration.is_some() {
             for (index, &parameter) in expanded_parameters.iter().enumerate() {
                 let original = original_parameters.and_then(|list| list.get(index).copied()?);
@@ -2110,6 +2218,9 @@ impl<'p> Printer<'_, 'p> {
         if self.enclosing_declaration.is_some()
             && self.flags & GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS != 0
         {
+            if !type_parameters.is_empty() {
+                self.push_fake_scope(1);
+            }
             for &parameter in type_parameters {
                 let name = self.type_parameter_to_name(parameter);
                 self.fake_scope_type_parameters
@@ -2119,11 +2230,28 @@ impl<'p> Printer<'_, 'p> {
         outer
     }
 
-    fn leave_scope(&mut self, outer: (usize, usize, usize, usize)) {
-        self.type_parameter_names.truncate(outer.0);
-        self.type_parameter_name_counts.truncate(outer.1);
-        self.fake_scope_type_parameters.truncate(outer.2);
-        self.fake_scope_parameters.truncate(outer.3);
+    /// `pushFakeScope`, where it makes a block. One of a kind that is there is used again by what is written inside of it.
+    fn push_fake_scope(&mut self, kind: usize) {
+        if let Some(enclosing_declaration) = &mut self.enclosing_declaration
+            && !self.has_fake_scope[kind]
+        {
+            self.has_fake_scope[kind] = true;
+            self.fake_scope_count += 1;
+            enclosing_declaration.fake_scope = self.fake_scope_count;
+        }
+    }
+
+    fn leave_scope(&mut self, outer: OuterScope) {
+        self.type_parameter_names
+            .truncate(outer.type_parameter_names);
+        self.type_parameter_name_counts
+            .truncate(outer.type_parameter_name_counts);
+        self.fake_scope_type_parameters
+            .truncate(outer.fake_scope_type_parameters);
+        self.fake_scope_parameters
+            .truncate(outer.fake_scope_parameters);
+        self.enclosing_declaration = outer.enclosing_declaration;
+        self.has_fake_scope = outer.has_fake_scope;
     }
 
     /// `getInferredTypeParameterConstraint(t, omitTypeReferences = true)`
@@ -2511,12 +2639,7 @@ impl<'p> Printer<'_, 'p> {
             }
             return self.elided_information_placeholder();
         }
-        let Some(depth) = self.enter_type(ty, Some(identity)) else {
-            return self.elided_information_placeholder();
-        };
-        let node = self.object_type_to_node(ty);
-        self.leave_type(ty, Some(identity), depth);
-        node
+        self.visit_and_transform_type(ty, Some(identity), Self::object_type_to_node)
     }
 
     /// `createTypeNodeFromObjectType`
@@ -2773,7 +2896,7 @@ impl<'p> Printer<'_, 'p> {
         let Some((file, decl)) = files.decls(symbol).first().copied() else {
             return Place::Nowhere;
         };
-        let pos = self.c.start_of_declaration(file, decl);
+        let pos = self.c.files().start_of_declaration(file, decl);
         Place::At(self.c.place_in_program_order(file, pos))
     }
 
@@ -3829,16 +3952,17 @@ impl<'p> Printer<'_, 'p> {
         let generates_names = self.flags & GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS != 0;
         // `getModifiersTypeFromMappedType`
         let modifiers = over_keyof.map(|(declared, _)| self.c.instantiate(declared, mapper));
-        // `isHomomorphicMappedTypeWithNonHomomorphicInstantiation`: declared over `keyof T`, instantiated with a `T` that is not a
-        // type parameter.
+        // `isHomomorphicMappedTypeWithNonHomomorphicInstantiation`
         let is_homomorphic_with_non_homomorphic_instantiation = generates_names
             && matches!(over_keyof, Some((_, true)))
-            && self.c.homomorphic_type_variable(file, node).is_some()
-            && modifiers.is_some_and(|modifiers| {
-                let modifiers = self.c.force(modifiers);
-                let modifiers = self.c.actual_type_variable(modifiers);
-                !matches!(self.c.data(modifiers), TypeData::TypeParam(..))
-            });
+            && self
+                .c
+                .homomorphic_type_variable(file, node, mapper)
+                .is_none()
+            && self
+                .c
+                .homomorphic_type_variable(file, node, MapperId::IDENTITY)
+                .is_some();
         let needs_modifier_preserving_wrapper =
             generates_names && matches!(over_keyof, Some((_, false))) && {
                 let keys = self.c.mapped_keys(ty);
@@ -3973,16 +4097,12 @@ impl<'p> Printer<'_, 'p> {
         }
         if self.visited_types.contains(&ty) {
             if self.flags & ALLOW_ANONYMOUS_IDENTIFIER == 0 {
+                self.encountered_error = true;
                 self.report(Report::CyclicStructure);
             }
             return self.elided_information_placeholder();
         }
-        let Some(depth) = self.enter_type(ty, None) else {
-            return self.elided_information_placeholder();
-        };
-        let node = self.type_to_node(ty);
-        self.leave_type(ty, None, depth);
-        node
+        self.visit_and_transform_type(ty, None, Self::type_to_node)
     }
 
     /// `conditionalTypeToTypeNode`, of the conditional type `ty` written at `node`.

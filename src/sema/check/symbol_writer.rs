@@ -10,6 +10,7 @@ use super::visit_node::{VisitedKind, VisitedNode};
 use super::*;
 use crate::bind::{
     ClassOwner, Decl, FnOwner, MemberDeclaration, MemberOwner, Parent, PatParent, ScopeId,
+    ScopeKind,
 };
 use crate::util::FxHashSet;
 
@@ -41,9 +42,6 @@ enum Declaration {
 #[derive(Clone)]
 enum Found {
     Symbol(Sym),
-    /// What `resolveName` finds under a name: the local symbol of `declareModuleMember`, where the symbol stands for that and for
-    /// `local.ExportSymbol`. Its name leads to it from where it was found.
-    LocalSymbol(Sym),
     Property(Prop),
     /// `createUnionOrIntersectionProperty`: the properties in `propSet`.
     Properties(Vec<Prop>),
@@ -129,8 +127,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         // The scope of the file stands in for a scope the binder did not record.
         let scope = if scope.is_some() { scope } else { ScopeId(0) };
         let (name, declarations) = match &found {
-            Found::Symbol(symbol) => self.describe_symbol(*symbol, scope, false),
-            Found::LocalSymbol(symbol) => self.describe_symbol(*symbol, scope, true),
+            Found::Symbol(symbol) => self.describe_symbol(*symbol, scope),
             Found::Property(prop) => self.describe_property(prop, scope),
             Found::Properties(props) => self.describe_properties(props, scope),
             Found::Anonymous {
@@ -225,16 +222,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     return None;
                 }
                 if matches!(kind, VisitedKind::DeclarationName(..)) {
-                    // `node.Symbol` of what is exported is `local.ExportSymbol`, of what is not the local symbol.
-                    let is_kept_back = bound
-                        .local_declarations
-                        .get(&id)
-                        .is_some_and(|local| local.contains(&(decl, false)));
-                    return Some(if is_kept_back {
-                        Found::LocalSymbol(symbol)
-                    } else {
-                        Found::Symbol(symbol)
-                    });
+                    return Some(Found::Symbol(symbol));
                 }
                 // `getImmediateAliasedSymbol`: the `a` of `import { a as b }` and of `export { a as b }`.
                 // `getTargetOfModuleDefault`: a default that is made up is `resolveExternalModuleSymbol(moduleSymbol, dontResolveAlias)`,
@@ -617,11 +605,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             self.c
                 .files()
                 .resolve_entity(self.file, scope, &names, meaning | SymFlags::ALIAS)?;
-        Some(if names.len() == 1 {
-            Found::LocalSymbol(symbol)
-        } else {
-            Found::Symbol(symbol)
-        })
+        Some(Found::Symbol(symbol))
     }
 
     /// `getSymbolAtLocation`, of a string, a number or a template without substitutions.
@@ -752,6 +736,31 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
 
     // ───────────────────────────── `getSymbolAtLocation` ─────────────────────────────
 
+    /// `resolveEntityName(name, SymbolFlagsValue, ..)`, of the identifier `e` for which `checkIdentifier` has `exported`. That asks
+    /// for `ExportValue` too, and goes on from the local symbol it finds to `ExportSymbol`. Without it a local symbol that is no
+    /// value is passed over, for what the table of exports has.
+    fn resolve_without_export_value(&self, e: ExprId, name: Atom, exported: Sym) -> Option<Sym> {
+        let (file, files, bound) = (self.file, self.c.files(), self.c.bound(self.file));
+        let mut scope = self.c.enclosing_scope_of_expr(file, e);
+        while scope.is_some() {
+            let s = &bound.scopes[scope.idx()];
+            if matches!(s.kind, ScopeKind::File | ScopeKind::Module(_))
+                && let Some(local) = bound.lookup(s.locals, name)
+            {
+                let leads_there = bound.symbols[local.idx()].export_symbol.is_some()
+                    && files.export_symbol_of_value_symbol_if_exported(files.sym(file, local))
+                        == exported;
+                return if leads_there {
+                    files.resolve_name(file, scope, name, SymFlags::VALUE)
+                } else {
+                    Some(exported)
+                };
+            }
+            scope = s.parent;
+        }
+        Some(exported)
+    }
+
     /// `getSymbolOfNameOrPropertyAccessExpression`, of an identifier that is an expression.
     fn get_symbol_of_identifier(&self, e: ExprId, name: Atom) -> Option<Found> {
         let file = self.file;
@@ -772,7 +781,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE | SymFlags::ALIAS,
             )
         {
-            return Some(Found::LocalSymbol(symbol));
+            return Some(Found::Symbol(symbol));
         }
         // `ignoreErrors`
         match self
@@ -780,16 +789,11 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             .resolve_identifier(file, e, name, true)
             .unwrap_or(None)
         {
-            // `getSymbol`: an alias that stands for no value is not there. `resolveName` finds the local symbol, which has
-            // `SymbolFlagsExportValue`, and `resolveEntityName` leaves it at that.
-            // `trySymbolTable` looks under `symbol.Name`: a module that `export as namespace a` makes global is not called `a`.
-            Some(symbol) => files.means(symbol, SymFlags::VALUE).then(|| {
-                if files.symbol(symbol).name == name {
-                    Found::LocalSymbol(symbol)
-                } else {
-                    Found::Symbol(symbol)
-                }
-            }),
+            // `getSymbol`: an alias that stands for no value is not there.
+            Some(symbol) if !files.means(symbol, SymFlags::VALUE) => None,
+            Some(symbol) => self
+                .resolve_without_export_value(e, name, symbol)
+                .map(Found::Symbol),
             None => match name {
                 known::undefined | known::globalThis => {
                     Some(Found::Undeclared(self.c.atom_text(name)))
@@ -1057,17 +1061,12 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
 
     // ───────────────────────────── `symbol.Declarations` ─────────────────────────────
 
-    /// `as_local`: see `Bound::declarations_of_symbol`.
-    fn declarations_of_symbol(
-        &mut self,
-        symbol: Sym,
-        as_local: bool,
-    ) -> Vec<(FileId, Declaration)> {
+    fn declarations_of_symbol(&mut self, symbol: Sym) -> Vec<(FileId, Declaration)> {
         // Those of a class or an interface are declared among its members.
         if let [(file, Decl::TypeParam(parameter))] = self.c.files().decls_of(symbol)[..] {
             return self.declarations_of_member(file, MemberDeclaration::TypeParameter(parameter));
         }
-        let exported = self.declarations_of_symbol_alone(symbol, as_local);
+        let exported = self.declarations_of_symbol_alone(symbol);
         match self.static_member_of_the_name(symbol) {
             Some((file, member)) => {
                 let members = self.declarations_of_member_alone(file, member);
@@ -1135,17 +1134,10 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         (!files.flags(export).intersects(SymFlags::VALUE)).then_some(export)
     }
 
-    fn declarations_of_symbol_alone(
-        &mut self,
-        symbol: Sym,
-        as_local: bool,
-    ) -> Vec<(FileId, Declaration)> {
+    fn declarations_of_symbol_alone(&mut self, symbol: Sym) -> Vec<(FileId, Declaration)> {
         let mut declarations = Vec::new();
         for &part in self.c.files().parts(symbol).iter() {
-            let of_part = self
-                .c
-                .bound(part.file)
-                .declarations_of_symbol(part.id, as_local);
+            let of_part = self.c.bound(part.file).declarations_of_symbol(part.id);
             declarations.extend(
                 of_part
                     .into_iter()
@@ -1164,7 +1156,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         let members = self.declarations_of_member_alone(file, declaration);
         match self.export_of_the_name(file, declaration) {
             Some(export) => {
-                let exported = self.declarations_of_symbol_alone(export, false);
+                let exported = self.declarations_of_symbol_alone(export);
                 self.in_order_of_binding(members, exported)
             }
             None => members,
@@ -1204,7 +1196,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             PropSource::Literal(file, property) => {
                 self.declarations_of_member(*file, MemberDeclaration::Property(*property))
             }
-            PropSource::Symbol(symbol) => self.declarations_of_symbol(*symbol, false),
+            PropSource::Symbol(symbol) => self.declarations_of_symbol(*symbol),
             PropSource::Assigned(file, assignments) => {
                 // `this.name = value` is one symbol with a member `name` that comes after it.
                 let of_this = assignments.first().map(|&first| {
@@ -1314,7 +1306,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         // Where the first token starts, and the flags of the declaration.
         let (start, flags) = match declaration {
             Declaration::Bound(decl) => (
-                self.c.start_of_declaration(file, decl),
+                self.c.files().start_of_declaration(file, decl),
                 match decl {
                     Decl::Fn(function) => hir[function].flags,
                     Decl::Alias(alias) => hir[alias].flags,
@@ -1361,15 +1353,11 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         &mut self,
         symbol: Sym,
         at: ScopeId,
-        as_local: bool,
     ) -> (String, Vec<(FileId, Declaration)>) {
         // `lookupSymbolChainWorker`
         let flags = self.c.files().flags(symbol);
         let is_type_parameter = flags.contains(SymFlags::TYPE_PARAMETER);
-        // `trySymbolTable`: `symbols[name]` is the local symbol itself, and no alias stands for it. The exports of an enum, where
-        // `resolveName` looks, are not among the tables of `someSymbolTableInScope`.
-        let is_found_by_name = as_local && !flags.contains(SymFlags::ENUM_MEMBER);
-        let (starts_with_global_this, chain) = if is_type_parameter || is_found_by_name {
+        let (starts_with_global_this, chain) = if is_type_parameter {
             (false, vec![symbol])
         } else {
             self.c.lookup_symbol_chain_for_symbol_to_string(
@@ -1380,7 +1368,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         };
         (
             self.symbol_chain_to_string(starts_with_global_this, &chain, at),
-            self.declarations_of_symbol(symbol, as_local),
+            self.declarations_of_symbol(symbol),
         )
     }
 
@@ -1390,7 +1378,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         at: ScopeId,
     ) -> (String, Vec<(FileId, Declaration)>) {
         match &prop.source {
-            PropSource::Symbol(symbol) => return self.describe_symbol(*symbol, at, false),
+            PropSource::Symbol(symbol) => return self.describe_symbol(*symbol, at),
             // The name, the parent and the declarations of what it is a copy of.
             PropSource::Copy(_, of, true) if of.len() == 1 => {
                 return self.describe_property(&of[0], at);

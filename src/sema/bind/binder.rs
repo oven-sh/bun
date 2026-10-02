@@ -12,6 +12,15 @@ enum ExpandoFunction {
     Object(ExprId),
 }
 
+/// `exportKind` of `declareModuleMember`
+fn export_kind(flags: SymFlags) -> SymFlags {
+    if flags.intersects(SymFlags::VALUE) {
+        SymFlags::EXPORT_VALUE
+    } else {
+        SymFlags::empty()
+    }
+}
+
 /// A label while the file is bound.
 struct Label {
     /// What leads to it.
@@ -24,17 +33,6 @@ struct Label {
 /// Set in what stands for a label while the file is bound. The rest is its number in `Binder::label_edges`.
 const PENDING: u32 = 1 << 31;
 
-/// `local` of `declareModuleMember`, of a name that a block exports.
-#[derive(Default)]
-struct LocalSymbol {
-    /// `local.Declarations`, each with whether it is exported.
-    declarations: SmallVec<[(Decl, bool); 2]>,
-    /// The symbols those declarations have here.
-    symbols: SmallVec<[SymbolId; 2]>,
-    /// `local.ExportSymbol`
-    export_symbol: Option<SymbolId>,
-}
-
 pub(super) struct Binder<'f> {
     f: &'f File,
     options: BindOptions,
@@ -42,8 +40,6 @@ pub(super) struct Binder<'f> {
     atoms: Option<&'f Interner>,
     b: Bound,
     tables: Vec<FxHashMap<Atom, SymbolId>>,
-    /// By the locals of the block and the name.
-    local_symbols: FxHashMap<(TableId, Atom), LocalSymbol>,
     scope: ScopeId,
     /// Identifiers to look up once everything is declared.
     idents: Vec<(ExprId, ScopeId)>,
@@ -159,7 +155,6 @@ impl<'f> Binder<'f> {
             atoms,
             b,
             tables: Vec::new(),
-            local_symbols: FxHashMap::default(),
             scope: ScopeId::NONE,
             idents: Vec::new(),
             assigned: Vec::new(),
@@ -270,12 +265,24 @@ impl<'f> Binder<'f> {
             }
     }
 
-    /// `declareSymbolEx`: the declarations of one name in one table are one symbol if they go together. One that is refused gets a
-    /// symbol of its own, which no name leads to.
     fn declare_in(
         &mut self,
         table: TableId,
         name: Atom,
+        flags: SymFlags,
+        decl: Decl,
+        parent: SymbolId,
+    ) -> SymbolId {
+        self.declare_symbol(table, name, flags, flags, decl, parent)
+    }
+
+    /// `declareSymbolEx`: the declarations of one name in one table are one symbol if they go together. One that is refused gets a
+    /// symbol of its own, which no name leads to. `flags`: what `decl` declares, which `excludes` goes by.
+    fn declare_symbol(
+        &mut self,
+        table: TableId,
+        name: Atom,
+        includes: SymFlags,
         flags: SymFlags,
         decl: Decl,
         parent: SymbolId,
@@ -289,9 +296,9 @@ impl<'f> Binder<'f> {
             symbol.decls.push(decl);
             if is_refused {
                 self.b.refused_declarations.push((existing, decl));
-                return self.new_symbol(name, flags, decl, parent);
+                return self.new_symbol(name, includes, decl, parent);
             }
-            symbol.flags |= flags;
+            symbol.flags |= includes;
             // What is more than `export { a as b }` is in scope.
             symbol.flags.remove(SymFlags::EXPORT_ONLY);
             if symbol.parent.is_none() {
@@ -299,7 +306,7 @@ impl<'f> Binder<'f> {
             }
             return existing;
         }
-        let symbol = self.new_symbol(name, flags, decl, parent);
+        let symbol = self.new_symbol(name, includes, decl, parent);
         self.tables[table.idx()].insert(name, symbol);
         symbol
     }
@@ -336,9 +343,8 @@ impl<'f> Binder<'f> {
         }
     }
 
-    /// `declareModuleMember`: declares `name` in `scope`, or among the exports of the module or namespace `scope` is the body of if
-    /// `exported`. What is exported under a name and what is not are two symbols. The locals hold what is not. Where there is no
-    /// such thing they hold what is exported, in place of the symbol that would only lead there.
+    /// `declareModuleMember`: "Exported module members are given 2 symbols: A local symbol that is classified with an ExportValue
+    /// flag, and an associated export symbol with all the correct flags set on it." The answer is `node.Symbol`, the second.
     fn declare(
         &mut self,
         scope: ScopeId,
@@ -353,142 +359,21 @@ impl<'f> Binder<'f> {
             return self.declare_in(locals, name, flags, decl, SymbolId::NONE);
         }
         let exports = self.b.symbols[container.idx()].exports;
-        let in_locals = self.tables[locals.idx()].get(&name).copied();
-        let in_exports = self.tables[exports.idx()].get(&name).copied();
-        // What the block declares without exporting it.
-        let own = in_locals
-            .filter(|&local| Some(local) != in_exports && !self.b.refused_exports.contains(&local));
-        let is_only_a_value = |flags: SymFlags| {
-            flags.intersects(SymFlags::VALUE)
-                && !flags.intersects(SymFlags::TYPE | SymFlags::NAMESPACE | SymFlags::ALIAS)
-        };
-        if !exported {
-            // An import is kept one symbol with what is exported under its name: whether the two clash (2440) is asked of that.
-            let Some(exported_one) =
-                in_locals.filter(|_| own.is_none() && !flags.contains(SymFlags::ALIAS))
-            else {
-                let symbol = self.declare_in(locals, name, flags, decl, container);
-                let is_accepted = in_locals.is_none_or(|there| there == symbol);
-                self.note_local_declaration(
-                    (locals, name),
-                    (decl, false),
-                    symbol,
-                    is_accepted,
-                    None,
-                );
-                return symbol;
+        if flags.contains(SymFlags::ALIAS) {
+            // Of the imports only `export import a = b` is exported, and it is among the exports alone.
+            let table = match decl {
+                Decl::ImportEquals(_) if exported => exports,
+                _ => locals,
             };
-            let symbol = self.new_symbol(name, flags, decl, container);
-            self.note_local_declaration((locals, name), (decl, false), symbol, true, None);
-            // `getExportSymbolOfValueSymbolIfExported`: as a value the name goes on meaning what is exported.
-            if !(is_only_a_value(flags)
-                && self.b.symbols[exported_one.idx()]
-                    .flags
-                    .intersects(SymFlags::VALUE))
-            {
-                self.tables[locals.idx()].insert(name, symbol);
-            }
-            return symbol;
+            return self.declare_in(table, name, flags, decl, container);
         }
-        let own_symbol = own;
-        let own = own.map(|local| self.b.symbols[local.idx()].flags);
-        // `declareSymbol(locals, .., exportKind, symbolExcludes)`
-        let goes_with_own = own.is_none_or(|there| !Self::is_refused(there, flags, decl));
-        // One symbol with an import of the name, as above.
-        if goes_with_own
-            && in_exports.is_none()
-            && own.is_some_and(|there| there.contains(SymFlags::ALIAS))
-        {
-            let symbol = self.declare_in(locals, name, flags, decl, container);
-            self.tables[exports.idx()].insert(name, symbol);
-            self.note_local_declaration((locals, name), (decl, true), symbol, true, own_symbol);
-            return symbol;
+        if !exported {
+            return self.declare_in(locals, name, flags, decl, container);
         }
+        let local = self.declare_symbol(locals, name, export_kind(flags), flags, decl, container);
         let symbol = self.declare_in(exports, name, flags, decl, container);
-        self.note_local_declaration(
-            (locals, name),
-            (decl, true),
-            symbol,
-            goes_with_own,
-            own_symbol,
-        );
-        let is_accepted = in_exports.is_none_or(|there| there == symbol);
-        // `local.ExportSymbol`: as a value the name means, in this block, what was exported under it last, be it refused. As
-        // anything else it means what the block keeps to itself, and then what the table of exports has.
-        let takes_the_name = (is_accepted || is_only_a_value(flags))
-            && own.is_none_or(|there| {
-                goes_with_own && flags.intersects(SymFlags::VALUE) && is_only_a_value(there)
-            });
-        if takes_the_name {
-            self.tables[locals.idx()].insert(name, symbol);
-            if !is_accepted {
-                self.b.refused_exports.push(symbol);
-            }
-        }
+        self.b.symbols[local.idx()].export_symbol = symbol;
         symbol
-    }
-
-    /// `declareSymbol(GetLocals(container), nil, node, ..)` of `declareModuleMember`: `decl`, whose symbol here is `symbol`, is a
-    /// declaration of the local symbol `name` of the block, unless that refused it. Only the names that the block exports are kept
-    /// track of. `own`: what the block had declared under the name without exporting it, when the first is exported.
-    fn note_local_declaration(
-        &mut self,
-        key: (TableId, Atom),
-        (decl, is_exported): (Decl, bool),
-        symbol: SymbolId,
-        is_accepted: bool,
-        own: Option<SymbolId>,
-    ) {
-        if !self.local_symbols.contains_key(&key) {
-            if !is_exported {
-                return;
-            }
-            let mut local = LocalSymbol::default();
-            if let Some(own) = own {
-                for &earlier in &self.b.symbols[own.idx()].decls {
-                    if earlier != decl && !self.b.refused_declarations.contains(&(own, earlier)) {
-                        local.declarations.push((earlier, false));
-                    }
-                }
-                local.symbols.push(own);
-            }
-            self.local_symbols.insert(key, local);
-        }
-        if is_accepted && let Some(local) = self.local_symbols.get_mut(&key) {
-            local.declarations.push((decl, is_exported));
-            if !local.symbols.contains(&symbol) {
-                local.symbols.push(symbol);
-            }
-            if is_exported {
-                local.export_symbol = Some(symbol);
-            }
-        }
-    }
-
-    /// Keeps `local.Declarations` of the local symbols that have both what is exported and what is not, and `local.ExportSymbol`
-    /// where no table has it.
-    fn keep_local_declarations(&mut self) {
-        for ((locals, _), local) in std::mem::take(&mut self.local_symbols) {
-            if let Some(export_symbol) = local.export_symbol
-                && let [decl] = self.b.symbols[export_symbol.idx()].decls[..]
-                && self
-                    .b
-                    .refused_declarations
-                    .iter()
-                    .any(|refused| refused.1 == decl)
-            {
-                self.b.refused_export_symbols.push((locals, export_symbol));
-            }
-            if local.declarations.iter().any(|declaration| declaration.1)
-                && local.declarations.iter().any(|declaration| !declaration.1)
-            {
-                for &symbol in &local.symbols {
-                    self.b
-                        .local_declarations
-                        .insert(symbol, local.declarations.clone());
-                }
-            }
-        }
     }
 
     /// `declareSymbolEx` for `export { a as b }` and `export * as b` among the exports. `AliasExcludes`: it is one symbol with what
@@ -554,16 +439,6 @@ impl<'f> Binder<'f> {
         }
     }
 
-    fn is_default_export(&self, decl: Decl) -> bool {
-        let flags = match decl {
-            Decl::Fn(f) => self.f[f].flags,
-            Decl::Class(c) => self.f[c].flags,
-            Decl::Interface(i) => self.f[i].flags,
-            _ => return false,
-        };
-        flags.contains(Flags::DEFAULT)
-    }
-
     /// `declareModuleMember`, `declareSymbolEx` for `export default` on a declaration: among the exports it goes by `default`,
     /// whatever it is called here. Without a name (`NONE`) nothing here can refer to it.
     fn declare_default(
@@ -585,38 +460,10 @@ impl<'f> Binder<'f> {
             };
         }
         let exports = self.b.symbols[container.idx()].exports;
-        // Next to what is declared here under the name and is no default export it is declared like what is not exported.
-        if name.is_some()
-            && let Some(&local) = self.tables[locals.idx()].get(&name)
-            && !self.b.symbols[local.idx()]
-                .decls
-                .iter()
-                .all(|&d| self.is_default_export(d))
-        {
-            let symbol = self.declare(self.scope, name, flags, decl, false);
-            self.tables[exports.idx()]
-                .entry(known::default)
-                .or_insert(symbol);
-            // It is exported all the same.
-            let noted = self
-                .local_symbols
-                .get_mut(&(locals, name))
-                .and_then(|it| it.declarations.last_mut())
-                .filter(|last| last.0 == decl);
-            if let Some(last) = noted {
-                last.1 = true;
-            } else {
-                let is_accepted = symbol == local;
-                self.note_local_declaration(
-                    (locals, name),
-                    (decl, true),
-                    symbol,
-                    is_accepted,
-                    Some(local),
-                );
-            }
-            return symbol;
-        }
+        // "No local symbol for an unnamed default!"
+        let local = name
+            .is_some()
+            .then(|| self.declare_symbol(locals, name, export_kind(flags), flags, decl, container));
         // With an alias it would be one symbol too, which is the declaration wherever that has the meaning asked for. Here an alias
         // is followed wherever it is met, so the declaration takes its place.
         let there = self.tables[exports.idx()].get(&known::default).copied();
@@ -638,10 +485,8 @@ impl<'f> Binder<'f> {
                 symbol
             }
         };
-        // The name means the last that took it: `ExportSymbol` of the local symbol.
-        if name.is_some() {
-            self.tables[locals.idx()].insert(name, symbol);
-            self.note_local_declaration((locals, name), (decl, true), symbol, true, None);
+        if let Some(local) = local {
+            self.b.symbols[local.idx()].export_symbol = symbol;
         }
         symbol
     }
@@ -1657,7 +1502,6 @@ impl<'f> Binder<'f> {
         self.collect_expandos();
         self.collect_this_properties();
         self.declare_member_symbols();
-        self.keep_local_declarations();
         // Tables, flat and sorted.
         self.b.tables.reserve_exact(self.tables.len());
         self.b

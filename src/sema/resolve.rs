@@ -7,9 +7,62 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
+
+/// What loading a program spends its time on. `Discover`, `Link` and `Merge` are done by one thread. The others are done by all at once,
+/// and the time of each thread counts.
+#[derive(Copy, Clone, Debug)]
+pub enum Phase {
+    /// The configuration files, the directories gone through for `include`, the search for the libraries.
+    Discover,
+    Read,
+    Parse,
+    /// From Bun's tree to `hir`.
+    Lower,
+    Bind,
+    /// What the imports and the `/// <reference>`s of a file lead to.
+    Resolve,
+    /// The files are numbered in the order they refer to each other.
+    Link,
+    Merge,
+}
+
+impl Phase {
+    pub const ALL: [Phase; 8] = [
+        Phase::Discover,
+        Phase::Read,
+        Phase::Parse,
+        Phase::Lower,
+        Phase::Bind,
+        Phase::Resolve,
+        Phase::Link,
+        Phase::Merge,
+    ];
+}
+
+/// Tells the host, when it is dropped, how long it was around.
+pub struct Spent<'a>(&'a dyn Host, Phase, Instant);
+
+impl<'a> Spent<'a> {
+    pub fn on(host: &'a dyn Host, phase: Phase) -> Spent<'a> {
+        Spent(host, phase, Instant::now())
+    }
+}
+
+impl Drop for Spent<'_> {
+    fn drop(&mut self) {
+        self.0.spent(self.1, self.2.elapsed());
+    }
+}
 
 /// The file system, and the parser. The bundler has its own of both.
 pub trait Host: Sync {
+    /// One thread has spent `time` on `phase`. Only a host that is asked for `times` keeps count.
+    fn spent(&self, _phase: Phase, _time: Duration) {}
+    /// What `spent` has been told so far, in the order of `Phase::ALL`.
+    fn times(&self) -> [Duration; 8] {
+        [Duration::ZERO; 8]
+    }
     /// What the file says. As in `bun_ast::Source`: a host that already holds it, as the bundler does of whatever it has loaded, lends
     /// it, and nothing is read or copied.
     fn read(&self, path: &str) -> Option<Cow<'static, [u8]>>;

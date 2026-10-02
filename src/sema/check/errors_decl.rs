@@ -637,7 +637,11 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         let files = self.files();
-        let flags = files.flags(sym);
+        // `getMergedSymbol(core.OrElse(symbol.ExportSymbol, symbol))`
+        let flags = match files.symbol(sym).export_symbol {
+            SymbolId::NONE => files.flags(sym),
+            exported => files.flags(files.sym(sym.file, exported)),
+        };
         let mut excluded = SymFlags::empty();
         for meaning in [SymFlags::VALUE, SymFlags::TYPE, SymFlags::NAMESPACE] {
             if flags.intersects(meaning) {

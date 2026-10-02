@@ -391,6 +391,10 @@ impl<'p> Checker<'p> {
                 self.keyof_with_origin(t)
             }
             &TypeData::Substitution { base, constraint } => {
+                // A declared type has no mapper in tsgo. Here it has one of identity pairs.
+                if self.p.types.mapping(mapper).iter().all(|p| p.0 == p.1) {
+                    return ty;
+                }
                 let base = self.instantiate(base, mapper);
                 if constraint == TypeId::UNKNOWN {
                     return self.no_infer(base);

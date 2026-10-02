@@ -288,11 +288,7 @@ impl Checker<'_> {
                 };
                 let flags = files.flags(found);
                 // `getSymbol`: an alias is found by what it stands for, and one that leads nowhere by anything.
-                let is_meant = flags.intersects(wanted)
-                    || flags.contains(SymFlags::ALIAS)
-                        && files
-                            .resolve_alias(found)
-                            .is_none_or(|target| files.flags(target).intersects(wanted));
+                let is_meant = files.symbol_flags(found).intersects(wanted);
                 if !is_meant || flags.contains(SymFlags::EXPORT_ONLY) {
                     continue;
                 }
@@ -471,10 +467,10 @@ impl Checker<'_> {
         // `getSymbol`: an alias is found by what it stands for.
         let means_umd_global = |name: Atom, scope: ScopeId, meaning: SymFlags| {
             umd_global(files, name).is_some_and(|global| {
+                let flags = files.symbol_flags(global);
                 files.resolve_name(file, scope, name, meaning) == Some(global)
-                    && files
-                        .resolve_alias(global)
-                        .is_some_and(|target| files.flags(target).intersects(meaning))
+                    && flags != SymFlags::all()
+                    && flags.intersects(meaning)
             })
         };
         for &(e, scope) in &bound.free_idents {

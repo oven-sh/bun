@@ -17,6 +17,7 @@ use crate::hir::{
 };
 use crate::program::FileId;
 use bun_core::lexer;
+use bun_core::strings::{lexer_step, wtf8_byte_sequence_length};
 
 // ───────────────────────────── the text ─────────────────────────────
 
@@ -247,7 +248,7 @@ pub(super) fn is_word_at(text: &[u8], at: usize, word: &[u8]) -> bool {
     word_at(text, at) == word
 }
 
-/// Where the word that ends at `end` starts. White space that is not ASCII, a byte order mark for one, is no part of it.
+/// Where the word that ends at `end` starts. What is not ASCII is part of it if `ident_end` says so.
 pub(super) fn word_start(text: &[u8], end: usize) -> usize {
     let end = end.min(text.len());
     let mut start = end;
@@ -256,7 +257,7 @@ pub(super) fn word_start(text: &[u8], end: usize) -> usize {
     }
     while ident_end(text, start) < end {
         let blank = ident_end(text, start);
-        start = (blank + white_space_len(text, blank).max(1)).min(end);
+        start = (blank + wtf8_byte_sequence_length(text[blank]) as usize).min(end);
     }
     start
 }
@@ -266,16 +267,7 @@ pub(super) fn word_before(text: &[u8], end: usize) -> &[u8] {
     &text[word_start(text, end)..end.min(text.len())]
 }
 
-fn utf8_len(first: u8) -> usize {
-    match first {
-        0xC0..=0xDF => 2,
-        0xE0..=0xEF => 3,
-        0xF0..=0xFF => 4,
-        _ => 1,
-    }
-}
-
-/// `scanIdentifierParts`. Every character that is neither ASCII nor a blank counts as part of a name.
+/// `scanIdentifierParts`
 pub(super) fn ident_end(text: &[u8], mut at: usize) -> usize {
     loop {
         match text.get(at) {
@@ -284,18 +276,34 @@ pub(super) fn ident_end(text: &[u8], mut at: usize) -> usize {
                 Some((len, ch)) if lexer::is_identifier_part(ch) => at += len,
                 _ => return at,
             },
-            Some(&b) if b >= 0x80 && white_space_len(text, at) == 0 => at += utf8_len(b),
+            Some(&b) if b >= 0x80 => {
+                let mut next = at;
+                let ch = lexer_step::next_codepoint_multibyte(text, &mut next, b);
+                if !lexer::is_identifier_part(ch as u32) {
+                    return at;
+                }
+                at = next;
+            }
             Some(_) => return at,
             None => return at.min(text.len()),
         }
     }
 }
 
-/// `scanIdentifier`: the same from where a name starts, which an escape that stands for no `IsIdentifierStart` does not.
+/// `scanIdentifier`: the same from where a name starts, which what is no `IsIdentifierStart` does not.
 pub(super) fn identifier_end(text: &[u8], at: usize) -> usize {
-    match unicode_escape(text, at) {
-        Some((_, ch)) if !lexer::is_identifier_start(ch) => at,
-        _ => ident_end(text, at),
+    let first = match (text.get(at), unicode_escape(text, at)) {
+        (_, Some((_, ch))) => ch,
+        (Some(&b), None) if b >= 0x80 => {
+            let mut next = at;
+            lexer_step::next_codepoint_multibyte(text, &mut next, b) as u32
+        }
+        _ => return ident_end(text, at),
+    };
+    if lexer::is_identifier_start(first) {
+        ident_end(text, at)
+    } else {
+        at
     }
 }
 
@@ -558,7 +566,7 @@ pub(super) fn token_end(text: &[u8], at: usize, is_jsx: bool) -> usize {
     }
     match identifier_end(text, at) {
         end if end > at => end,
-        _ => (at + utf8_len(first)).min(text.len()),
+        _ => (at + wtf8_byte_sequence_length(first) as usize).min(text.len()),
     }
 }
 

@@ -480,6 +480,7 @@ impl<'a> Parser<'a> {
         atoms: &'a bun_sema::atom::Interner,
         is_declaration_file: bool,
         await_is_a_name: bool,
+        parsing: &core::cell::Cell<core::time::Duration>,
     ) -> (bun_sema::hir::File, bool) {
         type Pi<'a> = P<'a, true, false>;
         let scratch_lexer = |this: &Self| {
@@ -530,7 +531,9 @@ impl<'a> Parser<'a> {
             is_typescript_declare: is_declaration_file,
             ..Default::default()
         };
+        let began = std::time::Instant::now();
         let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts);
+        parsing.set(parsing.get() + began.elapsed());
         let awaited = p.top_level_await_keyword.len > 0;
         if is_declaration_file {
             // For now this parser only provides the type nodes. `type_syntax::Builder` still reads the statements around them.

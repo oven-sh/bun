@@ -13,8 +13,8 @@ pub(super) struct Enclosing {
     /// It is that variable declaration.
     pub(super) variable: VarDeclId,
     /// It is a block that `enterNewScope` made up for the parameters or the type parameters of a signature, and the rest says what
-    /// that is in.
-    pub(super) is_fake_scope: bool,
+    /// that is in. Which block: they are numbered from 1. 0: none.
+    pub(super) fake_scope: u32,
 }
 
 impl Enclosing {
@@ -23,14 +23,14 @@ impl Enclosing {
             file,
             scope,
             variable: VarDeclId::NONE,
-            is_fake_scope: false,
+            fake_scope: 0,
         }
     }
 
     /// `getEnclosingDeclarationIgnoringFakeScope`
     pub(super) fn ignoring_fake_scope(self) -> Enclosing {
         Enclosing {
-            is_fake_scope: false,
+            fake_scope: 0,
             ..self
         }
     }
@@ -44,7 +44,7 @@ pub(super) fn or_file_scope(scope: ScopeId) -> ScopeId {
 impl Checker<'_> {
     /// `IsFunctionLikeDeclaration(enclosingDeclaration)`
     pub(super) fn is_function_like_declaration(&self, at: Enclosing) -> bool {
-        !at.is_fake_scope
+        at.fake_scope == 0
             && at.variable.is_none()
             && at.scope.is_some()
             && matches!(self.bound(at.file).scopes[at.scope.idx()].kind, ScopeKind::Fn(f)

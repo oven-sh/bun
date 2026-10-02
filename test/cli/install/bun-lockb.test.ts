@@ -411,6 +411,197 @@ it("rejects a binary lockfile whose package scripts flag byte is out of range", 
   expect(code).toBe(0);
   expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
 });
+// bun.lockb starts with a 42-byte header and a u32 format version. The 32-byte meta hash follows.
+async function storedMetaHash(dir: string) {
+  return Buffer.from(await file(join(dir, "bun.lockb")).arrayBuffer())
+    .subarray(46, 78)
+    .toString("hex");
+}
+
+// SHA-512/256 over the sorted `name@resolution` lines of every package but the root, then the
+// lifecycle scripts `bun install` runs for the root and the workspaces, one `hook: script` line each.
+function metaHashOf(packages: string[], scripts: string[] = []) {
+  return new Bun.CryptoHasher("sha512-256")
+    .update(
+      "\n-- BEGIN SHA512/256(`${alphabetize(name)}@${order(version)}`) --\n" +
+        packages.map(line => line + "\n").join("") +
+        (scripts.length
+          ? "\n-- BEGIN SCRIPTS --\n" + scripts.map(line => line + "\n").join("") + "\n-- END SCRIPTS --\n"
+          : "") +
+        "-- END HASH--\n",
+    )
+    .digest("hex");
+}
+
+async function bun(cwd: string, ...args: string[]) {
+  await using proc = spawn({ cmd: [bunExe(), ...args], cwd, stdout: "pipe", stderr: "pipe", env });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+const workspace = (name: string, scripts?: Record<string, string>) =>
+  JSON.stringify({ name, version: "1.0.0", scripts });
+
+it.concurrent.each([
+  {
+    name: "no lifecycle scripts",
+    packages: ["no-deps@1.0.0"],
+    scripts: [],
+  },
+  {
+    name: "a root postinstall",
+    root: { scripts: { postinstall: "echo root" } },
+    packages: ["no-deps@1.0.0"],
+    scripts: ["postinstall: echo root"],
+  },
+  {
+    name: "a root binding.gyp",
+    files: { "binding.gyp": "{}" },
+    packages: ["no-deps@1.0.0"],
+    scripts: ["install: node-gyp rebuild"],
+  },
+  {
+    name: "a workspace postinstall",
+    root: { workspaces: ["packages/*"] },
+    files: { "packages/wa/package.json": workspace("wa", { postinstall: "echo wa" }) },
+    packages: ["no-deps@1.0.0", "wa@workspace:packages/wa"],
+    scripts: ["postinstall: echo wa"],
+  },
+  {
+    // Lines are grouped by hook, and within a hook the root comes before the workspaces.
+    name: "root and workspace scripts together",
+    root: { workspaces: ["packages/*"], scripts: { postinstall: "echo root", prepare: "echo prepare" } },
+    files: {
+      "binding.gyp": "{}",
+      "packages/wa/package.json": workspace("wa", { postinstall: "echo wa", prepare: "echo wa-prepare" }),
+      "packages/wb/package.json": workspace("wb"),
+      "packages/wb/binding.gyp": "{}",
+    },
+    packages: ["no-deps@1.0.0", "wa@workspace:packages/wa", "wb@workspace:packages/wb"],
+    scripts: [
+      "install: node-gyp rebuild",
+      "install: node-gyp rebuild",
+      "postinstall: echo root",
+      "postinstall: echo wa",
+      "prepare: echo prepare",
+      "prepare: echo wa-prepare",
+    ],
+  },
+])("bun.lockb stores the meta hash of its packages and lifecycle scripts: $name", async shape => {
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: false },
+    files: shape.files ?? {},
+  });
+  await write(
+    packageJson,
+    JSON.stringify({ name: "meta-hash", version: "1.0.0", dependencies: { "no-deps": "1.0.0" }, ...shape.root }),
+  );
+
+  const install = await bun(packageDir, "install", "--ignore-scripts");
+  expect(install.stderr).toContain("Saved lockfile");
+  expect(install.exitCode).toBe(0);
+  expect(await storedMetaHash(packageDir)).toBe(metaHashOf(shape.packages, shape.scripts));
+
+  const frozen = await bun(packageDir, "install", "--frozen-lockfile", "--ignore-scripts");
+  expect(frozen.stderr).not.toContain("lockfile had changes");
+  expect(frozen.exitCode).toBe(0);
+});
+
+it("a bun.lockb without a stored meta hash passes a frozen install until a dependency changes", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+  const manifest = { name: "no-meta-hash", version: "1.0.0", dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" } };
+  await write(packageJson, JSON.stringify(manifest));
+  await runBunInstall(env, packageDir);
+  const hash = await storedMetaHash(packageDir);
+  expect(hash).toBe(metaHashOf(["a-dep@1.0.1", "no-deps@1.0.0"]));
+
+  // Older versions wrote all zero here when they migrated a pnpm-lock.yaml.
+  const lockbPath = join(packageDir, "bun.lockb");
+  const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+  lockb.fill(0, 46, 78);
+  await write(lockbPath, lockb);
+
+  const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+  expect(frozen.stderr).not.toContain("lockfile had changes");
+  expect(frozen.exitCode).toBe(0);
+  expect(await storedMetaHash(packageDir)).toBe("0".repeat(64));
+
+  // `bun bun.lockb` prints the hash of the lockfile it shows.
+  const printed = await bun(packageDir, "bun.lockb");
+  expect(
+    printed.stdout
+      .match(/--hash: (.*)/)?.[1]
+      .replaceAll("-", "")
+      .toLowerCase(),
+  ).toBe(hash);
+  expect(printed.exitCode).toBe(0);
+
+  await write(packageJson, JSON.stringify({ ...manifest, dependencies: { "no-deps": "1.0.0" } }));
+  const changed = await bun(packageDir, "install", "--frozen-lockfile");
+  expect(changed.stderr).toContain("lockfile had changes, but lockfile is frozen");
+  expect(changed.exitCode).toBe(1);
+
+  // A plain install writes the hash.
+  await write(packageJson, JSON.stringify(manifest));
+  const install = await bun(packageDir, "install");
+  expect(install.stderr).toContain("Saved lockfile");
+  expect(install.exitCode).toBe(0);
+  expect(await storedMetaHash(packageDir)).toBe(hash);
+});
+
+it("bun pm trust keeps the meta hash of a bun.lockb with a root lifecycle script", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "trust-keeps-hash",
+      version: "1.0.0",
+      scripts: { postinstall: "echo root" },
+      dependencies: { "uses-what-bin": "1.0.0" },
+    }),
+  );
+
+  const install = await bun(packageDir, "install");
+  expect(install.exitCode).toBe(0);
+  const hash = await storedMetaHash(packageDir);
+  expect(hash).toBe(metaHashOf(["uses-what-bin@1.0.0", "what-bin@1.0.0"], ["postinstall: echo root"]));
+
+  // `bun pm trust` saves the lockfile without an install pass.
+  const trust = await bun(packageDir, "pm", "trust", "uses-what-bin");
+  expect(trust.stdout).toContain("1 script ran across 1 package");
+  expect(trust.exitCode).toBe(0);
+  expect(await storedMetaHash(packageDir)).toBe(hash);
+
+  const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+  expect(frozen.stderr).not.toContain("lockfile had changes");
+  expect(frozen.exitCode).toBe(0);
+});
+
+it("bun install --yarn prints the same meta hash with bun.lock and with bun.lockb", async () => {
+  const manifest = JSON.stringify({
+    name: "yarn-header",
+    version: "1.0.0",
+    scripts: { postinstall: "echo root" },
+    dependencies: { "no-deps": "1.0.0" },
+  });
+  const hash = metaHashOf(["no-deps@1.0.0"], ["postinstall: echo root"]);
+
+  for (const saveTextLockfile of [false, true]) {
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile } });
+    await write(packageJson, manifest);
+
+    const install = await bun(packageDir, "install", "--ignore-scripts");
+    expect(install.exitCode).toBe(0);
+    expect(await exists(join(packageDir, saveTextLockfile ? "bun.lock" : "bun.lockb"))).toBe(true);
+
+    // The second install loads the lockfile the first one saved.
+    const yarn = await bun(packageDir, "install", "--yarn", "--ignore-scripts");
+    expect(yarn.exitCode).toBe(0);
+    const header = (await file(join(packageDir, "yarn.lock")).text()).match(/--hash: (.*)/)?.[1];
+    expect(header?.replaceAll("-", "").toLowerCase()).toBe(hash);
+  }
+});
+
 it("rejects a binary lockfile whose git resolved tag contains path separators", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 

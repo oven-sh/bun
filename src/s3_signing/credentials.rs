@@ -222,7 +222,6 @@ impl S3Credentials {
     /// higher-tier callers (e.g. `bun_runtime`) can build the refcounted
     /// signing credentials from the lower-tier `bun_dotenv::S3Credentials`
     /// POD mirror without naming the private `ref_count` field.
-    #[allow(clippy::too_many_arguments)]
     pub fn new_value(
         access_key_id: Box<[u8]>,
         secret_access_key: Box<[u8]>,
@@ -1270,8 +1269,6 @@ pub struct S3CredentialsWithOptions {
     pub request_payer: bool,
     /// indicates if the credentials have changed
     pub changed_credentials: bool,
-    /// indicates if the virtual hosted style is used
-    pub virtual_hosted_style: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

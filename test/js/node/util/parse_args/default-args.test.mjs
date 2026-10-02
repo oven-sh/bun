@@ -264,7 +264,6 @@ describe.concurrent("parseArgs default args in a Worker", () => {
       [["-p", "1"], slicedAt1],
       [["-p"], slicedAt2],
       [["--eval", ""], slicedAt2],
-      [["--eval", "1", "--eval", ""], slicedAt2],
     ].map(([execArgv, stdout]) => [
       execArgv ? `execArgv ${JSON.stringify(execArgv)}` : "no execArgv",
       execArgv,

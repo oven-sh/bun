@@ -1560,18 +1560,12 @@ unsafe fn parse_worker_exec_argv_flags(
         has_eval_string: false,
         invalid: None,
     };
-    let token = |arg: bun_core::WTFStringImpl| {
+    for (index, &arg) in exec_argv.iter().enumerate() {
         if arg.is_null() {
-            return None;
+            continue;
         }
         // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
-        Some(unsafe { &*arg }.to_owned_slice_z())
-    };
-    let mut tokens = exec_argv.iter().enumerate().peekable();
-    while let Some((index, &arg)) = tokens.next() {
-        let Some(owned) = token(arg) else {
-            continue;
-        };
+        let owned = unsafe { &*arg }.to_owned_slice_z();
         let bytes = owned.as_bytes();
         if bytes.first() != Some(&b'-') {
             break;
@@ -1593,12 +1587,12 @@ unsafe fn parse_worker_exec_argv_flags(
         } else if matches!(bytes, b"-e" | b"--eval" | b"-p" | b"--print" | b"-pe") {
             // The next token is the code, unless it is a flag: a bare `-p` only prints.
             // https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L1171-L1174
-            if let Some(&(_, &next)) = tokens.peek() {
-                let code = token(next);
+            if let Some(&next) = exec_argv.get(index + 1) {
+                // SAFETY: per fn contract — a non-null `next` is a live `WTFStringImpl*`.
+                let code = (!next.is_null()).then(|| unsafe { &*next }.to_owned_slice_z());
                 let code = code.as_ref().map_or(b"".as_slice(), |code| code.as_bytes());
                 if code.first() != Some(&b'-') {
                     flags.has_eval_string = !code.is_empty();
-                    tokens.next();
                 }
             }
         }

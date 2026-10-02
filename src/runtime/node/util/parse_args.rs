@@ -1,4 +1,5 @@
 use core::fmt;
+use core::ops::Range;
 use std::borrow::Cow;
 
 use bun_core::{String, StringView};
@@ -18,18 +19,21 @@ bun_output::declare_scope!(parseArgs, hidden);
 /// and own no element.
 const MAX_SLOW_ARGS: u32 = 1 << 20;
 
-/// An owned copy of `array[start..]`, like the `ArrayPrototypeSlice` that
-/// node's tokenizer reads from: user code that runs during the parse cannot
-/// resize it. `roots` keeps the elements alive.
+/// Appends a copy of `array[start..]` to `roots` and returns where it is in
+/// `roots`. It is the `ArrayPrototypeSlice` that node's tokenizer reads from:
+/// user code that runs during the parse cannot resize it.
 fn snapshot_args(
     global: &JSGlobalObject,
     array: JSValue,
     start: u32,
     roots: &mut MarkedArgumentBuffer,
-) -> JsResult<Vec<JSValue>> {
+) -> JsResult<Range<usize>> {
     let mut iter = array.array_iterator(global)?;
     iter.i = start.min(iter.len);
     let count = iter.len - iter.i;
+    if count == 0 {
+        return Ok(0..0);
+    }
     if !iter.is_fast() && count > MAX_SLOW_ARGS {
         return Err(global.throw_range_error(
             i64::from(count),
@@ -40,12 +44,12 @@ fn snapshot_args(
             },
         ));
     }
-    let mut args = Vec::with_capacity(count as usize);
-    while let Some(arg) = iter.next()? {
-        roots.append(arg);
-        args.push(arg);
+    let first = roots.as_slice().len();
+    iter.append_remaining_to(roots)?;
+    if roots.has_overflowed() {
+        return Err(global.throw_out_of_memory());
     }
-    Ok(args)
+    Ok(first..first + count as usize)
 }
 
 /// Helper ref to either a JSValue or a String,
@@ -206,10 +210,10 @@ fn find_option_by_long_name(long_name: &String, options: &[OptionDefinition]) ->
 fn get_default_args(
     global: &JSGlobalObject,
     roots: &mut MarkedArgumentBuffer,
-) -> JsResult<Vec<JSValue>> {
+) -> JsResult<Range<usize>> {
     let argv = super::process::get_argv(global)?;
     if !argv.is_array() {
-        return Ok(Vec::new());
+        return Ok(0..0);
     }
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/parse_args/parse_args.js#L58-L67
     let start = if global.bun_vm().has_eval_string {
@@ -985,6 +989,7 @@ fn parse_args_impl(
         Some(args) => args,
         None => snapshot_args(global, config_args, 0, roots)?,
     };
+    let args = &roots.as_slice()[args];
     bun_output::scoped_log!(
         parseArgs,
         "Phase 1+2: tokenize args (args.len={})",
@@ -1015,7 +1020,7 @@ fn parse_args_impl(
         kinds_jsvalues: [None; TokenKind::COUNT],
     };
 
-    tokenize_args(&mut state, global, &args, &option_defs)?;
+    tokenize_args(&mut state, global, args, &option_defs)?;
 
     //
     // Phase 3: fill in default values for missing args

@@ -3165,11 +3165,6 @@ fn report_run_ended_by_exit(mut run: jest::SerialRun, vm: &mut VirtualMachine, c
         return;
     }
 
-    // In a run of several files the exit is one failure wherever it happens, like a
-    // `--parallel` worker that exits mid-file: the result must not depend on the file order.
-    // In a run of one file it is one failure when it leaves registered tests without a result.
-    let is_failure = files.len() > 1 || vm.is_in_preload || !nothing_unfinished;
-
     let top_level_dir = FileSystem::instance().top_level_dir;
     let running_path = running.map(|(file_id, _)| {
         reporter.jest.files.items_source()[file_id as usize]
@@ -3181,6 +3176,10 @@ fn report_run_ended_by_exit(mut run: jest::SerialRun, vm: &mut VirtualMachine, c
         .saturating_sub(usize::from(vm.is_in_preload))
         .min(files.len());
     let not_started = &files[started..];
+
+    // The exit is one failure when it leaves work undone: a registered test without a result,
+    // or a file that did not start. A run that lost nothing keeps the code of the exit.
+    let is_failure = !nothing_unfinished || !not_started.is_empty();
 
     if reporter.reporters.dots && reporter.last_printed_dot.replace(false) {
         pretty_error!("<r>\n");
@@ -3204,27 +3203,29 @@ fn report_run_ended_by_exit(mut run: jest::SerialRun, vm: &mut VirtualMachine, c
         place.extend_from_slice(b"between test files");
     }
     if is_failure {
-        pretty_error!(
-            "<r><red>error<r><d>:<r> <b>process.exit({})<r> was called {}\n",
+        // The stack of the error is the call site of the exit.
+        let error = vm.global().create_error_instance(format_args!(
+            "process.exit({}) was called {}",
             code,
             bstr::BStr::new(&place)
-        );
+        ));
+        vm.run_error_handler(error, None);
         if unfinished.tests > 0 {
             pretty_error!(
-                "<d>       {} test{} in this file did not finish<r>\n",
+                "<r><d>{} test{} in this file did not finish<r>\n",
                 unfinished.tests,
                 if unfinished.tests == 1 { "" } else { "s" }
             );
         }
         if !not_started.is_empty() {
             pretty_error!(
-                "<d>       {} test file{} did not run:<r>\n",
+                "<r><d>{} test file{} did not run:<r>\n",
                 not_started.len(),
                 if not_started.len() == 1 { "" } else { "s" }
             );
             for file in not_started {
                 pretty_error!(
-                    "<d>         {}<r>\n",
+                    "<r><d>  {}<r>\n",
                     bstr::BStr::new(resolve_path::relative(top_level_dir, file.as_bytes()))
                 );
             }

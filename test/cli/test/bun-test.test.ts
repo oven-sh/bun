@@ -1812,7 +1812,7 @@ describe("bun test", () => {
   });
 
   // A test file that ends the process ends the run for every file. The runner reports the run before the process
-  // exits, and the run does not exit 0 when it failed or when the exit left tests or files without a result.
+  // exits. The run does not exit 0 when it failed, or when the exit left a test or a file without a result.
   describe.concurrent("process.exit() in a test file", () => {
     async function run(
       files: Record<string, string>,
@@ -1874,6 +1874,8 @@ describe("bun test", () => {
       );
       expect(stderr).toContain("(fail) fails");
       expect(stderr).toContain("error: process.exit(0) was called while a.test.ts was running");
+      // The stack of the error is the call site.
+      expect(stderr).toMatch(/at <anonymous> \(.*a\.test\.ts:4:\d+\)/);
       expect(stderr).toContain("2 tests in this file did not finish");
       expect(stderr).toContain(" 0 pass");
       expect(stderr).toContain(" 2 fail");
@@ -1921,7 +1923,7 @@ describe("bun test", () => {
         "./fails.test.ts",
       ]);
       expect(stderr).toContain("error: process.exit(0) was called while exits.test.ts was running");
-      expect(stderr).toContain("1 test file did not run:\n         fails.test.ts");
+      expect(stderr).toContain("1 test file did not run:\n  fails.test.ts");
       expect(stderr).toContain(" 1 fail");
       expect(stderr).toContain("Ran 1 test across 1 file.");
       expect(exitCode).toBe(1);
@@ -1946,7 +1948,7 @@ describe("bun test", () => {
         "./passes.test.ts",
       ]);
       expect(stderr).toContain("error: process.exit(0) was called while exits.test.ts was running");
-      expect(stderr).toContain("1 test file did not run:\n         passes.test.ts");
+      expect(stderr).toContain("1 test file did not run:\n  passes.test.ts");
       expect(exitCode).toBe(1);
     });
 
@@ -2000,23 +2002,49 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
-    // The result of a run does not depend on the order of its files.
     const exitsInDescribe = `describe("x", () => { process.exit(0); });`;
-    test.each([
-      ["afterAll", ["./exits.test.ts", "./passes.test.ts"], exitsInAfterAll],
-      ["afterAll", ["./passes.test.ts", "./exits.test.ts"], exitsInAfterAll],
-      ["a describe body", ["./exits.test.ts", "./passes.test.ts"], exitsInDescribe],
-      ["a describe body", ["./passes.test.ts", "./exits.test.ts"], exitsInDescribe],
-    ])("in %s, in the run %j, is a failure", async (_, order, exits) => {
-      const { stderr, exitCode } = await run({ "exits.test.ts": exits, "passes.test.ts": passes }, order);
-      expect(stderr).toContain("error: process.exit(0) was called while exits.test.ts was running");
-      expect(stderr).toContain(" 1 fail");
-      expect(exitCode).toBe(1);
+    describe.each([
+      ["afterAll", exitsInAfterAll],
+      ["a describe body", exitsInDescribe],
+    ])("in %s", (_, exits) => {
+      const files = { "exits.test.ts": exits, "passes.test.ts": passes };
+
+      test("with a file still to run, is a failure", async () => {
+        const { stderr, exitCode } = await run(files, ["./exits.test.ts", "./passes.test.ts"]);
+        expect(stderr).toContain("error: process.exit(0) was called while exits.test.ts was running");
+        expect(stderr).toContain("1 test file did not run:\n  passes.test.ts");
+        expect(stderr).toContain(" 1 fail");
+        expect(exitCode).toBe(1);
+      });
+
+      test("after the last file, every test has a result, so the code is kept", async () => {
+        const { stderr, exitCode } = await run(files, ["./passes.test.ts", "./exits.test.ts"]);
+        expect(stderr).toContain("note: process.exit(0) was called while exits.test.ts was running");
+        expect(stderr).toContain(" 0 fail");
+        expect(stderr).toContain("across 2 files.");
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    test("in a preload's afterAll, after every file ran, the code is kept", async () => {
+      const { stderr, exitCode } = await run(
+        {
+          "preload.ts": `import { afterAll } from "bun:test"; afterAll(() => { process.exit(0); });`,
+          "a.test.ts": passes,
+          "b.test.ts": passes,
+        },
+        ["--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"],
+      );
+      expect(stderr).toContain("note: process.exit(0) was called while b.test.ts was running");
+      expect(stderr).toContain(" 2 pass");
+      expect(stderr).toContain(" 0 fail");
+      expect(stderr).toContain("Ran 2 tests across 2 files.");
+      expect(exitCode).toBe(0);
     });
 
     test.each([
-      [["./p.test.ts"], "1 test file did not run:\n         p.test.ts"],
-      [["./p.test.ts", "./q.test.ts"], "2 test files did not run:\n         p.test.ts\n         q.test.ts"],
+      [["./p.test.ts"], "1 test file did not run:\n  p.test.ts"],
+      [["./p.test.ts", "./q.test.ts"], "2 test files did not run:\n  p.test.ts\n  q.test.ts"],
     ])("in a preload, no file of %j runs", async (testFiles, didNotRun) => {
       const { stderr, exitCode } = await run(
         { "preload.ts": `process.exit(0);`, "p.test.ts": passes, "q.test.ts": passes },
@@ -2050,7 +2078,7 @@ describe("bun test", () => {
       );
       expect(stderr).toContain("(pass) connects");
       expect(stderr).toContain("error: process.exit(0) was called between test files");
-      expect(stderr).toContain("1 test file did not run:\n         passes.test.ts");
+      expect(stderr).toContain("1 test file did not run:\n  passes.test.ts");
       expect(exitCode).toBe(1);
     });
 

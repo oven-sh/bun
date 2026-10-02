@@ -258,19 +258,19 @@ import { test, it, describe, expect, beforeAll, beforeEach, afterAll, afterEach,
 
 `bun test` runs every test file in one process unless you pass [`--parallel`](/test/parallel). A test file that calls `process.exit()` therefore ends the run for every file. Before the process exits, `bun test` prints the summary and writes the snapshot, JUnit and timings files.
 
-The exit counts as one failed test in each of these cases:
+The exit counts as one failed test when it leaves work undone:
 
-- The run has more than one test file.
-- A `--preload` script called `process.exit()`.
 - A test that the file registered has no result yet.
+- A test file did not start. When a `--preload` script calls `process.exit()`, no test file starts.
 
-`bun test` then prints an error that lists what did not run:
+`bun test` then prints an error at the line that called `process.exit()` and lists what did not run:
 
 ```txt
 error: process.exit(0) was called while a.test.ts was running
-       1 test in this file did not finish
-       1 test file did not run:
-         b.test.ts
+      at <anonymous> (/path/to/a.test.ts:4:11)
+1 test in this file did not finish
+1 test file did not run:
+  b.test.ts
 ```
 
 The exit code of the process is the code that you passed to `process.exit()`. When that code is `0` and the run failed, the exit code is `1`.

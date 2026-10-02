@@ -77,6 +77,24 @@ describe("Bun.deepMatch", () => {
       new Set(["a", "b", "c"]),
       new Set(["a", "b", "c"]),
     ],
+    // values inside a Map are still matched as a subset
+    [new Map([["a", { b: 1 }]]), new Map([["a", { b: 1, c: 2 }]])],
+
+    // Dates, Errors, RegExps and boxed primitives
+    [new Date(1), new Date(1)],
+    [{ d: new Date(1) }, { d: new Date(1) }],
+    [{ d: [new Date(1)] }, { d: [new Date(1)] }],
+    [new Error("a"), new Error("a")],
+    [{ e: new Error("a") }, { e: new Error("a", { cause: 1 }) }],
+    [{ e: new Error("a", { cause: { x: 1 } }) }, { e: new Error("a", { cause: { x: 1, y: 2 } }) }],
+    [{ e: new Error("a") }, { e: Object.assign(new Error("a"), { code: 1 }) }],
+    [{ r: /a/g }, { r: /a/g }],
+    [{ n: new Number(1) }, { n: new Number(1) }],
+    // a plain object in the subset matches the properties of any object
+    [{ message: "a" }, new Error("a")],
+    [{ e: { message: "a" } }, { e: new Error("a") }],
+    [{ d: {} }, { d: new Date() }],
+    [{ m: {} }, { m: new Map() }],
   ])("Bun.deepMatch(%p, %p) === true", (a, b) => {
     expect(Bun.deepMatch(a, b)).toBe(true);
   });
@@ -100,39 +118,63 @@ describe("Bun.deepMatch", () => {
     [[], [undefined]],
     [["a", "b", "c"], ["a", "b", "d"]],
 
-    // Maps
-    // FIXME: I assume this is incorrect but I need confirmation on expected behavior.
-    // [
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
-    //   new Map<number, number>([ [1, 2], [2, 3] ]),
-    // ],
-    // [
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4], [4, 5] ]),
-    // ],
-    // [
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4], [4, 5] ]),
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
-    // ],
+    // Maps and Sets are compared by their entries, like `expect().toMatchObject()` in jest
+    [
+      new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
+      new Map<number, number>([ [1, 2], [2, 3] ]),
+    ],
+    [
+      new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
+      new Map<number, number>([ [1, 2], [2, 3], [3, 4], [4, 5] ]),
+    ],
+    [
+      new Map<number, number>([ [1, 2], [2, 3], [3, 4], [4, 5] ]),
+      new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
+    ],
+    [{ m: new Map([["a", 1]]) }, { m: new Map([["a", 2]]) }],
+    [{ m: new Map() }, { m: {} }],
 
     // Sets
-    // FIXME: I assume this is incorrect but I need confirmation on expected behavior.
-    // [
-    //   new Set([1, 2, 3]),
-    //   new Set([4, 5, 6]),
-    // ],
-    // [
-    //   new Set([1, 2, 3]),
-    //   new Set([1, 2]),
-    // ],
-    // [
-    //   new Set([1, 2]),
-    //   new Set([1, 2, 3]),
-    // ],
-    // [
-    //   new Set(["a", "b", "c"]),
-    //   new Set(["a", "b", "d"]),
-    // ],
+    [
+      new Set([1, 2, 3]),
+      new Set([4, 5, 6]),
+    ],
+    [
+      new Set([1, 2, 3]),
+      new Set([1, 2]),
+    ],
+    [
+      new Set([1, 2]),
+      new Set([1, 2, 3]),
+    ],
+    [
+      new Set(["a", "b", "c"]),
+      new Set(["a", "b", "d"]),
+    ],
+    [{ s: new Set() }, { s: {} }],
+
+    // Dates are compared by their time value, Errors by name, message and cause
+    [new Date(1), new Date(2)],
+    [{ d: new Date(1) }, { d: new Date(2) }],
+    [{ d: new Date() }, { d: {} }],
+    [{ d: new Date(1) }, { d: [new Date(1)] }],
+    [new Error("a"), new Error("b")],
+    [{ e: new Error("a") }, { e: new Error("b") }],
+    [{ e: new Error("a") }, { e: new TypeError("a") }],
+    [{ e: new Error("a", { cause: 1 }) }, { e: new Error("a", { cause: 2 }) }],
+    [{ e: new Error("a", { cause: 1 }) }, { e: new Error("a") }],
+    [{ e: new Error("a") }, { e: { message: "b" } }],
+    [{ e: new Error("a") }, { e: {} }],
+
+    // Functions match by identity only
+    [{ f: () => 1 }, { f: () => 1 }],
+    [{ f: () => 1 }, { f: {} }],
+
+    // Boxed primitives and RegExps are compared by their value
+    [{ r: /a/ }, { r: /b/ }],
+    [{ r: /a/g }, { r: /a/i }],
+    [{ n: new Number(1) }, { n: new Number(2) }],
+    [{ s: new String("a") }, { s: new String("b") }],
   ])("Bun.deepMatch(%p, %p) === false", (a, b) => {
     expect(Bun.deepMatch(a, b)).toBe(false);
   });
@@ -193,16 +235,23 @@ describe("Bun.deepMatch", () => {
     });
   });
 
-  it("does not work on functions", () => {
+  it("compares functions by identity", () => {
     function foo() {}
     function bar() {}
     function baz(a) {
       return a;
     }
     expect(Bun.deepMatch(foo, foo)).toBe(true);
-    expect(Bun.deepMatch(foo, bar)).toBe(true);
-    // FIXME
-    // expect(Bun.deepMatch(foo, baz)).toBe(false);
+    expect(Bun.deepMatch(foo, bar)).toBe(false);
+    expect(Bun.deepMatch(foo, baz)).toBe(false);
+    expect(Bun.deepMatch({ f: foo }, { f: foo })).toBe(true);
+    expect(Bun.deepMatch({ f: foo }, { f: bar })).toBe(false);
+  });
+
+  it("matches a subset value that appears under several keys", () => {
+    const shared = { x: 1 };
+    expect(Bun.deepMatch({ a: shared, b: shared }, { a: shared, b: { x: 1 } })).toBe(true);
+    expect(Bun.deepMatch({ a: shared, b: shared }, { a: shared, b: { x: 2 } })).toBe(false);
   });
 
   describe("Invalid arguments", () => {

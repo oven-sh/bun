@@ -3606,6 +3606,98 @@ describe("expect()", () => {
       expect(a1).not.toMatchObject({ 1: 1 });
       expect(a1).toMatchObject(a1);
     });
+
+    // jest's subsetEquality only walks the keys of a plain expected object. An expected
+    // Date, Error, Set, Map or function is a leaf compared with equals().
+    test("an expected Date, Error, Set, Map or function is compared as a value", () => {
+      expect({ d: new Date(5) }).toMatchObject({ d: new Date(5) });
+      expect({ d: new Date(5) }).not.toMatchObject({ d: new Date(6) });
+      expect({ a: { d: new Date(5) } }).toMatchObject({ a: { d: new Date(5) } });
+      expect({ a: { d: new Date(5) } }).not.toMatchObject({ a: { d: new Date(6) } });
+      expect({ a: [new Date(5)] }).toMatchObject({ a: [new Date(5)] });
+      expect({ a: [new Date(5)] }).not.toMatchObject({ a: [new Date(6)] });
+      expect({ d: {} }).not.toMatchObject({ d: new Date(5) });
+      expect({ d: { x: 1 } }).not.toMatchObject({ d: new Date(5) });
+      expect({ d: new Date(5) }).not.toMatchObject({ d: { x: 1 } });
+      expect(new Date(5)).toMatchObject(new Date(5));
+      expect(new Date(5)).not.toMatchObject(new Date(6));
+
+      expect({ e: new Error("x") }).toMatchObject({ e: new Error("x") });
+      expect({ e: new Error("x") }).not.toMatchObject({ e: new Error("y") });
+      expect({ e: new TypeError("x") }).not.toMatchObject({ e: new Error("x") });
+      expect({ e: {} }).not.toMatchObject({ e: new Error("x") });
+      expect(new Error("x")).not.toMatchObject(new Error("y"));
+      expect({ e: new Error("x", { cause: 1 }) }).toMatchObject({ e: new Error("x") });
+      expect({ e: new Error("x", { cause: { a: 1, b: 2 } }) }).toMatchObject({ e: new Error("x", { cause: { a: 1 } }) });
+      expect({ e: new Error("x", { cause: { a: 1 } }) }).not.toMatchObject({ e: new Error("x", { cause: { a: 2 } }) });
+      expect({ e: Object.assign(new Error("x"), { code: 1 }) }).toMatchObject({ e: new Error("x") });
+      expect({ e: new Error("x") }).not.toMatchObject({ e: Object.assign(new Error("x"), { code: 1 }) });
+
+      expect({ s: new Set([1, 2]) }).toMatchObject({ s: new Set([1, 2]) });
+      expect({ s: new Set([1, 2]) }).not.toMatchObject({ s: new Set([1, 3]) });
+      expect({ s: new Set([1, 2, 3]) }).not.toMatchObject({ s: new Set([1, 2]) });
+      expect({ s: {} }).not.toMatchObject({ s: new Set() });
+      expect(new Set([1])).toMatchObject(new Set([1]));
+      expect(new Set([1])).not.toMatchObject(new Set([2]));
+
+      expect({ m: new Map([[1, 2]]) }).toMatchObject({ m: new Map([[1, 2]]) });
+      expect({ m: new Map([[1, 2]]) }).not.toMatchObject({ m: new Map([[1, 3]]) });
+      expect({ m: new Map([[1, 2], [3, 4]]) }).not.toMatchObject({ m: new Map([[1, 2]]) });
+      expect({ m: new Map([["k", { a: 1, b: 2 }]]) }).toMatchObject({ m: new Map([["k", { a: 1 }]]) });
+      expect({ m: {} }).not.toMatchObject({ m: new Map() });
+
+      const fn = () => 1;
+      expect({ f: fn }).toMatchObject({ f: fn });
+      expect({ f: fn }).not.toMatchObject({ f: () => 1 });
+      expect({ f: {} }).not.toMatchObject({ f: fn });
+    });
+
+    test("a plain expected object is matched against the properties of any received value", () => {
+      expect({ d: new Date(5) }).toMatchObject({ d: {} });
+      expect({ e: new Error("x") }).toMatchObject({ e: { message: "x" } });
+      expect({ e: new Error("x") }).not.toMatchObject({ e: { message: "y" } });
+      expect(new Error("x")).toMatchObject({ message: "x" });
+      expect({ m: new Map() }).toMatchObject({ m: {} });
+      expect({ f: () => 1 }).toMatchObject({ f: {} });
+      expect({ a: [1, 2] }).toMatchObject({ a: { 0: 1 } });
+      expect({ a: { 0: 1 } }).not.toMatchObject({ a: [1] });
+    });
+
+    test("an expected object reused under several keys is matched under each", () => {
+      const shared = { x: 1 };
+      expect({ a: shared, b: shared }).toMatchObject({ a: shared, b: { x: 1 } });
+      expect({ a: shared, b: { x: 2 } }).not.toMatchObject({ a: shared, b: shared });
+    });
+
+    if (isBun) {
+      // jest walks the (empty) key list of these, so any received object matches. Bun
+      // compares them by value, as toEqual does.
+      test("an expected RegExp, boxed primitive or Temporal value is compared as a value", () => {
+        expect({ r: /a/g }).toMatchObject({ r: /a/g });
+        expect({ r: /a/g }).not.toMatchObject({ r: /a/i });
+        expect({ r: /a/ }).not.toMatchObject({ r: /b/ });
+        expect({ r: {} }).not.toMatchObject({ r: /a/ });
+        expect({ n: new Number(1) }).toMatchObject({ n: new Number(1) });
+        expect({ n: new Number(1) }).not.toMatchObject({ n: new Number(2) });
+        expect({ s: new String("a") }).not.toMatchObject({ s: new String("b") });
+        expect({ t: Temporal.PlainDate.from("2024-01-01") }).toMatchObject({ t: Temporal.PlainDate.from("2024-01-01") });
+        expect({ t: Temporal.PlainDate.from("2024-01-01") }).not.toMatchObject({ t: Temporal.PlainDate.from("2024-01-02") });
+        expect({ t: {} }).not.toMatchObject({ t: Temporal.PlainDate.from("2024-01-01") });
+      });
+
+      test("Bun.deepMatch compares an expected Date, Error, Set, Map or function as a value", () => {
+        expect(Bun.deepMatch(new Date(1), new Date(2))).toBe(false);
+        expect(Bun.deepMatch({ d: new Date(2) }, { d: new Date(1) })).toBe(false);
+        expect(Bun.deepMatch({ d: new Date(1) }, { d: new Date(1) })).toBe(true);
+        expect(Bun.deepMatch(new Error("b"), new Error("a"))).toBe(false);
+        expect(Bun.deepMatch({ e: new Error("x") }, { e: new Error("x") })).toBe(true);
+        expect(Bun.deepMatch({ d: new Date() }, { d: {} })).toBe(false);
+        expect(Bun.deepMatch({ d: {} }, { d: new Date() })).toBe(true);
+        expect(Bun.deepMatch({ s: new Set([1, 2]) }, { s: new Set([1, 3]) })).toBe(false);
+        expect(Bun.deepMatch({ m: new Map([[1, 2]]) }, { m: new Map([[1, 3]]) })).toBe(false);
+        expect(Bun.deepMatch({ f: () => 1 }, { f: () => 1 })).toBe(false);
+      });
+    }
   });
 
   describe("toMatch()", () => {

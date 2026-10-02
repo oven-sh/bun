@@ -1137,7 +1137,7 @@ impl Expect {
 
             let prop_matchers = _prop_matchers;
 
-            if !value.jest_deep_match(prop_matchers, global_this, true)? {
+            if !value.jest_deep_match(prop_matchers, global_this)? {
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
                 let mut formatter = ConsoleObject::Formatter::new(global_this);

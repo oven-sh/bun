@@ -250,28 +250,8 @@ enum class AsymmetricMatcherConstructorType : int8_t {
     InstanceOf = 9,
 };
 
-// Ensure we instantiate the true and false variants of this function
-template bool Bun__deepMatch<true>(
-    JSValue objValue,
-    std::set<EncodedJSValue>* seenObjProperties,
-    JSValue subsetValue,
-    std::set<EncodedJSValue>* seenSubsetProperties,
-    JSGlobalObject* globalObject,
-    ThrowScope& throwScope,
-    MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
-    bool isMatchingObjectContaining);
-
-template bool Bun__deepMatch<false>(
-    JSValue objValue,
-    std::set<EncodedJSValue>* seenObjProperties,
-    JSValue subsetValue,
-    std::set<EncodedJSValue>* seenSubsetProperties,
-    JSGlobalObject* globalObject,
-    ThrowScope& throwScope,
-    MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
-    bool isMatchingObjectContaining);
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity, bool isPartial>
+static bool subsetPropertiesMatch(JSC::JSGlobalObject* globalObject, JSObject* received, JSObject* expected, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope);
 
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC::EncodedJSValue instanceValue, JSC::JSGlobalObject* globalObject, ExpectFlags* flags, JSC::EncodedJSValue* value, AsymmetricMatcherConstructorType* constructorType);
 
@@ -560,10 +540,12 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         JSValue patternObject = expectObjectContaining->m_objectValue.get();
         if (patternObject.isObject()) {
             if (otherProp.isObject()) {
-                // SAFETY: visited property sets are not required when
-                // `enableAsymmetricMatchers` and `isMatchingObjectContaining`
-                // are both true
-                bool match = Bun__deepMatch<true>(otherProp, nullptr, patternObject, nullptr, globalObject, throwScope, nullptr, false, true);
+                // The pattern is a subset at the top level only. Each property value is
+                // compared exactly, like jest's ObjectContaining: nested subset matching
+                // needs a nested objectContaining.
+                Vector<std::pair<JSValue, JSValue>, 16> stack;
+                MarkedArgumentBuffer gcBuffer;
+                bool match = subsetPropertiesMatch<false, true, false, false, false>(globalObject, otherProp.getObject(), patternObject.getObject(), gcBuffer, stack, throwScope);
                 RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
                 if (match) {
                     return AsymmetricMatcherResult::PASS;
@@ -695,7 +677,7 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
     return JSValue();
 }
 
-template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false, bool isPartial = false>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2);
 
 template<typename T>
@@ -722,7 +704,7 @@ static ALWAYS_INLINE bool hasExtraOwnProperties(JSC::Structure* structure)
 
 // node compares the non-index own properties of typed arrays as well;
 // only the node entry point (checkPrototypes) pays for this.
-template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false, bool isPartial = false>
 static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2)
 {
     VM& vm = globalObject->vm();
@@ -758,7 +740,7 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
         }
         JSValue v1 = slot1.getValue(globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, false);
-        bool eq = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, v1, v2, gcBuffer, stack, scope, true);
+        bool eq = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, v1, v2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, false);
         if (!eq) {
             return false;
@@ -809,7 +791,7 @@ static bool isWellKnownConstructor(JSValue value)
         || info == WebCore::JSBufferConstructor::info();
 }
 
-template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity, bool isPartial>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, bool addToStack)
 {
     VM& vm = globalObject->vm();
@@ -956,10 +938,26 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
     }
 
-    std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c1, c2);
+    if constexpr (isPartial) {
+        // Subset matching: v2 is the expected value and decides how the pair is compared.
+        // An expected Date, Error, Map, function, ... matches only a received value of the
+        // same type, through its arm in specialObjectsDequal. An expected plain object is
+        // matched key by key against a received value of any type, so `{ message: "x" }`
+        // still matches an Error. When the types differ, every arm returns before it
+        // recurses, so dispatching on the expected type never swaps the received/expected
+        // order of a nested comparison.
+        std::optional<bool> isSpecialEqual = c1->type() == c2->type()
+            ? specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, gcBuffer, stack, scope, c1, c2)
+            : specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, gcBuffer, stack, scope, c2, c1);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isSpecialEqual.has_value()) return *isSpecialEqual;
+        RELEASE_AND_RETURN(scope, (subsetPropertiesMatch<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, v1.getObject(), v2.getObject(), gcBuffer, stack, scope)));
+    }
+
+    std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, gcBuffer, stack, scope, c1, c2);
     RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
-    isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c2, c1);
+    isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, gcBuffer, stack, scope, c2, c1);
     RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
     JSObject* o1 = v1.getObject();
@@ -1007,7 +1005,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+            auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, left, right, gcBuffer, stack, scope, true);
             RETURN_IF_EXCEPTION(scope, false);
             if (!eql) return false;
         }
@@ -1026,7 +1024,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         if constexpr (checkPrototypes) {
             // node compares own enumerable non-index string+symbol props via getOwnNonIndexProperties;
             // the Bun.deepEquals symbol-only block below walks the prototype chain, so diverge here.
-            return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, o1, o2);
+            return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, gcBuffer, stack, scope, o1, o2);
         }
 
         JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
@@ -1068,7 +1066,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 return false;
             }
 
-            auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
+            auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
             RETURN_IF_EXCEPTION(scope, false);
             if (!eql) return false;
         }
@@ -1202,7 +1200,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 RETURN_IF_EXCEPTION(scope, false);
                 if (same) continue;
 
-                auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+                auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, left, right, gcBuffer, stack, scope, true);
                 RETURN_IF_EXCEPTION(scope, false);
                 if (!eql) {
                     return false;
@@ -1277,7 +1275,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
+        auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, false);
         if (!eql) return false;
     }
@@ -1291,6 +1289,84 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         RETURN_IF_EXCEPTION(scope, false);
 
         if (!prop2.isUndefined()) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Subset matching for toMatchObject, Bun.deepMatch and expect.objectContaining. Every
+// enumerable property of `expected` must exist on `received`, and the two values must be
+// equal in the mode the template arguments select (`isPartial` recurses as a subset,
+// otherwise exactly). Extra properties on `received` are ignored. An expected array
+// matches only a received array of the same length with the same property count.
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity, bool isPartial>
+static bool subsetPropertiesMatch(JSC::JSGlobalObject* globalObject, JSObject* received, JSObject* expected, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope)
+{
+    VM& vm = globalObject->vm();
+    PropertyNameArrayBuilder expectedProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    expected->getPropertyNames(globalObject, expectedProps, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    bool expectedIsArray = isArray(globalObject, expected);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (expectedIsArray) {
+        bool receivedIsArray = isArray(globalObject, received);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!receivedIsArray || received->getArrayLength() != expected->getArrayLength()) {
+            return false;
+        }
+        PropertyNameArrayBuilder receivedProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+        received->getPropertyNames(globalObject, receivedProps, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (receivedProps.size() != expectedProps.size()) {
+            return false;
+        }
+    }
+
+    for (const auto& property : expectedProps) {
+        JSValue receivedProp = received->getIfPropertyExists(globalObject, property);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (receivedProp.isEmpty()) {
+            return false;
+        }
+        JSValue expectedProp = expected->get(globalObject, property);
+        RETURN_IF_EXCEPTION(scope, false);
+
+        if constexpr (enableAsymmetricMatchers && isPartial) {
+            // toMatchObject and the snapshot property matchers copy a matched asymmetric
+            // matcher to the other side, so the failure diff does not flag that property.
+            JSCell* expectedCell = expectedProp.isCell() ? expectedProp.asCell() : nullptr;
+            JSCell* receivedCell = receivedProp.isCell() ? receivedProp.asCell() : nullptr;
+            if (expectedCell && expectedCell->type() == JSC::JSType(JSDOMWrapperType)) {
+                switch (matchAsymmetricMatcher(globalObject, expectedProp, receivedProp, scope)) {
+                case AsymmetricMatcherResult::FAIL:
+                    return false;
+                case AsymmetricMatcherResult::PASS:
+                    received->putDirectMayBeIndex(globalObject, property, expectedProp);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    continue;
+                case AsymmetricMatcherResult::NOT_MATCHER:
+                    break;
+                }
+            } else if (receivedCell && receivedCell->type() == JSC::JSType(JSDOMWrapperType)) {
+                switch (matchAsymmetricMatcher(globalObject, receivedProp, expectedProp, scope)) {
+                case AsymmetricMatcherResult::FAIL:
+                    return false;
+                case AsymmetricMatcherResult::PASS:
+                    expected->putDirectMayBeIndex(globalObject, property, receivedProp);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    continue;
+                case AsymmetricMatcherResult::NOT_MATCHER:
+                    break;
+                }
+            }
+        }
+
+        bool eq = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, receivedProp, expectedProp, gcBuffer, stack, scope, true);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!eq) {
             return false;
         }
     }
@@ -1368,18 +1444,20 @@ struct DeepEqualsMode {
     bool enableAsymmetricMatchers;
     bool checkPrototypes;
     bool skipPrototypeIdentity;
+    bool isPartial;
     bool (*deepEquals)(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSValue, JSValue>, 16>&, ThrowScope&, bool);
     bool (*nonIndexOwnPropertiesEqual)(JSC::JSGlobalObject*, MarkedArgumentBuffer&, Vector<std::pair<JSValue, JSValue>, 16>&, ThrowScope&, JSObject*, JSObject*);
 };
 
-template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity, bool isPartial>
 static constexpr DeepEqualsMode deepEqualsMode {
     isStrict,
     enableAsymmetricMatchers,
     checkPrototypes,
     skipPrototypeIdentity,
-    &Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>,
-    checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
+    isPartial,
+    &Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>,
+    checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial> : nullptr,
 };
 
 // The per-type comparisons (Map, Set, Date, typed arrays, ...) are compiled once
@@ -1570,10 +1648,18 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             RETURN_IF_EXCEPTION(scope, {});
             auto rightCause = right->get(globalObject, cause);
             RETURN_IF_EXCEPTION(scope, {});
-            bool causesEqual = mode.deepEquals(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!causesEqual) {
-                return false;
+            // Subset matching only checks a cause the expected error (right) has.
+            if (!(mode.isPartial && rightCause.isUndefined())) {
+                bool causesEqual = mode.deepEquals(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!causesEqual) {
+                    return false;
+                }
+            }
+
+            if (mode.isPartial) {
+                // Subset matching walks the expected error's enumerable properties.
+                break;
             }
 
             // check arbitrary enumerable properties. `.stack` is not checked.
@@ -1964,7 +2050,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
     return std::nullopt;
 }
 
-template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity, bool isPartial>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
 {
     VM& vm = globalObject->vm();
@@ -2001,7 +2087,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             JSValue key2;
             bool foundMatchingKey = false;
             while (iter2->next(globalObject, key2)) {
-                bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, key1, key2, gcBuffer, stack, scope, false);
                 RETURN_IF_EXCEPTION(scope, {});
                 if (equal) {
                     foundMatchingKey = true;
@@ -2046,7 +2132,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 JSValue key2;
                 bool foundMatchingKey = false;
                 while (iter2->nextKeyValue(globalObject, key2, value2)) {
-                    bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                    bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, key1, key2, gcBuffer, stack, scope, false);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (keysEqual) {
                         foundMatchingKey = true;
@@ -2061,7 +2147,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 // Compare both values below.
             }
 
-            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, false);
+            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, value1, value2, gcBuffer, stack, scope, false);
             RETURN_IF_EXCEPTION(scope, {});
             if (!valuesEqual) {
                 return false;
@@ -2099,7 +2185,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     case GlobalProxyType:
     case NumberObjectType:
     case BooleanObjectType:
-        return specialObjectsDequalSlow(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, c1, c2);
+        return specialObjectsDequalSlow(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>, globalObject, gcBuffer, stack, scope, c1, c2);
     default:
         break;
     }
@@ -2144,179 +2230,21 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     return std::nullopt;
 }
 
-// The other combinations are instantiated by their uses in this file. This one is
-// only reached from `Bun.deepEquals(a, b, true, true)` in BunObject.cpp.
+// The other combinations are instantiated by their uses in this file. These two are
+// only reached from `Bun.deepEquals(a, b, true, true)` and `Bun.deepMatch` in BunObject.cpp.
 template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
-
-/**
- * @brief `Bun.deepMatch(a, b)`
- *
- * @note
- * The sets recording already visited properties (`seenObjProperties`,
- * `seenSubsetProperties`, and `gcBuffer`) aren not needed when both
- * `enableAsymmetricMatchers` and `isMatchingObjectContaining` are true. In
- * this case, it is safe to pass a `nullptr`.
- *
- * `gcBuffer` ensures JSC's stack scan does not come up empty-handed and free
- * properties currently within those stacks. Likely unnecessary, but better to
- * be safe tnan sorry
- *
- * @tparam enableAsymmetricMatchers
- * @param objValue
- * @param seenObjProperties already visited properties of `objValue`.
- * @param subsetValue
- * @param seenSubsetProperties already visited properties of `subsetValue`.
- * @param globalObject
- * @param throwScope
- * @param gcBuffer
- * @param replacePropsWithAsymmetricMatchers
- * @param isMatchingObjectContaining
- *
- * @return true
- * @return false
- */
-template<bool enableAsymmetricMatchers>
-bool Bun__deepMatch(
-    JSValue objValue,
-    std::set<EncodedJSValue>* seenObjProperties,
-    JSValue subsetValue,
-    std::set<EncodedJSValue>* seenSubsetProperties,
-    JSGlobalObject* globalObject,
-    ThrowScope& throwScope,
-    MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
-    bool isMatchingObjectContaining)
-{
-
-    // Caller must ensure only objects are passed to this function.
-    ASSERT(objValue.isCell());
-    ASSERT(subsetValue.isCell());
-    VM& vm = globalObject->vm();
-    if (!vm.isSafeToRecurse()) [[unlikely]] {
-        throwStackOverflowError(globalObject, throwScope);
-        return false;
-    }
-
-    // fast path for reference equality.
-    if (objValue == subsetValue) return true;
-    JSObject* obj = objValue.getObject();
-    JSObject* subsetObj = subsetValue.getObject();
-
-    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-    subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(throwScope, false);
-
-    // TODO: add fast paths for:
-    // - two "simple" objects (using ->forEachProperty in both)
-    // - two "simple" arrays
-    // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
-
-    // arrays should match exactly
-    bool objIsArray = isArray(globalObject, objValue);
-    RETURN_IF_EXCEPTION(throwScope, false);
-    bool subsetIsArray = objIsArray && isArray(globalObject, subsetValue);
-    RETURN_IF_EXCEPTION(throwScope, false);
-    if (subsetIsArray) {
-        if (obj->getArrayLength() != subsetObj->getArrayLength()) {
-            return false;
-        }
-        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-        obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(throwScope, false);
-        if (objProps.size() != subsetProps.size()) {
-            return false;
-        }
-    }
-
-    for (const auto& property : subsetProps) {
-        JSValue prop = obj->getIfPropertyExists(globalObject, property);
-        RETURN_IF_EXCEPTION(throwScope, false);
-        if (prop.isEmpty()) {
-            return false;
-        }
-
-        JSValue subsetProp = subsetObj->get(globalObject, property);
-        RETURN_IF_EXCEPTION(throwScope, false);
-
-        JSCell* subsetPropCell = !subsetProp.isEmpty() && subsetProp.isCell() ? subsetProp.asCell() : nullptr;
-        JSCell* propCell = prop.isCell() ? prop.asCell() : nullptr;
-
-        if constexpr (enableAsymmetricMatchers) {
-            if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
-                switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
-                case AsymmetricMatcherResult::FAIL:
-                    return false;
-                case AsymmetricMatcherResult::PASS:
-                    if (replacePropsWithAsymmetricMatchers) {
-                        obj->putDirectMayBeIndex(globalObject, property, subsetProp);
-                        RETURN_IF_EXCEPTION(throwScope, false);
-                    }
-                    // continue to next subset prop
-                    continue;
-                case AsymmetricMatcherResult::NOT_MATCHER:
-                    break;
-                }
-            } else if (propCell && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
-                switch (matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope)) {
-                case AsymmetricMatcherResult::FAIL:
-                    return false;
-                case AsymmetricMatcherResult::PASS:
-                    if (replacePropsWithAsymmetricMatchers) {
-                        subsetObj->putDirectMayBeIndex(globalObject, property, prop);
-                        RETURN_IF_EXCEPTION(throwScope, false);
-                    }
-                    // continue to next subset prop
-                    continue;
-                case AsymmetricMatcherResult::NOT_MATCHER:
-                    break;
-                }
-            }
-        }
-
-        if (subsetProp.isObject() and prop.isObject()) {
-            // if this is called from inside an objectContaining asymmetric matcher, it should behave slightly differently:
-            // in such case, it expects exhaustive matching of any nested object properties, not just a subset,
-            // and the user would need to opt-in to subset matching by using another nested objectContaining matcher
-            if (enableAsymmetricMatchers && isMatchingObjectContaining) {
-                Vector<std::pair<JSValue, JSValue>, 16> stack;
-                MarkedArgumentBuffer gcBuffer;
-                auto eql = Bun__deepEquals<false, true, false>(globalObject, prop, subsetProp, gcBuffer, stack, throwScope, true);
-                RETURN_IF_EXCEPTION(throwScope, false);
-                if (!eql) return false;
-            } else {
-                ASSERT(seenObjProperties != nullptr);
-                ASSERT(seenSubsetProperties != nullptr);
-                ASSERT(gcBuffer != nullptr);
-                auto didInsertProp = seenObjProperties->insert(JSC::JSValue::encode(prop));
-                auto didInsertSubset = seenSubsetProperties->insert(JSC::JSValue::encode(subsetProp));
-                gcBuffer->append(prop);
-                gcBuffer->append(subsetProp);
-                // property cycle detected
-                if (!didInsertProp.second || !didInsertSubset.second) continue;
-                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining);
-                RETURN_IF_EXCEPTION(throwScope, false);
-                if (!matched) return false;
-            }
-        } else {
-            auto same = JSC::sameValue(globalObject, prop, subsetProp);
-            RETURN_IF_EXCEPTION(throwScope, false);
-            if (!same) return false;
-        }
-    }
-
-    return true;
-}
+template bool Bun__deepEquals<false, false, false, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
 
 // anonymous namespace to avoid name collision
 namespace {
-template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false, bool isPartial = false>
 inline bool deepEqualsWrapperImpl(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* global)
 {
     auto& vm = global->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16> stack;
     MarkedArgumentBuffer args;
-    bool result = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(global, JSC::JSValue::decode(a), JSC::JSValue::decode(b), args, stack, scope, true);
+    bool result = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(global, JSC::JSValue::decode(a), JSC::JSValue::decode(b), args, stack, scope, true);
     RELEASE_AND_RETURN(scope, result);
 }
 }
@@ -3252,17 +3180,11 @@ bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::Encod
 
 #undef IMPL_DEEP_EQUALS_WRAPPER
 
-bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
+// `expect(received).toMatchObject(expected)` and the snapshot property matchers:
+// `expected` is a subset of `received`, with asymmetric matchers enabled.
+bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue received, JSC::EncodedJSValue expected, JSC::JSGlobalObject* globalObject)
 {
-    JSValue obj = JSValue::decode(JSValue0);
-    JSValue subset = JSValue::decode(JSValue1);
-
-    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
-
-    std::set<EncodedJSValue> objVisited;
-    std::set<EncodedJSValue> subsetVisited;
-    MarkedArgumentBuffer gcBuffer;
-    RELEASE_AND_RETURN(scope, Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false));
+    return deepEqualsWrapperImpl<false, true, false, false, true>(received, expected, globalObject);
 }
 
 extern "C" bool Bun__JSValue__isAsyncContextFrame(JSC::EncodedJSValue value)

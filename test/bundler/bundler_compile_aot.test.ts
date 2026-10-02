@@ -306,7 +306,7 @@ describe.skipIf(!supported)("bundler", () => {
 
 // The compiler and the static heap builder have process-wide state, so concurrent builds are serialized on the
 // bundler's single thread.
-test.skipIf(!supported)("compile.aot: several builds at once, from several threads", async () => {
+test.skipIf(!supported)("compile.aot: concurrent builds from several threads", async () => {
   const apps = [1, 2, 3, 4];
   using dir = tempDir("compile-aot-at-once", {
     ...Object.fromEntries(
@@ -371,7 +371,7 @@ const whyNot = supported
   ? "ahead-of-time compilation cannot target another platform or version of Bun"
   : "ahead-of-time compilation only supports arm64 macOS and Linux so far";
 
-test("--compile-aot does not cross-compile, and says where it is not supported", async () => {
+test("--compile-aot rejects cross-compilation and unsupported targets", async () => {
   using dir = tempDir("compile-aot-cross", { "entry.ts": `console.log(1);` });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "--compile", "--compile-aot", `--target=${otherTarget}`, "entry.ts", "--outfile", "out"],
@@ -385,7 +385,7 @@ test("--compile-aot does not cross-compile, and says where it is not supported",
   expect(exitCode).not.toBe(0);
 });
 
-test("compile.aot does not cross-compile, and says where it is not supported", async () => {
+test("compile.aot rejects cross-compilation and unsupported targets", async () => {
   using dir = tempDir("compile-aot-cross-api", { "entry.ts": `console.log(1);` });
   expect(() =>
     Bun.build({
@@ -416,7 +416,7 @@ test.skipIf(!supported)("--compile-aot requires --format=esm", async () => {
   ).toThrow("compile.aot requires format: 'esm'");
 });
 
-describe.skipIf(!supported)("Bun.ModuleGraph in an executable that was compiled ahead of time", () => {
+describe.skipIf(!supported)("Bun.ModuleGraph with --compile-aot", () => {
   async function run(entry: string) {
     using dir = tempDir("compile-aot-module-graph", {
       "entry.ts": `
@@ -475,7 +475,7 @@ describe.skipIf(!supported)("Bun.ModuleGraph in an executable that was compiled 
   const everywhere = (value: unknown) =>
     ["main", "worker"].map(where => ({ where, stdout: JSON.stringify(value), stderr: "", exitCode: 0 }));
 
-  test.concurrent("each graph and the host have their own variables, whoever loads first", async () => {
+  test.concurrent("separate module state per graph", async () => {
     expect(
       await run(`
         const a = await new Bun.ModuleGraph().import(url);
@@ -504,7 +504,7 @@ describe.skipIf(!supported)("Bun.ModuleGraph in an executable that was compiled 
     },
   );
 
-  test.concurrent("a closure outlives its graph", async () => {
+  test.concurrent("closure outlives its graph", async () => {
     expect(
       await run(`
         let graph = new Bun.ModuleGraph();
@@ -519,7 +519,7 @@ describe.skipIf(!supported)("Bun.ModuleGraph in an executable that was compiled 
     ).toEqual(everywhere([2, 3]));
   });
 
-  test.concurrent("a graph that is disposed of by its own code goes on running it", async () => {
+  test.concurrent("dispose() from the graph's own code", async () => {
     expect(
       await run(`
         const graph = new Bun.ModuleGraph();
@@ -528,7 +528,7 @@ describe.skipIf(!supported)("Bun.ModuleGraph in an executable that was compiled 
     ).toEqual(everywhere([1, "2,3,4"]));
   });
 
-  test.concurrent("classes without a constructor", async () => {
+  test.concurrent("default class constructors", async () => {
     expect(
       await run(`
         const host = await import(url);
@@ -549,7 +549,7 @@ describe.skipIf(!supported)("Bun.ModuleGraph in an executable that was compiled 
     );
   });
 
-  test.concurrent("names that a graph's globals supply", async () => {
+  test.concurrent("globals option", async () => {
     expect(
       await run(`
         const [x, y] = await Promise.all(["x", "y"].map(tag => new Bun.ModuleGraph({ globals: { tag } }).import(url)));
@@ -569,7 +569,45 @@ describe.skipIf(!supported)("Bun.ModuleGraph in an executable that was compiled 
     ).toEqual(everywhere(1800));
   });
 
-  test.concurrent("graphs that are let go of are collected", async () => {
+  test.concurrent("dispose() frees modules while the host keeps the graph", async () => {
+    expect(
+      await run(`
+        const registry = new FinalizationRegistry(() => collected++);
+        let collected = 0;
+        const graphs = [];
+        for (let i = 0; i < 40; i++) {
+          const graph = new Bun.ModuleGraph();
+          registry.register((await graph.import(url)).count, 0);
+          graph.dispose();
+          graphs.push(graph);
+        }
+        for (let i = 0; i < 5 && collected < 30; i++) { Bun.gc(true); await new Promise(done => setTimeout(done, 1)); }
+        return [collected >= 30, graphs.length];
+      `),
+    ).toEqual(everywhere([true, 40]));
+  });
+
+  test.concurrent("a closure survives dispose() while the host keeps the graph", async () => {
+    expect(
+      await run(`
+        const graphs = [], closures = [];
+        for (let i = 0; i < 20; i++) {
+          const graph = new Bun.ModuleGraph();
+          const ns = await graph.import(url);
+          const f = ns.viaClosure();
+          f.extra = i;
+          delete f.extra;
+          closures.push(f);
+          graph.dispose();
+          graphs.push(graph);
+        }
+        for (let i = 0; i < 3; i++) { Bun.gc(true); await new Promise(done => setTimeout(done, 1)); }
+        return closures.map(f => f() + f()).join();
+      `),
+    ).toEqual(everywhere(Array(20).fill(3).join()));
+  });
+
+  test.concurrent("dropped graphs are collected", async () => {
     expect(
       await run(`
         const registry = new FinalizationRegistry(() => collected++);
@@ -614,7 +652,7 @@ test.skipIf(!supported).each(["forEach", "map"])(
   },
 );
 
-test.skipIf(!supported)("the code of an executable is not at a fixed address", async () => {
+test.skipIf(!supported)("code is position-independent", async () => {
   using dir = tempDir("compile-aot-address", {
     "entry.ts": `function add(a: number, b: number) { return a + b; } console.log(new (function Made(this: any) { this.sum = add(1, 2); } as any)().sum);`,
   });
@@ -687,7 +725,7 @@ test.skipIf(!supported).each([
 
 // Ahead-of-time compiled programs run without a JIT, so a pattern that has no code in the image is matched by the interpreter, which is
 // about ten times slower. The output is the same either way, so this counts the patterns that have code.
-test.skipIf(!supported)("regular expressions with the u and v flags are compiled", async () => {
+test.skipIf(!supported)("compiles RegExps with the u and v flags", async () => {
   using dir = tempDir("compile-aot-regexps", {
     "none.ts": `console.log("none");`,
     "some.ts": `console.log([/a+b/.test("aab"), /\\p{L}+x/u.test("\\xe9x"), /^.$/u.test("\\u{1f600}"), /[\\p{L}--[a-c]]y/v.test("dy")].join());`,
@@ -727,7 +765,7 @@ test.skipIf(!supported)("regular expressions with the u and v flags are compiled
 // The build has not seen a pattern that is put together at run time, so there is no code for it in the image. Although the program
 // runs without the JIT, such a pattern is compiled once it has done enough work in the interpreter to pay for that. The output is
 // the same either way, so this asks the engine what it did with each pattern.
-test.skipIf(!supported)("a regular expression that is built at run time is compiled when it is hot", async () => {
+test.skipIf(!supported)("hot run-time RegExps are compiled", async () => {
   using dir = tempDir("compile-aot-regexp-at-run-time", {
     "entry.ts": `
       const build = (word: string) => new RegExp(["(\\\\w+)@", "(\\\\w+)\\\\.", word].join(""));
@@ -774,7 +812,7 @@ test.skipIf(!supported)("a regular expression that is built at run time is compi
 
 // The loader knows nothing about the machine code that the executable carries, so the crash handler asks the engine where a
 // frame in it is, and reports an offset in an object called "aot". The map that a build can write resolves that to a function.
-test.skipIf(!supported)("a crash report locates the frames of compiled code", async () => {
+test.skipIf(!supported)("crash reports symbolicate compiled frames", async () => {
   using dir = tempDir("compile-aot-crash", {
     "entry.ts": `
       import { crash_handler } from "bun:internal-for-testing";
@@ -828,7 +866,7 @@ test.skipIf(!supported)("a crash report locates the frames of compiled code", as
 // The interpreter and the JIT tell the engine which frame is running whenever they call a C or C++ function. Compiled code leaves
 // that to the function, and one like sin() does not do it. The profiler used to charge the time in those to the last host function
 // that the program had called, which had returned long ago.
-test.skipIf(!supported)("--cpu-prof charges time in native functions to the function that is running", async () => {
+test.skipIf(!supported)("--cpu-prof attributes native time to the calling function", async () => {
   using dir = tempDir("compile-aot-cpu-prof", {
     "entry.ts": `
       function busy(rounds: number, seed: number) {
@@ -869,7 +907,7 @@ test.skipIf(!supported)("--cpu-prof charges time in native functions to the func
   expect(hits.busy).toBeGreaterThan(3 * (hits.stringify ?? 0));
 });
 
-test.skipIf(!supported)("a program with too much code for an image is an error", async () => {
+test.skipIf(!supported)("image size limit is a build error", async () => {
   using dir = tempDir("compile-aot-too-large", { "entry.ts": `console.log(1);` });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
@@ -945,7 +983,7 @@ test.skipIf(!supported).each([
   expect(exitCodeOfRun).toBe(0);
 });
 
-test.skipIf(!supported)("BUN_AOT=0 builds an executable that is not compiled ahead of time", async () => {
+test.skipIf(!supported)("BUN_AOT=0 disables AoT at build time", async () => {
   using dir = tempDir("compile-aot-env-off", { "entry.ts": `console.log(function named() {}.toString());` });
   await using build = Bun.spawn({
     cmd: [bunExe(), "build", "entry.ts", "--compile", "--compile-aot", "--outfile", "out"],
@@ -983,7 +1021,7 @@ test("--compile-aot requires --compile", async () => {
   expect(exitCode).not.toBe(0);
 });
 
-describe.skipIf(!supported)("what an executable was built with is shared by its threads", () => {
+describe.skipIf(!supported)("--compile-aot across threads", () => {
   async function run(files: Record<string, string>, entryPoints: string[], env: Record<string, string> = {}) {
     using dir = tempDir("compile-aot-threads", files);
     await using build = Bun.spawn({
@@ -1024,7 +1062,7 @@ describe.skipIf(!supported)("what an executable was built with is shared by its 
     export function spin(turns: Int32Array) { for (;;) turns[0]++; }
   `;
 
-  test.concurrent("a Worker that is busy in compiled code can be terminated", async () => {
+  test.concurrent("terminate a busy Worker", async () => {
     expect(
       await run(
         {
@@ -1050,7 +1088,7 @@ describe.skipIf(!supported)("what an executable was built with is shared by its 
     ).toEqual({ stdout: "terminated true\n", stderr: "", exitCode: 0 });
   });
 
-  test.concurrent("120 Workers, one after another, each with three graphs", async () => {
+  test.concurrent("120 sequential Workers with graphs", async () => {
     expect(
       await run(
         {
@@ -1078,13 +1116,11 @@ describe.skipIf(!supported)("what an executable was built with is shared by its 
     ).toEqual({ stdout: `["6000,6000,6000"]\n`, stderr: "", exitCode: 0 });
   });
 
-  test.concurrent(
-    "graphs in three Workers, with a collection every 20 allocations that take the slow path",
-    async () => {
-      expect(
-        await run(
-          {
-            "entry.ts": `
+  test.concurrent("graphs under GC stress", async () => {
+    expect(
+      await run(
+        {
+          "entry.ts": `
             const url = new URL("./app.js", import.meta.url).href;
             if (Bun.isMainThread) {
               const workers = [1, 2, 3].map(() => new Worker(import.meta.url));
@@ -1100,14 +1136,13 @@ describe.skipIf(!supported)("what an executable was built with is shared by its 
               postMessage(out.join());
             }
           `,
-            "app.ts": churn,
-          },
-          ["entry.ts", "app.ts"],
-          { BUN_JSC_slowPathAllocsBetweenGCs: "20" },
-        ),
-      ).toEqual({ stdout: `["90000,90000,90000,90000"]\n`, stderr: "", exitCode: 0 });
-    },
-  );
+          "app.ts": churn,
+        },
+        ["entry.ts", "app.ts"],
+        { BUN_JSC_slowPathAllocsBetweenGCs: "20" },
+      ),
+    ).toEqual({ stdout: `["90000,90000,90000,90000"]\n`, stderr: "", exitCode: 0 });
+  });
 
   const inEightWorkers = (work: string) => ({
     "entry.ts": `
@@ -1122,7 +1157,7 @@ describe.skipIf(!supported)("what an executable was built with is shared by its 
     "work.ts": work,
   });
 
-  test.concurrent("regular expression literals, used first and at once by eight Workers", async () => {
+  test.concurrent("RegExp literals in 8 Workers", async () => {
     expect(
       await run(
         inEightWorkers(`
@@ -1145,7 +1180,7 @@ describe.skipIf(!supported)("what an executable was built with is shared by its 
     ).toEqual({ stdout: `["aa,13,true,3,0,7,3,2,false"] true\n`, stderr: "", exitCode: 0 });
   });
 
-  test.concurrent("functions, classes, templates and literals, used first and at once by eight Workers", async () => {
+  test.concurrent("functions, classes and literals in 8 Workers", async () => {
     expect(
       await run(
         inEightWorkers(`

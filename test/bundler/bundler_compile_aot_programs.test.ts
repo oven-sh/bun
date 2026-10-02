@@ -31,14 +31,14 @@ const reportsErrors = `worker.addEventListener("error", event => {
   process.exitCode = 1;
 });`;
 const wrappers = {
-  "in a Worker": {
+  "Worker": {
     loads: 1,
     text: `
       const worker = new Worker(new URL("./main.js", import.meta.url).href);
       ${reportsErrors}
     `,
   },
-  "in two Bun.ModuleGraphs in a Worker": {
+  "two ModuleGraphs in a Worker": {
     loads: 2,
     text: `
       if (Bun.isMainThread) {
@@ -99,7 +99,7 @@ describe.skipIf(!supported)("compile.aot", () => {
     .sort((a, b) => Number(heavy.has(a)) - Number(heavy.has(b)))) {
     const it = heavy.has(name) ? test : test.concurrent;
     const reference = Promise.withResolvers<Awaited<ReturnType<typeof run>>>();
-    it(`${name}: the same build, not compiled ahead of time`, async () => {
+    it(`${name}: reference (no AoT)`, async () => {
       const result = await run(name, {
         BUN_AOT: "0",
         BUN_JSC_useImmutableIntrinsics: "1",
@@ -111,14 +111,11 @@ describe.skipIf(!supported)("compile.aot", () => {
     });
 
     for (const [label, options] of [
-      ["ahead of time", ""],
-      ["ahead of time, validated", "validateAOTInferredTypes=1,validateGraphAtEachPhase=1"],
-      ["ahead of time, with several copies of the stubs", "numberOfAOTStubCopiesForTesting=3"],
-      ["ahead of time, with every call through a veneer", "forceAOTVeneers=1"],
-      [
-        "ahead of time, with few function numbers",
-        "largestAOTFunctionNumberInTypesForTesting=3,validateAOTInferredTypes=1",
-      ],
+      ["AoT", ""],
+      ["AoT, validated", "validateAOTInferredTypes=1,validateGraphAtEachPhase=1"],
+      ["AoT, multiple stub copies", "numberOfAOTStubCopiesForTesting=3"],
+      ["AoT, forced veneers", "forceAOTVeneers=1"],
+      ["AoT, small function-number limit", "largestAOTFunctionNumberInTypesForTesting=3,validateAOTInferredTypes=1"],
     ]) {
       it(`${name}: ${label}`, async () => {
         const [expected, actual] = await Promise.all([

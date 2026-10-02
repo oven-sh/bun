@@ -29,6 +29,10 @@ const cases: Record<string, () => unknown> = {
   templateCall: () => { const t: any = undefined; return t`x`; },
   getterThrows: () => { const o = { get g(): never { throw new RangeError("from a getter"); } }; return o.g; },
   awaitThenable: () => { const o: any = undefined; return o.then; },
+  inInForIn: () => { const o: any = null; for (const p in { a: 1 }) if (p in o) return 1; },
+  getInForIn: () => { const o: any = null; for (const p in { a: 1 }) return o[p]; },
+  putInForIn: () => { const o: any = undefined; for (const p in { a: 1 }) o[p] = 1; },
+  nativeThrows: () => { const keys = Object.keys(null as any); return keys; },
 };
 for (const [name, f] of Object.entries(cases)) {
   try { f(); console.log(name.padEnd(26), "no error"); }

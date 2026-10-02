@@ -54,7 +54,6 @@ impl<'a> Checker<'a> {
             return TypeId::NIL;
         }
         let then_function = self.get_type_of_property_of_type(t, b"then");
-        // TODO: GH#18217
         if is_type_any(self, then_function) {
             return TypeId::NIL;
         }
@@ -452,5 +451,177 @@ impl<'a> Checker<'a> {
             return self.as_intrinsic_type(t).intrinsic_name.to_vec();
         }
         Vec::new()
+    }
+
+    pub fn get_string_mapping_type(&mut self, symbol: SymbolId, t: TypeId) -> TypeId {
+        if !self.stack_check.is_safe_to_recurse() {
+            return self.stack_limit();
+        }
+        let a = self.ast;
+        let flags = self.types[t].flags;
+        if flags.intersects(TypeFlags::UNION | TypeFlags::NEVER) {
+            return self.map_type(t, &mut |c, t| c.get_string_mapping_type(symbol, t));
+        }
+        if flags.intersects(TypeFlags::STRING_LITERAL) {
+            let value = get_string_literal_value(self, t);
+            let text = self.text(&apply_string_mapping(a, symbol, value));
+            return self.get_string_literal_type(text);
+        }
+        if flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
+            let texts = self.as_template_literal_type(t).texts;
+            let types = self.as_template_literal_type(t).types;
+            let (texts, types) = self.apply_template_string_mapping(symbol, texts, types);
+            return self.get_template_literal_type(texts.as_slice(), types);
+        }
+        if flags.intersects(TypeFlags::STRING_MAPPING) && symbol == self.types[t].symbol {
+            return t;
+        }
+        if flags.intersects(TypeFlags::ANY | TypeFlags::STRING | TypeFlags::STRING_MAPPING)
+            || self.is_generic_index_type(t)
+        {
+            return self.get_string_mapping_type_for_generic_type(symbol, t);
+        }
+        if self.is_pattern_literal_placeholder_type(t) {
+            let texts: [&[u8]; 2] = [b"", b""];
+            let template = self.get_template_literal_type(&texts, List::from_slice(&[t]));
+            return self.get_string_mapping_type_for_generic_type(symbol, template);
+        }
+        t
+    }
+}
+
+pub fn apply_string_mapping<'s>(a: Ast<'_>, symbol: SymbolId, str: &'s [u8]) -> Cow<'s, [u8]> {
+    match intrinsic_type_kinds(a.sym(symbol).name) {
+        IntrinsicTypeKind::UPPERCASE => to_upper_js(str),
+        IntrinsicTypeKind::LOWERCASE => to_lower_js(str),
+        IntrinsicTypeKind::CAPITALIZE => {
+            let (_, size) = decode_js_string_rune(str);
+            let mut result = to_upper_js(str.get(..size).unwrap_or(str)).into_owned();
+            result.extend_from_slice(str.get(size..).unwrap_or(&[]));
+            Cow::Owned(result)
+        }
+        IntrinsicTypeKind::UNCAPITALIZE => {
+            let (_, size) = decode_js_string_rune(str);
+            let mut result = to_lower_js(str.get(..size).unwrap_or(str)).into_owned();
+            result.extend_from_slice(str.get(size..).unwrap_or(&[]));
+            Cow::Owned(result)
+        }
+        _ => Cow::Borrowed(str),
+    }
+}
+
+impl<'a> Checker<'a> {
+    pub fn apply_template_string_mapping(
+        &mut self,
+        symbol: SymbolId,
+        texts: List<'a, Text<'a>>,
+        types: List<'a, TypeId>,
+    ) -> (List<'a, Text<'a>>, List<'a, TypeId>) {
+        let a = self.ast;
+        match intrinsic_type_kinds(a.sym(symbol).name) {
+            IntrinsicTypeKind::UPPERCASE | IntrinsicTypeKind::LOWERCASE => {
+                let new_texts =
+                    self.map_list(texts, |c, t| c.text(&apply_string_mapping(a, symbol, t)));
+                let new_types = self.map_list(types, |c, t| c.get_string_mapping_type(symbol, t));
+                (new_texts, new_types)
+            }
+            IntrinsicTypeKind::CAPITALIZE | IntrinsicTypeKind::UNCAPITALIZE => {
+                if !texts.at(0usize).is_empty() {
+                    let mut new_texts = texts.as_slice().to_vec();
+                    let first_text = self.text(&apply_string_mapping(a, symbol, texts.at(0usize)));
+                    match new_texts.first_mut() {
+                        Some(first) => *first = first_text,
+                        None => self.slice_set(false),
+                    }
+                    return (self.list_of(&new_texts), types);
+                }
+                let mut new_types = types.as_slice().to_vec();
+                let first_type = self.get_string_mapping_type(symbol, types.at(0usize));
+                match new_types.first_mut() {
+                    Some(first) => *first = first_type,
+                    None => self.slice_set(false),
+                }
+                (texts, self.list_of(&new_types))
+            }
+            _ => (texts, types),
+        }
+    }
+
+    pub fn get_string_mapping_type_for_generic_type(
+        &mut self,
+        symbol: SymbolId,
+        t: TypeId,
+    ) -> TypeId {
+        let key = StringMappingKey { s: symbol, t };
+        let mut result = self.string_mapping_types.get(&key);
+        if result.is_nil() {
+            result = self.new_string_mapping_type(symbol, t);
+            let ok = self.string_mapping_types.set(key, result);
+            self.map_set(ok);
+        }
+        result
+    }
+
+    // Given an indexed access on a mapped type of the form { [P in K]: E }[X], return an instantiation of E where P is replaced with X. Since this simplification doesn't account for mapped type modifiers, add 'undefined' to the resulting type if the mapped type includes a '?' modifier or if the modifiers type indicates that some properties are optional. If the modifiers type is generic, conservatively estimate optionality by recursively looking for mapped types that include '?' modifiers.
+    pub fn substitute_indexed_mapped_type(&mut self, object_type: TypeId, index: TypeId) -> TypeId {
+        let type_parameter = self.get_type_parameter_from_mapped_type(object_type);
+        let mapper = new_simple_type_mapper(self, type_parameter, index);
+        let object_mapper = self.as_mapped_type(object_type).mapper;
+        let template_mapper = self.combine_type_mappers(object_mapper, mapper);
+        let target = or_else(self.as_mapped_type(object_type).target, object_type);
+        let template_type = self.get_template_type_from_mapped_type(target);
+        let instantiated_template_type = self.instantiate_type(template_type, template_mapper);
+        let mut is_optional = get_mapped_type_optionality(self, object_type) > 0;
+        if !is_optional {
+            if self.is_generic_type(object_type) {
+                let modifiers_type = self.get_modifiers_type_from_mapped_type(object_type);
+                is_optional = self.get_combined_mapped_type_optionality(modifiers_type) > 0;
+            } else {
+                is_optional = self.could_access_optional_property(object_type, index);
+            }
+        }
+        self.add_optionality_ex(instantiated_template_type, true, is_optional)
+    }
+
+    // Return true if an indexed access with the given object and index types could access an optional property.
+    pub fn could_access_optional_property(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> bool {
+        let a = self.ast;
+        let index_constraint = self.get_base_constraint_of_type(index_type);
+        if index_constraint.is_nil() {
+            return false;
+        }
+        let properties = self.get_properties_of_type(object_type);
+        properties.as_slice().iter().any(|&p| {
+            if !a.sym(p).flags.intersects(SymbolFlags::OPTIONAL) {
+                return false;
+            }
+            let key_type = self.get_literal_type_from_property(
+                p,
+                TypeFlags::STRING_OR_NUMBER_LITERAL_OR_UNIQUE,
+                false,
+            );
+            self.is_type_assignable_to(key_type, index_constraint)
+        })
+    }
+
+    pub fn get_type_of_property_or_index_signature_of_type(
+        &mut self,
+        t: TypeId,
+        name: &[u8],
+    ) -> TypeId {
+        let prop_type = self.get_type_of_property_of_type(t, name);
+        if !prop_type.is_nil() {
+            return prop_type;
+        }
+        let index_info = self.get_applicable_index_info_for_name(t, name);
+        if !index_info.is_nil() {
+            let value_type = self.index_infos[index_info].value_type;
+            return self.add_optionality_ex(value_type, true, true);
+        }
+        TypeId::NIL
     }
 }

@@ -665,6 +665,53 @@ impl<'a> Checker<'a> {
         t
     }
 
+    pub fn get_true_type_from_conditional_type(&mut self, t: TypeId) -> TypeId {
+        if self.as_conditional_type(t).resolved_true_type.is_nil() {
+            let root = self.as_conditional_type(t).root;
+            let root_node = self.conditional_roots[root].node;
+            let true_type_node = self.ast.as_conditional_type_node(root_node).true_type;
+            let true_type = self.get_type_from_type_node(true_type_node);
+            let mapper = self.as_conditional_type(t).mapper;
+            let resolved = self.instantiate_type(true_type, mapper);
+            self.as_conditional_type_mut(t).resolved_true_type = resolved;
+        }
+        self.as_conditional_type(t).resolved_true_type
+    }
+
+    pub fn get_false_type_from_conditional_type(&mut self, t: TypeId) -> TypeId {
+        if self.as_conditional_type(t).resolved_false_type.is_nil() {
+            let root = self.as_conditional_type(t).root;
+            let root_node = self.conditional_roots[root].node;
+            let false_type_node = self.ast.as_conditional_type_node(root_node).false_type;
+            let false_type = self.get_type_from_type_node(false_type_node);
+            let mapper = self.as_conditional_type(t).mapper;
+            let resolved = self.instantiate_type(false_type, mapper);
+            self.as_conditional_type_mut(t).resolved_false_type = resolved;
+        }
+        self.as_conditional_type(t).resolved_false_type
+    }
+
+    pub fn get_inferred_true_type_from_conditional_type(&mut self, t: TypeId) -> TypeId {
+        if self
+            .as_conditional_type(t)
+            .resolved_inferred_true_type
+            .is_nil()
+        {
+            let combined_mapper = self.as_conditional_type(t).combined_mapper;
+            let resolved = if !combined_mapper.is_nil() {
+                let root = self.as_conditional_type(t).root;
+                let root_node = self.conditional_roots[root].node;
+                let true_type_node = self.ast.as_conditional_type_node(root_node).true_type;
+                let true_type = self.get_type_from_type_node(true_type_node);
+                self.instantiate_type(true_type, combined_mapper)
+            } else {
+                self.get_true_type_from_conditional_type(t)
+            };
+            self.as_conditional_type_mut(t).resolved_inferred_true_type = resolved;
+        }
+        self.as_conditional_type(t).resolved_inferred_true_type
+    }
+
     pub fn get_type_from_infer_type_node(&mut self, node: NodeId) -> TypeId {
         let links = self.type_node_links.get(node);
         if self.type_node_links[links].resolved_type.is_nil() {
@@ -674,6 +721,158 @@ impl<'a> Checker<'a> {
             self.type_node_links[links].resolved_type = t;
         }
         self.type_node_links[links].resolved_type
+    }
+
+    pub fn get_type_from_import_type_node(&mut self, node: NodeId) -> TypeId {
+        let a = self.ast;
+        let links = self.type_node_links.get(node);
+        if self.type_node_links[links].resolved_type.is_nil() {
+            let n = a.as_import_type_node(node);
+            if !is_literal_import_type_node(a, node) {
+                self.error(n.argument, diagnostics::STRING_LITERAL_EXPECTED, &[]);
+                let symbol_links = self.symbol_node_links.get(node);
+                self.symbol_node_links[symbol_links].resolved_symbol = self.unknown_symbol;
+                self.type_node_links[links].resolved_type = self.error_type;
+                return self.type_node_links[links].resolved_type;
+            }
+            let target_meaning = if n.is_type_of {
+                SymbolFlags::VALUE
+            } else {
+                SymbolFlags::TYPE
+            };
+            let module_name = a.as_literal_type_node(n.argument).literal;
+            let inner_module_symbol = self.resolve_external_module_name(node, module_name, false);
+            if inner_module_symbol.is_nil() {
+                let symbol_links = self.symbol_node_links.get(node);
+                self.symbol_node_links[symbol_links].resolved_symbol = self.unknown_symbol;
+                self.type_node_links[links].resolved_type = self.error_type;
+                return self.type_node_links[links].resolved_type;
+            }
+            let module_symbol = self.resolve_external_module_symbol(inner_module_symbol, false);
+            if !node_is_missing(a, n.qualifier) {
+                let name_chain = self.get_identifier_chain(n.qualifier);
+                let mut current_namespace = module_symbol;
+                for (i, &current) in name_chain.iter().enumerate() {
+                    let meaning = if i + 1 == name_chain.len() {
+                        target_meaning
+                    } else {
+                        SymbolFlags::NAMESPACE
+                    };
+                    // typeof a.b.c is normally resolved using `checkExpression` which in turn defers to `checkQualifiedName`. That, in turn, ultimately uses `getPropertyOfType` on the type of the symbol, which differs slightly from the `exports` lookup process that only looks up namespace members which is used for most type references
+                    let resolved_namespace = self.resolve_symbol(current_namespace);
+                    let merged_resolved_symbol = self.get_merged_symbol(resolved_namespace);
+                    let mut symbol_from_variable = SymbolId::NIL;
+                    let mut symbol_from_module = SymbolId::NIL;
+                    if n.is_type_of {
+                        let namespace_type = self.get_type_of_symbol(merged_resolved_symbol);
+                        symbol_from_variable = self.get_property_of_type_ex(
+                            namespace_type,
+                            a.text(current),
+                            false,
+                            true,
+                        );
+                    } else {
+                        let exports = self.get_exports_of_symbol(merged_resolved_symbol);
+                        symbol_from_module = self.get_symbol(exports, a.text(current), meaning);
+                        if symbol_from_module.is_nil() {
+                            // a CommonJS module might have typedefs exported alongside an export=
+                            let immediate_module_symbol =
+                                self.resolve_external_module_symbol(inner_module_symbol, true);
+                            if !immediate_module_symbol.is_nil()
+                                && a.sym(immediate_module_symbol)
+                                    .declarations
+                                    .as_slice()
+                                    .iter()
+                                    .any(|&d| {
+                                        get_assignment_declaration_kind(a, d)
+                                            == JSDeclarationKind::MODULE_EXPORTS
+                                    })
+                            {
+                                let exports = self
+                                    .get_exports_of_symbol(a.sym(immediate_module_symbol).parent);
+                                symbol_from_module =
+                                    self.get_symbol(exports, a.text(current), meaning);
+                            }
+                        }
+                    }
+                    let next = or_else(symbol_from_module, symbol_from_variable);
+                    if next.is_nil() {
+                        let namespace_name =
+                            self.get_fully_qualified_name(current_namespace, NodeId::NIL);
+                        let declaration_name = declaration_name_to_string(a, current);
+                        self.error(
+                            current,
+                            diagnostics::NAMESPACE_0_HAS_NO_EXPORTED_MEMBER_1,
+                            &[Arg::Str(&namespace_name), Arg::Str(&declaration_name)],
+                        );
+                        self.type_node_links[links].resolved_type = self.error_type;
+                        return self.type_node_links[links].resolved_type;
+                    }
+                    let current_links = self.symbol_node_links.get(current);
+                    self.symbol_node_links[current_links].resolved_symbol = next;
+                    let parent_links = self.symbol_node_links.get(a.parent(current));
+                    self.symbol_node_links[parent_links].resolved_symbol = next;
+                    current_namespace = next;
+                }
+                let resolved =
+                    self.resolve_import_symbol_type(node, current_namespace, target_meaning);
+                self.type_node_links[links].resolved_type = resolved;
+            } else {
+                let module_flags = self.get_symbol_flags(module_symbol);
+                if module_flags.intersects(target_meaning) {
+                    let resolved =
+                        self.resolve_import_symbol_type(node, module_symbol, target_meaning);
+                    self.type_node_links[links].resolved_type = resolved;
+                } else {
+                    let message = if target_meaning == SymbolFlags::VALUE {
+                        diagnostics::MODULE_0_DOES_NOT_REFER_TO_A_VALUE_BUT_IS_USED_AS_A_VALUE_HERE
+                    } else {
+                        diagnostics::MODULE_0_DOES_NOT_REFER_TO_A_TYPE_BUT_IS_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF_IMPORT_0
+                    };
+                    self.error(node, message, &[Arg::Str(a.text(module_name))]);
+                    let symbol_links = self.symbol_node_links.get(node);
+                    self.symbol_node_links[symbol_links].resolved_symbol = self.unknown_symbol;
+                    self.type_node_links[links].resolved_type = self.error_type;
+                }
+            }
+        }
+        self.type_node_links[links].resolved_type
+    }
+
+    pub fn get_identifier_chain(&self, node: NodeId) -> Vec<NodeId> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return self.stack_limit();
+        }
+        let a = self.ast;
+        if is_identifier(a, node) {
+            return vec![node];
+        }
+        let qualified = a.as_qualified_name(node);
+        // A node that is no qualified name ends the chain: its cast is recorded, where upstream panics.
+        if !is_qualified_name(a, node) {
+            return Vec::new();
+        }
+        let mut chain = self.get_identifier_chain(qualified.left);
+        chain.push(qualified.right);
+        chain
+    }
+
+    pub fn resolve_import_symbol_type(
+        &mut self,
+        node: NodeId,
+        symbol: SymbolId,
+        meaning: SymbolFlags,
+    ) -> TypeId {
+        let resolved_symbol = self.resolve_symbol(symbol);
+        let links = self.symbol_node_links.get(node);
+        self.symbol_node_links[links].resolved_symbol = resolved_symbol;
+        if meaning == SymbolFlags::VALUE {
+            // intentionally doesn't use resolved symbol so type is cached as expected on the alias
+            let expr_type = self.get_type_of_symbol(symbol);
+            return self.get_instantiation_expression_type(expr_type, node);
+        }
+        // getTypeReferenceType doesn't handle aliases - it must get the resolved symbol
+        self.get_type_reference_type(node, resolved_symbol)
     }
 
     pub fn create_type_from_generic_global_type(
@@ -692,6 +891,25 @@ impl<'a> Checker<'a> {
             return self.get_global_type(name, 0, true);
         }
         self.global_function_type
+    }
+
+    pub fn get_global_import_meta_expression_type(&mut self) -> TypeId {
+        if self.deferred_global_import_meta_expression_type.is_nil() {
+            let a = self.ast;
+            // Create a synthetic type `ImportMetaExpression { meta: MetaProperty }`
+            let symbol = self.new_symbol(SymbolFlags::NONE, b"ImportMetaExpression");
+            let import_meta_type = self.get_global_import_meta_type();
+            let meta_property_symbol =
+                self.new_symbol_ex(SymbolFlags::PROPERTY, b"meta", CheckFlags::READONLY);
+            a.update_symbol(meta_property_symbol, |s| s.parent = symbol);
+            let links = self.value_symbol_links_get(meta_property_symbol);
+            self.value_symbol_links[links].resolved_type = import_meta_type;
+            let members = create_symbol_table(a, &[meta_property_symbol]);
+            a.update_symbol(symbol, |s| s.members = members);
+            let t = self.new_anonymous_type(symbol, members, List::NIL, List::NIL, List::NIL);
+            self.deferred_global_import_meta_expression_type = t;
+        }
+        self.deferred_global_import_meta_expression_type
     }
 
     pub fn create_iterable_type(&mut self, iterated_type: TypeId) -> TypeId {

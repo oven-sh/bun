@@ -90,6 +90,8 @@ pub(super) struct Resolving<'p> {
     pub file: FileId,
     /// `NONE`: the attributes of a JSX element, which nothing is looked up in this for.
     pub call: ExprId,
+    /// Without a `call`: that JSX element (`inferJsxTypeArguments`).
+    pub node: ExprId,
     /// The signature under consideration, as it is before its type parameters are filled in.
     pub sig: Option<SigId>,
     pub params: List<'p, SigParam>,
@@ -114,10 +116,8 @@ pub(super) struct Resolving<'p> {
     pub nested_generic_functions: Vec<NestedGenericFunction>,
     /// `inferredTypeParameters`, while the second round of `inferTypeArguments` checks an argument with such a function in it.
     pub inferred_type_params: Vec<TypeId>,
-    /// A type parameter of `sig` is in scope at the call (a function that calls itself, `new C` inside the generic class `C`): a type
-    /// at the call can mention it without meaning the one that is inferred.
-    pub has_type_params_in_scope: bool,
-    /// With `has_type_params_in_scope`: the argument that `inferTypeArguments` is checking and the declared type of its parameter.
+    /// Where a type parameter of `sig` is in scope at the call (`Inference::calls_itself`: a function that calls itself, `new C` inside
+    /// the generic class `C`): the argument that `inferTypeArguments` is checking and the declared type of its parameter.
     pub checked_arg: Option<(ExprId, TypeId)>,
 }
 
@@ -146,6 +146,7 @@ impl<'p> Resolving<'p> {
         Resolving {
             file,
             call,
+            node: ExprId::NONE,
             sig,
             params,
             so_far: MapperId::IDENTITY,
@@ -157,7 +158,7 @@ impl<'p> Resolving<'p> {
             settles: Vec::new(),
             nested_generic_functions: Vec::new(),
             inferred_type_params: Vec::new(),
-            has_type_params_in_scope: false,
+
             checked_arg: None,
         }
     }
@@ -4277,43 +4278,55 @@ impl<'p> Checker<'p> {
         self.default_of_type_param(param).is_some()
     }
 
-    /// `createOuterReturnMapper`, applied to what is expected of a call among the arguments of the calls being resolved: none of
-    /// their type parameters is left in it.
-    fn instantiate_with_outer_return_mappers(
+    /// `createOuterReturnMapper(outerContext)`, applied to `ty`, what is expected of `call`: none of the type parameters of the call
+    /// around is left in it.
+    fn instantiate_with_outer_return_mapper(
         &mut self,
         file: FileId,
         call: ExprId,
-        mut ty: TypeId,
+        ty: TypeId,
     ) -> TypeId {
-        for i in self.inference_context_levels(file, call) {
-            if !self.has_type_variables(ty) {
-                break;
-            }
-            let mapped = self.instantiate(ty, self.resolving[i].outer_return_mapper);
-            if mapped != ty {
-                self.resolving[i].is_outer_return_mapper_taken = true;
-                ty = mapped;
-            }
+        let Some(outer) = self.outer_inference_context(file, call) else {
+            return ty;
+        };
+        let mapped = self.instantiate(ty, self.resolving[outer].outer_return_mapper);
+        if mapped != ty {
+            self.resolving[outer].is_outer_return_mapper_taken = true;
         }
-        ty
+        mapped
     }
 
-    /// `getInferenceContext`: the indices in `resolving` of the contexts whose mappers apply to the contextual type of `call`, innermost
-    /// first. tsgo applies the innermost context only. One further out maps nothing that is left by then, unless a type parameter of
-    /// its signature is in scope at its call: what is left can mention that one in its own right, so such a context is left out.
-    fn inference_context_levels(&self, file: FileId, call: ExprId) -> SmallVec<[usize; 8]> {
-        let mut levels = SmallVec::new();
-        let mut innermost = None;
-        for (i, resolving) in self.resolving.iter().enumerate().rev() {
-            let around = (resolving.file, resolving.call);
-            if innermost.is_none() && around != (file, call) {
-                innermost = Some(around);
-            }
-            if !resolving.has_type_params_in_scope || innermost == Some(around) {
-                levels.push(i);
+    /// `outerContext := getInferenceContext(node)`: the index in `resolving` of the last context pushed for something that holds `e`,
+    /// which is an argument of the call the entry is for. One context or none: an entry that infers nothing
+    /// (`pushInferenceContext(node, nil)`: `isSignatureApplicable`) has no mappers, and hides those further out.
+    fn outer_inference_context(&self, file: FileId, e: ExprId) -> Option<usize> {
+        self.resolving.iter().rposition(|r| {
+            let around = if r.call.is_some() { r.call } else { r.node };
+            r.file == file && around.is_some() && self.is_in_argument_of(file, e, around)
+        })
+    }
+
+    /// Whether `e` is in an argument of `call`, or in the attributes of the JSX element `call` (`node.Attributes()`): not in what is
+    /// called, in the tag or in a child.
+    fn is_in_argument_of(&self, file: FileId, e: ExprId, call: ExprId) -> bool {
+        let hir = self.hir(file);
+        let mut at = Parent::Expr(e);
+        loop {
+            let parent = self.parent_of_node(file, at);
+            match parent {
+                Parent::Expr(x) if x == call => {
+                    return match hir[call].kind {
+                        ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
+                            at != Parent::Expr(hir[c].callee)
+                        }
+                        ExprKind::Jsx(_) => matches!(at, Parent::Prop(_)),
+                        _ => true,
+                    };
+                }
+                Parent::None | Parent::File => return false,
+                _ => at = parent,
             }
         }
-        levels
     }
 
     /// `getContextualType` of `e` while `inferTypeArguments` checks the argument that `e` is, or is an operand of (`?:`, `||`, `??`, `&&`,
@@ -4626,7 +4639,7 @@ impl<'p> Checker<'p> {
         calls_itself: bool,
         inferred: Option<(TypeId, &Inference)>,
     ) -> MapperId {
-        let expected = self.instantiate_with_outer_return_mappers(file, call, contextual);
+        let expected = self.instantiate_with_outer_return_mapper(file, call, contextual);
         let expected = self.instantiate_with_candidate_holes(expected);
         if let Some((source, inference)) = inferred
             && source == expected
@@ -4887,15 +4900,15 @@ impl<'p> Checker<'p> {
                 let contextual = self
                     .contextual_type_for_outer_mapper(file, call, &type_params)
                     .unwrap_or(contextual);
-                // Type parameters of the calls around, which are still being worked out, are what is known of them by now.
+                // `outerMapper`: the type parameters of the call around, which is still being worked out, are what is known of them by
+                // now.
                 let mut expected = contextual;
-                let levels = self.inference_context_levels(file, call);
-                // Where nothing is left of one that nothing is known of, that comes first: `UNRESOLVED` would take what is around it along.
-                for &i in &levels {
-                    if !self.has_type_variables(expected) {
-                        break;
-                    }
-                    let so_far = self.resolving[i].so_far;
+                if let Some(outer) = self.outer_inference_context(file, call)
+                    && self.has_type_variables(expected)
+                {
+                    let so_far = self.resolving[outer].so_far;
+                    // Where nothing is left of one that nothing is known of, that comes first: `UNRESOLVED` would take what is around it
+                    // along.
                     if self
                         .p
                         .types
@@ -4905,12 +4918,6 @@ impl<'p> Checker<'p> {
                     {
                         expected = self.without_holes_that_vanish(expected, so_far, 0);
                     }
-                }
-                for &i in &levels {
-                    if !self.has_type_variables(expected) {
-                        break;
-                    }
-                    let so_far = self.resolving[i].so_far;
                     expected = self.remove_unresolved_params_from_unions(expected, so_far, 0);
                     expected = self.instantiate(expected, so_far);
                 }
@@ -4992,7 +4999,6 @@ impl<'p> Checker<'p> {
         let return_mapper = self.return_mapper_for_contexts(from_result);
         self.resolving.push(Resolving {
             is_trial: skip_sensitive,
-            has_type_params_in_scope: inference.calls_itself,
             ..Resolving::new(file, call, Some(sig), params.clone(), from_result)
         });
         let mut is_sensitive: SmallVec<[bool; 8]> = args
@@ -7945,13 +7951,20 @@ impl<'p> Checker<'p> {
             .last()
             .is_some_and(|r| r.sig == inference.sig);
         if !is_noted {
-            self.resolving.push(Resolving::new(
-                file,
-                ExprId::NONE,
-                inference.sig,
-                List::default(),
-                MapperId::IDENTITY,
-            ));
+            let node = self
+                .jsx_resolving
+                .last()
+                .map_or(ExprId::NONE, |&(_, element, _)| element);
+            self.resolving.push(Resolving {
+                node,
+                ..Resolving::new(
+                    file,
+                    ExprId::NONE,
+                    inference.sig,
+                    List::default(),
+                    MapperId::IDENTITY,
+                )
+            });
         }
         self.note_so_far(inference);
         let ty = look(self);

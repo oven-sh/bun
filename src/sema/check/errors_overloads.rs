@@ -8,6 +8,7 @@ use super::errors::Diagnostic;
 use super::explain::Related;
 use super::*;
 use crate::bind::Decl;
+use crate::util::group_by_key;
 use smallvec::SmallVec;
 
 /// Whether the parser skipped a token right before the declaration that starts at `start`. Then `previous.End() != node.Pos()`, though
@@ -120,7 +121,7 @@ impl Checker<'_> {
                 named.push((hir[f].name, i));
             }
         }
-        named.sort_unstable();
+        group_by_key(&mut named, |function| function.0);
         let mut group: Vec<usize> = Vec::new();
         for same in named.chunk_by(|a, b| a.0 == b.0) {
             group.clear();
@@ -355,21 +356,10 @@ impl Checker<'_> {
         let mut methods: Vec<(Atom, bool, usize)> = (0..members.len())
             .filter_map(|i| names[i].map(|name| (name, is_static(i), i)))
             .collect();
-        methods.sort_unstable();
-        for i in 0..members.len() {
-            let Some(name) = names[i] else { continue };
-            let key = (name, is_static(i));
-            let first = methods.partition_point(|m| (m.0, m.1) < key);
-            if methods[first].2 != i {
-                continue;
-            }
+        group_by_key(&mut methods, |method| (method.0, method.1));
+        for same in methods.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
             group.clear();
-            group.extend(
-                methods[first..]
-                    .iter()
-                    .take_while(|m| (m.0, m.1) == key)
-                    .map(|m| m.2),
-            );
+            group.extend(same.iter().map(|method| method.2));
             self.check_member_symbol(file, c, &names, &group, out);
         }
     }

@@ -1888,7 +1888,7 @@ impl Checker<'_> {
     }
 
     /// `node.Parent`, of what `parent` stands for. `None`: of a member of a type literal, whose parent is not kept.
-    fn parent_of_node(&self, file: FileId, parent: Parent) -> Parent {
+    pub(super) fn parent_of_node(&self, file: FileId, parent: Parent) -> Parent {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match parent {
             Parent::Expr(x) if x.is_none() => Parent::None,
@@ -3659,10 +3659,7 @@ impl Files {
                                 .then_some("undefined"),
                         )
                         .map(|word| (word.as_bytes(), Meant::Word(word)));
-                    let globals = files
-                        .globals
-                        .iter()
-                        .map(|(&candidate, &sym)| (candidate, sym));
+                    let globals = files.globals.iter().copied();
                     closest(files, text, globals.filter(fits).map(named).chain(words))
                 }
             };
@@ -5218,21 +5215,61 @@ impl Checker<'_> {
     pub(super) fn start_inside_parentheses(&self, file: FileId, e: ExprId) -> u32 {
         start_inside_parentheses(self.hir(file), e)
     }
+
+    /// `GetErrorRangeForNode`, of a declaration. `None`: the tree does not have it.
+    pub(super) fn error_range_of_declaration(
+        &self,
+        file: FileId,
+        decl: Decl,
+    ) -> Option<(u32, u32)> {
+        let hir = self.hir(file);
+        Some(match decl {
+            // `GetNameOfDeclaration`, of a variable declaration or a binding element.
+            Decl::Var(name) | Decl::Require(name) => {
+                (hir[name].pos, self.end_of_token_at(file, hir[name].pos))
+            }
+            Decl::ExportSpec(it) => (hir[it].start, self.end_of_export_spec(file, it)),
+            Decl::ExportStarAs(it) => match hir[it].kind {
+                StmtKind::ExportStar {
+                    star_pos,
+                    alias_pos,
+                    ..
+                } => (star_pos, self.end_of_name_at(file, alias_pos)),
+                _ => return None,
+            },
+            Decl::ModuleExports(e) | Decl::ExportsProperty(e) | Decl::Expando(e) => (
+                self.error_start_inside_parentheses(file, e),
+                self.error_end_inside_parentheses(file, e),
+            ),
+            _ => {
+                let statement = self.files().statement_of_declaration(file, decl)?;
+                self.error_range_of_stmt(file, statement)
+            }
+        })
+    }
 }
 
 impl Files {
     /// `declaration.Loc`. `None`: the tree does not have it.
     pub(crate) fn loc_of_declaration(&self, file: FileId, decl: Decl) -> Option<hir::TextRange> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let statement = match decl {
-            Decl::EnumMember(member) => return Some(hir[member].loc),
+        match decl {
+            Decl::EnumMember(member) => Some(hir[member].loc),
             Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => {
-                return match bound.pat_parent[pat.idx()] {
+                match bound.pat_parent[pat.idx()] {
                     PatParent::Param(parameter) => Some(hir[parameter].loc),
                     PatParent::Var(declaration) => Some(hir[declaration].loc),
                     _ => None,
-                };
+                }
             }
+            _ => Some(hir[self.statement_of_declaration(file, decl)?].loc),
+        }
+    }
+
+    /// The statement that `decl` is.
+    pub(crate) fn statement_of_declaration(&self, file: FileId, decl: Decl) -> Option<StmtId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let statement = match decl {
             Decl::Fn(function) => match bound.fns[function.idx()].owner {
                 FnOwner::Stmt(statement) => statement,
                 _ => return None,
@@ -5249,7 +5286,7 @@ impl Files {
             Decl::ExportExpr(statement) | Decl::UmdGlobal(statement) => statement,
             _ => return None,
         };
-        Some(hir[statement].loc)
+        statement.some()
     }
 
     /// `GetTokenPosOfNode`, of a declaration: where its first token is, decorators and modifiers included.

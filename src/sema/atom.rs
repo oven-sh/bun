@@ -2,7 +2,9 @@
 
 use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// A name. Its number is its place in a list that every parser thread adds to, so it is another in every run: atoms have no order.
+/// What is gone through goes by declaration or by text.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Atom(pub u32);
 
 impl Atom {

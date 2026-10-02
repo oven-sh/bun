@@ -1,6 +1,7 @@
 use super::member_flags::*;
 use super::*;
 use crate::atom::known;
+use crate::util::{group_by_key, number_repeated};
 
 /// `exportKind` of `declareModuleMember`
 fn export_kind(flags: SymFlags) -> SymFlags {
@@ -1253,7 +1254,10 @@ impl<'f> Binder<'f> {
                 self.b.this_properties.push((class, is_static, name, e));
             }
         }
-        self.b.this_properties.as_mut_slice().sort_unstable();
+        // By class and side. In one, what has one name is together, the names in the order they are first assigned to.
+        let properties = self.b.this_properties.as_mut_slice();
+        group_by_key(properties, |property| (property.0, property.1, property.2));
+        properties.sort_by_key(|property| (property.0, property.1));
     }
 
     fn finish(mut self) -> Bound {
@@ -1393,18 +1397,24 @@ impl<'f> Binder<'f> {
         self.bind_deferred_expando_assignments();
         self.collect_this_properties();
         self.declare_member_symbols();
-        // Tables, flat and sorted.
+        // Tables, flat.
         self.b.tables.reserve_exact(self.tables.len());
         self.b
             .entries
             .reserve_exact(self.tables.iter().map(|table| table.len()).sum());
-        for table in &self.tables {
-            let start = self.b.entries.len() as u32;
+        for (id, table) in self.tables.iter().enumerate() {
+            let start = self.b.entries.len();
             self.b
                 .entries
                 .extend(table.iter().map(|(&name, &symbol)| (name, symbol)));
-            self.b.entries[start as usize..].sort_unstable_by_key(|e| e.0);
-            self.b.tables.push((start, table.len() as u32));
+            self.b.entries[start..].sort_unstable_by_key(|e| e.1);
+            self.b.tables.push((start as u32, table.len() as u32));
+            if table.len() > Bound::SCANNED {
+                let places = (start as u32..).zip(&self.b.entries[start..]);
+                self.b
+                    .large_tables
+                    .extend(places.map(|(place, e)| ((TableId(id as u32), e.0), place)));
+            }
         }
         // Labels.
         let (mut kept, mut not_kept) = (0, 0);
@@ -4106,30 +4116,21 @@ impl<'f> Binder<'f> {
         // Nearly always every name is declared once.
         let mut keys: SmallVec<[MemberKey; 32]> = SmallVec::new();
         each(&self.b, &mut |member| keys.push(member.0));
-        keys.sort_unstable();
-        let mut repeated: SmallVec<[MemberKey; 4]> = keys
-            .windows(2)
-            .filter(|pair| pair[0] == pair[1])
-            .map(|pair| pair[0])
-            .collect();
+        let repeated = number_repeated(&keys);
         if repeated.is_empty() {
             return;
         }
-        repeated.dedup();
         // The two symbol tables, for the names that are repeated: `symbol.Flags` and `symbol.Declarations`.
         let mut table: SmallVec<[(u8, SmallVec<[MemberDeclaration; 4]>); 4]> =
             smallvec::smallvec![(0, SmallVec::new()); repeated.len()];
         let mut declared: SmallVec<[DeclaredMember; 16]> = SmallVec::new();
         each(&self.b, &mut |member| {
-            if repeated.binary_search(&member.0).is_ok() {
+            if repeated.contains_key(&member.0) {
                 declared.push(member);
             }
         });
         for (key, declaration, includes, excludes) in declared {
-            let Ok(index) = repeated.binary_search(&key) else {
-                continue;
-            };
-            let (flags, declarations) = &mut table[index];
+            let (flags, declarations) = &mut table[repeated[&key]];
             if *flags != 0 && includes & !*flags & REPLACEABLE_BY_METHOD != 0 {
                 // "A symbol already exists, so don't add this as a declaration."
                 self.b

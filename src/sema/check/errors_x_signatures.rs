@@ -23,7 +23,7 @@ use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberDeclaration, MemberOwner, Parent, SymbolId};
 use crate::resolve::ScriptTarget;
-use crate::util::FxHashSet;
+use crate::util::{FxHashSet, group_by_key};
 use smallvec::SmallVec;
 
 // ───────────────────────────── the text ─────────────────────────────
@@ -1077,7 +1077,7 @@ fn for_each_symbol(all: &[Declared], as_locals: bool, mut f: impl FnMut(&[usize]
         return;
     }
     let mut order: Vec<usize> = (0..all.len()).collect();
-    order.sort_unstable_by_key(|&i| (all[i].name, i));
+    group_by_key(&mut order, |&i| all[i].name);
     let mut group = Vec::new();
     let mut start = 0;
     while start < order.len() {

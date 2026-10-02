@@ -629,7 +629,7 @@ impl Checker<'_> {
         });
     }
 
-    /// `checkAliasSymbol`: what is imported means something that is declared here as well.
+    /// `checkAliasSymbol`: what is imported, or exported by a specifier, means something that is declared here as well.
     fn check_alias_conflicts(
         &mut self,
         file: FileId,
@@ -656,7 +656,8 @@ impl Checker<'_> {
         let is_import = |d: Decl| {
             matches!(
                 d,
-                Decl::ImportDefault(_)
+                Decl::ExportSpec(_)
+                    | Decl::ImportDefault(_)
                     | Decl::ImportNamespace(_)
                     | Decl::ImportSpec(_)
                     | Decl::ImportEquals(_)
@@ -693,11 +694,18 @@ impl Checker<'_> {
                 ImportEqualsTarget::Require(spec) => (ImportId::NONE, i, spec, None),
                 ImportEqualsTarget::Entity(_) => (ImportId::NONE, i, Atom::NONE, None),
             },
+            Decl::ExportSpec(s) => (
+                ImportId::NONE,
+                ImportEqualsId::NONE,
+                hir[hir[s].export].spec,
+                Some(hir[s].start),
+            ),
             _ => return,
         };
         let statement = hir.stmts.iter().position(|s| match s.kind {
             StmtKind::Import(x) => x == import,
             StmtKind::ImportEquals(x) => x == import_equals,
+            StmtKind::ExportNamed(x) => matches!(decl, Decl::ExportSpec(s) if hir[s].export == x),
             _ => false,
         });
         let Some(statement) = statement else { return };
@@ -716,14 +724,19 @@ impl Checker<'_> {
         };
         if is_in_place && self.flags_of_alias_target(sym).intersects(excluded) {
             let start = start.unwrap_or(hir.stmts[statement].pos);
-            out.push(Diagnostic { start, code: 2440 });
+            let code = match decl {
+                Decl::ExportSpec(_) => 2484,
+                _ => 2440,
+            };
+            out.push(Diagnostic { start, code });
             let end = match decl {
                 Decl::ImportDefault(i) => end_of_import_clause(self, file, i),
                 Decl::ImportSpec(s) => self.end_of_import_spec(file, s),
                 Decl::ImportEquals(_) => self.end_of_stmt(file, StmtId(statement as u32)),
+                Decl::ExportSpec(s) => self.end_of_export_spec(file, s),
                 _ => 0,
             };
-            self.explain_to(start, end, 2440, |c| vec![c.symbol_to_string(sym)]);
+            self.explain_to(start, end, code, |c| vec![c.symbol_to_string(sym)]);
         }
     }
 
@@ -734,10 +747,12 @@ impl Checker<'_> {
         let mut flags = SymFlags::empty();
         let mut at = sym;
         for _ in 0..32 {
-            let next = files
-                .alias_target(at)
-                .map(|t| files.canonical(t))
-                .filter(|&t| t != at);
+            let next = files.alias_target(at).map(|t| files.canonical(t));
+            // `resolveEntityName` returns what has a meaning without `resolveAlias`: `export { a }` next to an exported `a` stands for
+            // the symbol it is a declaration of.
+            if next == Some(at) {
+                return flags | files.flags(at);
+            }
             // `combineValueAndTypeSymbols`: next to an export that is no value, the value that goes by the name counts too; and it
             // alone if it is more than a value.
             if next.is_none_or(|t| !files.flags(t).intersects(SymFlags::VALUE))

@@ -1263,12 +1263,7 @@ impl<'p> EmitResolver<'_, 'p> {
             Table::ResolvedExports(symbol) if symbol != files.global_this_symbol => {
                 self.exports_of_symbol(symbol).to_vec()
             }
-            Table::ResolvedExports(_) | Table::Globals => {
-                let globals = files.globals.iter();
-                let mut globals: Vec<(Atom, Sym)> = globals.map(|(&n, &s)| (n, s)).collect();
-                globals.sort_unstable();
-                globals
-            }
+            Table::ResolvedExports(_) | Table::Globals => files.globals.to_vec(),
         }
     }
 

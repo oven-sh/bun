@@ -521,7 +521,7 @@ pub mod member_flags {
 }
 
 /// The name a member is declared under, and in which table of its container.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct MemberKey {
     pub name: Atom,
     /// `GetSymbolNameForPrivateIdentifier`: `#a` is not `"#a"`.
@@ -728,9 +728,11 @@ pub struct Redeclaration {
 pub struct Bound {
     pub symbols: Vec<Symbol>,
     pub scopes: Vec<Scope>,
-    /// Each table is a run of `entries`, sorted by name.
+    /// Each table is a run of `entries`, in the order the symbols were made in.
     pub tables: Vec<(u32, u32)>,
     pub entries: Vec<(Atom, SymbolId)>,
+    /// Where in `entries` each name of a table with more than `SCANNED` names is.
+    pub large_tables: FxHashMap<(TableId, Atom), u32>,
     pub ids: Vec<u32>,
 
     /// The file as a module. Its exports are what other files can import.
@@ -950,7 +952,7 @@ impl Bound {
                     assignments.push((f[e].pos, is_static, name, e));
                 }
             }
-            assignments.sort_unstable();
+            assignments.sort_unstable_by_key(|assignment| (assignment.0, assignment.3));
         }
         let mut assignments = assignments.into_iter().peekable();
         let mut declare_assignments_before = |pos: u32, declare: &mut dyn FnMut(DeclaredMember)| {
@@ -1346,21 +1348,19 @@ impl Bound {
         }
     }
 
+    /// A table with no more names than this is gone through to find one.
+    pub const SCANNED: usize = 8;
+
     pub fn lookup(&self, table: TableId, name: Atom) -> Option<SymbolId> {
-        if table.is_none() {
-            return None;
-        }
-        let (start, len) = self.tables[table.idx()];
-        let entries = &self.entries[start as usize..(start + len) as usize];
-        if entries.len() <= 8 {
+        let entries = self.table(table);
+        if entries.len() <= Self::SCANNED {
             return entries.iter().find(|e| e.0 == name).map(|e| e.1);
         }
-        entries
-            .binary_search_by_key(&name, |e| e.0)
-            .ok()
-            .map(|i| entries[i].1)
+        let place = *self.large_tables.get(&(table, name))?;
+        Some(self.entries[place as usize].1)
     }
 
+    /// In the order the symbols were made in.
     pub fn table(&self, table: TableId) -> &[(Atom, SymbolId)] {
         if table.is_none() {
             return &[];
@@ -1461,6 +1461,7 @@ impl Bound {
     pub fn heap_size(&self) -> usize {
         self.symbols.capacity() * std::mem::size_of::<Symbol>()
             + self.entries.capacity() * 8
+            + self.large_tables.capacity() * 13
             + self.expr_symbol.capacity() * 4
             + self.expr_parent.capacity() * 8
             + self.expr_flow.capacity() * 4

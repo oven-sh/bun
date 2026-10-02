@@ -9,6 +9,7 @@
 use super::errors::{Diagnostic, is_close};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
+use crate::util::number_repeated;
 use smallvec::SmallVec;
 
 impl Checker<'_> {
@@ -325,11 +326,8 @@ impl Checker<'_> {
                     PropKey::None => {}
                 }
             }
-            if is_all_written {
-                written.sort_unstable();
-                if written.windows(2).all(|pair| pair[0] != pair[1]) {
-                    continue;
-                }
+            if is_all_written && number_repeated(&written).is_empty() {
+                continue;
             }
             self.report_refused_members_of_object_literal(file, props, out);
             let mut seen: SmallVec<[(Atom, u8); 8]> = SmallVec::new();

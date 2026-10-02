@@ -13,7 +13,7 @@ use crate::resolve::{
     is_javascript, is_relative, join, known_extension, lib_name, parent_dir,
 };
 use crate::table::{Bases, ByNode, ByNodeKept, RawWord};
-use crate::util::{FxHashMap, FxHashSet, List, ListIter};
+use crate::util::{FxHashMap, FxHashSet, List, group_by_key};
 use crate::verify::{Place, Problem};
 use smallvec::SmallVec;
 use std::borrow::Cow;
@@ -329,6 +329,52 @@ impl Module {
     }
 }
 
+/// `ast.SymbolTable`. It is gone through in the order the names were put in, which is the same in every run.
+#[derive(Clone, Default)]
+pub struct SymbolMap {
+    entries: Vec<(Atom, Sym)>,
+    /// Where in `entries` a name is.
+    places: FxHashMap<Atom, u32>,
+}
+
+impl SymbolMap {
+    pub fn get(&self, name: &Atom) -> Option<&Sym> {
+        let place = *self.places.get(name)?;
+        Some(&self.entries[place as usize].1)
+    }
+
+    pub fn contains_key(&self, name: &Atom) -> bool {
+        self.places.contains_key(name)
+    }
+
+    pub fn insert(&mut self, name: Atom, symbol: Sym) {
+        match self.places.get(&name).copied() {
+            Some(place) => self.entries[place as usize].1 = symbol,
+            None => {
+                self.places.insert(name, self.entries.len() as u32);
+                self.entries.push((name, symbol));
+            }
+        }
+    }
+}
+
+impl std::ops::Deref for SymbolMap {
+    type Target = [(Atom, Sym)];
+    fn deref(&self) -> &[(Atom, Sym)] {
+        &self.entries
+    }
+}
+
+impl FromIterator<(Atom, Sym)> for SymbolMap {
+    fn from_iter<I: IntoIterator<Item = (Atom, Sym)>>(symbols: I) -> SymbolMap {
+        let mut table = SymbolMap::default();
+        for (name, symbol) in symbols {
+            table.insert(name, symbol);
+        }
+        table
+    }
+}
+
 /// A table `NameResolver.Resolve` looks into.
 #[derive(Copy, Clone)]
 pub enum SymbolTable {
@@ -345,7 +391,7 @@ pub struct Files {
     pub modules: Vec<ModuleCell>,
     pub by_path: FxHashMap<String, FileId>,
 
-    pub globals: FxHashMap<Atom, Sym>,
+    pub globals: SymbolMap,
     /// `globalThisSymbol`: a module no file declares, which is in `globals` and whose `Exports` they are. A symbol of the first file.
     pub global_this_symbol: Sym,
     /// `undefinedSymbol`: a property no file declares. It is in `globals` unless a file declares the name there.
@@ -370,9 +416,7 @@ pub struct Files {
     /// While symbols are put together: `name_means_instead`.
     stand_ins: Vec<(Sym, SymbolId)>,
     /// `symbol.Exports` of a transient symbol.
-    merged_exports: FxHashMap<Sym, FxHashMap<Atom, Sym>>,
-    /// The tables of `merged_exports` sorted by name, once symbols are put together.
-    sorted_exports: FxHashMap<Sym, Box<[(Atom, Sym)]>>,
+    merged_exports: FxHashMap<Sym, SymbolMap>,
     /// `symbol.Declarations` of the symbols of members that are declared in more than one part of a class or an interface.
     merged_members: Vec<Box<[(FileId, MemberDeclaration)]>>,
     /// Which of `merged_members`, by the first declaration in each part.
@@ -441,10 +485,10 @@ pub struct ExportCollision {
 /// `ModuleSymbolLinks`
 #[derive(Default)]
 pub struct ModuleSymbolLinks {
-    /// `resolvedExports`, sorted by name.
-    pub resolved_exports: Box<[(Atom, Sym)]>,
-    /// `typeOnlyExportStarMap`, sorted by name: the `export type *`.
-    pub type_only_export_star_map: Box<[(Atom, (FileId, StmtId))]>,
+    /// `resolvedExports`
+    pub resolved_exports: SymbolMap,
+    /// `typeOnlyExportStarMap`: the `export type *`.
+    pub type_only_export_star_map: FxHashMap<Atom, (FileId, StmtId)>,
     /// What `getExportsOfModuleWorker` reports of the `export *` of the module itself.
     pub export_collisions: Box<[ExportCollision]>,
 }
@@ -479,7 +523,7 @@ struct Exports<'a> {
     file: FileId,
     /// As the binder has them.
     own: std::slice::Iter<'a, (Atom, SymbolId)>,
-    merged: ListIter<'a, (Atom, Sym)>,
+    merged: std::slice::Iter<'a, (Atom, Sym)>,
 }
 
 impl Iterator for Exports<'_> {
@@ -493,7 +537,12 @@ impl Iterator for Exports<'_> {
                 Some((name, Sym { file, id }))
             }
             Some(&(name, id)) => Some((name, self.files.sym(self.file, id))),
-            None => self.merged.next(),
+            None => match self.merged.next() {
+                Some(&(name, symbol)) if self.files.is_merged => {
+                    Some((name, self.files.canonical(symbol)))
+                }
+                merged => merged.copied(),
+            },
         }
     }
     #[inline]
@@ -1931,7 +1980,7 @@ impl Files {
             options,
             modules,
             by_path,
-            globals: FxHashMap::default(),
+            globals: SymbolMap::default(),
             global_this_symbol: Sym {
                 file: FileId(0),
                 id: SymbolId::NONE,
@@ -1956,7 +2005,6 @@ impl Files {
             every_part: FxHashMap::default(),
             stand_ins: Vec::new(),
             merged_exports: FxHashMap::default(),
-            sorted_exports: FxHashMap::default(),
             merged_members: Vec::new(),
             merged_member: FxHashMap::default(),
             refused_merges: Vec::new(),
@@ -2649,10 +2697,15 @@ impl Files {
             // The first to claim a name has it. What a later file declares under the name of a module is added to the module.
             if !augmentations {
                 for (name, symbol) in self.modules[file].bound.umd_globals.clone() {
-                    self.globals.entry(name).or_insert(Sym {
-                        file: id,
-                        id: symbol,
-                    });
+                    if !self.globals.contains_key(&name) {
+                        self.globals.insert(
+                            name,
+                            Sym {
+                                file: id,
+                                id: symbol,
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -2746,10 +2799,8 @@ impl Files {
                 .for_each(stands_in);
         }
         // `addUndefinedToGlobalsOrErrorOnRedeclaration`
-        if !self.modules.is_empty() {
-            self.globals
-                .entry(known::undefined)
-                .or_insert(self.undefined_symbol);
+        if !self.modules.is_empty() && !self.globals.contains_key(&known::undefined) {
+            self.globals.insert(known::undefined, self.undefined_symbol);
         }
         self.merged_exports
             .insert(self.global_this_symbol, self.globals.clone());
@@ -2775,18 +2826,6 @@ impl Files {
         for &whole in self.merged_parts.keys() {
             self.memo.whole.insert(whole, Some(whole));
         }
-        self.sorted_exports = self
-            .merged_exports
-            .iter()
-            .map(|(&sym, table)| {
-                let mut all: Vec<(Atom, Sym)> = table
-                    .iter()
-                    .map(|(&n, &s)| (n, self.canonical(s)))
-                    .collect();
-                all.sort_unstable();
-                (sym, all.into_boxed_slice())
-            })
-            .collect();
         self.merge_members();
         self.is_merged = true;
     }
@@ -2834,7 +2873,7 @@ impl Files {
                     );
                 }
             }
-            declared.sort_by_key(|member| (member.0, member.1));
+            group_by_key(&mut declared, |member| member.0);
             for of_name in declared.chunk_by(|a, b| a.0 == b.0) {
                 let (mut flags, mut declarations, mut firsts) = (0, Vec::new(), Vec::new());
                 for of_part in of_name.chunk_by(|a, b| a.1 == b.1) {
@@ -2915,7 +2954,7 @@ impl Files {
     }
 
     /// `target.Exports`, of a transient symbol, while symbols are put together.
-    fn exports_of_transient_symbol(&mut self, target: Sym) -> &mut FxHashMap<Atom, Sym> {
+    fn exports_of_transient_symbol(&mut self, target: Sym) -> &mut SymbolMap {
         if target == self.global_this_symbol {
             &mut self.globals
         } else {
@@ -3130,11 +3169,11 @@ impl Files {
         result
     }
 
-    /// `symbol.Exports`, sorted by name.
+    /// `symbol.Exports`
     fn exports_in_table(&self, sym: Sym) -> Vec<(Atom, Sym)> {
         let sym = self.holder_of_exports(sym);
-        let mut all: Vec<(Atom, Sym)> = match self.merged_exports.get(&sym) {
-            Some(table) => table.iter().map(|(&n, &s)| (n, s)).collect(),
+        match self.merged_exports.get(&sym) {
+            Some(table) => table.to_vec(),
             None => {
                 let (file, bound) = (sym.file, self.bound(sym.file));
                 bound
@@ -3143,9 +3182,7 @@ impl Files {
                     .map(|&(n, id)| (n, Sym { file, id }))
                     .collect()
             }
-        };
-        all.sort_unstable();
-        all
+        }
     }
 
     /// `mergeSymbol`. The answer is what the table that has `target` has from then on.
@@ -3402,7 +3439,7 @@ impl Files {
         })
     }
 
-    /// The names `sym` exports itself, sorted by name.
+    /// The names `sym` exports itself.
     pub fn exports(&self, sym: Sym) -> Vec<(Atom, Sym)> {
         self.each_export(sym).collect()
     }
@@ -3411,8 +3448,9 @@ impl Files {
     pub fn each_export(&self, sym: Sym) -> impl ExactSizeIterator<Item = (Atom, Sym)> + '_ {
         let sym = self.holder_of_exports(sym);
         let symbol = self.symbol(sym);
+        // `None`: what the binder says it does.
         let merged = if symbol.flags.contains(SymFlags::MERGED) {
-            self.merged_exports_of(sym)
+            self.merged_exports.get(&sym)
         } else {
             None
         };
@@ -3424,19 +3462,8 @@ impl Files {
             files: self,
             file: sym.file,
             own: own.iter(),
-            merged: merged.unwrap_or_default().into_iter(),
+            merged: merged.map_or(&[][..], |table| &table[..]).iter(),
         }
-    }
-
-    /// What `sym`, which is `MERGED`, exports, sorted by name. `None`: what the binder says it does.
-    fn merged_exports_of(&self, sym: Sym) -> Option<List<'_, (Atom, Sym)>> {
-        if let Some(sorted) = self.sorted_exports.get(&sym) {
-            return Some(List::Kept(sorted));
-        }
-        let table = self.merged_exports.get(&sym)?;
-        let mut all: Vec<(Atom, Sym)> = table.iter().map(|(&n, &s)| (n, s)).collect();
-        all.sort_unstable();
-        Some(List::Own(all))
     }
 
     pub fn parts(&self, sym: Sym) -> List<'_, Sym> {
@@ -4059,19 +4086,19 @@ impl Files {
                 return None;
             }
         }
-        let find = |exports: &[(Atom, Sym)]| {
-            let found = exports.binary_search_by_key(&name, |export| export.0);
-            found.ok().map(|i| exports[i].1)
-        };
         // While symbols are put together nothing is kept.
         if self.is_merged {
-            find(self.exports_of_module(module))
+            self.module_links(module)
+                .resolved_exports
+                .get(&name)
+                .copied()
         } else {
-            find(&self.exports_of_module_worker(module).resolved_exports)
+            let links = self.exports_of_module_worker(module);
+            links.resolved_exports.get(&name).copied()
         }
     }
 
-    /// `getExportsOfModule`, sorted by name.
+    /// `getExportsOfModule`
     pub fn exports_of_module(&self, module: Sym) -> &[(Atom, Sym)] {
         &self.module_links(module).resolved_exports
     }
@@ -4090,37 +4117,29 @@ impl Files {
     fn exports_of_module_worker(&self, module: Sym) -> ModuleSymbolLinks {
         let mut visit = ExportsVisit::default();
         // A module defined by an `export =` consists of one export that needs to be resolved.
-        let mut exports = self
+        let mut resolved_exports = self
             .visit_exports(Some(self.module_value(module)), None, false, &mut visit)
             .unwrap_or_default();
         // What it exports besides counts if it is a type or a namespace and no value.
         if self.export(module, known::export_equals).is_some() {
             for (name, symbol) in self.each_export(module) {
-                if name == known::export_equals || exports.contains_key(&name) {
+                if name == known::export_equals || resolved_exports.contains_key(&name) {
                     continue;
                 }
                 let flags = self.symbol_flags(symbol);
                 if flags.intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
                     && !flags.intersects(SymFlags::VALUE)
                 {
-                    exports.insert(name, symbol);
+                    resolved_exports.insert(name, symbol);
                 }
             }
         }
-        let mut resolved_exports: Vec<(Atom, Sym)> = exports.into_iter().collect();
-        resolved_exports.sort_unstable();
-        let mut type_only_export_star_map: Vec<(Atom, (FileId, StmtId))> = visit
-            .type_only_export_star_map
-            .into_iter()
-            .filter(|star| !visit.non_type_only_names.contains(&star.0))
-            .collect();
-        type_only_export_star_map.sort_unstable();
         visit
-            .export_collisions
-            .sort_unstable_by_key(|collision| (collision.duplicate, collision.name));
+            .type_only_export_star_map
+            .retain(|name, _| !visit.non_type_only_names.contains(name));
         ModuleSymbolLinks {
-            resolved_exports: resolved_exports.into(),
-            type_only_export_star_map: type_only_export_star_map.into(),
+            resolved_exports,
+            type_only_export_star_map: visit.type_only_export_star_map,
             export_collisions: visit.export_collisions.into(),
         }
     }
@@ -4133,7 +4152,7 @@ impl Files {
         export_star: Option<(FileId, StmtId)>,
         is_type_only: bool,
         visit: &mut ExportsVisit,
-    ) -> Option<FxHashMap<Atom, Sym>> {
+    ) -> Option<SymbolMap> {
         let symbol = symbol?;
         // Before it is asked whether it has been here: a plain `export *` takes back what an `export type *` of the same module said.
         if !is_type_only {
@@ -4144,8 +4163,8 @@ impl Files {
             return None;
         }
         visit.visited_symbols.push(symbol);
-        let mut symbols: FxHashMap<Atom, Sym> = self.each_export(symbol).collect();
-        let mut nested_symbols: FxHashMap<Atom, Sym> = FxHashMap::default();
+        let mut symbols: SymbolMap = self.each_export(symbol).collect();
+        let mut nested_symbols = SymbolMap::default();
         // `ExportCollisionTable`: who exported the name first.
         let mut lookup_table: FxHashMap<Atom, (FileId, StmtId)> = FxHashMap::default();
         for node in self.export_stars_of(symbol) {
@@ -4167,7 +4186,7 @@ impl Files {
                 continue;
             };
             // `extendExportSymbols`
-            for (name, source) in exported {
+            for &(name, source) in exported.iter() {
                 if name == known::default {
                     continue;
                 }
@@ -4190,8 +4209,10 @@ impl Files {
                 }
             }
         }
-        for (name, nested) in nested_symbols {
-            symbols.entry(name).or_insert(nested);
+        for &(name, nested) in nested_symbols.iter() {
+            if !symbols.contains_key(&name) {
+                symbols.insert(name, nested);
+            }
         }
         if let Some(star) = export_star
             && matches!(
@@ -4202,7 +4223,7 @@ impl Files {
                 }
             )
         {
-            let names = symbols.keys().map(|&name| (name, star));
+            let names = symbols.iter().map(|export| (export.0, star));
             visit.type_only_export_star_map.extend(names);
         }
         Some(symbols)
@@ -4261,8 +4282,7 @@ impl Files {
             return None;
         }
         let map = &self.module_links(module).type_only_export_star_map;
-        let found = map.binary_search_by_key(&name, |star| star.0);
-        found.ok().map(|i| map[i].1)
+        map.get(&name).copied()
     }
 
     pub fn is_type_only_star_export(&self, module: Sym, name: Atom) -> bool {

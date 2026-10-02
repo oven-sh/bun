@@ -1,5 +1,5 @@
 //! One name declared twice in ways that do not go together: 2300 2451 2528 2567 2649 2699. And what goes together in some ways only:
-//! 2323 2433 2434 2484 2813 2814.
+//! 2323 2433 2434 2813 2814.
 //!
 //! In TypeScript 7.0.2 this is spread over `declareSymbolEx` and `declareModuleMember` of binder.go, which refuse a declaration that
 //! what is in the table excludes, `mergeSymbol` of checker.go, which does the same between files,
@@ -8,7 +8,10 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{ClassOwner, Decl, PatParent, ScopeId, ScopeKind, SymbolId};
+use crate::bind::{
+    ClassOwner, Decl, JsDeclarationKind, PatParent, SymbolId, assignment_declaration_kind,
+};
+use crate::util::number_repeated;
 use smallvec::SmallVec;
 
 /// A member as it is declared: its name, whether it is static, what it makes of the name, what that excludes, where it is, and 1
@@ -110,8 +113,7 @@ impl Checker<'_> {
         self.check_duplicate_umd_globals(file, out);
         self.check_duplicate_members(file, out);
         self.check_static_property_name_conflicts(file, out);
-        self.check_redeclared_exports(file, out);
-        self.check_redeclared_namespace_exports(file, out);
+        self.check_external_module_exports(file, out);
         self.report_redeclarations(file, out);
         let hir = self.hir(file);
         let lists = hir
@@ -477,10 +479,7 @@ impl Checker<'_> {
     fn check_declarations_of(&mut self, file: FileId, sym: Sym, out: &mut Vec<Diagnostic>) {
         let files = self.files();
         let parts = files.every_part(sym);
-        // What is exported as the default: `check_redeclared_exports`.
-        if parts.len() == 1 && files.symbol(sym).decls.len() < 2
-            || files.symbol(sym).name == known::default
-        {
+        if parts.len() == 1 && files.symbol(sym).decls.len() < 2 {
             return;
         }
         // What the files so far have come to.
@@ -716,15 +715,18 @@ impl Checker<'_> {
         if has_class && decls.iter().any(|d| d.2 && matches!(d.1, Decl::Fn(_))) {
             let classes: Vec<(FileId, u32)> = decls
                 .iter()
-                .filter_map(|&(of, decl, _)| match decl {
-                    Decl::Class(c) => Some((of, self.hir(of)[c].name_pos)),
-                    _ => None,
+                .filter(|d| matches!(d.1, Decl::Class(_)))
+                .filter_map(|&(of, decl, _)| {
+                    Some((of, self.error_range_of_declaration(of, decl)?.0))
                 })
                 .collect();
             for &(of, decl, _) in decls {
                 if of != file {
                     continue;
                 }
+                let Some((start, _)) = self.error_range_of_declaration(of, decl) else {
+                    continue;
+                };
                 match decl {
                     Decl::Class(c) => {
                         let class = &self.hir(of)[c];
@@ -734,10 +736,9 @@ impl Checker<'_> {
                         } else {
                             class.name
                         };
-                        self.report_class_with_function(class.name_pos, 2813, name, &classes, out);
+                        self.report_class_with_function(start, 2813, name, &classes, out);
                     }
-                    Decl::Fn(f) => {
-                        let start = self.hir(of)[f].name_pos;
+                    Decl::Fn(_) => {
                         self.report_class_with_function(start, 2814, Atom::NONE, &classes, out);
                     }
                     _ => {}
@@ -856,22 +857,17 @@ impl Checker<'_> {
                     declared.push((at, of, name, includes, excludes, member.pos));
                 }
             }
-            let mut names: Vec<Atom> = declared.iter().map(|d| d.2).collect();
-            names.sort_unstable();
-            // What is declared once has nothing to clash with. Sorted.
-            let mut repeated: Vec<Atom> = Vec::new();
-            for same in names.chunk_by(|a, b| a == b) {
-                if same.len() > 1 {
-                    repeated.push(same[0]);
-                }
-            }
+            let names: Vec<Atom> = declared.iter().map(|d| d.2).collect();
+            // What is declared once has nothing to clash with.
+            let repeated = number_repeated(&names);
             // One for each of `repeated`: what the files so far have come to.
-            let mut entries: Vec<Entry> = repeated.iter().map(|_| Entry::default()).collect();
+            let none = || Vec::from_iter((0..repeated.len()).map(|_| Entry::default()));
+            let mut entries: Vec<Entry> = none();
             // What one file declares is one symbol to the binder, with one table of members.
             for of_one_file in declared.chunk_by(|a, b| a.1 == b.1) {
-                let mut own: Vec<Entry> = repeated.iter().map(|_| Entry::default()).collect();
+                let mut own: Vec<Entry> = none();
                 for &(at, of, name, includes, excludes, pos) in of_one_file {
-                    let Ok(index) = repeated.binary_search(&name) else {
+                    let Some(&index) = repeated.get(&name) else {
                         continue;
                     };
                     let entry = &mut own[index];
@@ -1025,384 +1021,72 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkExternalModuleExports`: 2323, a module exports a name once, overloads, interfaces, namespaces and enums aside.
-    /// And 2484 of `checkAliasSymbol`: `export { a }` next to an exported `a`.
-    fn check_redeclared_exports(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        if !self.files().module(file).is_module() {
-            return;
+    /// `checkExternalModuleExports`: 2323. "It is a Syntax Error if the ExportedNames of ModuleItemList contains any duplicate entries.
+    /// (TS Exceptions: namespaces, function overloads, enums, and interfaces)". tsgo reports wherever a declaration is. Here a file
+    /// asks about each module it has a declaration of, and keeps what is said about itself.
+    fn check_external_module_exports(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+        let (files, bound) = (self.files(), self.bound(file));
+        let own = files.module(file).is_module();
+        let own = own.then(|| files.file_symbol(file));
+        let ambient = bound.ambient_modules.iter();
+        let ambient = ambient.map(|module| files.sym(file, module.1));
+        let mut modules: SmallVec<[Sym; 4]> = SmallVec::new();
+        for module in own.into_iter().chain(ambient) {
+            if !modules.contains(&module) && self.are_module_exports_checked(module) {
+                modules.push(module);
+            }
         }
-        /// What an error on a declaration is reported on.
-        #[derive(Copy, Clone)]
-        enum Node {
-            /// Its name or its first token.
-            Token,
-            Statement(StmtId),
-            Specifier(ExportSpecId),
-            /// `* as ns`: where `ns` is.
-            NamespaceExport(u32),
-        }
-        struct Declared {
-            name: Atom,
-            /// Where an error on the declaration starts: at its name. An export specifier, `* as ns` and `export default e` are
-            /// reported at their first token.
-            start: u32,
-            node: Node,
-            includes: u32,
-            excludes: u32,
-            is_overload: bool,
-            /// It is only declared.
-            is_ambient: bool,
-            /// `None` for `export default e`, `export { a }` and `export * as a`.
-            decl: Option<Decl>,
-            /// The specifier of an `export { a }` without `from`.
-            specifier: Option<ExportSpecId>,
-        }
-        let hir = self.hir(file);
-        let mut declared: Vec<Declared> = Vec::new();
-        // What is declared without being exported. Only an `export { a }` without `from` looks there.
-        let mut locals: Vec<(Atom, u32)> = Vec::new();
-        let needs_locals = hir.exports.iter().any(|x| x.spec.is_none());
-        let mut names = Vec::new();
-        for s in hir.ids(hir.body) {
-            let mut add = |c: &Self,
-                           name: Atom,
-                           flags: Flags,
-                           decl: Decl,
-                           is_overload: bool,
-                           unnamed: bool| {
-                if !needs_locals && !flags.contains(Flags::EXPORT) {
-                    return;
-                }
-                let Some((includes, excludes, start)) = c.declaration_flags(file, decl) else {
-                    return;
-                };
-                if !flags.contains(Flags::EXPORT) {
-                    locals.push((name, includes));
-                    return;
-                }
-                declared.push(Declared {
-                    name: if flags.contains(Flags::DEFAULT) {
-                        known::default
-                    } else {
-                        name
-                    },
-                    start: if unnamed { hir[s].pos } else { start },
-                    node: Node::Token,
-                    includes,
-                    excludes,
-                    is_overload,
-                    is_ambient: flags.contains(Flags::AMBIENT) || hir.kind == FileKind::Declaration,
-                    decl: Some(decl),
-                    specifier: None,
-                });
+        let exports = modules.iter();
+        for &(id, symbol) in exports.flat_map(|&module| files.exports_of_module(module)) {
+            let (flags, declarations) = (files.flags(symbol), files.decls_of(symbol));
+            if declarations.len() < 2 || flags.intersects(SymFlags::NAMESPACE | SymFlags::ENUM) {
+                continue;
+            }
+            // `isNotOverload`
+            let is_not_overload = |&&(of, decl): &&(FileId, Decl)| match decl {
+                Decl::Fn(f) => !matches!(self.hir(of)[f].body, FnBody::None),
+                _ => true,
             };
-            match hir[s].kind {
-                StmtKind::Var(decls) => {
-                    for d in decls.iter() {
-                        if !needs_locals && !hir[d].flags.contains(Flags::EXPORT) {
-                            continue;
-                        }
-                        names.clear();
-                        names_bound_by(hir, hir[d].pat, &mut names);
-                        for &(name, pat) in &names {
-                            add(self, name, hir[d].flags, Decl::Var(pat), false, false);
-                        }
-                    }
-                }
-                StmtKind::Fn(f) => add(
-                    self,
-                    hir[f].name,
-                    hir[f].flags,
-                    Decl::Fn(f),
-                    matches!(hir[f].body, FnBody::None),
-                    hir[f].name.is_none(),
-                ),
-                StmtKind::Class(c) => add(
-                    self,
-                    hir[c].name,
-                    hir[c].flags,
-                    Decl::Class(c),
-                    false,
-                    hir[c].name.is_none(),
-                ),
-                StmtKind::Interface(i) => add(
-                    self,
-                    hir[i].name,
-                    hir[i].flags,
-                    Decl::Interface(i),
-                    false,
-                    false,
-                ),
-                StmtKind::TypeAlias(a) => add(
-                    self,
-                    hir[a].name,
-                    hir[a].flags,
-                    Decl::Alias(a),
-                    false,
-                    false,
-                ),
-                StmtKind::Enum(e) => {
-                    add(self, hir[e].name, hir[e].flags, Decl::Enum(e), false, false)
-                }
-                StmtKind::Module(m) => {
-                    if let ModuleName::Ident(name) = hir[m].name {
-                        add(self, name, hir[m].flags, Decl::Module(m), false, false);
-                    }
-                }
-                StmtKind::ExportDefault(e) => declared.push(Declared {
-                    name: known::default,
-                    start: hir[s].pos,
-                    node: Node::Statement(s),
-                    includes: if matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::Dot { .. }) {
-                        ALIAS
-                    } else {
-                        PROPERTY
-                    },
-                    excludes: u32::MAX,
-                    is_overload: false,
-                    is_ambient: false,
-                    decl: None,
-                    specifier: None,
-                }),
-                StmtKind::ExportNamed(x) => {
-                    for i in hir[x].items.iter() {
-                        let from_here = hir[x].spec.is_none();
-                        declared.push(Declared {
-                            name: hir[i].exported,
-                            start: hir[i].start,
-                            node: Node::Specifier(i),
-                            includes: ALIAS,
-                            excludes: ALIAS,
-                            is_overload: false,
-                            is_ambient: false,
-                            decl: None,
-                            specifier: from_here.then_some(i),
-                        });
-                    }
-                }
-                // `bindExportDeclaration`: the declaration of `export * as ns` is the `* as ns` node.
-                StmtKind::ExportStar {
-                    alias,
-                    star_pos,
-                    alias_pos,
-                    ..
-                } if alias.is_some() => declared.push(Declared {
-                    name: alias,
-                    start: star_pos,
-                    node: Node::NamespaceExport(alias_pos),
-                    includes: ALIAS,
-                    excludes: ALIAS,
-                    is_overload: false,
-                    is_ambient: false,
-                    decl: None,
-                    specifier: None,
-                }),
-                _ => {}
-            }
-        }
-        if declared.len() < 2 {
-            return;
-        }
-        // `bindEachStatementFunctionsFirst`: the functions come before everything else.
-        let mut by_name: Vec<(Atom, bool, usize)> = declared
-            .iter()
-            .enumerate()
-            .map(|(i, d)| (d.name, d.includes != FUNCTION, i))
-            .collect();
-        by_name.sort_unstable();
-        // The names that are declared more than once, in the order they first come.
-        let mut groups: Vec<&[(Atom, bool, usize)]> = by_name
-            .chunk_by(|a, b| a.0 == b.0)
-            .filter(|group| group.len() > 1)
-            .collect();
-        groups.sort_unstable_by_key(|group| (group[0].1, group[0].2));
-        for group in groups {
-            let name = group[0].0;
-            // What is refused is not in the table.
-            let mut flags = 0;
-            let mut accepted: Vec<&Declared> = Vec::new();
-            for d in group.iter().map(|&(_, _, i)| &declared[i]) {
-                if flags & d.excludes == 0 {
-                    flags |= d.includes;
-                    accepted.push(d);
-                }
-            }
-            if accepted.len() < 2 {
-                continue;
-            }
-            // `checkFunctionOrConstructorSymbol` of the exported symbol: a function merges with a class only if the class is ambient.
-            if flags & FUNCTION != 0
-                && accepted
-                    .iter()
-                    .any(|d| d.includes == CLASS && !d.is_ambient)
-            {
-                let classes: Vec<(FileId, u32)> = accepted
-                    .iter()
-                    .filter(|d| d.includes == CLASS)
-                    .map(|d| (file, d.start))
-                    .collect();
-                for d in &accepted {
-                    match d.includes {
-                        CLASS => {
-                            self.report_class_with_function(d.start, 2813, name, &classes, out)
-                        }
-                        FUNCTION => self.report_class_with_function(
-                            d.start,
-                            2814,
-                            Atom::NONE,
-                            &classes,
-                            out,
-                        ),
-                        _ => {}
-                    }
-                }
-            }
-            // The defaults are one symbol, whatever each is called here.
-            if name == known::default {
-                let merged: Vec<Declaration> = accepted
-                    .iter()
-                    .filter_map(|d| d.decl.map(|decl| (file, decl, true)))
-                    .collect();
-                self.check_merged_members(file, &merged, out);
-            }
-            for d in &accepted {
-                let Some(spec) = d.specifier else { continue };
-                // The name is looked up among what is not exported first, and that is all it stands for if it is there.
-                let local = hir[spec].local;
-                let own = locals
-                    .iter()
-                    .filter(|l| l.0 == local)
-                    .fold(0, |all, l| all | l.1);
-                const NAMESPACE: u32 = VALUE_MODULE | NAMESPACE_MODULE | ENUM;
-                let (is_value, is_type, is_namespace) = if own != 0 {
-                    (own & VALUE != 0, own & TYPE != 0, own & NAMESPACE != 0)
-                } else {
-                    let all =
-                        SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE | SymFlags::ALIAS;
-                    let Some(target) = self
-                        .files()
-                        .resolve_name(file, ScopeId(0), local, all)
-                        .and_then(|t| self.files().resolve_alias_if_needed(t))
-                    else {
-                        continue;
-                    };
-                    let target = self.files().flags(target);
-                    (
-                        target.intersects(SymFlags::VALUE),
-                        target.intersects(SymFlags::TYPE),
-                        target.intersects(SymFlags::NAMESPACE),
-                    )
-                };
-                if flags & VALUE != 0 && is_value
-                    || flags & TYPE != 0 && is_type
-                    || flags & NAMESPACE != 0 && is_namespace
-                {
-                    out.push(Diagnostic {
-                        start: d.start,
-                        code: 2484,
-                    });
-                    let end = self.end_of_export_spec(file, spec);
-                    self.note(d.start, end, 2484, vec![self.atom_text(name)]);
-                }
-            }
-            if flags & (VALUE_MODULE | NAMESPACE_MODULE | ENUM) != 0 {
-                continue;
-            }
-            let count = accepted
-                .iter()
-                .filter(|d| !d.is_overload && d.includes != INTERFACE)
+            let counted = declarations.iter().filter(is_not_overload);
+            let count = counted
+                .filter(|d| !matches!(d.1, Decl::Interface(_)))
                 .count();
-            if count < 2 || flags & TYPE_ALIAS != 0 && count <= 2 {
+            // "it is legal to merge type alias with other values"
+            if count < 2 || flags.contains(SymFlags::TYPE_ALIAS) && count == 2 {
                 continue;
             }
-            out.extend(
-                accepted
-                    .iter()
-                    .filter(|d| !d.is_overload)
-                    .map(|d| Diagnostic {
-                        start: d.start,
-                        code: 2323,
-                    }),
-            );
-            for d in accepted.iter().filter(|d| !d.is_overload) {
-                let end = match d.node {
-                    Node::Token => 0,
-                    Node::Statement(s) => self.end_of_stmt(file, s),
-                    Node::Specifier(spec) => self.end_of_export_spec(file, spec),
-                    Node::NamespaceExport(name_start) => self.end_of_name_at(file, name_start),
-                };
-                self.note(d.start, end, 2323, vec![self.atom_text(name)]);
+            // `exports.a = 1` as often as one likes, but not next to `Object.defineProperty(exports, "a", ..)`.
+            let is_exports_property = |&(of, decl): &(FileId, Decl)| {
+                matches!(decl, Decl::ExportsProperty(e) if matches!(
+                    assignment_declaration_kind(self.hir(of), e),
+                    JsDeclarationKind::ExportsProperty(_)
+                ))
+            };
+            if declarations.iter().all(is_exports_property) {
+                continue;
+            }
+            for &(of, decl) in declarations.iter().filter(is_not_overload) {
+                if of == file
+                    && let Some((start, end)) = self.error_range_of_declaration(file, decl)
+                {
+                    out.push(Diagnostic { start, code: 2323 });
+                    self.note(start, end, 2323, vec![self.atom_text(id)]);
+                }
             }
         }
     }
 
-    /// 2484 of `checkAliasSymbol`, for `export { a }` in the body of a namespace or of an ambient module.
-    fn check_redeclared_namespace_exports(&self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        // `declareSymbolEx`: a second specifier for the name is refused, and is a symbol of its own.
-        let mut declared: Vec<(SymbolId, Atom)> = Vec::new();
-        for (x, export) in hir.exports.iter().enumerate() {
-            let scope = bound.export_scope[x];
-            if export.spec.is_some() || scope.is_none() {
-                continue;
-            }
-            let container = bound.scopes[scope.idx()].symbol;
-            if container.is_none()
-                || !matches!(bound.scopes[scope.idx()].kind, ScopeKind::Module(_))
-            {
-                continue;
-            }
-            for spec in export.items.iter() {
-                let exported = hir[spec].exported;
-                if declared.contains(&(container, exported)) {
-                    continue;
-                }
-                declared.push((container, exported));
-                // `export { "a" }` stands for nothing.
-                if matches!(
-                    hir.text.get(hir[spec].local_pos as usize),
-                    Some(b'"' | b'\'')
-                ) {
-                    continue;
-                }
-                // The specifier's own symbol, with what the binder merged into it. What other files add to the name goes to what the
-                // alias stands for (`mergeSymbol`).
-                let exports = bound.symbols[container.idx()].exports;
-                let Some(&(_, id)) = bound
-                    .table(exports)
-                    .iter()
-                    .find(|&&(name, _)| name == exported)
-                else {
-                    continue;
-                };
-                let symbol = Sym { file, id };
-                let own = bound.symbols[id.idx()].flags;
-                let mut excluded = SymFlags::empty();
-                for meaning in [SymFlags::VALUE, SymFlags::TYPE, SymFlags::NAMESPACE] {
-                    if own.intersects(meaning) {
-                        excluded |= meaning;
-                    }
-                }
-                if excluded.is_empty() {
-                    continue;
-                }
-                let all = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE | SymFlags::ALIAS;
-                let Some(found) = files.resolve_name(file, scope, hir[spec].local, all) else {
-                    continue;
-                };
-                let target = if found == symbol {
-                    Some(found)
-                } else {
-                    files.resolve_alias_if_needed(found)
-                };
-                if target.is_some_and(|target| files.flags(target).intersects(excluded)) {
-                    let start = hir[spec].start;
-                    out.push(Diagnostic { start, code: 2484 });
-                    let end = self.end_of_export_spec(file, spec);
-                    self.note(start, end, 2484, vec![self.atom_text(exported)]);
-                }
-            }
-        }
+    /// Whether `checkExternalModuleExports` is called for `module`: by `checkSourceFile`, for the module a file is, or by
+    /// `checkExportAssignment`, for the module it is written in.
+    fn are_module_exports_checked(&self, module: Sym) -> bool {
+        let files = self.files();
+        let assigned = [known::export_equals, known::default].into_iter();
+        let assigned = assigned.filter_map(|name| files.export(module, name));
+        std::iter::once(module).chain(assigned).any(|symbol| {
+            files.decls_of(symbol).iter().any(|&(of, decl)| {
+                matches!(decl, Decl::File | Decl::ExportExpr(_)) && self.reports_semantic_errors(of)
+            })
+        })
     }
 
     /// Of the members of each class, interface and type literal.
@@ -1484,43 +1168,40 @@ impl Checker<'_> {
 
     /// `declareSymbolEx`, `lateBindMember`, `combineSymbolTables`, as far as they report: 2300 at what the symbol of a name refuses
     /// and at all that symbol has by then. `late_bound`: where those of `declared` are whose names the checker works out. The
-    /// answer: the names that are declared more than once, sorted, and what became of each. `None`: there is none.
+    /// answer: the names that are declared more than once, each with its place in the list of what became of them. `None`: there
+    /// is none.
     fn report_refused_members(
         &mut self,
         file: FileId,
         declared: &[DeclaredName],
         late_bound: &[u32],
         out: &mut Vec<Diagnostic>,
-    ) -> Option<(Vec<(Atom, bool)>, Vec<MembersOfName>)> {
+    ) -> Option<(FxHashMap<(Atom, bool), usize>, Vec<MembersOfName>)> {
         let mut keys: SmallVec<[(Atom, bool); 16]> = declared.iter().map(|d| (d.0, d.1)).collect();
         // `bindClassLikeDeclaration`: every class has a static `prototype`, a property nobody declared.
         const PROTOTYPE: (Atom, bool) = (known::prototype, true);
         if keys.contains(&PROTOTYPE) {
             keys.push(PROTOTYPE);
         }
-        keys.sort_unstable();
-        // What is declared once has nothing to clash with. Sorted.
-        let mut repeated: Vec<(Atom, bool)> = Vec::new();
-        for same in keys.chunk_by(|a, b| a == b) {
-            if same.len() > 1 {
-                repeated.push(same[0]);
-            }
-        }
+        // What is declared once has nothing to clash with.
+        let repeated = number_repeated(&keys);
         if repeated.is_empty() {
             return None;
         }
         // One for each of `repeated`.
-        let mut entries: Vec<MembersOfName> = repeated
-            .iter()
-            .map(|&key| MembersOfName {
-                flags: if key == PROTOTYPE { PROPERTY } else { 0 },
+        let mut entries: Vec<MembersOfName> = (0..repeated.len())
+            .map(|_| MembersOfName {
+                flags: 0,
                 accepted: Vec::new(),
                 all: Vec::new(),
                 state: 0,
             })
             .collect();
+        if let Some(&at) = repeated.get(&PROTOTYPE) {
+            entries[at].flags = PROPERTY;
+        }
         for &(name, is_static, includes, excludes, pos, _) in declared {
-            let Ok(at) = repeated.binary_search(&(name, is_static)) else {
+            let Some(&at) = repeated.get(&(name, is_static)) else {
                 continue;
             };
             let entry = &mut entries[at];
@@ -1682,7 +1363,7 @@ impl Checker<'_> {
             if kind == 0 {
                 continue;
             }
-            let Ok(at) = repeated.binary_search(&(name, is_static)) else {
+            let Some(&at) = repeated.get(&(name, is_static)) else {
                 continue;
             };
             let entry = &mut entries[at];

@@ -2453,9 +2453,8 @@ impl<'p> Checker<'p> {
         loop {
             match at {
                 Parent::Expr(x) if x == ancestor => return true,
-                Parent::Expr(x) if x.is_none() => return false,
-                Parent::None | Parent::File | Parent::Module(_) => return false,
-                _ => at = self.parent_of(file, at),
+                Parent::None | Parent::File => return false,
+                _ => at = self.parent_of_node(file, at),
             }
         }
     }

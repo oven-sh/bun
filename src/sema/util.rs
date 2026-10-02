@@ -73,6 +73,37 @@ pub fn fx_hash<T: std::hash::Hash + ?Sized>(value: &T) -> u64 {
     h.finish()
 }
 
+/// Puts the items that have one key next to each other: the keys in the order each first comes in, the items of a key in the order
+/// they come in.
+pub fn group_by_key<T, K: Eq + std::hash::Hash>(items: &mut [T], key: impl Fn(&T) -> K) {
+    let mut groups: FxHashMap<K, usize> = FxHashMap::default();
+    for item in items.iter() {
+        let next = groups.len();
+        groups.entry(key(item)).or_insert(next);
+    }
+    items.sort_by_key(|item| groups[&key(item)]);
+}
+
+/// A number for each key that comes more than once: 0, 1, .. in the order each first comes in.
+pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<K, usize> {
+    let mut numbers: FxHashMap<K, usize> = FxHashMap::default();
+    // Nearly always every key comes once.
+    if keys.len() <= 32 && (1..keys.len()).all(|i| !keys[..i].contains(&keys[i])) {
+        return numbers;
+    }
+    let mut times: FxHashMap<K, usize> = FxHashMap::default();
+    for &key in keys {
+        *times.entry(key).or_default() += 1;
+    }
+    for &key in keys {
+        if times[&key] > 1 {
+            let next = numbers.len();
+            numbers.entry(key).or_insert(next);
+        }
+    }
+    numbers
+}
+
 /// A list that is kept for good somewhere, or was made for whoever asked.
 #[derive(Clone, Debug)]
 pub enum List<'p, T> {

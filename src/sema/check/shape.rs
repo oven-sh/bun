@@ -3,6 +3,7 @@
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
 use crate::table::Handle;
+use crate::util::group_by_key;
 use smallvec::{SmallVec, smallvec};
 
 /// Where the properties of a list are, by name. It is for more than `FEW` of them: fewer are gone through one by one.
@@ -799,7 +800,6 @@ impl<'p> Checker<'p> {
                     }
                     if let [(file, func)] = decls[..] {
                         shape = c.with_expandos(shape, file, c.bound(file).fn_symbol[func.idx()]);
-                        c.get_named_members(&mut shape.props, |_| true, &[]);
                     }
                     shape
                 });
@@ -2568,13 +2568,7 @@ impl<'p> Checker<'p> {
             }
             // What `var` and `function` declare globally. `let`, `const` and `class` do not become properties.
             Origin::GlobalThis => {
-                let mut globals: Vec<(Atom, Sym)> = self
-                    .files()
-                    .globals
-                    .iter()
-                    .map(|(&name, &sym)| (name, sym))
-                    .collect();
-                globals.sort_unstable();
+                let globals = self.files().globals.to_vec();
                 let global_this = self.files().global_this_symbol;
                 for (name, sym) in globals {
                     // Whether it is a value is asked of what it stands for; how it is scoped, of the name itself.
@@ -2633,15 +2627,15 @@ impl<'p> Checker<'p> {
         all
     }
 
-    /// `getExportsOfSymbol`, of what `bindDeferredExpandoAssignment` declares among the exports of `owner`: (name, declaration), by
-    /// name. `lateBindMember`: `f[key] = value` declares the property that the type of `key` names, together with the
-    /// `f.name = value` of that name. A key whose type names nothing declares nothing. `checkObjectLiteral` takes the exports as
-    /// the binder left them.
+    /// `getExportsOfSymbol`, of what `bindDeferredExpandoAssignment` declares among the exports of `owner`: (name, declaration),
+    /// those of one name together. `lateBindMember`: `f[key] = value` declares the property that the type of `key` names, together
+    /// with the `f.name = value` of that name. A key whose type names nothing declares nothing. `checkObjectLiteral` takes the
+    /// exports as the binder left them.
     pub(super) fn expandos_of(&mut self, file: FileId, owner: SymbolId) -> Vec<(Atom, ExprId)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let of = &bound.symbols[owner.idx()];
         let mut all = Vec::new();
-        let mut is_sorted = true;
+        let mut is_grouped = true;
         for &(name, symbol) in bound.table(of.exports) {
             for &decl in &bound.symbols[symbol.idx()].decls {
                 let Decl::Expando(e) = decl else {
@@ -2655,12 +2649,13 @@ impl<'p> Checker<'p> {
                     && let Some(name) = self.member_name(file, PropKey::Computed(index))
                 {
                     all.push((name, e));
-                    is_sorted = false;
+                    is_grouped = false;
                 }
             }
         }
-        if !is_sorted {
-            all.sort_unstable();
+        if !is_grouped {
+            all.sort_unstable_by_key(|assignment| assignment.1);
+            group_by_key(&mut all, |assignment| assignment.0);
         }
         all
     }
@@ -2680,7 +2675,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `shape`, which has no properties, with those that assignments declare for `owner`. `NONE`: there are none.
+    /// `shape`, which has no properties, with those that assignments declare for `owner`, in the order of `getNamedMembers`.
+    /// `NONE`: there are none.
     pub(super) fn with_expandos(&mut self, shape: Shape, file: FileId, owner: SymbolId) -> Shape {
         if owner.is_none() {
             return shape;
@@ -2689,7 +2685,11 @@ impl<'p> Checker<'p> {
             shape,
             ..Default::default()
         };
+        let before = b.shape.props.len();
         self.add_expandos(&mut b, file, owner);
+        if b.shape.props.len() > before {
+            self.get_named_members(&mut b.shape.props, |_| true, &[]);
+        }
         b.shape
     }
 

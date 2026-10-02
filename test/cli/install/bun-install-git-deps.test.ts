@@ -849,6 +849,58 @@ test.concurrent(
   30_000,
 );
 
+// A patch is applied to a git package right after its checkout when the
+// repository was cloned earlier in the same process, here for the `c` that
+// `bun install <url>` adds. The package to patch was looked up by the name of
+// the dependency, which an alias does not share with it: `panic: Package not found`.
+test.concurrent(
+  "patches a git package under an alias after another dependency cloned its repository",
+  async () => {
+    using dir = tempDir("git-dep-alias-patch", {
+      "project/patches/b.patch": `diff --git a/index.js b/index.js
+index 0000000000000000000000000000000000000000..1111111111111111111111111111111111111111 100644
+--- a/index.js
++++ b/index.js
+@@ -1 +1 @@
+-module.exports = "b";
++module.exports = "b-patched";
+`,
+    });
+    const root = String(dir);
+    const project = join(root, "project");
+    const bare = await makeSharedRepo(
+      root,
+      ["b", "c"].map(name => ({ name, branch: name })),
+    );
+    const repoUrl = `git+${pathToFileURL(bare)}`;
+    writeFileSync(
+      join(project, "package.json"),
+      JSON.stringify({
+        name: "project",
+        version: "1.0.0",
+        dependencies: { "b-alias": `${repoUrl}#b` },
+        patchedDependencies: { [`b@${repoUrl}#${branchCommits(bare).b}`]: "patches/b.patch" },
+      }),
+    );
+
+    // fresh install to produce a complete lockfile
+    {
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), {});
+      expect(stderr).toContain("Saved lockfile");
+      expect(await installedVersions(project, ["b-alias"])).toEqual({ "b-alias": "b-patched" });
+      expect(exitCode).toBe(0);
+    }
+
+    // a fresh machine: keep bun.lock, drop node_modules + cache, and add `c`
+    rmSync(join(project, "node_modules"), { recursive: true });
+    const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, `${repoUrl}#c`);
+    expect(stderr).toContain("Saved lockfile");
+    expect(await installedVersions(project, ["b-alias", "c"])).toEqual({ "b-alias": "b-patched", c: "c" });
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
 // issue #35420 bug 3: `git+file://` dependencies never cloned at all — the
 // clone task recognized neither an https nor an ssh URL and finished without
 // running git, leaving a poisoned repo handle behind.

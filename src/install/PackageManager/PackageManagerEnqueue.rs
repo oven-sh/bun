@@ -320,7 +320,7 @@ pub fn enqueue_git_for_checkout(
             alias,
             &resolution,
             resolved,
-            patch_name_and_version_hash,
+            patch_name_and_version_hash.map(|hash| (package_id, hash)),
         );
         this.enqueue_git_task(task);
     } else {
@@ -2044,16 +2044,18 @@ pub fn enqueue_git_checkout(
     name: &[u8],
     resolution: &Resolution,
     resolved: &[u8],
-    // if patched then we need to do apply step after network task is done
-    patch_name_and_version_hash: Option<u64>,
+    // if patched then we need to do apply step after network task is done:
+    // the package to patch and its name-and-version hash
+    patch: Option<(PackageID, u64)>,
 ) -> NonNull<Task::Task<'static>> {
     // The patched-dependency entry can be missing (or its hash not yet
     // computed) when install state went stale — e.g. the patch was removed
     // from package.json, leaving the hash only in
     // `patched_dependencies_to_remove`. Install the package unpatched instead
     // of panicking.
-    let patch = patch_name_and_version_hash.and_then(|h| {
+    let patch = patch.and_then(|(pkg_id, h)| {
         Some((
+            pkg_id,
             h,
             this.lockfile
                 .patched_dependencies
@@ -2092,18 +2094,7 @@ pub fn enqueue_git_checkout(
                     .expect("unreachable"),
                 }),
             },
-            apply_patch_task: if let Some((h, patch_hash)) = patch {
-                let dep_name_hash =
-                    this.lockfile.buffers.dependencies[dependency_id as usize].name_hash;
-                let pkg_id = match this
-                    .lockfile
-                    .package_index
-                    .get(&dep_name_hash)
-                    .unwrap_or_else(|| panic!("Package not found"))
-                {
-                    PackageIndexEntry::Id(p) => *p,
-                    PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
-                };
+            apply_patch_task: if let Some((pkg_id, h, patch_hash)) = patch {
                 let mut pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
                 pt.callback.apply_mut().task_id = Some(task_id);
                 Some(pt)

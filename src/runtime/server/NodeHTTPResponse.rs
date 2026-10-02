@@ -1320,6 +1320,8 @@ impl NodeHTTPResponse {
             return Ok(JSValue::UNDEFINED);
         };
         handle_ended_if_necessary(raw_response.state(), global_object)?;
+        // The tail of an earlier write() that is held by reference goes out first.
+        self.spill_pending_pinned_write(global_object);
         raw_response.write_informational(string_or_buffer.slice());
         Ok(JSValue::UNDEFINED)
     }

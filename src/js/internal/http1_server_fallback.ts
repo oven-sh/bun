@@ -257,10 +257,16 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     writeContinue() {
       writeToSocket("HTTP/1.1 100 Continue\r\n\r\n");
     },
-    writeInformational(chunk, encoding) {
-      // _writeRaw hands the fully-rendered 1xx block here (writeEarlyHints /
-      // writeProcessing / writeInformation all route through it).
-      if (!socket.writableEnded) socket.write(chunk, encoding);
+    writeInformational(chunk, encoding, callback) {
+      // _writeRaw hands a fully-rendered 1xx block here (writeEarlyHints / writeProcessing /
+      // writeInformation all route through it), and the data of _send(). Like Node's
+      // _writeRaw(), the socket takes the callback and says when it is full.
+      // Like the native handle, a response that ended takes no more bytes.
+      if (this.ended || socket.writableEnded) {
+        if (typeof callback === "function") process.nextTick(callback);
+        return true;
+      }
+      return socket.write(chunk, encoding, callback);
     },
     writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs) {
       const originalStatusCode = statusCode;

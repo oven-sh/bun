@@ -1,0 +1,15 @@
+base 1.4.3 bc7a813b10b6ef8accc00c931b9a501331ac8c5c (209628 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (209628 sources)
+3144420 records compared, 111240 differ, in 7772 sources
+!!     1180  A>A          unexplained  
+              t.ts.deco        "class C { @d x: readonly A[] extends B ? C : D; }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+!!    23760  R>A          unexplained  
+              t.ts.plain       "class C implements +1 {}"
+                base ["e",[["Unexpected +",1,20],["Expected \";\" but found \"{\"",1,23]]]
+                next ["o","class C {\n}\n"]
+!!    86300  R>R          unexplained  
+              t.ts.plain       "class C { @d m(): keyof<A> { return x; } }"
+                base ["e",[["Expected \"(\" but found \"{\"",1,28],["Unexpected return",1,30],["Expected \";\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+                next ["e",[["Expected \"(\" but found \"{\"",1,28],["Expected \")\" but found \"x\"",1,37],["Unexpected }",1,42]]]

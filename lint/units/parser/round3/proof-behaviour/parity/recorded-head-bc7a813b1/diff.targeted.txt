@@ -1,0 +1,24 @@
+base 1.4.3 bc7a813b10b6ef8accc00c931b9a501331ac8c5c (3952 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (3952 sources)
+59280 records compared, 2423 differ, in 180 sources
+!!       55  A>A          unexplained  
+              t.ts.plain       "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.exp         "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+!!     1715  R>A          unexplained  
+              t.ts.plain       "type as = 1;"
+                base ["e",[["Unexpected =",1,9]]]
+                next ["o",""]
+              t.ts.exp         "type as = 1;"
+                base ["e",[["Unexpected =",1,9]]]
+                next ["o",""]
+!!      653  R>R          unexplained  
+              t.ts.exp         "class C { accessor static a: A }"
+                base ["e",[["Expected \";\" but found \"static\"",1,20]]]
+                next ["e",[["Expected \";\" but found \"a\"",1,27],["Expected identifier but found \":\"",1,28]]]
+              t.ts.deco        "class C { accessor static a: A }"
+                base ["e",[["Expected \";\" but found \"static\"",1,20]]]
+                next ["e",[["Expected \";\" but found \"a\"",1,27],["Expected identifier but found \":\"",1,28]]]

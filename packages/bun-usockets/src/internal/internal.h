@@ -357,6 +357,8 @@ struct us_socket_t {
   /* A hangup that leaves bytes unsent closes the socket even while it is paused (loop.c defers it otherwise).
    * For an owner whose pause can wait for those bytes to drain: node:http's pipelining. */
   unsigned char hangup_closes_unsent : 1;
+  /* connect() itself returned 0 (an AF_UNIX connect): the connection was established before the first poll event. */
+  unsigned char connect_returned_zero : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */

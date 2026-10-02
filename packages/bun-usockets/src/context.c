@@ -350,6 +350,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
+    s->connect_returned_zero = 0;
     s->next = 0;
     s->prev = 0;
     s->connect_state = NULL;
@@ -531,6 +532,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
+    s->connect_returned_zero = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
 }
@@ -657,7 +659,8 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
 struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *server_path, size_t pathlen, int options, int socket_ext_size) {
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, options);
+    int connected = 0;
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, options, &connected);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }
@@ -674,6 +677,7 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
 
     struct us_socket_t *connect_socket = (struct us_socket_t *) p;
     us_internal_init_connect_socket(connect_socket, group, kind, options);
+    connect_socket->connect_returned_zero = connected;
 
     if (ssl_ctx) {
         us_internal_ssl_attach(connect_socket, ssl_ctx, 1, NULL, NULL);

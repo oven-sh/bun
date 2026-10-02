@@ -2,6 +2,7 @@
 // Submodules — these are the install-to-disk primitives the Installer state
 // machine drives.
 // ───────────────────────────────────────────────────────────────────────────
+#[cfg(target_os = "macos")]
 #[path = "isolated_install/FileCloner.rs"]
 pub(crate) mod file_cloner;
 #[path = "isolated_install/FileCopier.rs"]

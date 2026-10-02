@@ -173,13 +173,7 @@ impl MySQLRequestQueue {
                     debug!("run failed");
                     // R-2: `on_error` takes `&self`.
                     conn_ref.on_error(Some(req.get()), err);
-                    if offset == 0
-                        && (queue_ref.requests.get().front())
-                            .is_some_and(|f| core::ptr::eq(f.as_ptr(), req.get()))
-                    {
-                        queue_ref.requests.with_mut(|q| q.pop_front());
-                    }
-                    offset += 1;
+                    // `on_error` completed the request: the branch above retires it.
                     continue;
                 }
                 if req.is_being_prepared() {
@@ -269,7 +263,7 @@ impl MySQLRequestQueue {
         self.requests.get().front().map(RefPtr::this_ptr)
     }
 
-    pub(crate) fn clean(&mut self, reason: Option<JSValue>, queries_array: JSValue) {
+    pub(crate) fn clean(&self, reason: Option<JSValue>, queries_array: JSValue) {
         // reject()/rejectWithJSValue() run JS which can synchronously call .close()
         // (or otherwise fail the connection) and re-enter clean(). Swap the queue
         // into a local first so the re-entrant call sees an empty queue instead of

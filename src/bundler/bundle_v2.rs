@@ -1479,7 +1479,6 @@ pub mod bv2_impl {
             safe fn __bun_jsc_generate_cached_bytecode(
                 format: crate::options_impl::Format,
                 source: &[u8],
-                source_encoding: bun_core::strings::EncodingNonAscii,
                 source_provider_url: &bun_core::String,
                 depth: u32,
                 optimize: bool,
@@ -1594,7 +1593,6 @@ pub mod bv2_impl {
 
         /// Bytecode generation entry point for the linker: marks the calling
         /// thread as bundler-for-bytecode-cache, initializes JSC, and generates.
-        /// `source` is the chunk as written to disk, i.e. UTF-8.
         #[inline]
         pub(crate) fn generate_cached_bytecode(
             format: crate::options_impl::Format,
@@ -1612,7 +1610,6 @@ pub mod bv2_impl {
             __bun_jsc_generate_cached_bytecode(
                 format,
                 source,
-                bun_core::strings::EncodingNonAscii::Utf8,
                 source_provider_url,
                 depth,
                 optimize,

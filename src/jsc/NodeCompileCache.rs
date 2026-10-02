@@ -911,15 +911,14 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
                 .spawn(move || {
                     for job in rx {
                         let url = BunString::clone_utf8(&job.url);
-                        let result = crate::cached_bytecode::__bun_jsc_generate_cached_bytecode(
+                        // The module loader hands the transpiler's output to JSC as Latin-1.
+                        let source = BunString::clone_latin1(&job.code);
+                        let result = crate::cached_bytecode::generate_cached_bytecode_for_string(
                             job.format,
-                            &job.code,
-                            // The module loader hands the printer's output to JSC as Latin-1.
-                            bun_core::strings::EncodingNonAscii::Latin1,
+                            &source,
                             &url,
                             u32::MAX,
                             true,
-                            None,
                         );
                         let _ = job.resp.send(result);
                     }

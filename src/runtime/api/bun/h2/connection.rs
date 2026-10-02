@@ -256,9 +256,7 @@ pub(crate) trait Sink {
     fn on_frame_counters(&self, _received: u64, _sent: u64) {}
     /// `last_proc_stream_id` advanced. Store-only, like on_frame_counters.
     fn on_last_proc_stream_id(&self, _stream_id: u32) {}
-    /// The Last-Stream-ID for a GOAWAY that the engine is about to write. The embedder lowers
-    /// `wanted` to the id of an earlier GOAWAY of this session (§6.8) and records the result.
-    /// Store-only, like on_frame_counters.
+    /// §6.8: the id for the engine's next GOAWAY, `wanted` or the lower id of an earlier GOAWAY.
     fn clamp_goaway_last_stream_id(&self, wanted: u32) -> u32 {
         wanted
     }
@@ -364,9 +362,7 @@ pub(crate) struct Connection {
     preface_received: usize,
     /// Highest stream id in either direction, for the §5.1 idle checks; never sent in a GOAWAY.
     pub last_stream_id: u32,
-    /// Highest peer-initiated id that counts as processed, as nghttp2's last_proc_stream_id: what
-    /// a GOAWAY carries (§6.8). It is not the highest id that the peer used: a stream that is
-    /// refused or promised after a GOAWAY of ours does not raise it.
+    /// nghttp2's last_proc_stream_id: the highest peer stream that counts as processed (§6.8).
     last_proc_stream_id: u32,
     pub going_away: bool,
 }
@@ -1137,9 +1133,7 @@ impl Connection {
             }
             let processed = match disposition {
                 BlockDisposition::Deliver | BlockDisposition::StreamClosed => true,
-                // node refuses for memory in a callback that runs after nghttp2 set
-                // last_proc_stream_id, so the stream counts. It does not once a GOAWAY of ours
-                // told the peer that no higher id is processed (§6.8).
+                // node counts a stream refused for memory, but not after a GOAWAY of ours (§6.8).
                 BlockDisposition::Refused => !sink.goaway_sent(),
             };
             // A client's "new" HEADERS is the response to its own request: not a peer stream.

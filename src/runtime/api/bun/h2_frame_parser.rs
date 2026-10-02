@@ -1127,8 +1127,7 @@ pub(crate) struct H2FrameParser {
     last_stream_id: Cell<u32>,
     /// Copy of `Connection::last_proc_stream_id` (GOAWAY last-stream-id, state.lastProcStreamID).
     last_proc_stream_id: Cell<u32>,
-    /// Last-Stream-ID of the last GOAWAY this session wrote, `MAX_STREAM_ID` before the first one
-    /// (nghttp2's local_last_stream_id).
+    /// nghttp2's local_last_stream_id: the id of the last GOAWAY written, else `MAX_STREAM_ID`.
     sent_goaway_last_stream_id: Cell<u32>,
     is_server: Cell<bool>,
     /// A frame callback left an exception pending in this batch (`Sink::should_stop`).
@@ -2191,17 +2190,14 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    /// The Last-Stream-ID for the GOAWAY that is about to be written: `wanted`, lowered to the id
-    /// of an earlier GOAWAY (§6.8: the id must not increase). Every GOAWAY writer takes its id
-    /// from here.
+    /// §6.8: the id must not increase, so every GOAWAY writer takes its id from here.
     fn next_goaway_last_stream_id(&self, wanted: u32) -> u32 {
         let id = wanted.min(self.sent_goaway_last_stream_id.get());
         self.sent_goaway_last_stream_id.set(id);
         id
     }
 
-    /// `last_stream_id`: `None` names the last peer stream this session processed (§6.8). Only
-    /// `session.goaway(code, lastStreamID)` chooses an id of its own.
+    /// `last_stream_id`: `None` names the last processed peer stream (§6.8).
     pub(crate) fn send_go_away(
         &self,
         triggering_stream_id: u32,
@@ -4743,8 +4739,7 @@ impl H2FrameParser {
                 // peer that every in-flight stream is safe to retry.
                 if id > 0 {
                     let id = u32::try_from(id).expect("int cast");
-                    // nghttp2_submit_goaway refuses an id that only this side can open, and node
-                    // ignores that error: no GOAWAY is sent.
+                    // node sends nothing for an id that only this side can open.
                     if id.is_multiple_of(2) == this.is_server.get() {
                         return Ok(JSValue::UNDEFINED);
                     }

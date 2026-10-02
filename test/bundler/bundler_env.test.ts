@@ -168,8 +168,6 @@ describe("bundler/cli", () => {
 // few assignments that write through to the native env map, replacing the
 // stored value in place) while a build is in flight must not change, or free
 // out from under, what the build inlines.
-// Each test spawns a child that runs several builds. Under ASAN that takes
-// a few seconds, so the four tests share a wider budget than the default.
 describe.concurrent("env is copied when the build is scheduled", () => {
   const atCall = "http://proxy-when-the-build-was-scheduled.example:1111/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const duringBuild = "http://proxy-assigned-while-bundling.example:2222/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -188,13 +186,11 @@ describe.concurrent("env is copied when the build is scheduled", () => {
     };
   `;
 
-  test.each(["inline", "HTTPS_*"] as const)(
-    "Bun.build({ env: %j })",
-    async env => {
-      using dir = tempDir("bun-build-env-copy", {
-        "entry.ts": "export {};",
-        "plugin.ts": pluginSource("/entry\\.ts$/"),
-        "build-fixture.ts": /* ts */ `
+  test.each(["inline", "HTTPS_*"] as const)("Bun.build({ env: %j })", async env => {
+    using dir = tempDir("bun-build-env-copy", {
+      "entry.ts": "export {};",
+      "plugin.ts": pluginSource("/entry\\.ts$/"),
+      "build-fixture.ts": /* ts */ `
         import plugin from "./plugin.ts";
         process.env.HTTPS_PROXY = ${JSON.stringify(atCall)};
         const result = await Bun.build({
@@ -204,24 +200,22 @@ describe.concurrent("env is copied when the build is scheduled", () => {
         });
         process.stdout.write(await result.outputs[0].text());
       `,
-      });
+    });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "build-fixture.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build-fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout).toContain(`console.log(${JSON.stringify(atCall)})`);
-      expect(stdout).not.toContain(duringBuild);
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-    },
-    15_000,
-  );
+    expect(stdout).toContain(`console.log(${JSON.stringify(atCall)})`);
+    expect(stdout).not.toContain(duringBuild);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 
   // Bun.serve's HTML routes (without HMR) are built through the same bundler
   // thread, with env behavior and plugins coming from bunfig.
@@ -262,7 +256,7 @@ describe.concurrent("env is copied when the build is scheduled", () => {
     expect(stdout).not.toContain(duringBuild);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-  }, 15_000);
+  });
 
   // Macros run in a VM that a bundler thread creates the first time a macro
   // runs on it and then reuses for every later build. It must not keep reading
@@ -275,7 +269,9 @@ describe.concurrent("env is copied when the build is scheduled", () => {
     const env: Record<string, string> = { ...bunEnv, UV_THREADPOOL_SIZE: "2" };
     // The first builds read a key set at process start. The later builds read
     // a proxy variable (the only process.env writes that reach the native env)
-    // assigned right before that build is scheduled, after the VMs exist.
+    // assigned right before that build is scheduled, after the VMs exist. A
+    // VM's process.env only has the keys that existed when the VM was created,
+    // so the proxy variables start with a placeholder value.
     const keys = ["MACRO_ENV_0", "MACRO_ENV_1", "HTTPS_PROXY", "HTTP_PROXY"];
     const files: Record<string, string> = {
       "macro.ts": /* ts */ `export function envValue(name: string) { return process.env[name]; }`,
@@ -292,7 +288,7 @@ describe.concurrent("env is copied when the build is scheduled", () => {
     for (let i = 0; i < builds; i++) {
       // Each build reads a key no earlier build has read, so the lookup goes
       // to the VM's env instead of an already materialized process.env entry.
-      if (i < 2) env[keys[i]] = `value-of-build-${i}`;
+      env[keys[i]] = i < 2 ? `value-of-build-${i}` : `http://placeholder-for-build-${i}.example:1/`;
       files[`entry${i}.ts`] = /* ts */ `
         import { envValue } from "./macro.ts" with { type: "macro" };
         console.log(envValue(${JSON.stringify(keys[i])}));
@@ -314,5 +310,5 @@ describe.concurrent("env is copied when the build is scheduled", () => {
     );
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-  }, 15_000);
+  });
 });

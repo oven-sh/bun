@@ -5,6 +5,21 @@ import { release } from "node:os";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
+  test.if(isWindows)(
+    "Windows pipe stdio accepts later writes after end and pipeline",
+    async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "process-stdio-windows-reuse-fixture.cjs")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+    },
+    30000,
+  );
+
   test("process.stdin", () => {
     expect(process.stdin).toBeDefined();
     expect(process.stdin.isTTY).toBe(isatty(0) ? true : undefined);

@@ -223,7 +223,9 @@ impl<T: RefCounted> RefCount<T> {
         assert!(self.raw_count.get() == 0);
     }
 
-    fn assert_single_threaded(&self) {
+    /// Debug builds: panics unless the calling thread owns this count.
+    #[inline]
+    pub fn assert_single_threaded(&self) {
         self.thread.lock_or_assert();
     }
 

@@ -1064,9 +1064,7 @@ it("prints an actionable error for a lockfile version newer than this build supp
   expect(await exited).toBe(0);
 });
 
-// Without --silent the parse errors are printed and dropped on the "Ignoring
-// lockfile" path. They must be dropped when nothing prints them too, or they
-// fail the install that goes on without the lockfile.
+// The parse errors of an ignored lockfile are dropped even when nothing prints them.
 it.concurrent("--silent ignores a bun.lock that fails to parse and writes a new one", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   await Promise.all([
@@ -1090,6 +1088,35 @@ it.concurrent("--silent ignores a bun.lock that fails to parse and writes a new 
     await write(join(packageDir, "bun.lock"), "{ this is not json");
   }
 });
+
+// An error from the environment fails the install at every log level, before the lockfile is touched.
+for (const args of [[], ["--silent"], ["--lockfile-only", "--silent"]]) {
+  it.concurrent(`bun install ${args.join(" ")} fails on an invalid BUN_CONFIG_MAX_HTTP_REQUESTS`, async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "bad-env", dependencies: { "no-deps": "1.0.0" } })),
+      write(join(packageDir, "bun.lock"), "{ this is not json"),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: packageDir,
+      env: { ...env, BUN_CONFIG_MAX_HTTP_REQUESTS: "abc" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (args.includes("--silent")) {
+      expect(err).toBe("");
+    } else {
+      expect(err).toContain('BUN_CONFIG_MAX_HTTP_REQUESTS value "abc" is not a valid integer');
+    }
+    expect(out).not.toContain("Saved");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe("{ this is not json");
+    expect(existsSync(join(packageDir, "node_modules"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+}
 
 async function installWithHandEditedOverrides(overrides: Record<string, unknown>) {
   const { packageDir, packageJson } = await registry.createTestDir();

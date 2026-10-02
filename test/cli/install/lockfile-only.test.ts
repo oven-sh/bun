@@ -338,10 +338,7 @@ describe("--lockfile-only with remove and update", () => {
   });
 });
 
-// An error logged while resolving, or while the lockfile is cleaned, fails a
-// full install after the packages are linked. --lockfile-only returned before
-// that check, so it saved bun.lock and exited 0. An unresolved regular
-// dependency is not such a case: it already fails through verify_resolutions.
+// A peer edge and a cleaning error are not caught by verify_resolutions.
 describe.concurrent("--lockfile-only fails on a logged error", () => {
   async function packManifest(tarball: string, manifest: object) {
     using work = tempDir("pack-manifest", { "package/package.json": JSON.stringify(manifest) });

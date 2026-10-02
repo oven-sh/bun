@@ -110,17 +110,18 @@ describe.skipIf(!supported)("compile.aot", () => {
       expect(result.stdout).not.toBe("");
     });
 
-    for (const [label, options] of [
-      ["AoT", ""],
-      ["AoT, validated", "validateAOTInferredTypes=1,validateGraphAtEachPhase=1"],
-      ["AoT, multiple stub copies", "numberOfAOTStubCopiesForTesting=3"],
-      ["AoT, forced veneers", "forceAOTVeneers=1"],
-      ["AoT, small function-number limit", "maxAOTFunctionNumberInTypesForTesting=3,validateAOTInferredTypes=1"],
-    ]) {
+    for (const [label, options, env] of [
+      ["AoT", "", {}],
+      ["AoT, validated", "validateAOTInferredTypes=1,validateGraphAtEachPhase=1", {}],
+      ["AoT, multiple stub copies", "numberOfAOTStubCopiesForTesting=3", {}],
+      ["AoT, forced veneers", "forceAOTVeneers=1", {}],
+      ["AoT, small function-number limit", "maxAOTFunctionNumberInTypesForTesting=3,validateAOTInferredTypes=1", {}],
+      ["AoT, without data stubs", "", { BUN_JSC_useAOTDataStubs: "0" }],
+    ] as const) {
       it(`${name}: ${label}`, async () => {
         const [expected, actual] = await Promise.all([
           reference.promise,
-          run(name, options ? { BUN_AOT_OPTIONS: options } : {}),
+          run(name, { ...env, ...(options ? { BUN_AOT_OPTIONS: options } : {}) }),
         ]);
         expect(actual.stderr).toContain("[aot] image: ");
         expect(actual.stderr).not.toContain("[aot] not using");

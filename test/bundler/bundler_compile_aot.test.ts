@@ -1304,3 +1304,91 @@ describe.skipIf(!supported)("--compile-aot optimizations", () => {
     );
   });
 });
+
+describe.skipIf(!supported)("--compile-aot with a type table", () => {
+  const root = join(import.meta.dir, "compile-aot-typed");
+  const typed = [
+    "useTypeTags=1",
+    "useAOTTypedFields=1",
+    `aotTypeTablePath=${join(root, "types.bin")}`,
+    `aotOverriddenMethodsPath=${join(root, "overridden.txt")}`,
+  ].join(",");
+
+  async function buildAndRun(options: string, env: Record<string, string>) {
+    using dir = tempDir("compile-aot-typed", {});
+    const path = join(String(dir), "remarks.txt");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--compile-aot", "src/main.ts", "--outfile", join(String(dir), "out")],
+      env: {
+        ...bunEnv,
+        ...env,
+        BUN_SOUND_TYPES_TAGS: join(root, "tags.bin"),
+        BUN_SOUND_TYPES_ORACLE_ROOT: root,
+        BUN_AOT_OVERRIDDEN_METHODS: join(root, "overridden.txt"),
+        BUN_AOT_OPTIONS: [typed, `aotRemarksPath=${path}`, options].filter(Boolean).join(","),
+      },
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+    await using proc = Bun.spawn({
+      cmd: [join(String(dir), "out")],
+      env: { ...bunEnv, ...env, BUN_AOT_VERBOSE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("[aot] image: ");
+    expect(stderr).not.toContain("[aot] not using");
+    const remarks = new Map<string, string[]>();
+    for (const line of (await Bun.file(path).text()).split("\n")) {
+      const [name, remark] = line.split("\t");
+      if (remark) remarks.set(name, [...(remarks.get(name) ?? []), remark]);
+    }
+    return { stdout, exitCode, remarks };
+  }
+
+  const cases: [remark: string, appliesTo: string[], doesNotApplyTo: string[]][] = [
+    ["typed-field-read:a", ["readsSound"], []],
+    ["typed-field-read:b", ["readsSound"], []],
+    ["typed-field-read:x", ["add", "length2"], []],
+    ["typed-field-read", [], ["readsTyped", "readsUntyped", "makesLoose"]],
+    ["typed-field-write:a", ["writesSound"], []],
+    ["typed-field-write", [], ["writesTyped", "writesUntyped"]],
+    ["typed-planned-construction", ["Vector"], ["Loose"]],
+    ["planned-construction", ["Loose"], ["Vector"]],
+  ];
+
+  for (const [label, options, env] of [
+    ["as it is", "", {}],
+    ["validated", "validateAOTInferredTypes=1,validateGraphAtEachPhase=1", {}],
+    ["with loop optimizations", "useAOTLoopSplitting=1,useAOTInlineFastPathsInLoops=1", {}],
+    ["without data stubs", "", { BUN_JSC_useAOTDataStubs: "0" }],
+  ] as const) {
+    test(label, async () => {
+      await using reference = Bun.spawn({
+        cmd: [bunExe(), "src/main.ts"],
+        env: bunEnv,
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [expected, { stdout, exitCode, remarks }] = await Promise.all([
+        reference.stdout.text(),
+        buildAndRun(options, env),
+      ]);
+      expect(expected).not.toBe("");
+      expect(stdout).toBe(expected);
+      expect(exitCode).toBe(0);
+      const have = (name: string, pattern: string) => {
+        expect(remarks.get(name), name).toContain("compiled");
+        return remarks.get(name)!.some(remark => remark === pattern || remark.startsWith(pattern + ":"));
+      };
+      for (const [pattern, appliesTo, doesNotApplyTo] of cases) {
+        expect({ pattern, applies: appliesTo.filter(name => have(name, pattern)) }).toEqual({ pattern, applies: appliesTo });
+        expect({ pattern, applies: doesNotApplyTo.filter(name => have(name, pattern)) }).toEqual({ pattern, applies: [] });
+      }
+    });
+  }
+});

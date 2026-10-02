@@ -538,6 +538,67 @@ const IS_UV_FS_COPYFILE_DISABLED =
     });
   });
 
+  // A string source above 1 KiB preallocates the destination with fallocate().
+  // The preallocation must not grow the file: an O_APPEND write lands at the
+  // real end, and a grown file puts NUL bytes before the data.
+  describe.skipIf(isWindows)("Bun.write(fd, string) on an O_APPEND fd", () => {
+    function summarize(log) {
+      const out = fs.readFileSync(log);
+      return { head: out.subarray(0, 9).toString(), size: out.length, firstNul: out.indexOf(0) };
+    }
+
+    it("appends to stdout redirected with >>", async () => {
+      const size = 2000;
+      using dir = tempDir("bun-write-stdout-append-string", { "out.log": "abc\n" });
+      const log = join(String(dir), "out.log");
+      const script = `process.stderr.write(String(await Bun.write(Bun.stdout, Buffer.alloc(${size}, "x").toString())))`;
+
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `"$BUN" -e ${JSON.stringify(script)} >> ${JSON.stringify(log)}`],
+        env: { ...bunEnv, BUN: bunExe() },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, resolved: stderr, ...summarize(log) }).toEqual({
+        stdout: "",
+        resolved: String(size),
+        head: "abc\nxxxxx",
+        size: 4 + size,
+        firstNul: -1,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // A string under 256 KiB to a Bun.file(fd) is written on the main thread
+    // without a preallocation, so use a larger one to reach the async path.
+    it("appends to a file descriptor opened with 'a'", async () => {
+      const size = 300_000;
+      using dir = tempDir("bun-write-fd-append-string", { "out.log": "abc\n" });
+      const log = join(String(dir), "out.log");
+      const script = `
+        import fs from "node:fs";
+        const fd = fs.openSync(${JSON.stringify(log)}, "a");
+        try {
+          process.stderr.write(String(await Bun.write(Bun.file(fd), Buffer.alloc(${size}, "x").toString())));
+        } finally { fs.closeSync(fd); }
+      `;
+
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, resolved: stderr, ...summarize(log) }).toEqual({
+        stdout: "",
+        resolved: String(size),
+        head: "abc\nxxxxx",
+        size: 4 + size,
+        firstNul: -1,
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   // fstat on a FIFO reports st_size == 0, so the kernel-copy / bounded loop
   // must terminate on EOF, not on the stat-derived budget.
   // Bun.spawn({stdin:"pipe"}) hands the child a socketpair, not a FIFO, so

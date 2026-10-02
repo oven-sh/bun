@@ -402,7 +402,7 @@ impl TarballStream {
                             (crate::Error::Fail, Some(http_err)) => http_err,
                             (err, _) => err,
                         });
-                        (*this).close_output_file();
+                        let _ = (*this).close_output_file();
                     }
 
                     if (*this).fail.is_none() && (*this).phase != Phase::Done {
@@ -591,8 +591,9 @@ impl TarballStream {
                     Phase::WantData => {
                         let mut offset: i64 = 0;
                         let Some(block) = archive.next(&mut offset) else {
-                            // End of this entry's data.
-                            (*this).close_output_file();
+                            // End of this entry's data: the offset is its real size.
+                            (*this).entry_final_offset = (*this).entry_final_offset.max(offset);
+                            (*this).close_output_file()?;
                             (*this).phase = Phase::WantHeader;
                             continue;
                         };
@@ -724,18 +725,21 @@ impl TarballStream {
         Ok(())
     }
 
-    fn close_output_file(&mut self) {
-        if let Some(fd) = self.out_fd {
-            // Same trailing-hole handling as `Archive.readDataIntoFd`:
-            // extend the file to cover the furthest block we were asked
-            // to write even if the pwrite/lseek fallback path left
-            // `actual_offset` behind.
-            if self.entry_final_offset > self.entry_actual_offset {
-                let _ = bun_sys::ftruncate(fd, self.entry_final_offset);
-            }
-            fd.close();
-            self.out_fd = None;
-        }
+    fn close_output_file(&mut self) -> crate::Result<()> {
+        let Some(fd) = self.out_fd.take() else {
+            return Ok(());
+        };
+        // Same trailing-hole handling as `Archive.readDataIntoFd`:
+        // extend the file to cover the furthest block we were asked
+        // to write even if the pwrite/lseek fallback path left
+        // `actual_offset` behind.
+        let extended = if self.entry_final_offset > self.entry_actual_offset {
+            bun_sys::ftruncate(fd, self.entry_final_offset)
+        } else {
+            Ok(())
+        };
+        fd.close();
+        extended.map_err(|e| e.to_zig_err().into())
     }
 
     /// Process one entry header returned by `read_next_header`. Opens the
@@ -921,13 +925,12 @@ impl TarballStream {
     fn write_data_block(&mut self, fd: Fd, block: &lib::Block) -> crate::Result<()> {
         let file = bun_sys::File::borrow(&fd);
         let data = block.bytes;
-        if data.is_empty() {
-            return Ok(());
-        }
-
         self.entry_final_offset = self
             .entry_final_offset
             .max(block.offset + i64::try_from(data.len()).expect("int cast"));
+        if data.is_empty() {
+            return Ok(());
+        }
 
         #[cfg(unix)]
         {
@@ -1001,7 +1004,7 @@ impl TarballStream {
             let network: *mut NetworkTask = (*this).network_task;
             let manager: *mut PackageManager = (*this).package_manager;
 
-            (*this).close_output_file();
+            let _ = (*this).close_output_file();
 
             // The HTTP thread has delivered the final `has_more=false` chunk
             // (that's the only way `closed` gets set) and `notify()` does not

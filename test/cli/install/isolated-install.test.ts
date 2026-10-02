@@ -2020,7 +2020,7 @@ test("same resolution, different dependency name", async () => {
 
 // One store entry serves every dependent of a package version, whatever name
 // each dependent uses for it. The entry is created for the first dependent.
-describe.concurrent("bins of a package that dependents reach under different names", () => {
+describe("bins of a package that dependents reach under different names", () => {
   const storeBin = (packageDir: string, entry: string, bin: string) =>
     join(packageDir, "node_modules", ".bun", entry, "node_modules", ".bin", bin);
   const memberBin = (packageDir: string, member: string, bin: string) =>
@@ -2102,7 +2102,8 @@ describe.concurrent("bins of a package that dependents reach under different nam
       },
     });
 
-    await runBunInstall(bunEnv, packageDir);
+    // BUN_INSTALL_CACHE_DIR overrides bunfig's `cache`, and CI sets it. This test builds the entry in a store of its own.
+    await runBunInstall({ ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") }, packageDir);
 
     expect(readlinkSync(join(packageDir, "node_modules", ".bun", "uses-what-bin@1.0.0"))).toContain(
       join(".bun-cache", "links", "uses-what-bin@1.0.0-"),

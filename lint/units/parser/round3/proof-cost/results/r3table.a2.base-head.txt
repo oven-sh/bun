@@ -1,0 +1,13 @@
+head against base                                  bun-types  typescript-lib          src-js             tsx      js-control
+input bytes per pass                               1,076,221       3,784,758       3,268,179           7,003       1,506,667
+passes                                                    20              20              20           2,000              20
+-- default VEX
+parser Ir base                                   314,436,617   1,106,661,637   4,450,919,644   1,179,608,115   2,904,302,641
+parser Ir head - base                            +33,783,282    +162,006,442     +19,122,042     +46,445,586      -2,145,198
+parser Ir head - base, percent                      +10.744%        +14.639%         +0.430%         +3.937%         -0.074%
+parser Bc base                                    44,553,098     160,854,698     515,005,866     137,933,729     312,333,038
+parser Bc head - base                             +5,435,042     +25,943,240      +4,044,780      +8,292,005        +203,340
+parser Bc head - base, percent                      +12.199%        +16.128%         +0.785%         +6.012%         +0.065%
+parser Bi head - base                               -280,827        -394,020         -86,780        -508,000              +0
+program Ir head - base                           +35,543,798    +163,296,182     +23,374,827     +49,812,708      -5,014,903
+program Bc head - base                            +5,643,047     +26,078,807      +4,826,077      +8,939,249        -200,343

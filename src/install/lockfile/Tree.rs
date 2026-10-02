@@ -885,6 +885,7 @@ impl Tree {
                     // An earlier placement of this package was processed with the slot
                     // unbound, and has to be processed again with it bound.
                     if METHOD == BuilderMethod::Resolvable
+                        && !builder.late_bound_optional_peer
                         && builder.processed_earlier_placement(parent_pkg_id, dependency_id)
                     {
                         builder.late_bound_optional_peer = true;

@@ -4048,7 +4048,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     var TLSSocketClass = undefined;
     const bunTLS = this[bunTlsSymbol];
     const options = this[bunSocketServerOptions];
-    let contexts: Map<string, any> | null = null;
+    let contexts: [RegExp, { context: unknown }, string][] | null = null;
     if (typeof bunTLS === "function") {
       [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
       options.servername = tls.serverName;

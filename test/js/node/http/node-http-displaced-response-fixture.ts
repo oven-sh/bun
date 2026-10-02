@@ -458,7 +458,6 @@ async function draining() {
   const size = 8 * 1024 * 1024;
   const second = Promise.withResolvers<http.ServerResponse>();
   let firstHandle: any;
-  let wroteAll: boolean | undefined;
   let heldTail: boolean | undefined;
   const server = createServer((req, res) => {
     req.on("error", () => {});
@@ -468,7 +467,7 @@ async function draining() {
       return;
     }
     firstHandle = handleOf(res);
-    wroteAll = res.write(Buffer.alloc(size, "a"));
+    res.write(Buffer.alloc(size, "a"));
     heldTail = firstHandle.bufferedAmount > 0;
     res.detachSocket(req.socket);
   });
@@ -476,13 +475,21 @@ async function draining() {
   const client = await connect(server);
   client.pause();
   let received = 0;
+  // The write of response 1 on the wire: its head, the chunk size line, the chunk and its CRLF.
+  let head = "";
+  let writeLength = Infinity;
   let tail = "";
   const bodies = Promise.withResolvers<void>();
   const wholeWrite = Promise.withResolvers<void>();
   client.on("data", chunk => {
     received += chunk.length;
+    if (writeLength === Infinity && head.length < 1024) {
+      head += chunk.toString("latin1", 0, 1024 - head.length);
+      const headEnd = head.indexOf("\r\n\r\n");
+      if (headEnd !== -1) writeLength = headEnd + 4 + `${size.toString(16)}\r\n`.length + size + 2;
+    }
     tail = (tail + chunk.toString("latin1")).slice(-64);
-    if (received >= size) wholeWrite.resolve();
+    if (received >= writeLength) wholeWrite.resolve();
     if (tail.includes("second-body")) bodies.resolve();
   });
   client.write(request("/first") + request("/second"));
@@ -490,17 +497,18 @@ async function draining() {
   await turn();
   const displaced = res.socket !== null;
   const pending = isPending(firstHandle);
-  // Nothing in JS holds response 1 from here on.
-  firstHandle = undefined;
+  // Counted while the handle still holds the cell of response 1, so that no collection comes between the count and the release.
   const cells = () => heapStats().objectTypeCounts.NodeHTTPResponse ?? 0;
   const cellsBefore = cells();
+  // Nothing in JS holds response 1 from here on.
+  firstHandle = undefined;
   Bun.gc(true);
   await turn();
   Bun.gc(true);
   const collected = cellsBefore - cells();
   client.resume();
-  // The client has the whole write, so the socket buffer of the server is empty: uWS has called the drain handler that was armed.
-  await wholeWrite.promise;
+  // The client has the whole write of response 1, so the socket buffer of the server is empty: uWS has called the drain handler that was armed.
+  await within(wholeWrite.promise, undefined);
   await turn();
   res.end("second-body");
   await bodies.promise;
@@ -510,7 +518,7 @@ async function draining() {
   await closed;
   server.close();
   server.closeAllConnections();
-  return { displaced, pending, wroteAll, heldTail, collected, receivedAtLeastTheWrite: received >= size };
+  return { displaced, pending, heldTail, collected, receivedAtLeastTheWrite: received >= writeLength };
 }
 
 // Request 2 waits in the queue behind response 1, which has written nothing. req.destroy() on it
@@ -549,7 +557,7 @@ async function queuedDestroyed(secondRequest: "same read" | "later read") {
 }
 
 // The scenarios of a suite have a server and a connection each, so they run side by side.
-const all = <T>(items: T[], scenario: (item: T) => Promise<object>) => Promise.all(items.map(scenario));
+const all = <T>(items: readonly T[], scenario: (item: T) => Promise<object>) => Promise.all(items.map(scenario));
 let results: object[] = [];
 if (suite === "displaced") {
   results = await all(

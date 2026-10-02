@@ -10,20 +10,6 @@ use super::relate::{Excess, Relation};
 use super::*;
 use crate::bind::{FnOwner, Parent};
 
-/// `getArrayElementTypeNode`: `X` for `X[]`, `[...X[]]` and `[...[...X[]]]`.
-fn array_element_type_node(hir: &hir::File, node: TypeNodeId) -> Option<TypeNodeId> {
-    if node.is_none() {
-        return None;
-    }
-    match hir[node].kind {
-        TypeNodeKind::Array(element) => Some(element),
-        TypeNodeKind::Tuple(elems) if elems.len() == 1 && hir[elems.at(0)].rest => {
-            array_element_type_node(hir, hir[elems.at(0)].ty)
-        }
-        _ => None,
-    }
-}
-
 /// `getImpliedConstraint`: reduces `[X] extends [Y]` to `X extends Y`, repeatedly. In tsgo's AST an element with a name, a `?` or a
 /// `...` is not a tuple type node, so unwrapping stops there. A plain type node is returned as an element without any of those.
 fn unwrap_unary_tuples(

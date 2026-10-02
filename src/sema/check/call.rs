@@ -2,6 +2,7 @@
 
 use super::errors_call::Applicable;
 use super::infer::{Inference, PRIORITY_PARTIAL_HOMOMORPHIC, PRIORITY_RETURN};
+use super::relate::Relation;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent, UNREACHABLE};
 use smallvec::{SmallVec, smallvec};
@@ -38,11 +39,47 @@ impl crate::table::Packed for ResolvedCall {
 #[derive(Copy, Clone)]
 pub(super) enum Arg {
     Expr(ExprId),
-    /// An element of a tuple that was spread, and its label (`tupleNameSource`) or `NONE`.
-    Type(TypeId, Atom),
+    /// `createSyntheticExpression`: a type, and its label (`tupleNameSource`) or `NONE`. The last is the node it is at: the
+    /// argument whose tuple it is an element of, the tagged template whose pieces of text it is, the expression of the decorator.
+    Type(TypeId, Atom, ExprId),
     /// `...list`: any number of the first. The second is the list that is spread. The third is the label of the element of a
-    /// spread tuple that it stands for (`tupleNameSource`), or `NONE`.
-    Spread(TypeId, TypeId, Atom),
+    /// spread tuple that it stands for (`tupleNameSource`), or `NONE`. The last is the argument that spreads it.
+    Spread(TypeId, TypeId, Atom, ExprId),
+}
+
+impl Arg {
+    /// The node an error about it is at.
+    pub(super) fn node(self) -> ExprId {
+        match self {
+            Arg::Expr(e) | Arg::Type(_, _, e) | Arg::Spread(_, _, _, e) => e,
+        }
+    }
+}
+
+/// What `resolveCall` resolves (`IsCallLikeExpression`). The expression that goes with it stands for the node in the tables: the
+/// call, `new` or tagged template, the binary expression, the expression of the decorator.
+#[derive(Copy, Clone)]
+pub(super) enum CallLike {
+    Call(CallId),
+    /// `left instanceof right`, resolved as `right[Symbol.hasInstance](left)`.
+    InstanceOf {
+        left: ExprId,
+        right: ExprId,
+    },
+    Decorator(DecoratorOwner),
+}
+
+/// `CallState`: what `resolveCall` holds the candidates against.
+#[derive(Copy, Clone)]
+pub(super) struct CallState<'a> {
+    pub(super) file: FileId,
+    /// What stands for `node` in the tables.
+    pub(super) call: ExprId,
+    pub(super) node: CallLike,
+    pub(super) type_args: &'a [TypeId],
+    pub(super) args: &'a [Arg],
+    /// `getThisArgumentOfCall`
+    pub(super) this_arg: Option<ExprId>,
 }
 
 pub(super) type Args = SmallVec<[Arg; 8]>;
@@ -374,11 +411,6 @@ impl<'p> Checker<'p> {
     }
 
     /// What the argument `a` comes to: itself, or what it spreads.
-    pub(super) fn push_effective_arg(&mut self, file: FileId, a: ExprId, out: &mut Vec<Arg>) {
-        self.each_effective_arg(file, a, |arg| out.push(arg));
-    }
-
-    /// `push_effective_arg`, for any kind of list.
     #[inline]
     pub(super) fn each_effective_arg(
         &mut self,
@@ -387,12 +419,18 @@ impl<'p> Checker<'p> {
         mut push: impl FnMut(Arg),
     ) {
         match self.hir(file)[a].kind {
-            ExprKind::Spread(inner) => self.each_spread_arg(file, inner, push),
+            ExprKind::Spread(inner) => self.each_spread_arg(file, a, inner, push),
             _ => push(Arg::Expr(a)),
         }
     }
 
-    fn each_spread_arg(&mut self, file: FileId, inner: ExprId, mut push: impl FnMut(Arg)) {
+    fn each_spread_arg(
+        &mut self,
+        file: FileId,
+        a: ExprId,
+        inner: ExprId,
+        mut push: impl FnMut(Arg),
+    ) {
         let ty = self.type_of_expr(file, inner);
         match self.data(ty) {
             // `getEffectiveCallArguments`: a `...T` in it is a spread of `T`, a `...X[]` one of `X[]`.
@@ -400,12 +438,12 @@ impl<'p> Checker<'p> {
                 for (&e, f) in elems.iter().zip(flags.iter()) {
                     if f.contains(ElemFlags::VARIADIC) {
                         let element = self.indexed_access(e, TypeId::NUMBER);
-                        push(Arg::Spread(element, e, f.label()));
+                        push(Arg::Spread(element, e, f.label(), a));
                     } else if f.contains(ElemFlags::REST) {
                         let list = self.array_of(e);
-                        push(Arg::Spread(e, list, f.label()));
+                        push(Arg::Spread(e, list, f.label(), a));
                     } else {
-                        push(Arg::Type(e, f.label()));
+                        push(Arg::Type(e, f.label(), a));
                     }
                 }
             }
@@ -417,7 +455,7 @@ impl<'p> Checker<'p> {
                     None if self.is_known(ty) && !self.is_uncertain(file, inner) => TypeId::ANY,
                     None => TypeId::UNRESOLVED,
                 };
-                push(Arg::Spread(element, ty, Atom::NONE));
+                push(Arg::Spread(element, ty, Atom::NONE, a));
             }
         }
     }
@@ -508,22 +546,19 @@ impl<'p> Checker<'p> {
                 let ty = self.type_of_expr(file, a);
                 Some(self.widen_literal(ty))
             }
-            Some(&(Arg::Type(ty, _) | Arg::Spread(ty, ..))) => Some(ty),
+            Some(&(Arg::Type(ty, ..) | Arg::Spread(ty, ..))) => Some(ty),
             None if own.default.is_some() => None,
             // `undefinedWideningType`
             None => Some(TypeId::UNDEFINED),
         }
     }
 
-    /// `hasCorrectArity`, of a call that is complete.
-    #[inline]
-    pub(super) fn has_correct_arity(&mut self, params: &[SigParam], args: &[Arg]) -> bool {
-        self.has_correct_arity_of_call(params, args, false)
-    }
-
     /// `callIsIncomplete`: the tagged template is unterminated, or the `)` of the call is missing. `close_pos` is where the parser
     /// expected the `)`. The default library has no text.
-    pub(super) fn is_call_incomplete(&self, file: FileId, call: ExprId, id: CallId) -> bool {
+    pub(super) fn is_call_incomplete(&self, file: FileId, call: ExprId, node: CallLike) -> bool {
+        let CallLike::Call(id) = node else {
+            return false;
+        };
         let hir = self.hir(file);
         let close_pos = hir[id].close_pos;
         if matches!(hir[call].kind, ExprKind::TaggedTemplate(_)) {
@@ -534,15 +569,16 @@ impl<'p> Checker<'p> {
             && hir.text.get(close_pos as usize) != Some(&b')')
     }
 
-    /// `hasCorrectArity`. The lower bound is not checked if `is_incomplete`.
-    fn has_correct_arity_of_call(
-        &mut self,
-        params: &[SigParam],
-        args: &[Arg],
-        is_incomplete: bool,
-    ) -> bool {
+    /// `hasCorrectArity`
+    pub(super) fn has_correct_arity(&mut self, s: CallState<'_>, params: &[SigParam]) -> bool {
+        let (file, call, node, args) = (s.file, s.call, s.node, s.args);
+        let given = match node {
+            CallLike::Decorator(owner) => self.decorator_argument_count(file, owner, params),
+            _ => args.len(),
+        };
         let spread = args.iter().position(|a| matches!(a, Arg::Spread(..)));
-        self.has_correct_arity_for_count(params, args.len(), spread, is_incomplete)
+        let is_incomplete = self.is_call_incomplete(file, call, node);
+        self.has_correct_arity_for_count(params, given, spread, is_incomplete)
     }
 
     /// `hasCorrectArity`, of a call with `given` arguments. `spread`: the first of them that is spread.
@@ -625,17 +661,21 @@ impl<'p> Checker<'p> {
                 };
             }
             let type_args = self.types_from_nodes(file, type_args);
-            let mut args = Args::new();
-            args.push(Arg::Type(
-                self.global_ref(known::TemplateStringsArray, &[]),
-                Atom::NONE,
-            ));
-            args.extend(hir.ids(exprs).map(Arg::Expr));
-            let this_arg = self.this_argument_of_call(file, tag).map(|(obj, _)| obj);
+            let node = CallLike::Call(c);
+            let args = self.effective_call_arguments(file, call, node);
+            let this_arg = self.this_argument_of_call(file, call, node);
             let is_sure = !self.is_uncertain(file, tag);
             return self.resolve_among(
-                file, call, c, &sigs, &type_args, &args, this_arg, false, is_sure, true,
+                file, call, node, &sigs, &type_args, &args, this_arg, is_sure, true,
             );
+        }
+        if let ExprKind::Binary {
+            op: BinOp::Instanceof,
+            left,
+            right,
+        } = hir[call].kind
+        {
+            return self.resolve_instanceof_expression(file, call, left, right);
         }
         let (id, is_new) = match hir[call].kind {
             ExprKind::Call(c) => (c, false),
@@ -702,7 +742,17 @@ impl<'p> Checker<'p> {
             return self.resolve_untyped_call(file, self.hir(file)[id].args);
         }
         let args = self.effective_args(file, self.hir(file)[id].args);
-        self.resolve_among(file, call, id, &sigs, &[], &args, None, false, true, true)
+        self.resolve_among(
+            file,
+            call,
+            CallLike::Call(id),
+            &sigs,
+            &[],
+            &args,
+            None,
+            true,
+            true,
+        )
     }
 
     /// `resolveCallExpression`, `resolveNewExpression`
@@ -816,24 +866,19 @@ impl<'p> Checker<'p> {
         }
         let type_args = self.types_from_nodes(file, data.type_args);
         let args = self.effective_args(file, data.args);
-        let this_arg = if is_new {
-            None
-        } else {
-            self.this_argument_of_call(file, data.callee)
-                .map(|(obj, _)| obj)
-        };
+        let node = CallLike::Call(id);
+        let this_arg = self.this_argument_of_call(file, call, node);
         let is_sure = !self.is_uncertain(file, data.callee);
         // `resolveNewExpression` reads the return type of a call signature invoked with `new` only without `noImplicitAny` (2350).
         let wants_return = !(is_call_by_new && self.p.files.options.no_implicit_any);
         let resolved = self.resolve_among(
             file,
             call,
-            id,
+            node,
             &sigs,
             &type_args,
             &args,
             this_arg,
-            is_new,
             is_sure,
             wants_return,
         );
@@ -846,6 +891,82 @@ impl<'p> Checker<'p> {
         } else {
             resolved
         }
+    }
+
+    /// `resolveInstanceofExpression`. 2359 is said elsewhere.
+    fn resolve_instanceof_expression(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        left: ExprId,
+        right: ExprId,
+    ) -> ResolvedCall {
+        let any_signature = ResolvedCall {
+            sig: None,
+            ret: TypeId::ANY,
+        };
+        // `checkBinaryLikeExpression` has checked both operands, with nothing expected of them.
+        self.type_of_expr(file, left);
+        let right_type = self.type_of_expr(file, right);
+        if self.is_any(right_type) {
+            return any_signature;
+        }
+        let Some(method) = self.symbol_has_instance_method_of_object_type(right_type) else {
+            return any_signature;
+        };
+        let apparent = self.apparent_type(method);
+        if self.is_error_type(apparent) {
+            return ResolvedCall {
+                sig: None,
+                ret: TypeId::ERROR,
+            };
+        }
+        let sigs = self.signatures(apparent, false);
+        let constructs = self.signatures(apparent, true).len();
+        if sigs.is_empty()
+            || self.is_untyped_function_call(method, apparent, sigs.len(), constructs)
+        {
+            return any_signature;
+        }
+        let node = CallLike::InstanceOf { left, right };
+        let is_sure = !self.is_uncertain(file, right);
+        let args = self.effective_call_arguments(file, call, node);
+        self.resolve_among(
+            file,
+            call,
+            node,
+            &sigs,
+            &[],
+            &args,
+            Some(right),
+            is_sure,
+            true,
+        )
+    }
+
+    /// `getSymbolHasInstanceMethodOfObjectType`
+    pub(super) fn symbol_has_instance_method_of_object_type(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<TypeId> {
+        // `getPropertyNameForKnownSymbolName`
+        let name = self.files().atoms.symbol_name(b"hasInstance");
+        // `getPropertyOfType`: an index signature is no property.
+        let mut methods = Vec::new();
+        for &part in self.parts(ty) {
+            if !self.is_assignable(part, TypeId::OBJECT) {
+                return None;
+            }
+            let apparent = self.apparent_type(part);
+            for &member in self.parts(apparent) {
+                let members = self.members(member)?;
+                let (prop, mapper) = self.property_of_type(&members, name)?;
+                methods.push(self.type_of_prop(&prop, mapper));
+            }
+        }
+        let method = self.union(&methods);
+        // A method type that is not known is returned as it is: nothing is made of it.
+        (!self.is_known(method) || !self.signatures(method, false).is_empty()).then_some(method)
     }
 
     /// `someSignature(constructSignatures, abstract)`: what is made for a union is abstract if what one of its members has is.
@@ -904,16 +1025,8 @@ impl<'p> Checker<'p> {
 
     /// `chooseOverload` holds the arguments against a candidate though it is the only one and nothing depends on how that goes. What
     /// leads back from there to something that is being worked out is a circle.
-    fn hold_arguments_against(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        id: CallId,
-        declared: SigId,
-        sig: SigId,
-        this_arg: Option<ExprId>,
-        is_new: bool,
-    ) {
+    fn hold_arguments_against(&mut self, s: CallState<'_>, declared: SigId, sig: SigId) {
+        let (file, call) = (s.file, s.call);
         let params = self.sig_params(sig);
         self.resolving.push(Resolving::new(
             file,
@@ -922,30 +1035,36 @@ impl<'p> Checker<'p> {
             params,
             MapperId::IDENTITY,
         ));
-        let with_nodes = self.args_with_nodes(file, call, id);
         let uncertain = self.uncertain;
-        self.is_signature_applicable(file, call, id, &with_nodes, sig, this_arg, is_new, None);
+        self.is_signature_applicable(s, sig, None);
         self.uncertain = uncertain;
         self.resolving.pop();
     }
 
-    /// The end of `resolveCall`: which of `declared`, the signatures of what is called, the call, `new` or tagged template `call`
-    /// is a call of. `is_sure`: what is called was found out for sure, so that it can be told when none of them will do.
+    /// The end of `resolveCall`: which of `declared`, the signatures of what is called, `node`, which `call` stands for, is a
+    /// call of. `is_sure`: what is called was found out for sure, so that it can be told when none of them will do.
     /// `wants_return`: the caller reads `ret`. Otherwise `ret` is `any` and the return type of the signature is not resolved:
     /// `checkCallExpression` returns `anyType` for `new` of a call signature before it calls `getReturnTypeOfSignature`.
-    fn resolve_among(
+    pub(super) fn resolve_among(
         &mut self,
         file: FileId,
         call: ExprId,
-        id: CallId,
+        node: CallLike,
         declared: &[SigId],
         type_args: &[TypeId],
         args: &[Arg],
         this_arg: Option<ExprId>,
-        is_new: bool,
         is_sure: bool,
         wants_return: bool,
     ) -> ResolvedCall {
+        let s = CallState {
+            file,
+            call,
+            node,
+            type_args,
+            args,
+            this_arg,
+        };
         let return_of = |c: &mut Self, sig: SigId| {
             if wants_return {
                 c.sig_return(sig)
@@ -962,7 +1081,6 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        let is_incomplete = self.is_call_incomplete(file, call, id);
         let mut candidates: Sigs = Sigs::new();
         // What the last of `candidates` takes.
         let mut taken: List<'p, SigParam> = List::default();
@@ -974,7 +1092,7 @@ impl<'p> Checker<'p> {
             };
             if takes_type_args {
                 let params = self.sig_params(sig);
-                if self.has_correct_arity_of_call(&params, args, is_incomplete) {
+                if self.has_correct_arity(s, &params) {
                     candidates.push(sig);
                     taken = params;
                     continue;
@@ -983,9 +1101,7 @@ impl<'p> Checker<'p> {
             is_const_left_out = is_const_left_out || self.has_const_type_parameter(sig);
         }
         if candidates.is_empty() {
-            let sig = self.candidate_for_overload_failure(
-                file, call, &sigs, type_args, args, this_arg, false,
-            );
+            let sig = self.candidate_for_overload_failure(s, &sigs, false);
             let ret = return_of(self, sig);
             return ResolvedCall {
                 sig: Some(sig),
@@ -1002,27 +1118,22 @@ impl<'p> Checker<'p> {
         // Where one is left there is nothing to choose, and nothing has been held against it.
         let chosen = match candidates[..] {
             [only] => Some(only),
-            _ => self.choose_overload(file, call, &candidates, type_args, args, this_arg),
+            _ => self.choose_overload(s, &candidates),
         };
         // Where what does not wait rules them all out, `chooseOverload` never gets to look at the functions among the arguments.
         if chosen.is_none() && is_sure && !self.is_provisional_here() {
-            let (ruled_out, is_certain) = self.with_certainty(|c| {
-                c.ruled_out_by_plain_arguments(file, call, &candidates, type_args, args, this_arg)
-            });
+            let (ruled_out, is_certain) =
+                self.with_certainty(|c| c.ruled_out_by_plain_arguments(s, &candidates));
             if let Some(last) = ruled_out
                 && is_certain
             {
                 if let Some(last) = last
-                    && self.look_at_arguments_as_of(file, call, args, last) < args.len()
+                    && self.look_at_arguments_as_of(s, last) < args.len()
                 {
                     // No candidate passed the first round, so `argCheckMode` is still `CheckModeSkipContextSensitive`.
-                    self.add_implementation_success_elaboration(
-                        file, call, last, type_args, args, this_arg, true,
-                    );
+                    self.add_implementation_success_elaboration(s, last, true);
                 }
-                let sig = self.candidate_for_overload_failure(
-                    file, call, &sigs, type_args, args, this_arg, false,
-                );
+                let sig = self.candidate_for_overload_failure(s, &sigs, false);
                 let ret = return_of(self, sig);
                 return ResolvedCall {
                     sig: Some(sig),
@@ -1038,20 +1149,10 @@ impl<'p> Checker<'p> {
             && is_sure
             && !self.is_provisional_here()
         {
-            self.check_sole_candidate_in_order(
-                file,
-                call,
-                only,
-                &taken,
-                is_generic,
-                sigs.len() == 1,
-                type_args,
-                args,
-                this_arg,
-            );
+            self.check_sole_candidate_in_order(s, only, &taken, is_generic, sigs.len() == 1);
         }
         let is_tested = candidates.len() > 1 && chosen.is_some();
-        let sig = self.instantiate_for_call(file, call, first, type_args, args, this_arg, false);
+        let sig = self.instantiate_for_call(s, first, false);
         let ret = return_of(self, sig);
         let resolved = ResolvedCall {
             sig: Some(sig),
@@ -1065,7 +1166,7 @@ impl<'p> Checker<'p> {
             return resolved;
         }
         if !can_differ {
-            self.hold_arguments_against(file, call, id, first, sig, this_arg, is_new);
+            self.hold_arguments_against(s, first, sig);
             return resolved;
         }
         // What is left is the round of `chooseOverload` in which no argument is left out.
@@ -1075,7 +1176,7 @@ impl<'p> Checker<'p> {
         let waits = has_sensitive || is_inferred && self.has_generic_function_argument(file, args);
         if !waits && (sigs.len() == 1 || is_tested) {
             if !is_tested {
-                self.hold_arguments_against(file, call, id, first, sig, this_arg, is_new);
+                self.hold_arguments_against(s, first, sig);
             }
             return resolved;
         }
@@ -1092,7 +1193,7 @@ impl<'p> Checker<'p> {
             sigs.len() > 1 && type_args.is_empty() && has_sensitive && chosen.is_some();
         let ((accepted, fails), is_certain) = self.with_certainty(|c| {
             let accepted = if has_later_attempts {
-                c.later_attempts(file, call, &candidates, first, sig, args, this_arg)
+                c.later_attempts(s, &candidates, first, sig)
             } else {
                 None
             };
@@ -1102,20 +1203,9 @@ impl<'p> Checker<'p> {
                 let (declared_params, instantiated_params) =
                     (c.sig_params(first), c.sig_params(sig));
                 let has_wrong_arity = c.non_array_rest_type(&declared_params).is_some()
-                    && !c.has_correct_arity(&instantiated_params, args);
-                let with_nodes = c.args_with_nodes(file, call, id);
-                (has_wrong_arity
-                    || c.is_signature_applicable(
-                        file,
-                        call,
-                        id,
-                        &with_nodes,
-                        sig,
-                        this_arg,
-                        is_new,
-                        None,
-                    ) == Applicable::No)
-                    && c.no_candidate_applies(file, call, id, declared, is_new, resolved)
+                    && !c.has_correct_arity(s, &instantiated_params);
+                (has_wrong_arity || c.is_signature_applicable(s, sig, None) == Applicable::No)
+                    && c.no_candidate_applies(file, call, node, declared, resolved)
             };
             (accepted, fails)
         });
@@ -1133,8 +1223,7 @@ impl<'p> Checker<'p> {
         if !fails {
             return resolved;
         }
-        let failure =
-            self.candidate_for_overload_failure(file, call, &sigs, type_args, args, this_arg, true);
+        let failure = self.candidate_for_overload_failure(s, &sigs, true);
         let ret = return_of(self, failure);
         // The errors of a call of the only signature there is are told against `sig`: that stays what all the arguments come to.
         // `resolve_call` stores `failure` in `failure_sigs` if it keeps the resolution.
@@ -1163,13 +1252,10 @@ impl<'p> Checker<'p> {
     /// `None`: it does not, or it cannot be told.
     fn ruled_out_by_plain_arguments(
         &mut self,
-        file: FileId,
-        call: ExprId,
+        s: CallState<'_>,
         candidates: &[SigId],
-        type_args: &[TypeId],
-        args: &[Arg],
-        this_arg: Option<ExprId>,
     ) -> Option<Option<SigId>> {
+        let (file, call, type_args, args) = (s.file, s.call, s.type_args, s.args);
         if args.iter().any(|a| matches!(a, Arg::Spread(..))) {
             return None;
         }
@@ -1209,28 +1295,22 @@ impl<'p> Checker<'p> {
             if !type_args.is_empty() && !self.do_type_arguments_fit(candidate, type_args) {
                 continue;
             }
-            let sig =
-                self.instantiate_for_call(file, call, candidate, type_args, args, this_arg, true);
+            let sig = self.instantiate_for_call(s, candidate, true);
             let params = self.sig_params(sig);
             let declared = self.sig_params(candidate);
             if self.non_array_rest_type(&declared).is_some() {
                 // With `...args: T`, how many it takes is only known now.
-                if !self.has_correct_arity(&params, args) {
+                if !self.has_correct_arity(s, &params) {
                     continue;
                 }
                 // What goes into it is held against it all together, which is left to `is_signature_applicable`.
                 return None;
             }
             self.resolving
-                .push(Resolving::trial(file, call, candidate, params.clone()));
-            let fits = match self.are_arguments_related(file, args, &params, false, true) {
-                Some(true) if self.is_waiting_argument_ruled_out(file, args, &params) => {
-                    Some(false)
-                }
-                fits => fits,
-            };
+                .push(Resolving::trial(file, call, candidate, params));
+            let fits = self.signature_applicability(s, sig, Relation::Assignable, true, None);
             self.resolving.pop();
-            if fits != Some(false) {
+            if fits != Applicable::No {
                 return None;
             }
             last = Some(sig);
@@ -1238,40 +1318,27 @@ impl<'p> Checker<'p> {
         Some(last)
     }
 
-    /// `isSignatureApplicable` under `CheckModeSkipContextSensitive`, of the arguments that wait: a function in them is
-    /// `anyFunctionType`, and what is left has to fit `params`. Whether one of them does not. In doubt they all do.
-    fn is_waiting_argument_ruled_out(
+    /// `isSignatureApplicable` under `CheckModeSkipContextSensitive`, of the context sensitive argument `arg`: a function in it
+    /// is `anyFunctionType`, and what is left has to be related to `param`. In doubt it is.
+    pub(super) fn is_context_sensitive_argument_related(
         &mut self,
         file: FileId,
-        args: &[Arg],
-        params: &[SigParam],
+        arg: ExprId,
+        param: TypeId,
+        relation: Relation,
     ) -> bool {
-        for (i, &arg) in args.iter().enumerate() {
-            if let Arg::Expr(e) = arg
-                && self.is_context_sensitive(file, e)
-                && let Some(param) = self.context_of_arg_at(params, i, Some(args.len()))
-                && (!self.has_room_for_literal(file, e, param)
-                    || !self.is_any_function_type_related_to(file, e, param, false)
-                    || self.literal_lacks_target_signatures(file, e, param)
-                    || !self.do_plain_members_fit(file, e, param, false))
-            {
-                return true;
-            }
-        }
-        false
+        self.has_room_for_literal(file, arg, param)
+            && self.is_any_function_type_related_to(file, arg, param, relation)
+            && !self.literal_lacks_target_signatures(file, arg, param)
+            && self.do_plain_members_fit(file, arg, param, relation)
     }
 
     /// `reportCallResolutionErrors` holds the arguments against `last`, the last candidate they do not fit, one by one until it
     /// comes to one that does not fit. The functions it gets to on the way take the types of their parameters from it.
     /// Returns the number of arguments that were checked. Returns `args.len()` if `last` has a `this` type or the mismatch rests on an
     /// unknown type: the caller then treats every argument as checked.
-    fn look_at_arguments_as_of(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        args: &[Arg],
-        last: SigId,
-    ) -> usize {
+    fn look_at_arguments_as_of(&mut self, s: CallState<'_>, last: SigId) -> usize {
+        let (file, call, args) = (s.file, s.call, s.args);
         // What it is called on comes first. Whether that fits is left open, and nothing is looked at.
         if self.sig_this_type(last).is_some() {
             return args.len();
@@ -1330,16 +1397,13 @@ impl<'p> Checker<'p> {
     /// `declared`: what `candidate` takes. `is_generic`: it has type parameters.
     fn check_sole_candidate_in_order(
         &mut self,
-        file: FileId,
-        call: ExprId,
+        s: CallState<'_>,
         candidate: SigId,
         declared: &[SigParam],
         is_generic: bool,
         is_only_signature: bool,
-        type_args: &[TypeId],
-        args: &[Arg],
-        this_arg: Option<ExprId>,
     ) {
+        let (file, call, type_args, args) = (s.file, s.call, s.type_args, s.args);
         let is_inferred = is_generic && type_args.is_empty();
         let mut last_sensitive = None;
         // `inferTypeArguments` checks an argument only if `couldContainTypeVariables(paramType)`.
@@ -1372,17 +1436,17 @@ impl<'p> Checker<'p> {
         {
             return;
         }
-        let first_round =
-            self.instantiate_for_call(file, call, candidate, type_args, args, this_arg, true);
+        let first_round = self.instantiate_for_call(s, candidate, true);
         // `isSingleNonGenericCandidate`: `argCheckMode` is `CheckModeNormal` from the start, and there is no first round.
         let mut is_rejected_in_first_round = false;
         if is_generic || !is_only_signature {
             let params = self.sig_params(first_round);
             self.resolving
-                .push(Resolving::trial(file, call, candidate, params.clone()));
-            let is_applicable = self.are_arguments_related(file, args, &params, false, true);
+                .push(Resolving::trial(file, call, candidate, params));
+            let is_applicable =
+                self.signature_applicability(s, first_round, Relation::Assignable, true, None);
             self.resolving.pop();
-            let Some(is_applicable) = is_applicable else {
+            let Some(is_applicable) = is_applicable.known() else {
                 return;
             };
             is_rejected_in_first_round = !is_applicable;
@@ -1393,17 +1457,9 @@ impl<'p> Checker<'p> {
         }
         // No context sensitive argument contributes to the inference, so the second round yields `first_round` again.
         let (checked, is_certain) =
-            self.with_certainty(|c| c.look_at_arguments_as_of(file, call, args, first_round));
+            self.with_certainty(|c| c.look_at_arguments_as_of(s, first_round));
         if is_certain && checked < args.len() {
-            self.add_implementation_success_elaboration(
-                file,
-                call,
-                first_round,
-                type_args,
-                args,
-                this_arg,
-                is_rejected_in_first_round,
-            );
+            self.add_implementation_success_elaboration(s, first_round, is_rejected_in_first_round);
         }
     }
 
@@ -1506,14 +1562,11 @@ impl<'p> Checker<'p> {
     /// `skips_sensitive`: `argCheckMode` is still `CheckModeSkipContextSensitive`.
     fn add_implementation_success_elaboration(
         &mut self,
-        file: FileId,
-        call: ExprId,
+        s: CallState<'_>,
         failed: SigId,
-        type_args: &[TypeId],
-        args: &[Arg],
-        this_arg: Option<ExprId>,
         skips_sensitive: bool,
     ) {
+        let (file, call, type_args, args) = (s.file, s.call, s.type_args, s.args);
         let has_unchecked_argument =
             args.iter().any(|&arg| matches!(arg, Arg::Expr(e) if self.is_context_sensitive(file, e) && self.explicit_context(file, e).is_none()));
         if !has_unchecked_argument {
@@ -1527,13 +1580,13 @@ impl<'p> Checker<'p> {
             self.sig_params(implementation),
         );
         if !self.has_correct_type_argument_arity(&type_params, type_args.len())
-            || !self.has_correct_arity(&declared, args)
+            || !self.has_correct_arity(s, &declared)
         {
             return;
         }
         // `isSingleNonGenericCandidate`: a single `isSignatureApplicable` under `CheckModeNormal`.
         if type_params.is_empty() {
-            self.look_at_arguments_as_of(file, call, args, implementation);
+            self.look_at_arguments_as_of(s, implementation);
             return;
         }
         // A generic rest parameter needs a second arity check and a check of the collected arguments, which are not modelled here.
@@ -1543,62 +1596,57 @@ impl<'p> Checker<'p> {
             return;
         }
         if skips_sensitive {
-            let first_round = self.instantiate_for_call(
-                file,
-                call,
-                implementation,
-                type_args,
-                args,
-                this_arg,
-                true,
-            );
+            let first_round = self.instantiate_for_call(s, implementation, true);
             let params = self.sig_params(first_round);
             self.resolving
-                .push(Resolving::trial(file, call, implementation, params.clone()));
-            let is_applicable = self.are_arguments_related(file, args, &params, false, true)
-                == Some(true)
-                && !self.is_waiting_argument_ruled_out(file, args, &params);
+                .push(Resolving::trial(file, call, implementation, params));
+            let is_applicable =
+                self.signature_applicability(s, first_round, Relation::Assignable, true, None);
             self.resolving.pop();
-            if !is_applicable {
+            if is_applicable != Applicable::Yes {
                 return;
             }
         }
         if type_args.is_empty() {
             // The second round of `inferTypeArguments`. It assigns a contextual type to every remaining context sensitive argument,
             // also to those `isSignatureApplicable` would not reach.
-            self.instantiate_for_call(file, call, implementation, type_args, args, this_arg, false);
+            self.instantiate_for_call(s, implementation, false);
         } else {
-            let instantiated = self.instantiate_for_call(
-                file,
-                call,
-                implementation,
-                type_args,
-                args,
-                this_arg,
-                true,
-            );
-            self.look_at_arguments_as_of(file, call, args, instantiated);
+            let instantiated = self.instantiate_for_call(s, implementation, true);
+            self.look_at_arguments_as_of(s, instantiated);
         }
     }
 
-    /// The arguments of `call` the way `is_signature_applicable` takes them: each with the argument it is written as (part of),
-    /// after the pieces of text if it is a tagged template.
-    pub(super) fn args_with_nodes(
+    /// `getEffectiveCallArguments`
+    pub(super) fn effective_call_arguments(
         &mut self,
         file: FileId,
         call: ExprId,
-        id: CallId,
-    ) -> SmallVec<[(Arg, ExprId); 8]> {
+        node: CallLike,
+    ) -> Args {
         let hir = self.hir(file);
-        let mut args: SmallVec<[(Arg, ExprId); 8]> = SmallVec::new();
-        if matches!(hir[call].kind, ExprKind::TaggedTemplate(_)) {
-            let strings = self.global_ref(known::TemplateStringsArray, &[]);
-            args.push((Arg::Type(strings, Atom::NONE), call));
+        match node {
+            CallLike::Call(id) => {
+                let mut args = self.effective_args(file, hir[id].args);
+                if matches!(hir[call].kind, ExprKind::TaggedTemplate(_)) {
+                    let strings = self.global_ref(known::TemplateStringsArray, &[]);
+                    args.insert(0, Arg::Type(strings, Atom::NONE, call));
+                }
+                args
+            }
+            CallLike::InstanceOf { left, .. } => smallvec![Arg::Expr(left)],
+            // `getEffectiveDecoratorArguments`
+            CallLike::Decorator(owner) => match self.decorator_call_signature(file, owner) {
+                Some(expected) => {
+                    let mut args = Args::new();
+                    for p in self.sig_params(expected).iter() {
+                        args.push(Arg::Type(p.ty, Atom::NONE, call));
+                    }
+                    args
+                }
+                None => Args::new(),
+            },
         }
-        for a in hir.ids(hir[id].args) {
-            self.each_effective_arg(file, a, |arg| args.push((arg, a)));
-        }
-        args
     }
 
     /// Whether one of `args`, whatever it is written as, is a generic function, or something generic to construct: given where one
@@ -1692,87 +1740,35 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Whether each of `args` is a subtype of the one of `params` it is given for, or else can be assigned to it. `plain_only`:
-    /// with those that wait for the others left out. `None`: it cannot be told.
-    fn are_arguments_related(
-        &mut self,
-        file: FileId,
-        args: &[Arg],
-        params: &[SigParam],
-        by_subtype: bool,
-        plain_only: bool,
-    ) -> Option<bool> {
-        // `CheckModeSkipContextSensitive` is set by a context sensitive argument, and applies to the functions in all of them.
-        let skips_operand_functions = plain_only
-            && args
-                .iter()
-                .any(|a| matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e)));
-        for (i, &arg) in args.iter().enumerate() {
-            if let Arg::Expr(e) = arg
-                && (matches!(self.hir(file)[e].kind, ExprKind::Missing)
-                    || plain_only && self.is_context_sensitive(file, e)
-                    || skips_operand_functions && self.has_context_sensitive_right_operand(file, e))
-            {
-                continue;
-            }
-            let Some(param) = self.param_type_at(params, i) else {
-                break;
-            };
-            let ty = self.arg_type(file, arg);
-            if !self.is_known(ty)
-                || !self.is_known(param)
-                || matches!(arg, Arg::Expr(e) if self.is_uncertain(file, e))
-            {
-                return None;
-            }
-            // `getRegularTypeOfObjectLiteral`: properties there are too many of do not count before everything is looked at.
-            let ty = if plain_only {
-                self.regular_type_of_object_literal(ty)
-            } else {
-                ty
-            };
-            if !self.is_related_in_pass(ty, param, by_subtype) {
-                return Some(false);
-            }
-        }
-        Some(true)
-    }
-
     /// `chooseOverload`, from the attempt on that gave the functions among the arguments their parameter types: `first`, which
     /// is what `chosen` was inferred to be then. They keep those types (`NodeCheckFlagsContextChecked`) and `argCheckMode` stays
     /// `CheckModeNormal`, so to the attempts that follow they are arguments like any other, and nothing is settled early on
     /// their account. `None`: no attempt is accepted, or it cannot be told.
     fn later_attempts(
         &mut self,
-        file: FileId,
-        call: ExprId,
+        s: CallState<'_>,
         candidates: &[SigId],
         chosen: SigId,
         first: SigId,
-        args: &[Arg],
-        this_arg: Option<ExprId>,
     ) -> Option<SigId> {
+        let (file, args) = (s.file, s.args);
         if args.iter().any(|a| matches!(a, Arg::Spread(..))) {
             return None;
         }
-        // What it is called on, and what goes into `...args: T` all together, are left to `is_signature_applicable`.
-        let params = self.sig_params(first);
-        if self.sig_this_type(first).is_some() || self.non_array_rest_type(&params).is_some() {
-            return None;
-        }
         let at = candidates.iter().position(|&c| c == chosen)?;
-        // That attempt was made in the round that goes by subtypes if what does not wait passed there.
-        let mut by_subtype = self.are_arguments_related(file, args, &params, true, true)?;
-        for (i, &arg) in args.iter().enumerate() {
-            if by_subtype
-                && let Arg::Expr(e) = arg
-                && self.is_context_sensitive(file, e)
-                && let Some(param) = self.param_type_at(&params, i)
-            {
-                by_subtype = self.is_any_function_type_related_to(file, e, param, true);
-            }
-        }
-        if self.are_arguments_related(file, args, &params, by_subtype, false)? {
+        let is_applicable =
+            |c: &mut Self, sig: SigId, relation: Relation, skips_sensitive: bool| {
+                c.signature_applicability(s, sig, relation, skips_sensitive, None)
+                    .known()
+            };
+        // That attempt was made in the round that goes by subtypes if its first round passed there.
+        let by_subtype = is_applicable(self, first, Relation::Subtype, true)?;
+        let relation = if by_subtype {
+            Relation::Subtype
+        } else {
+            Relation::Assignable
+        };
+        if is_applicable(self, first, relation, false)? {
             return Some(first);
         }
         // The first round of that attempt was applicable, so every argument has been checked. The attempts that follow have new
@@ -1782,31 +1778,18 @@ impl<'p> Checker<'p> {
                 self.set_context_checked(file, e, ContextChecked::ByEndedAttempt);
             }
         }
-        let mut attempts: SmallVec<[(bool, SigId); 8]> = candidates[at + 1..]
+        let mut attempts: SmallVec<[(Relation, SigId); 8]> = candidates[at + 1..]
             .iter()
-            .map(|&c| (by_subtype, c))
+            .map(|&c| (relation, c))
             .collect();
         if by_subtype {
-            attempts.extend(candidates.iter().map(|&c| (false, c)));
+            attempts.extend(candidates.iter().map(|&c| (Relation::Assignable, c)));
         }
-        for (by_subtype, candidate) in attempts {
+        for (relation, candidate) in attempts {
             let outer = std::mem::replace(&mut self.keeps_arg_contexts, true);
-            let sig = self.instantiate_for_call_as(
-                file,
-                call,
-                candidate,
-                &[],
-                args,
-                this_arg,
-                false,
-                true,
-            );
+            let sig = self.instantiate_for_call_as(s, candidate, false, true);
             self.keeps_arg_contexts = outer;
-            let params = self.sig_params(sig);
-            if self.sig_this_type(sig).is_some() || self.non_array_rest_type(&params).is_some() {
-                return None;
-            }
-            if self.are_arguments_related(file, args, &params, by_subtype, false)? {
+            if is_applicable(self, sig, relation, false)? {
                 return Some(sig);
             }
         }
@@ -1817,12 +1800,8 @@ impl<'p> Checker<'p> {
     /// in the order they are tried in. `settled`: the arguments have been looked at, and what is expected of them stays.
     fn candidate_for_overload_failure(
         &mut self,
-        file: FileId,
-        call: ExprId,
+        s: CallState<'_>,
         sigs: &[SigId],
-        type_args: &[TypeId],
-        args: &[Arg],
-        this_arg: Option<ExprId>,
         settled: bool,
     ) -> SigId {
         if sigs.len() == 1
@@ -1830,9 +1809,7 @@ impl<'p> Checker<'p> {
                 .iter()
                 .any(|&sig| !self.sig_type_params(sig).is_empty())
         {
-            self.pick_longest_candidate_signature(
-                file, call, sigs, type_args, args, this_arg, settled,
-            )
+            self.pick_longest_candidate_signature(s, sigs, settled)
         } else {
             self.union_of_signatures_for_overload_failure(sigs)
         }
@@ -1861,14 +1838,11 @@ impl<'p> Checker<'p> {
     /// `pickLongestCandidateSignature`
     fn pick_longest_candidate_signature(
         &mut self,
-        file: FileId,
-        call: ExprId,
+        s: CallState<'_>,
         sigs: &[SigId],
-        type_args: &[TypeId],
-        args: &[Arg],
-        this_arg: Option<ExprId>,
         settled: bool,
     ) -> SigId {
+        let (type_args, args) = (s.type_args, s.args);
         let candidate = sigs[self.longest_candidate_index(sigs, args.len())];
         let type_params = self.sig_type_params(candidate);
         if type_params.is_empty() {
@@ -1897,7 +1871,7 @@ impl<'p> Checker<'p> {
         // `inferSignatureInstantiationForOverloadFailure`: inferred anew, from the arguments that do not wait for the others.
         let keeps = settled || self.keeps_arg_contexts;
         let outer = std::mem::replace(&mut self.keeps_arg_contexts, keeps);
-        let sig = self.instantiate_for_call(file, call, candidate, &[], args, this_arg, true);
+        let sig = self.instantiate_for_call(s, candidate, true);
         self.keeps_arg_contexts = outer;
         sig
     }
@@ -2243,7 +2217,7 @@ impl<'p> Checker<'p> {
     pub(super) fn arg_type(&mut self, file: FileId, arg: Arg) -> TypeId {
         match arg {
             Arg::Expr(e) => self.type_of_expr(file, e),
-            Arg::Type(t, _) | Arg::Spread(t, ..) => t,
+            Arg::Type(t, ..) | Arg::Spread(t, ..) => t,
         }
     }
 
@@ -2276,7 +2250,7 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         let is_const = self.is_const_type_variable(rest, 0);
         // `...x` for `...rest`
-        if let Some(&Arg::Spread(element, list, _)) = args.last()
+        if let Some(&Arg::Spread(element, list, ..)) = args.last()
             && index + 1 >= args.len()
         {
             if self.is_array_like(list) {
@@ -2293,7 +2267,7 @@ impl<'p> Checker<'p> {
         let mut flags: SmallVec<[ElemFlags; 8]> = SmallVec::with_capacity(length);
         for i in index..args.len() {
             let (ty, flag) = match args[i] {
-                Arg::Spread(element, list, _) => {
+                Arg::Spread(element, list, ..) => {
                     if self.is_array_like(list) {
                         (list, ElemFlags::VARIADIC)
                     } else {
@@ -2328,7 +2302,7 @@ impl<'p> Checker<'p> {
             elems.push(ty);
             // `tupleNameSource`
             flags.push(match args[i] {
-                Arg::Type(_, label) | Arg::Spread(_, _, label) => flag.with_label(label),
+                Arg::Type(_, label, _) | Arg::Spread(_, _, label, _) => flag.with_label(label),
                 _ => flag,
             });
         }
@@ -2392,15 +2366,8 @@ impl<'p> Checker<'p> {
     }
 
     /// The first candidate the arguments fit, going by those whose types do not depend on the choice.
-    fn choose_overload(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        candidates: &[SigId],
-        type_args: &[TypeId],
-        args: &[Arg],
-        this_arg: Option<ExprId>,
-    ) -> Option<SigId> {
+    fn choose_overload(&mut self, s: CallState<'_>, candidates: &[SigId]) -> Option<SigId> {
+        let (file, call) = (s.file, s.call);
         // What the arguments are expected to be mentions the type parameters of all the candidates. To a call among the
         // arguments those say nothing.
         let mut type_params: SmallVec<[TypeId; 8]> = SmallVec::new();
@@ -2411,7 +2378,7 @@ impl<'p> Checker<'p> {
             type_params.extend_from_slice(&own);
         }
         if has_const {
-            self.try_candidates_before_const(file, call, candidates, type_args, args, this_arg);
+            self.try_candidates_before_const(s, candidates);
         }
         self.candidate_holes.push(CandidateHoles {
             call: (file, call),
@@ -2419,7 +2386,7 @@ impl<'p> Checker<'p> {
             mapper: None,
             deferred_calls: SmallVec::new(),
         });
-        let chosen = self.choose_overload_among(file, call, candidates, type_args, args, this_arg);
+        let chosen = self.choose_overload_among(s, candidates);
         self.candidate_holes.pop();
         chosen
     }
@@ -2882,15 +2849,8 @@ impl<'p> Checker<'p> {
     /// `chooseOverload` checks the arguments again for each candidate, so only a candidate with a `const` type parameter sees them in
     /// a const context. Here an argument is checked once. If a candidate applies that comes before the first such one that no literal
     /// among the arguments rules out, the call has no const context.
-    fn try_candidates_before_const(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        candidates: &[SigId],
-        type_args: &[TypeId],
-        args: &[Arg],
-        this_arg: Option<ExprId>,
-    ) {
+    fn try_candidates_before_const(&mut self, s: CallState<'_>, candidates: &[SigId]) {
+        let (file, call, args) = (s.file, s.call, s.args);
         let mut before: SmallVec<[SigId; 8]> = SmallVec::new();
         for &candidate in candidates {
             if !self.has_const_type_parameter(candidate) {
@@ -2915,7 +2875,7 @@ impl<'p> Checker<'p> {
         self.provisional += 1;
         self.outside_const_context.push((file, call));
         let forced = std::mem::replace(&mut self.forces_provisional_contexts, true);
-        let chosen = self.choose_overload(file, call, &before, type_args, args, this_arg);
+        let chosen = self.choose_overload(s, &before);
         self.forces_provisional_contexts = forced;
         self.outside_const_context.pop();
         self.provisional -= 1;
@@ -2964,7 +2924,7 @@ impl<'p> Checker<'p> {
             if !self.is_any(bound)
                 && bound != TypeId::UNKNOWN
                 && (!self.has_room_for_literal(file, e, bound)
-                    || !self.do_plain_members_fit(file, e, bound, false))
+                    || !self.do_plain_members_fit(file, e, bound, Relation::Assignable))
             {
                 is_rejected = true;
                 break;
@@ -3014,7 +2974,7 @@ impl<'p> Checker<'p> {
         {
             return SmallVec::new();
         }
-        let is_incomplete = self.is_call_incomplete(file, call, id);
+        let is_incomplete = self.is_call_incomplete(file, call, CallLike::Call(id));
         let mut has_arity: SmallVec<[bool; 8]> = SmallVec::with_capacity(sigs.len());
         for &sig in sigs {
             let type_params = self.sig_type_params(sig);
@@ -3031,15 +2991,9 @@ impl<'p> Checker<'p> {
         has_arity
     }
 
-    fn choose_overload_among(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        candidates: &[SigId],
-        type_args: &[TypeId],
-        args: &[Arg],
-        this_arg: Option<ExprId>,
-    ) -> Option<SigId> {
+    fn choose_overload_among(&mut self, s: CallState<'_>, candidates: &[SigId]) -> Option<SigId> {
+        let (file, call, node, type_args, args, this_arg) =
+            (s.file, s.call, s.node, s.type_args, s.args, s.this_arg);
         // An argument is looked at once, whichever candidate is tried: it is expected to be what any of them wants.
         let lists: SmallVec<[List<'p, SigParam>; 8]> =
             candidates.iter().map(|&c| self.sig_params(c)).collect();
@@ -3111,9 +3065,8 @@ impl<'p> Checker<'p> {
                     .iter()
                     .map(|said| said.is_none_or(|said| said.0))
                     .collect();
-                let first = self.first_candidate_to_take_literals(
-                    file, call, candidates, &lists, &standing, args, this_arg, i,
-                );
+                let first =
+                    self.first_candidate_to_take_literals(s, candidates, &lists, &standing, i);
                 for said in plain.iter_mut().take(first).flatten() {
                     said.0 = false;
                 }
@@ -3296,34 +3249,27 @@ impl<'p> Checker<'p> {
                 self.set_context(file, e, context);
             }
         }
-        // `isSignatureApplicable`: what it is called on counts, but for `new` and for a call of `super.m`.
-        let hir = self.hir(file);
-        let checks_this = match hir[call].kind {
-            ExprKind::New(_) => false,
-            ExprKind::Call(c) => {
-                !matches!(hir[hir[c].callee].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if matches!(hir[obj].kind, ExprKind::Super))
-            }
-            _ => true,
-        };
+        let checks_this = self.checks_this_argument(file, call, node);
         // The first whose parameters the arguments are subtypes of, if there is one; whether the call is an error is up to
         // whether they can be assigned.
         let mut instantiated: SmallVec<[Option<(List<'p, SigParam>, Option<TypeId>)>; 8]> =
             smallvec![None; candidates.len()];
-        let passes: &[bool] = if candidates.len() > 1 {
-            &[true, false]
+        let passes: &[Relation] = if candidates.len() > 1 {
+            &[Relation::Subtype, Relation::Assignable]
         } else {
-            &[false]
+            &[Relation::Assignable]
         };
         // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` infers from the annotations of a function only the first time the
         // function is checked. `is_arg_checked[i]`: an attempt has checked argument `i`. `is_first_to_check[k]`: the inference for
         // candidate `k` was the first to check a function, so `instantiated[k]` may depend on the annotations of that function.
         let mut is_arg_checked: SmallVec<[bool; 8]> = smallvec![false; args.len()];
         let mut is_first_to_check: SmallVec<[bool; 8]> = smallvec![false; candidates.len()];
-        let mut was_by_subtype = passes[0];
-        for (&by_subtype, k) in passes
+        let mut was_by_subtype = passes[0] == Relation::Subtype;
+        for (&relation, k) in passes
             .iter()
             .flat_map(|pass| (0..candidates.len()).map(move |k| (pass, k)))
         {
+            let by_subtype = relation == Relation::Subtype;
             // The assignable pass starts. Each of its attempts has a new inference context, which gets nothing from the functions
             // that the subtype pass checked.
             if was_by_subtype && !by_subtype {
@@ -3373,9 +3319,7 @@ impl<'p> Checker<'p> {
                             (List::Kept(*declared), self.sig_this_type(candidate))
                         }
                         _ => {
-                            let sig = self.instantiate_for_call(
-                                file, call, candidate, type_args, args, this_arg, true,
-                            );
+                            let sig = self.instantiate_for_call(s, candidate, true);
                             (self.sig_params(sig), self.sig_this_type(sig))
                         }
                     };
@@ -3384,8 +3328,7 @@ impl<'p> Checker<'p> {
                 }
             };
             // With `...args: T`, how many it takes is only known now.
-            if self.non_array_rest_type(&lists[k]).is_some()
-                && !self.has_correct_arity(&params, args)
+            if self.non_array_rest_type(&lists[k]).is_some() && !self.has_correct_arity(s, &params)
             {
                 continue;
             }
@@ -3438,10 +3381,7 @@ impl<'p> Checker<'p> {
                     && is_sensitive[i]
                 {
                     if let Some(param) = self.context_of_arg_at(&params, i, Some(args.len())) {
-                        if !self.has_room_for_literal(file, e, param)
-                            || !self.is_any_function_type_related_to(file, e, param, by_subtype)
-                            || self.literal_lacks_target_signatures(file, e, param)
-                        {
+                        if !self.is_context_sensitive_argument_related(file, e, param, relation) {
                             applicable = false;
                             break;
                         }
@@ -3452,12 +3392,7 @@ impl<'p> Checker<'p> {
                         let fits = is_rejected_in_second_round
                             || self.is_guard_if_expected(file, e, param)
                                 && (is_deferred.contains(&true)
-                                    || self
-                                        .do_annotated_parameters_fit(file, e, param, by_subtype));
-                        if !self.do_plain_members_fit(file, e, param, by_subtype) {
-                            applicable = false;
-                            break;
-                        }
+                                    || self.do_annotated_parameters_fit(file, e, param, relation));
                         if !fits {
                             is_rejected_in_second_round = true;
                             // The second round goes from left to right, and may not get past another function.
@@ -3482,7 +3417,7 @@ impl<'p> Checker<'p> {
                     && let Some(wants_construct) =
                         self.wants_plain_signature(param, MapperId::IDENTITY)
                     && self.single_generic_signature(ty, wants_construct).is_some()
-                    && !self.is_related_in_pass(ty, param, by_subtype)
+                    && !self.related(ty, param, relation)
                 {
                     is_generic_function_deferred = true;
                     continue;
@@ -3554,12 +3489,11 @@ impl<'p> Checker<'p> {
             // The second round of `chooseOverload`: inference and `isSignatureApplicable` under `CheckModeNormal`.
             if applicable && is_generic_function_deferred {
                 let outer = std::mem::replace(&mut self.keeps_arg_contexts, true);
-                let sig = self
-                    .instantiate_for_call(file, call, candidate, type_args, args, this_arg, false);
+                let sig = self.instantiate_for_call(s, candidate, false);
                 self.keeps_arg_contexts = outer;
-                let params = self.sig_params(sig);
                 applicable = self
-                    .are_arguments_related(file, args, &params, by_subtype, false)
+                    .signature_applicability(s, sig, relation, false, None)
+                    .known()
                     .unwrap_or(!by_subtype);
             }
             if applicable {
@@ -3577,15 +3511,13 @@ impl<'p> Checker<'p> {
     /// Zero where it cannot be told, and where no candidate takes them.
     fn first_candidate_to_take_literals(
         &mut self,
-        file: FileId,
-        call: ExprId,
+        s: CallState<'_>,
         candidates: &[SigId],
         lists: &[List<'p, SigParam>],
         standing: &[bool],
-        args: &[Arg],
-        this_arg: Option<ExprId>,
         at: usize,
     ) -> usize {
+        let (file, call, args) = (s.file, s.call, s.args);
         if candidates.len() < 2
             || self.provisional > 0
             || candidates.iter().any(|&c| self.has_const_type_parameter(c))
@@ -3625,7 +3557,7 @@ impl<'p> Checker<'p> {
                     says_something = true;
                 } else if self.has_room_for_literal(file, e, bound) {
                     says_something = true;
-                    fits = fits && self.do_plain_members_fit(file, e, bound, false);
+                    fits = fits && self.do_plain_members_fit(file, e, bound, Relation::Assignable);
                 } else {
                     fits = false;
                 }
@@ -3647,30 +3579,24 @@ impl<'p> Checker<'p> {
             if self.frames.iter().any(|frame| frame.tainted) {
                 return 0;
             }
-            if self.takes_arguments_alone(file, call, candidate, args, this_arg) {
+            if self.takes_arguments_alone(s, candidate) {
                 return k;
             }
         }
         0
     }
 
-    /// Whether `candidate` passes the first round of `chooseOverload` as the only candidate of `call`. In doubt it does. Nothing is
-    /// being tried around. What is expected of the arguments meanwhile, and what comes of that, is not kept.
-    fn takes_arguments_alone(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        candidate: SigId,
-        args: &[Arg],
-        this_arg: Option<ExprId>,
-    ) -> bool {
+    /// Whether `candidate` passes the first round of `chooseOverload` as the only candidate. In doubt it does. Nothing is being
+    /// tried around. What is expected of the arguments meanwhile, and what comes of that, is not kept.
+    fn takes_arguments_alone(&mut self, s: CallState<'_>, candidate: SigId) -> bool {
+        let (file, call, args) = (s.file, s.call, s.args);
         self.provisional_floor = self.stack.len();
         self.provisional += 1;
         let forced = std::mem::replace(&mut self.forces_provisional_contexts, true);
         // What is read of a trial counts as a question that came back to itself. That says nothing about what is worked out around.
         let (cycles, uncertain) = (self.cycles, self.uncertain);
         let gave_up = std::mem::replace(&mut self.relation_gave_up, false);
-        let chosen = self.choose_overload(file, call, &[candidate], &[], args, this_arg);
+        let chosen = self.choose_overload(s, &[candidate]);
         let is_sure = !self.relation_gave_up;
         self.relation_gave_up = gave_up;
         self.cycles = cycles;
@@ -3749,7 +3675,7 @@ impl<'p> Checker<'p> {
         file: FileId,
         arg: ExprId,
         param: TypeId,
-        by_subtype: bool,
+        relation: Relation,
     ) -> bool {
         let hir = self.hir(file);
         let ExprKind::Fn(func) = hir[arg].kind else {
@@ -3784,7 +3710,7 @@ impl<'p> Checker<'p> {
             if !self.is_known(from) || !self.is_known(to) || self.has_type_variables(from) {
                 continue;
             }
-            if !self.is_related_in_pass(from, to, by_subtype) {
+            if !self.related(from, to, relation) {
                 return false;
             }
         }
@@ -3798,9 +3724,9 @@ impl<'p> Checker<'p> {
         file: FileId,
         arg: ExprId,
         param: TypeId,
-        by_subtype: bool,
+        relation: Relation,
     ) -> bool {
-        self.check_literal_skipping_sensitive(file, arg, param, by_subtype)
+        self.check_literal_skipping_sensitive(file, arg, param, relation)
             .is_some()
     }
 
@@ -3812,13 +3738,13 @@ impl<'p> Checker<'p> {
         file: FileId,
         arg: ExprId,
         param: TypeId,
-        by_subtype: bool,
+        relation: Relation,
     ) -> Option<TypeId> {
         let hir = self.hir(file);
         let props = match hir[arg].kind {
             ExprKind::Object(props) => props,
             ExprKind::Array(items) => {
-                return self.check_array_skipping_sensitive(file, arg, items, param, by_subtype);
+                return self.check_array_skipping_sensitive(file, arg, items, param, relation);
             }
             _ => return Some(TypeId::UNRESOLVED),
         };
@@ -3874,15 +3800,14 @@ impl<'p> Checker<'p> {
             {
                 if let Some(wanted) = wanted {
                     if !self.has_room_for_literal(file, prop.value, wanted)
-                        || !self
-                            .is_any_function_type_related_to(file, prop.value, wanted, by_subtype)
+                        || !self.is_any_function_type_related_to(file, prop.value, wanted, relation)
                     {
                         return None;
                     }
                     // The type of a nested literal becomes part of the type of `arg`: `wanted` leaves out an index signature of `param`
                     // once a member of an intersection declares the property, but the relation below checks the property against both.
-                    ty = self
-                        .check_literal_skipping_sensitive(file, prop.value, wanted, by_subtype)?;
+                    ty =
+                        self.check_literal_skipping_sensitive(file, prop.value, wanted, relation)?;
                 }
             } else if prop.value.is_some()
                 && matches!(prop.kind, PropKind::Init | PropKind::Shorthand)
@@ -3911,7 +3836,7 @@ impl<'p> Checker<'p> {
         if self.is_any(literal_type) {
             return Some(TypeId::UNRESOLVED);
         }
-        self.is_related_in_pass(literal_type, param, by_subtype)
+        self.related(literal_type, param, relation)
             .then_some(literal_type)
     }
 
@@ -3924,7 +3849,7 @@ impl<'p> Checker<'p> {
         arg: ExprId,
         items: IdList<ExprId>,
         param: TypeId,
-        by_subtype: bool,
+        relation: Relation,
     ) -> Option<TypeId> {
         let hir = self.hir(file);
         if self.has_type_variables(param)
@@ -3945,9 +3870,9 @@ impl<'p> Checker<'p> {
             {
                 if let Some(wanted) = wanted {
                     ty = if self.has_room_for_literal(file, item, wanted)
-                        && self.is_any_function_type_related_to(file, item, wanted, by_subtype)
+                        && self.is_any_function_type_related_to(file, item, wanted, relation)
                     {
-                        self.check_literal_skipping_sensitive(file, item, wanted, by_subtype)
+                        self.check_literal_skipping_sensitive(file, item, wanted, relation)
                             .unwrap_or(TypeId::UNKNOWN)
                     } else {
                         TypeId::UNKNOWN
@@ -3991,7 +3916,7 @@ impl<'p> Checker<'p> {
             };
             self.array_of(element)
         };
-        self.is_related_in_pass(literal_type, param, by_subtype)
+        self.related(literal_type, param, relation)
             .then_some(literal_type)
     }
 
@@ -4003,7 +3928,7 @@ impl<'p> Checker<'p> {
         file: FileId,
         arg: ExprId,
         param: TypeId,
-        by_subtype: bool,
+        relation: Relation,
     ) -> bool {
         if !matches!(self.hir(file)[arg].kind, ExprKind::Fn(_))
             || self.has_type_variables(param)
@@ -4015,7 +3940,7 @@ impl<'p> Checker<'p> {
             literal: Literalness::Partial,
             ..Shape::default()
         });
-        self.is_related_in_pass(any_function_type, param, by_subtype)
+        self.related(any_function_type, param, relation)
     }
 
     /// Whether a function, object or array literal whose type is not known yet could be a `param` at all:
@@ -4817,39 +4742,24 @@ impl<'p> Checker<'p> {
     #[inline]
     pub(super) fn instantiate_for_call(
         &mut self,
-        file: FileId,
-        call: ExprId,
+        s: CallState<'_>,
         sig: SigId,
-        type_args: &[TypeId],
-        args: &[Arg],
-        this_arg: Option<ExprId>,
         skip_sensitive: bool,
     ) -> SigId {
-        self.instantiate_for_call_as(
-            file,
-            call,
-            sig,
-            type_args,
-            args,
-            this_arg,
-            skip_sensitive,
-            false,
-        )
+        self.instantiate_for_call_as(s, sig, skip_sensitive, false)
     }
 
     /// `settled`: the functions among the arguments have their parameter types for good (`NodeCheckFlagsContextChecked`). They
     /// wait for nothing, and are inferred from in their turn like any other argument.
     pub(super) fn instantiate_for_call_as(
         &mut self,
-        file: FileId,
-        call: ExprId,
+        s: CallState<'_>,
         sig: SigId,
-        type_args: &[TypeId],
-        args: &[Arg],
-        this_arg: Option<ExprId>,
         skip_sensitive: bool,
         settled: bool,
     ) -> SigId {
+        let (file, call, type_args, args, this_arg) =
+            (s.file, s.call, s.type_args, s.args, s.this_arg);
         let type_params = self.sig_type_params(sig);
         let params = self.sig_params(sig);
         if type_params.is_empty() {
@@ -4890,18 +4800,13 @@ impl<'p> Checker<'p> {
         inference.call_site = Some((file, call));
         // `returnMapper`: the inferences from the contextual type of the call alone.
         let mut from_result = MapperId::IDENTITY;
-        // `inferTypeArguments`: nothing is expected of what a decorator gives back when it is applied. It is applied to what is made
-        // up for it, where `@f(x)` itself, a call like any other, has expressions.
-        let is_decorator_applied = matches!(
-            self.bound(file).expr_parent[call.idx()],
-            Parent::Decorator(..)
-        ) && !args.is_empty()
-            && args.iter().all(|a| matches!(a, Arg::Type(..)));
+        // `inferTypeArguments`: nothing is expected of what a decorator or a `[Symbol.hasInstance]` method gives back.
+        let has_no_contextual_type = !matches!(s.node, CallLike::Call(_));
         // `inferTypeArguments` reads the contextual type of the call first, and the return type of `sig` only if there is one. The order
         // is observable only while that return type is being resolved, when reading it is a circularity. `None`: not read yet.
-        let has_no_contextual_type = self.is_resolving_return_type(sig)
-            && (is_decorator_applied || self.expected_result(file, call, &type_params).is_none());
-        let mut ret = if has_no_contextual_type {
+        let is_return_type_put_off = self.is_resolving_return_type(sig)
+            && (has_no_contextual_type || self.expected_result(file, call, &type_params).is_none());
+        let mut ret = if is_return_type_put_off {
             None
         } else {
             Some(self.return_type_in_chain(file, call, sig))
@@ -4910,7 +4815,7 @@ impl<'p> Checker<'p> {
         // The contextual type of the call contributes inferences, at a lower priority than the arguments.
         if let Some(ret) = ret
             && self.has_type_variables(ret)
-            && !is_decorator_applied
+            && !has_no_contextual_type
             && let Some((contextual, is_from_pattern)) =
                 self.expected_result(file, call, &type_params)
         {
@@ -5193,7 +5098,7 @@ impl<'p> Checker<'p> {
                             ..*p
                         })
                         .collect();
-                    !self.has_correct_arity(&instantiated, args)
+                    !self.has_correct_arity(s, &instantiated)
                 };
                 // `chooseOverload`: once a generic function was skipped `argCheckMode` has `CheckModeSkipGenericFunctions`, and
                 // `isSignatureApplicable` takes every generic function given where one that is not generic is expected for
@@ -5757,7 +5662,7 @@ impl<'p> Checker<'p> {
                 continue;
             };
             // The relation also covers index signatures and the members of an intersection, which the loop below does not reach.
-            if !self.do_plain_members_fit(file, e, param, false) {
+            if !self.do_plain_members_fit(file, e, param, Relation::Assignable) {
                 return false;
             }
             let target = self.apparent_type(param);
@@ -5798,7 +5703,7 @@ impl<'p> Checker<'p> {
                 let wanted = self.type_of_prop(wanted, members.mapper);
                 // Further in, the same.
                 if self.is_context_sensitive(file, prop.value) {
-                    if !self.do_plain_members_fit(file, prop.value, wanted, false) {
+                    if !self.do_plain_members_fit(file, prop.value, wanted, Relation::Assignable) {
                         return false;
                     }
                     continue;

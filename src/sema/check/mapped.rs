@@ -60,7 +60,7 @@ impl<'p> Checker<'p> {
             TypeData::Template { .. } | TypeData::StringMapping { .. } => true,
             TypeData::LazyAlias { .. } => false,
             // `getGenericObjectFlags`: a substitution type is as generic as what it stands for.
-            TypeData::NoInfer(of) => self.is_generic(*of),
+            TypeData::Substitution { base: of, .. } => self.is_generic(*of),
             _ => self.is_deferred(ty),
         }
     }
@@ -110,7 +110,7 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         self.guard("keyof");
         // The keys of `NoInfer<T>` are those of `T`, and nothing is inferred to them either.
-        if let TypeData::NoInfer(of) = *self.data(ty) {
+        if let TypeData::Substitution { base: of, .. } = *self.data(ty) {
             let keys = self.get_index_type_ex(of, no_reducible_check, no_index_signatures);
             return self.no_infer(keys);
         }

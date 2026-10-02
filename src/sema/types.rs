@@ -253,8 +253,11 @@ pub enum TypeData {
         undefined: bool,
     },
     Keyof(TypeId),
-    /// `NoInfer<T>`, for as long as `T` mentions type parameters: `T`, but nothing is inferred to it.
-    NoInfer(TypeId),
+    /// `SubstitutionType`: `base`, which is known to be a `constraint`. With the constraint `unknown` it is `NoInfer<base>`.
+    Substitution {
+        base: TypeId,
+        constraint: TypeId,
+    },
     Template {
         texts: Box<[Atom]>,
         types: Box<[TypeId]>,
@@ -773,10 +776,10 @@ fn is_type_local(data: &TypeData, file: FileId) -> bool {
         | TypeData::Cond {
             file: f, mapper, ..
         } => *f == file || mapper.is_local(),
-        TypeData::EvolvingArray(t)
-        | TypeData::Keyof(t)
-        | TypeData::NoInfer(t)
-        | TypeData::StringMapping { ty: t, .. } => t.is_local(),
+        TypeData::EvolvingArray(t) | TypeData::Keyof(t) | TypeData::StringMapping { ty: t, .. } => {
+            t.is_local()
+        }
+        TypeData::Substitution { base, constraint } => base.is_local() || constraint.is_local(),
         TypeData::Union(t) | TypeData::Intersection(t) => any(t),
         TypeData::Ref { target: sym, args } | TypeData::LazyAlias { sym, args } => {
             sym.file == file || any(args)
@@ -1328,9 +1331,10 @@ impl TypeStore {
                     | (made_with & (TypeFlags::HAS_UNRESOLVED | TypeFlags::HAS_MARKER))
             }
             TypeData::IndexedAccess { obj, index, .. } => self.flags(*obj) | self.flags(*index),
-            TypeData::Keyof(t) | TypeData::NoInfer(t) | TypeData::StringMapping { ty: t, .. } => {
-                self.flags(*t)
+            TypeData::Substitution { base, constraint } => {
+                self.flags(*base) | self.flags(*constraint)
             }
+            TypeData::Keyof(t) | TypeData::StringMapping { ty: t, .. } => self.flags(*t),
             TypeData::Template { types, .. } => all(types),
             _ => TypeFlags::empty(),
         }

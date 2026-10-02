@@ -450,52 +450,65 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getSymbolFlags`: whether the alias `sym` ends at a property, which is a value and nothing else. The symbol tables alone lead
-    /// nowhere then. It is a property of the `export =` value of a module (`getExternalModuleMember`), or the `resolvedSymbol` of
-    /// `a.b` in `exports.x = a.b` and the like (`getTargetOfAliasLikeExpression`).
+    /// `getSymbolFlags`: whether the alias `sym` ends at a property, which is a value and nothing else.
     pub(super) fn is_alias_of_property(&mut self, sym: Sym) -> bool {
+        self.property_access_of_alias(sym).is_some()
+    }
+
+    /// `resolveAlias` of `sym`, where it ends at a property.
+    pub(super) fn property_of_alias(&mut self, sym: Sym) -> Option<&'p Prop> {
+        let (object, name) = self.property_access_of_alias(sym)?;
+        // `getReducedApparentType`
+        let apparent = self.apparent_type(object);
+        let apparent = self.reduced(apparent);
+        Some(self.prop_ref(apparent, name)?.0)
+    }
+
+    /// Where the alias `sym` ends at a property: the type that has it, and its name. The symbol tables alone lead nowhere then. It is
+    /// a property of the `export =` value of a module (`getExternalModuleMember`), or the `resolvedSymbol` of `a.b` in
+    /// `exports.x = a.b` and the like (`getTargetOfAliasLikeExpression`).
+    fn property_access_of_alias(&mut self, sym: Sym) -> Option<(TypeId, Atom)> {
         let files = self.files();
         if !files.flags(sym).contains(SymFlags::ALIAS)
             || files.resolve_alias_as(sym, SymFlags::TYPE).is_some()
         {
-            return false;
+            return None;
         }
         let (mut last, mut steps) = (sym, 0);
         while let Some(next) = files.alias_target(last) {
             steps += 1;
             if next == last || steps > 32 {
-                return false;
+                return None;
             }
             last = files.canonical(next);
         }
         if self.imported_property_of_export_equals(last).is_some() {
-            return true;
+            return self.imported_from_export_equals(last);
         }
-        let Some((file, decl)) = files.declaration_of_alias_symbol(last) else {
-            return false;
-        };
+        let (file, decl) = files.declaration_of_alias_symbol(last)?;
         let hir = self.hir(file);
         let e = match decl {
             Decl::ExportExpr(stmt) => match hir[stmt].kind {
                 StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => e,
-                _ => return false,
+                _ => return None,
             },
             Decl::ModuleExports(assignment) | Decl::ExportsProperty(assignment) => {
                 match hir[assignment].kind {
                     ExprKind::Assign { value, .. } => value,
-                    _ => return false,
+                    _ => return None,
                 }
             }
-            _ => return false,
+            _ => return None,
         };
         let ExprKind::Dot { obj, name, .. } = hir[e].kind else {
-            return false;
+            return None;
         };
         let object = self.type_of_expr(file, obj);
         let object = self.non_null_type(object);
-        self.is_known(object)
+        (self.is_known(object)
             && !self.is_any(object)
-            && self.declared_property(object, name).is_some()
+            && self.declared_property(object, name).is_some())
+        .then_some((object, name))
     }
 
     /// `resolveAlias`, where it comes to a symbol `cloneTypeAsModuleType` made: the alias of the `import * as ns` that made it, which
@@ -699,6 +712,24 @@ impl<'p> Checker<'p> {
     /// `const { a } = require("m")` name a property of the value when `m` has `export = value`. Returns the type of the value and
     /// the type of its property `a`, if it has one. `None` if `sym` is not such an import or export.
     fn property_of_export_equals(&mut self, sym: Sym) -> Option<(TypeId, Option<TypeId>)> {
+        let (ty, name) = self.imported_from_export_equals(sym)?;
+        if self.is_any(ty) {
+            return Some((ty, None));
+        }
+        // `skipObjectFunctionPropertyAugment`: what every object and every function has does not count, nor does an index signature.
+        let apparent = self.apparent_type(ty);
+        let apparent = self.reduced(apparent);
+        let found = if self.is_union(apparent) {
+            self.type_of_property(apparent, name)
+        } else {
+            self.prop_ref(apparent, name)
+                .map(|(prop, mapper)| self.type_of_prop(prop, mapper))
+        };
+        Some((ty, found))
+    }
+
+    /// The type of the value and the name `a`, for the same.
+    fn imported_from_export_equals(&mut self, sym: Sym) -> Option<(TypeId, Atom)> {
         let file = sym.file;
         let files = self.files();
         for &decl in &files.symbol(sym).decls {
@@ -712,20 +743,7 @@ impl<'p> Checker<'p> {
             if value == module {
                 continue;
             }
-            let ty = self.type_of_symbol(value);
-            if self.is_any(ty) {
-                return Some((ty, None));
-            }
-            // `skipObjectFunctionPropertyAugment`: what every object and every function has does not count, nor does an index signature.
-            let apparent = self.apparent_type(ty);
-            let apparent = self.reduced(apparent);
-            let found = if self.is_union(apparent) {
-                self.type_of_property(apparent, name)
-            } else {
-                self.prop_ref(apparent, name)
-                    .map(|(prop, mapper)| self.type_of_prop(prop, mapper))
-            };
-            return Some((ty, found));
+            return Some((self.type_of_symbol(value), name));
         }
         None
     }

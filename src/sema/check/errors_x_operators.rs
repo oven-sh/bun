@@ -14,8 +14,10 @@
 //!
 //! To be called after `check_assignments`: 2412 takes the place of the 2322 that is said there.
 
+use super::call::CallLike;
 use super::errors::Diagnostic;
 use super::explain::Line;
+use super::relate::Relation;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent, PatParent};
 use crate::resolve::ScriptTarget;
@@ -485,16 +487,16 @@ fn operand_types(
         .then_some((l, r))
 }
 
-/// Whether `source` is a subtype of `target`, or else assignable to it. `None`: the comparison was cut short, and what it came to is
+/// Whether `source` is related to `target`. `None`: the comparison was cut short, and what it came to is
 /// not to be gone by.
 fn is_related_for_sure(
     c: &mut Checker<'_>,
     source: TypeId,
     target: TypeId,
-    by_subtype: bool,
+    relation: Relation,
 ) -> Option<bool> {
     let gave_up_before = std::mem::replace(&mut c.relation_gave_up, false);
-    let is_related = c.is_related_in_pass(source, target, by_subtype);
+    let is_related = c.related(source, target, relation);
     let is_sure = !c.relation_gave_up && !c.timed_out();
     c.relation_gave_up |= gave_up_before;
     is_sure.then_some(is_related)
@@ -681,7 +683,7 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
                 c.note(start, end, 2839, vec![always.to_owned()]);
             }
         }
-        BinOp::Instanceof => check_instanceof(c, file, left, right, out),
+        BinOp::Instanceof => check_instanceof(c, file, e, left, right, out),
         BinOp::In => check_right_operand_of_in(c, file, right, out),
         BinOp::And | BinOp::Or | BinOp::Nullish if is_assignment => {
             check_assignment_operator(c, file, left, right, out)
@@ -1171,88 +1173,11 @@ fn check_tagged_template(
 
 // ───────────────────────────── `instanceof` and `in` ─────────────────────────────
 
-/// `getSymbolHasInstanceMethodOfObjectType`
-fn has_instance_method(c: &mut Checker<'_>, ty: TypeId) -> Option<TypeId> {
-    // `getPropertyNameForKnownSymbolName`
-    let name = c.files().atoms.symbol_name(b"hasInstance");
-    // `getPropertyOfType`: an index signature is no property.
-    let mut methods = Vec::new();
-    for &part in c.parts(ty) {
-        if !c.is_assignable(part, TypeId::OBJECT) {
-            return None;
-        }
-        let apparent = c.apparent_type(part);
-        for &member in c.parts(apparent) {
-            let members = c.members(member)?;
-            let (prop, mapper) = c.property_of_type(&members, name)?;
-            methods.push(c.type_of_prop(&prop, mapper));
-        }
-    }
-    let method = c.union(&methods);
-    // An unresolved method type is returned as it is: the caller reports nothing about it.
-    (!c.is_known(method) || !c.signatures(method, false).is_empty()).then_some(method)
-}
-
-/// `isSignatureApplicable`, of `right[Symbol.hasInstance](left)`, `l` and `r` being the types of the two. `None`: it cannot be told.
-/// `report`: where to say why not.
-fn is_has_instance_applicable(
-    c: &mut Checker<'_>,
-    file: FileId,
-    sig: SigId,
-    (left, l): (ExprId, TypeId),
-    (right, r): (ExprId, TypeId),
-    by_subtype: bool,
-    report: Option<&mut Vec<Diagnostic>>,
-) -> Option<bool> {
-    if let Some(wanted) = c.sig_this_type(sig)
-        && wanted != TypeId::VOID
-    {
-        if !c.is_known(wanted) {
-            return None;
-        }
-        if !is_related_for_sure(c, r, wanted, by_subtype)? {
-            if let Some(out) = report {
-                let start = c.error_start_of(file, right);
-                out.push(Diagnostic { start, code: 2684 });
-                let end = c.error_end_of(file, right);
-                c.explain_to(start, end, 2684, |c| {
-                    let (given, expected) = c.type_names_for_error_display(r, wanted);
-                    vec![given, expected]
-                });
-                c.explain_chain(start, 2684, |c| c.assignability_chain(r, wanted));
-                c.relate(start, 2684, |c| c.assignability_related(r, wanted));
-            }
-            return Some(false);
-        }
-    }
-    let params = c.sig_params(sig);
-    let Some(wanted) = c.param_type_at(&params, 0) else {
-        return Some(true);
-    };
-    if !c.is_known(wanted) {
-        return None;
-    }
-    if is_related_for_sure(c, l, wanted, by_subtype)? {
-        return Some(true);
-    }
-    if let Some(out) = report {
-        // `getEffectiveCheckNode`: less the parentheses and every `satisfies`.
-        let hir = c.hir(file);
-        let mut node = left;
-        while let ExprKind::Satisfies { expr, .. } = hir[node].kind {
-            node = expr;
-        }
-        let at = c.error_start_inside_parentheses(file, node);
-        let end = c.error_end_inside_parentheses(file, node);
-        c.check_assignable_with_end(file, l, wanted, at, end, node, 2345, out);
-    }
-    Some(false)
-}
-
-/// `resolveInstanceofExpression`, and what `checkInstanceOfExpression` makes of the signature it gives: 2359 2860 2861
+/// What `checkInstanceOfExpression` makes of the signature `e`, which is `left instanceof right`, resolves to: 2860 2861
 fn check_instanceof(
     c: &mut Checker<'_>,
     file: FileId,
+    e: ExprId,
     left: ExprId,
     right: ExprId,
     out: &mut Vec<Diagnostic>,
@@ -1266,16 +1191,7 @@ fn check_instanceof(
     if !c.is_known(apparent_right) || c.is_any(apparent_right) {
         return;
     }
-    let Some(method) = has_instance_method(c, r) else {
-        let function = c.global_ref(known::Function, &[]);
-        if c.signatures(r, false).is_empty()
-            && c.signatures(r, true).is_empty()
-            && is_related_for_sure(c, r, function, true) == Some(false)
-        {
-            let start = c.error_start_of(file, right);
-            out.push(Diagnostic { start, code: 2359 });
-            c.note(start, c.error_end_of(file, right), 2359, Vec::new());
-        }
+    let Some(method) = c.symbol_has_instance_method_of_object_type(r) else {
         return;
     };
     let apparent = c.apparent_type(method);
@@ -1286,89 +1202,17 @@ fn check_instanceof(
     if !c.is_known(l) || c.is_uncertain(file, left) {
         return;
     }
-    // `resolveCall`. What has type parameters of its own is left alone.
     let signatures = c.signatures(apparent, false);
-    let candidates = c.reorder_candidates(&signatures);
-    if candidates.is_empty()
-        || candidates
-            .iter()
-            .any(|&sig| !c.sig_type_params(sig).is_empty())
-    {
+    if signatures.is_empty() {
         return;
     }
-    // `hasCorrectArity`, of one argument.
-    let mut fitting = Vec::with_capacity(candidates.len());
-    for &sig in &candidates {
-        let params = c.sig_params(sig);
-        if (c.has_effective_rest_parameter(&params) || c.parameter_count(&params) >= 1)
-            && c.min_argument_count(&params) <= 1
-        {
-            fitting.push(sig);
-        }
-    }
-    let mut chosen = None;
-    for by_subtype in [true, false] {
-        if chosen.is_some() || by_subtype && candidates.len() < 2 {
-            continue;
-        }
-        for &sig in &fitting {
-            match is_has_instance_applicable(c, file, sig, (left, l), (right, r), by_subtype, None)
-            {
-                Some(true) => {
-                    chosen = Some(sig);
-                    break;
-                }
-                Some(false) => {}
-                None => return,
-            }
-        }
-    }
-    if chosen.is_none() {
-        // `reportCallResolutionErrors`: whatever is wrong, it is put as the left side not being what the method takes.
-        match fitting.last() {
-            Some(&last) => {
-                let mut said = Vec::new();
-                is_has_instance_applicable(
-                    c,
-                    file,
-                    last,
-                    (left, l),
-                    (right, r),
-                    false,
-                    Some(&mut said),
-                );
-                for d in said {
-                    let mut on_top = d.code;
-                    if fitting.len() > 1 {
-                        c.explain_under(d.start, on_top, 2770, Vec::new());
-                        c.explain_under(d.start, 2770, 2769, Vec::new());
-                        on_top = 2769;
-                    }
-                    c.explain_under(d.start, on_top, 2860, Vec::new());
-                    out.push(Diagnostic {
-                        start: d.start,
-                        code: 2860,
-                    });
-                }
-            }
-            None => {
-                let start = c.start_of(file, left);
-                out.push(Diagnostic { start, code: 2860 });
-                explain_has_instance_arity(c, file, left, right, start, &candidates);
-            }
-        }
-    }
-    let returned = match chosen {
-        Some(sig) => c.sig_return(sig),
-        None => {
-            let candidate = c.union_of_signatures_for_overload_failure(&candidates);
-            c.sig_return(candidate)
-        }
-    };
+    let resolved = c.resolve_call(file, e);
+    let node = CallLike::InstanceOf { left, right };
+    c.report_call_resolution(file, e, node, &signatures, resolved, Some(2860), out);
     let at = c.error_start_of(file, right);
     c.check_assignable_with_end_from(
         file,
-        returned,
+        resolved.ret,
         TypeId::BOOLEAN,
         at,
         |c| error_end(c, file, ErrorNode::Written(right)),
@@ -1376,53 +1220,6 @@ fn check_instanceof(
         2861,
         out,
     );
-}
-
-/// `getArgumentArityError`, of the one argument `left` of `right[Symbol.hasInstance]`, under 2860, which is reported at `start`.
-fn explain_has_instance_arity(
-    c: &mut Checker<'_>,
-    file: FileId,
-    left: ExprId,
-    right: ExprId,
-    start: u32,
-    candidates: &[SigId],
-) {
-    if !c.explains {
-        return;
-    }
-    let (mut min, mut max, mut has_rest) = (usize::MAX, 0usize, false);
-    // `minAbove`: the fewest parameters of those that take more than the one argument.
-    let mut above = usize::MAX;
-    for &sig in candidates {
-        let params = c.sig_params(sig);
-        let most = c.parameter_count(&params);
-        min = min.min(c.min_argument_count(&params));
-        max = max.max(most);
-        if most > 1 {
-            above = above.min(most);
-        }
-        has_rest |= c.has_effective_rest_parameter(&params);
-    }
-    let (code, args) = if min < 1 && 1 < max {
-        (
-            2575,
-            vec!["1".to_owned(), "0".to_owned(), above.to_string()],
-        )
-    } else {
-        let range = if !has_rest && min < max {
-            format!("{min}-{max}")
-        } else {
-            min.to_string()
-        };
-        (
-            if has_rest { 2555 } else { 2554 },
-            vec![range, "1".to_owned()],
-        )
-    };
-    // One argument too many is reported on the argument, anything else on the whole expression.
-    let end = c.end_of_expr(file, if max < 1 { left } else { right });
-    c.note(start, end, code, args);
-    c.explain_under(start, code, 2860, Vec::new());
 }
 
 /// `checkInExpression`, once the right operand has been found to be an object: 2638
@@ -1623,7 +1420,7 @@ fn promised_type_of_promise(c: &mut Checker<'_>, t: TypeId, a: &mut Awaiting) ->
             && this != TypeId::VOID
         {
             let takes_it = if c.is_known(this) {
-                is_related_for_sure(c, t, this, true)
+                is_related_for_sure(c, t, this, Relation::Subtype)
             } else {
                 None
             };
@@ -2012,7 +1809,7 @@ fn check_iterated_type(
     let any_list = c.readonly_array_of(TypeId::ANY);
     if c.is_array(array_type)
         || !c.is_nullish(array_type)
-            && is_related_for_sure(c, array_type, any_list, false) != Some(false)
+            && is_related_for_sure(c, array_type, any_list, Relation::Assignable) != Some(false)
     {
         return;
     }

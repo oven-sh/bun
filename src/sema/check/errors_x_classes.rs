@@ -185,7 +185,7 @@ impl Checker<'_> {
                 start: class.name_pos,
                 code: 2725,
             });
-            let module = super::errors_x_modules::module_kind_name(self.p.files.options.module);
+            let module = self.p.files.options.module.name();
             self.note(class.name_pos, 0, 2725, vec![module.to_owned()]);
         }
         let base = self.resolve_base_of_class(file, c, sym, out);

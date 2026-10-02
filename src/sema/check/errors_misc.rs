@@ -293,7 +293,9 @@ impl Checker<'_> {
             ExprKind::Fn(f) if hir[f].kind == FnKind::Expr && hir[f].name.is_some() => {
                 Some(hir[f].name_pos)
             }
-            ExprKind::Fn(f) if hir[f].kind == FnKind::Expr => self.assigned_name_start(file, e),
+            ExprKind::Fn(f) if hir[f].kind == FnKind::Expr => {
+                self.bound(file).get_assigned_name(hir, e)
+            }
             ExprKind::Class(c) if hir[c].name.is_some() => Some(hir[c].name_pos),
             // The last word before the type, and before the `(`, `|` or `&` it may be written after, which are not kept, or the
             // `{` of `@satisfies {T}` (`findOriginatingJSDocSatisfiesTag`: the name of the tag).
@@ -310,48 +312,6 @@ impl Checker<'_> {
             _ => None,
         };
         elsewhere.unwrap_or_else(|| self.start_inside_parentheses(file, e))
-    }
-
-    /// `GetAssignedName`: where the name is of what `e` is directly given to.
-    fn assigned_name_start(&self, file: FileId, e: ExprId) -> Option<u32> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if is_parenthesized(self.hir(file), e) {
-            return None;
-        }
-        match bound.expr_parent[e.idx()] {
-            Parent::Prop(p) if hir[p].kind == PropKind::Init => {
-                let owner = bound.prop_owner[p.idx()];
-                (owner.is_some() && matches!(hir[owner].kind, ExprKind::Object(_)))
-                    .then_some(hir[p].pos)
-            }
-            Parent::PatPropDefault(p) => Some(hir[hir[p].value].pos),
-            Parent::PatElemDefault(p) => Some(hir[hir[p].pat].pos),
-            Parent::VarInit(d) if matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
-                Some(hir[hir[d].pat].pos)
-            }
-            // On the right of any operator.
-            Parent::Expr(parent) => {
-                let left = match hir[parent].kind {
-                    ExprKind::Binary { left, right, .. } if right == e => left,
-                    ExprKind::Assign { target, value, .. } if value == e => target,
-                    _ => return None,
-                };
-                if is_parenthesized(self.hir(file), left) {
-                    return None;
-                }
-                match hir[left].kind {
-                    ExprKind::Ident(_) => Some(hir[left].pos),
-                    ExprKind::Dot { name_pos, .. } => Some(name_pos),
-                    ExprKind::Index { index, .. }
-                        if matches!(hir[index].kind, ExprKind::String(_) | ExprKind::Number(_)) =>
-                    {
-                        Some(self.start_inside_parentheses(file, index))
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
     }
 
     /// `getThisContainer`, for the `this` of `typeof this.x`: it goes by where the type is written, which is not where the binder

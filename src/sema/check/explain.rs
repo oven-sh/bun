@@ -5,7 +5,6 @@
 
 use super::Checker;
 use super::errors::Diagnostic;
-use super::spans::{ident_end, identifier_end};
 use crate::messages::{self, Category};
 use crate::program::FileId;
 
@@ -459,7 +458,7 @@ impl Checker<'_> {
         // What is reported where a line ends is reported between two tokens, and is empty. In a JSDoc comment the end of a line is a token.
         let token_end = match text.get(d.start as usize) {
             Some(b'\n' | b'\r') if !self.hir(file).is_in_jsdoc(d.start) => d.start,
-            _ => end_of_token(text, d.start),
+            _ => self.end_of_token_at(file, d.start),
         };
         let mut message = match note {
             Some(note) if !note.args.is_empty() => messages::format(template, &note.args),
@@ -513,35 +512,6 @@ impl Checker<'_> {
                 .collect(),
         }
     }
-}
-
-/// Where the token that starts at `start` ends: a name, a number, a string, or else one character.
-pub(super) fn end_of_token(text: &[u8], start: u32) -> u32 {
-    let at = start as usize;
-    let Some(&first) = text.get(at) else {
-        return start;
-    };
-    let mut end = at + 1;
-    match first {
-        b'"' | b'\'' | b'`' => {
-            while let Some(&b) = text.get(end) {
-                end += 1;
-                if b == b'\\' {
-                    end += 1;
-                } else if b == first || b == b'\n' && first != b'`' {
-                    break;
-                }
-            }
-        }
-        b'#' | b'@' => end = ident_end(text, end),
-        b'0'..=b'9' => {
-            while text.get(end) == Some(&b'.') || ident_end(text, end) > end {
-                end = ident_end(text, end).max(end + 1);
-            }
-        }
-        _ => end = identifier_end(text, at).max(end),
-    }
-    end.min(text.len()) as u32
 }
 
 /// The arguments of a message that nothing was noted for, where they can be read off the source: the name or the string the error is

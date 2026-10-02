@@ -298,7 +298,6 @@ impl Checker<'_> {
             if let Some(start) = start {
                 reported = block;
                 out.push(Diagnostic { start, code: 2563 });
-                self.note(start, self.end_of_token_at(file, start), 2563, Vec::new());
             }
         }
     }
@@ -413,23 +412,6 @@ impl Checker<'_> {
     /// `checkCollisionsForDeclarationName`, of what the statements at the top of the file declare, imports aside. And
     /// `checkGrammarForEsModuleMarkerInBindingName`: 1216.
     fn xm_collisions_of_declarations(&self, cx: &Cx<'_>, out: &mut Vec<Diagnostic>) {
-        /// The names `pat` binds, and where they are.
-        fn bound_names(hir: &hir::File, pat: PatId, names: &mut Vec<(Atom, u32)>) {
-            match hir[pat].kind {
-                PatKind::Ident(name) => names.push((name, hir[pat].pos)),
-                PatKind::Object(props) => {
-                    for p in props.iter() {
-                        bound_names(hir, hir[p].value, names);
-                    }
-                }
-                PatKind::Array(elems) => {
-                    for x in elems.iter() {
-                        bound_names(hir, hir[x].pat, names);
-                    }
-                }
-                PatKind::Missing => {}
-            }
-        }
         /// Where `pat` binds `marker`. Of a pattern, only the first element that has a name is looked into.
         fn es_module_marker(hir: &hir::File, marker: Atom, pat: PatId) -> Option<u32> {
             match hir[pat].kind {
@@ -491,9 +473,15 @@ impl Checker<'_> {
                             continue;
                         }
                         names.clear();
-                        bound_names(hir, decl.pat, &mut names);
-                        for &(name, pos) in &names {
-                            self.xm_collision_with_generated_code(cx, name, pos, false, out);
+                        names_bound_by(hir, decl.pat, &mut names);
+                        for &(name, pat) in &names {
+                            self.xm_collision_with_generated_code(
+                                cx,
+                                name,
+                                hir[pat].pos,
+                                false,
+                                out,
+                            );
                         }
                     }
                 }
@@ -682,8 +670,6 @@ impl Checker<'_> {
                 start: name_pos,
                 code: 1540,
             });
-            let end = self.end_of_token_at(cx.file, name_pos);
-            self.note(name_pos, end, 1540, Vec::new());
         }
         // Both are about options that keep `const enum`s, so that a namespace of nothing else counts as well.
         if !is_ambient
@@ -1459,7 +1445,7 @@ impl Checker<'_> {
                     written.pos,
                     0,
                     1543,
-                    vec![module_kind_name(files.options.module).to_owned()],
+                    vec![files.options.module.name().to_owned()],
                 );
             }
         } else {
@@ -2269,12 +2255,6 @@ impl Checker<'_> {
             {
                 let start = hir[c].start;
                 out.push(Diagnostic { start, code: 1211 });
-                self.note(
-                    start,
-                    self.end_of_token_at(cx.file, start),
-                    1211,
-                    Vec::new(),
-                );
             }
             if matches!(bound.stmt_parent[i], Parent::File | Parent::Module(_)) {
                 continue;
@@ -2438,25 +2418,6 @@ pub(super) fn isolated_modules_like_flag_name(files: &Files) -> String {
         "verbatimModuleSyntax".to_owned()
     } else {
         "isolatedModules".to_owned()
-    }
-}
-
-/// `ModuleKind.String`
-pub(super) fn module_kind_name(kind: ModuleKind) -> &'static str {
-    match kind {
-        ModuleKind::CommonJs => "CommonJS",
-        ModuleKind::Amd => "AMD",
-        ModuleKind::Umd => "UMD",
-        ModuleKind::System => "System",
-        ModuleKind::Es2015 => "ES2015",
-        ModuleKind::Es2020 => "ES2020",
-        ModuleKind::Es2022 => "ES2022",
-        ModuleKind::EsNext => "ESNext",
-        ModuleKind::Node16 => "Node16",
-        ModuleKind::Node18 => "Node18",
-        ModuleKind::Node20 => "Node20",
-        ModuleKind::NodeNext => "NodeNext",
-        ModuleKind::Preserve => "Preserve",
     }
 }
 

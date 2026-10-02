@@ -412,7 +412,6 @@ fn check_grammar_parameter_list(
                     start: dots as u32 - 3,
                     code: 1014,
                 });
-                c.note(dots as u32 - 3, dots as u32, 1014, vec![]);
                 return true;
             }
             // Whether a signature without a body is ambient is not always known. One with a body is not.
@@ -527,7 +526,6 @@ fn check_grammar_arrow_function(
             start: func.anchor,
             code: 1200,
         });
-        c.note(func.anchor, func.anchor + 2, 1200, vec![]);
     }
     is_on_a_new_line
 }
@@ -862,19 +860,6 @@ struct Block {
     is_global_augmentation: bool,
 }
 
-/// `hasExportDeclarations`
-fn has_export_declarations(hir: &hir::File, list: IdList<StmtId>) -> bool {
-    hir.ids(list).any(|s| {
-        matches!(
-            hir[s].kind,
-            StmtKind::ExportNamed(_)
-                | StmtKind::ExportStar { .. }
-                | StmtKind::ExportAssign(_)
-                | StmtKind::ExportDefault(_)
-        )
-    })
-}
-
 impl Block {
     fn plain(file: FileId, list: IdList<StmtId>, has_exports: bool) -> Block {
         Block {
@@ -1005,19 +990,6 @@ fn declaration(
     }
 }
 
-fn names_bound_by(hir: &hir::File, pat: PatId, into: &mut Vec<(Atom, u32)>) {
-    match hir[pat].kind {
-        PatKind::Ident(name) => into.push((name, hir[pat].pos)),
-        PatKind::Object(props) => props
-            .iter()
-            .for_each(|p| names_bound_by(hir, hir[p].value, into)),
-        PatKind::Array(elems) => elems
-            .iter()
-            .for_each(|e| names_bound_by(hir, hir[e].pat, into)),
-        PatKind::Missing => {}
-    }
-}
-
 /// What the statement `s` puts in the table of locals of `block`. Not `is_at_the_top`: it is inside a statement of the block, from where
 /// only `var` gets there.
 fn declared_by_statement(
@@ -1059,17 +1031,11 @@ fn declared_by_statement(
                     _ => (BLOCK_SCOPED_VARIABLE, VALUE, SPACE_VALUE),
                 };
                 names.clear();
-                match hir[decl.pat].kind {
-                    PatKind::Ident(name) => all.push(Declared {
-                        is_variable: true,
-                        ..declaration(block, name, hir[decl.pat].pos, decl.flags, inside, table)
-                    }),
-                    _ => names_bound_by(hir, decl.pat, &mut names),
-                }
-                for &(name, at) in &names {
+                names_bound_by(hir, decl.pat, &mut names);
+                for &(name, pat) in &names {
                     all.push(Declared {
                         is_variable: true,
-                        ..declaration(block, name, at, decl.flags, inside, table)
+                        ..declaration(block, name, hir[pat].pos, decl.flags, inside, table)
                     });
                 }
             }
@@ -2318,51 +2284,8 @@ impl Checker<'_> {
             (FnKind::Constructor, FnOwner::Member(m)) => hir[m].start,
             (FnKind::Method | FnKind::Getter | FnKind::Setter, _) => func.name_pos,
             _ if func.name.is_some() => func.name_pos,
-            // `GetAssignedName`: one without a name goes by what it is given to, if it is written right there.
-            (FnKind::Expr, FnOwner::Expr(e)) if !is_parenthesized(hir, e) => {
-                match bound.expr_parent[e.idx()] {
-                    Parent::VarInit(d) if matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
-                        hir[hir[d].pat].pos
-                    }
-                    // Of an object literal: an attribute of a JSX element gives no name.
-                    Parent::Prop(p)
-                        if hir[p].kind == PropKind::Init
-                            && bound.prop_owner[p.idx()]
-                                .some()
-                                .is_some_and(|o| matches!(hir[o].kind, ExprKind::Object(_))) =>
-                    {
-                        hir[p].pos
-                    }
-                    Parent::PatPropDefault(p) => hir[hir[p].value].pos,
-                    Parent::PatElemDefault(p) => hir[hir[p].pat].pos,
-                    Parent::Expr(x) => match hir[x].kind {
-                        ExprKind::Assign {
-                            target: left,
-                            value: right,
-                            ..
-                        }
-                        | ExprKind::Binary { left, right, .. }
-                            if right == e =>
-                        {
-                            match hir[left].kind {
-                                ExprKind::Ident(_) => hir[left].pos,
-                                ExprKind::Dot { name_pos, .. } => name_pos,
-                                ExprKind::Index { index, .. }
-                                    if matches!(
-                                        hir[index].kind,
-                                        ExprKind::String(_) | ExprKind::Number(_)
-                                    ) =>
-                                {
-                                    hir[index].pos
-                                }
-                                _ => func.pos,
-                            }
-                        }
-                        _ => func.pos,
-                    },
-                    _ => func.pos,
-                }
-            }
+            // One without a name goes by what it is given to, if it is written right there.
+            (FnKind::Expr, FnOwner::Expr(e)) => bound.get_assigned_name(hir, e).unwrap_or(func.pos),
             _ => func.pos,
         }
     }

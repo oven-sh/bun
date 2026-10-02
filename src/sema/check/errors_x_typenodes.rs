@@ -290,7 +290,10 @@ fn is_rest_element(hir: &hir::File, elem: &TupleElem) -> bool {
 }
 
 /// `getArrayElementTypeNode`: `X` for `X[]`, `[...X[]]`, `[...[...X[]]]`.
-fn array_element_type_node(hir: &hir::File, node: TypeNodeId) -> Option<TypeNodeId> {
+pub(super) fn array_element_type_node(hir: &hir::File, node: TypeNodeId) -> Option<TypeNodeId> {
+    if node.is_none() {
+        return None;
+    }
     match hir[node].kind {
         TypeNodeKind::Array(element) => Some(element),
         TypeNodeKind::Tuple(elems)
@@ -886,10 +889,10 @@ impl Checker<'_> {
                 }
             }
             if std::mem::take(&mut self.relation_too_deep) {
-                out.push(Diagnostic {
-                    start: hir.types[t].pos,
-                    code: 2321,
-                });
+                let start = hir.types[t].pos;
+                out.push(Diagnostic { start, code: 2321 });
+                let end = self.end_of_type_node(file, TypeNodeId(t as u32));
+                self.note(start, end, 2321, Vec::new());
             }
         }
     }

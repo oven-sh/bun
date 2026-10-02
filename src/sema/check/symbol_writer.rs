@@ -232,8 +232,24 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     });
                 }
                 // `getImmediateAliasedSymbol`: the `a` of `import { a as b }` and of `export { a as b }`.
-                let target = files.alias_target(symbol)?;
-                Some(Found::Symbol(files.canonical(target)))
+                // `getTargetOfModuleDefault`: a default that is made up is `resolveExternalModuleSymbol(moduleSymbol, dontResolveAlias)`,
+                // which stops at the `export =` of the module.
+                if let Some((specifier, mode, known::default)) =
+                    files.external_module_member_of(file, decl)
+                    && let Some(module) = files.module_of_specifier_as(file, specifier, mode)
+                    && let Some(equals) = files.export(module, known::export_equals)
+                    && files.alias_target(symbol) == Some(files.module_value(module))
+                {
+                    return Some(Found::Symbol(equals));
+                }
+                match files.alias_target(symbol) {
+                    Some(target) => Some(Found::Symbol(files.canonical(target))),
+                    // `getExternalModuleMember`: a property of the value a module says it is with `export =`.
+                    None => self
+                        .c
+                        .property_of_alias(symbol)
+                        .map(|prop| Found::Property(prop.clone())),
+                }
             }
             // `IsLiteralComputedPropertyDeclarationName`: the literal in `["name"]`, `` [`name`] `` and `[0]` has the symbol of the
             // declaration.
@@ -1024,6 +1040,79 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         if let [(file, Decl::TypeParam(parameter))] = self.c.files().decls_of(symbol)[..] {
             return self.declarations_of_member(file, MemberDeclaration::TypeParameter(parameter));
         }
+        let exported = self.declarations_of_symbol_alone(symbol, as_local);
+        match self.static_member_of_the_name(symbol) {
+            Some((file, member)) => {
+                let members = self.declarations_of_member_alone(file, member);
+                self.in_order_of_binding(members, exported)
+            }
+            None => exported,
+        }
+    }
+
+    /// The declarations of one symbol that we keep as two, in the order the binder comes to them: in one file, as they are written.
+    fn in_order_of_binding(
+        &self,
+        mut first: Vec<(FileId, Declaration)>,
+        mut second: Vec<(FileId, Declaration)>,
+    ) -> Vec<(FileId, Declaration)> {
+        if let (Some(&(file, a)), Some(&(other, b))) = (first.first(), second.first())
+            && file == other
+            && self.start_of_declaration(file, b).0 < self.start_of_declaration(file, a).0
+        {
+            std::mem::swap(&mut first, &mut second);
+        }
+        first.append(&mut second);
+        first
+    }
+
+    /// `declareClassMember`, `declareModuleMember`: the static members of a class and what a namespace that is one with the class
+    /// exports are in one table, `symbol.Exports`. The static member that is one symbol with `symbol`, which is no value.
+    fn static_member_of_the_name(&self, symbol: Sym) -> Option<(FileId, MemberDeclaration)> {
+        let files = self.c.files();
+        let declared = files.symbol(symbol);
+        if declared.parent.is_none() || declared.flags.intersects(SymFlags::VALUE) {
+            return None;
+        }
+        let class = files.sym(symbol.file, declared.parent);
+        if !files.flags(class).contains(SymFlags::CLASS)
+            || files.export(class, declared.name) != Some(symbol)
+        {
+            return None;
+        }
+        files.decls_of(class).iter().find_map(|&(file, decl)| {
+            let Decl::Class(class) = decl else {
+                return None;
+            };
+            let hir = self.c.hir(file);
+            let member = hir[class].members.iter().find(|&m| {
+                hir[m].flags.contains(Flags::STATIC) && hir[m].key == PropKey::Name(declared.name)
+            })?;
+            Some((file, MemberDeclaration::Member(member)))
+        })
+    }
+
+    /// The other way: what is exported under the name of the static member `declaration`, if it is no value.
+    fn export_of_the_name(&self, file: FileId, declaration: MemberDeclaration) -> Option<Sym> {
+        let MemberDeclaration::Member(member) = declaration else {
+            return None;
+        };
+        let (hir, files) = (self.c.hir(file), self.c.files());
+        let PropKey::Name(name) = hir[member].key else {
+            return None;
+        };
+        if !hir[member].flags.contains(Flags::STATIC) {
+            return None;
+        }
+        let export = files.export(self.container_of_member(file, member)?, name)?;
+        (!files.flags(export).intersects(SymFlags::VALUE)).then_some(export)
+    }
+
+    fn declarations_of_symbol_alone(
+        &mut self,
+        symbol: Sym,
+        as_local: bool,
+    ) -> Vec<(FileId, Declaration)> {
         let mut declarations = Vec::new();
         for &part in self.c.files().parts(symbol).iter() {
             let of_part = self
@@ -1041,6 +1130,21 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
 
     /// `symbol.Declarations`, of the symbol of a member.
     fn declarations_of_member(
+        &mut self,
+        file: FileId,
+        declaration: MemberDeclaration,
+    ) -> Vec<(FileId, Declaration)> {
+        let members = self.declarations_of_member_alone(file, declaration);
+        match self.export_of_the_name(file, declaration) {
+            Some(export) => {
+                let exported = self.declarations_of_symbol_alone(export, false);
+                self.in_order_of_binding(members, exported)
+            }
+            None => members,
+        }
+    }
+
+    fn declarations_of_member_alone(
         &mut self,
         file: FileId,
         declaration: MemberDeclaration,
@@ -1172,8 +1276,22 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             text.push_str(", --, --)");
             return;
         }
+        let (start, flags) = self.start_of_declaration(file, declaration);
+        // `declaration.Pos()`: where the token before it ends. `finishReparsedNode`: what is made of a JSDoc tag is where the tag is,
+        // and the scanner of JSDoc comments has no trivia.
+        let pos = if flags.contains(Flags::REPARSED) {
+            start
+        } else {
+            self.c.end_of_token_before(file, start)
+        };
+        let (line, character) = self.line_and_character(file, pos);
+        text.push_str(&format!(", {line}, {character})"));
+    }
+
+    /// Where the first token of `declaration` starts, and the flags of the declaration.
+    fn start_of_declaration(&self, file: FileId, declaration: Declaration) -> (u32, Flags) {
         let hir = self.c.hir(file);
-        let (start, flags) = match declaration {
+        match declaration {
             Declaration::Bound(decl) => (
                 self.c.start_of_declaration(file, decl),
                 match decl {
@@ -1193,16 +1311,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             Declaration::TypeNode(node) => (hir[node].pos, Flags::empty()),
             // Right after the `(`.
             Declaration::ThisParameter(function) => (hir[function].anchor + 1, Flags::empty()),
-        };
-        // `declaration.Pos()`: where the token before it ends. `finishReparsedNode`: what is made of a JSDoc tag is where the tag is,
-        // and the scanner of JSDoc comments has no trivia.
-        let pos = if flags.contains(Flags::REPARSED) {
-            start
-        } else {
-            self.c.end_of_token_before(file, start)
-        };
-        let (line, character) = self.line_and_character(file, pos);
-        text.push_str(&format!(", {line}, {character})"));
+        }
     }
 
     /// `GetECMALineAndUTF16CharacterOfPosition`
@@ -1277,6 +1386,12 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             _ => {}
         }
         let declarations = self.declarations_of_property(prop, 0);
+        if let Some(alias) = self.c.accessible_alias_of_property_at(prop, self.file, at) {
+            return (
+                self.symbol_chain_to_string(false, &[alias], at),
+                declarations,
+            );
+        }
         // `getNameOfSymbolAsWritten`: as the first declaration writes it.
         let source = match declarations.first() {
             Some(&(file, Declaration::Member(member))) => {

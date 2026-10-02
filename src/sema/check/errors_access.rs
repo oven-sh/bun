@@ -2640,13 +2640,7 @@ fn properties_intersected<'a>(prop: &'a Prop, out: &mut SmallVec<[&'a Prop; 4]>)
 
 /// Whether the private name written at `pos` is `#constructor`.
 fn is_private_constructor_name(text: &[u8], pos: u32) -> bool {
-    text.get(pos as usize..)
-        .and_then(|rest| rest.strip_prefix(b"#constructor"))
-        .is_some_and(|rest| {
-            !rest.first().is_some_and(|&b| {
-                b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'\\') || b >= 0x80
-            })
-        })
+    text.get(pos as usize) == Some(&b'#') && is_word_at(text, pos as usize + 1, b"constructor")
 }
 
 /// Whether what is written at `at` is a bigint literal: a number that ends in `n`.

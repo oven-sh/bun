@@ -582,7 +582,7 @@ impl Checker<'_> {
             let bound = self.bound(file);
             let is_identifier = |pat: PatId| matches!(hir[pat].kind, PatKind::Ident(_));
             for &call in index.of(ExprTag::Call) {
-                let Some((argument, spec)) = require_call_argument(hir, call) else {
+                let Some((argument, spec)) = crate::bind::require_call_argument(hir, call) else {
                     continue;
                 };
                 // The loader only resolves the specifiers that the binder collected.
@@ -1472,7 +1472,7 @@ impl Checker<'_> {
         {
             return None;
         }
-        require_call_argument(hir, init)
+        crate::bind::require_call_argument(hir, init)
     }
 
     /// `getTargetOfImportSpecifier` for a binding element: each identifier directly in the pattern of `const { a, b: c } = require(spec)`
@@ -1979,7 +1979,6 @@ impl Checker<'_> {
                 && hir.is_js
                 && crate::bind::require_argument(hir, call).is_some()
                 && matches!(hir[call].kind, ExprKind::Call(c) if hir[c].callee == e)
-                && !is_parenthesized(hir, e)
             {
                 continue;
             }
@@ -3434,17 +3433,6 @@ fn is_name_of_a_library_feature(name: &[u8]) -> bool {
     )
 }
 
-/// `IsRequireCall` with `requireStringLiteralLikeArgument`: the argument of `require("m")` and its text. Parentheses around `require` or
-/// around the string make it an ordinary call.
-fn require_call_argument(hir: &hir::File, call: ExprId) -> Option<(ExprId, Atom)> {
-    let argument = crate::bind::require_argument(hir, call)?;
-    let (ExprKind::Call(c), ExprKind::String(spec)) = (hir[call].kind, hir[argument].kind) else {
-        return None;
-    };
-    (!is_parenthesized(hir, hir[c].callee) && !is_parenthesized(hir, argument))
-        .then_some((argument, spec))
-}
-
 /// Whether somebody who wrote `name` may have meant `candidate`.
 pub(super) fn is_close(name: &[u8], candidate: &[u8]) -> bool {
     let allowed_difference = 2.max(name.len() * 34 / 100);
@@ -3583,20 +3571,10 @@ fn end_of_type_member_from(c: &Checker<'_>, file: FileId, from: u32) -> u32 {
 /// `checkUnmatchedJSDocParameters`: 8032 is said of all of the `a.b.c` written at `start`, and names it and `a.b`.
 fn explain_qualified_parameter_name(c: &Checker<'_>, file: FileId, start: u32) {
     let text = &c.hir(file).text[..];
-    let is_part = |at: usize| {
-        text.get(at)
-            .is_some_and(|&b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$') || b >= 0x80)
-    };
-    let (mut end, mut last_dot) = (start as usize, None);
-    loop {
-        while is_part(end) {
-            end += 1;
-        }
-        if text.get(end) != Some(&b'.') || !is_part(end + 1) {
-            break;
-        }
+    let (mut end, mut last_dot) = (word_end(text, start as usize), None);
+    while text.get(end) == Some(&b'.') && word_end(text, end + 1) > end + 1 {
         last_dot = Some(end);
-        end += 1;
+        end = word_end(text, end + 1);
     }
     if let Some(dot) = last_dot {
         let whole = c.source_text(file, start, end as u32);
@@ -4365,17 +4343,20 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
                 c.note(start, 0, code, arguments);
             }
         }
-        // `reportObviousDecoratorErrors` points at the `@`. `checkGrammarModifiers` objects to all of the decorator between `export` and
-        // `default`, which the class keeps.
-        1206 if !hir.is_js => {
+        // `checkGrammarModifiers`, `checkJSDecoratorSyntax`: all of a decorator the class keeps, which is one after `export`.
+        // `reportObviousDecoratorErrors` points at the `@`.
+        1206 | 8038 => {
             let kept = hir.decorators.iter().find(|decorator| {
                 matches!(decorator.0, DecoratorOwner::Class(_))
                     && start_of_token_before(text, c.start_of(file, decorator.1), b"@")
                         == Some(start)
             });
-            let end = kept.map_or(start + 1, |decorator| c.end_of_expr(file, decorator.1));
-            c.note(start, end, code, Vec::new());
+            if let Some(decorator) = kept {
+                c.note(start, c.end_of_expr(file, decorator.1), code, Vec::new());
+            }
         }
+        // `checkGrammarTaggedTemplateChain`, `parseErrorForMissingSemicolonAfter`: said of `node.Template`.
+        1358 | 1443 => c.note(start, c.end_of_template_at(file, start), code, Vec::new()),
         // `createIdentifierWithDiagnostic`, `parsingContextErrors`, `parseErrorForInvalidName`: these name the word they are reported at.
         1359 | 1389 | 1390 | 2819 => c.note(start, 0, code, vec![word_at(c, file, start)]),
         // What is made of a tag is as long as the tag, which goes on to the next one: the `?` of `makeQuestionIfOptional`, the modifier that
@@ -4405,18 +4386,9 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
         1002 | 1011 | 1123 | 1124 | 1125 | 1177 | 1178 | 1199 => {
             c.note(start, super::explain::NO_LENGTH, code, Vec::new());
         }
-        // `parseErrorAtCurrentToken`, and `scanNumber` of all of a literal: the token, whatever it is.
-        1034 | 1260 | 1357 | 1489 => {
-            c.note(start, c.end_of_token_at(file, start), code, Vec::new());
-        }
         // `createIdentifierWithDiagnostic`: at the end of the file it is said where the last token ends.
-        1110 => {
-            let end = if skip_trivia(text, at) >= text.len() {
-                super::explain::NO_LENGTH
-            } else {
-                c.end_of_token_at(file, start)
-            };
-            c.note(start, end, code, Vec::new());
+        1110 if skip_trivia(text, at) >= text.len() => {
+            c.note(start, super::explain::NO_LENGTH, code, Vec::new());
         }
         // `checkGrammarImportClause`: said of the clause, which ends before the `from`.
         1363 | 18058 | 18059 => {
@@ -4454,8 +4426,6 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
         6188 | 6189 => c.note(start, start + 1, code, Vec::new()),
         // `Scan`: the `#!`.
         18026 => c.note(start, start + 2, code, Vec::new()),
-        // `checkGrammarIndexSignatureParameters`: the `...`.
-        1017 => c.note(start, start + 3, code, Vec::new()),
         // `scanConflictMarkerTrivia`: the seven characters of the marker.
         1185 => c.note(start, start + 7, code, Vec::new()),
         // `parseFunctionOrConstructorTypeToError`: said of the type and the blanks before it. A constructor type is kept where its
@@ -4627,8 +4597,6 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             code,
             vec![c.source_text(file, start, start + 2)],
         ),
-        // `scanNumber`: all of the literal, from the `.` it may start with to its `n`.
-        1352 | 1353 => c.note(start, c.end_of_token_at(file, start), code, Vec::new()),
         // `processPragmasIntoFields`: said of the comment, which ends with its line.
         1084 => {
             let rest = text.get(at..).unwrap_or_default();
@@ -4659,16 +4627,7 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
         }
         // `checkGrammarClassDeclarationHeritageClauses`: the tag, the last name in it, the last name of what the class extends.
         8023 => {
-            let word = |from: usize| {
-                let rest = &text[from.min(text.len())..];
-                let len = rest
-                    .iter()
-                    .take_while(|&&b| {
-                        b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$') || b >= 0x80
-                    })
-                    .count();
-                c.source_text(file, from as u32, (from + len) as u32)
-            };
+            let word = |from: usize| c.source_text(file, from as u32, word_end(text, from) as u32);
             let Some(tag) = text[..at.min(text.len())].iter().rposition(|&b| b == b'@') else {
                 return;
             };
@@ -4691,44 +4650,7 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             c.note(start, end, code, vec![word(tag + 1), name, extended]);
         }
         // `parseIdentifierNameErrorOnUnicodeEscapeSequence`: said of the token, which `ScanJsxIdentifier` carries on through every `-`.
-        17021 => {
-            let hex_digits = |from: usize| {
-                text[from.min(text.len())..]
-                    .iter()
-                    .take_while(|b| b.is_ascii_hexdigit())
-                    .count()
-            };
-            let mut end = at;
-            loop {
-                end += match text.get(end) {
-                    Some(&b)
-                        if b.is_ascii_alphanumeric()
-                            || matches!(b, b'_' | b'$' | b'-')
-                            || b >= 0x80 =>
-                    {
-                        1
-                    }
-                    Some(b'\\') if text.get(end + 1) == Some(&b'u') => {
-                        if text.get(end + 2) == Some(&b'{') {
-                            match hex_digits(end + 3) {
-                                digits
-                                    if digits > 0 && text.get(end + 3 + digits) == Some(&b'}') =>
-                                {
-                                    digits + 4
-                                }
-                                _ => break,
-                            }
-                        } else if hex_digits(end + 2) >= 4 {
-                            6
-                        } else {
-                            break;
-                        }
-                    }
-                    _ => break,
-                };
-            }
-            c.note(start, end as u32, code, Vec::new());
-        }
+        17021 => c.note(start, jsx_identifier_end(text, at) as u32, code, Vec::new()),
         // `parseUnaryExpressionOrHigher`: said of all that is on the left of the `**`.
         17006 | 17007 => {
             let end = hir.exprs.iter().find_map(|x| match x.kind {
@@ -4765,7 +4687,7 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
         // `parseJsxElementOrSelfClosingElementOrFragment`, `parseJsxChild`: the name in the opening tag.
         17008 => {
             let name = skip_trivia(text, at) as u32;
-            let end = super::errors_jsx::jsx_name_end(text, name);
+            let end = jsx_tag_name_end(text, name as usize) as u32;
             // A name that is missing is where the `<` ends, before any blanks.
             let reaches = if end == name {
                 super::explain::NO_LENGTH
@@ -4827,10 +4749,6 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             );
         }
         _ => {}
-    }
-    // `parseErrorAtCurrentToken`, of an error whose argument is noted above.
-    if code == 1209 {
-        c.explain_moved(start, code, start, c.end_of_token_at(file, start));
     }
 }
 

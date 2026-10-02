@@ -189,7 +189,7 @@ impl<'c, 'p> Describer<'c, 'p> {
             return;
         }
         // The other side collects the members of the base type of a substitution type.
-        if let TypeData::NoInfer(base) = *self.c.data(ty) {
+        if let TypeData::Substitution { base, .. } = *self.c.data(ty) {
             self.collect(base, d, out);
             return;
         }
@@ -246,7 +246,7 @@ impl<'c, 'p> Describer<'c, 'p> {
                 format!("tp:{}", self.name(name))
             }
             TypeData::Keyof(_) => "keyof".to_owned(),
-            TypeData::NoInfer(t) => self.desc(t, d),
+            TypeData::Substitution { base: t, .. } => self.desc(t, d),
             TypeData::IndexedAccess { .. } => "tpx".to_owned(),
             TypeData::Cond { .. } => "cond".to_owned(),
             TypeData::LazyAlias { .. } => "?".to_owned(),

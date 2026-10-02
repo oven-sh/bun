@@ -592,6 +592,19 @@ impl<'p> Checker<'p> {
         (starts_with_global_this, chain)
     }
 
+    /// `getAccessibleSymbolChain` as `lookup_symbol_chain_for_symbol_to_string` asks it, of a property: the alias it is written as.
+    pub(super) fn accessible_alias_of_property_at(
+        &mut self,
+        property: &Prop,
+        file: FileId,
+        scope: ScopeId,
+    ) -> Option<Sym> {
+        self.with_enclosing_declaration(file, scope, |emit| {
+            let at = emit.b.enclosing;
+            emit.accessible_alias_of_property(property, at)
+        })
+    }
+
     /// `getSpecifierForModuleSymbol`
     pub(super) fn specifier_for_module_symbol_at(
         &mut self,
@@ -721,8 +734,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
         self.c.source_text(self.file, range.0, range.1)
     }
 
-    /// `symbol.Parent`. The binder notes what a declaration is written in whether or not it is exported: only what is among the
-    /// exports has a parent.
+    /// `symbol.Parent`. The binder notes what a declaration is written in whether or not it is exported: only what is declared
+    /// among the exports has a parent, be it refused there (`declareSymbolEx`).
     fn parent_of_symbol(&self, symbol: Sym) -> Option<Sym> {
         if symbol == GLOBAL_THIS {
             return None;
@@ -734,21 +747,77 @@ impl<'p> DeclarationEmit<'_, 'p> {
             return None;
         }
         let parent = files.sym(symbol.file, declared.parent);
+        let bound = self.c.bound(symbol.file);
         let is_exported = files.export(parent, declared.name) == Some(symbol)
-            || files.export(parent, known::default) == Some(symbol);
+            || files.export(parent, known::default) == Some(symbol)
+            || bound
+                .lookup(bound.symbols[declared.parent.idx()].exports, declared.name)
+                .is_some_and(|there| {
+                    declared
+                        .decls
+                        .iter()
+                        .any(|&decl| bound.refused_declarations.contains(&(there, decl)))
+                });
         is_exported.then_some(parent)
     }
 
     /// `core.Some(symbol.Declarations, hasNonGlobalAugmentationExternalModuleSymbol)`
     fn is_external_module_symbol(&self, symbol: Sym) -> bool {
+        symbol != GLOBAL_THIS
+            && self
+                .c
+                .files()
+                .parts(self.target_of_module_clone(symbol))
+                .iter()
+                .any(|&part| self.is_external_module_part(part))
+    }
+
+    /// `is_external_module_symbol`, of the symbol one file has made.
+    fn is_external_module_part(&self, part: Sym) -> bool {
         let files = self.c.files();
-        self.decls_of(symbol)
-            .into_iter()
-            .any(|(file, decl)| match decl {
-                Decl::File => files.module(file).is_module(),
-                Decl::Module(m) => matches!(self.c.hir(file)[m].name, ModuleName::String(_)),
-                _ => false,
+        files.symbol(part).decls.iter().any(|&decl| match decl {
+            Decl::File => files.module(part.file).is_module(),
+            Decl::Module(m) => matches!(self.c.hir(part.file)[m].name, ModuleName::String(_)),
+            _ => false,
+        })
+    }
+
+    /// `is_external_module_symbol`, of `symbol` as a table holds it. `mergeSymbol` adds a module augmentation to a copy
+    /// (`cloneSymbol`) of what nothing was merged into before, and the table keeps the original.
+    fn is_external_module_symbol_in_table(&self, symbol: Sym) -> bool {
+        if symbol == GLOBAL_THIS {
+            return false;
+        }
+        let parts = self.c.files().parts(self.target_of_module_clone(symbol));
+        let modules = parts
+            .iter()
+            .filter(|&&part| self.is_external_module_part(part))
+            .count();
+        modules > 0 && parts.len() - modules != 1
+    }
+
+    /// `GetSourceFileOfModule`
+    fn source_file_of_module(&self, symbol: Sym) -> Option<FileId> {
+        if symbol == GLOBAL_THIS {
+            return None;
+        }
+        let files = self.c.files();
+        let parts = files.parts(self.target_of_module_clone(symbol));
+        let declares = |meaning: SymFlags| {
+            parts
+                .iter()
+                .find(|&&part| files.symbol(part).flags.intersects(meaning))
+        };
+        // `SetValueDeclaration`: other kinds of value declarations take precedence over modules.
+        declares(SymFlags::VALUE.difference(SymFlags::VALUE_MODULE))
+            .or_else(|| declares(SymFlags::VALUE_MODULE))
+            // `GetNonAugmentationDeclaration`
+            .or_else(|| {
+                parts
+                    .iter()
+                    .find(|&&part| !self.is_external_module_part(part))
             })
+            .map(|part| part.file)
     }
 
     /// `core.FirstNonNil(symbol.Declarations, c.getExternalModuleContainer)`
@@ -1291,6 +1360,38 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
     }
 
+    /// `declareModuleMember`: whether `symbol`, which `table` holds under `name`, is among the exports of what the locals are those
+    /// of. There the locals have a symbol that leads to it (`ExportSymbol`) under the name it is declared with.
+    fn is_export_among_locals(&self, table: Table, name: Atom, symbol: Sym) -> bool {
+        let Table::Locals(file, scope) = table else {
+            return false;
+        };
+        let files = self.c.files();
+        let container = self.c.bound(file).scopes[scope.idx()].symbol;
+        container.is_some()
+            && (files.export(files.sym(file, container), name) == Some(symbol)
+                || self.is_refused_export_symbol(table, symbol))
+    }
+
+    /// Whether `symbol` is `ExportSymbol` of the local symbol that `table` holds under its name, and the exports refused it.
+    fn is_refused_export_symbol(&self, table: Table, symbol: Sym) -> bool {
+        let Table::Locals(file, scope) = table else {
+            return false;
+        };
+        let bound = self.c.bound(file);
+        symbol.file == file
+            && bound
+                .refused_export_symbols
+                .contains(&(bound.scopes[scope.idx()].locals, symbol.id))
+    }
+
+    /// `declareModuleMember`: `export import a = ..` is declared among the exports alone.
+    fn is_exported_import_equals(&self, symbol: Sym) -> bool {
+        self.decls_of(symbol).iter().any(|&(file, decl)| {
+            matches!(decl, Decl::ImportEquals(import) if self.c.hir(file)[import].flags.contains(Flags::EXPORT))
+        })
+    }
+
     /// `getSymbolTableAliases`, each with the name it is in the table under.
     fn aliases_in_table(&mut self, table: Table) -> Rc<Vec<(Atom, Sym)>> {
         let files = self.c.files();
@@ -1298,17 +1399,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let aliases: Vec<(Atom, Sym)> = match table {
             Table::Locals(file, scope) => {
                 let bound = self.c.bound(file);
-                let container = bound.scopes[scope.idx()].symbol;
-                // `declareModuleMember`: an exported alias is among the exports alone.
-                let is_exported = |entry: &(Atom, Sym)| {
-                    container.is_some()
-                        && files.export(files.sym(file, container), entry.0) == Some(entry.1)
-                };
                 bound
                     .table(bound.scopes[scope.idx()].locals)
                     .iter()
                     .map(|&(name, id)| (name, files.sym(file, id)))
-                    .filter(|entry| is_alias(entry) && !is_exported(entry))
+                    .filter(|entry| is_alias(entry) && !self.is_exported_import_equals(entry.1))
                     .collect()
             }
             Table::Exports(symbol) => files.each_export(symbol).filter(is_alias).collect(),
@@ -1413,7 +1508,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
         is_local_name_lookup: bool,
         visited: &mut Vec<(Sym, Table)>,
     ) -> Vec<Sym> {
-        if let Some(found) = self.lookup_symbol(table, symbol)
+        let mut candidates: Vec<Vec<Sym>> = Vec::new();
+        let found = if self.is_refused_export_symbol(table, symbol) {
+            Some(symbol)
+        } else {
+            self.lookup_symbol(table, symbol)
+        };
+        if let Some(found) = found
             && self.is_accessible(
                 symbol,
                 at,
@@ -1424,26 +1525,16 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 visited,
             )
         {
-            return vec![symbol];
+            if self.is_export_among_locals(table, self.name_of(found), found) {
+                // `res.ExportSymbol`: it is weighed against the aliases.
+                if !self.is_exported_import_equals(found) {
+                    candidates.push(vec![symbol]);
+                }
+            } else if !self.is_export_among_locals(table, known::default, found) {
+                return vec![symbol];
+            }
         }
-        let is_in_module = self.c.hir(at.file).has_module_syntax;
-        let mut candidates: Vec<Vec<Sym>> = Vec::new();
-        for &(name, alias) in self.aliases_in_table(table).iter() {
-            if name == known::export_equals || name == known::default {
-                continue;
-            }
-            let decls = self.decls_of(alias);
-            // `isUMDExportSymbol`
-            if is_in_module && matches!(decls.first(), Some((_, Decl::UmdGlobal(_)))) {
-                continue;
-            }
-            // `isNamespaceReexportDeclaration`
-            if is_local_name_lookup && decls.iter().any(|d| matches!(d.1, Decl::ExportStarAs(_))) {
-                continue;
-            }
-            if !ignores_qualification && decls.iter().any(|d| matches!(d.1, Decl::ExportSpec(_))) {
-                continue;
-            }
+        for alias in self.aliases_to_try(table, at, ignores_qualification, is_local_name_lookup) {
             let Some(resolved) = self.resolve_alias(alias) else {
                 continue;
             };
@@ -1479,12 +1570,91 @@ impl<'p> DeclarationEmit<'_, 'p> {
         Vec::new()
     }
 
+    /// The aliases of `table` that `trySymbolTable` asks what they resolve to.
+    fn aliases_to_try(
+        &mut self,
+        table: Table,
+        at: Enclosing,
+        ignores_qualification: bool,
+        is_local_name_lookup: bool,
+    ) -> Vec<Sym> {
+        let is_in_module = self.c.hir(at.file).has_module_syntax;
+        let mut aliases = Vec::new();
+        for &(name, alias) in self.aliases_in_table(table).iter() {
+            if name == known::export_equals || name == known::default {
+                continue;
+            }
+            let decls = self.decls_of(alias);
+            // `isUMDExportSymbol`
+            if is_in_module && matches!(decls.first(), Some((_, Decl::UmdGlobal(_)))) {
+                continue;
+            }
+            // `isNamespaceReexportDeclaration`
+            if is_local_name_lookup && decls.iter().any(|d| matches!(d.1, Decl::ExportStarAs(_))) {
+                continue;
+            }
+            if !ignores_qualification && decls.iter().any(|d| matches!(d.1, Decl::ExportSpec(_))) {
+                continue;
+            }
+            aliases.push(alias);
+        }
+        aliases
+    }
+
+    /// `getAccessibleSymbolChain(property, enclosingDeclaration, SymbolFlagsNone, ..)`. A property is in no table, so the chain is
+    /// an alias that resolves to it.
+    fn accessible_alias_of_property(&mut self, property: &Prop, at: Enclosing) -> Option<Sym> {
+        // `isPropertyOrMethodDeclarationSymbol`
+        let is_property_or_method_declaration = match &property.source {
+            PropSource::Members(list) => list.iter().all(|&(file, member)| {
+                let is_in_class = matches!(
+                    self.c.bound(file).member_owner[member.idx()],
+                    MemberOwner::Class(_)
+                );
+                match self.c.hir(file)[member].kind {
+                    MemberKind::Getter | MemberKind::Setter => true,
+                    MemberKind::Property | MemberKind::Method => is_in_class,
+                    _ => false,
+                }
+            }),
+            PropSource::Literal(file, written) => matches!(
+                self.c.hir(*file)[*written].kind,
+                PropKind::Method | PropKind::Getter | PropKind::Setter
+            ),
+            _ => false,
+        };
+        if is_property_or_method_declaration {
+            return None;
+        }
+        for table in self.tables_in_scope(at) {
+            let mut candidates = Vec::new();
+            for alias in self.aliases_to_try(table, at, false, true) {
+                if self.c.property_of_alias(alias) == Some(property)
+                    && self.can_qualify_symbol(at, alias, Meaning::None, &mut Vec::new())
+                {
+                    candidates.push(alias);
+                }
+            }
+            candidates.sort_by(|&a, &b| self.compare_symbols(a, b));
+            if let Some(&first) = candidates.first() {
+                return Some(first);
+            }
+        }
+        None
+    }
+
     /// `resolveAlias`: what the alias is declared to stand for, and on from there while that is an alias and nothing else
     /// (`resolveSymbol`, `isNonLocalAlias`).
     fn resolve_alias(&mut self, alias: Sym) -> Option<Sym> {
         match self.c.originating_import_of_alias(alias) {
             Some(originating_import) => Some(module_clone(originating_import)),
-            None => self.target_of_alias(alias),
+            None => {
+                let target = self.target_of_alias(alias)?;
+                // `combineValueAndTypeSymbols` makes a symbol that nothing else is and that exports nothing.
+                let is_combined = !self.flags_of(target).intersects(SymFlags::VALUE)
+                    && self.c.imported_property_of_export_equals(alias).is_some();
+                (!is_combined).then_some(target)
+            }
         }
     }
 
@@ -1555,7 +1725,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if symbol != from_table && Some(symbol) != resolved {
             return false;
         }
-        !self.is_external_module_symbol(from_table)
+        !self.is_external_module_symbol_in_table(from_table)
             && (ignores_qualification || self.can_qualify_symbol(at, from_table, meaning, visited))
     }
 
@@ -3823,7 +3993,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.b.approximate_length += 2;
             }
             // `Uppercase<T>`, `NoInfer<T>`
-            TypeData::StringMapping { ty: of, .. } | TypeData::NoInfer(of) => {
+            TypeData::StringMapping { ty: of, .. } | TypeData::Substitution { base: of, .. } => {
                 self.type_to_node(*of);
                 self.b.approximate_length += 20;
             }
@@ -6253,7 +6423,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 _ => {}
             }
         }
-        let specifier = match (specifier, target) {
+        let specifier = match (
+            specifier,
+            target.or_else(|| self.source_file_of_module(symbol)),
+        ) {
             (Some(name), _) => name,
             (None, Some(target)) => self.module_specifier(target, importing, mode),
             (None, None) => String::new(),
@@ -6358,7 +6531,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
             .decls_of(module)
             .into_iter()
             .find(|d| d.1 == Decl::File)
-            .map(|d| files.module(d.0).implied_format);
+            .map(|d| d.0)
+            .or_else(|| self.source_file_of_module(module))
+            .map(|file| files.module(file).implied_format);
         let mut specifier = String::new();
         let mut mode = None;
         // An `import` type that leads to an ECMAScript module only resolves as `import` does.

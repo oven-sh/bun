@@ -1824,16 +1824,9 @@ impl<'p> Checker<'p> {
         let params = hir[func].params;
         let index = (p.0 - params.start) as usize;
         // `getImmediatelyInvokedFunctionExpression`: how many arguments it is called with where it is written.
-        let given = match bound.fns[func.idx()].owner {
-            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
-                Parent::Expr(parent) => match hir[parent].kind {
-                    ExprKind::Call(call) if hir[call].callee == e => Some(hir[call].args.len()),
-                    _ => None,
-                },
-                _ => None,
-            },
-            _ => None,
-        };
+        let given = bound
+            .get_immediately_invoked_function_expression(hir, func)
+            .map(|call| hir[call].args.len());
         if param.default.is_none() {
             return given.is_some_and(|given| {
                 param.ty.is_none() && !param.flags.contains(Flags::REST) && index >= given
@@ -2968,7 +2961,7 @@ impl<'p> Checker<'p> {
                 self.iso_write_type(tx, *index);
             }
             TypeData::Keyof(x)
-            | TypeData::NoInfer(x)
+            | TypeData::Substitution { base: x, .. }
             | TypeData::EvolvingArray(x)
             | TypeData::StringMapping { ty: x, .. } => self.iso_write_type(tx, *x),
             TypeData::Template { types, .. } => {

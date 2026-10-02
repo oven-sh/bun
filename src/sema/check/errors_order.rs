@@ -366,13 +366,11 @@ impl Checker<'_> {
         }
     }
 
-    /// A function expression that is called where it is written runs there and then.
+    /// `GetImmediatelyInvokedFunctionExpression(f) != nil`
     pub(super) fn is_immediately_invoked(&self, file: FileId, f: FnId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let FnOwner::Expr(e) = bound.fns[f.idx()].owner else {
-            return false;
-        };
-        matches!(bound.expr_parent[e.idx()], Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Call(c) if hir[c].callee == e))
+        self.bound(file)
+            .get_immediately_invoked_function_expression(self.hir(file), f)
+            .is_some()
     }
 
     /// What is around what `parent` stands for, patterns and `extends` included. `None`: it is not kept track of.

@@ -7,7 +7,7 @@ use crate::bind::{
     Symbol, SymbolId, member_flags,
 };
 use crate::hir::{self, *};
-use crate::json::{Expression, Json, PropertyName};
+use crate::json::{Expression, ExpressionKind, Json, PropertyName};
 use crate::resolve::{
     Host, JsxEmit, ModuleDetection, ModuleKind, Options, Resolver, ScriptTarget, is_javascript,
     is_relative, join, known_extension, lib_name, parent_dir,
@@ -300,17 +300,6 @@ impl Module {
     }
 }
 
-/// What `cloneSymbol` copied when `mergeSymbol` put the clone in the table of another symbol.
-struct ClonedSymbol {
-    flags: SymFlags,
-    /// `None`: nothing was merged into it, so it is not transient.
-    parts: Option<Vec<Sym>>,
-    every_part: Option<Vec<Sym>>,
-    exports: Option<FxHashMap<Atom, Sym>>,
-    /// The entries that have the clone: whose exports, and the name.
-    entries: Vec<(Sym, Atom)>,
-}
-
 pub struct Files {
     pub atoms: Interner,
     pub options: Options,
@@ -323,18 +312,16 @@ pub struct Files {
     ambient_patterns: Vec<(String, String, Sym)>,
     /// `patternAmbientModuleAugmentations`: by the name written, what `declare module "a.svg"` in a module makes of `declare module "*.svg"`.
     pattern_augmentations: FxHashMap<Atom, Sym>,
-    /// From a part to the symbol it is part of.
-    merged_into: FxHashMap<Sym, Sym>,
-    /// From a symbol to its parts, itself included.
+    /// `mergedSymbols`
+    merged_symbols: FxHashMap<Sym, Sym>,
+    /// `symbol.Declarations` of a transient symbol: the symbols of the binder that have them, in the order they were merged.
     merged_parts: FxHashMap<Sym, Vec<Sym>>,
     /// `merged_parts`, and among them, in the order they came, those that could not be made one with what was there before. They add
     /// nothing to the symbol. They are errors.
     every_part: FxHashMap<Sym, Vec<Sym>>,
     /// While symbols are put together: `name_means_instead`.
     stand_ins: Vec<(Sym, SymbolId)>,
-    /// While symbols are put together: the symbols `mergeSymbol` reached through an alias or an `export *` and cloned. The table that
-    /// declares such a symbol keeps what was cloned. The symbol stands for the clone (`getMergedSymbol`).
-    clones: FxHashMap<Sym, ClonedSymbol>,
+    /// `symbol.Exports` of a transient symbol.
     merged_exports: FxHashMap<Sym, FxHashMap<Atom, Sym>>,
     /// The tables of `merged_exports` sorted by name, once symbols are put together.
     sorted_exports: FxHashMap<Sym, Box<[(Atom, Sym)]>>,
@@ -537,50 +524,49 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
     }
     // The same for a file with syntax errors, as TypeScript's parser recovers from them.
     fn expression(f: &mut hir::File, e: &Expression, atoms: &Interner) -> ExprId {
-        let kind = match e {
-            Expression::Null => ExprKind::Null,
-            Expression::Bool(true) => ExprKind::True,
-            Expression::Bool(false) => ExprKind::False,
-            Expression::Number(n) => ExprKind::Number(f.number(*n)),
-            Expression::String(s) => ExprKind::String(atoms.intern_str(s)),
-            Expression::Identifier(name) => ExprKind::Ident(atoms.intern_str(name)),
-            Expression::Missing => ExprKind::Missing,
-            Expression::Array(items) => {
+        let kind = match &e.kind {
+            ExpressionKind::Null => ExprKind::Null,
+            ExpressionKind::Bool(true) => ExprKind::True,
+            ExpressionKind::Bool(false) => ExprKind::False,
+            ExpressionKind::Number(n) => ExprKind::Number(f.number(*n)),
+            ExpressionKind::String(s) => ExprKind::String(atoms.intern_str(s)),
+            ExpressionKind::Identifier(name) => ExprKind::Ident(atoms.intern_str(name)),
+            ExpressionKind::Missing => ExprKind::Missing,
+            ExpressionKind::Array(items) => {
                 let items: Vec<ExprId> = items.iter().map(|i| expression(f, i, atoms)).collect();
                 ExprKind::Array(f.list(&items))
             }
-            Expression::Object(properties) => {
+            ExpressionKind::Object(properties) => {
                 let props: Vec<Prop> = properties
                     .iter()
                     .map(|p| {
                         let key = match &p.name {
-                            PropertyName::Name(name)
-                            | PropertyName::Computed(Expression::String(name)) => {
-                                PropKey::Name(atoms.intern_str(name))
-                            }
-                            PropertyName::Computed(Expression::Number(n))
-                                if !n.is_sign_negative() =>
-                            {
-                                PropKey::Name(atoms.intern_str(&number_to_string(*n)))
-                            }
-                            PropertyName::Computed(name) => {
-                                PropKey::Computed(expression(f, name, atoms))
-                            }
+                            PropertyName::Name(name) => PropKey::Name(atoms.intern_str(name)),
+                            PropertyName::Computed(name) => match &name.kind {
+                                ExpressionKind::String(name) => {
+                                    PropKey::Name(atoms.intern_str(name))
+                                }
+                                ExpressionKind::Number(n) if !n.is_sign_negative() => {
+                                    PropKey::Name(atoms.intern_str(&number_to_string(*n)))
+                                }
+                                _ => PropKey::Computed(expression(f, name, atoms)),
+                            },
                         };
                         let (kind, value) = match (&p.initializer, key) {
                             (Some(initializer), _) => {
                                 (PropKind::Init, expression(f, initializer, atoms))
                             }
-                            (None, PropKey::Name(name)) => {
-                                (PropKind::Shorthand, f.expr(ExprKind::Ident(name), 0))
-                            }
-                            (None, _) => (PropKind::Init, f.expr(ExprKind::Missing, 0)),
+                            (None, PropKey::Name(name)) => (
+                                PropKind::Shorthand,
+                                f.expr(ExprKind::Ident(name), p.name_pos),
+                            ),
+                            (None, _) => (PropKind::Init, f.expr(ExprKind::Missing, p.name_pos)),
                         };
                         Prop {
                             kind,
                             key,
                             value,
-                            pos: 0,
+                            pos: p.name_pos,
                             start: 0,
                         }
                     })
@@ -588,7 +574,7 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                 ExprKind::Object(f.add_props(&props))
             }
         };
-        f.expr(kind, 0)
+        f.expr(kind, e.pos)
     }
     let mut f = hir::File {
         kind: FileKind::Json,
@@ -1835,11 +1821,10 @@ impl Files {
             ambient_modules: FxHashMap::default(),
             ambient_patterns: Vec::new(),
             pattern_augmentations: FxHashMap::default(),
-            merged_into: FxHashMap::default(),
+            merged_symbols: FxHashMap::default(),
             merged_parts: FxHashMap::default(),
             every_part: FxHashMap::default(),
             stand_ins: Vec::new(),
-            clones: FxHashMap::default(),
             merged_exports: FxHashMap::default(),
             sorted_exports: FxHashMap::default(),
             merged_members: Vec::new(),
@@ -2172,7 +2157,10 @@ impl Files {
             .ambient_specifiers
             .iter()
             .filter(|&&spec| !is_relative(&atoms.text(spec)));
-        for &spec in ambient.chain(&bound.specifiers) {
+        for &spec in ambient
+            .chain(&bound.specifiers)
+            .chain(bound.module_augmentations.iter())
+        {
             let text = atoms.text(spec);
             // `isExtensionlessRelativePathImport`. `HasExtension` goes by `GetBaseFileName`, to which one slash at the end is nothing.
             let base = text.strip_suffix('/').unwrap_or(&text);
@@ -2559,8 +2547,8 @@ impl Files {
                 }
                 // `mergeGlobalSymbol`
                 let merged = match self.globals.get(&name).copied() {
-                    Some(existing) => self.merge_symbols(existing, sym),
-                    None => self.canonical(sym),
+                    Some(existing) => self.merge_symbol(existing, sym, false),
+                    None => self.get_merged_symbol(sym),
                 };
                 self.globals.insert(name, merged);
             }
@@ -2599,14 +2587,11 @@ impl Files {
                         sym,
                     ));
                 }
-                match self.ambient_modules.get(&name).copied() {
-                    Some(existing) => {
-                        self.merge_symbols(existing, sym);
-                    }
-                    None => {
-                        self.ambient_modules.insert(name, sym);
-                    }
-                }
+                let merged = match self.ambient_modules.get(&name).copied() {
+                    Some(existing) => self.merge_symbol(existing, sym, false),
+                    None => sym,
+                };
+                self.ambient_modules.insert(name, merged);
             }
         }
         for (file, name, sym) in augmentations {
@@ -2621,54 +2606,30 @@ impl Files {
                     // `mergeModuleAugmentation`: what is added to `a.svg`, which only the pattern `*.svg` declares, is not added to the
                     // pattern. The addition gets what the pattern has, and goes by its own name. A pattern several scripts declare is
                     // not the symbol of any of them (`mainModule == module.Symbol`), and is added to like any module.
-                    if !self.flags(target).contains(SymFlags::MERGED)
-                        && self.ambient_patterns.iter().any(|p| p.2 == target)
-                    {
-                        self.merge_one_way(sym, target);
-                        self.pattern_augmentations.insert(name, sym);
+                    if self.ambient_patterns.iter().any(|p| p.2 == target) {
+                        let merged = self.merge_symbol(sym, target, true);
+                        self.pattern_augmentations.insert(name, merged);
                         continue;
                     }
                     // What the module only passes on with `export *` is added to where it is declared.
-                    let bound = &self.modules[sym.file.idx()].bound;
-                    let added: Vec<(Atom, Sym)> = bound
-                        .table(bound.symbols[sym.id.idx()].exports)
-                        .iter()
-                        .map(|&(n, s)| {
-                            (
-                                n,
-                                Sym {
-                                    file: sym.file,
-                                    id: s,
-                                },
-                            )
-                        })
-                        .collect();
-                    let mut passed_on = Vec::new();
-                    for (name, addition) in added {
+                    for (name, addition) in self.exports_in_table(sym) {
                         if self.export(target, name).is_none()
                             && let Some(found) = self.module_export(target, name)
-                            && let Some(found) = self.resolve_alias_if_needed(found)
+                            && let Some(resolved) = self.resolve_alias_if_needed(found)
                         {
-                            let found = self.canonical(found);
                             // `mergeSymbol`: what cannot be one symbol stays two, and the module has the addition under the name.
                             if self
-                                .flags(found)
+                                .flags(resolved)
                                 .intersects(excluded_flags(self.flags(addition)))
                             {
-                                self.refused_merges.push((found, addition));
+                                let resolved = self.canonical(resolved);
+                                self.refused_merges.push((resolved, addition));
                                 continue;
                             }
-                            let entry = (self.canonical(target), name);
-                            let merged = self.merge_symbols_at(found, addition, Some(entry), true);
-                            passed_on.push((name, merged));
+                            self.merge_symbol(found, addition, false);
                         }
                     }
-                    self.merge_symbols(target, sym);
-                    // The module now has the name itself: it means the whole, not the addition.
-                    let target = self.canonical(target);
-                    if let Some(table) = self.merged_exports.get_mut(&target) {
-                        table.extend(passed_on);
-                    }
+                    self.merge_symbol(target, sym, false);
                 }
                 // `mergeModuleAugmentation`: what adds to a module that is not there adds to nothing.
                 None => {}
@@ -2696,8 +2657,8 @@ impl Files {
         self.aliases = ByNode::new(&symbols);
         self.alias_steps = ByNode::new(&symbols);
         self.memo = Memo::new(&symbols);
-        for (&part, &whole) in &self.merged_into {
-            self.memo.whole.insert(part, Some(whole));
+        for &part in self.merged_symbols.keys() {
+            self.memo.whole.insert(part, Some(self.canonical(part)));
         }
         for &whole in self.merged_parts.keys() {
             self.memo.whole.insert(whole, Some(whole));
@@ -2706,7 +2667,10 @@ impl Files {
             .merged_exports
             .iter()
             .map(|(&sym, table)| {
-                let mut all: Vec<(Atom, Sym)> = table.iter().map(|(&n, &s)| (n, s)).collect();
+                let mut all: Vec<(Atom, Sym)> = table
+                    .iter()
+                    .map(|(&n, &s)| (n, self.canonical(s)))
+                    .collect();
                 all.sort_unstable();
                 (sym, all.into_boxed_slice())
             })
@@ -2805,69 +2769,84 @@ impl Files {
         &mut self.modules[sym.file.idx()].bound.symbols[sym.id.idx()]
     }
 
-    /// `mergeSymbol`: `source` becomes a part of `target`. The answer is what the name the two go by means from then on.
-    fn merge_symbols(&mut self, target: Sym, source: Sym) -> Sym {
-        self.merge_symbols_at(target, source, None, false)
+    /// `getMergedSymbol`
+    fn get_merged_symbol(&self, sym: Sym) -> Sym {
+        self.merged_symbols.get(&sym).copied().unwrap_or(sym)
     }
 
-    /// `merge_symbols`. `entry`: the symbol whose exports the answer is put in, and the name. `is_resolved`: `target` is not what
-    /// `entry` has but what an `export *` leads to.
-    fn merge_symbols_at(
-        &mut self,
-        target: Sym,
-        source: Sym,
-        entry: Option<(Sym, Atom)>,
-        mut is_resolved: bool,
-    ) -> Sym {
-        let mut target = self.canonical(target);
-        let source = self.canonical(source);
-        if target == source {
+    /// `recordMergedSymbol`
+    fn record_merged_symbol(&mut self, target: Sym, source: Sym) {
+        self.symbol_mut(source).flags |= SymFlags::MERGED;
+        self.merged_symbols.insert(source, target);
+    }
+
+    /// `cloneSymbol`. The clone is a symbol of the file of `symbol`, where `decls`, `parent` and `exports` mean what they mean for
+    /// `symbol`. It takes over what the tables have for `symbol`: from now on `canonical` leads past that.
+    fn clone_symbol(&mut self, symbol: Sym) -> Sym {
+        let parts = self.merged_parts.remove(&symbol);
+        let every_part = self.every_part.remove(&symbol);
+        let exports = self.merged_exports.remove(&symbol);
+        let symbols = &mut self.modules[symbol.file.idx()].bound.symbols;
+        let cloned = &symbols[symbol.id.idx()];
+        let clone = Symbol {
+            name: cloned.name,
+            flags: cloned.flags | SymFlags::MERGED | SymFlags::TRANSIENT,
+            decls: bind::Decls::Many(cloned.decls.as_slice().into()),
+            parent: cloned.parent,
+            exports: cloned.exports,
+        };
+        let result = Sym {
+            file: symbol.file,
+            id: SymbolId(symbols.len() as u32),
+        };
+        symbols.push(clone);
+        self.merged_parts
+            .insert(result, parts.unwrap_or_else(|| vec![symbol]));
+        self.every_part
+            .insert(result, every_part.unwrap_or_else(|| vec![symbol]));
+        if let Some(exports) = exports {
+            self.merged_exports.insert(result, exports);
+        }
+        self.record_merged_symbol(result, symbol);
+        result
+    }
+
+    /// `symbol.Exports`, sorted by name.
+    fn exports_in_table(&self, sym: Sym) -> Vec<(Atom, Sym)> {
+        let mut all: Vec<(Atom, Sym)> = match self.merged_exports.get(&sym) {
+            Some(table) => table.iter().map(|(&n, &s)| (n, s)).collect(),
+            None => {
+                let (file, bound) = (sym.file, self.bound(sym.file));
+                bound
+                    .table(bound.symbols[sym.id.idx()].exports)
+                    .iter()
+                    .map(|&(n, id)| (n, Sym { file, id }))
+                    .collect()
+            }
+        };
+        all.sort_unstable();
+        all
+    }
+
+    /// `mergeSymbol`. The answer is what the table that has `target` has from then on.
+    fn merge_symbol(&mut self, mut target: Sym, source: Sym, unidirectional: bool) -> Sym {
+        // `mergeModuleAugmentation`: the one symbol of several augmentations in a file is merged once.
+        if source == target || self.get_merged_symbol(source) == target {
             return target;
         }
-        let source_flags = self.symbol(source).flags;
-        // What is added to a name that only stands for something (`IsNonLocalAlias`) is added to what it stands for.
+        let (target_flags, source_flags) = (self.flags(target), self.flags(source));
+        // `IsNonLocalAlias`
         let meanings = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
-        let target_flags = self.symbol(target).flags;
-        if target_flags.contains(SymFlags::ALIAS) && !target_flags.intersects(meanings) {
+        let is_alias = target_flags.contains(SymFlags::ALIAS) && !target_flags.intersects(meanings);
+        // `reportMergeSymbolError`
+        if target_flags.intersects(excluded_flags(source_flags)) {
             // Two aliases are never one: the first keeps the name.
-            if source_flags.contains(SymFlags::ALIAS) {
+            if is_alias || unidirectional {
                 self.refused_merges.push((target, source));
                 return target;
             }
-            match self.resolve_alias_as(target, meanings) {
-                Some(resolved) => {
-                    let resolved = self.canonical(resolved);
-                    if resolved == source {
-                        return source;
-                    }
-                    // Where the two cannot be one, the addition has the name.
-                    if self
-                        .symbol(resolved)
-                        .flags
-                        .intersects(excluded_flags(source_flags))
-                    {
-                        self.refused_merges.push((target, source));
-                        return source;
-                    }
-                    target = resolved;
-                    is_resolved = true;
-                }
-                // It may be a property of what a module `export =`s, which only the type of that tells. The alias goes on standing for it.
-                None if self.may_be_property_of_export_equals(target) => {}
-                // Where the alias leads nowhere (`unknownSymbol`), the addition has the name as well.
-                None => {
-                    self.record_alias_cycle(target);
-                    return source;
-                }
-            }
-        }
-        // What cannot be one symbol with what has the name adds nothing to it: two classes, a class and a variable. It stays what its
-        // own declarations are about, and the name goes on meaning the first wherever it is used.
-        if self
-            .symbol(target)
-            .flags
-            .intersects(excluded_flags(source_flags))
-        {
+            // What cannot be one symbol with what has the name adds nothing to it: two classes, a class and a variable. It stays what
+            // its own declarations are about, and the name goes on meaning the first wherever it is used.
             let refused = self.every_part(source).into_vec();
             for &part in &refused {
                 self.name_means_instead(part, target);
@@ -2882,196 +2861,61 @@ impl Files {
                 .extend(refused);
             return target;
         }
-        if let Some(entry) = entry
-            && !self.prepare_merge_target(target, source, entry, is_resolved)
-        {
-            return target;
-        }
-        let source_parts = self
-            .merged_parts
-            .remove(&source)
-            .unwrap_or_else(|| vec![source]);
-        let every_source_part = self
-            .every_part
-            .remove(&source)
-            .unwrap_or_else(|| vec![source]);
-        self.every_part
-            .entry(target)
-            .or_insert_with(|| vec![target])
-            .extend(every_source_part);
-        let target_exports_table = self.symbol(target).exports;
-        self.symbol_mut(target).flags |= source_flags | SymFlags::MERGED;
-        self.symbol_mut(source).flags |= SymFlags::MERGED;
-        self.merged_into.insert(source, target);
-        for &part in &source_parts {
-            self.merged_into.insert(part, target);
-        }
-        self.merged_parts
-            .entry(target)
-            .or_insert_with(|| vec![target])
-            .extend(source_parts);
-
-        let source_exports: Vec<(Atom, Sym)> = match self.merged_exports.remove(&source) {
-            Some(table) => table.into_iter().collect(),
-            None => {
-                let bound = &self.modules[source.file.idx()].bound;
-                bound
-                    .table(bound.symbols[source.id.idx()].exports)
-                    .iter()
-                    .map(|&(n, s)| {
-                        (
-                            n,
-                            Sym {
-                                file: source.file,
-                                id: s,
-                            },
-                        )
-                    })
-                    .collect()
-            }
-        };
-        if source_exports.is_empty() && target_exports_table.is_none() {
-            return target;
-        }
-        if !self.merged_exports.contains_key(&target) {
-            let bound = &self.modules[target.file.idx()].bound;
-            let table = bound
-                .table(target_exports_table)
-                .iter()
-                .map(|&(n, s)| {
-                    (
-                        n,
-                        Sym {
-                            file: target.file,
-                            id: s,
-                        },
-                    )
-                })
-                .collect();
-            self.merged_exports.insert(target, table);
-        }
-        let mut sorted = source_exports;
-        sorted.sort_unstable();
-        // `mergeSymbolTable`
-        for (name, sym) in sorted {
-            let merged = match self
-                .merged_exports
-                .get(&target)
-                .and_then(|table| table.get(&name))
-                .copied()
-            {
-                Some(existing) => self.merge_symbols_at(existing, sym, Some((target, name)), false),
-                None => self.canonical(sym),
-            };
-            if let Some(table) = self.merged_exports.get_mut(&target) {
-                table.insert(name, merged);
-            }
-        }
-        target
-    }
-
-    /// `mergeSymbol` clones a target that is not transient and `mergeSymbolTable` puts the clone in `entry`. Where the target was
-    /// reached through an alias or an `export *` (`is_resolved`), the table that declares it keeps the symbol that was cloned, and
-    /// the next merge that starts from that symbol clones it again. Called when `source` is about to be merged into `target`.
-    /// Returns whether `source` becomes a part of what `target` stands for.
-    fn prepare_merge_target(
-        &mut self,
-        target: Sym,
-        source: Sym,
-        entry: (Sym, Atom),
-        is_resolved: bool,
-    ) -> bool {
-        let Some(cloned) = self.clones.get(&target) else {
-            if is_resolved {
-                let cloned = ClonedSymbol {
-                    flags: self.symbol(target).flags,
-                    parts: self.merged_parts.get(&target).cloned(),
-                    every_part: self.every_part.get(&target).cloned(),
-                    exports: self.merged_exports.get(&target).cloned(),
-                    entries: vec![entry],
-                };
-                self.clones.insert(target, cloned);
-            }
-            return true;
-        };
-        if !is_resolved {
-            // The entry has the clone, which is transient.
-            if cloned.entries.contains(&entry) {
-                return true;
-            }
-            // The entry has the symbol that was cloned. It is transient and gets `source`, but `getMergedSymbol` of it is the clone.
-            if cloned.parts.is_some() {
-                let flags = self.symbol(source).flags;
-                let parts = self.parts(source).into_vec();
-                let every_part = self.every_part(source).into_vec();
-                if let Some(cloned) = self.clones.get_mut(&target) {
-                    cloned.flags |= flags;
-                    if let Some(list) = &mut cloned.parts {
-                        list.extend(parts);
+        if !target_flags.contains(SymFlags::TRANSIENT) {
+            // `resolveSymbol`: what is added to a name that only stands for something is added to what it stands for.
+            let mut resolved = target;
+            if is_alias {
+                match self.resolve_alias_as(target, meanings) {
+                    Some(found) if found == source => return source,
+                    // Where the two cannot be one, the addition has the name.
+                    Some(found) if self.flags(found).intersects(excluded_flags(source_flags)) => {
+                        self.refused_merges.push((target, source));
+                        return source;
                     }
-                    if let Some(list) = &mut cloned.every_part {
-                        list.extend(every_part);
+                    Some(found) => resolved = found,
+                    // It may be a property of what a module `export =`s, which only the type of that tells. The alias goes on standing
+                    // for it.
+                    None if self.may_be_property_of_export_equals(target) => {}
+                    // Where the alias leads nowhere (`unknownSymbol`), the addition has the name as well.
+                    None => {
+                        self.record_alias_cycle(target);
+                        return source;
                     }
                 }
-                return false;
+            }
+            target = self.clone_symbol(resolved);
+        }
+        self.symbol_mut(target).flags |= source_flags;
+        let (parts, every_part) = (
+            self.parts(source).into_vec(),
+            self.every_part(source).into_vec(),
+        );
+        self.merged_parts.entry(target).or_default().extend(parts);
+        self.every_part
+            .entry(target)
+            .or_default()
+            .extend(every_part);
+        let source_exports = self.exports_in_table(source);
+        if !source_exports.is_empty() || self.symbol(target).exports.is_some() {
+            if !self.merged_exports.contains_key(&target) {
+                let table = self.exports_in_table(target).into_iter().collect();
+                self.merged_exports.insert(target, table);
+            }
+            // `mergeSymbolTable`
+            for (name, source_symbol) in source_exports {
+                let merged = match self.merged_exports[&target].get(&name).copied() {
+                    Some(existing) => self.merge_symbol(existing, source_symbol, unidirectional),
+                    None => self.get_merged_symbol(source_symbol),
+                };
+                if let Some(table) = self.merged_exports.get_mut(&target) {
+                    table.insert(name, merged);
+                }
             }
         }
-        let Some(mut cloned) = self.detach_clone(target) else {
-            return true;
-        };
-        if is_resolved {
-            cloned.entries.push(entry);
-            self.clones.insert(target, cloned);
+        if !unidirectional {
+            self.record_merged_symbol(target, source);
         }
-        true
-    }
-
-    /// `recordMergedSymbol` is about to point `original` at a new clone. The clone it stands for so far keeps its parts and the entries
-    /// it is in, and goes by the first symbol that was merged into it. `original` is what was cloned again. Returns that, without entries.
-    fn detach_clone(&mut self, original: Sym) -> Option<ClonedSymbol> {
-        let mut cloned = self.clones.remove(&original)?;
-        let parts = self.merged_parts.remove(&original).unwrap_or_default();
-        let is_copied = |part: Sym| match &cloned.parts {
-            Some(copied) => copied.contains(&part),
-            None => part == original,
-        };
-        let Some(clone) = parts.iter().copied().find(|&part| !is_copied(part)) else {
-            if !parts.is_empty() {
-                self.merged_parts.insert(original, parts);
-            }
-            return Some(cloned);
-        };
-        for &part in &parts {
-            if !is_copied(part) {
-                self.merged_into.insert(part, clone);
-            }
-        }
-        self.merged_into.remove(&clone);
-        let flags = self.symbol(original).flags;
-        self.symbol_mut(clone).flags |= flags;
-        self.symbol_mut(original).flags = cloned.flags;
-        self.merged_parts.insert(clone, parts);
-        if let Some(every_part) = self.every_part.remove(&original) {
-            self.every_part.insert(clone, every_part);
-        }
-        if let Some(exports) = self.merged_exports.remove(&original) {
-            self.merged_exports.insert(clone, exports);
-        }
-        if let Some(parts) = cloned.parts.clone() {
-            self.merged_parts.insert(original, parts);
-        }
-        if let Some(every_part) = cloned.every_part.clone() {
-            self.every_part.insert(original, every_part);
-        }
-        if let Some(exports) = cloned.exports.clone() {
-            self.merged_exports.insert(original, exports);
-        }
-        for (owner, name) in cloned.entries.drain(..) {
-            if let Some(table) = self.merged_exports.get_mut(&owner) {
-                table.insert(name, clone);
-            }
-        }
-        Some(cloned)
+        target
     }
 
     /// Names are looked up in the table the two symbols were to share, which has `target`. The binder has found `refused` for those in
@@ -3091,7 +2935,7 @@ impl Files {
             exports: bind::TableId::NONE,
         });
         self.stand_ins.push((refused, stand_in));
-        self.merged_into.insert(
+        self.merged_symbols.insert(
             Sym {
                 file: refused.file,
                 id: stand_in,
@@ -3128,62 +2972,6 @@ impl Files {
         }
     }
 
-    /// `mergeSymbol(target, source, unidirectional)`: `target` gets all that `source` has, and `source` stays what it is.
-    fn merge_one_way(&mut self, target: Sym, source: Sym) {
-        let (target, source) = (self.canonical(target), self.canonical(source));
-        if target == source {
-            return;
-        }
-        let source_flags = self.symbol(source).flags;
-        if self.flags(target).intersects(excluded_flags(source_flags)) {
-            self.refused_merges.push((target, source));
-            return;
-        }
-        let source_parts = self.parts(source).into_vec();
-        let source_exports = self.exports(source);
-        let target_exports_table = self.symbol(target).exports;
-        self.symbol_mut(target).flags |= source_flags | SymFlags::MERGED;
-        self.every_part
-            .entry(target)
-            .or_insert_with(|| vec![target])
-            .extend_from_slice(&source_parts);
-        self.merged_parts
-            .entry(target)
-            .or_insert_with(|| vec![target])
-            .extend(source_parts);
-        if source_exports.is_empty() && target_exports_table.is_none() {
-            return;
-        }
-        if !self.merged_exports.contains_key(&target) {
-            let bound = &self.modules[target.file.idx()].bound;
-            let table = bound
-                .table(target_exports_table)
-                .iter()
-                .map(|&(n, s)| {
-                    (
-                        n,
-                        Sym {
-                            file: target.file,
-                            id: s,
-                        },
-                    )
-                })
-                .collect();
-            self.merged_exports.insert(target, table);
-        }
-        for (name, sym) in source_exports {
-            match self.merged_exports[&target].get(&name).copied() {
-                Some(existing) => self.merge_one_way(existing, sym),
-                None => {
-                    self.merged_exports
-                        .get_mut(&target)
-                        .unwrap()
-                        .insert(name, sym);
-                }
-            }
-        }
-    }
-
     // ───────────────────────────── symbols ─────────────────────────────
 
     #[inline]
@@ -3211,7 +2999,8 @@ impl Files {
         self.canonical(Sym { file, id })
     }
 
-    /// The symbol `sym` is a part of.
+    /// `getMergedSymbol`, for as long as it leads on. A clone can be cloned again, and tsgo gets to the last by asking at each layer
+    /// (`resolveEntityName`, `getSymbolOfDeclaration`, `getTypeFromClassOrInterfaceReference`).
     #[inline]
     pub fn canonical(&self, sym: Sym) -> Sym {
         if self.symbol(sym).flags.contains(SymFlags::MERGED) {
@@ -3224,7 +3013,16 @@ impl Files {
     fn whole_of(&self, sym: Sym) -> Sym {
         match self.memo.whole.get(&sym) {
             Some(Some(whole)) => whole,
-            _ => self.merged_into.get(&sym).copied().unwrap_or(sym),
+            _ => {
+                let mut whole = sym;
+                for _ in 0..32 {
+                    match self.merged_symbols.get(&whole) {
+                        Some(&next) => whole = next,
+                        None => break,
+                    }
+                }
+                whole
+            }
         }
     }
 
@@ -3272,14 +3070,22 @@ impl Files {
 
     pub fn export(&self, sym: Sym, name: Atom) -> Option<Sym> {
         let symbol = self.symbol(sym);
-        if symbol.flags.contains(SymFlags::MERGED)
+        let found = if symbol.flags.contains(SymFlags::MERGED)
             && let Some(table) = self.merged_exports.get(&sym)
         {
-            return table.get(&name).copied();
-        }
-        self.bound(sym.file)
-            .lookup(symbol.exports, name)
-            .map(|id| self.sym(sym.file, id))
+            *table.get(&name)?
+        } else {
+            Sym {
+                file: sym.file,
+                id: self.bound(sym.file).lookup(symbol.exports, name)?,
+            }
+        };
+        // `getExportsOfModule` has the symbols as the table has them, and `mergeSymbol` clones one that is not transient.
+        Some(if self.is_merged {
+            self.canonical(found)
+        } else {
+            found
+        })
     }
 
     /// The names `sym` exports itself, sorted by name.
@@ -3708,7 +3514,7 @@ impl Files {
 
     /// `module`, or what it says it is with `export =`.
     pub fn module_value(&self, module: Sym) -> Sym {
-        match self.export(module, known::export_equals) {
+        self.canonical(match self.export(module, known::export_equals) {
             // `resolveSymbolEx`: only what is nothing but an alias (`IsNonLocalAlias`) is followed.
             Some(equals)
                 if self
@@ -3719,7 +3525,7 @@ impl Files {
             }
             Some(equals) => self.resolve_alias(equals).unwrap_or(equals),
             None => module,
-        }
+        })
     }
 
     /// `canHaveSyntheticDefault`: the module, or what it says it is with `export =`, if it can have a default that is made up.
@@ -3752,11 +3558,14 @@ impl Files {
         }
         let can = if !is_file || self.hir(module.file).kind == FileKind::Declaration {
             // One that is only declared may turn out to have one, unless it says what its default is or that it is an ECMAScript module.
-            self.export(module, known::default).is_none()
+            // `resolveExportByName`: with `export =` both are properties of the value. `isSyntacticDefault`: a member of an enum is none.
+            let exporter = self.module_value(module);
+            self.export(exporter, known::default)
+                .is_none_or(|default| self.flags(default).contains(SymFlags::ENUM_MEMBER))
                 && self
                     .atoms
                     .lookup(b"__esModule")
-                    .is_none_or(|name| self.export(module, name).is_none())
+                    .is_none_or(|name| self.export(exporter, name).is_none())
         } else if self.hir(module.file).is_js {
             // JavaScript has one if it has none of the syntax of ECMAScript modules and does not say that it is one.
             let of = self.hir(module.file);
@@ -4228,7 +4037,18 @@ impl Files {
             r.steps.push(sym);
             Some(r.circles)
         })?;
-        let target = self.alias_target(sym).map(|t| self.canonical(t));
+        // `links.aliasTarget`, which `mergeSymbol` goes by. `getExternalModuleMember` finds the symbol as the table of the module has
+        // it. `resolveEntityName` and `resolveExternalModuleSymbol` end with `getMergedSymbol`.
+        let is_as_in_table = !self.is_merged
+            && self
+                .declaration_of_alias_symbol(sym)
+                .is_some_and(|(file, decl)| self.external_module_member_of(file, decl).is_some());
+        let target = self.alias_target(sym);
+        let target = if is_as_in_table {
+            target
+        } else {
+            target.map(|t| self.canonical(t))
+        };
         let is_settled = RESOLVING.with(|r| {
             let mut r = r.borrow_mut();
             r.steps.pop();

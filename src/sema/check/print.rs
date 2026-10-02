@@ -770,7 +770,7 @@ impl<'p> Printer<'_, 'p> {
                 let of = self.type_to_node(*of);
                 self.intrinsic_alias_to_node(string_mapping_name(*kind), of)
             }
-            TypeData::NoInfer(of) => {
+            TypeData::Substitution { base: of, .. } => {
                 let of = self.type_to_node(*of);
                 self.intrinsic_alias_to_node("NoInfer", of)
             }
@@ -1000,8 +1000,7 @@ impl<'p> Printer<'_, 'p> {
             start = before - 1;
         }
         let end = match *text.get(start)? {
-            b'[' => end_of_brackets(text, start).unwrap_or(text.len()),
-            b'"' | b'\'' | b'0'..=b'9' => super::explain::end_of_token(text, start as u32) as usize,
+            b'[' | b'"' | b'\'' | b'0'..=b'9' => self.c.end_of_name_at(file, start as u32) as usize,
             _ => return None,
         };
         let end = end.clamp(start, text.len());
@@ -2228,7 +2227,7 @@ impl<'p> Printer<'_, 'p> {
             TypeData::Keyof(_) => 1 << 21,
             TypeData::Template { .. } => 1 << 22,
             TypeData::StringMapping { .. } => 1 << 23,
-            TypeData::NoInfer(_) => 1 << 24,
+            TypeData::Substitution { .. } => 1 << 24,
             TypeData::IndexedAccess { .. } => 1 << 25,
             TypeData::Cond { .. } => 1 << 26,
             TypeData::Union(_) if ty == TypeId::BOOLEAN => 1 << 27 | 1 << 8,
@@ -3466,16 +3465,9 @@ impl<'p> Printer<'_, 'p> {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let parameters = hir[func].params;
         // `getImmediatelyInvokedFunctionExpression`: the arguments a function called where it is written is called with.
-        let arguments = match bound.fns[func.idx()].owner {
-            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
-                Parent::Expr(parent) => match hir[parent].kind {
-                    ExprKind::Call(call) if hir[call].callee == e => Some(hir[call].args),
-                    _ => None,
-                },
-                _ => None,
-            },
-            _ => None,
-        };
+        let arguments = bound
+            .get_immediately_invoked_function_expression(hir, func)
+            .map(|call| hir[call].args);
         let given = arguments.map(|arguments| arguments.len());
         // `getEffectiveCallArguments`: a tuple that is spread counts for its elements.
         let effective = arguments.map(|arguments| {

@@ -1,7 +1,7 @@
 //! Related information: where the other things an error is about are. `'x' is declared here.`
 
 use super::Checker;
-use super::explain::{Related, end_of_token};
+use super::explain::Related;
 use crate::bind::{Decl, SymFlags};
 use crate::program::{FileId, Sym};
 use crate::types::{Prop, PropSource};
@@ -12,7 +12,7 @@ pub(super) type Place = (FileId, u32, u32);
 impl Checker<'_> {
     /// From `start` in `file` to the end of the name, number or string that starts there.
     pub(super) fn place_of_token(&self, file: FileId, start: u32) -> Place {
-        (file, start, end_of_token(&self.hir(file).text, start))
+        (file, start, self.end_of_token_at(file, start))
     }
 
     /// `getErrorRangeForNode` of a declaration: its name, or where it starts if it has none.

@@ -1,6 +1,7 @@
 //! The types of expressions.
 
 use super::errors_order::Named;
+use super::relate::Relation;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
 use smallvec::SmallVec;
@@ -692,7 +693,7 @@ impl<'p> Checker<'p> {
                 None => false,
             },
             // A substitution type is as its base type is.
-            &TypeData::NoInfer(base) => self.is_const_type_variable(base, depth),
+            &TypeData::Substitution { base, .. } => self.is_const_type_variable(base, depth),
             // `getHomomorphicTypeVariable`: `{ [K in keyof T]: .. }` is as `T` is.
             &TypeData::Anon {
                 origin: Origin::Mapped(file, node),
@@ -4430,7 +4431,7 @@ impl<'p> Checker<'p> {
             if sensitive && waits {
                 let early = self.inference_mapper(&inference);
                 let props = self.instantiate(param, early);
-                if !self.jsx_fits(file, e, props, false, true) {
+                if !self.jsx_fits(file, e, props, Relation::Assignable, true) {
                     self.jsx_resolving.pop();
                     return Some(self.instantiate_sig(sig, early));
                 }
@@ -4525,14 +4526,14 @@ impl<'p> Checker<'p> {
         Some(self.instantiate_sig(sig, mapper))
     }
 
-    /// `isSignatureApplicable` under `CheckModeSkipContextSensitive`: whether the attributes of the JSX element `e` fit `props`, as
-    /// subtypes if `by_subtype`, with those that wait for what is expected of them, and the children, taken to fit. In doubt they do.
+    /// `isSignatureApplicable` under `CheckModeSkipContextSensitive`: whether the attributes of the JSX element `e` are related
+    /// to `props`, with those that wait for what is expected of them, and the children, taken to fit. In doubt they are.
     fn jsx_fits_without_sensitive(
         &mut self,
         file: FileId,
         e: ExprId,
         props: TypeId,
-        by_subtype: bool,
+        relation: Relation,
     ) -> bool {
         let hir = self.hir(file);
         let ExprKind::Jsx(j) = hir[e].kind else {
@@ -4542,7 +4543,7 @@ impl<'p> Checker<'p> {
             return true;
         }
         // `anyFunctionType` fits every function type whichever way it is compared, and `any` is a subtype of nothing.
-        let left_out = if by_subtype {
+        let left_out = if relation == Relation::Subtype {
             TypeId::UNRESOLVED
         } else {
             TypeId::ANY
@@ -4589,7 +4590,7 @@ impl<'p> Checker<'p> {
             self.cycles,
             std::mem::replace(&mut self.relation_gave_up, false),
         );
-        let fits = self.is_related_in_pass(given, props, by_subtype);
+        let fits = self.related(given, props, relation);
         let is_sure = self.cycles == cycles_before && !self.relation_gave_up;
         self.relation_gave_up |= gave_up_before;
         fits || !is_sure
@@ -4651,7 +4652,7 @@ impl<'p> Checker<'p> {
         // The last of `candidatesForArgumentError`.
         let mut last_failed = None;
         // `chooseOverload`: the first that the attributes are subtypes of what it takes, or else the first they can be assigned to.
-        for by_subtype in [true, false] {
+        for relation in [Relation::Subtype, Relation::Assignable] {
             for (i, &sig) in candidates.iter().enumerate() {
                 let type_params = self.sig_type_params(sig);
                 if !self.has_correct_type_argument_arity(&type_params, given_type_args) {
@@ -4664,13 +4665,13 @@ impl<'p> Checker<'p> {
                 wanted[i] = Some(props);
                 last_failed = Some(props);
                 if leaves_out {
-                    if !self.jsx_fits(file, e, props, by_subtype, true) {
+                    if !self.jsx_fits(file, e, props, relation, true) {
                         continue;
                     }
                     leaves_out = false;
                     self.settle_what_waits(file, e, props, &waiting);
                 }
-                if self.jsx_fits(file, e, props, by_subtype, false) {
+                if self.jsx_fits(file, e, props, relation, false) {
                     return Some(props);
                 }
             }
@@ -4715,21 +4716,21 @@ impl<'p> Checker<'p> {
     }
 
     /// `isSignatureApplicable`: whether the attributes of the JSX element `e`, read with `props` in mind, which is what a candidate
-    /// takes, fit it: as subtypes if `by_subtype`, with what waits left out if `leaves_out`.
+    /// takes, are related to it, with what waits left out if `leaves_out`.
     fn jsx_fits(
         &mut self,
         file: FileId,
         e: ExprId,
         props: TypeId,
-        by_subtype: bool,
+        relation: Relation,
         leaves_out: bool,
     ) -> bool {
         self.jsx_resolving.push((file, e, props));
         let fits = if leaves_out {
-            self.jsx_fits_without_sensitive(file, e, props, by_subtype)
+            self.jsx_fits_without_sensitive(file, e, props, relation)
         } else {
             let given = self.jsx_attributes_type(file, e);
-            self.is_related_in_pass(given, props, by_subtype)
+            self.related(given, props, relation)
         };
         self.jsx_resolving.pop();
         fits

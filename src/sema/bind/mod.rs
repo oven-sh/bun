@@ -44,7 +44,7 @@ bitflags::bitflags! {
         const ASSIGNED = 1 << 13;
         const CONST = 1 << 14;
         const PARAMETER = 1 << 15;
-        /// Part of a symbol made of declarations in several places: see `Program`.
+        /// `mergedSymbols` has it, or it is transient: see `Files::canonical`.
         const MERGED = 1 << 16;
         const TYPE_ONLY = 1 << 17;
         /// A name others import by, which nothing in the file can refer to: `export { a as b }`, `export default e`.
@@ -53,6 +53,8 @@ bitflags::bitflags! {
         const CONST_ENUM = 1 << 19;
         /// `module` and `exports` in a CommonJS module.
         const MODULE_EXPORTS = 1 << 20;
+        /// `SymbolFlagsTransient`: made by `cloneSymbol`, not by the binder.
+        const TRANSIENT = 1 << 21;
 
         const VARIABLE = Self::FUNCTION_SCOPED_VARIABLE.bits() | Self::BLOCK_SCOPED_VARIABLE.bits();
         const VALUE = Self::VARIABLE.bits() | Self::FUNCTION.bits() | Self::CLASS.bits() | Self::ENUM.bits()
@@ -253,16 +255,21 @@ pub fn require_argument(hir: &File, e: ExprId) -> Option<ExprId> {
         return None;
     };
     let call = &hir[c];
-    (matches!(hir[call.callee].kind, ExprKind::Ident(known::require)) && call.args.len() == 1)
+    (matches!(hir[call.callee].kind, ExprKind::Ident(known::require))
+        && !is_parenthesized(hir, call.callee)
+        && call.args.len() == 1)
         .then(|| hir.id_at(call.args, 0))
 }
 
-/// The same, of a name that is written out.
+/// The same with `requireStringLiteralLikeArgument`: the argument of `require("m")`, and its text.
+pub fn require_call_argument(hir: &File, e: ExprId) -> Option<(ExprId, Atom)> {
+    let argument = require_argument(hir, e)?;
+    is_string_literal_like(hir, argument).then(|| (argument, string_literal_text(hir, argument)))
+}
+
+/// The text alone.
 pub fn required_specifier(hir: &File, e: ExprId) -> Option<Atom> {
-    match hir[require_argument(hir, e)?].kind {
-        ExprKind::String(spec) => Some(spec),
-        _ => None,
-    }
+    Some(require_call_argument(hir, e)?.1)
 }
 
 pub struct Symbol {
@@ -711,10 +718,15 @@ pub struct Bound {
     /// `local.Declarations` of `declareModuleMember`, of the names that a block of a module or a namespace both exports and keeps to
     /// itself: each declaration, with whether it is exported. By each of the symbols those declarations have here.
     pub local_declarations: FxHashMap<SymbolId, SmallVec<[(Decl, bool); 2]>>,
+    /// `local.ExportSymbol` of `declareModuleMember` where the exports refused it, with the locals `local` is in.
+    pub refused_export_symbols: Few<(TableId, SymbolId)>,
     /// `export as namespace N`
     pub umd_globals: Few<(Atom, SymbolId)>,
-    /// The module specifiers in the file that are looked for, in the order they are first mentioned. `collectModuleReferences`
+    /// `file.Imports()`: the module specifiers in the file that are looked for, in the order they are first mentioned.
+    /// `collectModuleReferences`
     pub specifiers: Vec<Atom>,
+    /// `file.ModuleAugmentations`: the names of the modules a module adds to, but for those it imports. Looked for after `specifiers`.
+    pub module_augmentations: Few<Atom>,
     /// Those of the import and export statements directly in the ambient modules a script declares, and the names of the modules
     /// added to there: looked for unless relative.
     pub ambient_specifiers: Few<Atom>,
@@ -1023,6 +1035,73 @@ impl Bound {
             .iter()
             .take_while(|a| a.0 == symbol)
             .any(|a| self.get_assignment_target_kind(hir, a.1) == AssignmentKind::Definite)
+    }
+
+    /// `GetImmediatelyInvokedFunctionExpression`: the call, if the function expression or arrow function `f` is called where it is
+    /// written.
+    pub fn get_immediately_invoked_function_expression(
+        &self,
+        hir: &File,
+        f: FnId,
+    ) -> Option<CallId> {
+        if let FnOwner::Expr(e) = self.fns[f.idx()].owner
+            && matches!(hir[f].kind, FnKind::Expr | FnKind::Arrow)
+            && let Parent::Expr(parent) = self.expr_parent[e.idx()]
+            && parent.is_some()
+            && let ExprKind::Call(call) = hir[parent].kind
+            && hir[call].callee == e
+        {
+            return Some(call);
+        }
+        None
+    }
+
+    /// `GetAssignedName`: where the name is of what `e` is directly given to.
+    pub fn get_assigned_name(&self, hir: &File, e: ExprId) -> Option<u32> {
+        if is_parenthesized(hir, e) {
+            return None;
+        }
+        match self.expr_parent[e.idx()] {
+            // Not the attribute of a JSX element.
+            Parent::Prop(p) if hir[p].kind == PropKind::Init => {
+                let owner = self.prop_owner[p.idx()];
+                (owner.is_some() && matches!(hir[owner].kind, ExprKind::Object(_)))
+                    .then_some(hir[p].pos)
+            }
+            Parent::PatPropDefault(p) => Some(hir[hir[p].value].pos),
+            Parent::PatElemDefault(p) => Some(hir[hir[p].pat].pos),
+            Parent::VarInit(d) if matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
+                Some(hir[hir[d].pat].pos)
+            }
+            // On the right of any operator.
+            Parent::Expr(parent) if parent.is_some() => {
+                let left = match hir[parent].kind {
+                    ExprKind::Binary { left, right, .. } if right == e => left,
+                    ExprKind::Assign { target, value, .. } if value == e => target,
+                    _ => return None,
+                };
+                // `{ a = e }` is a `ShorthandPropertyAssignment`.
+                if is_parenthesized(hir, left)
+                    || matches!(self.expr_parent[parent.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
+                {
+                    return None;
+                }
+                match hir[left].kind {
+                    ExprKind::Ident(_) => Some(hir[left].pos),
+                    ExprKind::Dot { name_pos, .. } => Some(name_pos),
+                    // `IsStringOrNumericLiteralLike(SkipParentheses(argument))`
+                    ExprKind::Index { index, .. } => match hir[index].kind {
+                        ExprKind::String(_) | ExprKind::Number(_) => Some(hir[index].pos),
+                        ExprKind::Template { exprs, .. } if exprs.is_empty() => {
+                            Some(hir[index].pos)
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     /// `IsInTypeQuery`: it is asked what `e` is, but `e` is not read.

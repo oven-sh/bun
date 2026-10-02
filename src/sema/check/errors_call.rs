@@ -1,4 +1,5 @@
-//! Errors about calls, `new` and tagged templates: what is called cannot be, or not with these arguments.
+//! Errors about calls, `new` and tagged templates: what is called cannot be, or not with these arguments. What `resolveCall`
+//! reports of a decorator and of `instanceof` is said here too.
 //!
 //! The order of the checks, what is said and where follow `resolveCallExpression`, `resolveNewExpression`,
 //! `resolveTaggedTemplateExpression`, `resolveCall`, `chooseOverload`, `isSignatureApplicable`, `reportCallResolutionErrors` and
@@ -6,9 +7,10 @@
 //! when the call was resolved, where they look at it again for each candidate. Whenever that leaves it open whether a candidate
 //! fits, nothing is said.
 
-use super::call::{Arg, ResolvedCall};
+use super::call::{Arg, Args, CallLike, CallState, ResolvedCall};
 use super::errors::Diagnostic;
 use super::explain::Line;
+use super::relate::Relation;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent};
 use smallvec::SmallVec;
@@ -22,9 +24,20 @@ pub(super) enum Applicable {
     Unknown,
 }
 
+impl Applicable {
+    /// `None`: it cannot be told.
+    pub(super) fn known(self) -> Option<bool> {
+        match self {
+            Applicable::Yes => Some(true),
+            Applicable::No => Some(false),
+            Applicable::Unknown => None,
+        }
+    }
+}
+
 /// What `chooseOverload` leaves behind when no candidate will do, and what it held the candidates against.
 struct Failed {
-    args: SmallVec<[(Arg, ExprId); 8]>,
+    args: Args,
     type_args: Vec<TypeId>,
     this_arg: Option<ExprId>,
     /// `candidatesForArgumentError`
@@ -97,6 +110,7 @@ impl Checker<'_> {
     ) {
         let hir = self.hir(file);
         let data = hir[c];
+        let node = CallLike::Call(c);
         // The `super` of `new super()` is that of `super.x`: an instance of the base.
         if !is_new && matches!(hir[data.callee].kind, ExprKind::Super) {
             self.check_super_call(file, e, c, out);
@@ -227,7 +241,7 @@ impl Checker<'_> {
                 });
                 return;
             }
-            self.report_call_resolution(file, e, c, &call_sigs, false, resolved, out);
+            self.report_call_resolution(file, e, node, &call_sigs, resolved, None, out);
             self.check_assertion_target(file, e, c, resolved.sig, out);
             return;
         }
@@ -275,11 +289,11 @@ impl Checker<'_> {
                 );
                 return;
             }
-            self.report_call_resolution(file, e, c, &construct_sigs, true, resolved, out);
+            self.report_call_resolution(file, e, node, &construct_sigs, resolved, None, out);
             return;
         }
         if !call_sigs.is_empty() {
-            self.report_call_resolution(file, e, c, &call_sigs, true, resolved, out);
+            self.report_call_resolution(file, e, node, &call_sigs, resolved, None, out);
             let node_start = self.start_inside_parentheses(file, e);
             let only = match call_sigs[..] {
                 [only] => Some(only),
@@ -641,7 +655,7 @@ impl Checker<'_> {
             sigs.push(self.instantiate_sig(sig, mapper));
         }
         if !sigs.is_empty() {
-            self.report_call_resolution(file, e, c, &sigs, false, resolved, out);
+            self.report_call_resolution(file, e, CallLike::Call(c), &sigs, resolved, None, out);
         }
     }
 
@@ -695,7 +709,7 @@ impl Checker<'_> {
             }
             return;
         }
-        self.report_call_resolution(file, e, c, &call_sigs, false, resolved, out);
+        self.report_call_resolution(file, e, CallLike::Call(c), &call_sigs, resolved, None, out);
     }
 
     /// `isUntypedFunctionCall`
@@ -858,26 +872,22 @@ impl Checker<'_> {
             .map_or(0, |i| i + 1)
     }
 
-    /// `hasCorrectArity`. `is_incomplete`: the `)` of the call is missing or the tagged template is unterminated, so the lower bound is
-    /// not checked (`callIsIncomplete`).
-    fn has_correct_arity_for(
-        &mut self,
-        params: &[SigParam],
-        args: &[(Arg, ExprId)],
-        is_incomplete: bool,
-    ) -> bool {
-        let spread = args.iter().position(|a| matches!(a.0, Arg::Spread(..)));
-        self.has_correct_arity_for_count(params, args.len(), spread, is_incomplete)
-    }
-
-    /// `getThisArgumentOfCall`: the object of the access that is called, whatever assertions are around the access, and how that
-    /// access is chained.
+    /// `getThisArgumentOfCall`
     pub(super) fn this_argument_of_call(
         &self,
         file: FileId,
-        mut callee: ExprId,
-    ) -> Option<(ExprId, Chain)> {
+        e: ExprId,
+        node: CallLike,
+    ) -> Option<ExprId> {
         let hir = self.hir(file);
+        let mut callee = match node {
+            CallLike::InstanceOf { right, .. } => return Some(right),
+            CallLike::Call(_) if matches!(hir[e].kind, ExprKind::New(_)) => return None,
+            CallLike::Call(c) => hir[c].callee,
+            CallLike::Decorator(_) if hir.legacy_decorators => return None,
+            CallLike::Decorator(_) => e,
+        };
+        // `SkipOuterExpressions(expression, OEKAll)`
         loop {
             callee = match hir[callee].kind {
                 ExprKind::As { expr, .. }
@@ -885,44 +895,47 @@ impl Checker<'_> {
                 | ExprKind::Instantiation { expr, .. }
                 | ExprKind::AsConst(expr)
                 | ExprKind::NonNull(expr) => expr,
-                ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => {
-                    return Some((obj, chain));
-                }
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => return Some(obj),
                 _ => return None,
             };
         }
     }
 
-    /// The types of the arguments, if they were all found out.
-    fn known_argument_types(
-        &mut self,
-        file: FileId,
-        args: &[(Arg, ExprId)],
-    ) -> Option<SmallVec<[TypeId; 8]>> {
-        let mut types = SmallVec::new();
-        for &(arg, _) in args {
-            let ty = self.arg_type(file, arg);
-            if !self.is_known(ty) || matches!(arg, Arg::Expr(x) if self.is_uncertain(file, x)) {
-                return None;
+    /// `isSignatureApplicable`: whether what the signature is called on is held against its `this` type. Not for `new`, nor for
+    /// a call of `super.m` written just so.
+    pub(super) fn checks_this_argument(&self, file: FileId, e: ExprId, node: CallLike) -> bool {
+        let hir = self.hir(file);
+        match (node, hir[e].kind) {
+            (CallLike::Call(_), ExprKind::New(_)) => false,
+            (CallLike::Call(c), ExprKind::Call(_)) => {
+                let callee = hir[c].callee;
+                is_parenthesized(hir, callee)
+                    || !matches!(hir[callee].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if matches!(hir[obj].kind, ExprKind::Super))
             }
-            types.push(ty);
+            _ => true,
         }
-        Some(types)
     }
 
-    /// Whether it is certain that none of `sigs` takes the arguments of the call, `new` or tagged template `e`, which may still be
-    /// in the middle of being resolved. `resolved.sig`: where there is one signature and that is generic, it as inferred from
+    /// Whether the types of the arguments were all found out.
+    fn are_argument_types_known(&mut self, file: FileId, args: &[Arg]) -> bool {
+        args.iter().all(|&arg| {
+            let ty = self.arg_type(file, arg);
+            self.is_known(ty) && !matches!(arg, Arg::Expr(x) if self.is_uncertain(file, x))
+        })
+    }
+
+    /// Whether it is certain that none of `sigs` takes the arguments of `node`, which `e` stands for and which may still be in
+    /// the middle of being resolved. `resolved.sig`: where there is one signature and that is generic, it as inferred from
     /// all of the arguments (the `checkCandidate` of `chooseOverload`), never what `getCandidateForOverloadFailure` makes of it.
     pub(super) fn no_candidate_applies(
         &mut self,
         file: FileId,
         e: ExprId,
-        c: CallId,
+        node: CallLike,
         sigs: &[SigId],
-        is_new: bool,
         resolved: ResolvedCall,
     ) -> bool {
-        self.failed_candidates(file, e, c, sigs, is_new, resolved)
+        self.failed_candidates(file, e, node, sigs, resolved)
             .is_some()
     }
 
@@ -955,51 +968,41 @@ impl Checker<'_> {
         &mut self,
         file: FileId,
         e: ExprId,
-        c: CallId,
+        node: CallLike,
         sigs: &[SigId],
-        is_new: bool,
         resolved: ResolvedCall,
     ) -> Option<Failed> {
         let hir = self.hir(file);
-        let data = hir[c];
         let candidates = self.candidates_in_order(sigs);
-        let args = self.args_with_nodes(file, e, c);
+        let args = self.effective_call_arguments(file, e, node);
         // A call that is being resolved cannot say what it expects of an argument. The candidate at hand does, in
         // `is_signature_applicable`. The arguments of any other call are what they are, whatever they are held against.
         let is_under_way = self.stack.contains(&Query::Call(file, e));
-        let types = if is_under_way {
-            None
-        } else {
-            Some(self.known_argument_types(file, &args)?)
-        };
+        if !is_under_way && !self.are_argument_types_known(file, &args) {
+            return None;
+        }
         // `resolveCall`: the type arguments of `super<T>()` are not looked at.
-        let is_super_call = !is_new && matches!(hir[data.callee].kind, ExprKind::Super);
-        let type_args = if is_super_call {
-            Vec::new()
-        } else {
-            self.types_from_nodes(file, data.type_args)
+        let type_args = match node {
+            CallLike::Call(c)
+                if matches!(hir[e].kind, ExprKind::New(_))
+                    || !matches!(hir[hir[c].callee].kind, ExprKind::Super) =>
+            {
+                self.types_from_nodes(file, hir[c].type_args)
+            }
+            _ => Vec::new(),
         };
         if type_args.iter().any(|&t| !self.is_known(t)) {
             return None;
         }
-        let this_arg = if is_new {
-            None
-        } else {
-            self.this_argument_of_call(file, data.callee)
-                .map(|(obj, _)| obj)
+        let this_arg = self.this_argument_of_call(file, e, node);
+        let s = CallState {
+            file,
+            call: e,
+            node,
+            type_args: &type_args,
+            args: &args,
+            this_arg,
         };
-        // What type arguments are inferred from, which they are not for the only candidate of a call that is resolved.
-        let plain: SmallVec<[Arg; 4]> = if candidates.len() > 1 || resolved.sig.is_none() {
-            args.iter().map(|a| a.0).collect()
-        } else {
-            SmallVec::new()
-        };
-        let applicability = |checker: &mut Self, sig: SigId| match &types {
-            Some(types) => checker
-                .signature_applicability(file, e, c, &args, types, sig, this_arg, is_new, None),
-            None => checker.is_signature_applicable(file, e, c, &args, sig, this_arg, is_new, None),
-        };
-        let is_incomplete = self.is_call_incomplete(file, e, c);
         // All that is asked is whether any of them applies, and the call has been resolved to one that most likely does. The ones before it do
         // not, which takes inferring their type arguments to find out.
         if candidates.len() > 1
@@ -1012,9 +1015,9 @@ impl Checker<'_> {
                 .any(|&candidate| self.is_declared_where(sig, candidate))
             && {
                 let params = self.sig_params(sig);
-                self.has_correct_arity_for(&params, &args, is_incomplete)
+                self.has_correct_arity(s, &params)
             }
-            && applicability(self, sig) == Applicable::Yes
+            && self.is_signature_applicable(s, sig, None) == Applicable::Yes
         {
             return None;
         }
@@ -1025,7 +1028,7 @@ impl Checker<'_> {
             let type_params = self.sig_type_params(candidate);
             let params = self.sig_params(candidate);
             if !self.has_correct_type_argument_arity(&type_params, type_args.len())
-                || !self.has_correct_arity_for(&params, &args, is_incomplete)
+                || !self.has_correct_arity(s, &params)
             {
                 continue;
             }
@@ -1045,9 +1048,7 @@ impl Checker<'_> {
                     Some(sig) if candidates.len() == 1 => sig,
                     _ => {
                         let outer = std::mem::replace(&mut self.keeps_arg_contexts, true);
-                        let sig = self.instantiate_for_call(
-                            file, e, candidate, &type_args, &plain, this_arg, false,
-                        );
+                        let sig = self.instantiate_for_call(s, candidate, false);
                         self.keeps_arg_contexts = outer;
                         sig
                     }
@@ -1055,13 +1056,13 @@ impl Checker<'_> {
                 // With a rest parameter that is a type parameter, how many it takes is only known now.
                 if self.non_array_rest_type(&params).is_some() {
                     let instantiated = self.sig_params(check);
-                    if !self.has_correct_arity_for(&instantiated, &args, is_incomplete) {
+                    if !self.has_correct_arity(s, &instantiated) {
                         for_arity_error = Some(check);
                         continue;
                     }
                 }
             }
-            match applicability(self, check) {
+            match self.is_signature_applicable(s, check, None) {
                 Applicable::Yes | Applicable::Unknown => return None,
                 Applicable::No => for_argument_error.push(check),
             }
@@ -1076,33 +1077,23 @@ impl Checker<'_> {
             && !for_argument_error.is_empty()
             && let Some(accepted) = resolved.sig
             && !for_argument_error.contains(&accepted)
-            && plain
+            && args
                 .iter()
                 .any(|a| matches!(a, Arg::Expr(x) if self.is_context_sensitive(file, *x)))
         {
             for &candidate in &candidates {
                 let params = self.sig_params(candidate);
-                if self.sig_type_params(candidate).is_empty()
-                    || !self.has_correct_arity_for(&params, &args, is_incomplete)
+                if self.sig_type_params(candidate).is_empty() || !self.has_correct_arity(s, &params)
                 {
                     continue;
                 }
                 let outer = std::mem::replace(&mut self.keeps_arg_contexts, true);
-                let attempt = self.instantiate_for_call_as(
-                    file,
-                    e,
-                    candidate,
-                    &[],
-                    &plain,
-                    this_arg,
-                    false,
-                    true,
-                );
+                let attempt = self.instantiate_for_call_as(s, candidate, false, true);
                 self.keeps_arg_contexts = outer;
                 if attempt != accepted {
                     continue;
                 }
-                if applicability(self, accepted) != Applicable::No {
+                if self.is_signature_applicable(s, accepted, None) != Applicable::No {
                     return None;
                 }
                 break;
@@ -1151,34 +1142,36 @@ impl Checker<'_> {
         }
         let noted = self.notes.borrow().len();
         let mut said = Vec::new();
-        self.report_call_resolution(file, e, c, &sigs, false, resolved, &mut said);
+        self.report_call_resolution(file, e, CallLike::Call(c), &sigs, resolved, None, &mut said);
         let notes = self.notes.borrow_mut().split_off(noted);
         p.said_of_calls_resolved_again
             .insert_ref((file, e), (said, notes));
     }
 
-    /// `resolveCall`, for what it reports.
-    fn report_call_resolution(
+    /// `resolveCall`, for what it reports. `head`: `headMessage`.
+    pub(super) fn report_call_resolution(
         &mut self,
         file: FileId,
         e: ExprId,
-        c: CallId,
+        node: CallLike,
         sigs: &[SigId],
-        is_new: bool,
         resolved: ResolvedCall,
+        head: Option<u32>,
         out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
-        let data = hir[c];
         // `resolveCall`: with several candidates the errors come from the assignable pass. The subtype pass has checked every function
         // among the arguments (`NodeCheckFlagsContextChecked`), so no attempt of the assignable pass infers from their annotations.
         let mut previous = Vec::new();
-        if sigs.len() > 1 && data.type_args.is_empty() {
-            for arg in hir.ids(data.args) {
+        if sigs.len() > 1
+            && let CallLike::Call(c) = node
+            && hir[c].type_args.is_empty()
+        {
+            for arg in hir.ids(hir[c].args) {
                 self.mark_context_checked(file, arg, &mut previous);
             }
         }
-        let failed = self.failed_candidates(file, e, c, sigs, is_new, resolved);
+        let failed = self.failed_candidates(file, e, node, sigs, resolved);
         for (function, entry) in previous {
             match entry {
                 Some(entry) => self.context_checked_for.insert((file, function), entry),
@@ -1194,59 +1187,51 @@ impl Checker<'_> {
             for_arity_error,
             for_type_argument_error,
         } = failed;
+        let s = CallState {
+            file,
+            call: e,
+            node,
+            type_args: &type_args,
+            args: &args,
+            this_arg,
+        };
         // `reportCallResolutionErrors`
         if let Some(&last) = for_argument_error.last() {
             let mut said = Vec::new();
-            self.is_signature_applicable(
-                file,
-                e,
-                c,
-                &args,
-                last,
-                this_arg,
-                is_new,
-                Some(&mut said),
-            );
+            self.is_signature_applicable(s, last, Some(&mut said));
             let is_overloaded = for_argument_error.len() > 1;
             let related = if said.is_empty() {
                 Vec::new()
             } else {
-                self.related_to_failed_candidate(
-                    file,
-                    e,
-                    c,
-                    &args,
-                    &type_args,
-                    this_arg,
-                    is_new,
-                    last,
-                    is_overloaded,
-                )
+                self.related_to_failed_candidate(s, last, is_overloaded)
             };
             for d in said {
-                let d = if is_overloaded {
-                    self.explain_under(d.start, d.code, 2770, Vec::new());
+                let mut code = d.code;
+                if is_overloaded {
+                    self.explain_under(d.start, code, 2770, Vec::new());
                     self.explain_under(d.start, 2770, 2769, Vec::new());
-                    Diagnostic {
-                        start: d.start,
-                        code: 2769,
-                    }
-                } else {
-                    d
-                };
-                if !related.is_empty() {
-                    self.relate(d.start, d.code, |_| related.clone());
+                    code = 2769;
                 }
-                out.push(d);
+                if let Some(head) = head {
+                    self.explain_under(d.start, code, head, Vec::new());
+                    code = head;
+                }
+                if !related.is_empty() {
+                    self.relate(d.start, code, |_| related.clone());
+                }
+                out.push(Diagnostic {
+                    start: d.start,
+                    code,
+                });
             }
         } else if let Some(sig) = for_arity_error {
-            self.report_argument_arity(file, e, c, is_new, &[sig], &args, out);
-        } else if let Some(candidate) = for_type_argument_error {
+            self.report_argument_arity(s, &[sig], head, out);
+        } else if let (Some(candidate), CallLike::Call(c)) = (for_type_argument_error, node) {
             let type_params = self.sig_type_params(candidate);
             if let Ok(Some((index, given, constraint))) =
                 self.failing_type_argument(candidate, &type_params, &type_args)
             {
-                let node = hir.ids(data.type_args).nth(index).unwrap();
+                let node = hir.ids(hir[c].type_args).nth(index).unwrap();
                 let end = self.end_of_type_node(file, node);
                 // 2344, or what says more.
                 self.report_not_assignable_with_end(
@@ -1266,10 +1251,10 @@ impl Checker<'_> {
                     fitting.push(sig);
                 }
             }
-            if fitting.is_empty() {
+            if !fitting.is_empty() {
+                self.report_argument_arity(s, &fitting, head, out);
+            } else if let CallLike::Call(c) = node {
                 self.report_type_argument_arity(file, c, sigs, type_args.len(), out);
-            } else {
-                self.report_argument_arity(file, e, c, is_new, &fitting, &args, out);
             }
         }
     }
@@ -1362,26 +1347,16 @@ impl Checker<'_> {
         }))
     }
 
-    /// `addImplementationSuccessElaboration`: whether `chooseOverload` takes `implementation`, as the only candidate, for the call,
-    /// `new` or tagged template `e`. `false` where it cannot be told.
-    fn does_implementation_apply(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        c: CallId,
-        args: &[(Arg, ExprId)],
-        type_args: &[TypeId],
-        this_arg: Option<ExprId>,
-        is_new: bool,
-        implementation: SigId,
-    ) -> bool {
-        let is_incomplete = self.is_call_incomplete(file, e, c);
+    /// `addImplementationSuccessElaboration`: whether `chooseOverload` takes `implementation` as the only candidate. `false`
+    /// where it cannot be told.
+    fn does_implementation_apply(&mut self, s: CallState<'_>, implementation: SigId) -> bool {
+        let type_args = s.type_args;
         let (type_params, params) = (
             self.sig_type_params(implementation),
             self.sig_params(implementation),
         );
         if !self.has_correct_type_argument_arity(&type_params, type_args.len())
-            || !self.has_correct_arity_for(&params, args, is_incomplete)
+            || !self.has_correct_arity(s, &params)
         {
             return false;
         }
@@ -1395,44 +1370,29 @@ impl Checker<'_> {
             {
                 return false;
             }
-            let plain: SmallVec<[Arg; 4]> = args.iter().map(|a| a.0).collect();
             let outer = std::mem::replace(&mut self.keeps_arg_contexts, true);
-            check = self.instantiate_for_call(
-                file,
-                e,
-                implementation,
-                type_args,
-                &plain,
-                this_arg,
-                false,
-            );
+            check = self.instantiate_for_call(s, implementation, false);
             self.keeps_arg_contexts = outer;
             // With a rest parameter that is a type parameter, how many it takes is only known now.
             if self.non_array_rest_type(&params).is_some() {
                 let instantiated = self.sig_params(check);
-                if !self.has_correct_arity_for(&instantiated, args, is_incomplete) {
+                if !self.has_correct_arity(s, &instantiated) {
                     return false;
                 }
             }
         }
-        self.is_signature_applicable(file, e, c, args, check, this_arg, is_new, None)
-            == Applicable::Yes
+        self.is_signature_applicable(s, check, None) == Applicable::Yes
     }
 
     /// What `reportCallResolutionErrors` relates to each thing it says of `last`, the last of `candidatesForArgumentError`.
     /// `is_overloaded`: there are more of those.
     fn related_to_failed_candidate(
         &mut self,
-        file: FileId,
-        e: ExprId,
-        c: CallId,
-        args: &[(Arg, ExprId)],
-        type_args: &[TypeId],
-        this_arg: Option<ExprId>,
-        is_new: bool,
+        s: CallState<'_>,
         last: SigId,
         is_overloaded: bool,
     ) -> Vec<super::explain::Related> {
+        let (file, e) = (s.file, s.call);
         if !self.explains {
             return Vec::new();
         }
@@ -1443,16 +1403,7 @@ impl Checker<'_> {
         };
         if !self.stack.contains(&Query::Call(file, e))
             && let Some(implementation) = self.implementation_of_overload(last)
-            && self.does_implementation_apply(
-                file,
-                e,
-                c,
-                args,
-                type_args,
-                this_arg,
-                is_new,
-                implementation,
-            )
+            && self.does_implementation_apply(s, implementation)
             && let Some((of, func, _)) = self.sig_decl(implementation)
         {
             related.push(super::explain::Related {
@@ -1537,26 +1488,20 @@ impl Checker<'_> {
         Ok(None)
     }
 
-    /// `isSignatureApplicable`, of the call, `new` or tagged template `e`, which may still be in the middle of being resolved.
-    /// `args`: the arguments as `getEffectiveCallArguments` has them, each with the argument it is written as (part of), after the
-    /// pieces of text if it is a tagged template.
+    /// `isSignatureApplicable`, of a call that may still be in the middle of being resolved.
     pub(super) fn is_signature_applicable(
         &mut self,
-        file: FileId,
-        e: ExprId,
-        c: CallId,
-        args: &[(Arg, ExprId)],
+        s: CallState<'_>,
         sig: SigId,
-        this_arg: Option<ExprId>,
-        is_new: bool,
         report: Option<&mut Vec<Diagnostic>>,
     ) -> Applicable {
+        let (file, e, args) = (s.file, s.call, s.args);
         // `checkExpressionWithContextualType`: a call that is being resolved cannot say what it expects of an argument, so `sig`
         // does, but for what is settled already.
         let settled = self.contextual.len();
         if self.stack.contains(&Query::Call(file, e)) {
             let expected = self.sig_params(sig);
-            for (i, &(arg, _)) in args.iter().enumerate() {
+            for (i, &arg) in args.iter().enumerate() {
                 if let Arg::Expr(x) = arg
                     && self.explicit_context(file, x).is_none()
                     && let Some(param) = self.context_of_arg_at(&expected, i, Some(args.len()))
@@ -1568,39 +1513,36 @@ impl Checker<'_> {
             }
         }
         // Nothing is decided on the strength of an argument that could not be found out.
-        let applicable = match self.known_argument_types(file, args) {
-            Some(types) => self
-                .signature_applicability(file, e, c, args, &types, sig, this_arg, is_new, report),
-            None => Applicable::Unknown,
+        let applicable = if self.are_argument_types_known(file, args) {
+            self.signature_applicability(s, sig, Relation::Assignable, false, report)
+        } else {
+            Applicable::Unknown
         };
         self.contextual.truncate(settled);
         applicable
     }
 
-    /// `isSignatureApplicable`, once the arguments are known and know what is expected of them. `types`: what each of them is.
-    fn signature_applicability(
+    /// `isSignatureApplicable`, once the arguments know what is expected of them. `skips_context_sensitive`:
+    /// `CheckModeSkipContextSensitive`.
+    pub(super) fn signature_applicability(
         &mut self,
-        file: FileId,
-        e: ExprId,
-        c: CallId,
-        args: &[(Arg, ExprId)],
-        types: &[TypeId],
+        s: CallState<'_>,
         sig: SigId,
-        this_arg: Option<ExprId>,
-        is_new: bool,
+        relation: Relation,
+        skips_context_sensitive: bool,
         mut report: Option<&mut Vec<Diagnostic>>,
     ) -> Applicable {
+        let (file, e, node, args, this_arg) = (s.file, s.call, s.node, s.args, s.this_arg);
         let hir = self.hir(file);
         let params = self.sig_params(sig);
-        let callee = hir[c].callee;
-        // Only a call of `super.m` written just so goes without.
-        let is_super_property = matches!(hir[e].kind, ExprKind::Call(_))
-            && matches!(hir[callee].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if matches!(hir[obj].kind, ExprKind::Super))
-            && !is_parenthesized(hir, callee);
+        // What a decorator is applied to is made up (`createSyntheticExpression`): an error about it is at the expression.
+        let decorator = match node {
+            CallLike::Decorator(_) if report.is_some() => Some(self.where_decorator_is(file, e)),
+            _ => None,
+        };
         if let Some(wanted) = self.sig_this_type(sig)
             && wanted != TypeId::VOID
-            && !is_new
-            && !is_super_property
+            && self.checks_this_argument(file, e, node)
         {
             let given = self.this_argument_type(file, this_arg);
             if !self.is_known(given)
@@ -1609,10 +1551,15 @@ impl Checker<'_> {
             {
                 return Applicable::Unknown;
             }
-            if !self.is_assignable(given, wanted) {
+            if !self.related(given, wanted, relation) {
                 if let Some(out) = report.as_deref_mut() {
-                    let start = self.start_of(file, this_arg.unwrap_or(e));
-                    let end = self.error_end_of(file, this_arg.unwrap_or(e));
+                    let (start, end) = match (this_arg, decorator) {
+                        (None, Some(written)) => (written.at_sign, written.end),
+                        _ => (
+                            self.start_of(file, this_arg.unwrap_or(e)),
+                            self.error_end_of(file, this_arg.unwrap_or(e)),
+                        ),
+                    };
                     // 2684, or what says more.
                     self.report_not_assignable_with_end(given, wanted, start, end, 2684, out);
                 }
@@ -1625,17 +1572,45 @@ impl Checker<'_> {
         } else {
             args.len()
         };
-        for (i, &(arg, node)) in args.iter().enumerate().take(count) {
+        // The mode is set by a context sensitive argument, and applies to the functions in all of them.
+        let skips_operand_functions = skips_context_sensitive
+            && args
+                .iter()
+                .any(|a| matches!(a, Arg::Expr(x) if self.is_context_sensitive(file, *x)));
+        for (i, &arg) in args.iter().enumerate().take(count) {
+            let node = arg.node();
             if matches!(hir[node].kind, ExprKind::Missing) {
                 continue;
+            }
+            if skips_context_sensitive && let Arg::Expr(x) = arg {
+                if self.is_context_sensitive(file, x) {
+                    if let Some(param) = self.context_of_arg_at(&params, i, Some(args.len()))
+                        && !self.is_context_sensitive_argument_related(file, x, param, relation)
+                    {
+                        return Applicable::No;
+                    }
+                    continue;
+                }
+                if skips_operand_functions && self.has_context_sensitive_right_operand(file, x) {
+                    continue;
+                }
             }
             let Some(wanted) = self.param_type_at(&params, i) else {
                 continue;
             };
-            if !self.is_known(wanted) {
+            let given = self.arg_type(file, arg);
+            if !self.is_known(given)
+                || !self.is_known(wanted)
+                || matches!(arg, Arg::Expr(x) if self.is_uncertain(file, x))
+            {
                 return Applicable::Unknown;
             }
-            let given = types[i];
+            // `getRegularTypeOfObjectLiteral`: properties there are too many of do not count before everything is looked at.
+            let given = if skips_context_sensitive {
+                self.regular_type_of_object_literal(given)
+            } else {
+                given
+            };
             if self.trace_relations {
                 let (a, b) = (
                     crate::describe::Describer::new(self).describe(given),
@@ -1644,10 +1619,10 @@ impl Checker<'_> {
                 eprintln!(
                     "ARGUMENT {i} at {}: {a} for {b}: {}",
                     hir[node].pos,
-                    self.is_assignable(given, wanted)
+                    self.related(given, wanted, relation)
                 );
             }
-            if self.is_assignable(given, wanted) {
+            if self.related(given, wanted, relation) {
                 continue;
             }
             let check_node = self.effective_check_node(file, node);
@@ -1658,11 +1633,13 @@ impl Checker<'_> {
             };
             // The pieces of text of a tagged template: where the template starts is not kept.
             if let Some(out) = report.as_deref_mut()
-                && node != e
+                && (node != e || decorator.is_some())
             {
-                let (at, end) = match self.start_of_jsdoc_type_assertion(file, check_node) {
-                    Some(open) => (open, self.end_of_bracket_at(file, open)),
-                    None => (
+                let jsdoc_type_assertion = self.start_of_jsdoc_type_assertion(file, check_node);
+                let (at, end) = match (decorator, jsdoc_type_assertion) {
+                    (Some(written), _) => (written.start, written.end),
+                    (None, Some(open)) => (open, self.end_of_bracket_at(file, open)),
+                    (None, None) => (
                         self.start_inside_parentheses(file, check_node),
                         self.error_end_inside_parentheses(file, check_node),
                     ),
@@ -1692,34 +1669,49 @@ impl Checker<'_> {
             if !self.is_known(rest) {
                 return Applicable::Unknown;
             }
-            let plain: SmallVec<[Arg; 8]> = args.iter().map(|a| a.0).collect();
+            // What is left out is not looked at.
+            let taken_for: SmallVec<[Option<TypeId>; 8]> = args
+                .iter()
+                .map(|a| {
+                    (skips_operand_functions
+                        && matches!(a, Arg::Expr(x) if self.is_context_sensitive(file, *x)
+                            || self.has_context_sensitive_right_operand(file, *x)))
+                    .then_some(TypeId::UNRESOLVED)
+                })
+                .collect();
             let given =
-                self.spread_argument_type(file, &plain, count, rest, &[], MapperId::IDENTITY);
+                self.spread_argument_type(file, args, count, rest, &taken_for, MapperId::IDENTITY);
             if !self.is_known(given) {
                 return Applicable::Unknown;
             }
-            if !self.is_assignable(given, rest) {
+            if !self.related(given, rest, relation) {
                 if let Some(out) = report
-                    && args.get(count).is_none_or(|first| first.1 != e)
+                    && (decorator.is_some()
+                        || args.get(count).is_none_or(|first| first.node() != e))
                 {
-                    let (at, end) = match args[count..] {
-                        [] => (
-                            self.start_inside_parentheses(file, e),
-                            self.end_inside_parentheses(file, e),
-                        ),
-                        [(_, node)] => {
-                            let check_node = self.effective_check_node(file, node);
-                            match self.start_of_jsdoc_type_assertion(file, check_node) {
-                                Some(open) => (open, self.end_of_bracket_at(file, open)),
-                                None => (
-                                    self.start_inside_parentheses(file, check_node),
-                                    self.error_end_inside_parentheses(file, check_node),
-                                ),
+                    let (at, end) = match decorator {
+                        Some(written) if count == args.len() => (written.at_sign, written.end),
+                        Some(written) => (written.start, written.end),
+                        None => match args[count..] {
+                            [] => (
+                                self.start_inside_parentheses(file, e),
+                                self.end_inside_parentheses(file, e),
+                            ),
+                            [only] => {
+                                let check_node = self.effective_check_node(file, only.node());
+                                match self.start_of_jsdoc_type_assertion(file, check_node) {
+                                    Some(open) => (open, self.end_of_bracket_at(file, open)),
+                                    None => (
+                                        self.start_inside_parentheses(file, check_node),
+                                        self.error_end_inside_parentheses(file, check_node),
+                                    ),
+                                }
                             }
-                        }
-                        [(_, first), .., (_, last)] => {
-                            (self.start_of(file, first), self.end_of_expr(file, last))
-                        }
+                            [first, .., last] => (
+                                self.start_of(file, first.node()),
+                                self.end_of_expr(file, last.node()),
+                            ),
+                        },
                     };
                     let said = out.len();
                     self.check_assignable_with_end(
@@ -1801,31 +1793,27 @@ impl Checker<'_> {
         e
     }
 
-    /// `getErrorNodeForCallNode`
-    fn start_of_call_error(&self, file: FileId, e: ExprId, c: CallId, is_new: bool) -> u32 {
+    /// `getErrorNodeForCallNode`: from where to where it goes.
+    fn error_range_of_call_node(&self, file: FileId, e: ExprId, node: CallLike) -> (u32, u32) {
         let hir = self.hir(file);
-        if is_new || matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
-            return self.start_inside_parentheses(file, e);
-        }
-        let callee = hir[c].callee;
-        match hir[callee].kind {
-            ExprKind::Dot { name_pos, .. } if !is_parenthesized(hir, callee) => name_pos,
-            _ => self.start_of(file, callee),
-        }
-    }
-
-    /// Where the node that starts at `start_of_call_error` ends.
-    fn end_of_call_error(&self, file: FileId, e: ExprId, c: CallId, is_new: bool) -> u32 {
-        let hir = self.hir(file);
-        if is_new || matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
-            return self.end_inside_parentheses(file, e);
-        }
-        let callee = hir[c].callee;
-        match hir[callee].kind {
-            ExprKind::Dot { name_pos, .. } if !is_parenthesized(hir, callee) => {
-                self.end_of_name_at(file, name_pos)
+        match (node, hir[e].kind) {
+            (CallLike::Decorator(_), _) => {
+                let written = self.where_decorator_is(file, e);
+                (written.at_sign, written.end)
             }
-            _ => self.error_end_of(file, callee),
+            (CallLike::Call(c), ExprKind::Call(_)) => {
+                let callee = hir[c].callee;
+                match hir[callee].kind {
+                    ExprKind::Dot { name_pos, .. } if !is_parenthesized(hir, callee) => {
+                        (name_pos, self.end_of_name_at(file, name_pos))
+                    }
+                    _ => (self.start_of(file, callee), self.error_end_of(file, callee)),
+                }
+            }
+            _ => (
+                self.start_inside_parentheses(file, e),
+                self.end_inside_parentheses(file, e),
+            ),
         }
     }
 
@@ -1914,21 +1902,24 @@ impl Checker<'_> {
         }]
     }
 
-    /// `getArgumentArityError`: 2554 2555 2556 2575 2794 2810
+    /// `getArgumentArityError`: 2554 2555 2556 2575 2794 2810, and 1278 1279 of a decorator. `head`: `headMessage`.
     fn report_argument_arity(
         &mut self,
-        file: FileId,
-        e: ExprId,
-        c: CallId,
-        is_new: bool,
+        s: CallState<'_>,
         sigs: &[SigId],
-        args: &[(Arg, ExprId)],
+        head: Option<u32>,
         out: &mut Vec<Diagnostic>,
     ) {
-        if let Some(&(_, node)) = args.iter().find(|a| matches!(a.0, Arg::Spread(..))) {
-            let start = self.start_of(file, node);
+        let (file, e, node, args) = (s.file, s.call, s.node, s.args);
+        if let Some(spread) = args.iter().find(|a| matches!(a, Arg::Spread(..))) {
+            let start = self.start_of(file, spread.node());
             out.push(Diagnostic { start, code: 2556 });
-            self.note(start, self.end_of_expr(file, node), 2556, Vec::new());
+            self.note(
+                start,
+                self.end_of_expr(file, spread.node()),
+                2556,
+                Vec::new(),
+            );
             return;
         }
         let counts = self.argument_counts(sigs, args.len());
@@ -1940,13 +1931,18 @@ impl Checker<'_> {
             least_above,
             has_rest,
         } = counts;
-        let error_start = self.start_of_call_error(file, e, c, is_new);
-        let code = if has_rest {
+        let decorator = match node {
+            CallLike::Decorator(_) => Some(self.where_decorator_is(file, e)),
+            _ => None,
+        };
+        let code = if decorator.is_some() {
+            if has_rest { 1279 } else { 1278 }
+        } else if has_rest {
             2555
         } else if least == 1
             && most == 1
             && args.is_empty()
-            && self.is_promise_resolve_arity_error(file, c, is_new)
+            && matches!(node, CallLike::Call(c) if self.is_promise_resolve_arity_error(file, e, c))
         {
             // In JavaScript there is no type argument to put `void` in.
             let path = self.files().module(file).path.as_str();
@@ -1962,41 +1958,41 @@ impl Checker<'_> {
             2554
         };
         let given = args.len().to_string();
-        if least < args.len() && args.len() < most {
-            out.push(Diagnostic {
-                start: error_start,
-                code: 2575,
-            });
-            let end = self.end_of_call_error(file, e, c, is_new);
+        let error_range = self.error_range_of_call_node(file, e, node);
+        let ((start, end), code, counted) = if least < args.len() && args.len() < most {
             let either = vec![given, most_below.to_string(), least_above.to_string()];
-            self.note(error_start, end, 2575, either);
+            (error_range, 2575, either)
         } else if args.len() < least || most >= args.len() {
-            out.push(Diagnostic {
-                start: error_start,
-                code,
-            });
-            let end = self.end_of_call_error(file, e, c, is_new);
-            self.note(error_start, end, code, vec![expected, given]);
-            if args.len() < least && code != 2810 {
-                self.relate(error_start, code, |c| {
-                    c.parameter_without_argument(sigs, args.len())
-                });
-            }
-        } else if args[most].1 != e {
-            let start = self.start_of(file, args[most].1);
-            out.push(Diagnostic { start, code });
-            let end = self.end_of_expr(file, args[args.len() - 1].1);
-            self.note(start, end, code, vec![expected, given]);
+            (error_range, code, vec![expected, given])
+        } else if let Some(written) = decorator {
+            ((written.start, written.end), code, vec![expected, given])
+        } else if args[most].node() != e {
+            let start = self.start_of(file, args[most].node());
+            let end = self.end_of_expr(file, args[args.len() - 1].node());
+            ((start, end), code, vec![expected, given])
+        } else {
+            // It is at the template of a tagged template, and where that starts is not kept.
+            return;
+        };
+        self.note(start, end, code, counted);
+        let top = head.unwrap_or(code);
+        if let Some(head) = head {
+            self.explain_under(start, code, head, Vec::new());
         }
-        // Otherwise it is at the template of a tagged template, and where that starts is not kept.
+        out.push(Diagnostic { start, code: top });
+        if args.len() < least && code != 2810 {
+            self.relate(start, top, |c| {
+                c.parameter_without_argument(sigs, args.len())
+            });
+        }
     }
 
     /// `isPromiseResolveArityError`: what is called is the `resolve` of `new Promise((resolve) => ...)`. With parentheses around
     /// `resolve`, the function or `Promise` it is not: those are nodes.
-    fn is_promise_resolve_arity_error(&mut self, file: FileId, c: CallId, is_new: bool) -> bool {
+    fn is_promise_resolve_arity_error(&mut self, file: FileId, e: ExprId, c: CallId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let callee = hir[c].callee;
-        if is_new
+        if !matches!(hir[e].kind, ExprKind::Call(_))
             || !matches!(hir[callee].kind, ExprKind::Ident(_))
             || is_parenthesized(hir, callee)
         {
@@ -2126,18 +2122,5 @@ fn line_breaks_after(text: &[u8], mut at: usize) -> bool {
             }
             _ => return false,
         }
-    }
-}
-
-/// `IsDottedName`
-fn is_dotted_name(hir: &hir::File, e: ExprId) -> bool {
-    match hir[e].kind {
-        ExprKind::Ident(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::NewTarget
-        | ExprKind::ImportMeta => true,
-        ExprKind::Dot { obj, .. } => is_dotted_name(hir, obj),
-        _ => false,
     }
 }

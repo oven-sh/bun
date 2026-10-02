@@ -2017,7 +2017,7 @@ impl Checker<'_> {
             return;
         }
         out.push(Diagnostic { start, code: 1544 });
-        let kind = super::errors_x_modules::module_kind_name(self.files().options.module);
+        let kind = self.files().options.module.name();
         self.note(start, 0, 1544, vec![kind.to_owned()]);
     }
 
@@ -2196,7 +2196,7 @@ impl Checker<'_> {
         // that `isCommonJSRequire` accepts.
         let is_identifier = |pat: PatId| matches!(hir[pat].kind, PatKind::Ident(_));
         for &call in index.of(ExprTag::Call) {
-            let Some((argument, spec)) = require_call_argument(hir, call) else {
+            let Some((argument, spec)) = crate::bind::require_call_argument(hir, call) else {
                 continue;
             };
             // The loader resolves only the specifiers that the binder collected.
@@ -3016,17 +3016,6 @@ fn is_declaration_file_name(path: &str) -> bool {
         || base.ends_with(".d.mts")
         || base.ends_with(".d.cts")
         || base.ends_with(".ts") && base.contains(".d.")
-}
-
-/// `IsRequireCall` with `requireStringLiteralLikeArgument`: the argument of `require("m")` and its text. Parentheses around `require`
-/// or around the string make it an ordinary call.
-fn require_call_argument(hir: &hir::File, call: ExprId) -> Option<(ExprId, Atom)> {
-    let argument = crate::bind::require_argument(hir, call)?;
-    let (ExprKind::Call(c), ExprKind::String(spec)) = (hir[call].kind, hir[argument].kind) else {
-        return None;
-    };
-    (!is_parenthesized(hir, hir[c].callee) && !is_parenthesized(hir, argument))
-        .then_some((argument, spec))
 }
 
 /// `isCommentOrBlankLine`

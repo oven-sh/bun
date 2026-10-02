@@ -2864,9 +2864,9 @@ impl<'p> Checker<'p> {
                 let (obj, index) = (*obj, *index);
                 self.mentions(obj, param, depth + 1) || self.mentions(index, param, depth + 1)
             }
-            TypeData::Keyof(t) | TypeData::NoInfer(t) | TypeData::StringMapping { ty: t, .. } => {
-                self.mentions(*t, param, depth + 1)
-            }
+            TypeData::Keyof(t)
+            | TypeData::Substitution { base: t, .. }
+            | TypeData::StringMapping { ty: t, .. } => self.mentions(*t, param, depth + 1),
             TypeData::Template { types, .. } => {
                 types.iter().any(|&t| self.mentions(t, param, depth + 1))
             }

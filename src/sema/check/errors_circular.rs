@@ -660,46 +660,7 @@ impl Checker<'_> {
             {
                 Some(hir[p].pos)
             }
-            // What is in parentheses is given to nothing.
-            _ if is_parenthesized(hir, e) => None,
-            Parent::VarInit(d) if matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
-                Some(hir[hir[d].pat].pos)
-            }
-            // Not the attribute of a JSX element.
-            Parent::Prop(p)
-                if hir[p].kind == PropKind::Init
-                    && matches!(hir[bound.prop_owner[p.idx()]].kind, ExprKind::Object(_)) =>
-            {
-                Some(hir[p].pos)
-            }
-            Parent::PatPropDefault(p) => Some(hir[hir[p].value].pos),
-            Parent::PatElemDefault(p) => Some(hir[hir[p].pat].pos),
-            // On the right of any operator.
-            Parent::Expr(outer) => {
-                let (ExprKind::Assign {
-                    target: left,
-                    value: right,
-                    ..
-                }
-                | ExprKind::Binary { left, right, .. }) = hir[outer].kind
-                else {
-                    return None;
-                };
-                if right != e || is_parenthesized(hir, left) {
-                    return None;
-                }
-                match hir[left].kind {
-                    ExprKind::Ident(_) => Some(hir[left].pos),
-                    ExprKind::Dot { name_pos, .. } => Some(name_pos),
-                    ExprKind::Index { index, .. }
-                        if matches!(hir[index].kind, ExprKind::String(_) | ExprKind::Number(_)) =>
-                    {
-                        Some(hir[index].pos)
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
+            _ => bound.get_assigned_name(hir, e),
         }
     }
 

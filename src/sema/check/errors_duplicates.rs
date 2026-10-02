@@ -11,6 +11,21 @@ use super::*;
 use crate::bind::{ClassOwner, Decl, PatParent, ScopeId, ScopeKind, SymbolId};
 use smallvec::SmallVec;
 
+/// A member as it is declared: its name, whether it is static, what it makes of the name, what that excludes, where it is, and 1
+/// for a property, 2 for an accessor.
+type DeclaredName = (Atom, bool, u32, u32, u32, u8);
+
+/// What goes by one name on one side of a class, an interface, a type literal or an object literal.
+struct MembersOfName {
+    flags: u32,
+    /// Where the declarations that went together are.
+    accepted: Vec<u32>,
+    /// All that go by the name, refused or not.
+    all: Vec<u32>,
+    /// As `checkObjectTypeForDuplicateDeclarations` has it: nothing yet, a property, an accessor, said.
+    state: u8,
+}
+
 const FUNCTION_SCOPED_VARIABLE: u32 = 1 << 0;
 const BLOCK_SCOPED_VARIABLE: u32 = 1 << 1;
 const PROPERTY: u32 = 1 << 2;
@@ -1266,16 +1281,6 @@ impl Checker<'_> {
             /// The specifier of an `export { a }` without `from`.
             specifier: Option<ExportSpecId>,
         }
-        fn names_in(hir: &File, pat: PatId, into: &mut Vec<(Atom, PatId)>) {
-            match hir[pat].kind {
-                PatKind::Ident(name) => into.push((name, pat)),
-                PatKind::Object(props) => {
-                    props.iter().for_each(|p| names_in(hir, hir[p].value, into))
-                }
-                PatKind::Array(elems) => elems.iter().for_each(|e| names_in(hir, hir[e].pat, into)),
-                _ => {}
-            }
-        }
         let hir = self.hir(file);
         let mut declared: Vec<Declared> = Vec::new();
         // What is declared without being exported. Only an `export { a }` without `from` looks there.
@@ -1322,7 +1327,7 @@ impl Checker<'_> {
                             continue;
                         }
                         names.clear();
-                        names_in(hir, hir[d].pat, &mut names);
+                        names_bound_by(hir, hir[d].pat, &mut names);
                         for &(name, pat) in &names {
                             add(self, name, hir[d].flags, Decl::Var(pat), false, false);
                         }
@@ -1701,80 +1706,16 @@ impl Checker<'_> {
         self.note(start, self.end_of_name_at(file, start), 2300, vec![name]);
     }
 
-    fn check_members_of(
+    /// `declareSymbolEx`, `lateBindMember`, `combineSymbolTables`, as far as they report: 2300 at what the symbol of a name refuses
+    /// and at all that symbol has by then. `late_bound`: where those of `declared` are whose names the checker works out. The
+    /// answer: the names that are declared more than once, sorted, and what became of each. `None`: there is none.
+    fn report_refused_members(
         &mut self,
         file: FileId,
-        members: Span<MemberId>,
-        is_ambient: bool,
+        declared: &[DeclaredName],
+        late_bound: &[u32],
         out: &mut Vec<Diagnostic>,
-    ) {
-        struct Entry {
-            flags: u32,
-            /// Where the declarations that went together are.
-            accepted: Vec<u32>,
-            /// All that go by the name, refused or not.
-            all: Vec<u32>,
-            /// As `checkObjectTypeForDuplicateDeclarations` has it: nothing yet, a property, an accessor, said.
-            state: u8,
-        }
-        let hir = self.hir(file);
-        // One member has nothing to clash with, unless it declares more than itself, or is static as the `prototype` of every class is.
-        if members.len() < 2
-            && !members.iter().any(|m| {
-                hir[m].kind == MemberKind::Constructor || hir[m].flags.contains(Flags::STATIC)
-            })
-        {
-            return;
-        }
-        // Name, whether it is static, what it makes of the name, what that excludes, where, and 1 for a property, 2 for an accessor.
-        let mut declared: SmallVec<[(Atom, bool, u32, u32, u32, u8); 16]> = SmallVec::new();
-        // Where those are whose names the checker works out (`lateBindMember`).
-        let mut late_bound: Vec<u32> = Vec::new();
-        for m in members.iter() {
-            let member = &hir[m];
-            let is_static = member.flags.contains(Flags::STATIC);
-            let (includes, excludes, kind) = match member.kind {
-                MemberKind::Property if member.flags.contains(Flags::ACCESSOR) => {
-                    (ACCESSOR, VALUE & !PROPERTY, 2)
-                }
-                MemberKind::Property => (PROPERTY, VALUE & !(PROPERTY | ACCESSOR), 1),
-                MemberKind::Method => (METHOD, VALUE & !METHOD, 0),
-                MemberKind::Getter => (GET_ACCESSOR, VALUE & !(SET_ACCESSOR | PROPERTY), 2),
-                MemberKind::Setter => (SET_ACCESSOR, VALUE & !(GET_ACCESSOR | PROPERTY), 2),
-                MemberKind::Constructor => {
-                    for p in hir[member.func].params.iter() {
-                        if hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
-                            && let PatKind::Ident(name) = hir[hir[p].pat].kind
-                        {
-                            declared.push((
-                                name,
-                                false,
-                                PROPERTY,
-                                VALUE & !(PROPERTY | ACCESSOR),
-                                hir[hir[p].pat].pos,
-                                1,
-                            ));
-                        }
-                    }
-                    continue;
-                }
-                _ => continue,
-            };
-            let Some(name) = self.declared_member_name(file, member.key) else {
-                continue;
-            };
-            if !is_ambient && is_static && name == known::prototype {
-                out.push(Diagnostic {
-                    start: member.pos,
-                    code: 2699,
-                });
-                self.explain_static_name_conflict(file, m, name);
-            }
-            if matches!(member.key, PropKey::Computed(_)) {
-                late_bound.push(member.pos);
-            }
-            declared.push((name, is_static, includes, excludes, member.pos, kind));
-        }
+    ) -> Option<(Vec<(Atom, bool)>, Vec<MembersOfName>)> {
         let mut keys: SmallVec<[(Atom, bool); 16]> = declared.iter().map(|d| (d.0, d.1)).collect();
         // `bindClassLikeDeclaration`: every class has a static `prototype`, a property nobody declared.
         const PROTOTYPE: (Atom, bool) = (known::prototype, true);
@@ -1790,19 +1731,19 @@ impl Checker<'_> {
             }
         }
         if repeated.is_empty() {
-            return;
+            return None;
         }
         // One for each of `repeated`.
-        let mut entries: Vec<Entry> = repeated
+        let mut entries: Vec<MembersOfName> = repeated
             .iter()
-            .map(|&key| Entry {
+            .map(|&key| MembersOfName {
                 flags: if key == PROTOTYPE { PROPERTY } else { 0 },
                 accepted: Vec::new(),
                 all: Vec::new(),
                 state: 0,
             })
             .collect();
-        for &(name, is_static, includes, excludes, pos, _) in &declared {
+        for &(name, is_static, includes, excludes, pos, _) in declared {
             let Ok(at) = repeated.binary_search(&(name, is_static)) else {
                 continue;
             };
@@ -1857,6 +1798,109 @@ impl Checker<'_> {
                 entry.flags |= ACCESSOR;
             }
         }
+        Some((repeated, entries))
+    }
+
+    /// The same for the members `props` of an object literal.
+    pub(super) fn report_refused_members_of_object_literal(
+        &mut self,
+        file: FileId,
+        props: Span<PropId>,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let hir = self.hir(file);
+        let mut declared: SmallVec<[DeclaredName; 16]> = SmallVec::new();
+        let mut late_bound: Vec<u32> = Vec::new();
+        for p in props.iter() {
+            let prop = &hir[p];
+            let (includes, excludes) = match prop.kind {
+                PropKind::Init | PropKind::Shorthand => (PROPERTY, VALUE & !(PROPERTY | ACCESSOR)),
+                // `IsObjectLiteralMethod`: it goes with nothing, not even another.
+                PropKind::Method => (METHOD, VALUE),
+                PropKind::Getter => (GET_ACCESSOR, VALUE & !(SET_ACCESSOR | PROPERTY)),
+                PropKind::Setter => (SET_ACCESSOR, VALUE & !(GET_ACCESSOR | PROPERTY)),
+                PropKind::Spread => continue,
+            };
+            let Some(name) = self.declared_member_name(file, prop.key) else {
+                continue;
+            };
+            if matches!(prop.key, PropKey::Computed(_)) {
+                late_bound.push(prop.pos);
+            }
+            declared.push((name, false, includes, excludes, prop.pos, 0));
+        }
+        self.report_refused_members(file, &declared, &late_bound, out);
+    }
+
+    fn check_members_of(
+        &mut self,
+        file: FileId,
+        members: Span<MemberId>,
+        is_ambient: bool,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let hir = self.hir(file);
+        // One member has nothing to clash with, unless it declares more than itself, or is static as the `prototype` of every class is.
+        if members.len() < 2
+            && !members.iter().any(|m| {
+                hir[m].kind == MemberKind::Constructor || hir[m].flags.contains(Flags::STATIC)
+            })
+        {
+            return;
+        }
+        let mut declared: SmallVec<[DeclaredName; 16]> = SmallVec::new();
+        // Where those are whose names the checker works out (`lateBindMember`).
+        let mut late_bound: Vec<u32> = Vec::new();
+        for m in members.iter() {
+            let member = &hir[m];
+            let is_static = member.flags.contains(Flags::STATIC);
+            let (includes, excludes, kind) = match member.kind {
+                MemberKind::Property if member.flags.contains(Flags::ACCESSOR) => {
+                    (ACCESSOR, VALUE & !PROPERTY, 2)
+                }
+                MemberKind::Property => (PROPERTY, VALUE & !(PROPERTY | ACCESSOR), 1),
+                MemberKind::Method => (METHOD, VALUE & !METHOD, 0),
+                MemberKind::Getter => (GET_ACCESSOR, VALUE & !(SET_ACCESSOR | PROPERTY), 2),
+                MemberKind::Setter => (SET_ACCESSOR, VALUE & !(GET_ACCESSOR | PROPERTY), 2),
+                MemberKind::Constructor => {
+                    for p in hir[member.func].params.iter() {
+                        if hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
+                            && let PatKind::Ident(name) = hir[hir[p].pat].kind
+                        {
+                            declared.push((
+                                name,
+                                false,
+                                PROPERTY,
+                                VALUE & !(PROPERTY | ACCESSOR),
+                                hir[hir[p].pat].pos,
+                                1,
+                            ));
+                        }
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
+            let Some(name) = self.declared_member_name(file, member.key) else {
+                continue;
+            };
+            if !is_ambient && is_static && name == known::prototype {
+                out.push(Diagnostic {
+                    start: member.pos,
+                    code: 2699,
+                });
+                self.explain_static_name_conflict(file, m, name);
+            }
+            if matches!(member.key, PropKey::Computed(_)) {
+                late_bound.push(member.pos);
+            }
+            declared.push((name, is_static, includes, excludes, member.pos, kind));
+        }
+        let Some((repeated, mut entries)) =
+            self.report_refused_members(file, &declared, &late_bound, out)
+        else {
+            return;
+        };
         // Two properties, or a property and an accessor.
         for &(name, is_static, _, _, pos, kind) in &declared {
             if kind == 0 {
@@ -1924,19 +1968,6 @@ fn start_after_tokens(text: &[u8], pos: u32, tokens: &[&[u8]]) -> Option<u32> {
     Some(skip_trivia(text, at) as u32)
 }
 
-/// `hasExportDeclarations`
-fn has_export_declarations(hir: &File, list: IdList<StmtId>) -> bool {
-    hir.ids(list).any(|s| {
-        matches!(
-            hir[s].kind,
-            StmtKind::ExportNamed(_)
-                | StmtKind::ExportStar { .. }
-                | StmtKind::ExportAssign(_)
-                | StmtKind::ExportDefault(_)
-        )
-    })
-}
-
 /// What the statement `s` puts among the locals of the body of a module or a namespace it is in: name, declaration, modifiers.
 /// `is_in_block`: there is a block between the two, out of which only `var` gets.
 fn declared_by_statement(
@@ -1945,18 +1976,6 @@ fn declared_by_statement(
     is_in_block: bool,
     into: &mut Vec<(Atom, Decl, Flags)>,
 ) {
-    fn bound_by(hir: &File, pat: PatId, flags: Flags, into: &mut Vec<(Atom, Decl, Flags)>) {
-        match hir[pat].kind {
-            PatKind::Ident(name) => into.push((name, Decl::Var(pat), flags)),
-            PatKind::Object(props) => props
-                .iter()
-                .for_each(|p| bound_by(hir, hir[p].value, flags, into)),
-            PatKind::Array(elems) => elems
-                .iter()
-                .for_each(|e| bound_by(hir, hir[e].pat, flags, into)),
-            PatKind::Missing => {}
-        }
-    }
     if s.is_none() {
         return;
     }
@@ -1964,7 +1983,13 @@ fn declared_by_statement(
         StmtKind::Var(decls) => {
             for d in decls.iter() {
                 if !is_in_block || hir[d].kind == VarKind::Var {
-                    bound_by(hir, hir[d].pat, hir[d].flags, into);
+                    let mut names = Vec::new();
+                    names_bound_by(hir, hir[d].pat, &mut names);
+                    into.extend(
+                        names
+                            .iter()
+                            .map(|&(name, pat)| (name, Decl::Var(pat), hir[d].flags)),
+                    );
                 }
             }
         }

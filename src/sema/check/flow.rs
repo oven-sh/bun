@@ -2151,7 +2151,9 @@ impl<'p> Checker<'p> {
                 BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
                     self.narrow_by_comparison(reference, ty, op, left, right, sense)
                 }
-                BinOp::Instanceof => self.narrow_by_instanceof(reference, ty, left, right, sense),
+                BinOp::Instanceof => {
+                    self.narrow_by_instanceof(reference, ty, e, left, right, sense)
+                }
                 BinOp::In => self.narrow_by_in(reference, ty, left, right, sense),
                 BinOp::Comma => self.narrow(reference, ty, right, sense),
                 BinOp::And => {
@@ -2795,24 +2797,29 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getEffectsSignature`, of `left instanceof right`. `method`: the type of the `[Symbol.hasInstance]` of `right`.
-    /// `getSignaturesOfType` puts the signatures of the members of a union together.
-    pub(super) fn get_effects_signature_of_has_instance_method(
+    /// `getEffectsSignature`, of `e`, which is `left instanceof right`. `right_type`: the type of `right`.
+    pub(super) fn effects_signature_of_instanceof(
         &mut self,
-        method: TypeId,
+        file: FileId,
+        e: ExprId,
+        right_type: TypeId,
     ) -> Option<SigId> {
-        self.single_call_signature(method, true).or_else(|| {
-            match self.signatures(method, false)[..] {
-                [only] if self.sig_type_params(only).is_empty() => Some(only),
-                _ => None,
+        let method = self.symbol_has_instance_method_of_object_type(right_type)?;
+        let sigs = self.signatures(method, false);
+        match sigs[..] {
+            [only] if self.sig_type_params(only).is_empty() => Some(only),
+            _ if sigs.iter().any(|&s| self.sig_predicate(s).is_some()) => {
+                self.resolve_call(file, e).sig
             }
-        })
+            _ => None,
+        }
     }
 
     fn narrow_by_instanceof(
         &mut self,
         reference: &Reference,
         ty: TypeId,
+        e: ExprId,
         left: ExprId,
         right: ExprId,
         sense: bool,
@@ -2831,10 +2838,8 @@ impl<'p> Checker<'p> {
         if !self.is_type_derived_from(constructor, object) {
             return ty;
         }
-        // A `[Symbol.hasInstance]` that is a type guard has the say. `getPropertyNameForKnownSymbolName`
-        let has_instance = self.files().atoms.symbol_name(b"hasInstance");
-        if let Some(method) = self.type_of_property(constructor, has_instance)
-            && let Some(sig) = self.get_effects_signature_of_has_instance_method(method)
+        // A `[Symbol.hasInstance]` that is a type guard has the say.
+        if let Some(sig) = self.effects_signature_of_instanceof(file, e, constructor)
             && let Some(Predicate {
                 param: Some(0),
                 ty: Some(guarded),
@@ -4673,11 +4678,9 @@ impl<'p> Checker<'p> {
     fn skip_invoked_fns(&self, file: FileId, mut func: Option<FnId>) -> Option<FnId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         while let Some(f) = func
-            && matches!(hir[f].kind, FnKind::Expr | FnKind::Arrow)
-            && let crate::bind::FnOwner::Expr(x) = bound.fns[f.idx()].owner
-            && matches!(bound.expr_parent[x.idx()], Parent::Expr(call) if matches!(hir[call].kind, ExprKind::Call(c) if hir[c].callee == x))
+            && let Some(call) = bound.get_immediately_invoked_function_expression(hir, f)
         {
-            func = self.enclosing_fn_of_expr(file, x);
+            func = self.enclosing_fn_of_expr(file, hir[call].callee);
         }
         func
     }

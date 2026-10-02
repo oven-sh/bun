@@ -234,14 +234,6 @@ impl Pass<'_, '_> {
         }
     }
 
-    /// `GetImmediatelyInvokedFunctionExpression`
-    fn is_immediately_invoked(&self, f: FnId) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        matches!(hir[f].kind, FnKind::Expr | FnKind::Arrow)
-            && matches!(bound.fns[f.idx()].owner, FnOwner::Expr(e) if matches!(bound.expr_parent[e.idx()], Parent::Expr(call)
-                if matches!(hir[call].kind, ExprKind::Call(c) if hir[c].callee == e)))
-    }
-
     /// `getControlFlowContainer`
     fn control_flow_container(&self, mut node: Node) -> Node {
         loop {
@@ -249,7 +241,7 @@ impl Pass<'_, '_> {
             match node {
                 Node::Fn(f)
                     if self.hir[f].kind != FnKind::StaticBlock
-                        && !self.is_immediately_invoked(f) =>
+                        && !self.c.is_immediately_invoked(self.file, f) =>
                 {
                     return node;
                 }
@@ -796,7 +788,7 @@ impl Pass<'_, '_> {
                         node,
                         entry,
                         is_container: hir[f].kind != FnKind::StaticBlock
-                            && !self.is_immediately_invoked(f),
+                            && !self.c.is_immediately_invoked(self.file, f),
                     }
                 }
                 Node::Property(m) => {
@@ -1006,7 +998,7 @@ impl Pass<'_, '_> {
             match node {
                 Node::Fn(f)
                     if hir[f].kind == FnKind::StaticBlock
-                        || self.is_immediately_invoked(f)
+                        || self.c.is_immediately_invoked(self.file, f)
                             && !hir[f].flags.intersects(Flags::ASYNC | Flags::GENERATOR) =>
                 {
                     inline.push(f);
@@ -2005,7 +1997,7 @@ impl Pass<'_, '_> {
                 op: BinOp::Instanceof,
                 left,
                 right,
-            } => self.narrow_by_instanceof(w, ty, left, right, sense),
+            } => self.narrow_by_instanceof(w, ty, e, left, right, sense),
             ExprKind::Binary {
                 op: BinOp::In,
                 left,
@@ -2339,6 +2331,7 @@ impl Pass<'_, '_> {
         &mut self,
         w: &Walk,
         ty: Abs,
+        e: ExprId,
         left: ExprId,
         right: ExprId,
         sense: bool,
@@ -2363,14 +2356,9 @@ impl Pass<'_, '_> {
             return ty;
         }
         // A `[Symbol.hasInstance]` that is a type guard has the say.
-        let has_instance = [
-            symbol_name_prefix(&self.c.files().atoms),
-            &b"hasInstance"[..],
-        ]
-        .concat();
-        if let Some(name) = self.c.files().atoms.lookup(&has_instance)
-            && let Some(method) = self.c.type_of_property(constructor, name)
-            && let Some(sig) = self.c.get_effects_signature_of_has_instance_method(method)
+        if let Some(sig) = self
+            .c
+            .effects_signature_of_instanceof(self.file, e, constructor)
             && let Some(predicate) = self.c.sig_predicate(sig)
             && !predicate.asserts
             && predicate.param == Some(0)
@@ -3385,52 +3373,6 @@ impl Pass<'_, '_> {
         }
     }
 
-    /// `GetAssignedName`: where what the function expression `e` is given to is named.
-    fn start_of_assigned_name(&self, e: ExprId) -> Option<u32> {
-        let (hir, bound) = (self.hir, self.bound);
-        if is_parenthesized(self.hir, e) {
-            return None;
-        }
-        match bound.expr_parent[e.idx()] {
-            Parent::VarInit(d) if matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
-                Some(hir[hir[d].pat].pos)
-            }
-            Parent::Prop(p)
-                if hir[p].kind == PropKind::Init
-                    && matches!(hir[bound.prop_owner[p.idx()]].kind, ExprKind::Object(_)) =>
-            {
-                Some(hir[p].pos)
-            }
-            Parent::PatPropDefault(p) => Some(hir[hir[p].value].pos),
-            Parent::PatElemDefault(p) => Some(hir[hir[p].pat].pos),
-            Parent::Expr(parent) => {
-                let (ExprKind::Assign {
-                    target: left,
-                    value: right,
-                    ..
-                }
-                | ExprKind::Binary { left, right, .. }) = hir[parent].kind
-                else {
-                    return None;
-                };
-                if right != e || is_parenthesized(self.hir, left) {
-                    return None;
-                }
-                match hir[left].kind {
-                    ExprKind::Ident(_) => Some(hir[left].pos),
-                    ExprKind::Dot { name_pos, .. } => Some(name_pos),
-                    ExprKind::Index { index, .. }
-                        if matches!(hir[index].kind, ExprKind::String(_) | ExprKind::Number(_)) =>
-                    {
-                        Some(hir[index].pos)
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
-    }
-
     /// Whether the getter `func` goes with a setter that says what it takes.
     fn has_annotated_setter(&self, func: FnId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
@@ -3658,9 +3600,10 @@ impl Pass<'_, '_> {
             (FnKind::Method | FnKind::Getter, FnOwner::Member(m)) => (hir[m].pos, true),
             (FnKind::Method | FnKind::Getter, _) => (f.name_pos, true),
             (FnKind::Decl | FnKind::Expr, _) if f.name.is_some() => (f.name_pos, true),
-            (FnKind::Expr, FnOwner::Expr(e)) => {
-                (self.start_of_assigned_name(e).unwrap_or(f.pos), false)
-            }
+            (FnKind::Expr, FnOwner::Expr(e)) => (
+                self.bound.get_assigned_name(self.hir, e).unwrap_or(f.pos),
+                false,
+            ),
             (FnKind::Arrow, _) => (f.pos, false),
             _ => return,
         };
@@ -4089,7 +4032,7 @@ impl Pass<'_, '_> {
             | TypeData::Marker(_)
             | TypeData::IndexedAccess { .. }
             | TypeData::Cond { .. }
-            | TypeData::NoInfer(_) => true,
+            | TypeData::Substitution { .. } => true,
             _ => self.c.is_any(ty) || ty == TypeId::OBJECT || self.c.is_object_type(ty),
         }
     }

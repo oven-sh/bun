@@ -15,7 +15,7 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId};
+use crate::bind::{Decl, Parent, PatParent, ScopeId, ScopeKind, SymbolId};
 use crate::util::FxHashSet;
 
 impl Checker<'_> {
@@ -618,18 +618,9 @@ impl Checker<'_> {
                     start: start as u32,
                     code: 2686,
                 });
-                let rest = hir.text.get(start..).unwrap_or(&[]);
-                let length = rest
-                    .iter()
-                    .position(|&b| {
-                        !(b.is_ascii_alphanumeric()
-                            || b >= 0x80
-                            || matches!(b, b'_' | b'$' | b'.' | b'-' | b':'))
-                    })
-                    .unwrap_or(rest.len());
                 self.note(
                     start as u32,
-                    (start + length) as u32,
+                    jsx_tag_name_end(&hir.text, start) as u32,
                     2686,
                     vec![self.atom_text(factory)],
                 );
@@ -1384,16 +1375,6 @@ fn is_in_ambient_or_type_node(c: &Checker<'_>, usage: Location) -> bool {
     }
 }
 
-/// `GetImmediatelyInvokedFunctionExpression(f) != nil`
-fn is_immediately_invoked(c: &Checker<'_>, file: FileId, f: FnId) -> bool {
-    let (hir, bound) = (c.hir(file), c.bound(file));
-    let FnOwner::Expr(e) = bound.fns[f.idx()].owner else {
-        return false;
-    };
-    matches!(hir[f].kind, FnKind::Expr | FnKind::Arrow)
-        && matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Call(call) if hir[call].callee == e))
-}
-
 /// `isSameScopeDescendentOf(usage, declaration, ..)`: `usage` is in the declaration `d`, with no function in between that runs later.
 fn is_in_initializer_of(c: &Checker<'_>, usage: Location, d: VarDeclId) -> bool {
     let file = usage.file();
@@ -1409,7 +1390,7 @@ fn is_in_initializer_of(c: &Checker<'_>, usage: Location, d: VarDeclId) -> bool 
                     _ => unreachable!(),
                 };
                 if hir[f].kind != FnKind::StaticBlock
-                    && (!is_immediately_invoked(c, file, f)
+                    && (!c.is_immediately_invoked(file, f)
                         || hir[f].flags.intersects(Flags::ASYNC | Flags::GENERATOR))
                 {
                     return false;
@@ -1456,7 +1437,7 @@ fn is_use_deferred(c: &Checker<'_>, usage: Location, declaration: Location) -> b
                 if encloses_declaration(f) {
                     return false;
                 }
-                if hir[f].kind != FnKind::StaticBlock && !is_immediately_invoked(c, file, f) {
+                if hir[f].kind != FnKind::StaticBlock && !c.is_immediately_invoked(file, f) {
                     return true;
                 }
             }

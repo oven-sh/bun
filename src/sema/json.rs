@@ -232,7 +232,14 @@ impl Parser<'_> {
 
 /// What `parseJSONText` makes of a JSON module that is not JSON: TypeScript's parser reports the errors and goes on.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expression {
+pub struct Expression {
+    pub kind: ExpressionKind,
+    /// Where it starts. One that is missing: where the token that is no expression starts.
+    pub pos: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExpressionKind {
     Null,
     Bool(bool),
     Number(f64),
@@ -254,6 +261,7 @@ pub enum PropertyName {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Property {
     pub name: PropertyName,
+    pub name_pos: u32,
     /// `None`: `{ name }`
     pub initializer: Option<Expression>,
 }
@@ -337,7 +345,8 @@ impl Expression {
         let expression = if expressions.len() == 1 {
             expressions.pop()?
         } else {
-            Expression::Array(expressions)
+            let start = expressions.first().map_or(0, |first| first.pos as usize);
+            at(start, ExpressionKind::Array(expressions))
         };
         p.errors.append(&mut p.invalid);
         Some((expression, p.errors))
@@ -359,6 +368,11 @@ enum Token {
     /// An identifier or a keyword.
     Word(String),
     EndOfFile,
+}
+
+fn at(start: usize, kind: ExpressionKind) -> Expression {
+    let pos = start as u32;
+    Expression { kind, pos }
 }
 
 /// `PCObjectLiteralMembers`, `PCArrayLiteralMembers`
@@ -712,11 +726,11 @@ impl TolerantParser<'_> {
         let start = self.token_start;
         let is_single_quoted = self.scanner.text.get(start) == Some(&b'\'');
         let literal = match std::mem::replace(&mut self.token, Token::EndOfFile) {
-            Token::String(text) => Expression::String(text),
-            Token::Number(n) => Expression::Number(n),
-            Token::Word(word) if word == "true" => Expression::Bool(true),
-            Token::Word(word) if word == "false" => Expression::Bool(false),
-            Token::Word(word) if word == "null" => Expression::Null,
+            Token::String(text) => ExpressionKind::String(text),
+            Token::Number(n) => ExpressionKind::Number(n),
+            Token::Word(word) if word == "true" => ExpressionKind::Bool(true),
+            Token::Word(word) if word == "false" => ExpressionKind::Bool(false),
+            Token::Word(word) if word == "null" => ExpressionKind::Null,
             _ => return None,
         };
         self.next_token()?;
@@ -724,11 +738,12 @@ impl TolerantParser<'_> {
         if is_single_quoted {
             self.refuse(start, 1327);
         }
-        Some(literal)
+        Some(at(start, literal))
     }
 
     /// `parsePrefixUnaryExpression`, of `-` before a number.
     fn parse_prefix_unary_expression(&mut self) -> Option<Expression> {
+        let start = self.token_start;
         self.next_token()?;
         let Token::Number(n) = self.token else {
             return None;
@@ -738,7 +753,7 @@ impl TolerantParser<'_> {
         if self.token == Token::OpenBracket {
             return None;
         }
-        Some(Expression::Number(-n))
+        Some(at(start, ExpressionKind::Number(-n)))
     }
 
     fn enter(&mut self) -> Option<()> {
@@ -748,6 +763,7 @@ impl TolerantParser<'_> {
 
     /// `parseArrayLiteralExpression`
     fn parse_array_literal_expression(&mut self) -> Option<Expression> {
+        let start = self.token_start;
         self.enter()?;
         if self.token == Token::OpenBracket {
             self.next_token()?;
@@ -764,20 +780,21 @@ impl TolerantParser<'_> {
             self.error_at_token(1005, "]");
         }
         self.scanner.depth -= 1;
-        Some(Expression::Array(elements))
+        Some(at(start, ExpressionKind::Array(elements)))
     }
 
     /// `parseArgumentOrArrayLiteralElement`
     fn parse_argument_or_array_literal_element(&mut self) -> Option<Expression> {
         if self.token == Token::Comma {
             self.refuse(self.token_start, 1328);
-            return Some(Expression::Missing);
+            return Some(at(self.token_start, ExpressionKind::Missing));
         }
         self.parse_assignment_expression_or_higher()
     }
 
     /// `parseObjectLiteralExpression`. Without the `{` the members are read all the same.
     fn parse_object_literal_expression(&mut self) -> Option<Expression> {
+        let start = self.token_start;
         self.enter()?;
         if self.token == Token::OpenBrace {
             self.next_token()?;
@@ -792,7 +809,7 @@ impl TolerantParser<'_> {
             self.error_at_token(1005, "}");
         }
         self.scanner.depth -= 1;
-        Some(Expression::Object(properties))
+        Some(at(start, ExpressionKind::Object(properties)))
     }
 
     /// `parseObjectLiteralElement`
@@ -847,6 +864,7 @@ impl TolerantParser<'_> {
             self.refuse(start, 1136);
             return Some(Property {
                 name,
+                name_pos: start as u32,
                 initializer: None,
             });
         }
@@ -860,6 +878,7 @@ impl TolerantParser<'_> {
         }
         Some(Property {
             name,
+            name_pos: start as u32,
             initializer: Some(self.parse_assignment_expression_or_higher()?),
         })
     }
@@ -882,7 +901,7 @@ impl TolerantParser<'_> {
                 } else {
                     self.next_token()?;
                     self.refuse(start, 1328);
-                    Expression::Identifier(word)
+                    at(start, ExpressionKind::Identifier(word))
                 }
             }
             // `parseIdentifier(Expression_expected)`: no token is taken. `createIdentifierWithDiagnostic`: at the end of the file it is said
@@ -894,7 +913,7 @@ impl TolerantParser<'_> {
                     self.error_at_token(1109, "");
                 }
                 self.refuse(start, 1328);
-                return Some(Expression::Missing);
+                return Some(at(start, ExpressionKind::Missing));
             }
         };
         // The expression goes on: an element access, an operator, an assertion.
@@ -927,34 +946,46 @@ mod tests {
 
     #[test]
     fn recovers_from_syntax_errors() {
-        let property = |name: &str, initializer: Option<Expression>| Property {
+        use ExpressionKind::*;
+        let property = |name: &str, name_pos: u32, initializer: Option<Expression>| Property {
             name: PropertyName::Name(name.to_owned()),
+            name_pos,
             initializer,
         };
         assert_eq!(
             Expression::parse(b"a b"),
-            Some(Expression::Object(vec![
-                property("a", None),
-                property("b", None)
-            ]))
+            Some(at(
+                0,
+                Object(vec![property("a", 0, None), property("b", 2, None)])
+            ))
         );
         assert_eq!(
             Expression::parse(b"{'a': true} [1,, -2]"),
-            Some(Expression::Array(vec![
-                Expression::Object(vec![property("a", Some(Expression::Bool(true)))]),
-                Expression::Array(vec![
-                    Expression::Number(1.0),
-                    Expression::Missing,
-                    Expression::Number(-2.0)
-                ]),
-            ]))
+            Some(at(
+                0,
+                Array(vec![
+                    at(0, Object(vec![property("a", 1, Some(at(6, Bool(true))))])),
+                    at(
+                        12,
+                        Array(vec![
+                            at(13, Number(1.0)),
+                            at(15, Missing),
+                            at(17, Number(-2.0))
+                        ])
+                    ),
+                ])
+            ))
         );
         assert_eq!(
             Expression::parse(b"{ [a]: }"),
-            Some(Expression::Object(vec![Property {
-                name: PropertyName::Computed(Expression::Identifier("a".to_owned())),
-                initializer: Some(Expression::Missing),
-            }]))
+            Some(at(
+                0,
+                Object(vec![Property {
+                    name: PropertyName::Computed(at(3, Identifier("a".to_owned()))),
+                    name_pos: 2,
+                    initializer: Some(at(7, Missing)),
+                }])
+            ))
         );
         assert_eq!(Expression::parse(b"{ \"a\": 1 + 2 }"), None);
     }

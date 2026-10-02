@@ -395,51 +395,7 @@ impl Checker<'_> {
             (_, FnOwner::Member(m)) => hir[m].pos,
             (FnKind::Method | FnKind::Getter | FnKind::Setter, _) => f.name_pos,
             _ if f.name.is_some() => f.name_pos,
-            // `GetAssignedName`
-            (FnKind::Expr, FnOwner::Expr(e)) if !is_parenthesized(hir, e) => {
-                match bound.expr_parent[e.idx()] {
-                    Parent::VarInit(d) if matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
-                        hir[hir[d].pat].pos
-                    }
-                    Parent::Prop(p)
-                        if hir[p].kind == PropKind::Init
-                            && matches!(
-                                hir[bound.prop_owner[p.idx()]].kind,
-                                ExprKind::Object(_)
-                            ) =>
-                    {
-                        hir[p].pos
-                    }
-                    Parent::PatPropDefault(p) => hir[hir[p].value].pos,
-                    Parent::PatElemDefault(p) => hir[hir[p].pat].pos,
-                    Parent::Expr(x) => match hir[x].kind {
-                        ExprKind::Assign {
-                            target: left,
-                            value: right,
-                            ..
-                        }
-                        | ExprKind::Binary { left, right, .. }
-                            if right == e && !is_parenthesized(hir, left) =>
-                        {
-                            match hir[left].kind {
-                                ExprKind::Ident(_) => hir[left].pos,
-                                ExprKind::Dot { name_pos, .. } => name_pos,
-                                ExprKind::Index { index, .. }
-                                    if matches!(
-                                        hir[index].kind,
-                                        ExprKind::String(_) | ExprKind::Number(_)
-                                    ) =>
-                                {
-                                    hir[index].pos
-                                }
-                                _ => f.pos,
-                            }
-                        }
-                        _ => f.pos,
-                    },
-                    _ => f.pos,
-                }
-            }
+            (FnKind::Expr, FnOwner::Expr(e)) => bound.get_assigned_name(hir, e).unwrap_or(f.pos),
             _ => f.pos,
         }
     }

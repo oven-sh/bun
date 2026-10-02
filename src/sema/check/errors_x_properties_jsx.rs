@@ -20,7 +20,6 @@
 //! `declare`, `type`, a bracket, a brace) is read off the text.
 
 use super::errors::Diagnostic;
-use super::errors_jsx::jsx_name_end;
 use super::errors_small::has_parameter_list_error;
 use super::*;
 use crate::bind::{ClassOwner, Decl, MemberOwner, Parent};
@@ -883,7 +882,8 @@ impl Checker<'_> {
                 {
                     let start = hir[jsx.tag].pos;
                     out.push(Diagnostic { start, code: 2639 });
-                    self.note(start, jsx_name_end(&hir.text, start), 2639, Vec::new());
+                    let end = jsx_tag_name_end(&hir.text, start as usize) as u32;
+                    self.note(start, end, 2639, Vec::new());
                 }
             }
             seen.clear();

@@ -329,7 +329,7 @@ impl Visitor<'_, '_> {
                         }
                     }
                     for (tag, start) in names {
-                        let end = super::errors_jsx::jsx_name_end(&hir.text, start);
+                        let end = jsx_tag_name_end(&hir.text, start as usize) as u32;
                         if !self.jsx_namespaced_name(start, end) {
                             self.node(start, end, VisitedKind::JsxIntrinsicTagName(e, tag));
                         }
@@ -502,6 +502,10 @@ impl Visitor<'_, '_> {
         // `declareSymbolEx`: `Symbol::decls` also lists the declarations the symbol refused. Each has a symbol of its own, made later.
         let mut symbols: FxHashMap<Decl, SymbolId> = FxHashMap::default();
         for (index, symbol) in bound.symbols.iter().enumerate() {
+            // `cloneSymbol` copies the declarations, whose `Symbol` is still what the binder made.
+            if symbol.flags.contains(SymFlags::TRANSIENT) {
+                continue;
+            }
             let id = SymbolId(index as u32);
             symbols.extend(symbol.decls.iter().map(|&decl| (decl, id)));
         }

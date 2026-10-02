@@ -1745,5 +1745,55 @@ pub fn is_dynamic_name(hir: &File, e: ExprId) -> bool {
     !is_string_or_numeric_literal_like(hir, e) && !is_signed_numeric_literal(hir, e)
 }
 
+/// `IsDottedName`
+pub fn is_dotted_name(hir: &File, e: ExprId) -> bool {
+    match hir[e].kind {
+        ExprKind::Ident(_)
+        | ExprKind::This
+        | ExprKind::Super
+        | ExprKind::NewTarget
+        | ExprKind::ImportMeta => true,
+        ExprKind::Dot { obj, .. } => is_dotted_name(hir, obj),
+        _ => false,
+    }
+}
+
+/// `NodeIsPresent(node.Body())`: a body written where none belongs is not kept, but it counts.
+pub fn has_body(func: &Func) -> bool {
+    !matches!(func.body, FnBody::None) || func.flags.contains(Flags::BODY_DROPPED)
+}
+
+/// `node.Body() != nil`: a block whose `{` is missing is a body node, though not a present one.
+pub fn has_body_node(func: &Func) -> bool {
+    has_body(func) || func.flags.contains(Flags::MISSING_BODY)
+}
+
+/// `hasExportDeclarations`
+pub fn has_export_declarations(hir: &File, list: IdList<StmtId>) -> bool {
+    hir.ids(list).any(|s| {
+        matches!(
+            hir[s].kind,
+            StmtKind::ExportNamed(_)
+                | StmtKind::ExportStar { .. }
+                | StmtKind::ExportAssign(_)
+                | StmtKind::ExportDefault(_)
+        )
+    })
+}
+
+/// The names `pat` binds, each with the pattern that is the name.
+pub fn names_bound_by(hir: &File, pat: PatId, into: &mut Vec<(Atom, PatId)>) {
+    match hir[pat].kind {
+        PatKind::Missing => {}
+        PatKind::Ident(name) => into.push((name, pat)),
+        PatKind::Object(props) => props
+            .iter()
+            .for_each(|p| names_bound_by(hir, hir[p].value, into)),
+        PatKind::Array(elems) => elems
+            .iter()
+            .for_each(|e| names_bound_by(hir, hir[e].pat, into)),
+    }
+}
+
 const _: () = assert!(std::mem::size_of::<Expr>() <= 24);
 const _: () = assert!(std::mem::size_of::<TypeNode>() <= 28);

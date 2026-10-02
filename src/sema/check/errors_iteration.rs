@@ -553,14 +553,14 @@ impl Checker<'_> {
             return false;
         }
         // `getEffectiveCallArguments`: a tuple that is spread counts for what is in it.
-        let mut before = Vec::new();
+        let mut before = 0;
         for a in hir.ids(hir[id].args) {
             if a == spread {
                 break;
             }
-            self.push_effective_arg(file, a, &mut before);
+            self.each_effective_arg(file, a, |_| before += 1);
         }
-        if before.len() + 1 < self.parameter_count(&params) {
+        if before + 1 < self.parameter_count(&params) {
             return false;
         }
         // `getCandidateForOverloadFailure`, `resolveUntypedCall`: in a call that does not go through every argument is looked at by

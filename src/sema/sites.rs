@@ -221,11 +221,6 @@ fn type_of_parameter_property(
     (first != hir[p].pat).then(|| c.type_of_pat(file, first))
 }
 
-/// `node.body != nil`: a body is written, or its `{` is missing and the parser made a zero-width block.
-fn has_body_node(func: &Func) -> bool {
-    !matches!(func.body, FnBody::None) || func.flags.contains(Flags::MISSING_BODY)
-}
-
 /// Calls `emit` with every site of `file` and its type.
 pub fn for_each_site(
     c: &mut Checker<'_>,

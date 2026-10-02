@@ -351,7 +351,7 @@ fn is_normalized_kind(data: &TypeData) -> bool {
         | TypeData::IndexedAccess { .. }
         | TypeData::Cond { .. }
         | TypeData::LazyAlias { .. }
-        | TypeData::NoInfer(_) => false,
+        | TypeData::Substitution { .. } => false,
         TypeData::Tuple { .. } => !is_generic_tuple_kind(data),
         _ => !is_fresh_literal_kind(data),
     }
@@ -379,21 +379,6 @@ impl<'p> Checker<'p> {
 
     pub fn is_subtype(&mut self, source: TypeId, target: TypeId) -> bool {
         self.related(source, target, Relation::Subtype)
-    }
-
-    /// `is_subtype` in the first pass of `resolveCall`, `is_assignable` in the second.
-    pub(super) fn is_related_in_pass(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        by_subtype: bool,
-    ) -> bool {
-        let relation = if by_subtype {
-            Relation::Subtype
-        } else {
-            Relation::Assignable
-        };
-        self.related(source, target, relation)
     }
 
     pub fn is_comparable(&mut self, source: TypeId, target: TypeId) -> bool {
@@ -462,7 +447,10 @@ impl<'p> Checker<'p> {
     #[inline]
     fn forced_as(&mut self, ty: TypeId) -> (TypeId, &'p TypeData) {
         let data = self.data(ty);
-        if matches!(data, TypeData::LazyAlias { .. } | TypeData::NoInfer(_)) {
+        if matches!(
+            data,
+            TypeData::LazyAlias { .. } | TypeData::Substitution { .. }
+        ) {
             let ty = self.force(ty);
             return (ty, self.data(ty));
         }
@@ -1234,7 +1222,7 @@ impl<'p> Checker<'p> {
                 self.is_permissive_wildcard(obj, depth + 1)
                     || self.is_permissive_wildcard(index, depth + 1)
             }
-            TypeData::Keyof(of) | TypeData::NoInfer(of) => {
+            TypeData::Keyof(of) | TypeData::Substitution { base: of, .. } => {
                 self.is_permissive_wildcard(of, depth + 1)
             }
             TypeData::Cond { .. } => {
@@ -1390,7 +1378,7 @@ impl<'p> Checker<'p> {
                         self.normalized_tuple(&simpler, flags, *readonly)
                     }
                 }
-                TypeData::LazyAlias { .. } | TypeData::NoInfer(_) => self.force(t),
+                TypeData::LazyAlias { .. } | TypeData::Substitution { .. } => self.force(t),
                 // `createTypeReference(t.Target(), getTypeArguments(t))`, of a deferred type reference.
                 TypeData::Ref { .. } | TypeData::Tuple { .. } => {
                     return self.without_alias_of_reference(t);
@@ -4177,7 +4165,7 @@ impl<'p> Checker<'p> {
             };
             met_alias |= matches!(
                 self.data(target),
-                TypeData::LazyAlias { .. } | TypeData::NoInfer(_)
+                TypeData::LazyAlias { .. } | TypeData::Substitution { .. }
             );
             let target = self.force(target);
             let found = match self.data(target) {

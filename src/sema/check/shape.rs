@@ -217,11 +217,6 @@ fn is_plain_object(data: &TypeData) -> bool {
     }
 }
 
-/// `decl.Body() != nil`: a body written where none belongs is not kept, but it counts.
-fn has_body(func: &Func) -> bool {
-    !matches!(func.body, FnBody::None) || func.flags.contains(Flags::BODY_DROPPED)
-}
-
 /// Whether a `;` comes right before what is at `pos`, modifiers aside. After a body it is an element or a statement of its own,
 /// which is not kept.
 fn follows_a_semicolon(text: &[u8], pos: u32) -> bool {
@@ -318,7 +313,7 @@ impl<'p> Checker<'p> {
     #[inline]
     pub fn force(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
-            TypeData::LazyAlias { .. } | TypeData::NoInfer(_) => self.force_reference(ty),
+            TypeData::LazyAlias { .. } | TypeData::Substitution { .. } => self.force_reference(ty),
             TypeData::Union(_) | TypeData::Intersection(_)
                 if self.p.types.flags(ty).contains(TypeFlags::HAS_LAZY_MEMBER) =>
             {
@@ -376,7 +371,7 @@ impl<'p> Checker<'p> {
                 self.note_depth(Deep::Instantiation(ty, MapperId::IDENTITY), None);
                 let (hosted, hosted_arguments) = (*sym, args);
                 match self.type_reference(hosted, hosted_arguments) {
-                    expanded if matches!(self.data(expanded), TypeData::NoInfer(_)) => {
+                    expanded if matches!(self.data(expanded), TypeData::Substitution { .. }) => {
                         self.force(expanded)
                     }
                     expanded => match self.stored_alias(ty) {
@@ -391,7 +386,7 @@ impl<'p> Checker<'p> {
                     },
                 }
             }
-            TypeData::NoInfer(t) => self.force(*t),
+            TypeData::Substitution { base: t, .. } => self.force(*t),
             _ => ty,
         }
     }
@@ -408,7 +403,7 @@ impl<'p> Checker<'p> {
     #[inline]
     pub(super) fn is_no_infer(&self, ty: TypeId) -> bool {
         match self.data(ty) {
-            TypeData::NoInfer(_) => true,
+            TypeData::Substitution { constraint, .. } => *constraint == TypeId::UNKNOWN,
             TypeData::LazyAlias { sym, .. } => self.intrinsic_alias(*sym) == Some(Err(())),
             _ => false,
         }
@@ -417,7 +412,10 @@ impl<'p> Checker<'p> {
     /// `getNoInferType`
     pub(super) fn no_infer(&mut self, ty: TypeId) -> TypeId {
         if self.has_type_variables(ty) && self.is_no_infer_target_type(ty) {
-            self.intern(TypeData::NoInfer(ty))
+            self.intern(TypeData::Substitution {
+                base: ty,
+                constraint: TypeId::UNKNOWN,
+            })
         } else {
             ty
         }
@@ -552,7 +550,7 @@ impl<'p> Checker<'p> {
     fn members_uncached(&mut self, ty: TypeId) -> Option<(Built<'p>, MapperId)> {
         self.guard("members");
         match self.data(ty) {
-            TypeData::NoInfer(t) => self.members(*t).map(|members| {
+            TypeData::Substitution { base: t, .. } => self.members(*t).map(|members| {
                 (
                     Built {
                         resolved: members.resolved,
@@ -4234,7 +4232,7 @@ impl<'p> Checker<'p> {
             | TypeData::Intersection(_)
             | TypeData::Template { .. }
             | TypeData::StringMapping { .. }
-            | TypeData::NoInfer(_) => true,
+            | TypeData::Substitution { .. } => true,
             // `isGenericTupleType`
             TypeData::Tuple { flags, .. } => flags.iter().any(|f| f.contains(ElemFlags::VARIADIC)),
             _ => false,
@@ -4393,7 +4391,7 @@ impl<'p> Checker<'p> {
                 self.base_constraint_of_as(t, true).unwrap_or(t)
             }
             // `getSubstitutionIntersection`
-            TypeData::NoInfer(of) => self.next_base_constraint(*of),
+            TypeData::Substitution { base: of, .. } => self.next_base_constraint(*of),
             // A variadic element gives way to what it extends only if that is arrays and tuples with no variadic element of their own.
             TypeData::Tuple {
                 elems,

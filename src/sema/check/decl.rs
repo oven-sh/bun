@@ -47,20 +47,6 @@ fn enum_value_key(value: EnumValue) -> EnumValue {
     }
 }
 
-/// `getArrayElementTypeNode`: `X` for `X[]`, `[...X[]]` and `[...[...X[]]]`.
-fn array_element_type_node(hir: &hir::File, node: TypeNodeId) -> Option<TypeNodeId> {
-    if node.is_none() {
-        return None;
-    }
-    match hir[node].kind {
-        TypeNodeKind::Array(element) => Some(element),
-        TypeNodeKind::Tuple(elems) if elems.len() == 1 && hir[elems.at(0)].rest => {
-            array_element_type_node(hir, hir[elems.at(0)].ty)
-        }
-        _ => None,
-    }
-}
-
 /// `isVariadicTupleElement`: `...T` where `T` is not written as an array type.
 pub(super) fn is_variadic_tuple_element(hir: &hir::File, elem: &TupleElem) -> bool {
     elem.rest && elem.ty.is_some() && array_element_type_node(hir, elem.ty).is_none()
@@ -3433,16 +3419,9 @@ impl<'p> Checker<'p> {
         let mut out = Vec::with_capacity(hir[func].params.len());
         // `getImmediatelyInvokedFunctionExpression`: how many arguments a function that is called where it is written is called with.
         let bound = self.bound(file);
-        let given = match bound.fns[func.idx()].owner {
-            crate::bind::FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
-                crate::bind::Parent::Expr(parent) => match hir[parent].kind {
-                    ExprKind::Call(c) if hir[c].callee == e => Some(hir[c].args.len()),
-                    _ => None,
-                },
-                _ => None,
-            },
-            _ => None,
-        };
+        let given = bound
+            .get_immediately_invoked_function_expression(hir, func)
+            .map(|call| hir[call].args.len());
         // `SignatureFlagsIsUntypedSignatureInJSFile`, `getMinArgumentCount`: JavaScript that says nothing of its parameters, and of which
         // nothing is expected, can be called with as few arguments as one likes.
         let is_untyped_in_js = hir.is_js

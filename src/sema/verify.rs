@@ -164,25 +164,6 @@ impl Problem {
     }
 }
 
-/// `ModuleKind.String`
-fn module_kind_name(module: ModuleKind) -> &'static str {
-    match module {
-        ModuleKind::CommonJs => "CommonJS",
-        ModuleKind::Amd => "AMD",
-        ModuleKind::Umd => "UMD",
-        ModuleKind::System => "System",
-        ModuleKind::Es2015 => "ES2015",
-        ModuleKind::Es2020 => "ES2020",
-        ModuleKind::Es2022 => "ES2022",
-        ModuleKind::EsNext => "ESNext",
-        ModuleKind::Node16 => "Node16",
-        ModuleKind::Node18 => "Node18",
-        ModuleKind::Node20 => "Node20",
-        ModuleKind::NodeNext => "NodeNext",
-        ModuleKind::Preserve => "Preserve",
-    }
-}
-
 /// `GetRelativePathFromFile`, both being absolute.
 pub(crate) fn relative_from_file(from: &str, to: &str) -> String {
     let from: Vec<&str> = crate::resolve::parent_dir(from)
@@ -541,7 +522,7 @@ pub fn verify_compiler_options(
         };
         out.push(Problem::new(
             5109,
-            &[wanted, module_kind_name(module)],
+            &[wanted, module.name()],
             Place::Value("moduleResolution"),
         ));
     } else if resolves_like_node && !module.is_node() {

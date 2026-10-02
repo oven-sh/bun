@@ -1,44 +1,23 @@
 //! Decorators: what one is called with, and whether it can be: 1206 1207 1249 1497, 1329, 1238 1239 1240 1241, 1270 1271.
 //!
-//! Follows `getLegacyDecoratorCallSignature`, `getESDecoratorCallSignature`, `resolveDecorator`, `resolveCall` as far as it
-//! concerns a decorator, `checkDecorator` and what `checkGrammarModifiers` says of decorators, of TypeScript 7.0.2's checker.go
-//! and grammarchecks.go.
+//! Follows `getLegacyDecoratorCallSignature`, `getESDecoratorCallSignature`, `resolveDecorator`, `checkDecorator` and what
+//! `checkGrammarModifiers` says of decorators, of TypeScript 7.0.2's checker.go and grammarchecks.go.
 
-use super::call::Arg;
+use super::call::CallLike;
 use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{MemberOwner, Parent};
 
 /// Where a decorator is written.
 #[derive(Copy, Clone)]
-struct Written {
+pub(super) struct Written {
     /// Its `@`.
-    at_sign: u32,
+    pub(super) at_sign: u32,
     /// Its expression, from the parenthesis on if it is in parentheses.
-    start: u32,
+    pub(super) start: u32,
     /// Where the expression ends, and the decorator with it.
-    end: u32,
+    pub(super) end: u32,
     is_parenthesized: bool,
-}
-
-/// What a signature does not take of what a decorator is called with.
-#[derive(Copy, Clone)]
-struct Mismatch {
-    /// The node it is said of.
-    at: u32,
-    end: u32,
-    source: TypeId,
-    target: TypeId,
-    /// 2345, or 2684 of `this`.
-    code: u32,
-}
-
-/// Whether a signature takes what a decorator is called with.
-enum Applicable {
-    Yes,
-    /// That rests on something that is not known.
-    Unknown,
-    No(Mismatch),
 }
 
 impl<'p> Checker<'p> {
@@ -344,7 +323,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getDecoratorArgumentCount`
-    fn decorator_argument_count(
+    pub(super) fn decorator_argument_count(
         &self,
         file: FileId,
         owner: DecoratorOwner,
@@ -374,20 +353,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `hasCorrectArity`
-    fn has_correct_decorator_arity(
-        &mut self,
-        file: FileId,
-        owner: DecoratorOwner,
-        params: &[SigParam],
-    ) -> bool {
-        let count = self.decorator_argument_count(file, owner, params);
-        (self.has_effective_rest_parameter(params) || count <= self.parameter_count(params))
-            && count >= self.min_argument_count(params)
-    }
-
     /// Where the decorator with the expression `e` is written. The parentheses of a standard `@(x)` are only in the text.
-    fn where_decorator_is(&self, file: FileId, e: ExprId) -> Written {
+    pub(super) fn where_decorator_is(&self, file: FileId, e: ExprId) -> Written {
         let start = self.start_of(file, e);
         let before = self
             .hir(file)
@@ -411,27 +378,6 @@ impl<'p> Checker<'p> {
             start,
             end: self.end_of_expr(file, e),
             is_parenthesized: start != self.start_inside_parentheses(file, e),
-        }
-    }
-
-    /// `getThisArgumentOfCall`: the `a` of `@a.b` and `@(a[b])`, and how the chain goes on from it. The decorators of old are
-    /// called on nothing.
-    fn this_argument_of_decorator(&self, file: FileId, mut e: ExprId) -> Option<(ExprId, Chain)> {
-        let hir = self.hir(file);
-        if hir.legacy_decorators {
-            return None;
-        }
-        loop {
-            e = match hir[e].kind {
-                ExprKind::As { expr, .. }
-                | ExprKind::Satisfies { expr, .. }
-                | ExprKind::Instantiation { expr, .. } => expr,
-                ExprKind::AsConst(inner) | ExprKind::NonNull(inner) => inner,
-                ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => {
-                    return Some((obj, chain));
-                }
-                _ => return None,
-            };
         }
     }
 
@@ -467,7 +413,6 @@ impl<'p> Checker<'p> {
                             start: at_sign,
                             code,
                         });
-                        self.note(at_sign, at_sign + 1, code, Vec::new());
                     }
                 }
                 continue;
@@ -519,7 +464,6 @@ impl<'p> Checker<'p> {
                             start: at_sign,
                             code: 1207,
                         });
-                        self.note(at_sign, at_sign + 1, 1207, Vec::new());
                     }
                 }
             }
@@ -617,157 +561,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isSignatureApplicable`: whether `sig` can be called on `this_arg` with all of `given`, however many of them counted for
-    /// the arity.
-    fn is_decorator_signature_applicable(
-        &mut self,
-        file: FileId,
-        sig: SigId,
-        given: &[SigParam],
-        this_arg: Option<(ExprId, Chain)>,
-        by_subtype: bool,
-        written: Written,
-    ) -> Applicable {
-        if let Some(wanted) = self.sig_this_type(sig)
-            && wanted != TypeId::VOID
-        {
-            // `getThisArgumentType`
-            let (this, at, end) = match this_arg {
-                Some((obj, chain)) => (
-                    self.chain_receiver(file, obj, chain).0,
-                    self.start_of(file, obj),
-                    self.end_of_expr(file, obj),
-                ),
-                None => (TypeId::VOID, written.at_sign, written.end),
-            };
-            if !self.is_known(this) || !self.is_known(wanted) {
-                return Applicable::Unknown;
-            }
-            if !self.is_related_in_pass(this, wanted, by_subtype) {
-                return Applicable::No(Mismatch {
-                    at,
-                    end,
-                    source: this,
-                    target: wanted,
-                    code: 2684,
-                });
-            }
-        }
-        let params = self.sig_params(sig);
-        let rest = self.non_array_rest_type(&params);
-        let count = if rest.is_some() {
-            (self.parameter_count(&params) - 1).min(given.len())
-        } else {
-            given.len()
-        };
-        for (i, arg) in given[..count].iter().enumerate() {
-            // Past the last parameter anything goes (`getTypeAtPosition`).
-            let Some(wanted) = self.param_type_at(&params, i) else {
-                break;
-            };
-            if !self.is_known(wanted) {
-                return Applicable::Unknown;
-            }
-            if !self.is_related_in_pass(arg.ty, wanted, by_subtype) {
-                return Applicable::No(Mismatch {
-                    at: written.start,
-                    end: written.end,
-                    source: arg.ty,
-                    target: wanted,
-                    code: 2345,
-                });
-            }
-        }
-        if let Some(rest) = rest {
-            if !self.is_known(rest) {
-                return Applicable::Unknown;
-            }
-            let args: Vec<Arg> = given.iter().map(|p| Arg::Type(p.ty, Atom::NONE)).collect();
-            let spread =
-                self.spread_argument_type(file, &args, count, rest, &[], MapperId::IDENTITY);
-            if !self.is_related_in_pass(spread, rest, by_subtype) {
-                return Applicable::No(Mismatch {
-                    at: if count == given.len() {
-                        written.at_sign
-                    } else {
-                        written.start
-                    },
-                    end: written.end,
-                    source: spread,
-                    target: rest,
-                    code: 2345,
-                });
-            }
-        }
-        Applicable::Yes
-    }
-
-    /// What `isSignatureApplicable` says of `mismatch`, under what `reportCallResolutionErrors` puts on top of it: 2769 and 2770 if
-    /// several candidates got as far as their arguments, and `head`.
-    fn explain_decorator_mismatch(&mut self, mismatch: Mismatch, is_overloaded: bool, head: u32) {
-        if !self.explains {
-            return;
-        }
-        let Mismatch {
-            at,
-            end,
-            source,
-            target,
-            code,
-        } = mismatch;
-        let mut said = Vec::new();
-        self.report_not_assignable_with_end(source, target, at, end, code, &mut said);
-        match said.first() {
-            Some(inner) if inner.start == at => {
-                let mut top = inner.code;
-                if is_overloaded {
-                    self.explain_under(at, top, 2770, Vec::new());
-                    self.explain_under(at, 2770, 2769, Vec::new());
-                    top = 2769;
-                }
-                self.explain_under(at, top, head, Vec::new());
-            }
-            _ => self.note(at, end, head, Vec::new()),
-        }
-    }
-
-    /// `getArgumentArityError`, of a decorator that is called with `given` arguments and that none of `sigs` takes that many of:
-    /// the line under `head`.
-    fn explain_decorator_arity(
-        &mut self,
-        sigs: &[SigId],
-        given: usize,
-        at: u32,
-        end: u32,
-        head: u32,
-    ) {
-        if !self.explains {
-            return;
-        }
-        let counts = self.argument_counts(sigs, given);
-        let (code, args) = if counts.least < given && given < counts.most {
-            (
-                2575,
-                vec![
-                    given.to_string(),
-                    counts.most_below.to_string(),
-                    counts.least_above.to_string(),
-                ],
-            )
-        } else {
-            (
-                if counts.has_rest { 1279 } else { 1278 },
-                vec![counts.expected(), given.to_string()],
-            )
-        };
-        self.note(at, end, code, args);
-        self.explain_under(at, code, head, Vec::new());
-        if given < counts.least {
-            self.relate(at, head, |c| c.parameter_without_argument(sigs, given));
-        }
-    }
-
-    /// `resolveDecorator`, `resolveCall`, `checkDecorator`
+    /// `resolveDecorator`, `checkDecorator`
     fn check_decorator(
         &mut self,
         file: FileId,
@@ -806,7 +600,6 @@ impl<'p> Checker<'p> {
             DecoratorOwner::Member(m) if hir[m].kind == MemberKind::Property => 1240,
             DecoratorOwner::Member(_) => 1241,
         };
-        let sigs = self.candidates_in_order(&sigs);
         let lists: Vec<List<'p, SigParam>> = sigs.iter().map(|&s| self.sig_params(s)).collect();
         // `isPotentiallyUncalledDecorator`, which goes by the parameters as declared: one that takes `void` is required.
         if !sigs.is_empty()
@@ -838,122 +631,14 @@ impl<'p> Checker<'p> {
         if given.iter().any(|p| !self.is_known(p.ty)) {
             return;
         }
-        // `getEffectiveDecoratorArguments`
-        let args: Vec<Arg> = given.iter().map(|p| Arg::Type(p.ty, Atom::NONE)).collect();
-        let this_arg = self.this_argument_of_decorator(file, e);
-        let this_expr = this_arg.map(|(obj, _)| obj);
-        // `chooseOverload`: the first whose parameters the arguments are subtypes of, else the first they can be assigned to.
-        let mut instantiated: Vec<Option<SigId>> = vec![None; sigs.len()];
-        let mut chosen = None;
-        // Of the last of `candidatesForArgumentError`, where it does not fit; of `candidateForArgumentArityError`, how many it takes.
-        let (mut argument_error, mut arity_error) = (None, None);
-        // How many `candidatesForArgumentError` there are, and `candidateForArgumentArityError` itself.
-        let (mut argument_errors, mut arity_candidate) = (0, None);
-        let passes: &[bool] = if sigs.len() > 1 {
-            &[true, false]
-        } else {
-            &[false]
-        };
-        'passes: for &by_subtype in passes {
-            argument_errors = 0;
-            for (k, params) in lists.iter().enumerate() {
-                if !self.has_correct_decorator_arity(file, owner, params) {
-                    continue;
-                }
-                let candidate = match instantiated[k] {
-                    Some(candidate) => candidate,
-                    None => {
-                        let candidate = self.instantiate_for_call(
-                            file,
-                            e,
-                            sigs[k],
-                            &[],
-                            &args,
-                            this_expr,
-                            false,
-                        );
-                        instantiated[k] = Some(candidate);
-                        candidate
-                    }
-                };
-                // With a rest parameter that is a type parameter, how many it takes is only known now.
-                if self.non_array_rest_type(params).is_some() {
-                    let params = self.sig_params(candidate);
-                    if !self.has_correct_decorator_arity(file, owner, &params) {
-                        arity_error = Some(self.parameter_count(&params));
-                        arity_candidate = Some(candidate);
-                        continue;
-                    }
-                }
-                match self.is_decorator_signature_applicable(
-                    file, candidate, &given, this_arg, by_subtype, written,
-                ) {
-                    Applicable::Yes => {
-                        chosen = Some(candidate);
-                        break 'passes;
-                    }
-                    Applicable::Unknown => return,
-                    Applicable::No(mismatch) => {
-                        argument_error = Some(mismatch);
-                        argument_errors += 1;
-                    }
-                }
-            }
-        }
-        let returned = match chosen {
-            Some(chosen) => self.sig_return(chosen),
-            None => {
-                // `reportCallResolutionErrors`. `getArgumentArityError`: more than any of them takes is said where the arguments are
-                // taken to be, at the expression; whatever else is wrong with their number, of the decorator.
-                let at = argument_error.map_or_else(
-                    || {
-                        let most = arity_error.unwrap_or_else(|| {
-                            lists
-                                .iter()
-                                .map(|params| self.parameter_count(params))
-                                .max()
-                                .unwrap_or(0)
-                        });
-                        if most < given.len() { start } else { at_sign }
-                    },
-                    |mismatch: Mismatch| mismatch.at,
-                );
-                out.push(Diagnostic {
-                    start: at,
-                    code: head,
-                });
-                match (argument_error, arity_candidate) {
-                    (Some(mismatch), _) => {
-                        self.explain_decorator_mismatch(mismatch, argument_errors > 1, head)
-                    }
-                    (None, Some(candidate)) => {
-                        self.explain_decorator_arity(&[candidate], given.len(), at, end, head)
-                    }
-                    (None, None) => self.explain_decorator_arity(&sigs, given.len(), at, end, head),
-                }
-                // `getCandidateForOverloadFailure`
-                if sigs.len() == 1
-                    || sigs
-                        .iter()
-                        .any(|&sig| !self.sig_type_params(sig).is_empty())
-                {
-                    let best = self.longest_candidate_index(&sigs, given.len());
-                    let candidate = self.instantiate_for_call(
-                        file,
-                        e,
-                        sigs[best],
-                        &[],
-                        &args,
-                        this_expr,
-                        false,
-                    );
-                    self.sig_return(candidate)
-                } else {
-                    let candidate = self.union_of_signatures_for_overload_failure(&sigs);
-                    self.sig_return(candidate)
-                }
-            }
-        };
+        let node = CallLike::Decorator(owner);
+        let args = self.effective_call_arguments(file, e, node);
+        let this_arg = self.this_argument_of_call(file, e, node);
+        let resolved = self.resolve_among(file, e, node, &sigs, &[], &args, this_arg, true, true);
+        // Only `resolve_call` keeps it.
+        self.pending_failure_sig = None;
+        self.report_call_resolution(file, e, node, &sigs, resolved, Some(head), out);
+        let returned = resolved.ret;
         let wanted = self.sig_return(expected);
         if !self.is_known(returned)
             || self.is_any(returned)

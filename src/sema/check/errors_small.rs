@@ -455,8 +455,6 @@ impl Checker<'_> {
                     hir[params[0]].pos
                 };
                 out.push(Diagnostic { start, code: 1053 });
-                let end = self.end_of_token_at(file, start);
-                self.explain_to(start, end, 1053, |_| vec![]);
                 continue;
             } else if hir[params[0]].flags.contains(Flags::OPTIONAL) {
                 // At the `?`, which comes after the name or the pattern.
@@ -997,31 +995,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `getSymbolHasInstanceMethodOfObjectType`: whether `ty` has a `[Symbol.hasInstance]` that can be called.
-    fn has_instance_method(&mut self, ty: TypeId) -> bool {
-        if !self
-            .parts(ty)
-            .iter()
-            .all(|&part| self.is_assignable(part, TypeId::OBJECT))
-        {
-            return false;
-        }
-        // `getPropertyNameForKnownSymbolName`: the name that the type of `Symbol.hasInstance` stands for.
-        let name = self.files().atoms.intern(b"hasInstance");
-        let symbol = self.intern(TypeData::UniqueSymbol {
-            symbol: UniqueSymbolDeclaration::SymbolConstructor,
-            name,
-        });
-        let Some(name) = self.property_name_of_type(symbol) else {
-            return false;
-        };
-        let apparent = self.apparent_type(ty);
-        match self.type_of_property(apparent, name) {
-            Some(method) => !self.is_known(method) || !self.signatures(method, false).is_empty(),
-            None => false,
-        }
-    }
-
     /// `checkInstanceOfExpression`, `resolveInstanceofExpression`: 2358 2359
     fn check_instanceof(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -1055,7 +1028,7 @@ impl Checker<'_> {
             if !self.is_known(r)
                 || self.is_any(r)
                 || self.is_uncertain(file, right)
-                || self.has_instance_method(r)
+                || self.symbol_has_instance_method_of_object_type(r).is_some()
             {
                 continue;
             }

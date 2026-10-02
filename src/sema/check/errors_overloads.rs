@@ -10,16 +10,6 @@ use super::*;
 use crate::bind::Decl;
 use smallvec::SmallVec;
 
-/// `NodeIsPresent(node.Body())`: a body written where none belongs is not kept, but it counts.
-fn has_body(func: &Func) -> bool {
-    !matches!(func.body, FnBody::None) || func.flags.contains(Flags::BODY_DROPPED)
-}
-
-/// `node.Body() != nil`: a block whose `{` is missing is a body node, though not a present one.
-fn has_body_node(func: &Func) -> bool {
-    has_body(func) || func.flags.contains(Flags::MISSING_BODY)
-}
-
 /// Whether the parser skipped a token right before the declaration that starts at `start`. Then `previous.End() != node.Pos()`, though
 /// the two are neighbours in the tree.
 fn follows_skipped_token(hir: &hir::File, start: u32) -> bool {

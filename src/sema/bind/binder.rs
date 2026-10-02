@@ -31,6 +31,8 @@ struct LocalSymbol {
     declarations: SmallVec<[(Decl, bool); 2]>,
     /// The symbols those declarations have here.
     symbols: SmallVec<[SymbolId; 2]>,
+    /// `local.ExportSymbol`
+    export_symbol: Option<SymbolId>,
 }
 
 pub(super) struct Binder<'f> {
@@ -453,12 +455,26 @@ impl<'f> Binder<'f> {
             if !local.symbols.contains(&symbol) {
                 local.symbols.push(symbol);
             }
+            if is_exported {
+                local.export_symbol = Some(symbol);
+            }
         }
     }
 
-    /// Keeps `local.Declarations` of the local symbols that have both what is exported and what is not.
+    /// Keeps `local.Declarations` of the local symbols that have both what is exported and what is not, and `local.ExportSymbol`
+    /// where no table has it.
     fn keep_local_declarations(&mut self) {
-        for (_, local) in std::mem::take(&mut self.local_symbols) {
+        for ((locals, _), local) in std::mem::take(&mut self.local_symbols) {
+            if let Some(export_symbol) = local.export_symbol
+                && let [decl] = self.b.symbols[export_symbol.idx()].decls[..]
+                && self
+                    .b
+                    .refused_declarations
+                    .iter()
+                    .any(|refused| refused.1 == decl)
+            {
+                self.b.refused_export_symbols.push((locals, export_symbol));
+            }
             if local.declarations.iter().any(|declaration| declaration.1)
                 && local.declarations.iter().any(|declaration| !declaration.1)
             {
@@ -1668,6 +1684,9 @@ impl<'f> Binder<'f> {
         if !self.b.ambient_specifiers.is_empty() {
             self.b.ambient_specifiers.retain(|s| seen.insert(*s));
         }
+        if !self.b.module_augmentations.is_empty() {
+            self.b.module_augmentations.retain(|s| seen.insert(*s));
+        }
         self.b
     }
 
@@ -2233,22 +2252,9 @@ impl<'f> Binder<'f> {
         {
             let callee = self.f[c].callee;
             // `super(..)` got its own where it was bound.
-            if !matches!(self.f[callee].kind, ExprKind::Super) && self.is_dotted_name(callee) {
+            if !matches!(self.f[callee].kind, ExprKind::Super) && is_dotted_name(self.f, callee) {
                 self.flow_call(e);
             }
-        }
-    }
-
-    /// `IsDottedName`
-    fn is_dotted_name(&self, e: ExprId) -> bool {
-        match self.f[e].kind {
-            ExprKind::Ident(_)
-            | ExprKind::This
-            | ExprKind::Super
-            | ExprKind::NewTarget
-            | ExprKind::ImportMeta => true,
-            ExprKind::Dot { obj, .. } => self.is_dotted_name(obj),
-            _ => false,
         }
     }
 
@@ -2459,8 +2465,10 @@ impl<'f> Binder<'f> {
             ModuleName::String(name) => {
                 // `collectModuleReferences`: what adds to a module has to find it, like one that is imported. At the top of a script
                 // it is the module.
-                if !is_at_top || self.f.has_module_syntax && ambient {
+                if !is_at_top {
                     self.statement_specifier(name);
+                } else if self.f.has_module_syntax && ambient && name.is_some() {
+                    self.b.module_augmentations.push(name);
                 }
                 let existing = self
                     .b

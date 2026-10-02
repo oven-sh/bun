@@ -481,20 +481,24 @@ fn regex_end(text: &[u8], start: usize) -> usize {
     at
 }
 
-/// `ScanJsxIdentifier`, and the `:name` of `parseJsxAttributeName` and `parseJsxTagName`.
-fn jsx_name_end(text: &[u8], at: usize) -> usize {
-    let part = |mut at: usize| loop {
+/// `ScanJsxIdentifier`
+pub(super) fn jsx_identifier_end(text: &[u8], mut at: usize) -> usize {
+    loop {
         let end = ident_end(text, at);
         if text.get(end) != Some(&b'-') {
             return end;
         }
         at = end + 1;
-    };
-    let end = part(at);
+    }
+}
+
+/// The same, and the `:name` of `parseJsxAttributeName` and `parseJsxTagName`.
+fn jsx_name_end(text: &[u8], at: usize) -> usize {
+    let end = jsx_identifier_end(text, at);
     let colon = skip_trivia(text, end);
     if text.get(colon) == Some(&b':') {
         let name = skip_trivia(text, colon + 1);
-        let name_end = part(name);
+        let name_end = jsx_identifier_end(text, name);
         // The name after the `:` may be missing.
         return if name_end > name { name_end } else { colon + 1 };
     }
@@ -502,7 +506,7 @@ fn jsx_name_end(text: &[u8], at: usize) -> usize {
 }
 
 /// `parseJsxElementName`: `a`, `a-b`, `a:b`, `a.b.c`
-fn jsx_tag_name_end(text: &[u8], at: usize) -> usize {
+pub(super) fn jsx_tag_name_end(text: &[u8], at: usize) -> usize {
     let mut end = jsx_name_end(text, at);
     if end == at {
         return at;
@@ -2583,9 +2587,15 @@ impl Checker<'_> {
         self.spans(file).name(pos as usize) as u32
     }
 
-    /// `GetRangeOfTokenAtPosition`: where the token that starts at `pos` ends, operators of any length included.
+    /// `GetRangeOfTokenAtPosition`: where the token that starts at `pos` ends, operators of any length included. `pos` where there is
+    /// no text: that of the default library is not kept.
     pub(super) fn end_of_token_at(&self, file: FileId, pos: u32) -> u32 {
-        self.spans(file).token(pos as usize) as u32
+        (self.spans(file).token(pos as usize) as u32).max(pos)
+    }
+
+    /// `node.End()` of the template that opens at `open`, whatever is substituted in it.
+    pub(super) fn end_of_template_at(&self, file: FileId, open: u32) -> u32 {
+        self.spans(file).template(open as usize, &|_, from| from) as u32
     }
 
     /// Where what the bracket at `open` opens is closed: after the matching `)`, `]`, `}`.

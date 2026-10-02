@@ -75,6 +75,25 @@ impl ModuleKind {
     pub fn is_node(self) -> bool {
         (ModuleKind::Node16..=ModuleKind::NodeNext).contains(&self)
     }
+
+    /// `ModuleKind.String`
+    pub fn name(self) -> &'static str {
+        match self {
+            ModuleKind::CommonJs => "CommonJS",
+            ModuleKind::Amd => "AMD",
+            ModuleKind::Umd => "UMD",
+            ModuleKind::System => "System",
+            ModuleKind::Es2015 => "ES2015",
+            ModuleKind::Es2020 => "ES2020",
+            ModuleKind::Es2022 => "ES2022",
+            ModuleKind::EsNext => "ESNext",
+            ModuleKind::Node16 => "Node16",
+            ModuleKind::Node18 => "Node18",
+            ModuleKind::Node20 => "Node20",
+            ModuleKind::NodeNext => "NodeNext",
+            ModuleKind::Preserve => "Preserve",
+        }
+    }
 }
 
 /// `core.ScriptTarget`. In order: a later one has all that an earlier one has.

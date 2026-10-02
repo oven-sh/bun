@@ -419,7 +419,7 @@ impl<'p> Checker<'p> {
                 let t = self.instantiate(*t, mapper);
                 self.keyof_with_origin(t)
             }
-            TypeData::NoInfer(t) => {
+            TypeData::Substitution { base: t, .. } => {
                 let t = self.instantiate(*t, mapper);
                 self.no_infer(t)
             }
@@ -496,7 +496,7 @@ impl<'p> Checker<'p> {
                 | TypeData::Marker(_)
                 | TypeData::IndexedAccess { .. }
                 | TypeData::Cond { .. }
-                | TypeData::NoInfer(_) => true,
+                | TypeData::Substitution { .. } => true,
                 TypeData::Anon {
                     origin: Origin::Mapped(..),
                     ..

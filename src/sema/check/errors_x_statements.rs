@@ -145,19 +145,6 @@ fn why_no_reference(hir: &File, mut e: ExprId, codes: [u32; 2]) -> Option<u32> {
     }
 }
 
-fn names_bound_by(hir: &File, pat: PatId, into: &mut Vec<(Atom, PatId)>) {
-    match hir[pat].kind {
-        PatKind::Missing => {}
-        PatKind::Ident(name) => into.push((name, pat)),
-        PatKind::Object(props) => props
-            .iter()
-            .for_each(|p| names_bound_by(hir, hir[p].value, into)),
-        PatKind::Array(elems) => elems
-            .iter()
-            .for_each(|e| names_bound_by(hir, hir[e].pat, into)),
-    }
-}
-
 /// A `with` statement is kept as a block of its object and its body, put where the keyword is.
 fn is_with_statement(hir: &File, s: StmtId) -> bool {
     matches!(hir[s].kind, StmtKind::Block(list) if list.len() == 2)
@@ -442,7 +429,6 @@ impl Checker<'_> {
                     )
             });
             out.push(Diagnostic { start, code: 1036 });
-            self.note(start, self.end_of_token_at(file, start), 1036, Vec::new());
         }
         refused
     }
@@ -528,7 +514,6 @@ impl Checker<'_> {
                             start: pos,
                             code: 1108,
                         });
-                        self.note(pos, pos + b"return".len() as u32, 1108, Vec::new());
                     }
                 }
                 // `checkIfStatement`. Other statements of which nothing is kept are empty as well: it has to be written that way.

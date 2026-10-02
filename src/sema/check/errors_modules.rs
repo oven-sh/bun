@@ -9,7 +9,7 @@
 use super::errors::{Diagnostic, is_close};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, SymbolId};
-use smallvec::{SmallVec, smallvec};
+use smallvec::SmallVec;
 
 /// `typeOnlyDeclaration`: what says `type` on the way from an alias to what it stands for.
 #[derive(Copy, Clone)]
@@ -340,42 +340,7 @@ impl Checker<'_> {
                     continue;
                 }
             }
-            // `declareSymbolEx`: what the table of its members refuses. A method goes with nothing, not even another.
-            let mut table: SmallVec<[(Atom, u8, SmallVec<[u32; 2]>); 8]> = SmallVec::new();
-            for p in props.iter() {
-                let prop = &hir[p];
-                let (includes, excludes) = match prop.kind {
-                    PropKind::Init | PropKind::Shorthand => (PROPERTY, METHOD),
-                    PropKind::Method => (METHOD, METHOD),
-                    PropKind::Getter => (GET, METHOD | GET),
-                    PropKind::Setter => (SET, METHOD | SET),
-                    PropKind::Spread => continue,
-                };
-                let Some(name) = self.member_name(file, prop.key) else {
-                    continue;
-                };
-                let Some(entry) = table.iter_mut().find(|t| t.0 == name) else {
-                    table.push((name, includes, smallvec![prop.pos]));
-                    continue;
-                };
-                // What is there may refuse the newcomer just as well.
-                let refused = entry.1 & excludes != 0 || includes == METHOD && entry.1 != 0;
-                if !refused {
-                    entry.1 |= includes;
-                    entry.2.push(prop.pos);
-                    continue;
-                }
-                out.extend(
-                    entry
-                        .2
-                        .iter()
-                        .chain(std::iter::once(&prop.pos))
-                        .map(|&start| Diagnostic { start, code: 2300 }),
-                );
-                if entry.1 & (GET | SET) != 0 && entry.1 & (GET | SET) != includes & (GET | SET) {
-                    entry.1 |= GET | SET;
-                }
-            }
+            self.report_refused_members_of_object_literal(file, props, out);
             let mut seen: SmallVec<[(Atom, u8); 8]> = SmallVec::new();
             for p in props.iter() {
                 let prop = &hir[p];

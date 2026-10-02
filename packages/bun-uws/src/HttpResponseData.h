@@ -307,12 +307,18 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
     bool requestTimeoutReported = false;
 
     /* Behind the FIN of socket.end() no response can leave, so the connection reads no other request.
-     * A window opens: requestTimeout ends a connection that its peer does not end. */
+     * A window opens: requestTimeout ends a connection that its peer does not end. A connection that
+     * already reported a timeout reports no second one. */
     void stopReadsBehindOwnFin() {
         this->state |= HttpResponseData<SSL, false>::HTTP_NODE_PARSING_STOPPED;
         lastMessageStartMs = nodeCompatMonotonicMs();
         headersCompleted = true;
-        requestTimeoutReported = false;
+    }
+
+    /* stopReadsBehindOwnFin() ran, or a parse error ended the reads behind that FIN: no request is in flight, and what is buffered cannot leave. */
+    bool stoppedReadsBehindOwnFin() const {
+        constexpr uint32_t both = HttpResponseData<SSL, false>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN | HttpResponseData<SSL, false>::HTTP_NODE_PARSING_STOPPED;
+        return (this->state & both) == both && this->inStream == nullptr;
     }
 };
 

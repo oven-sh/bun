@@ -128,6 +128,9 @@ template<bool SSL>
 static void onNodeHttpReadsResumable(us_socket_t* socket);
 
 template<bool SSL>
+static void endFloodPreventionPause(us_socket_t* socket, uWS::NodeHttpResponseData<SSL>* httpResponseData);
+
+template<bool SSL>
 static void upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody)
 {
     auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(socket);
@@ -202,6 +205,9 @@ void JSNodeHTTPServerSocket::readStop()
     }
     tunnelReadsStopped = true;
     applyTunnelReads();
+    if (ended) {
+        updateTunnelIdle();
+    }
 }
 
 void JSNodeHTTPServerSocket::readStart()
@@ -209,8 +215,13 @@ void JSNodeHTTPServerSocket::readStart()
     if (!isTunnel(this)) {
         return;
     }
+    const bool wasAtRest = ended && tunnelReadsStopped && !tunnelReadEnded;
     tunnelReadsStopped = false;
     applyTunnelReads();
+    // us_socket_resume() closes a socket whose poll it cannot arm again.
+    if (wasAtRest && !isClosed()) {
+        setTunnelIdle(false);
+    }
 }
 
 void JSNodeHTTPServerSocket::didDeliverQueuedTunnelBytes(size_t length)
@@ -352,10 +363,16 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket, bool destroySo
     auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
     if (!bodyStillParsing && asyncSocket->getBufferedAmount() == 0) {
-        /* Nothing to wait for: the caller sends the FIN now. The connection reads behind it like behind the one that waits, and onEnd sees the peer's. */
-        httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
-        socket->end_after_shutdown = 1;
-        return false;
+        if (destroySoon) {
+            return false;
+        }
+        if (asyncSocket->hasFullyDrained()) {
+            /* Nothing to wait for: the caller sends the FIN now. The connection reads behind it like behind the one that waits, and onEnd sees the peer's. */
+            httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
+            socket->end_after_shutdown = 1;
+            return false;
+        }
+        /* TLS still holds ciphertext of the last write. us_socket_shutdown() would park the FIN behind it and tell no one when it leaves, so the FIN waits below. */
     }
     /* uWS shuts down after the parse and the flush. HttpContext dispatches nothing behind a complete response that closes the connection. */
     httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
@@ -365,6 +382,10 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket, bool destroySo
     } else {
         /* The FIN follows them there. With a response still in flight, the socket then stays for the peer's FIN. */
         httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
+    }
+    if (httpResponseData->isDrainingBeforeClose()) {
+        /* Every read is dropped from here on, so none may wait. Bytes that a paused read leaves in the kernel make the close a reset, and a reset discards the response bytes that the kernel still holds. */
+        endFloodPreventionPause<SSL>(socket, reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(httpResponseData));
     }
     return true;
 }
@@ -416,6 +437,7 @@ JSC::EncodedJSValue JSNodeHTTPServerSocket::halfClose(JSC::JSGlobalObject* globa
             stopReadsBehindFinIfIdle<false>(socket);
         }
     }
+    updateTunnelIdle();
     return result;
 }
 
@@ -911,16 +933,25 @@ extern "C" bool Bun__NodeHTTPServerSocket__writeBehindResponse(us_socket_t* sock
     return is_ssl ? writeBehindResponse<true>(socket, data, length) : writeBehindResponse<false>(socket, data, length);
 }
 
+void JSNodeHTTPServerSocket::setTunnelIdle(bool idle)
+{
+    if (is_ssl) {
+        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(idle);
+    } else {
+        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(idle);
+    }
+}
+
 void JSNodeHTTPServerSocket::updateTunnelIdle()
 {
-    if (!tunnelReadEnded || upgraded || isClosed()) {
+    if (!noTunnelReadCanCome() || upgraded || isClosed()) {
         return;
     }
     const bool sent = streamBuffer.bufferedSize() == 0;
     if (is_ssl) {
-        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained());
+        setTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained());
     } else {
-        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained());
+        setTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained());
     }
 }
 

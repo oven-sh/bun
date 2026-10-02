@@ -721,6 +721,8 @@ private:
                                 httpResponseData->inStream = nullptr;
                                 if (readsBehindOwnFin(httpResponseData) && !httpResponseData->isConnectRequest) {
                                     ((HttpResponseData<SSL, true> *) httpResponseData)->stopReadsBehindOwnFin();
+                                    /* The socket stays open for the peer's FIN: balance the ref of onData, as its end does for a read that is parsed to the end. */
+                                    us_socket_unref((us_socket_t *) user);
                                 }
                             }
                         }

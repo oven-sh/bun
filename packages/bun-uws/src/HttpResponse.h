@@ -161,10 +161,15 @@ public:
         HttpResponseData<SSL> *data = getHttpResponseData();
         bool idle = data->isIdle;
         if (idle && HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp()) {
+            auto *nodeData = (HttpResponseData<SSL, true> *) data;
+            /* Reads that stopped behind this side's FIN receive no request: the window that stopReadsBehindOwnFin() opened is no
+             * message, and what a response left in the buffer behind that FIN never leaves. */
+            const bool receivesNoRequest = us_socket_is_shut_down((us_socket_t *) this) && nodeData->stoppedReadsBehindOwnFin();
             /* node:http: a connection that still receives a request (a body, or the head of the next one) is not idle, also after its
              * response ended (Node.js: last_message_start_). In the request handler the parser has not entered a chunked body yet, so the armed body handler tells. */
-            const bool messageOpen = ((HttpResponseData<SSL, true> *) data)->lastMessageStartMs != 0;
-            idle = !(messageOpen && data->inStream != nullptr) && !data->hasIncompleteRequestBody() && !data->hasBufferedPartialRequestHeaders();
+            const bool messageOpen = !receivesNoRequest && nodeData->lastMessageStartMs != 0;
+            idle = receivesNoRequest
+                || (!(messageOpen && data->inStream != nullptr) && !data->hasIncompleteRequestBody() && !data->hasBufferedPartialRequestHeaders());
             if (idle && messageOpen && !Super::hasFullyDrained()) {
                 /* The handler of this request still runs and its response has unsent bytes: close when they are out. */
                 data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
@@ -183,8 +188,9 @@ public:
         return true;
     }
 
-    /* node:http: an idle tunnel is at read EOF and has nothing left to send. Like a libuv handle in that state, it does not hold
-     * the event loop. The filter hears -3 when a tunnel becomes idle and +3 when it has bytes to send again. */
+    /* node:http: an idle tunnel has nothing left to send, and no read can come: it is at read EOF, or JavaScript ended it and stopped
+     * its reads. Like a libuv handle in that state, it does not hold the event loop. The filter hears -3 when a tunnel becomes idle
+     * and +3 when it has bytes to send or reads again. */
     void setNodeHttpTunnelIdle(bool idle) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         if (!httpResponseData->filteredAccept || httpResponseData->filteredIdleTunnel == idle) {

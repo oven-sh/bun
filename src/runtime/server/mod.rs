@@ -498,7 +498,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// uWS filter: `+2` at TCP accept (before any TLS handshake), `-2` on
     /// `HttpContext::onClose` / `HttpResponse::upgrade()` — see
     /// `AsyncSocketData::filteredAccept`. Feeds [`Self::active_connection_count`].
-    /// `-3` / `+3`: a node:http tunnel becomes idle / has bytes to send again. `-4`: it closes idle.
+    /// `-3` / `+3`: a node:http tunnel becomes idle / has bytes to send or reads again. `-4`: it closes idle.
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,
         opened: i32,
@@ -1624,7 +1624,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         });
     }
 
-    /// An idle tunnel is open but, like a libuv handle at EOF with no write pending, does not hold the loop.
+    /// An idle tunnel is open but, like a libuv handle that does not read and has no write pending, does not hold the loop.
     fn has_loop_holding_connections(&self) -> bool {
         self.active_connection_count.get() > self.idle_tunnel_count.get()
     }

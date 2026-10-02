@@ -563,6 +563,12 @@ impl NodeHTTPResponse {
         {
             return;
         }
+        // A complete response that closes the connection: uWS drops every later read (HttpResponseData::isDrainingBeforeClose).
+        // Bytes that a pause leaves in the kernel make that close a reset, and a reset discards the response bytes that the kernel still holds.
+        let state = raw.state();
+        if state.is_http_connection_close() && !state.is_response_pending() {
+            return;
+        }
         raw.pause();
     }
 

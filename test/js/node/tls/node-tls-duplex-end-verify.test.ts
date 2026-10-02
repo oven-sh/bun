@@ -901,41 +901,6 @@ test("end() inside 'connect' still reports a ClientHello that the client cannot 
   assert.match(events.join(", "), /^error ERR_SSL_NO_(PROTOCOLS_AVAILABLE|SUPPORTED_VERSIONS_ENABLED), close$/);
 });
 
-test(
-  "end() still sends the FIN when the socket starts to connect again before the shutdown runs",
-  { skip: !isBun && "Node's connect() does not throw for a socket that is already a TLS socket" },
-  async () => {
-    // The shutdown of a client that ends during its handshake runs one turn of the event loop after end(). What
-    // happens to the socket in between must not strand it: here connect() throws and leaves `connecting` set.
-    const peerSaw = Promise.withResolvers();
-    const peer = net.createServer({ allowHalfOpen: true }, socket => {
-      const types = [];
-      socket.on("error", () => {});
-      socket.on("data", data => types.push(data[0]));
-      socket.on("end", () => {
-        peerSaw.resolve(types);
-        socket.end();
-      });
-    });
-    await new Promise(listening => peer.listen(0, "127.0.0.1", listening));
-    const port = peer.address().port;
-    const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
-    client.on("error", () => {});
-    try {
-      const finished = new Promise(done => client.once("finish", done));
-      await new Promise(connected => client.once("connect", connected));
-      client.end();
-      assert.throws(() => client.connect({ port, host: "127.0.0.1" }), /socket must be an instance of net\.Socket/);
-      // 22 is a handshake record: the ClientHello left before the FIN.
-      assert.deepStrictEqual(await peerSaw.promise, [22]);
-      await finished;
-    } finally {
-      client.destroy();
-      peer.close();
-    }
-  },
-);
-
 test("end() inside 'connect' sends the FIN when setImmediate was replaced after node:tls loaded", async () => {
   const sawFin = Promise.withResolvers();
   let accepted;

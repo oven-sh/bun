@@ -1573,12 +1573,17 @@ impl Template {
         {
             // The per-user installer puts Cursor under %LOCALAPPDATA%\Programs.
             if let Some(local_app_data) = env_var::LOCALAPPDATA.get_not_empty() {
+                const CURSOR_EXE: &[u8] = b"Programs\\Cursor\\Cursor.exe";
                 let mut pathbuf = path_buffer_pool::get();
-                let parts: [&[u8]; 2] = [local_app_data, b"Programs\\Cursor\\Cursor.exe"];
+                // Joining adds one separator and one NUL. Skip the probe rather than overflow.
+                if local_app_data.len() + 1 + CURSOR_EXE.len() + 1 > pathbuf.len() {
+                    return false;
+                }
+                let parts: [&[u8]; 2] = [local_app_data, CURSOR_EXE];
                 let path = bun_paths::resolve_path::join_string_buf_z::<
                     bun_paths::resolve_path::platform::Auto,
                 >(&mut pathbuf[..], &parts);
-                if bun_sys::exists(path.as_bytes()) {
+                if bun_sys::exists_z(path) {
                     return true;
                 }
             }

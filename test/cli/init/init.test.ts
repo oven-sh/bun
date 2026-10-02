@@ -507,42 +507,40 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   // https://github.com/oven-sh/bun/issues/44416
   test.skipIf(!isWindows)("bun init detects a per-user Cursor install through LOCALAPPDATA", async () => {
     const cursorRule = path.join(".cursor", "rules", "use-bun-instead-of-node-vite-npm-pnpm.mdc");
-    const probeEnv = {
-      ...bunEnv,
+    // The inherited block may spell the key `LocalAppData`. Drop every case
+    // variant so the override below is the only one the child sees.
+    const probeEnv: NodeJS.Dict<string> = Object.fromEntries(
+      Object.entries(bunEnv).filter(([key]) => key.toUpperCase() !== "LOCALAPPDATA"),
+    );
+    Object.assign(probeEnv, {
       BUN_AGENT_RULE_DISABLED: undefined,
       CURSOR_AGENT_RULE_DISABLED: undefined,
       CURSOR_TRACE_ID: undefined,
       // A plain Windows session sets USERNAME, not USER. The probe must not need it.
       USER: undefined,
-    };
+    });
+
+    async function init(cwd: string, localAppData: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init", "-y"],
+        cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...probeEnv, LOCALAPPDATA: localAppData },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    }
 
     await using installed = tempDir("bun-init-cursor-localappdata", {
       "Programs/Cursor/Cursor.exe": "",
     });
     await using withCursor = tempDir("bun-init-cursor-found", {});
-    await using withCursorProc = Bun.spawn({
-      cmd: [bunExe(), "init", "-y"],
-      cwd: withCursor,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...probeEnv, LOCALAPPDATA: String(installed) },
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      withCursorProc.stdout.text(),
-      withCursorProc.stderr.text(),
-      withCursorProc.exited,
-    ]);
-    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    await init(String(withCursor), String(installed));
     expect(fs.existsSync(path.join(withCursor, cursorRule))).toBe(true);
 
     await using empty = tempDir("bun-init-cursor-localappdata-empty", {});
     await using withoutCursor = tempDir("bun-init-cursor-missing", {});
-    await using withoutCursorProc = Bun.spawn({
-      cmd: [bunExe(), "init", "-y"],
-      cwd: withoutCursor,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...probeEnv, LOCALAPPDATA: String(empty) },
-    });
-    expect(await withoutCursorProc.exited).toBe(0);
+    await init(String(withoutCursor), String(empty));
     expect(fs.existsSync(path.join(withoutCursor, ".cursor"))).toBe(false);
   });
 });

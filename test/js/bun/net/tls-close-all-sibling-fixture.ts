@@ -35,9 +35,9 @@
 // which is the proof that N - 5 sockets were parked when stop(true) ran.
 import { getEventLoopStats } from "bun:internal-for-testing";
 import net from "node:net";
-import { join } from "node:path";
 import tls from "node:tls";
 import { tls as certs, bunEnv, bunExe } from "harness";
+import { listen } from "./tls-fixture-transport";
 
 const N = 64;
 // Well inside the test's own timeout, so a stalled step still gets to print
@@ -127,36 +127,31 @@ async function captureClientHello(): Promise<Buffer> {
 const clientHello = await captureClientHello();
 
 // The child reads one command per line on stdin:
-//   connect <n> <port> -> connects n sockets, writes ONLY the ClientHello to
-//                         each, answers `hellos <n>` once every ClientHello is
-//                         in the server's receive queue, and later
-//                         `closed <n> <flights>` once all n sockets have
-//                         closed, where <flights> is how many of them received
-//                         any bytes first
-//   exit               -> exits 0
-//
-// A write callback says that the kernel took the bytes, not that they have
-// arrived (see loopback-round-trip.ts). A socket that the server resumes
-// before its ClientHello arrives has nothing to read in the next iteration,
-// so it takes none of the budget and is not parked. The child therefore
-// answers `hellos` after a loopback round trip.
+//   connect <n> <address> -> connects n sockets to the port or the unix socket
+//                            path (see tls-fixture-transport.ts), writes ONLY
+//                            the ClientHello to each, answers `hellos <n>` once
+//                            every write callback has fired, and later
+//                            `closed <n> <flights>` once all n sockets have
+//                            closed, where <flights> is how many of them
+//                            received any bytes first
+//   exit                  -> exits 0
 const clientSrc = `
 const net = require("node:net");
 const readline = require("node:readline");
-const { loopbackRoundTrip } = require(${JSON.stringify(join(import.meta.dir, "loopback-round-trip.ts"))});
 const hello = Buffer.from(process.env.REPRO_HELLO, "hex");
 const say = line => process.stdout.write(line + "\\n");
 readline.createInterface({ input: process.stdin }).on("line", line => {
-  const [cmd, arg, arg2] = line.split(" ");
+  const [cmd, arg, ...rest] = line.split(" ");
   if (cmd === "connect") {
     const n = Number(arg);
+    const address = rest.join(" ");
     let connected = 0;
     let written = 0;
     let closed = 0;
     let flights = 0;
     const socks = [];
     for (let i = 0; i < n; i++) {
-      const c = net.connect(Number(arg2), "127.0.0.1");
+      const c = /^\\d+$/.test(address) ? net.connect(Number(address), "127.0.0.1") : net.connect(address);
       c.setNoDelay(true);
       let gotData = false;
       c.on("error", () => {});
@@ -168,9 +163,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
       socks.push(c);
       c.on("connect", () => {
         if (++connected < n) return;
-        for (const s of socks) s.write(hello, () => {
-          if (++written === n) loopbackRoundTrip().then(() => say("hellos " + n));
-        });
+        for (const s of socks) s.write(hello, () => { if (++written === n) say("hellos " + n); });
       });
     }
   } else if (cmd === "exit") {
@@ -257,9 +250,7 @@ async function scenario(kind: Scenario["kind"]) {
     other.end();
   }
 
-  const server = Bun.listen({
-    hostname: "127.0.0.1",
-    port: 0,
+  const { server, address } = listen(kind, {
     tls: { key: certs.key, cert: certs.cert },
     socket: {
       open(s) {
@@ -299,7 +290,7 @@ async function scenario(kind: Scenario["kind"]) {
   });
 
   try {
-    send(`connect ${N} ${server.port}`);
+    send(`connect ${N} ${address}`);
     await withDeadline(allOpen.promise, `${N} opens`);
     await expectLine(`hellos ${N}`);
     if (kind === "parked") {

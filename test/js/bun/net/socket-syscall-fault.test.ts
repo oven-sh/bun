@@ -1,6 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -20,10 +20,16 @@ const skip = !fault.available() || isWindows;
 // The explicit timeout is required: a bare `bun bd test <file>` applies Bun's
 // 5000ms default, and each fixture spawns two Bun processes and takes a few
 // seconds on a debug+ASAN build.
+//
+// On macOS the fixtures get a directory for unix sockets, because TCP loopback
+// does not deliver inside write() there (see tls-fixture-transport.ts). The
+// low-prio fixture does not use it: it needs fault injection, which no macOS
+// lane has, so a change of its transport could not be checked there.
 async function runFixture(name: string) {
+  using unixDir = isMacOS ? tempDir("tlsq", {}) : undefined;
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, name)],
-    env: bunEnv,
+    env: { ...bunEnv, TLS_FIXTURE_UNIX_DIR: unixDir && String(unixDir) },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -69,7 +75,7 @@ test.concurrent.skipIf(skip)(
         closed: 130,
         // Every wave socket is closed mid-handshake by the unread-ciphertext
         // guard, which reports the handshake as failed; the primers are
-        // closed by the child's `reset` and report nothing.
+        // closed by stop(true) and report nothing.
         handshakeFailed: 128,
         handshakeOk: 0,
         data: 0,

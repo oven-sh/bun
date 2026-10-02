@@ -9,34 +9,26 @@
 // queue drain did not look at is_paused, so it switched the reads of a paused socket back on: its
 // handshake ran, and `handshake` and `data` were delivered to a socket whose pause() had returned.
 //
-// Server and clients share this process, so a loop iteration is one step for both sides. The
-// steps run on two clocks:
-//   - The iteration counter is exact for what the loop does with bytes that a socket already
-//     holds: which sockets it reads, parks, and takes out of the queue.
-//   - The iteration counter says nothing about bytes in transit. The clock for those is a
-//     loopback round trip (loopback-round-trip.ts): when it completes, everything that was sent
-//     before it started has arrived.
+// Server and clients share this process, so a loop iteration is one step for both sides and the
+// iteration counter is an exact clock, as long as a write() delivers at once (see
+// tls-fixture-transport.ts):
 //   1. N clients connect. The server pauses each accepted socket in `open`, so every ClientHello
 //      stays unread in the kernel.
 //   2. The server resumes all N at once. The next iteration reads 5 ClientHellos (their clients
 //      complete the TLS 1.3 handshake on the flight they get back) and parks the other N - 5.
 //   3. An immediate of that same iteration pauses all N again. From here on no server handler may
 //      run, and no other client may complete its handshake.
-//   4. The 5 clients complete. Then the loop drains the queue several times over, with a round
-//      trip after each pass for the bytes that a wrongly resumed socket puts in transit.
+//   4. The loop runs long enough to drain the queue several times over.
 //   5. The server resumes all N. Every handshake completes and every ping is answered, so a socket
 //      that the drain left paused comes back.
 import type { Socket } from "bun";
 import { getEventLoopStats } from "bun:internal-for-testing";
 import { tls as certs } from "harness";
-import { loopbackRoundTrip } from "./loopback-round-trip";
+import { connect, listen } from "./tls-fixture-transport";
 
 const N = 32;
 // MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION in packages/bun-usockets/src/loop.c.
 const BUDGET = 5;
-// Empties the queue several times over. The queue holds the N - 5 parked server sockets and, for
-// an iteration each, the clients that got a flight back. It drains 5 per iteration.
-const DRAIN_ITERATIONS = 4 * Math.ceil(N / BUDGET) + 8;
 // Well inside the test's own timeout, so a stalled step still prints the summary.
 const STEP_DEADLINE_MS = 20_000;
 
@@ -78,9 +70,7 @@ const accepted: Socket<State>[] = [];
 let clientOpens = 0;
 let clientHandshakes = 0;
 
-const server = Bun.listen<State>({
-  hostname: "127.0.0.1",
-  port: 0,
+const { server, address } = listen<State>("s", {
   tls: { key: certs.key, cert: certs.cert },
   socket: {
     open(s) {
@@ -104,23 +94,11 @@ const server = Bun.listen<State>({
   },
 });
 
-// Every wait goes through until(): it has the deadline, and its turns keep the queue moving.
-async function roundTrip() {
-  let back = false;
-  loopbackRoundTrip().then(
-    () => (back = true),
-    e => report({ error: `loopback round trip: ${e}` }),
-  );
-  await until("a loopback round trip", () => back);
-}
-
 const clients: Socket[] = [];
 try {
   for (let i = 0; i < N; i++) {
     clients.push(
-      await Bun.connect({
-        hostname: "127.0.0.1",
-        port: server.port,
+      await connect(address, {
         tls: { rejectUnauthorized: false },
         socket: {
           // The ClientHello goes out as soon as this returns.
@@ -143,8 +121,8 @@ try {
     );
   }
   await until(`${N} connections`, () => accepted.length === N && clientOpens === N);
-  // Every ClientHello is in the server's receive queue.
-  await roundTrip();
+  // One more turn and every ClientHello is in the server's receive queue.
+  await afterIterations(2);
 
   // Step 2.
   for (const s of accepted) {
@@ -161,18 +139,9 @@ try {
     s.data.paused = true;
   }
 
-  // Step 4. The 5 clients complete when the flights of step 2 arrive.
-  await until(`${BUDGET} client handshakes`, () => clientHandshakes >= BUDGET);
-  // Nothing else may happen. To show that takes a bound on how far a socket gets when the drain
-  // wrongly resumes it. One pass over the queue: it reads its ClientHello and sends its flight.
-  await afterIterations(DRAIN_ITERATIONS);
-  // One round trip: the flight is at its client. One pass: the client completes the handshake and
-  // writes its ping.
-  await roundTrip();
-  await afterIterations(DRAIN_ITERATIONS);
-  // One round trip: the ping is at the server. One pass: the server runs `handshake` and `data`.
-  await roundTrip();
-  await afterIterations(DRAIN_ITERATIONS);
+  // Step 4. The queue holds the N - 5 parked server sockets and, for an iteration each, the 5
+  // clients that got a flight back. It drains 5 per iteration.
+  await afterIterations(4 * Math.ceil(N / BUDGET) + 8);
   summary.clientHandshakesWhilePaused = clientHandshakes;
 
   // Step 5.

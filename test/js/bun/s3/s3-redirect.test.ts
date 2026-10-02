@@ -168,6 +168,27 @@ target.stop(true);
 endpoint.stop(true);
 `;
 
+const fetchStreamFixture = `
+${servers}
+// The multipart upload also reports its S3Error as an unhandled rejection.
+process.on("unhandledRejection", () => {});
+
+const body = new ReadableStream({
+  start(controller) {
+    controller.enqueue(new TextEncoder().encode("payload"));
+    controller.close();
+  },
+});
+const ok = await fetch("s3://bkt/307/cross/stream", { s3, method: "PUT", body }).then(
+  res => res.ok,
+  () => false,
+);
+
+process.stdout.write(JSON.stringify({ ok, targetHits }));
+target.stop(true);
+endpoint.stop(true);
+`;
+
 // An inherited proxy would hijack the requests to the loopback servers.
 const envWithoutProxy = {
   ...bunEnv,
@@ -203,7 +224,7 @@ describe.concurrent("a 3xx from the S3 endpoint is not followed", () => {
     }
     // A HEAD response has no body.
     for (const name of ["exists", "stat"]) {
-      expect(ops[name]).toEqual({ name, resolved: null, code: expect.any(String) });
+      expect(ops[name]).toEqual({ name, resolved: null, code: "UnknownError" });
     }
     expect(exitCode).toBe(0);
   });
@@ -229,6 +250,13 @@ describe.concurrent("a 3xx from the S3 endpoint is not followed", () => {
       },
       targetHits: [],
     });
+    expect(exitCode).toBe(0);
+  });
+
+  test('fetch("s3://") with a stream body fails and sends nothing to the Location', async () => {
+    const { result, exitCode } = await run(fetchStreamFixture);
+
+    expect(result).toEqual({ ok: false, targetHits: [] });
     expect(exitCode).toBe(0);
   });
 });

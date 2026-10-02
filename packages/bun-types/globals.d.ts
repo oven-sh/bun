@@ -2048,6 +2048,7 @@ interface BunFetchRequestInit extends RequestInit {
    * Bun signs an `s3://` request for one host and path, so `fetch` never
    * follows a redirect for it. `redirect: "follow"` resolves with the 3xx
    * response, the same as `"manual"`, and `maxRedirects` has no effect.
+   * A request with a stream body does not read `redirect`.
    *
    * @example
    * ```js

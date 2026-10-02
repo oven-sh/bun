@@ -290,19 +290,19 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // Empty string ≠ null. WTF::String() utf8's to an empty CString (not
     // isNull), which the spawner passes as "" into --user-data-dir= and
     // Chrome falls back to the default profile → ProcessSingleton abort.
-    WTF::CString dir = userDataDir.utf8();
-    WTF::CString pathC = path.utf8();
+    WTF::UTF8CString dir = userDataDir.utf8();
+    WTF::UTF8CString pathC = path.utf8();
     // Two-level pack: CString owns the bytes, ptrVec holds data() pointers.
     // Both live until Bun__Chrome__ensure returns (spawn copies argv).
-    WTF::Vector<WTF::CString, 8> argvC;
+    WTF::Vector<WTF::UTF8CString, 8> argvC;
     WTF::Vector<const char*, 8> argvPtrs;
     for (auto& s : extraArgv) {
         argvC.append(s.utf8());
-        argvPtrs.append(argvC.last().data());
+        argvPtrs.append(argvC.last().legacyCStringPointer());
     }
     int32_t rc = Bun__Chrome__ensure(zig,
-        dir.length() ? dir.data() : nullptr,
-        pathC.length() ? pathC.data() : nullptr,
+        dir.length() ? dir.legacyCStringPointer() : nullptr,
+        pathC.length() ? pathC.legacyCStringPointer() : nullptr,
         argvPtrs.isEmpty() ? nullptr : argvPtrs.span().data(),
         static_cast<uint32_t>(argvPtrs.size()),
         stdoutInherit, stderrInherit);
@@ -713,8 +713,8 @@ static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue
 static JSValue errorFromExceptionDetails(JSGlobalObject* g, std::span<const char> excDetails)
 {
     auto root = JSON::Value::parseJSON(
-        StringView::fromLatin1(std::span<const Latin1Character>(
-            reinterpret_cast<const Latin1Character*>(excDetails.data()), excDetails.size())));
+        StringView { std::span<const Latin1Character>(
+            reinterpret_cast<const Latin1Character*>(excDetails.data()), excDetails.size()) });
     auto d = root ? root->asObject() : nullptr;
     if (!d) return createError(g, "JavaScript exception"_s);
 
@@ -863,8 +863,8 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // navigateToHistoryEntry. WTF::JSON parses to a C++ tree — no
         // JSValue allocation for a structure we only read once.
         auto root = JSON::Value::parseJSON(
-            StringView::fromLatin1(std::span<const Latin1Character>(
-                reinterpret_cast<const Latin1Character*>(result.data()), result.size())));
+            StringView { std::span<const Latin1Character>(
+                reinterpret_cast<const Latin1Character*>(result.data()), result.size()) });
         auto o = root ? root->asObject() : nullptr;
         if (!o) {
             settle(g, view, entry.slot, false, createError(g, "malformed history response"_s));

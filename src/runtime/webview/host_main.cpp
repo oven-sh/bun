@@ -98,7 +98,7 @@ void FrameWriter::sendReply(uint32_t viewId, Reply op, const uint8_t* payload, u
 
 void FrameWriter::sendReplyStr(uint32_t viewId, Reply op, const WTF::String& s)
 {
-    WTF::CString c = s.utf8();
+    WTF::UTF8CString c = s.utf8();
     uint32_t slen = static_cast<uint32_t>(c.length());
     WTF::Vector<uint8_t, 256> payload;
     payload.grow(4 + slen);

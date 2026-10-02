@@ -1869,7 +1869,7 @@ JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject * globa
     auto attributeName = callFrame->uncheckedArgument(1).getString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto error = static_cast<ErrorInstance*>(createTypeError(globalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(interfaceName.utf8().legacyCStringPointer(), attributeName)));
+    auto error = static_cast<ErrorInstance*>(createTypeError(globalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(interfaceName, attributeName)));
     error->setNativeGetterTypeError();
     return JSValue::encode(error);
 }
@@ -3291,14 +3291,14 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 #undef VISIT_GLOBALOBJECT_GC_MEMBER
 
     // This runs on a concurrent GC helper thread. Fetch the VM through the
-    // visitor (AbstractSlotVisitor::vm() returns m_heap.vm(), guaranteed alive
+    // JSCell* (HeapCell::vm() reads its MarkedBlock/PreciseAllocation, alive
     // for the duration of marking) rather than thisObject->vm() which
     // dereferences JSGlobalObject::m_vm and can read stale bytes if the cell
     // was picked up via conservative scan mid-recycle (see the
     // visitGlobalObjectMember(unique_ptr) guard above for the same window).
     // A stale m_vm surfaces as a SEGV in TypeCastTraits<JSVMClientData>::isType
     // when downcast<> calls the virtual isWebCoreJSClientData() on garbage.
-    WebCore::clientData(visitor.vm())->httpHeaderIdentifiers().template visit<Visitor>(visitor);
+    WebCore::clientData(cell->vm())->httpHeaderIdentifiers().template visit<Visitor>(visitor);
 
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
@@ -3515,7 +3515,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (!globalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPluginRunner(globalObject->bunVM())) {
-            CString narrowed;
+            Latin1CString narrowed;
             std::span<const Latin1Character> chars;
             if (moduleName->is8Bit())
                 chars = moduleName->span8();

@@ -2439,7 +2439,7 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
             *names = { i, name.length() };
             i += name.length();
         } else {
-            WTF::CString nameCString = name.latin1();
+            WTF::Latin1CString nameCString = name.latin1();
             memcpy(&buf[i], nameCString.data(), nameCString.length());
             *names = { i, static_cast<uint32_t>(nameCString.length()) };
             i += static_cast<uint32_t>(nameCString.length());
@@ -2455,7 +2455,7 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
                 *values = { i, value.length() };
                 i += value.length();
             } else {
-                WTF::CString valueCString = value.latin1();
+                WTF::Latin1CString valueCString = value.latin1();
                 memcpy(&buf[i], valueCString.data(), valueCString.length());
                 *values = { i, static_cast<uint32_t>(valueCString.length()) };
                 i += static_cast<uint32_t>(valueCString.length());

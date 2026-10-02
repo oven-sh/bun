@@ -673,7 +673,7 @@ WTF::String WebViewHost::title() { return m_webview.title(); }
 // Pack two inline strings: u32 alen + a + u32 blen + b.
 static WTF::Vector<uint8_t, 512> pack2(const WTF::String& a, const WTF::String& b)
 {
-    WTF::CString ca = a.utf8(), cb = b.utf8();
+    WTF::UTF8CString ca = a.utf8(), cb = b.utf8();
     uint32_t na = static_cast<uint32_t>(ca.length()), nb = static_cast<uint32_t>(cb.length());
     WTF::Vector<uint8_t, 512> out;
     out.grow(8 + na + nb);
@@ -721,7 +721,7 @@ void WebViewHost::onConsoleMessage(id type, id args)
     if (m_closed) return;
     // type is NSString, args is NSArray<NSString> — each a page-side
     // JSON.stringify. Payload: str type + u32 argCount + str[argCount].
-    WTF::CString typeC = objc::NSString(type).toWTF().utf8();
+    WTF::UTF8CString typeC = objc::NSString(type).toWTF().utf8();
     uint32_t typeLen = static_cast<uint32_t>(typeC.length());
     objc::NSArray arr(args);
     uint32_t argCount = args ? static_cast<uint32_t>(arr.count()) : 0;
@@ -736,7 +736,7 @@ void WebViewHost::onConsoleMessage(id type, id args)
     for (uint32_t i = 0; i < argCount; ++i) {
         id arg = arr.objectAtIndex(i);
         if (!objc::Ref(arg).isKindOf(objc::NSString::cls)) arg = nullptr;
-        WTF::CString argC = objc::NSString(arg).toWTF().utf8();
+        WTF::UTF8CString argC = objc::NSString(arg).toWTF().utf8();
         uint32_t argLen = static_cast<uint32_t>(argC.length());
         size_t was = out.size();
         out.grow(was + 4 + argLen);

@@ -868,6 +868,9 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             String sourceURL;
             JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
             RETURN_IF_EXCEPTION(scope, {});
+            // JSC's own Error.captureStackTrace (a node:vm realm) may have saved frames for this error that it
+            // formats on the next read of "stack". Settle them now, or that read would replace the value below.
+            instance->materializeErrorInfoIfNeeded(vm);
             errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
         } else {
             // Not yet materialized — safe to install new frames with a lazy getter.

@@ -39,7 +39,7 @@ public:
     std::span<const char> span() const
     {
         if (m_isConverted)
-            return m_converted.span();
+            return byteCast<char>(m_converted.span());
         return byteCast<char>(m_borrowed.span8());
     }
 
@@ -47,7 +47,7 @@ private:
     UTF8View() = default;
 
     WTF::StringView m_borrowed {};
-    WTF::CString m_converted {};
+    WTF::UTF8CString m_converted {};
     bool m_isConverted { false };
 };
 

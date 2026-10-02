@@ -122,7 +122,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
 
     globalObject->setInspectable(true);
     auto& server = Inspector::RemoteInspectorServer::singleton();
-    if (!server.start(reinterpret_cast<const char*>(host), port)) {
+    if (!server.start(UTF8CStringView::unsafeFromUTF8(host), port)) {
         throwVMError(
             globalObject, scope,
             createError(globalObject,

@@ -151,7 +151,7 @@ WTF::Vector<uint8_t, 64> encode(const Head& head, const WTF::String& tail = {})
         out.grow(sizeof(Head));
         __builtin_memcpy(out.mutableSpan().data(), &head, sizeof(Head));
     } else {
-        WTF::CString c = tail.utf8();
+        WTF::UTF8CString c = tail.utf8();
         uint32_t n = static_cast<uint32_t>(c.length());
         out.grow(sizeof(Head) + 4 + n);
         uint8_t* p = out.mutableSpan().data();
@@ -167,7 +167,7 @@ WTF::Vector<uint8_t, 64> encode(const Head& head, const WTF::String& tail = {})
 // String-only payload (Navigate, Evaluate, Type) — no head struct.
 inline WTF::Vector<uint8_t, 64> encodeStr(const WTF::String& s)
 {
-    WTF::CString c = s.utf8();
+    WTF::UTF8CString c = s.utf8();
     uint32_t n = static_cast<uint32_t>(c.length());
     WTF::Vector<uint8_t, 64> out;
     out.grow(4 + n);

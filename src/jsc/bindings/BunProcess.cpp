@@ -502,7 +502,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         filename = fileURL.fileSystemPath();
     }
 
-    CString utf8;
+    UTF8CString utf8;
 
     // Support embedded .node files
     // See src/standalone_graph/StandaloneModuleGraph.rs for what this "$bunfs" thing is
@@ -558,7 +558,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     // See https://github.com/oven-sh/bun/issues/15753.
     if (!fromEmbedded) {
         char soname[64] = { 0 };
-        if (Bun__addonNeedsGlibcOnMusl(utf8.data(), utf8.length(), soname, sizeof(soname))) [[unlikely]] {
+        if (Bun__addonNeedsGlibcOnMusl(utf8.legacyCStringPointer(), utf8.length(), soname, sizeof(soname))) [[unlikely]] {
             WTF::StringBuilder msg;
             msg.append(filename);
             msg.append(" is linked against glibc (DT_NEEDED "_s);
@@ -568,8 +568,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         }
     }
 #endif
-    CrashHandler__setDlOpenAction(utf8.data());
-    void* handle = dlopen(utf8.data(), RTLD_LAZY);
+    CrashHandler__setDlOpenAction(utf8.legacyCStringPointer());
+    void* handle = dlopen(utf8.legacyCStringPointer(), RTLD_LAZY);
     CrashHandler__setDlOpenAction(nullptr);
 #endif
 
@@ -761,7 +761,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
 
-    char* filename_cstr = toFileURI(utf8.span());
+    char* filename_cstr = toFileURI(byteCast<char>(utf8.span()));
 
     napi_module nmodule {
         .nm_version = module_version,
@@ -1962,7 +1962,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    Vector<CString> argvStorage;
+    Vector<UTF8CString> argvStorage;
     argvStorage.reserveInitialCapacity(argsLength);
 
     for (unsigned i = 0; i < argsLength; i++) {
@@ -1990,7 +1990,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    Vector<CString> envStorage;
+    Vector<UTF8CString> envStorage;
     {
         Bun::V::validateObject(scope, globalObject, envValue, "env"_s);
         RETURN_IF_EXCEPTION(scope, {});
@@ -2026,7 +2026,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
         }
     }
 
-    CString execPathUtf8 = execPath.utf8();
+    UTF8CString execPathUtf8 = execPath.utf8();
 
     // Build the null-terminated argv/envp pointer arrays only after the
     // backing storage is fully populated so there is no risk of pointers
@@ -2034,13 +2034,13 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
     Vector<char*> argv;
     argv.reserveInitialCapacity(argvStorage.size() + 1);
     for (auto& s : argvStorage)
-        argv.append(const_cast<char*>(s.data()));
+        argv.append(const_cast<char*>(s.legacyCStringPointer()));
     argv.append(nullptr);
 
     Vector<char*> envp;
     envp.reserveInitialCapacity(envStorage.size() + 1);
     for (auto& s : envStorage)
-        envp.append(const_cast<char*>(s.data()));
+        envp.append(const_cast<char*>(s.legacyCStringPointer()));
     envp.append(nullptr);
 
     // Set stdin, stdout and stderr to be non-close-on-exec so that the new
@@ -2087,7 +2087,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
     posix_spawn_file_actions_addinherit_np(&actions, 2);
 
     pid_t pid;
-    savedErrno = posix_spawn(&pid, execPathUtf8.data(), &actions, &attrs, argv.begin(), envp.begin());
+    savedErrno = posix_spawn(&pid, execPathUtf8.legacyCStringPointer(), &actions, &attrs, argv.begin(), envp.begin());
     // With POSIX_SPAWN_SETEXEC a successful call never returns; reaching
     // here means it failed and the return value is the errno.
     posix_spawn_file_actions_destroy(&actions);
@@ -2118,7 +2118,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
     sigemptyset(&emptyMask);
     pthread_sigmask(SIG_SETMASK, &emptyMask, &previousMask);
 
-    ::execve(execPathUtf8.data(), argv.begin(), envp.begin());
+    ::execve(execPathUtf8.legacyCStringPointer(), argv.begin(), envp.begin());
     savedErrno = errno;
 
     // execve(2) failed; put back the signal mask we cleared above.
@@ -3573,7 +3573,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
     // initgroups(3) takes a user *name*. Node passes a string user through
     // as-is (initgroups(3) reports EPERM/ENOMEM/etc. itself); only a numeric
     // uid is pre-resolved through passwd so we have a name to pass.
-    CString userNameUTF8;
+    UTF8CString userNameUTF8;
     const char* userName = nullptr;
     struct passwd pwd;
     struct passwd* pp = nullptr;
@@ -3582,7 +3582,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
         auto str = user.getString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         userNameUTF8 = str.utf8();
-        userName = userNameUTF8.data();
+        userName = userNameUTF8.legacyCStringPointer();
     } else {
         uid_t uid = static_cast<uid_t>(user.toUInt32(globalObject));
         RETURN_IF_EXCEPTION(scope, {});
@@ -4723,8 +4723,8 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
     // call is best-effort (it fails in console-less processes).
     BunString str = Bun::toString(wtfStr);
     Bun__Process__setTitle(globalObject, &str);
-    CString cstr = wtfStr.utf8();
-    uv_set_process_title(cstr.data());
+    UTF8CString cstr = wtfStr.utf8();
+    uv_set_process_title(cstr.legacyCStringPointer());
     return true;
 #endif
 }

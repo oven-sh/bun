@@ -111,7 +111,7 @@ CodecOptions parseCodecOptions(JSGlobalObject* globalObject, JSValue strategy, s
 
 // BufferSource → (ptr, len). `scratch` owns the bytes when `chunk` is a string
 // (Node-compat: node:zlib-backed CompressionStream accepts string chunks).
-static std::optional<std::span<const uint8_t>> bufferSourceBytes(JSGlobalObject* globalObject, JSValue chunk, WTF::CString& scratch)
+static std::optional<std::span<const uint8_t>> bufferSourceBytes(JSGlobalObject* globalObject, JSValue chunk, WTF::UTF8CString& scratch)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -378,7 +378,7 @@ static JSPromise* compressionStreamTransformImpl(JSGlobalObject* globalObject, J
 {
     return promiseFromSteps(globalObject, [&] -> JSPromise* {
         auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-        WTF::CString scratch;
+        WTF::UTF8CString scratch;
         std::optional<std::span<const uint8_t>> bytes = bufferSourceBytes(globalObject, chunk, scratch);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (!bytes) [[unlikely]]

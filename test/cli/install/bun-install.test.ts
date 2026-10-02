@@ -5559,7 +5559,9 @@ describe.concurrent("bun-install", () => {
       expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
         join("..", "uglify-js", "bin", "uglifyjs"),
       );
-      expect((await readdirSorted(join(ctx.package_dir, "node_modules", ".cache")))[0]).toBe("9694c5fe9c41ad51.git");
+      expect((await readdirSorted(join(ctx.package_dir, "node_modules", ".cache")))[0]).toBe(
+        "4b781131fcb82ac5d8b5de22e75d3dc2.git",
+      );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "uglify-js"))).toEqual([
         ".bun-tag",
         ".gitattributes",
@@ -5622,7 +5624,9 @@ describe.concurrent("bun-install", () => {
       expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
         join("..", "uglify", "bin", "uglifyjs"),
       );
-      expect((await readdirSorted(join(ctx.package_dir, "node_modules", ".cache")))[0]).toBe("87d55589eb4217d2.git");
+      expect((await readdirSorted(join(ctx.package_dir, "node_modules", ".cache")))[0]).toBe(
+        "203d84def89a6418b8e746cc10046b51.git",
+      );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "uglify"))).toEqual([
         ".bun-tag",
         ".gitattributes",
@@ -5684,7 +5688,7 @@ describe.concurrent("bun-install", () => {
         join("..", "uglify", "bin", "uglifyjs"),
       );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache"))).toEqual([
-        "9694c5fe9c41ad51.git",
+        "4b781131fcb82ac5d8b5de22e75d3dc2.git",
         "@G@e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
       ]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "uglify"))).toEqual([
@@ -6066,7 +6070,7 @@ describe.concurrent("bun-install", () => {
         join("..", "uglify-hash", "bin", "uglifyjs"),
       );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache"))).toEqual([
-        "9694c5fe9c41ad51.git",
+        "4b781131fcb82ac5d8b5de22e75d3dc2.git",
         "@G@e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
       ]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "uglify-hash"))).toEqual([
@@ -11625,50 +11629,121 @@ it.skipIf(isWindows)("file: deps with colliding abs-path hashes resolve to disti
   expect({ alpha: alpha.name, beta: beta.name }).toEqual({ alpha: "pkg-alpha", beta: "pkg-beta" });
 });
 
-// Two local tarball paths that collide under Wyhash11(0), the hash that used
-// to name the `@T@<hash>` extraction folder in the shared install cache. Each
-// project depends on one of them. The second install must not overwrite the
-// first project's cache entry, and a reinstall of the first project must get
-// its own tarball's bytes back.
-it("local tarballs with colliding path hashes get separate cache folders", async () => {
-  const pathA = "./t/m3daaaaaaaaaaaaaaaaaaaaaaaaa.7aQs_ePaaaaaaaaw9Aaaaaaaaaaaaaa.tgz";
-  const pathB = "./t/m3daaaaaaaaaaaaaaaaaaaaaaaaa.7aQs_ePbaaaaaaaw9Aaaaaaaaaaaaaa.tgz";
-  expect(pathA).not.toBe(pathB);
+// The shared install cache names an extracted tarball and the bare clone of a
+// git dependency after the URL they came from. Each pair below collides under
+// Wyhash11(0), the hash that used to make those names, and each project
+// depends on one URL of the pair.
+describe.concurrent("URLs with colliding Wyhash11 hashes get separate cache entries", () => {
   const enc = new TextEncoder();
-  expect(wyhash11(0, enc.encode(pathA))).toBe(wyhash11(0, enc.encode(pathB)));
+  const bar = readFileSync(join(import.meta.dir, "bar-0.0.2.tgz"));
+  const baz = readFileSync(join(import.meta.dir, "baz-0.0.3.tgz"));
 
-  using root = tempDir("tarball-cache-collision", {
-    "p1/package.json": JSON.stringify({ name: "p1", dependencies: { bar: `file:${pathA}` } }),
-    [`p1/${pathA.slice(2)}`]: readFileSync(join(import.meta.dir, "bar-0.0.2.tgz")),
-    "p2/package.json": JSON.stringify({ name: "p2", dependencies: { baz: `file:${pathB}` } }),
-    [`p2/${pathB.slice(2)}`]: readFileSync(join(import.meta.dir, "baz-0.0.3.tgz")),
-  });
-  const cacheDir = join(String(root), "cache");
-  const testEnv = { ...env, BUN_INSTALL_CACHE_DIR: cacheDir };
-
-  async function install(project: string) {
-    await using proc = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: join(String(root), project),
-      env: testEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(err).not.toContain("error:");
-    expect(out).toContain("1 package installed");
-    expect(exitCode).toBe(0);
+  // The second install must not replace the first project's entry, so a
+  // reinstall of the first project links its own tarball again.
+  async function installBoth(root: string, testEnv: typeof env) {
+    await runBunInstall(testEnv, join(root, "p1"));
+    await runBunInstall(testEnv, join(root, "p2"));
+    await rm(join(root, "p1", "node_modules"), { recursive: true, force: true });
+    await runBunInstall(testEnv, join(root, "p1"), { savesLockfile: false });
+    return {
+      bar: (await file(join(root, "p1", "node_modules", "bar", "package.json")).json()).name,
+      baz: (await file(join(root, "p2", "node_modules", "baz", "package.json")).json()).name,
+      entries: (await readdirSorted(join(root, "cache"))).filter(name => name.startsWith("@T@")).length,
+    };
   }
 
-  await install("p1");
-  await install("p2");
-  await rm(join(String(root), "p1", "node_modules"), { recursive: true, force: true });
-  await install("p1");
+  it("local tarballs", async () => {
+    const pathA = "./t/m3daaaaaaaaaaaaaaaaaaaaaaaaa.7aQs_ePaaaaaaaaw9Aaaaaaaaaaaaaa.tgz";
+    const pathB = "./t/m3daaaaaaaaaaaaaaaaaaaaaaaaa.7aQs_ePbaaaaaaaw9Aaaaaaaaaaaaaa.tgz";
+    expect(pathA).not.toBe(pathB);
+    expect(wyhash11(0, enc.encode(pathA))).toBe(wyhash11(0, enc.encode(pathB)));
 
-  const bar = await file(join(String(root), "p1", "node_modules", "bar", "package.json")).json();
-  const baz = await file(join(String(root), "p2", "node_modules", "baz", "package.json")).json();
-  expect({ bar: bar.name, baz: baz.name }).toEqual({ bar: "bar", baz: "baz" });
-  expect((await readdirSorted(cacheDir)).filter(name => name.startsWith("@T@"))).toHaveLength(2);
+    using root = tempDir("tarball-cache-collision", {
+      "p1/package.json": JSON.stringify({ name: "p1", dependencies: { bar: `file:${pathA}` } }),
+      [`p1/${pathA.slice(2)}`]: bar,
+      "p2/package.json": JSON.stringify({ name: "p2", dependencies: { baz: `file:${pathB}` } }),
+      [`p2/${pathB.slice(2)}`]: baz,
+    });
+    const testEnv = { ...env, BUN_INSTALL_CACHE_DIR: join(String(root), "cache") };
+
+    expect(await installBoth(String(root), testEnv)).toEqual({ bar: "bar", baz: "baz", entries: 2 });
+  });
+
+  it("URL tarballs", async () => {
+    const urlA = "http://example.invalid/mJYaaaaaaGgiQtruKaaaaaaaa-same-cache-dir-.tgz";
+    const urlB = "http://example.invalid/mJYaaaaaaGgiQtruKbbbbbbbb-same-cache-dir-.tgz";
+    expect(urlA).not.toBe(urlB);
+    expect(wyhash11(0, enc.encode(urlA))).toBe(wyhash11(0, enc.encode(urlB)));
+
+    // A loopback proxy answers for the host, so no name is resolved.
+    const tarballs = { [new URL(urlA).pathname]: bar, [new URL(urlB).pathname]: baz };
+    await using proxy = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const tarball = tarballs[new URL(req.url).pathname];
+        return tarball ? new Response(tarball) : new Response("not found", { status: 404 });
+      },
+    });
+    const proxyUrl = `http://127.0.0.1:${proxy.port}`;
+    using root = tempDir("url-tarball-cache-collision", {
+      "p1/package.json": JSON.stringify({ name: "p1", dependencies: { bar: urlA } }),
+      "p2/package.json": JSON.stringify({ name: "p2", dependencies: { baz: urlB } }),
+    });
+    const testEnv = {
+      ...env,
+      BUN_INSTALL_CACHE_DIR: join(String(root), "cache"),
+      http_proxy: proxyUrl,
+      HTTP_PROXY: proxyUrl,
+      no_proxy: "",
+      NO_PROXY: "",
+    };
+
+    expect(await installBoth(String(root), testEnv)).toEqual({ bar: "bar", baz: "baz", entries: 2 });
+  });
+
+  it("git repositories", async () => {
+    const urlA = "https://example.invalid/dJgaaaaalyOlIE3Aaaaaaaaa-same-clone-dir-.git";
+    const urlB = "https://example.invalid/dJgaaaaalyOlIE3Abbbbbbbb-same-clone-dir-.git";
+    expect(urlA).not.toBe(urlB);
+    expect(wyhash11(0, enc.encode(urlA))).toBe(wyhash11(0, enc.encode(urlB)));
+
+    using root = tempDir("git-clone-collision", {
+      "repo-a/package.json": JSON.stringify({ name: "pkg-a", version: "1.0.0" }),
+      "repo-b/package.json": JSON.stringify({ name: "pkg-b", version: "1.0.0" }),
+      "p1/package.json": JSON.stringify({ name: "p1", dependencies: { "pkg-a": `git+${urlA}` } }),
+      "p2/package.json": JSON.stringify({ name: "p2", dependencies: { "pkg-b": `git+${urlB}` } }),
+    });
+    const repoA = join(String(root), "repo-a");
+    const repoB = join(String(root), "repo-b");
+    for (const repo of [repoA, repoB]) {
+      await git(repo, ["-c", "init.defaultBranch=main", "init", "--quiet"]);
+      await git(repo, ["add", "-A"]);
+      await git(repo, ["-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "init"]);
+    }
+    const cacheDir = join(String(root), "cache");
+    // git fetches each URL from the local repository it is an alias of.
+    const testEnv = {
+      ...gitEnv,
+      BUN_INSTALL_CACHE_DIR: cacheDir,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: `url.${repoA.replaceAll("\\", "/")}.insteadOf`,
+      GIT_CONFIG_VALUE_0: urlA,
+      GIT_CONFIG_KEY_1: `url.${repoB.replaceAll("\\", "/")}.insteadOf`,
+      GIT_CONFIG_VALUE_1: urlB,
+    };
+
+    // The second project must clone its own repository. It must not resolve
+    // its dependency in the clone the first project left in the cache.
+    await runBunInstall(testEnv, join(String(root), "p1"));
+    await runBunInstall(testEnv, join(String(root), "p2"));
+
+    const a = await file(join(String(root), "p1", "node_modules", "pkg-a", "package.json")).json();
+    const b = await file(join(String(root), "p2", "node_modules", "pkg-b", "package.json")).json();
+    expect({ a: a.name, b: b.name }).toEqual({ a: "pkg-a", b: "pkg-b" });
+    expect((await readdirSorted(cacheDir)).filter(name => name.endsWith(".git"))).toHaveLength(2);
+  });
 });
 
 it("reports an invalid URL for a manifest tarball URL containing a newline", async () => {

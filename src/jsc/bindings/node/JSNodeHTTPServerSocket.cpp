@@ -381,14 +381,23 @@ bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains(bool destroySoon)
     return deferShutdownUntilResponseDrains<false>(socket, destroySoon);
 }
 
-JSC::EncodedJSValue JSNodeHTTPServerSocket::halfClose(JSC::JSGlobalObject* globalObject, bool keepReadPause)
+/* The FIN has left and no request body is in flight: the connection reads no other request (a tunnel reads on). */
+template<bool SSL>
+static void stopReadsBehindFinIfIdle(us_socket_t* socket)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    if (!httpResponseData->isConnectRequest && httpResponseData->inStream == nullptr) {
+        httpResponseData->stopReadsBehindOwnFin();
+    }
+}
+
+JSC::EncodedJSValue JSNodeHTTPServerSocket::halfClose(JSC::JSGlobalObject* globalObject)
 {
     // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
     // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
     // re-add), without which macOS 26 does not deliver the peer's close.
     // Not for a tunnel that paused its reads: the resume that ends that pause is the re-add.
-    // The same goes for a pause that this FIN has to keep.
-    const bool cycleReads = !upgraded && !tunnelReadsPaused() && !(keepReadPause && socket && socket->flags.is_paused);
+    const bool cycleReads = !upgraded && !tunnelReadsPaused();
     if (socket && cycleReads) {
         us_socket_pause(socket);
     }
@@ -396,8 +405,16 @@ JSC::EncodedJSValue JSNodeHTTPServerSocket::halfClose(JSC::JSGlobalObject* globa
     // Undo the pause above after the shutdown so the unread body drains
     // and kqueue's one-shot EVFILT_WRITE (which delivers EV_EOF on
     // SHUT_WR) is not deleted by a W -> R|W -> R step.
+    // A body that paused the reads gets one more read: onDataIncomingMessage pauses again for a reader and drops the rest with none.
     if (socket && cycleReads) {
         us_socket_resume(socket);
+    }
+    if (socket && !upgraded && !us_socket_is_closed(socket) && us_socket_is_shut_down(socket)) {
+        if (is_ssl) {
+            stopReadsBehindFinIfIdle<true>(socket);
+        } else {
+            stopReadsBehindFinIfIdle<false>(socket);
+        }
     }
     return result;
 }
@@ -1112,8 +1129,7 @@ static void halfCloseAfterDrain(us_socket_t* socket)
     if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
         endFloodPreventionPause<SSL>(socket, httpResponseData);
     }
-    /* A request body that paused the reads still resumes them itself. */
-    serverSocket->halfClose(serverSocket->globalObject(), true);
+    serverSocket->halfClose(serverSocket->globalObject());
     /* Both sides have ended: no event is left to close the socket. */
     if (peerEnded && !serverSocket->isClosed()) {
         serverSocket->close();

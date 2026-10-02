@@ -311,7 +311,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
         return JSValue::encode(JSC::jsUndefined());
     }
     if (bufferedSize == 0) {
-        return thisObject->halfClose(globalObject, false);
+        return thisObject->halfClose(globalObject);
     }
     return JSValue::encode(JSC::jsUndefined());
 }

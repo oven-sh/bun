@@ -246,9 +246,15 @@ private:
         us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
     }
 
-    /* node:http socket.end() (HTTP_NODE_SHUTDOWN_AFTER_DRAIN) sends its FIN when the queued bytes are out, at once when there are none, and leaves the reads as they were. */
+    /* node:http socket.end() (HTTP_NODE_SHUTDOWN_AFTER_DRAIN) sends its FIN when the queued bytes are out, at once when there are none. The peer's FIN ends the connection. */
     static bool readsBehindOwnFin(HttpResponseData<SSL> *httpResponseData) {
         return (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN) != 0;
+    }
+
+    /* Behind that FIN the request in flight still gets the body that a handler takes. No other request is read (stopReadsBehindOwnFin). */
+    static bool readsBodyBehindOwnFin(HttpResponseData<SSL> *httpResponseData) {
+        return (httpResponseData->state & (HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN | HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED)) == HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN
+            && httpResponseData->inStream != nullptr;
     }
 
     template <bool IsNodeHttp>
@@ -341,7 +347,7 @@ private:
         if constexpr (IsNodeHttp) isHalfOpenTunnel = httpResponseData->isConnectRequest;
         if (us_socket_is_shut_down((us_socket_t *) s) && !isHalfOpenTunnel) {
             bool stillReads = false;
-            if constexpr (IsNodeHttp) stillReads = readsBehindOwnFin(httpResponseData);
+            if constexpr (IsNodeHttp) stillReads = readsBodyBehindOwnFin(httpResponseData);
             if (!stillReads) {
                 /* Balance the us_socket_ref above — every other return path
                  * reaches the unref via returnedData. */
@@ -610,7 +616,7 @@ private:
             /* We absolutely have to terminate parsing if shutdown */
             if (us_socket_is_shut_down((us_socket_t *) s)) {
                 bool stillReads = false;
-                if constexpr (IsNodeHttp) stillReads = readsBehindOwnFin(httpResponseData);
+                if constexpr (IsNodeHttp) stillReads = readsBodyBehindOwnFin(httpResponseData);
                 if (!stillReads) {
                     return nullptr;
                 }
@@ -706,12 +712,16 @@ private:
                 /* We absolutely have to terminate parsing if shutdown */
                 if (us_socket_is_shut_down((us_socket_t *) user)) {
                     bool stillReads = false;
-                    if constexpr (IsNodeHttp) stillReads = readsBehindOwnFin(httpResponseData);
+                    /* The tunnel of an Upgrade request starts behind the last chunk of its body. */
+                    if constexpr (IsNodeHttp) stillReads = fin ? switchToTunnelAfterThisChunk && readsBehindOwnFin(httpResponseData) : readsBodyBehindOwnFin(httpResponseData);
                     if (!stillReads) {
                         /* node:http: this socket can be a tunnel that still reads. Its bytes are not for a body that ended. */
                         if constexpr (IsNodeHttp) {
                             if (fin) {
                                 httpResponseData->inStream = nullptr;
+                                if (readsBehindOwnFin(httpResponseData) && !httpResponseData->isConnectRequest) {
+                                    ((HttpResponseData<SSL, true> *) httpResponseData)->stopReadsBehindOwnFin();
+                                }
                             }
                         }
                         return nullptr;

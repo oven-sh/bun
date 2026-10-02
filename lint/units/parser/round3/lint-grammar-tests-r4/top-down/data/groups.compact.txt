@@ -1,0 +1,37 @@
+G01 0-34 (35) tg "type forms" T:35 T31/R4/P0 routes V:22,G1:9,TWIN:3,P1:3,RT:1
+G02 35-46 (12) tg "object types" O-stmt:6,T:6 T4/R0/P0 routes S-AS:6,G1:5,G2:6,V:1
+G03 47-80 (34) tg "signatures, type parameters and type arguments" T:29,O-param:5 T14/R3/P17 routes V:7,G1:4,EXT:1,P-MOD:1,P-REST:4,TP:10,D1:6,TWIN:5,TSX-ARROW:1
+G04 81-111 (31) tg "expressions" T:24,O-expr:7 T18/R1/P5 routes D1:11,TSX-ARROW:2,AS:10,TWIN:1,P1:2,E-ASYNC:1,E-LT:3,E-IDENT-ARROW:2,TWIN-BODY-FLAGS:2
+G05 112-123 (12) tg "class members" O-member:10,O-param:1,O-class:1 T0/R0/P0 routes G3:4,P-MOD:1,IMPL:1,M-ACC:6
+G06 124-137 (14) tg "module syntax" O-stmt:13,X:1 T0/R0/P0 routes S-WITH:1,S-NSIMPORT:2,S-ABS:2,S-ENUM:4,S-AS:5
+G07 138-179 (42) tg "decorator metadata:" M:42 T32/R10/P0 routes -
+G08 180-185 (6) tg-expr "a call of async is no arrow function there" O-expr:6 T0/R0/P0 routes E-ASYNC:6
+G09 186-191 (6) tg-expr "a type assertion before parentheses is no arrow function there" O-expr:6 T0/R0/P0 routes E-LT:6
+G10 192-193 (2) tg-expr "the same with the tsx loader" O-expr:2 T0/R0/P0 routes E-ASYNC:2
+G11 194-200 (7) tg-expr "after type parameters it starts a return type only where a col" O-expr:7 T0/R0/P0 routes E-LT:5,E-ASYNC:2
+G12 201-213 (13) tg-expr "in the body of an arrow function with one name it does the sam" O-expr:13 T0/R0/P0 routes E-IDENT-ARROW:11,E-ASYNC:2,TWIN-BODY-FLAGS:2
+G13 214-223 (10) tg-expr "in the body after parameters that an expression could start wi" O-expr:10 T0/R0/P0 routes P1:7,TWIN-BODY-FLAGS:10,E-ASYNC:1,E-LT:2
+G14 224-230 (7) tg-expr "in the body after type parameters, whatever the parameters are" O-expr:7 T0/R0/P0 routes E-LT:5,TWIN-BODY-FLAGS:7,E-ASYNC:2
+G15 231-232 (2) tg-expr "the same with the tsx loader" O-expr:2 T0/R0/P0 routes E-IDENT-ARROW:1,P1:1,TWIN-BODY-FLAGS:1
+G16 233-237 (5) tg-expr "out is the name of a type and of a type parameter of an arrow " T:5 T2/R0/P3 routes D1:5
+G17 238-239 (2) tg-expr "a comparison follows the type after as and satisfies" T:2 T2/R0/P0 routes AS:2
+G18 240-242 (3) tg-expr "the same with the tsx loader" T:3 T1/R0/P2 routes TSX-ARROW:2,AS:1
+G19 243-251 (9) tg-stmt "as and satisfies name a type alias" O-stmt:9 T0/R0/P0 routes S-AS:9,G1:9
+G20 252-264 (13) tg-stmt "as and satisfies name an interface" X:4,O-stmt:9 T0/R0/P0 routes S-AS:13,G2:13
+G21 265-275 (11) tg-stmt "as and satisfies name a namespace" X:2,O-stmt:9 T0/R0/P0 routes S-AS:11
+G22 276-278 (3) tg-stmt "abstract stands before declare" O-stmt:3 T0/R0/P0 routes S-ABS:3
+G23 279-289 (11) tg-stmt "a string in brackets names an enum member" O-stmt:11 T0/R0/P0 routes S-ENUM:11
+G24 290-295 (6) tg-stmt "import starts an expression in a namespace" O-stmt:6 T0/R0/P0 routes S-NSIMPORT:6
+G25 296-301 (6) tg-stmt "the attributes of a module path start on the next line" O-stmt:6 T0/R0/P0 Fails:3 routes S-WITH:6
+G26 302-307 (6) tg-stmt "stays the cast of type, interface or namespace" O-stmt:2,X:4 T0/R0/P0 Fails:6 routes S-AS:6,G1:2,G2:2
+G27 308-308 (1) tg-stmt "with ( after a module path starts a statement" O-stmt:1 T0/R0/P0 Fails:1 routes S-WITH:1
+G28 309-315 (7) tg-meta "and & are the check type of a conditional type" M:7 T7/R0/P0 routes -
+G29 316-320 (5) tg-meta "keyof, readonly and unique end before extends" M:5 T5/R0/P0 routes -
+G30 321-325 (5) tg-meta "and &" M:5 T5/R0/P0 routes -
+G31 326-330 (5) tg-meta "a keyword before a dot is the first name of a type reference" M:5 T5/R0/P0 routes -
+G32 331-332 (2) tg-meta "unique takes the whole type after it" M:2 T2/R0/P0 routes -
+G33 333-341 (9) tg-meta "do" M:9 T9/R0/P0 routes -
+G34 342-347 (6) tg-meta "and & counts as what it serializes to" M:6 T6/R0/P0 routes -
+G35 348-352 (5) tg-meta "an import type and unique symbol are Object" M:5 T5/R0/P0 routes -
+G36 353-354 (2) tg-meta "a predicate on this is Boolean" M:2 T2/R0/P0 routes -
+G37 355-365 (11) tg-meta "a predicate in a return type is Boolean and an assertion is un" M:11 T0/R11/P0 routes -

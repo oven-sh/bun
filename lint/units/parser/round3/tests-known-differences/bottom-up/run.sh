@@ -24,7 +24,8 @@ if ls /workspace/wt/parser/test/bundler/transpiler/typescript-grammar*.test.ts >
 
 # 2. main, the release build of round 1, and tsc on each row.
 "$BASE" side.mjs rows.json runs/main.f4d755a9c.json
-"$HEAD" side.mjs rows.json runs/head.23a20afa7.json
+# The release build of round 1 (23a20afa7e) is gone since the restart of 2026-10-02: its run is kept, never made again with another binary.
+if [ ! -s runs/head.23a20afa7.json ]; then "$HEAD" side.mjs rows.json runs/head.23a20afa7.json; fi
 node tsc-rows.mjs rows.json runs/tsc.json
 
 # 3. Classes and causes, then what tsc builds for each row.

@@ -185,8 +185,8 @@ emit();
 // ---- 5. lint parse
 emit("### What a lint parse does with these sources");
 emit();
-const pinned = rows.filter(r => asWithoutLint.has(r.i));
-const pinnedKeys = new Set(pinned.map(r => r.loader + "\0" + r.src));
+const pinnedKeys = new Set(rows.filter(r => asWithoutLint.has(r.i)).map(r => r.loader + "\0" + r.src));
+const pinned = rows.filter(r => pinnedKeys.has(r.loader + "\0" + r.src));
 const allKeys = new Set(rows.map(r => r.loader + "\0" + r.src));
 emit(`A lint parse reads ${allKeys.size - pinnedKeys.size} of the ${allKeys.size} sources of the removed tests as tsc reads them: the types with the lint grammar, the rest through the`);
 emit("sites that test the side table. `src/js_parser/parse/grammar_rows_tests.rs` holds each source with what tsc builds for it.");

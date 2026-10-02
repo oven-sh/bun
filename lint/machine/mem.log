@@ -1,12 +1,3 @@
-10-02_13:20:52 anon=25MB pids=27 load=777.70 top=mariadbd:18MB
-10-02_13:21:23 anon=23MB pids=27 load=771.78 top=mariadbd:17MB
-10-02_13:21:53 anon=23MB pids=27 load=780.33 top=mariadbd:17MB
-10-02_13:22:25 anon=23MB pids=27 load=775.06 top=mariadbd:17MB
-10-02_13:22:58 anon=23MB pids=27 load=804.51 top=mariadbd:17MB
-10-02_13:23:31 anon=23MB pids=27 load=862.26 top=mariadbd:17MB
-10-02_13:24:03 anon=23MB pids=27 load=915.39 top=mariadbd:16MB
-10-02_13:24:35 anon=23MB pids=27 load=906.47 top=mariadbd:16MB
-10-02_13:25:08 anon=23MB pids=27 load=892.73 top=mariadbd:16MB
 10-02_13:25:41 anon=26MB pids=29 load=925.00 top=mariadbd:16MB
 10-02_13:26:13 anon=40MB pids=31 load=895.10 top=git-remote-http:19MB
 10-02_13:26:44 anon=23MB pids=27 load=917.94 top=mariadbd:16MB
@@ -398,3 +389,12 @@
 10-02_17:08:19 anon=7MB pids=36 load=602.76 top=node-MainThread:64MB
 10-02_17:08:52 anon=3MB pids=27 load=571.99 top=postgres:5MB
 10-02_17:09:30 anon=3MB pids=28 load=538.26 top=runc:[2:INIT]:9MB
+10-02_17:10:05 anon=270MB pids=34 load=664.49 top=rustc:417MB
+10-02_17:10:38 anon=3MB pids=27 load=644.14 top=runc:[2:INIT]:9MB
+10-02_17:11:12 anon=326MB pids=33 load=635.25 top=rustc:457MB
+10-02_17:11:47 anon=3MB pids=28 load=621.12 top=postgres:5MB
+10-02_17:12:22 anon=3MB pids=27 load=612.80 top=postgres:5MB
+10-02_17:12:56 anon=3MB pids=27 load=606.70 top=runc:[2:INIT]:9MB
+10-02_17:13:33 anon=11MB pids=53 load=643.89 top=bun.f4d755a9c:52MB
+10-02_17:14:11 anon=18MB pids=59 load=653.65 top=bun.f4d755a9c:50MB
+10-02_17:14:43 anon=3MB pids=28 load=556.50 top=postgres:5MB

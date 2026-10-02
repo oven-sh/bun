@@ -43,6 +43,6 @@ mutant 's/\.synthetic_origin = modifiers_prop;/.synthetic_origin = key_type;/' '
 mutant 's/let include = TypeFlags::STRING_OR_NUMBER_LITERAL_OR_UNIQUE;/let include = TypeFlags::STRING_OR_NUMBER_LITERAL_OR_UNIQUE; let unused_include = include;/' 'unused variable in resolve_mapped_type_members' 'unused variable'
 mutant 's/prop_type = self.get_optional_type(prop_type, true);/prop_type = self.get_optional_type(prop_type);/' 'missing argument in get_type_of_mapped_symbol' 'E0061'
 mutant 's/prepend_type_mapping(self, root_check_type, constraint, mapper);/prepend_type_mapping(self, mapper, root_check_type, constraint);/' 'mapper for a type in get_lower_bound_of_key_type' 'E0308'
-mutant 's/self.same_map(types, |c, u| c.get_lower_bound_of_key_type(u));/self.same_map(types, |_, u| self.get_lower_bound_of_key_type(u));/' 'nested mutable borrow in get_lower_bound_of_key_type' 'E0499'
+mutant 's/self.same_map(types, |c, u| c.get_lower_bound_of_key_type(u));/self.same_map(types, |_, u| self.get_lower_bound_of_key_type(u));/' 'second borrow of the checker in get_lower_bound_of_key_type' 'E0500'
 rustfmt --edition 2024 --check "$FILE"
 echo "c35_resolve_members.rs: probe ok"

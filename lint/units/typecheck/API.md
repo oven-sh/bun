@@ -3715,8 +3715,11 @@ No compiler has seen the 15 functions, and nothing ran one. What was checked, on
   checker that the 15 call (`c02_program_checker.rs`, `c03`, `c12`, `c14`, `c17`, `c20`, `c21`, `c22`, `c28`, `c31`,
   `c33`, `c36`, `c40`, `c41`, `c42`, `c43`, `c47`, `c48`, `c50`, `c51`, `flow.rs`, `relater.rs`), the free functions of
   `ast/`, `checker/` (`c42`, `c43`, `c45`, `flow.rs`, `utilities.rs`) and `core/core.rs`, the accessors of `Ast`, and
-  the fields, records and flags of the data model. A script counted the arguments of the 260 calls of the file against
-  the definitions of the tree, and it reports three faults that were put into a copy: no call of the file differs.
+  the fields, records and flags of the data model.
+- `python3 round2-layer7-checker/c34-arity.py`: of the 260 calls of the file on `self`, `a`, `c`, `resolver` and of free
+  functions, each has a definition of its name in the tree that takes as many arguments (the script compares numbers,
+  not types, and does not know which definition of a name a call means). It reports three faults that were put into a
+  copy of the file.
 - The 19 calls that 8 other files make into the 15 (`c07` 570, 585 and 640, `c08` 548, `c14` 1477, 1552 and 1556,
   `c16` 113, 247 and 276, `c31` 1394, `c38` 331, `c48` 515, 618, 683, 686 and 713, `relater.rs` 1404 and 3588) match
   the signatures by name, number and kind of arguments, and by what they do with the result.

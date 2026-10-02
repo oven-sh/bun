@@ -52,6 +52,9 @@ for (const r of rows) {
 // What a parse without lint keeps of a source that it accepts: one tag for each statement of its output.
 const keptOfOutput = text => text.split("\n").filter(Boolean).map(line => (/^(export )?(const|let|var) /.test(line) ? "s_local" : "s_expr"));
 
+// A case named with --as-without-lint stands for every case with its loader and source.
+for (const i of asWithoutLint) if (!rows[i]) throw new Error("no case " + i);
+const pinned = new Set(rows.filter(r => asWithoutLint.has(r.i)).map(r => r.loader + "\0" + r.src));
 const seen = new Map();
 for (const r of rows) {
   const key = r.loader + "\0" + r.src;
@@ -68,7 +71,7 @@ for (const r of rows) {
     return `Want::AsWithoutLint(Ok(${list(program.statements.map(st => STATEMENT[st.kind] ?? (() => { throw new Error("no tag for " + ts.SyntaxKind[st.kind]); })()))}))`;
   };
   let want;
-  if (asWithoutLint.has(r.i)) want = asMain();
+  if (pinned.has(key)) want = asMain();
   else if (r.reject) want = `Want::Fails(${r.reject.code}, ${r.reject.start}, ${r.reject.end})`;
   else {
     const f = r.facts;

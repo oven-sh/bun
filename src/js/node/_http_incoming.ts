@@ -12,6 +12,7 @@ const {
   eofInProgress,
   kHandle,
   kHandoffResponse,
+  kHeaderSource,
   noBodySymbol,
   emitErrorNextTickIfErrorListenerNT,
   NodeHTTPBodyReadState,
@@ -29,10 +30,9 @@ const kHeaders = Symbol("kHeaders");
 const kReqShouldKeepAlive = Symbol("kReqShouldKeepAlive");
 const kHeadersDistinct = Symbol("kHeadersDistinct");
 const kHeadersCount = Symbol("kHeadersCount");
-// Lazy req.rawHeaders: cache slot + the native handle the bytes live on
+// Lazy req.rawHeaders: cache slot. The bytes live on the native handle in kHeaderSource
 // (never cleared - unlike kHandle - so post-_destroy access still works).
 const kRawHeaders = Symbol("kRawHeaders");
-const kHeaderSource = Symbol("kHeaderSource");
 const kTrailers = Symbol("kTrailers");
 const kTrailersDistinct = Symbol("kTrailersDistinct");
 const kTrailersCount = Symbol("kTrailersCount");

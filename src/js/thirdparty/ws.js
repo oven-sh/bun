@@ -21,6 +21,19 @@ function lazyHttp() {
   return (http ??= require("node:http"));
 }
 
+// The server upgrades through the native response of the request. node:http keeps it on the
+// request: null for a request that it parsed in JS (http2 allowHTTP1, a socket given to
+// server.emit("connection")), and such a request cannot upgrade. A request object that the
+// program built has no such slot, so the response that the socket holds is taken.
+// Loaded on the first handshake.
+let kHeaderSource;
+function nativeRequest(request, socket) {
+  kHeaderSource ??= require("internal/http").kHeaderSource;
+  const own = request?.[kHeaderSource];
+  return own !== undefined ? own : socket[kBunInternals];
+}
+let upgradeNodeHTTPResponse;
+
 // npm ws's sendAfterClose: a ping/pong/send on a CLOSING/CLOSED socket delivers
 // a "not open" Error to the callback on the next tick and never throws.
 function sendAfterClose(state, cb) {
@@ -937,7 +950,7 @@ function socketOnError() {
   this.destroy();
 }
 
-function abortHandshake(socket, code, message, headers) {
+function abortHandshake(socket, code, message, headers, req) {
   const { STATUS_CODES } = lazyHttp();
   message = message || STATUS_CODES[code];
   headers = {
@@ -948,8 +961,9 @@ function abortHandshake(socket, code, message, headers) {
   };
 
   // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
+  // In an 'upgrade' listener the socket can still hold the response of a request ahead.
   const response = socket._httpMessage;
-  if (response) {
+  if (response && (!response.req || response.req === req)) {
     response.writeHead(code, headers);
     response.write(message);
     response.end();
@@ -957,7 +971,7 @@ function abortHandshake(socket, code, message, headers) {
   }
 
   // Another WebSocketServer on the same http.Server has already taken this connection.
-  if (socket[kBunInternals]?.upgraded) return;
+  if (nativeRequest(req, socket)?.upgraded) return;
 
   socket.once("finish", socket.destroy);
 
@@ -978,7 +992,7 @@ function abortHandshakeOrEmitwsClientError(server, req, socket, code, message, h
 
     server.emit("wsClientError", err, socket, req);
   } else {
-    abortHandshake(socket, code, message, headers);
+    abortHandshake(socket, code, message, headers, req);
   }
 }
 
@@ -1536,7 +1550,7 @@ class WebSocketServer extends EventEmitter {
     // Destroy the socket if the client has already sent a FIN packet.
     if (!socket.readable || !socket.writable) return socket.destroy();
 
-    const req = socket[kBunInternals];
+    const req = nativeRequest(request, socket);
 
     if (req?.upgraded) {
       throw new Error(
@@ -1544,9 +1558,12 @@ class WebSocketServer extends EventEmitter {
       );
     }
 
-    if (this._state > RUNNING) return abortHandshake(socket, 503);
+    if (this._state > RUNNING) return abortHandshake(socket, 503, undefined, undefined, request);
 
-    const server = socket.server[kBunInternals];
+    // No native request: refuse before handleProtocols and 'headers' run.
+    if (!req) {
+      return abortHandshake(socket, 500, "WebSocket is not supported on this connection", undefined, request);
+    }
 
     let protocol = "";
     if (protocols.size) {
@@ -1562,12 +1579,8 @@ class WebSocketServer extends EventEmitter {
     const headers = ["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade"];
     this.emit("headers", headers, request);
 
-    if (
-      server.upgrade(req, {
-        data: ws[kBunInternals],
-        headers: protocol ? { "sec-websocket-protocol": protocol } : undefined,
-      })
-    ) {
+    upgradeNodeHTTPResponse ??= $newRustFunction("node_http_binding.rs", "upgradeNodeHTTPResponse", 3);
+    if (upgradeNodeHTTPResponse(req, ws[kBunInternals], protocol || undefined)) {
       const clients = this.clients;
       if (clients) {
         clients.add(ws);
@@ -1581,7 +1594,7 @@ class WebSocketServer extends EventEmitter {
       }
       cb(ws, request);
     } else {
-      abortHandshake(socket, 500);
+      abortHandshake(socket, 500, undefined, undefined, request);
     }
   }
   /**
@@ -1631,7 +1644,7 @@ class WebSocketServer extends EventEmitter {
     }
 
     if (!this.shouldHandle(req)) {
-      abortHandshake(socket, 400);
+      abortHandshake(socket, 400, undefined, undefined, req);
       return;
     }
 
@@ -1665,7 +1678,7 @@ class WebSocketServer extends EventEmitter {
       if (this.options.verifyClient.length === 2) {
         this.options.verifyClient(info, (verified, code, message, headers) => {
           if (!verified) {
-            return abortHandshake(socket, code || 401, message, headers);
+            return abortHandshake(socket, code || 401, message, headers, req);
           }
 
           this.completeUpgrade(extensions, key, protocols, req, socket, head, cb);
@@ -1673,7 +1686,7 @@ class WebSocketServer extends EventEmitter {
         return;
       }
 
-      if (!this.options.verifyClient(info)) return abortHandshake(socket, 401);
+      if (!this.options.verifyClient(info)) return abortHandshake(socket, 401, undefined, undefined, req);
     }
 
     this.completeUpgrade(extensions, key, protocols, req, socket, head, cb);

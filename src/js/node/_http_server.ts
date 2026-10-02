@@ -927,7 +927,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // token; the server then consults shouldUpgradeCallback (default: an
         // 'upgrade' listener is installed) and otherwise dispatches the
         // request normally.
-        // Not when pipelined: the builtin ws answers through the socket's current response, the one in flight.
+        // Not when pipelined: the builtin ws upgrades through the native response of the request, and a queued one does not hold the connection.
         let is_upgrade = false;
         if (
           !isPipelined &&

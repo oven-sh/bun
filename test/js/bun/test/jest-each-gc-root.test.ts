@@ -185,7 +185,7 @@ test("the rows of a test.each/describe.each template table are a GC root", async
   expect(stderr).toContain(" 4 pass");
   expect(stderr).toContain(" 0 fail");
   expect(exitCode).toBe(0);
-}, 60_000);
+});
 
 // A collection runs while .each builds the rows, and while it makes the function that keeps
 // them: the row array and its rows have no other owner then. slowPathAllocsBetweenGCs
@@ -225,5 +225,4 @@ test.concurrent.each([3, 4])(
     expect(stderr).toContain(" 0 fail");
     expect(exitCode).toBe(0);
   },
-  60_000,
 );

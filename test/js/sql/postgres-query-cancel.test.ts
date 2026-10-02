@@ -714,6 +714,45 @@ test("cancel() during the Parse of a statement does not fail the queries that sh
   expect(server.queryUnits).toBe(2);
 });
 
+// The first run of a statement with parameters sends Parse, Describe and Sync and
+// waits for the parameter types. Its Bind is not written, so cancel() rejects the
+// query at once and opens no connection. The backend still answers the Parse, and
+// the statement is prepared for the next query with that text.
+test("cancel() while only the Parse of a query is on the wire rejects it and keeps the statement", async () => {
+  await using server = await backend();
+  server.autoReply = false;
+  await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
+  const statement = (value: string) => sql`select ${value}::text as v`;
+
+  const cancelled = statement("x").execute();
+  const cancelledSettled = cancelled.then(
+    rows => rows,
+    err => err,
+  );
+  await server.untilQueryUnits(1);
+  cancelled.cancel();
+  const err = await cancelledSettled;
+  expect({ code: err.code, hint: err.hint }).toEqual({ code: "ERR_POSTGRES_QUERY_CANCELLED", hint: undefined });
+
+  server.reply(
+    pgParseComplete(),
+    pgParameterDescription([TEXT_OID]),
+    pgRowDescription([{ name: "v", typeOid: TEXT_OID }]),
+    pgReadyForQuery(),
+  );
+
+  // The next run needs no Parse: its unit is a Bind and an Execute.
+  const next = statement("z").execute();
+  await server.untilQueryUnits(2);
+  server.answerPrepared("z");
+  expect(await next).toEqual([{ v: "z" }]);
+  expect({
+    parses: server.frontendMessages.match(/P/g)?.length,
+    binds: server.frontendMessages.match(/B/g)?.length,
+    connections: server.connections,
+  }).toEqual({ parses: 1, binds: 1, connections: 1 });
+});
+
 test("cancel() on a queued query does not cancel the one the backend is running", async () => {
   await using server = await backend();
   server.autoReply = false;

@@ -9,14 +9,14 @@ Part of #2246
 
 - `bun --lint <files>` parses each file and never runs it. It prints syntax errors and the findings of 11 lint rules. It needs `BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1`.
 - A lint parse reads what tsc reads and keeps the type syntax in a side table beside the unchanged tree.
-- The type checker (a port of typescript-go) is not in this branch yet. The notes list each step.
-- Verified: `test/cli/lint/` (89 tests), `test/bundler/transpiler/typescript-grammar*.test.ts` (366 cases), 70 parser Rust tests.
+- The type checker (a typescript-go port) is not in this branch yet. The notes list each step.
+- Verified: `test/cli/lint/` (89 tests), `typescript-grammar*.test.ts` (366 cases), 70 parser Rust tests.
 
 ### Background
 
 - A sink receives what the type grammar reads. `Discard` keeps nothing, `Build` makes type nodes.
 - A lint parse runs the parse pass without the visit pass. Other parses build the same tree as before.
-- Considered a third const parameter on the parser: one more parser copy (475,827 B). Considered type syntax as AST nodes: `G::Decl` grows for each run.
+- Considered a third const parameter on the parser: one more parser copy (475,827 B). Considered type syntax as AST nodes: `G::Decl` grows.
 
 ### Downsides
 

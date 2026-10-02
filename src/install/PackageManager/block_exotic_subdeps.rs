@@ -5,14 +5,14 @@
 //! are exempt. Modeled on pnpm:
 //! https://pnpm.io/11.x/supply-chain-security#prevent-exotic-transitive-dependencies
 //!
-//! Classification layers (see `classify`): `catalog:` literals are
-//! root-authored and skipped first; then the child's `Resolution::Tag`
+//! Classification layers (see `classify`): dereferenced `catalog:` references
+//! are root-authored and skipped first; then the child's `Resolution::Tag`
 //! decides; only a `.workspace` resolution falls back to re-inferring the
 //! parent's literal, because `linkWorkspacePackages` can rewrite a plain
 //! semver to a workspace. Root `overrides`/`resolutions` take priority over
 //! the transitive literal when the resolver applied them. A range or dist-tag
 //! that binds to a non-registry package is allowed only when the root or a
-//! workspace depends on that package directly.
+//! workspace itself names a non-registry source for that package.
 
 use bstr::BStr;
 use bun_collections::ArrayHashMap;
@@ -105,20 +105,19 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
             } else {
                 None
             };
-            let literal_raw: &[u8] = match overridden.as_ref() {
-                Some(ovr) => ovr.literal.slice(string_buf),
-                None => dep.version.literal.slice(string_buf),
-            };
+            let version = overridden.as_ref().unwrap_or(&dep.version);
+            let literal_raw: &[u8] = version.literal.slice(string_buf);
 
-            let Some(verdict) = classify(dep_res_tag, literal_raw) else {
+            let Some(verdict) = classify(dep_res_tag, version.tag, literal_raw) else {
                 continue;
             };
 
-            // A plain range names no source. It can bind to a package the
-            // project itself took from one (a plugin's peer range on a library
-            // the root pins to a tarball). The project chose that package.
-            if names_no_source(literal_raw)
-                && manager.lockfile.is_workspace_declared_package(dep_pkg_id)
+            // A range or a dist-tag names no source. It can bind to a package
+            // for which the project itself names one (a plugin's peer range on
+            // a library the root pins to a tarball). The lockfile row alone
+            // does not count: it can bind a range to a source nobody declared.
+            if matches!(version.tag, dependency::Tag::Npm | dependency::Tag::DistTag)
+                && project_names_source_of(manager, dep_pkg_id)
             {
                 continue;
             }
@@ -174,33 +173,69 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
     count
 }
 
-/// Is the literal a range or a dist-tag? An empty one does not count: the
-/// lockfile clone pass can wipe a literal.
-fn names_no_source(literal_raw: &[u8]) -> bool {
-    let literal = strings::trim_left(literal_raw, b" \t\n\r");
-    !literal.is_empty()
-        && matches!(
-            dependency::Tag::infer(literal),
-            dependency::Tag::Npm | dependency::Tag::DistTag
-        )
+/// Does the root or a workspace depend on package `id` through a dependency
+/// that names a non-registry source in its own package.json (or in the catalog
+/// entry it references)?
+fn project_names_source_of(manager: &PackageManager, id: PackageID) -> bool {
+    let lockfile = &manager.lockfile;
+    let pkgs = lockfile.packages.slice();
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+
+    for (res, deps) in pkgs
+        .items_resolution()
+        .iter()
+        .zip(pkgs.items_dependencies())
+    {
+        if res.tag != ResolutionTag::Root && res.tag != ResolutionTag::Workspace {
+            continue;
+        }
+        for dep_id in deps.begin()..deps.end() {
+            let dep_id = dep_id as usize;
+            if dep_id >= dependencies.len() || resolutions.get(dep_id) != Some(&id) {
+                continue;
+            }
+            let version = lockfile
+                .catalogs
+                .resolve_range(string_buf, &dependencies[dep_id]);
+            if matches!(
+                version.tag,
+                dependency::Tag::Git
+                    | dependency::Tag::Github
+                    | dependency::Tag::Tarball
+                    | dependency::Tag::Folder
+                    | dependency::Tag::Symlink
+            ) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
-/// Returns the exotic-source label if the (resolution, literal) pair is
-/// exotic per this policy, or `None` if it's allowed.
+/// Returns the exotic-source label if the (resolution, version) pair is
+/// exotic per this policy, or `None` if it's allowed. `version_tag` is the
+/// tag the resolver parsed for `literal_raw`.
 #[inline]
-fn classify(res_tag: ResolutionTag, literal_raw: &[u8]) -> Option<&'static str> {
+fn classify(
+    res_tag: ResolutionTag,
+    version_tag: dependency::Tag,
+    literal_raw: &[u8],
+) -> Option<&'static str> {
+    // A `catalog:` reference the resolver dereferences is root-authored, and
+    // the resolution carries the catalog target's tag. A package outside the
+    // project cannot reference a catalog: its `catalog:` peer is an optional
+    // `*` range by the time it gets here (`CatalogMap::strip_reference`).
+    if version_tag == dependency::Tag::Catalog {
+        return None;
+    }
+
     // Trim like `Dependency::parse` does so re-inference matches the
     // resolver's read of the same literal (untrimmed bytes skew `infer()`:
     // `" workspace:*"` reads as a git SCP shorthand, for example).
     let literal = strings::trim_left(literal_raw, b" \t\n\r");
     let literal_tag = dependency::Tag::infer(literal);
-
-    // `catalog:` is root-authored. The resolver dereferences it inline, so
-    // the resolution carries the catalog target's tag; the stored literal
-    // is the only signal the parent wrote `catalog:`.
-    if literal_tag == dependency::Tag::Catalog {
-        return None;
-    }
 
     match res_tag {
         ResolutionTag::Uninitialized | ResolutionTag::Root | ResolutionTag::Npm => None,

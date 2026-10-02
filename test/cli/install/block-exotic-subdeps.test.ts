@@ -497,27 +497,33 @@ blockExoticSubdeps = true
     expect(exitCode).not.toBe(0);
   });
 
-  // The root may take `lib` from any source. A registry package's plain peer
-  // range binds to that same package, and names no source of its own.
+  // The root may take `lib` from any source. A registry package's peer range
+  // binds to that same package, and names no source of its own. An empty
+  // range is `latest`. A `catalog:` peer outside the project is read as `*`.
   describe.each([
-    ["a local tarball", () => "file:./lib.tgz"],
-    ["a folder", () => "file:./lib"],
-    ["a tarball URL", (origin: string) => `${origin}/lib.tgz`],
-  ] as const)("a plain peer range on a package the root takes from %s", (_, source) => {
+    ["a local tarball", () => "file:./lib.tgz", false],
+    ["a folder", () => "file:./lib", false],
+    ["a tarball URL", (origin: string) => `${origin}/lib.tgz`, false],
+    ["a local tarball that its catalog names", () => "file:./lib.tgz", true],
+  ] as const)("a peer range on a package the root takes from %s", (_, source, throughCatalog) => {
     test.each([
-      ["a peer dependency", {}],
-      ["an optional peer dependency", { peerDependenciesMeta: { lib: { optional: true } } }],
-    ] as const)("is allowed as %s, in the first install and in the second", async (_, meta) => {
+      ["a peer dependency", { peerDependencies: { lib: "^1.0.0" } }],
+      [
+        "an optional peer dependency",
+        { peerDependencies: { lib: "^1.0.0" }, peerDependenciesMeta: { lib: { optional: true } } },
+      ],
+      ["a peer dependency with an empty range", { peerDependencies: { lib: "" } }],
+      ["a `catalog:` peer dependency", { peerDependencies: { lib: "catalog:" } }],
+    ] as const)("is allowed as %s, in the first install and in the second", async (_, fields) => {
       const lib = { name: "lib", version: "1.0.0" };
-      await using registry = await serveRegistry([
-        lib,
-        { name: "plugin", version: "1.0.0", peerDependencies: { lib: "^1.0.0" }, ...meta },
-      ]);
+      await using registry = await serveRegistry([lib, { name: "plugin", version: "1.0.0", ...fields }]);
+      const spec = source(registry.origin);
       using dir = tempDir("block-exotic-peer-range", {
         "package.json": JSON.stringify({
           name: "root",
           version: "1.0.0",
-          dependencies: { lib: source(registry.origin), plugin: "1.0.0" },
+          dependencies: { lib: throughCatalog ? "catalog:" : spec, plugin: "1.0.0" },
+          ...(throughCatalog && { workspaces: { catalog: { lib: spec } } }),
         }),
         "bunfig.toml": bunfigWithRegistry(registry.origin),
         "lib.tgz": Buffer.from(await tarball(lib)),
@@ -578,6 +584,45 @@ blockExoticSubdeps = true
     expect(stderr).toContain("plugin@1.0.0 depends on lib@^1.0.0 via remote_tarball source");
     expect(exitCode).toBe(1);
   });
+
+  // bun.lock is not the project's word. The root asks for a range here, so a
+  // row that binds that range to a tarball does not make the root its declarer.
+  test.each([
+    ["a dependency", { dependencies: { lib: "^1.0.0" } }, "^1.0.0"],
+    ["a peer dependency", { peerDependencies: { lib: "^1.0.0" } }, "^1.0.0"],
+    ["a `catalog:` peer dependency", { peerDependencies: { lib: "catalog:" } }, "catalog:"],
+  ] as const)(
+    "blocks a lockfile entry that binds the range of the root and of %s to a tarball",
+    async (_, fields, literal) => {
+      await using registry = await serveRegistry([
+        { name: "lib", version: "1.0.0" },
+        { name: "plugin", version: "1.0.0", ...fields },
+      ]);
+      using dir = tempDir("block-exotic-lockfile-row", {
+        "package.json": JSON.stringify({
+          name: "root",
+          version: "1.0.0",
+          dependencies: { lib: "^1.0.0", plugin: "1.0.0" },
+        }),
+        "bunfig.toml": bunfigWithRegistry(registry.origin),
+      });
+
+      // Every package comes from the registry, so the first install is allowed.
+      expect(await install(String(dir))).toEqual({
+        stderr: expect.not.stringContaining("blockExoticSubdeps"),
+        exitCode: 0,
+      });
+      const lockfile = join(String(dir), "bun.lock");
+      const recorded = await Bun.file(lockfile).text();
+      const row = /"lib": \["lib@1\.0\.0", [^\n]*\],/;
+      expect(recorded).toMatch(row);
+      await Bun.write(lockfile, recorded.replace(row, `"lib": ["lib@${registry.origin}/lib.tgz", {}],`));
+
+      const { stderr, exitCode } = await install(String(dir), "--frozen-lockfile");
+      expect(stderr).toContain(`plugin@1.0.0 depends on lib@${literal} via remote_tarball source`);
+      expect(exitCode).toBe(1);
+    },
+  );
 
   test("blocks a tarball URL that a registry package depends on", async () => {
     await using registry = await serveRegistry(

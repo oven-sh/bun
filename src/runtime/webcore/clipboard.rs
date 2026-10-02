@@ -3,10 +3,14 @@
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 use core::ptr;
+use core::sync::atomic::{AtomicU64, Ordering};
 use std::borrow::Cow;
 
 use bun_jsc::job::JsAffine;
-use bun_jsc::{Completion, JSGlobalObject, Job, JobContext, JsError, JsThread};
+use bun_jsc::{
+    CallFrame, Completion, JSGlobalObject, JSValue, Job, JobContext, JsError, JsResult, JsThread,
+    Ticket,
+};
 
 /// `WebCore::ClipboardRequest`, completed or released on the JS thread.
 struct Request(*mut c_void);
@@ -112,10 +116,13 @@ impl JobContext for ClipboardJob {
     type Js = Request;
 
     fn run(this: &mut ClipboardOp, done: Completion<Self>) -> Option<Completion<Self>> {
+        let ticket = done.ticket();
         this.outcome = match &this.op {
-            Op::ReadText => platform::read_types(&[Mime::TextPlain], &this.env),
-            Op::Read => platform::read_types(&Mime::ALL, &this.env),
-            Op::Write(items) => platform::write_types(items, &this.env).map(|()| Vec::new()),
+            Op::ReadText => platform::read_types(&[Mime::TextPlain], &this.env, ticket),
+            Op::Read => platform::read_types(&Mime::ALL, &this.env, ticket),
+            Op::Write(items) => {
+                platform::write_types(items, &this.env, ticket).map(|()| Vec::new())
+            }
         };
         Some(done)
     }
@@ -186,6 +193,29 @@ pub(crate) unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
     schedule(global, Op::Write(items), request)
 }
 
+/// How long one run of a helper program may take, in milliseconds. Only the
+/// Linux/BSD backend runs helpers.
+static HELPER_TIMEOUT_MS: AtomicU64 = AtomicU64::new(10_000);
+
+/// `bun:internal-for-testing`'s `setClipboardHelperTimeoutForTesting(milliseconds)`.
+/// Returns the limit it replaces.
+#[bun_jsc::host_fn]
+pub(crate) fn set_helper_timeout_for_testing(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [limit] = callframe.arguments_as_array::<1>();
+    if !limit.is_number() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "setClipboardHelperTimeoutForTesting expects a number"
+        )));
+    }
+    let milliseconds =
+        u64::try_from(limit.coerce_to_int64(global)?.max(1)).expect("a positive i64 fits u64");
+    let previous = HELPER_TIMEOUT_MS.swap(milliseconds, Ordering::Relaxed);
+    Ok(JSValue::js_number(previous as f64))
+}
+
 /// Why the platform clipboard could not be used; the `NotAllowedError` message.
 enum Unavailable {
     Platform,
@@ -230,7 +260,7 @@ impl Unavailable {
 mod platform {
     use core::ffi::{CStr, c_char, c_void};
 
-    use super::{JSGlobalObject, Mime, Outcome, Unavailable};
+    use super::{JSGlobalObject, Mime, Outcome, Ticket, Unavailable};
 
     /// The pasteboard does not depend on the environment.
     pub(super) struct Env;
@@ -268,7 +298,7 @@ mod platform {
         }
     }
 
-    pub(super) fn read_types(types: &[Mime], _env: &Env) -> Outcome {
+    pub(super) fn read_types(types: &[Mime], _env: &Env, _ticket: &Ticket) -> Outcome {
         let utis: Vec<*const c_char> = types.iter().map(|&mime| uti(mime).as_ptr()).collect();
         let mut datas: Vec<*mut c_void> = vec![core::ptr::null_mut(); types.len()];
         let mut lens = vec![0usize; types.len()];
@@ -311,7 +341,11 @@ mod platform {
         Err(Unavailable::Changing)
     }
 
-    pub(super) fn write_types(items: &[(Mime, Vec<u8>)], _env: &Env) -> Result<(), Unavailable> {
+    pub(super) fn write_types(
+        items: &[(Mime, Vec<u8>)],
+        _env: &Env,
+        _ticket: &Ticket,
+    ) -> Result<(), Unavailable> {
         if items.is_empty() {
             return Ok(());
         }
@@ -488,7 +522,7 @@ mod platform {
     use bun_sys::windows::user32::CF_UNICODETEXT;
 
     use super::win32::{OpenedClipboard, OwnedGlobal, register_format};
-    use super::{JSGlobalObject, Mime, Outcome, Unavailable};
+    use super::{JSGlobalObject, Mime, Outcome, Ticket, Unavailable};
 
     /// The clipboard does not depend on the environment.
     pub(super) struct Env;
@@ -631,7 +665,7 @@ mod platform {
     }
 
     /// One open span, so no other process writes between the types.
-    pub(super) fn read_types(types: &[Mime], _env: &Env) -> Outcome {
+    pub(super) fn read_types(types: &[Mime], _env: &Env, _ticket: &Ticket) -> Outcome {
         let read: Vec<(Mime, Read)> = {
             let mut clipboard = OpenedClipboard::open().ok_or(Unavailable::Platform)?;
             types
@@ -719,7 +753,11 @@ mod platform {
         Some(dib)
     }
 
-    pub(super) fn write_types(items: &[(Mime, Vec<u8>)], _env: &Env) -> Result<(), Unavailable> {
+    pub(super) fn write_types(
+        items: &[(Mime, Vec<u8>)],
+        _env: &Env,
+        _ticket: &Ticket,
+    ) -> Result<(), Unavailable> {
         // Everything fallible happens before the clipboard is emptied.
         let mut formats = Vec::with_capacity(items.len() + 1);
         for (mime, bytes) in items {
@@ -749,10 +787,12 @@ mod platform {
 #[cfg(not(any(target_os = "macos", windows)))]
 mod platform {
     use core::ffi::c_char;
+    use core::sync::atomic::Ordering;
+    use core::time::Duration;
     use std::ffi::CString;
     use std::io::Write as _;
 
-    use bun_core::{env_var, strings};
+    use bun_core::strings;
     use bun_jsc::{
         JSObject, JSPropertyIterator, JSValue, JsError, JsResult, PropertyIteratorOptions,
     };
@@ -761,11 +801,13 @@ mod platform {
     use crate::api::bun_process::Status as SpawnStatus;
     use crate::api::bun_process::sync as spawn_sync;
 
-    use super::{JSGlobalObject, Mime, Outcome, Unavailable};
+    use super::{HELPER_TIMEOUT_MS, JSGlobalObject, Mime, Outcome, Ticket, Unavailable};
 
     unsafe extern "C" {
         /// The script's `process.env`, which holds the writes the native env map does not.
         fn Bun__Clipboard__processEnv(global: &JSGlobalObject) -> JSValue;
+        // The declaration of `api/bun/js_bun_spawn_bindings.rs`.
+        safe static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
     }
 
     /// What `process.env` holds when the operation is scheduled, taken on the JS
@@ -945,7 +987,8 @@ mod platform {
         b"No suitable type",
     ];
 
-    /// The watchdog's codes (127/126 missing, 124 killed) are ones no helper uses.
+    /// 126 and 127 are how a wrapper script says it could not run the program. A
+    /// helper that a signal ended has failed. The time limit ends it with one.
     fn classify(result: spawn_sync::Result) -> HelperRun {
         if result.status.is_ok() {
             return HelperRun::Succeeded(result.stdout);
@@ -955,7 +998,6 @@ mod platform {
         };
         match exited.code {
             126 | 127 => HelperRun::NotInstalled,
-            124 => HelperRun::Failed { clean: false },
             _ => HelperRun::Failed {
                 clean: NOTHING_COPIED
                     .iter()
@@ -964,52 +1006,30 @@ mod platform {
         }
     }
 
-    /// POSIX single-quoting: literal inside `'…'` except `'` -> `'\''`.
-    fn shell_quote_into(command: &mut Vec<u8>, word: &[u8]) {
-        command.push(b'\'');
-        for &byte in word {
-            if byte == b'\'' {
-                command.extend_from_slice(b"'\\''");
-            } else {
-                command.push(byte);
-            }
-        }
-        command.push(b'\'');
-    }
-
-    /// Runs a helper under a `/bin/sh` watchdog: a hung X11 selection owner blocks forever.
+    /// Runs one helper. It has a time limit because a hung X11 selection owner
+    /// blocks it forever; the spawn ends it, and what it started, at the limit.
     fn run(
         argv: &[&str],
         stdin: Option<Fd>,
         capture: bool,
         env: &Env,
+        ticket: &Ticket,
     ) -> Result<HelperRun, Unavailable> {
-        let mut command = Vec::<u8>::with_capacity(256);
-        // An asynchronous command's stdin is /dev/null, so the payload goes through fd 3.
-        if stdin.is_some() {
-            command.extend_from_slice(b"exec 3<&0; ");
+        // A VM that is stopping takes no answer, so a read gets no further run.
+        // A write is still of use, so its next candidate runs.
+        if capture && !ticket.script_allowed() {
+            return Err(Unavailable::Platform);
         }
-        for (i, word) in argv.iter().enumerate() {
-            if i > 0 {
-                command.push(b' ');
-            }
-            shell_quote_into(&mut command, word.as_bytes());
-        }
-        if stdin.is_some() {
-            command.extend_from_slice(b" <&3 3<&- & c=$!; exec 3<&-;");
-        } else {
-            command.extend_from_slice(b" & c=$!;");
-        }
-        let seconds = env_var::BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT
-            .get()
-            .unwrap_or_default()
-            .max(1);
-        // Fires only after `sleep` completes; redirected so it holds no captured pipe.
-        command.extend_from_slice(b" { trap 'kill \"$sp\" 2>/dev/null; exit 0' TERM; sleep ");
-        command.extend_from_slice(seconds.to_string().as_bytes());
-        command.extend_from_slice(
-            b" & sp=$!; wait \"$sp\" && kill \"$c\" 2>/dev/null; } >/dev/null 2>&1 & w=$!; wait \"$c\"; s=$?; kill \"$w\" 2>/dev/null; [ \"$s\" -ge 128 ] && s=124; exit \"$s\"",
-        );
+        // An unset PATH is the system's default one, as in sh. An empty one has nothing.
+        let path = env.get(b"PATH").unwrap_or_else(|| {
+            // SAFETY: a NUL-terminated static C string.
+            unsafe { bun_core::ffi::cstr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes()
+        });
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let Some(program) = bun_which::which(&mut path_buf, path, b"", argv[0].as_bytes()) else {
+            return Ok(HelperRun::NotInstalled);
+        };
+        let program = program.as_bytes();
         let output = if capture {
             spawn_sync::SyncStdio::Buffer
         } else {
@@ -1017,11 +1037,10 @@ mod platform {
         };
         let envp = env.envp();
         let result = spawn_sync::spawn(&spawn_sync::Options {
-            argv: vec![
-                Box::from(b"/bin/sh".as_slice()),
-                Box::from(b"-c".as_slice()),
-                command.into_boxed_slice(),
-            ],
+            argv: core::iter::once(program)
+                .chain(argv[1..].iter().map(|word| word.as_bytes()))
+                .map(Box::from)
+                .collect(),
             cwd: Box::from(b".".as_slice()),
             stdin: stdin.map_or(spawn_sync::SyncStdio::Ignore, spawn_sync::SyncStdio::Fd),
             // Not for writes: a helper that daemonizes keeps its output open.
@@ -1030,10 +1049,25 @@ mod platform {
             envp: Some(envp.as_ptr()),
             // A pool thread must not arm the process-wide signal forwarder.
             forward_signals: false,
+            timeout: Some(Duration::from_millis(
+                HELPER_TIMEOUT_MS.load(Ordering::Relaxed),
+            )),
+            // A read is of no use once this process is gone. A write still is:
+            // its helper goes on to hand the data to the daemon it forks.
+            linux_pdeathsig: capture.then_some(libc::SIGKILL as u8),
             ..Default::default()
         });
         match result {
             Ok(Ok(result)) => Ok(classify(result)),
+            // This candidate cannot be run. The next one may.
+            Ok(Err(error))
+                if matches!(
+                    error.get_errno(),
+                    bun_sys::E::ENOENT | bun_sys::E::ENOTDIR | bun_sys::E::EACCES
+                ) =>
+            {
+                Ok(HelperRun::NotInstalled)
+            }
             Ok(Err(error)) => Err(Unavailable::Spawn(error)),
             Err(_) => Err(Unavailable::Platform),
         }
@@ -1067,11 +1101,16 @@ mod platform {
         String::from_utf16_lossy(&units).into_bytes()
     }
 
-    fn read_one(helper: Helper, mime: Mime, env: &Env) -> Result<Answer, Unavailable> {
+    fn read_one(
+        helper: Helper,
+        mime: Mime,
+        env: &Env,
+        ticket: &Ticket,
+    ) -> Result<Answer, Unavailable> {
         let Some(argv) = helper.read_argv(mime) else {
             return Ok(Answer::NotInstalled);
         };
-        Ok(match run(argv, None, true, env)? {
+        Ok(match run(argv, None, true, env, ticket)? {
             HelperRun::NotInstalled => Answer::NotInstalled,
             HelperRun::Failed { clean: false } => Answer::Failed,
             HelperRun::Failed { clean: true } => Answer::Present(Vec::new()),
@@ -1087,11 +1126,16 @@ mod platform {
     }
 
     /// Asks the selection owner what it offers, then reads only those types.
-    fn read_offered(helper: Helper, types: &[Mime], env: &Env) -> Result<Answer, Unavailable> {
+    fn read_offered(
+        helper: Helper,
+        types: &[Mime],
+        env: &Env,
+        ticket: &Ticket,
+    ) -> Result<Answer, Unavailable> {
         let Some(argv) = helper.targets_argv() else {
-            return read_one(helper, Mime::TextPlain, env);
+            return read_one(helper, Mime::TextPlain, env, ticket);
         };
-        let targets = match run(argv, None, true, env)? {
+        let targets = match run(argv, None, true, env, ticket)? {
             HelperRun::NotInstalled => return Ok(Answer::NotInstalled),
             HelperRun::Failed { clean: false } => return Ok(Answer::Failed),
             HelperRun::Failed { clean: true } => return Ok(Answer::Present(Vec::new())),
@@ -1099,7 +1143,7 @@ mod platform {
         };
         let mut present = Vec::new();
         for &mime in types.iter().filter(|&&mime| offers(&targets, mime)) {
-            match read_one(helper, mime, env)? {
+            match read_one(helper, mime, env, ticket)? {
                 Answer::Present(mut read) => present.append(&mut read),
                 // An offered type that cannot be delivered is a failed read, not an absent one.
                 Answer::Failed | Answer::NotInstalled => return Ok(Answer::Failed),
@@ -1109,12 +1153,12 @@ mod platform {
     }
 
     /// The first helper that reaches the clipboard answers for it.
-    pub(super) fn read_types(types: &[Mime], env: &Env) -> Outcome {
+    pub(super) fn read_types(types: &[Mime], env: &Env, ticket: &Ticket) -> Outcome {
         let mut ran = false;
         for helper in helpers(env)? {
             let answer = match types {
-                [mime] => read_one(helper, *mime, env)?,
-                _ => read_offered(helper, types, env)?,
+                [mime] => read_one(helper, *mime, env, ticket)?,
+                _ => read_offered(helper, types, env, ticket)?,
             };
             match answer {
                 Answer::Present(present) => return Ok(present),
@@ -1129,7 +1173,11 @@ mod platform {
         })
     }
 
-    pub(super) fn write_types(items: &[(Mime, Vec<u8>)], env: &Env) -> Result<(), Unavailable> {
+    pub(super) fn write_types(
+        items: &[(Mime, Vec<u8>)],
+        env: &Env,
+        ticket: &Ticket,
+    ) -> Result<(), Unavailable> {
         // WebCore passes exactly one representation on this backend.
         let [(mime, bytes)] = items else {
             return Err(Unavailable::Platform);
@@ -1142,7 +1190,7 @@ mod platform {
                 continue;
             };
             payload.seek_to(0).map_err(|_| Unavailable::Platform)?;
-            match run(argv, Some(payload.handle), false, env)? {
+            match run(argv, Some(payload.handle), false, env, ticket)? {
                 HelperRun::Succeeded(_) => return Ok(()),
                 HelperRun::NotInstalled => {}
                 HelperRun::Failed { .. } => ran = true,

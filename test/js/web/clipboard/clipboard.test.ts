@@ -877,8 +877,30 @@ const NO_HELPER = "NotAllowedError: No clipboard helper was found. Install `wl-c
 const HELPER_FAILED = "NotAllowedError: The clipboard helper program failed to access the clipboard.";
 const TEXT_TOO_LARGE = "NotAllowedError: The text on the clipboard is too large to read as a string.";
 
+// Whether a process is still there. One that was ended and that nobody has
+// collected yet (a zombie) is not.
+function isRunning(pid: string) {
+  try {
+    const stat = readFileSync("/proc/" + pid + "/stat", "utf8");
+    return stat[stat.lastIndexOf(")") + 2] !== "Z";
+  } catch (e: any) {
+    if (e.code !== "ENOENT" && e.code !== "ESRCH") throw e;
+    return false;
+  }
+}
+
+// A signal ends a process at its own pace, so this waits for that.
+async function hasEnded(pid: string) {
+  for (let tries = 0; tries < 200 && isRunning(pid); tries++) await Bun.sleep(10);
+  return !isRunning(pid);
+}
+
 // Available to every child script: settle a promise into something JSON can
 // carry, read what a stand-in recorded, and print the one line the test reads.
+// `limitHelperRuns` replaces the 10 seconds a helper run may take. `running`
+// and `ended` are the two functions above, for a pid that a stand-in recorded.
+// On a machine under heavy load the time limit can end a stand-in before it
+// records the pid. Then nothing of it is left to look at.
 const CHILD_PRELUDE = `
   const { readFileSync, readdirSync } = require("node:fs");
   const CLIP_DIR = process.env.CLIP_DIR;
@@ -888,7 +910,25 @@ const CHILD_PRELUDE = `
   const received = name => readFileSync(CLIP_DIR + "/" + name, "utf8");
   const leftovers = () => readdirSync(process.env.TMPDIR);
   const print = value => console.log(JSON.stringify(value));
+  const limitHelperRuns = ms => require("bun:internal-for-testing").setClipboardHelperTimeoutForTesting(ms);
+  ${isRunning}
+  ${hasEnded}
+  const recordedPid = name => {
+    try {
+      return received(name).trim();
+    } catch (e) {
+      if (e.code !== "ENOENT") throw e;
+      return "";
+    }
+  };
+  const running = name => recordedPid(name) !== "" && isRunning(recordedPid(name));
+  const ended = async name => recordedPid(name) === "" || (await hasEnded(recordedPid(name)));
 `;
+
+// A pidfd tells the wait that a helper exited, and a memfd holds its output.
+// Where the kernel has neither (FreeBSD), the wait looks at the helper at
+// intervals and the output comes through a socket pair.
+const NO_PIDFD_NO_MEMFD = { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" };
 
 // Runs `script` in a child whose PATH starts with a directory of stand-ins for
 // the four helpers. A stand-in appends "<name> <args>" to a log and then runs
@@ -908,8 +948,7 @@ async function runWithHelpers(
     "tmp 'dir'": {},
   };
   for (const helper of HELPERS) {
-    files[helper] =
-      `#!/bin/sh\nprintf '%s\\n' "$(basename "$0") $*" >> "$CLIP_DIR/log"\n${bodies[helper] ?? "exit 127"}\n`;
+    files[helper] = `#!/bin/sh\nprintf '%s\\n' "\${0##*/} $*" >> "$CLIP_DIR/log"\n${bodies[helper] ?? "exit 127"}\n`;
   }
   using dir = tempDir("clipboard-helpers", files);
   for (const helper of HELPERS) chmodSync(join(String(dir), helper), 0o755);
@@ -1061,14 +1100,13 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     });
   });
 
-  // sh's own "not found" exit for the helper, with nothing else on PATH either:
-  // the watchdog, whose `sleep` is missing too, must not turn that into a
-  // kill (which would report a failed helper instead of a missing one).
-  test("a genuinely empty PATH also reads as nothing installed", async () => {
+  // No helper on PATH: nothing is spawned, and the answer is "not installed".
+  // An empty PATH does not mean the working directory, where the stand-ins are.
+  test.each(["/nonexistent/clipboard-helpers", ""])("PATH=%j has no helper to run", async PATH => {
     const { result, log } = await runWithHelpers(
       { xclip: "printf must-not-run" },
       `print({ readText: await settle(navigator.clipboard.readText()), writeText: await settle(navigator.clipboard.writeText("x")) });`,
-      { PATH: "/nonexistent/clipboard-helpers" },
+      { PATH },
     );
     expect({ result, log }).toEqual({
       result: { readText: { error: NO_HELPER }, writeText: { error: NO_HELPER } },
@@ -1258,30 +1296,148 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     });
   });
 
-  test("the watchdog kills a helper that hangs and the operation fails", async () => {
-    const { result, log } = await runWithHelpers(
-      // A hung selection owner: the helper records its pid and never returns.
-      { xclip: `echo $$ > "$CLIP_DIR/helper-pid"; exec sleep 30` },
+  // A hung selection owner: the helper records its pid and never returns. It
+  // also ignores SIGTERM, which is a request and not an order. The shell that
+  // has the trap is the one that waits, so the stand-in does not `exec` its
+  // sleep. The time limit needs no program from PATH (no `sh`, no `sleep`),
+  // which has only the stand-ins here. With a Wayland display alone, each
+  // operation has one candidate helper.
+  const hangs = [
+    `trap '' TERM`,
+    `echo $$ > "$CLIP_DIR/helper-pid"`,
+    `n=0; while [ $n -lt 300 ]; do /bin/sleep 0.1; n=$((n + 1)); done`,
+  ].join("\n");
+  const WAYLAND_ONLY = { DISPLAY: "", WAYLAND_DISPLAY: "wayland-0" };
+  test.each([
+    { operation: `readText()`, kernel: "a pidfd and a memfd", env: {} },
+    { operation: `writeText("x")`, kernel: "a pidfd and a memfd", env: {} },
+    { operation: `readText()`, kernel: "no pidfd and no memfd", env: NO_PIDFD_NO_MEMFD },
+  ])(
+    "a helper that hangs is ended at the time limit and the operation fails: $operation with $kernel",
+    async ({ operation, env }) => {
+      const { result } = await runWithHelpers(
+        { "wl-paste": hangs, "wl-copy": hangs },
+        `
+          process.env.PATH = CLIP_DIR;
+          limitHelperRuns(500);
+          const settled = await settle(navigator.clipboard.${operation});
+          print({ settled, helperStillRunning: running("helper-pid") });
+        `,
+        { ...WAYLAND_ONLY, ...env },
+      );
+      expect(result).toEqual({ settled: { error: HELPER_FAILED }, helperStillRunning: false });
+    },
+  );
+
+  // The time limit is for the helper and for everything it started.
+  test("a helper that waits for its own child is ended together with the child", async () => {
+    const { result } = await runWithHelpers(
+      { "wl-paste": `sleep 300 &\necho $! > "$CLIP_DIR/child-pid"\nwait` },
       `
-        const started = performance.now();
+        limitHelperRuns(500);
         const readText = await settle(navigator.clipboard.readText());
-        const waitedForWatchdog = performance.now() - started >= 900;
-        const pid = Number(received("helper-pid"));
-        let helperStillRunning = true;
-        try {
-          process.kill(pid, 0);
-        } catch (e) {
-          if (e.code !== "ESRCH") throw e;
-          helperStillRunning = false;
-        }
-        print({ readText, waitedForWatchdog, helperStillRunning });
+        print({ readText, childEnded: await ended("child-pid") });
       `,
-      { BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT: "1" },
+      WAYLAND_ONLY,
     );
+    expect(result).toEqual({ readText: { error: HELPER_FAILED }, childEnded: true });
+  });
+
+  // A helper's output is captured in a memfd where there is one, and through a
+  // socket pair where there is not. Something the helper started can hold
+  // either open. The answer is there when the helper exits.
+  test.each([
+    { capture: "a memfd", env: {} },
+    { capture: "a socket pair", env: { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" } },
+    { capture: "a socket pair and no pidfd", env: NO_PIDFD_NO_MEMFD },
+  ])("a helper that exits answers while something it started holds its output open: $capture", async ({ env }) => {
+    const { result } = await runWithHelpers(
+      { xclip: `sleep 300 &\necho $! > "$CLIP_DIR/child-pid"\nprintf 'from the helper'` },
+      `
+        const readText = await settle(navigator.clipboard.readText());
+        const childStillRunning = running("child-pid");
+        if (childStillRunning) process.kill(Number(received("child-pid")), "SIGKILL");
+        print({ readText, childStillRunning });
+      `,
+      env,
+    );
+    expect(result).toEqual({ readText: { ok: "from the helper" }, childStillRunning: true });
+  });
+
+  // The kernel cannot start a helper whose "#!" program is missing, is not a
+  // program, or is under something that is not a directory. Such a helper
+  // counts as not installed, so the next candidate answers.
+  test("a helper that the kernel cannot start is skipped in favor of the next candidate", async () => {
+    const interpreters = ["/nonexistent/interpreter", "/etc/passwd", "/etc/passwd/interpreter"];
+    const { result, log } = await runWithHelpers(
+      { xsel: "printf 'from xsel'" },
+      `
+        const { writeFileSync } = require("node:fs");
+        const result = {};
+        for (const interpreter of ${JSON.stringify(interpreters)}) {
+          writeFileSync(CLIP_DIR + "/xclip", "#!" + interpreter + "\\n");
+          result[interpreter] = {
+            readText: await settle(navigator.clipboard.readText()),
+            writeText: await settle(navigator.clipboard.writeText("x")),
+          };
+        }
+        print(result);
+      `,
+    );
+    const skipped = { readText: { ok: "from xsel" }, writeText: { error: NO_HELPER } };
     expect({ result, log }).toEqual({
-      result: { readText: { error: HELPER_FAILED }, waitedForWatchdog: true, helperStillRunning: false },
-      log: ["xclip -selection clipboard -out", "xsel --clipboard --output"],
+      result: Object.fromEntries(interpreters.map(interpreter => [interpreter, skipped])),
+      log: interpreters.map(() => "xsel --clipboard --output"),
     });
+  });
+
+  // The time limit lives in the process that waits for the helper. When that
+  // process is killed, the kernel ends the helper of a read.
+  test("the helper of a read is ended when the process is killed", async () => {
+    using dir = tempDir("clipboard-orphan", {
+      "xclip": `#!/bin/sh\necho $$ > "$CLIP_DIR/helper-pid"\nexec sleep 300\n`,
+      "main.js": `await navigator.clipboard.readText();`,
+    });
+    chmodSync(join(String(dir), "xclip"), 0o755);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        PATH: `${dir}:${bunEnv.PATH ?? process.env.PATH}`,
+        DISPLAY: ":0",
+        WAYLAND_DISPLAY: undefined,
+        CLIP_DIR: String(dir),
+      },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const pidFile = join(String(dir), "helper-pid");
+    let helper = "";
+    while (helper === "") {
+      await Bun.sleep(5);
+      if (existsSync(pidFile)) helper = readFileSync(pidFile, "utf8").trim();
+    }
+    proc.kill("SIGKILL");
+    await proc.exited;
+    const helperEnded = await hasEnded(helper);
+    if (!helperEnded) process.kill(Number(helper), "SIGKILL");
+    expect(helperEnded).toBe(true);
+  });
+
+  // xclip and wl-copy leave a daemon behind that serves the data. The time
+  // limit is for the run of the helper, so the daemon stays.
+  test("the daemon that a write helper leaves behind is left alone", async () => {
+    const { result } = await runWithHelpers(
+      { xclip: `cat > "$CLIP_DIR/received"\nsleep 30 > /dev/null 2>&1 &\necho $! > "$CLIP_DIR/daemon-pid"` },
+      `
+        const writeText = await settle(navigator.clipboard.writeText("for the daemon"), () => received("received"));
+        const daemonStillRunning = running("daemon-pid");
+        if (daemonStillRunning) process.kill(Number(received("daemon-pid")), "SIGKILL");
+        print({ writeText, daemonStillRunning });
+      `,
+    );
+    expect(result).toEqual({ writeText: { ok: "for the daemon" }, daemonStillRunning: true });
   });
 
   // The payload reaches the helper's stdin through a descriptor with no name
@@ -1359,6 +1515,65 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
       log: ["xclip -selection clipboard -in", "xclip -selection clipboard -in"],
     });
   });
+
+  // A read tries one helper after another. A worker that is stopping takes no
+  // answer, so the helper that was running when it was terminated is the last.
+  test("a worker that is terminated during a read starts no further helper", async () => {
+    const { result, log } = await runWithHelpers(
+      {
+        xclip: [
+          `: > "$CLIP_DIR/helper-started"`,
+          `until [ -e "$CLIP_DIR/release" ]; do sleep 0.02; done`,
+          `exit 1`,
+        ].join("\n"),
+        xsel: "printf 'from xsel'",
+      },
+      `
+        const { existsSync, writeFileSync } = require("node:fs");
+        const worker = new Worker(new URL("./worker.js", import.meta.url));
+        const closed = new Promise(resolve => worker.addEventListener("close", resolve, { once: true }));
+        while (!existsSync(CLIP_DIR + "/helper-started")) await Bun.sleep(5);
+        worker.terminate();
+        writeFileSync(CLIP_DIR + "/release", "");
+        await closed;
+        print({ closed: true });
+      `,
+      {},
+      { "worker.js": `navigator.clipboard.readText().catch(() => {});` },
+    );
+    expect({ result, log }).toEqual({ result: { closed: true }, log: ["xclip -selection clipboard -out"] });
+  });
+
+  // A write is for other programs, so it is still of use when its worker is
+  // gone: the next candidate runs.
+  test("a worker that is terminated during a write still tries the next helper", async () => {
+    const { result, log } = await runWithHelpers(
+      {
+        "wl-copy": [
+          `: > "$CLIP_DIR/helper-started"`,
+          `until [ -e "$CLIP_DIR/release" ]; do sleep 0.02; done`,
+          `exit 1`,
+        ].join("\n"),
+        xclip: `cat > "$CLIP_DIR/received"`,
+      },
+      `
+        const { existsSync, writeFileSync } = require("node:fs");
+        const worker = new Worker(new URL("./worker.js", import.meta.url));
+        const closed = new Promise(resolve => worker.addEventListener("close", resolve, { once: true }));
+        while (!existsSync(CLIP_DIR + "/helper-started")) await Bun.sleep(5);
+        worker.terminate();
+        writeFileSync(CLIP_DIR + "/release", "");
+        await closed;
+        print({ received: received("received") });
+      `,
+      { WAYLAND_DISPLAY: "wayland-0" },
+      { "worker.js": `navigator.clipboard.writeText("from the worker").catch(() => {});` },
+    );
+    expect({ result, log }).toEqual({
+      result: { received: "from the worker" },
+      log: ["wl-copy --type text/plain;charset=utf-8", "xclip -selection clipboard -in"],
+    });
+  });
 });
 
 // Not concurrent with the tests above: the child holds several GiB, so small
@@ -1373,14 +1588,13 @@ describe.skipIf(!isLinux || totalmem() < 10 * 1024 ** 3)("POSIX helper backend, 
       { xclip: `cat "$CLIP_DIR/first-bytes"; head -c 1073741824 /dev/zero | tr '\\000' a` },
       `
         const { writeFileSync } = require("node:fs");
+        limitHelperRuns(240_000);
         const read = firstBytes => {
           writeFileSync(CLIP_DIR + "/first-bytes", Buffer.from(firstBytes));
           return settle(navigator.clipboard.readText(), text => [text.length, text.charCodeAt(0), text.charCodeAt(1)]);
         };
         print({ notAllAscii: await read([0xc3, 0xa9]), notUtf8: await read([0x80]) });
       `,
-      // The stand-in needs more than the 10 seconds of a helper run on a slow machine.
-      { BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT: "240" },
     );
     expect(result).toEqual({
       notAllAscii: { ok: [1024 ** 3 + 1, 0xe9, 0x61] },

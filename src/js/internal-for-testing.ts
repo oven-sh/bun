@@ -188,6 +188,14 @@ export const setMaxMarkdownBlockBytesForTesting: (limit: number) => number = $ne
   1,
 );
 
+// How long one run of a clipboard helper program (`wl-paste`, `xclip`, ...) may
+// take, in milliseconds. Returns the previous limit.
+export const setClipboardHelperTimeoutForTesting: (milliseconds: number) => number = $newRustFunction(
+  "runtime/webcore/clipboard.rs",
+  "setHelperTimeoutForTesting",
+  1,
+);
+
 export const npm_manifest_test_helpers = $rust("npm.rs", "PackageManifest.bindings.generate") as {
   /**
    * Returns the parsed manifest file. Currently only returns an array of available versions.

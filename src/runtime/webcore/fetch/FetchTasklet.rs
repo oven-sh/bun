@@ -1442,9 +1442,6 @@ impl FetchTasklet {
             http::Error::RedirectURLInvalid => BunString::create_format(format_args!(
                 "{code}: Redirect URL in Location header is invalid."
             )),
-            http::Error::RequestBodyTruncated => BunString::create_format(format_args!(
-                "{code}: Request body source reached EOF before the advertised Content-Length was sent (the file was truncated while uploading)"
-            )),
 
             http::Error::Cert(http::CertError::UNABLE_TO_GET_ISSUER_CERT) => {
                 BunString::static_("unable to get issuer certificate")

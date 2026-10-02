@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
+import { truncateSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -323,6 +324,67 @@ describe("fetch() re-sends a Bun.file() body when following a redirect", () => {
       plainHops: [received("PUT", "/start")],
       secureHops: [received("PUT", "/secure"), received("PUT", "/final")],
     });
+  });
+
+  // Over TLS the file is read and written in chunks of at most 256 KiB. A file
+  // that needs many chunks, and is not a multiple of one, must arrive whole
+  // and in order on every https hop.
+  it.concurrent("re-sends a file of many chunks over https", async () => {
+    const BIG = randomBytes(8 * 1024 * 1024 + 4321);
+    using dir = tempDir("fetch-redirect-sendfile", { "body.bin": BIG });
+    const secureHops: Hop[] = [];
+    using secure = serveHops(secureHops, BIG, { "/secure": { status: 308, location: "/final" } }, tls);
+    const plainHops: Hop[] = [];
+    using plain = serveHops(plainHops, BIG, {
+      "/start": { status: 308, location: `https://127.0.0.1:${secure.port}/secure` },
+    });
+
+    const res = await fetch(new URL("/start", plain.url), {
+      method: "PUT",
+      body: Bun.file(join(String(dir), "body.bin")),
+      tls: { ca: tls.cert },
+    });
+
+    expect({ status: res.status, text: await res.text(), plainHops, secureHops }).toEqual({
+      status: 200,
+      text: "final",
+      plainHops: [received("PUT", "/start", BIG)],
+      secureHops: [received("PUT", "/secure", BIG), received("PUT", "/final", BIG)],
+    });
+  });
+
+  // The https hop has already promised the whole file in Content-Length. If
+  // the file shrank since the first hop, the fetch must fail instead of
+  // sending a short body that the server waits on.
+  it.concurrent("rejects when the file shrinks before an https hop", async () => {
+    using dir = tempDir("fetch-redirect-sendfile", { "body.bin": FILE });
+    const path = join(String(dir), "body.bin");
+    using secure = Bun.serve({
+      port: 0,
+      tls,
+      async fetch(req) {
+        await req.arrayBuffer().catch(() => {});
+        return new Response("final");
+      },
+    });
+    using plain = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await req.arrayBuffer();
+        truncateSync(path, 40 * 1024);
+        return new Response(null, { status: 307, headers: { Location: `https://127.0.0.1:${secure.port}/final` } });
+      },
+    });
+
+    const outcome = await fetch(new URL("/start", plain.url), {
+      method: "POST",
+      body: Bun.file(path),
+      tls: { ca: tls.cert },
+    }).then(
+      res => ({ rejected: false as const, status: res.status }),
+      e => ({ rejected: true as const, code: e.code }),
+    );
+    expect(outcome).toEqual({ rejected: true, code: "RequestBodyLengthMismatch" });
   });
 
   // A server may redirect as soon as it has seen the request head, while the

@@ -52,7 +52,7 @@ impl SendFile {
                 return Status::Done;
             }
             let read = match bun_sys::pread(self.fd, &mut buf[..want], self.offset as i64) {
-                Ok(0) => return Status::Err(crate::Error::RequestBodyTruncated),
+                Ok(0) => return Status::Err(crate::Error::RequestBodyLengthMismatch),
                 Ok(n) => n,
                 Err(err) => return Status::Err(bun_errno::SystemErrno::from(err).into()),
             };

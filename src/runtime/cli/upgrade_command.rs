@@ -13,7 +13,7 @@ use bun_http::{self as HTTP, headers};
 use bun_install::integrity::{Integrity, Tag as IntegrityTag};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_parsers::json as JSON;
-use bun_paths::{self, PathBuffer, SEP_STR};
+use bun_paths::{self, SEP_STR};
 use bun_resolver::fs;
 use bun_sys as sys;
 use bun_url::URL;
@@ -65,7 +65,7 @@ fn argv_contains(target: &[u8]) -> bool {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Version {
+pub(crate) struct Version {
     pub(crate) zip_url: Box<[u8]>,
     pub(crate) tag: Box<[u8]>,
     pub(crate) size: u32,
@@ -73,7 +73,7 @@ pub struct Version {
 }
 
 impl Version {
-    pub fn name(&self) -> Option<Vec<u8>> {
+    pub(crate) fn name(&self) -> Option<Vec<u8>> {
         if self.tag.len() <= b"bun-v".len() || !self.tag.starts_with(b"bun-v") {
             if &*self.tag == b"canary" {
                 use crate::cli as Cli;
@@ -756,7 +756,7 @@ impl UpgradeCommand {
             let save_dir: sys::Dir = save_dir_it;
 
             // Reshaped for borrowck — use a stack-local PathBuffer instead of thread_local
-            let mut tmpdir_path_buf = PathBuffer::uninit();
+            let mut tmpdir_path_buf = bun_paths::path_buffer_pool::get();
             let tmpdir_path = match sys::get_fd_path(save_dir.fd(), &mut tmpdir_path_buf) {
                 Ok(p) => p,
                 Err(err) => {
@@ -816,7 +816,7 @@ impl UpgradeCommand {
 
                 #[cfg(unix)]
                 {
-                    let mut unzip_path_buf = PathBuffer::uninit();
+                    let mut unzip_path_buf = bun_paths::path_buffer_pool::get();
                     let Some(unzip_exe) = which(
                         &mut unzip_path_buf,
                         env_loader.map.get(b"PATH").unwrap_or(b""),
@@ -844,8 +844,6 @@ impl UpgradeCommand {
                         stdin: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stderr: spawn_sync::SyncStdio::Inherit,
-                        #[cfg(windows)]
-                        windows: spawn_windows_options(),
                         ..Default::default()
                     }) {
                         Ok(Ok(r)) => r,
@@ -896,10 +894,10 @@ impl UpgradeCommand {
                     )
                     .expect("oom");
 
-                    let mut buf = PathBuffer::uninit();
+                    let mut buf = bun_paths::path_buffer_pool::get();
                     // Separate fallback buffer — borrowck holds `buf` for the lifetime
                     // of `which`'s returned `Option<&ZStr>` even across the `None` arm.
-                    let mut buf2 = PathBuffer::uninit();
+                    let mut buf2 = bun_paths::path_buffer_pool::get();
                     let powershell_path: &ZStr = match which(
                         &mut buf,
                         bun_core::env_var::PATH.get().unwrap_or(b""),
@@ -947,7 +945,6 @@ impl UpgradeCommand {
                         stderr: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stdin: spawn_sync::SyncStdio::Inherit,
-                        #[cfg(windows)]
                         windows: spawn_windows_options(),
                         ..Default::default()
                     });
@@ -1079,7 +1076,6 @@ impl UpgradeCommand {
             // Keep the `&ZStr` form for Windows `sys::rename` (needs
             // a NUL-terminated path); `destination_executable` (bytes view) is
             // used everywhere else.
-            #[cfg_attr(not(windows), allow(unused_variables))]
             let destination_executable_z: &ZStr = bun_core::self_exe_path()
                 .map_err(|_| crate::Error::UpgradeFailedMissingExecutable)?;
             let destination_executable: &[u8] = destination_executable_z.as_bytes();
@@ -1093,7 +1089,7 @@ impl UpgradeCommand {
             // or `&mut [u8]` over the *whole* array, retagging it and
             // invalidating the raw-pointer-derived `&ZStr` views below. The
             // single `buf_ptr` is the shared provenance root.
-            let mut current_executable_buf = PathBuffer::uninit();
+            let mut current_executable_buf = bun_paths::path_buffer_pool::get();
             let buf_ptr: *mut u8 = current_executable_buf.as_mut_ptr();
             // SAFETY: `buf_ptr` covers `MAX_PATH_BYTES`; `destination_executable`
             // came from `self_exe_path()` which is bounded by that.
@@ -1145,7 +1141,7 @@ impl UpgradeCommand {
 
             // `move_file_z` wants `&ZStr`; pre-compute a NUL-terminated
             // copy of `exe`.
-            let mut exe_z_buf = PathBuffer::uninit();
+            let mut exe_z_buf = bun_paths::path_buffer_pool::get();
             exe_z_buf[..exe.len()].copy_from_slice(exe);
             exe_z_buf[exe.len()] = 0;
             // SAFETY: NUL written above.
@@ -1436,9 +1432,9 @@ pub(crate) mod upgrade_js_bindings {
         {
             use sys::windows as w;
 
-            let mut buf = bun_paths::WPathBuffer::uninit();
+            let mut buf = bun_paths::w_path_buffer_pool::get();
             let tmpdir_path = fs::RealFS::get_default_temp_dir();
-            let mut wtmp = bun_paths::WPathBuffer::uninit();
+            let mut wtmp = bun_paths::w_path_buffer_pool::get();
             let tmpdir_w = bun_core::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
             let path = match sys::normalize_path_windows(sys::Fd::INVALID, tmpdir_w, &mut buf[..]) {
                 sys::Result::Err(_) => return Ok(JSValue::UNDEFINED),

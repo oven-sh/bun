@@ -30,7 +30,7 @@ use crate::cli::which_npm_client::NPMClient;
 // so `SourceFileProjectGenerator::generate(...)` resolves. The submodule itself
 // reaches back into `crate::cli::create_command::Example` via absolute path.
 #[path = "create/SourceFileProjectGenerator.rs"]
-pub mod SourceFileProjectGenerator;
+pub(crate) mod SourceFileProjectGenerator;
 
 // PORTING.md §Global mutable state: single-thread CLI scratch buffer →
 // RacyCell. Touched on the main thread for `--open` *and* the spawned git
@@ -122,8 +122,6 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
             ),
             ..Default::default()
         },
-        #[cfg(not(windows))]
-        windows: (),
         ..Default::default()
     });
 }
@@ -614,7 +612,7 @@ impl CreateCommand {
                 };
 
                 #[cfg(windows)]
-                let mut destination_buf: bun_paths::WPathBuffer = bun_paths::WPathBuffer::uninit();
+                let mut destination_buf = bun_paths::w_path_buffer_pool::get();
                 #[cfg(windows)]
                 let dst_without_trailing_slash: &[u8] =
                     strings::without_trailing_slash(destination);
@@ -625,8 +623,7 @@ impl CreateCommand {
                 }
 
                 #[cfg(windows)]
-                let mut template_path_buf: bun_paths::WPathBuffer =
-                    bun_paths::WPathBuffer::uninit();
+                let mut template_path_buf = bun_paths::w_path_buffer_pool::get();
                 #[cfg(windows)]
                 let src_without_trailing_slash: &[u8] =
                     strings::without_trailing_slash(abs_template_path);
@@ -1150,8 +1147,6 @@ impl CreateCommand {
                     ),
                     ..Default::default()
                 },
-                #[cfg(not(windows))]
-                windows: (),
                 ..Default::default()
             })?;
             let _ = process?;
@@ -1274,8 +1269,6 @@ impl CreateCommand {
                         ),
                         ..Default::default()
                     },
-                    #[cfg(not(windows))]
-                    windows: (),
                     ..Default::default()
                 })?;
             }
@@ -1673,7 +1666,7 @@ fn run_on_entry_point(
     crate::cli::build_command::BuildCommand::exec(crate::cli::Command::get(), Some(&fetcher))
 }
 
-pub struct Example {
+pub(crate) struct Example {
     // `&'static` is sound for these three fields: they borrow either static
     // literals, the process-lifetime CLI arena (`cli_arena()` — remote
     // examples JSON), or `filesystem.filename_store` (local examples).
@@ -2471,8 +2464,6 @@ impl GitHandler {
                         loop_: win_loop,
                         ..Default::default()
                     },
-                    #[cfg(not(windows))]
-                    windows: (),
                     ..Default::default()
                 })?;
             }

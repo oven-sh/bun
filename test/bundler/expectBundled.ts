@@ -261,10 +261,15 @@ export interface BundlerTestInput {
   splitting?: boolean;
   /** `splitRequire` (`--no-split-require` when false); on by default for target bun. */
   splitRequire?: boolean;
+  /** `modulePreload` (`--no-module-preload` when false); on by default for target browser. */
+  modulePreload?: boolean;
   /** `--min-chunk-size` / `minChunkSize`; requires `splitting` */
   minChunkSize?: number;
+  /** `false` skips chunk folding (`merge_small_chunks`). Internal to Bun's tests: api backend only. */
+  foldChunks?: boolean;
   serverComponents?: boolean;
   reactCompiler?: boolean;
+  reactFastRefresh?: boolean;
   reactCompilerOutputMode?: "client" | "ssr";
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
@@ -534,13 +539,16 @@ function expectBundled(
     runtimeFiles,
     serverComponents = false,
     reactCompiler = false,
+    reactFastRefresh = false,
     reactCompilerOutputMode,
     skipOnEsbuild,
     snapshotSourceMap,
     sourceMap,
     splitting,
     splitRequire,
+    modulePreload,
     minChunkSize,
+    foldChunks,
     target,
     todo: notImplemented,
     treeShaking,
@@ -615,7 +623,9 @@ function expectBundled(
           : entryPoints.length === 1;
 
   if (bundling === false && entryPoints.length > 1) {
-    throw new UnsupportedOptionError("bundling:false with more than one entry point is not implemented in this harness");
+    throw new UnsupportedOptionError(
+      "bundling:false with more than one entry point is not implemented in this harness",
+    );
   }
 
   if (!ESBUILD && legalComments) {
@@ -676,14 +686,23 @@ function expectBundled(
   if (ESBUILD && minChunkSize !== undefined) {
     throw new UnsupportedOptionError("minChunkSize not possible in esbuild backend");
   }
+  if (ESBUILD && foldChunks !== undefined) {
+    throw new UnsupportedOptionError("foldChunks not possible in esbuild backend");
+  }
   if (ESBUILD && splitRequire !== undefined) {
     throw new UnsupportedOptionError("splitRequire not possible in esbuild backend");
+  }
+  if (ESBUILD && modulePreload !== undefined) {
+    throw new UnsupportedOptionError("modulePreload not possible in esbuild backend");
   }
   if (ESBUILD && deprecatedNamespaceObjectSetters !== undefined) {
     throw new UnsupportedOptionError("deprecatedNamespaceObjectSetters not possible in esbuild backend");
   }
   if (ESBUILD && allowUnresolved !== undefined) {
     throw new UnsupportedOptionError("allowUnresolved not possible in esbuild backend");
+  }
+  if (ESBUILD && reactFastRefresh) {
+    throw new UnsupportedOptionError("reactFastRefresh not possible in esbuild backend");
   }
   if (dryRun) {
     return testRef(id, opts);
@@ -722,8 +741,7 @@ function expectBundled(
 
     outfile = useOutFile ? path.join(root, outfile ?? (compile ? "/out" : "/out.js")) : undefined;
     // The file `bun build --compile` writes: on Windows it appends `.exe` unless the name already ends with it.
-    const outfileOnDisk =
-      outfile && compile && isWindows && !outfile.endsWith(".exe") ? outfile + ".exe" : outfile;
+    const outfileOnDisk = outfile && compile && isWindows && !outfile.endsWith(".exe") ? outfile + ".exe" : outfile;
     outdir = !useOutFile && generateOutput ? path.join(root, outdir ?? "/out") : undefined;
     metafile = metafile ? path.join(root, metafile) : undefined;
     outputPaths = (
@@ -823,6 +841,9 @@ function expectBundled(
       if (reactCompilerOutputMode) {
         throw new Error("reactCompilerOutputMode not possible in backend=CLI (API-only option)");
       }
+      if (foldChunks !== undefined) {
+        throw new Error("foldChunks not possible in backend=CLI (API-only option)");
+      }
       const cmd = (
         !ESBUILD
           ? [
@@ -874,9 +895,11 @@ function expectBundled(
               assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, assetNaming],
               splitting && `--splitting`,
               splitRequire === false && `--no-split-require`,
+              modulePreload === false && `--no-module-preload`,
               minChunkSize !== undefined && `--min-chunk-size=${minChunkSize}`,
               serverComponents && "--server-components",
               reactCompiler && "--react-compiler",
+              reactFastRefresh && "--react-fast-refresh",
               outbase && `--root=${outbase}`,
               banner && `--banner="${banner}"`, // TODO: --banner-css=*
               footer && `--footer="${footer}"`,
@@ -1246,10 +1269,13 @@ function expectBundled(
           sourcemap: sourceMap,
           splitting,
           splitRequire,
+          modulePreload,
           minChunkSize,
+          ...(foldChunks === undefined ? {} : { foldChunksForTesting: foldChunks }),
           target,
           reactCompiler,
           reactCompilerOutputMode,
+          reactFastRefresh,
           bytecode,
           bytecodeDepth,
           publicPath,
@@ -1727,7 +1753,10 @@ for (const [key, blob] of build.outputs) {
               for (let i = 0; i < parsed.sources.length; i++) {
                 const source = parsed.sources[i];
                 const sourcemap_content = parsed.sourcesContent[i];
-                const actual_content = readFileSync(path.resolve(path.dirname(path.join(outdir!, file)), source), "utf-8");
+                const actual_content = readFileSync(
+                  path.resolve(path.dirname(path.join(outdir!, file)), source),
+                  "utf-8",
+                );
                 expect(sourcemap_content).toBe(actual_content);
               }
 

@@ -240,6 +240,8 @@ pub struct Lexer<'a> {
     pub(crate) temp_buffer_u16: Vec<u16>,
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
+    /// `@name`, an intrinsic in the source of one of JavaScriptCore's builtins, is a name like any other.
+    pub(crate) jsc_builtin_syntax: bool,
     pub(crate) all_comments: Vec<Range>,
 }
 
@@ -691,7 +693,6 @@ impl<'a> Lexer<'a> {
                                     }
                                     j += 1;
                                 }
-                                let _ = width3;
                             }
 
                             iter.c = value as CodePoint; // @truncate
@@ -1369,7 +1370,15 @@ impl<'a> Lexer<'a> {
                 }
                 0x40 => {
                     self.step_with(contents);
-                    self.token = T::TAt;
+                    if self.jsc_builtin_syntax && is_identifier_start(self.code_point) {
+                        while is_identifier_continue(self.code_point) {
+                            self.step_with(contents);
+                        }
+                        self.identifier = self.raw();
+                        self.token = T::TIdentifier;
+                    } else {
+                        self.token = T::TAt;
+                    }
                 }
                 0x7E => {
                     self.step_with(contents);
@@ -1960,8 +1969,12 @@ impl<'a> Lexer<'a> {
             match c {
                 b'@' | b'#' => {
                     let chunk = rest;
-                    let offset =
-                        self.scan_pragma(self.start + i + (text.len() - rest.len()), chunk, false);
+                    let offset = self.scan_pragma(
+                        self.start + i + (text.len() - rest.len()),
+                        chunk,
+                        CommentKind::MultiLine,
+                        PureAnnotation::Allow,
+                    );
 
                     rest = &rest[
                         // The min is necessary because the file could end
@@ -2064,6 +2077,8 @@ impl<'a> Lexer<'a> {
     fn scan_single_line_comment(&mut self) {
         // PERF: keep the source slice register-resident — see `next_codepoint_with`.
         let contents: &[u8] = self.contents;
+        // Only the first `#` / `@` of a `//` comment can start a `__PURE__` annotation.
+        let mut first_marker = true;
         loop {
             // Find index of newline (ASCII/Unicode), non-ASCII, '#', or '@'.
             if let Some(relative_index) =
@@ -2086,8 +2101,22 @@ impl<'a> Lexer<'a> {
 
                     0x23 | 0x40 => {
                         let pragma_trigger_pos = self.end;
+                        let pure = if first_marker
+                            && strings::is_all_whitespace(
+                                &contents[self.start + 2..pragma_trigger_pos],
+                            ) {
+                            PureAnnotation::Allow
+                        } else {
+                            PureAnnotation::Ignore
+                        };
+                        first_marker = false;
                         let chunk = js_ast::StoreStr::new(self.remaining());
-                        self.current += self.scan_pragma(pragma_trigger_pos, chunk.slice(), true);
+                        self.current += self.scan_pragma(
+                            pragma_trigger_pos,
+                            chunk.slice(),
+                            CommentKind::SingleLine,
+                            pure,
+                        );
                         continue;
                     }
                     _ => {
@@ -2115,9 +2144,12 @@ impl<'a> Lexer<'a> {
         &mut self,
         offset_for_errors: usize,
         chunk: &[u8],
-        allow_newline: bool,
+        comment: CommentKind,
+        pure: PureAnnotation,
     ) -> usize {
-        if !self.has_pure_comment_before {
+        // A `//` comment ends at the line break, so a pragma argument stops there.
+        let allow_newline = comment == CommentKind::SingleLine;
+        if pure == PureAnnotation::Allow && !self.has_pure_comment_before {
             if strings::has_prefix_with_word_boundary(chunk, b"__PURE__") {
                 self.has_pure_comment_before = true;
                 return "__PURE__".len();
@@ -2248,6 +2280,7 @@ impl<'a> Lexer<'a> {
             temp_buffer_u16: Vec::new(),
             track_comments: false,
             track_react_suppressions: false,
+            jsc_builtin_syntax: false,
             all_comments: Vec::new(),
         }
     }
@@ -3416,6 +3449,19 @@ pub(crate) fn latin1_identifier_continue_length_scalar(name: &[u8]) -> usize {
     }
 
     name.len()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CommentKind {
+    SingleLine,
+    MultiLine,
+}
+
+/// Whether a `__PURE__` match at this position marks the next call.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PureAnnotation {
+    Allow,
+    Ignore,
 }
 
 pub struct PragmaArg;

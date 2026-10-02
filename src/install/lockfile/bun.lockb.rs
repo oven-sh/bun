@@ -11,7 +11,7 @@ use bun_io::Write as _;
 use super::PatchedDep;
 use super::override_map::ScopedOverride;
 use super::{
-    FormatVersion, Lockfile, Scratch, Stream, StringPool, buffers, package,
+    FormatVersion, Lockfile, Scratch, Stream, StringPool, Tree, buffers, package,
     package_index as PackageIndex,
 };
 use crate::ALIGNMENT_BYTES_TO_REPEAT_BUFFER;
@@ -20,6 +20,7 @@ use crate::dependency;
 use crate::dependency::{Behavior, Dependency};
 use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::resolution_real::Tag as ResolutionTag;
+use crate::{bin, invalid_dependency_id, invalid_package_id};
 use bun_ast::Log;
 use bun_core::strings;
 use bun_install::{PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash};
@@ -454,6 +455,9 @@ pub(crate) fn load(
     res.migrated_from_lockb_v2 = migrate_from_v2;
 
     lockfile.buffers = buffers::load(stream, log, manager.as_deref_mut())?;
+
+    validate_buffer_ranges(lockfile)?;
+
     if stream.read_int_le::<u64>()? != 0 {
         return Err(crate::Error::LockfileIsMalformedExpected0AtTheEnd);
     }
@@ -877,4 +881,96 @@ pub(crate) fn load(
     debug_assert!(stream.pos as u64 == total_buffer_size);
 
     Ok(res)
+}
+
+/// `off + len <= buffer_len`, computed in `usize` so the sum cannot wrap.
+#[inline]
+fn slice_in_bounds(off: u32, len: u32, buffer_len: usize) -> bool {
+    off as usize + len as usize <= buffer_len
+}
+
+/// Rejects slice windows and element ids that the rest of the installer
+/// indexes with unchecked, so a corrupt or crafted lockfile fails the parse
+/// instead of panicking later. String `(off, len)` pairs are exempt:
+/// `SemverString::slice` clamps them.
+fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
+    let buffers = &lockfile.buffers;
+    let dependencies_len = buffers.dependencies.len();
+    let resolutions_len = buffers.resolutions.len();
+
+    // Parallel buffers: one dependency id indexes both.
+    if resolutions_len != dependencies_len {
+        return Err(crate::Error::InvalidLockfile);
+    }
+
+    // For the same reason a package's two windows must be one range, not just
+    // two in-bounds ranges.
+    for (dependencies, resolutions) in lockfile
+        .packages
+        .items_dependencies()
+        .iter()
+        .zip(lockfile.packages.items_resolutions())
+    {
+        if !slice_in_bounds(dependencies.off, dependencies.len, dependencies_len)
+            || resolutions.off != dependencies.off
+            || resolutions.len != dependencies.len
+        {
+            return Err(crate::Error::InvalidLockfile);
+        }
+    }
+
+    // A `Map` bin is a window of `[name, target]` pairs in `extern_strings`,
+    // walked two at a time, so it must also have even length.
+    let extern_strings_len = buffers.extern_strings.len();
+    for package_bin in lockfile.packages.items_bin() {
+        if package_bin.tag == bin::Tag::Map {
+            // SAFETY: `tag == Map` discriminates the active union field.
+            let map = unsafe { package_bin.value.map };
+            if !slice_in_bounds(map.off, map.len, extern_strings_len) || map.len % 2 != 0 {
+                return Err(crate::Error::InvalidLockfile);
+            }
+        }
+    }
+
+    // An unresolved optional peer keeps `invalid_package_id` as its resolution.
+    let packages_len = lockfile.packages.len();
+    for &package_id in buffers.resolutions.iter() {
+        if package_id != invalid_package_id && package_id as usize >= packages_len {
+            return Err(crate::Error::InvalidLockfile);
+        }
+    }
+
+    // `Builder::clean` drops unresolved dependencies, so no sentinel here.
+    for &dependency_id in buffers.hoisted_dependencies.iter() {
+        if dependency_id as usize >= dependencies_len {
+            return Err(crate::Error::InvalidLockfile);
+        }
+    }
+
+    let hoisted_len = buffers.hoisted_dependencies.len();
+    for (tree_index, tree) in buffers.trees.iter().enumerate() {
+        // Only the root may carry a sentinel dependency id; every other
+        // tree's id is used to index `buffers.dependencies`.
+        let dependency_id_valid = (tree.dependency_id as usize) < dependencies_len
+            || (tree_index == 0
+                && (tree.dependency_id == super::tree::ROOT_DEP_ID
+                    || tree.dependency_id == invalid_dependency_id));
+        // The builder appends each tree after its parent: ids are positions,
+        // only the root has no parent, and a parent precedes its child, which
+        // also rules out parent cycles.
+        let parent_valid = if tree_index == 0 {
+            tree.parent == Tree::INVALID_ID
+        } else {
+            (tree.parent as usize) < tree_index
+        };
+        if tree.id as usize != tree_index
+            || !dependency_id_valid
+            || !parent_valid
+            || !slice_in_bounds(tree.dependencies.off, tree.dependencies.len, hoisted_len)
+        {
+            return Err(crate::Error::InvalidLockfile);
+        }
+    }
+
+    Ok(())
 }

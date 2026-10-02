@@ -2309,20 +2309,10 @@ impl Checker<'_> {
         (start, spans.token(start as usize) as u32)
     }
 
-    /// `node.End()` of a `case` or `default` clause.
-    pub(super) fn end_of_case(&self, file: FileId, case: CaseId) -> u32 {
-        self.spans(file).case(case).unwrap_or(0) as u32
-    }
-
     /// `GetErrorRangeForNode` of a `case` or `default` clause: up to its `:`.
     pub(super) fn error_range_of_case(&self, file: FileId, case: CaseId) -> (u32, u32) {
         let start = self.hir(file).cases.get(case.idx()).map_or(0, |c| c.pos);
         (start, self.spans(file).case_label(case).unwrap_or(0) as u32)
-    }
-
-    /// `node.End()` of one declaration of a variable statement.
-    pub(super) fn end_of_var_decl(&self, file: FileId, decl: VarDeclId) -> u32 {
-        self.spans(file).var_decl(decl) as u32
     }
 
     /// `GetErrorRangeForNode` of one declaration of a variable statement: its name or pattern.
@@ -2339,11 +2329,6 @@ impl Checker<'_> {
             Some(last) => self.spans(file).var_decl(last) as u32,
             None => 0,
         }
-    }
-
-    /// Past the `;` after `end`, if that is what comes next (`parseSemicolon`). Otherwise `end`.
-    pub(super) fn end_after_semicolon(&self, file: FileId, end: u32) -> u32 {
-        self.spans(file).semicolon(end as usize) as u32
     }
 
     // ───────────────────────────── declarations ─────────────────────────────
@@ -2474,11 +2459,6 @@ impl Checker<'_> {
             member.pos,
             spans.key(member.key, member.pos as usize) as u32,
         )
-    }
-
-    /// `node.End()` of a member of an enum.
-    pub(super) fn end_of_enum_member(&self, file: FileId, member: EnumMemberId) -> u32 {
-        self.spans(file).enum_member(member) as u32
     }
 
     /// `GetErrorRangeForNode` of a member of an enum: its name.

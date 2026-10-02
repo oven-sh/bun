@@ -746,28 +746,6 @@ impl Checker<'_> {
         false
     }
 
-    /// `isInConstructorArgumentInitializer`: whether `func` is a constructor and `e` is in one of its parameters, with no other
-    /// function in between.
-    fn is_in_constructor_argument_initializer(&self, file: FileId, e: ExprId, func: FnId) -> bool {
-        let bound = self.bound(file);
-        if self.hir(file)[func].kind != FnKind::Constructor {
-            return false;
-        }
-        let mut parent = bound.expr_parent[e.idx()];
-        loop {
-            parent = match parent {
-                Parent::ParamDefault(p) => return bound.param_fn[p.idx()] == func,
-                Parent::Expr(x) if x.is_some() => bound.expr_parent[x.idx()],
-                Parent::Key(literal) if literal.is_some() => Parent::Expr(literal),
-                Parent::Prop(_)
-                | Parent::PatPropDefault(_)
-                | Parent::PatElemDefault(_)
-                | Parent::ClassExtends(_) => self.outward(file, parent),
-                _ => return false,
-            };
-        }
-    }
-
     /// `someSignature(constructSignatures, abstract)`: what is made for a union is abstract if what one of the members has is.
     fn some_construct_signature_is_abstract(&mut self, ty: TypeId) -> bool {
         let ty = self.apparent_type(ty);

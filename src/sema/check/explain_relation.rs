@@ -315,18 +315,6 @@ impl<'p> Checker<'p> {
         lines.into_iter().skip(1).collect()
     }
 
-    /// The same for `checkTypeComparableTo(source, target, node, nil)`.
-    pub(super) fn comparability_chain(&mut self, source: TypeId, target: TypeId) -> Vec<Line> {
-        let lines = self.relation_lines(source, target, Relation::Comparable, None, 0);
-        lines.into_iter().skip(1).collect()
-    }
-
-    /// The same for the subtype relation.
-    pub(super) fn subtype_chain(&mut self, source: TypeId, target: TypeId) -> Vec<Line> {
-        let lines = self.relation_lines(source, target, Relation::Subtype, None, 0);
-        lines.into_iter().skip(1).collect()
-    }
-
     /// The `relatedInfo` of the error `checkTypeAssignableTo(source, target, node, head)` reports, whatever the `head`.
     pub(super) fn assignability_related(&mut self, source: TypeId, target: TypeId) -> Vec<Related> {
         self.relation_lines_with_related(source, target, Relation::Assignable, None, 0)
@@ -401,35 +389,6 @@ impl<'p> Checker<'p> {
         }
         (lines_of(&x.chain, level), x.related)
     }
-
-    /// The lines `compareSignaturesRelated` reports for two call signatures under the assignable relation, from level 1.
-    pub(super) fn signature_chain(&mut self, source: SigId, target: SigId) -> Vec<Line> {
-        let mut x = Reporter {
-            r: Relater::new(Relation::Assignable, self.cycles),
-            chain: None,
-            related: Vec::new(),
-            budget: 2000,
-        };
-        let gave_up = self.relation_gave_up;
-        let too_complex = self.relation_too_complex;
-        let reliability = self.reliability;
-        self.compare_signatures_related_reporting(
-            &mut x,
-            source,
-            target,
-            (source, target),
-            false,
-            0,
-            STATE_NONE,
-        );
-        self.relation_gave_up = gave_up;
-        self.relation_too_complex = too_complex;
-        self.reliability = reliability;
-        if x.r.overflow {
-            return Vec::new();
-        }
-        lines_of(&x.chain, 1)
-    }
 }
 
 // ───────────────────────────── names ─────────────────────────────
@@ -437,7 +396,7 @@ impl<'p> Checker<'p> {
 impl<'p> Checker<'p> {
     /// `getParameterNameAtPosition`. An element of a rest parameter that has no label goes by the name of the parameter and its
     /// place (`getTupleElementLabel`).
-    fn parameter_name_at_position(&self, params: &[SigParam], pos: usize) -> String {
+    pub(super) fn parameter_name_at_position(&self, params: &[SigParam], pos: usize) -> String {
         let name_of = |index: usize| {
             let name = params[index].name;
             if name.is_none() {
@@ -465,7 +424,8 @@ impl<'p> Checker<'p> {
                 let is_variable = flags
                     .get(index)
                     .is_some_and(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC));
-                if is_variable {
+                // `getTupleElementLabelFromBindingElement`, which takes a rest parameter that has a declaration.
+                if is_variable && params[fixed].has_declaration {
                     rest
                 } else {
                     format!("{rest}_{index}")

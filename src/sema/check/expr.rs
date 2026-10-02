@@ -524,7 +524,8 @@ impl<'p> Checker<'p> {
                             return false;
                         }
                         // By the time the function is looked at the type parameter may have been settled.
-                        return returned.is_none() || self.is_const_by_contextual_type(file, e);
+                        return returned.is_none()
+                            || self.is_const_by_contextual_type(file, e, false);
                     }
                     // What a generator written where one is expected yields: on from the generator.
                     ExprKind::Yield { star: false, .. } => {
@@ -628,20 +629,36 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isConstContext` of `e`, going by `getContextualType` alone: `e`, or a literal it is part of, is expected to be a `const` type
-    /// variable.
-    fn is_const_by_contextual_type(&mut self, file: FileId, e: ExprId) -> bool {
+    /// `isConstContext` of `e`, going by `getContextualType`: `e`, or a literal it is part of, is under `as const` or expected to be a
+    /// `const` type variable. `is_resolved`: it is asked once everything is checked, as the node builder does. What is expected of an
+    /// argument then comes from the resolved signature, where the type parameter has given way to what was inferred for it.
+    pub(super) fn is_const_by_contextual_type(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        is_resolved: bool,
+    ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = e;
         loop {
-            if self.is_valid_const_assertion_argument(file, at)
-                && self
-                    .contextual_type(file, at)
-                    .is_some_and(|c| self.is_const_type_variable(c, 0))
-            {
-                return true;
+            if self.is_valid_const_assertion_argument(file, at) {
+                let resolved = if is_resolved {
+                    self.contextual_type_from_resolved_signature(file, at)
+                } else {
+                    None
+                };
+                let expected = match resolved {
+                    Some(resolved) => Some(resolved),
+                    None => self.contextual_type(file, at),
+                };
+                if expected.is_some_and(|c| self.is_const_type_variable(c, 0)) {
+                    return true;
+                }
             }
             at = match bound.expr_parent[at.idx()] {
+                Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::AsConst(_)) => {
+                    return true;
+                }
                 Parent::Expr(parent)
                     if matches!(
                         hir[parent].kind,
@@ -4723,19 +4740,22 @@ impl<'p> Checker<'p> {
             Vec::with_capacity(candidates.len()),
             Vec::with_capacity(candidates.len()),
         );
+        // `createCombinedSymbolForOverloadFailure`: `createSymbolWithType` of the first source.
+        let mut source: Option<SigParam> = None;
         for &sig in &candidates {
             let params = self.sig_params(sig);
+            source = source.or(params.first().copied());
             // `tryGetTypeAtPosition`
             taken.extend(self.param_type_at(&params, 0));
             made.push(self.sig_return(sig));
         }
         let mut params = Vec::new();
-        if !taken.is_empty() {
+        if let Some(source) = source.filter(|_| !taken.is_empty()) {
             params.push(SigParam {
-                name: known::props,
                 ty: self.union_reduced(&taken),
                 optional: false,
                 rest: false,
+                ..source
             });
         }
         let ret = if made.iter().all(|&ty| self.is_known(ty)) {

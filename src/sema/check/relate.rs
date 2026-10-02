@@ -540,13 +540,20 @@ impl<'p> Checker<'p> {
 
     /// `TypeFlagsSingleton`
     fn is_singleton(&self, ty: TypeId) -> bool {
-        matches!(self.data(ty), TypeData::Intrinsic(_)) || ty == TypeId::BOOLEAN
+        matches!(
+            self.data(ty),
+            TypeData::Intrinsic(_) | TypeData::UnresolvedName { .. }
+        ) || ty == TypeId::BOOLEAN
     }
 
     /// What has to be the same for two types to be identical, before anything is looked into. The kinds of `undefined` have the
     /// same flags, and so have those of `null`.
     fn flags_for_identity(&self, ty: TypeId) -> u32 {
         match self.data(ty.plain()) {
+            // `TypeFlagsAny`
+            TypeData::Intrinsic(Intrinsic::Error) | TypeData::UnresolvedName { .. } => {
+                Intrinsic::Any as u32
+            }
             TypeData::Intrinsic(i) => *i as u32,
             TypeData::StringLit { .. } => 32,
             TypeData::NumberLit { .. } => 33,

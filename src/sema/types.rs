@@ -429,6 +429,22 @@ pub struct SigParam {
     pub ty: TypeId,
     pub optional: bool,
     pub rest: bool,
+    /// `symbol.ValueDeclaration != nil`. A parameter that the checker makes up (`combineUnionOrIntersectionParameters`,
+    /// `newParameter`) has a name and no declaration.
+    pub has_declaration: bool,
+}
+
+impl SigParam {
+    /// `getNameableDeclarationAtPosition`: what a tuple element made of this parameter is labelled with. `name` is `NONE` for a
+    /// pattern (`isValidDeclarationForTupleLabel`).
+    #[inline]
+    pub fn label(&self) -> Atom {
+        if self.has_declaration {
+            self.name
+        } else {
+            Atom::NONE
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]

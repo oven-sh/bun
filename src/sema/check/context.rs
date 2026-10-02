@@ -1898,19 +1898,6 @@ impl<'p> Checker<'p> {
                 .any(|x| x.2 == assignment)
     }
 
-    /// What the element at `index` (anywhere after a spread, if `None`) of an array literal that is expected to be `context` is
-    /// expected to be.
-    pub(super) fn contextual_element(
-        &mut self,
-        context: TypeId,
-        index: Option<usize>,
-    ) -> Option<TypeId> {
-        match index {
-            Some(index) => self.contextual_element_at(context, index, None, None, None),
-            None => self.contextual_element_at(context, 0, None, Some(0), Some(0)),
-        }
-    }
-
     /// `getContextualTypeForElementExpression`. `length`: how many elements are written, if that is known. `first_spread`,
     /// `last_spread`: where the first and the last `...` among them are.
     pub(super) fn contextual_element_at(
@@ -2295,98 +2282,11 @@ impl<'p> Checker<'p> {
                     if !self.type_parameters_identical(&left, &right) {
                         return None;
                     }
-                    self.combine_intersected_signatures(so_far, sig)
+                    self.combine_member_signatures(so_far, sig, false)
                 }
             });
         }
         combined
-    }
-
-    /// `combineUnionOrIntersectionMemberSignatures`, of an intersection: it may be given what either takes, and has to return what
-    /// both do.
-    fn combine_intersected_signatures(&mut self, left: SigId, right: SigId) -> SigId {
-        let (left_type_params, right_type_params) =
-            (self.sig_type_params(left), self.sig_type_params(right));
-        let right = if !left_type_params.is_empty()
-            && !right_type_params.is_empty()
-            && left_type_params != right_type_params
-        {
-            self.with_own_type_params(right, &right_type_params, &left_type_params)
-        } else {
-            right
-        };
-        let type_params = if left_type_params.is_empty() {
-            right_type_params
-        } else {
-            left_type_params
-        };
-        // `combineUnionOrIntersectionParameters`
-        let (lp, rp) = (self.sig_params(left), self.sig_params(right));
-        let (left_count, right_count) = (self.parameter_count(&lp), self.parameter_count(&rp));
-        let (longest_count, longest, shorter) = if left_count >= right_count {
-            (left_count, &lp, &rp)
-        } else {
-            (right_count, &rp, &lp)
-        };
-        let either_has_rest =
-            self.has_effective_rest_parameter(&lp) || self.has_effective_rest_parameter(&rp);
-        let needs_extra_rest = either_has_rest && !self.has_effective_rest_parameter(longest);
-        // `minArgumentCount` goes by what is declared: `(...args: [string])` needs nothing.
-        let least = Self::min_args(&lp).max(Self::min_args(&rp));
-        // `tryGetTypeAtPosition`: past the end of a rest tuple that ends there is nothing.
-        let at = |c: &mut Self, params: &[SigParam], i: usize| {
-            if i >= c.parameter_count(params) && !c.has_effective_rest_parameter(params) {
-                None
-            } else {
-                c.param_type_at(params, i)
-            }
-        };
-        let mut params = Vec::with_capacity(longest_count + 1);
-        for i in 0..longest_count {
-            let a = at(self, &longest[..], i).unwrap_or(TypeId::UNKNOWN);
-            let b = at(self, &shorter[..], i).unwrap_or(TypeId::UNKNOWN);
-            let either = self.union(&[a, b]);
-            let is_rest = either_has_rest && !needs_extra_rest && i == longest_count - 1;
-            let name = longest
-                .get(i)
-                .or(longest.last())
-                .map_or(Atom::NONE, |p| p.name);
-            params.push(SigParam {
-                name,
-                ty: if is_rest {
-                    self.array_of(either)
-                } else {
-                    either
-                },
-                optional: !is_rest && i >= least,
-                rest: is_rest,
-            });
-        }
-        if needs_extra_rest {
-            let element = self
-                .param_type_at(shorter, longest_count)
-                .unwrap_or(TypeId::ANY);
-            params.push(SigParam {
-                name: known::args,
-                ty: self.array_of(element),
-                optional: false,
-                rest: true,
-            });
-        }
-        let (a, b) = (self.sig_return(left), self.sig_return(right));
-        let ret = self.intersection(&[a, b]);
-        // `combineUnionOrIntersectionThisParam`
-        let this = match (self.sig_this_type(left), self.sig_this_type(right)) {
-            (Some(a), Some(b)) => Some(self.union(&[a, b])),
-            (a, b) => a.or(b),
-        };
-        self.p.types.intern_sig(SigData::Synth {
-            type_params: type_params.into(),
-            params: params.into(),
-            ret,
-            this,
-            of: Box::new([]),
-        })
     }
 
     /// The `targetParameterCount` of `isAritySmaller`: the parameters of `func` before the first that may be left out.

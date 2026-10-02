@@ -898,6 +898,11 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `t.ObjectFlags() & ObjectFlagsRequiresWidening`
+    pub(super) fn requires_widening(&mut self, ty: TypeId) -> bool {
+        self.may_hold_object_literal(ty) || self.regular_object(ty) != ty
+    }
+
     /// The type a variable, a result or a type argument gets from an expression of type `ty`: object literals in it become
     /// ordinary object types, and those that are alternatives to one another get each other's properties as `p?: undefined`.
     #[inline]

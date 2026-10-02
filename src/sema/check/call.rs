@@ -1887,7 +1887,8 @@ impl<'p> Checker<'p> {
         let most = lists.iter().map(|list| plain(list)).max().unwrap_or(0);
         let mut params = Vec::with_capacity(most + 1);
         for i in 0..most {
-            let mut name = None;
+            // `createCombinedSymbolForOverloadFailure`: `createSymbolWithType` of the first source.
+            let mut source: Option<SigParam> = None;
             let mut types = Vec::new();
             for list in &lists {
                 // The parameter at that place, or the rest parameter that stands for it.
@@ -1896,7 +1897,7 @@ impl<'p> Checker<'p> {
                 } else {
                     list.last().filter(|p| p.rest)
                 };
-                name = name.or(named.map(|p| p.name));
+                source = source.or(named.copied());
                 // `tryGetTypeAtPosition`
                 if (i < self.parameter_count(list) || self.has_effective_rest_parameter(list))
                     && let Some(ty) = self.param_type_at(list, i)
@@ -1906,10 +1907,11 @@ impl<'p> Checker<'p> {
             }
             let ty = self.union_reduced(&types);
             params.push(SigParam {
-                name: name.unwrap_or(Atom::NONE),
+                name: source.map_or(Atom::NONE, |p| p.name),
                 ty,
                 optional: i >= least,
                 rest: false,
+                has_declaration: source.is_some_and(|p| p.has_declaration),
             });
         }
         let rests: Vec<&SigParam> = lists
@@ -1928,6 +1930,7 @@ impl<'p> Checker<'p> {
                 ty: self.array_of(element),
                 optional: false,
                 rest: true,
+                has_declaration: first.has_declaration,
             });
         }
         let mut these = Vec::new();
@@ -7238,6 +7241,19 @@ impl<'p> Checker<'p> {
             Some(&TypeData::StringLit { value, .. }) => Some(value),
             _ => Some(declared),
         }
+    }
+
+    /// `newTypeParameter(newSymbol(SymbolFlagsTypeParameter, name))`. There is no type parameter without a declaration: it is a clone
+    /// of `param`, renamed as `unique_type_params` renames.
+    pub(super) fn renamed_type_param(&self, param: TypeId, name: Atom) -> Option<TypeId> {
+        let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
+            return None;
+        };
+        let declared = self.string_literal(self.hir(file)[tp].name, true);
+        let mut pairs = self.p.types.mapping(around).to_vec();
+        pairs.retain(|pair| pair.0 != declared);
+        pairs.push((declared, self.string_literal(name, false)));
+        Some(self.cloned_type_param(file, tp, self.p.types.mapper(pairs)))
     }
 
     /// `getUniqueTypeParameters`: `own`, with a renamed clone for each type parameter whose name occurs in `inferred` or earlier in

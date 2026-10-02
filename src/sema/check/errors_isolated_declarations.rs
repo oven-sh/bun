@@ -1970,7 +1970,7 @@ impl<'p> Checker<'p> {
                 constant,
                 regular,
             } => {
-                return if self.in_const_context(file, *at) {
+                return if self.is_const_by_contextual_type(file, *at, true) {
                     self.iso_type_of_pseudo(file, constant)
                 } else {
                     self.iso_type_of_pseudo(file, regular)
@@ -2461,7 +2461,7 @@ impl<'p> Checker<'p> {
                 constant,
                 regular,
             } => {
-                if self.in_const_context(file, *at) {
+                if self.is_const_by_contextual_type(file, *at, true) {
                     self.iso_write_pseudo(tx, constant)
                 } else {
                     self.iso_write_pseudo(tx, regular)
@@ -2622,11 +2622,7 @@ impl<'p> Checker<'p> {
         let accessor = self
             .iso_fn_of_node(file, node)
             .filter(|&f| matches!(hir[f].kind, FnKind::Getter | FnKind::Setter));
-        let requires_widening = self
-            .p
-            .types
-            .flags(ty)
-            .contains(TypeFlags::HAS_OBJECT_LITERAL);
+        let requires_widening = self.requires_widening(ty);
         let mut has_reported = false;
         if tries_reuse
             && (accessor.is_some() || self.iso_has_inferred_type(file, node) && !requires_widening)

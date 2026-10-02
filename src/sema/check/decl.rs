@@ -3948,6 +3948,7 @@ impl<'p> Checker<'p> {
                 ty: self.instantiate(declared, mapper),
                 optional: optional || is_untyped_in_js && !param.flags.contains(Flags::REST),
                 rest: param.flags.contains(Flags::REST),
+                has_declaration: true,
             });
         }
         out

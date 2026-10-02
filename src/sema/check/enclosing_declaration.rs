@@ -75,6 +75,12 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = e;
         loop {
+            // The operand of `typeof` in a type.
+            if bound.is_in_type_query(at)
+                && let Some(&scope) = bound.expr_scope.get(&at)
+            {
+                return or_file_scope(scope);
+            }
             match bound.expr_parent[at.idx()] {
                 Parent::Expr(outer) | Parent::Key(outer) if outer.is_some() => at = outer,
                 Parent::Prop(p) if bound.prop_owner[p.idx()].is_some() => {

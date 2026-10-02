@@ -2236,7 +2236,7 @@ impl<'p> Checker<'p> {
         for p in params {
             if !p.rest {
                 elems.push(p.ty);
-                labels.push(p.name);
+                labels.push(p.label());
                 continue;
             }
             let TypeData::Tuple {
@@ -2250,7 +2250,7 @@ impl<'p> Checker<'p> {
                 } else {
                     p.ty
                 });
-                rest_label = p.name;
+                rest_label = p.label();
                 continue;
             };
             let fixed = tf

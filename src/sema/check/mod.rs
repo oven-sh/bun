@@ -68,6 +68,7 @@ pub mod symbol_writer;
 mod symbols;
 pub mod type_writer;
 mod unions;
+mod visit_node;
 
 use crate::atom::{Atom, known};
 use crate::bind::{Bound, SymFlags};

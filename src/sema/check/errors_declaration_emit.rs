@@ -504,12 +504,12 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// `lookupSymbolChain` with `yieldModuleSymbol`, of a symbol that is no type parameter: whether the chain starts with `globalThis`,
-    /// and the rest of it.
+    /// `lookupSymbolChain` of a symbol that is no type parameter: whether the chain starts with `globalThis`, and the rest of it.
     pub(super) fn lookup_symbol_chain_at(
         &mut self,
         symbol: Sym,
         is_value: bool,
+        yields_module: bool,
         file: FileId,
         scope: ScopeId,
     ) -> (bool, Vec<Sym>) {
@@ -518,8 +518,9 @@ impl<'p> Checker<'p> {
         } else {
             Meaning::Type
         };
-        let mut chain = self
-            .with_enclosing_declaration(file, scope, |emit| emit.symbol_chain(symbol, meaning, 0));
+        let mut chain = self.with_enclosing_declaration(file, scope, |emit| {
+            emit.symbol_chain_ex(symbol, meaning, yields_module, 0)
+        });
         let starts_with_global_this = chain.len() > 1 && chain[0] == GLOBAL_THIS;
         if starts_with_global_this {
             chain.remove(0);
@@ -1271,11 +1272,17 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let aliases: Vec<(Atom, Sym)> = match table {
             Table::Locals(file, scope) => {
                 let bound = self.c.bound(file);
+                let container = bound.scopes[scope.idx()].symbol;
+                // `declareModuleMember`: an exported alias is among the exports alone.
+                let is_exported = |entry: &(Atom, Sym)| {
+                    container.is_some()
+                        && files.export(files.sym(file, container), entry.0) == Some(entry.1)
+                };
                 bound
                     .table(bound.scopes[scope.idx()].locals)
                     .iter()
                     .map(|&(name, id)| (name, files.sym(file, id)))
-                    .filter(is_alias)
+                    .filter(|entry| is_alias(entry) && !is_exported(entry))
                     .collect()
             }
             Table::Exports(symbol) => files.each_export(symbol).filter(is_alias).collect(),
@@ -1511,18 +1518,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         ignores_qualification: bool,
         visited: &mut Vec<(Sym, Table)>,
     ) -> bool {
-        let mut is_like = symbol == from_table || Some(symbol) == resolved;
-        let mut stop = resolved;
-        for _ in 0..32 {
-            let Some(alias) = stop.filter(|&stop| {
-                !is_like && stop != GLOBAL_THIS && self.flags_of(stop).contains(SymFlags::ALIAS)
-            }) else {
-                break;
-            };
-            stop = self.resolve_alias(alias);
-            is_like = stop == Some(symbol);
-        }
-        if !is_like {
+        if symbol != from_table && Some(symbol) != resolved {
             return false;
         }
         !self.is_external_module_symbol(from_table)

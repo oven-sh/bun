@@ -3340,6 +3340,7 @@ impl<'f> Binder<'f> {
                 (self.true_target, self.false_target) = (FlowId::NONE, FlowId::NONE);
                 // The `this` of `typeof this.x` is a name, not the keyword.
                 let seen_this = self.seen_this;
+                self.b.expr_scope.insert(expr, self.scope);
                 self.expr(expr, parent);
                 self.seen_this = seen_this;
                 (self.true_target, self.false_target) = saved;

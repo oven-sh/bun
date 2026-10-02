@@ -79,6 +79,7 @@ impl<'p> Checker<'p> {
                 ty,
                 optional: false,
                 rest: false,
+                has_declaration: false,
             })
             .collect();
         self.p.types.intern_sig(SigData::Synth {

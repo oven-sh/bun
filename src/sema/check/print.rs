@@ -12,14 +12,13 @@ use crate::bind::{
 #[path = "print_node_reuse.rs"]
 mod node_reuse;
 
-/// `nodebuilder.Flags`, those that change what is written when there is no enclosing declaration.
+/// `nodebuilder.Flags`, those that change what is written.
 const NO_TRUNCATION: u32 = 1 << 0;
 const USE_FULLY_QUALIFIED_TYPE: u32 = 1 << 1;
 const ALLOW_UNIQUE_ES_SYMBOL_TYPE: u32 = 1 << 2;
 const USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE: u32 = 1 << 3;
 const NO_TYPE_REDUCTION: u32 = 1 << 4;
-/// There is an enclosing declaration: parameters and results are written as they are annotated.
-const REUSES_TYPE_NODES: u32 = 1 << 5;
+const GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS: u32 = 1 << 5;
 /// Not of `nodebuilder.Flags`: the type that is asked about has no `alias`. What it is made of goes by what it goes by.
 const WRITTEN_OUT: u32 = 1 << 16;
 
@@ -64,7 +63,11 @@ impl Checker<'_> {
         if ty == TypeId::ERROR {
             return super::type_writer::ERROR_TYPE_TEXT.to_owned();
         }
-        type_to_string_with(self, ty, NO_TRUNCATION | ALLOW_UNIQUE_ES_SYMBOL_TYPE)
+        type_to_string_with(
+            self,
+            ty,
+            NO_TRUNCATION | ALLOW_UNIQUE_ES_SYMBOL_TYPE | GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS,
+        )
     }
 
     /// `type_to_string_for_baseline` with an `enclosingDeclaration`: the scope of `node.Parent`.
@@ -99,32 +102,63 @@ impl Checker<'_> {
         )
     }
 
+    /// `t.symbol.ValueDeclaration`, if that is an expression (`ast.IsExpression`), and the scope names are looked up in from it.
+    fn value_declaration_expression_of_type(
+        &self,
+        ty: TypeId,
+    ) -> Option<(FileId, ExprId, ScopeId)> {
+        match *self.data(ty) {
+            TypeData::Fns { ref decls, .. } => {
+                let [(file, func)] = decls[..] else {
+                    return None;
+                };
+                let FnOwner::Expr(e) = self.bound(file).fns[func.idx()].owner else {
+                    return None;
+                };
+                if !matches!(self.hir(file)[func].kind, FnKind::Expr | FnKind::Arrow) {
+                    return None;
+                }
+                let scope = self.enclosing_scope_of_declaration(file, Decl::Fn(func));
+                Some((file, e, scope))
+            }
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(file, e) | Origin::WidenedLiteral(file, e),
+                ..
+            } => matches!(self.hir(file)[e].kind, ExprKind::Object(_))
+                .then(|| (file, e, self.enclosing_scope_of_expr(file, e))),
+            TypeData::Anon {
+                origin: Origin::ClassStatic(class),
+                ..
+            }
+            | TypeData::Ref { target: class, .. } => {
+                let decls = self.files().decls_of(class);
+                let &(file, Decl::Class(c)) = decls.first()? else {
+                    return None;
+                };
+                let ClassOwner::Expr(e) = self.bound(file).class_owner[c.idx()] else {
+                    return None;
+                };
+                let scope = self.enclosing_scope_of_declaration(file, Decl::Class(c));
+                Some((file, e, scope))
+            }
+            _ => None,
+        }
+    }
+
     /// `typeToString(t, t.symbol.ValueDeclaration)` if `symbolValueDeclarationIsContextSensitive`, which says the opposite of its
-    /// name: of a function expression that is not context sensitive. Otherwise `typeToString(t)`.
+    /// name. Otherwise `typeToString(t)`.
     fn type_to_string_where_it_is_declared(&mut self, ty: TypeId) -> String {
-        let is_enclosed = match self.data(ty) {
-            TypeData::Fns { decls, .. } => match decls[..] {
-                [(file, func)] => match self.bound(file).fns[func.idx()].owner {
-                    FnOwner::Expr(e) => {
-                        matches!(self.hir(file)[func].kind, FnKind::Expr | FnKind::Arrow)
-                            && !self.is_context_sensitive(file, e)
-                    }
-                    _ => false,
-                },
-                _ => false,
-            },
-            _ => false,
-        };
-        let flags = ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
-        type_to_string_with(
+        self.enclosing_declaration = self
+            .value_declaration_expression_of_type(ty)
+            .filter(|&(file, e, _)| !self.is_context_sensitive(file, e))
+            .map(|(file, _, scope)| (file, scope));
+        let text = type_to_string_with(
             self,
             ty,
-            if is_enclosed {
-                flags | REUSES_TYPE_NODES
-            } else {
-                flags
-            },
-        )
+            ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE,
+        );
+        self.enclosing_declaration = None;
+        text
     }
 
     /// `getTypeNamesForErrorDisplay`: both, with qualified names if they would read the same.
@@ -188,9 +222,7 @@ impl Checker<'_> {
         {
             let node = self.hir(file)[tp].constraint;
             if self.is_unresolved_type_reference(file, node) {
-                return with_printer(self, 0, |printer| {
-                    printer.type_node_to_node(file, node).text
-                });
+                return with_printer(self, 0, |printer| printer.reuse_type_node(file, node).text);
             }
         }
         self.type_to_string(constraint)
@@ -500,8 +532,9 @@ struct Printer<'c, 'p> {
     type_parameter_names: Vec<(TypeId, String)>,
     /// `typeParameterNamesByTextNextNameCount`
     type_parameter_name_counts: Vec<(String, u32)>,
-    /// The locals of the fake scope `enterNewScope` puts in front of `enclosing_declaration` for type parameters.
-    fake_scope_type_parameters: Vec<(String, TypeId)>,
+    /// The locals of the fake scopes `enterNewScope` puts in front of `enclosing_declaration` that a search for a type finds: type
+    /// parameters, and parameters that are one symbol with a type parameter. `None`: such a parameter after `instantiateSymbol`.
+    fake_scope_type_parameters: Vec<(String, Option<TypeId>)>,
 }
 
 /// `escapeStringWorker`
@@ -800,7 +833,8 @@ impl<'p> Printer<'_, 'p> {
         let is_written_out = self.flags & WRITTEN_OUT != 0 && self.depth == 1;
         if !is_written_out
             && let Some((alias, arguments)) = self.alias_of_type(ty)
-            && self.is_type_symbol_accessible(alias)
+            && (self.flags & USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE != 0
+                || self.is_type_symbol_accessible(alias))
         {
             let arguments = self.map_to_type_nodes(&arguments, false);
             return self.symbol_to_type_node(alias, false, arguments);
@@ -1179,22 +1213,36 @@ impl<'p> Printer<'_, 'p> {
             },
             _ => Atom::NONE,
         };
-        name.is_some().then(|| self.text(name))
+        if name.is_none() {
+            return None;
+        }
+        // `GetTextOfNode`: the unicode escapes of an identifier are part of its text, and not of the atom.
+        if let Some(start) = self.c.declaration_name_start(file, decl) {
+            let end = self.c.end_of_token_at(file, start);
+            if hir
+                .text
+                .get(start as usize..end as usize)
+                .is_some_and(|written| written.contains(&b'\\'))
+            {
+                return Some(self.c.source_text(file, start, end));
+            }
+        }
+        Some(self.text(name))
     }
 
     /// `DeclarationNameToString(GetAssignedName(e))`: the name of what `e` is given to.
     fn name_of_initialized_variable(&self, file: FileId, e: ExprId) -> Option<String> {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let parent = bound.expr_parent[e.idx()];
+        // What is in parentheses is given to nothing.
+        if self.c.is_written_in_parentheses(file, e) {
+            return None;
+        }
         if let Parent::VarInit(declaration) = parent {
             return match hir[hir[declaration].pat].kind {
                 PatKind::Ident(name) => Some(self.text(name)),
                 _ => None,
             };
-        }
-        // What is in parentheses is given to nothing.
-        if self.c.is_written_in_parentheses(file, e) {
-            return None;
         }
         let written = |pat: PatId| {
             self.c
@@ -1372,9 +1420,10 @@ impl<'p> Printer<'_, 'p> {
             .flags(symbol)
             .contains(SymFlags::TYPE_PARAMETER);
         let (starts_with_global_this, chain) = match self.enclosing_declaration {
-            Some((file, scope)) if !is_type_parameter => self
-                .c
-                .lookup_symbol_chain_at(symbol, is_type_of, file, scope),
+            Some((file, scope)) if !is_type_parameter => {
+                self.c
+                    .lookup_symbol_chain_at(symbol, is_type_of, yields_module, file, scope)
+            }
             _ => (false, self.lookup_symbol_chain(symbol, yields_module)),
         };
         let mut qualifier = String::new();
@@ -1810,7 +1859,7 @@ impl<'p> Printer<'_, 'p> {
         }
     }
 
-    fn name_of_container(&self, container: Option<(FileId, ScopeId)>) -> String {
+    fn name_of_container(&mut self, container: Option<(FileId, ScopeId)>) -> String {
         let Some((file, scope)) = container.filter(|container| container.1.is_some()) else {
             return String::new();
         };
@@ -1818,8 +1867,19 @@ impl<'p> Printer<'_, 'p> {
         let symbol = match bound.scopes[scope.idx()].kind {
             ScopeKind::Fn(function) => {
                 if let FnOwner::Member(member) = bound.fns[function.idx()].owner {
+                    let owner = bound.member_owner[member.idx()];
                     let member = &self.c.hir(file)[member];
-                    return self.property_key_text(file, member.key, member.pos);
+                    let name = self.property_key_text(file, member.key, member.pos);
+                    // `getSymbolChain`: a method is reached through its class.
+                    if self.enclosing_declaration.is_some()
+                        && let MemberOwner::Class(class) = owner
+                        && bound.class_symbol[class.idx()].is_some()
+                    {
+                        let class = self.c.files().sym(file, bound.class_symbol[class.idx()]);
+                        let class = self.symbol_to_type_node(class, false, Vec::new());
+                        return format!("{}.{name}", class.text);
+                    }
+                    return name;
                 }
                 // `GetAssignedName`
                 if bound.fn_symbol[function.idx()].is_none()
@@ -2015,7 +2075,8 @@ impl<'p> Printer<'_, 'p> {
             .rev()
             .find(|local| local.0 == name)
         {
-            Some(local) => local.1,
+            Some(&(_, Some(found))) => found,
+            Some(&(_, None)) => return true,
             None => {
                 let files = self.c.files();
                 let Some(found) = files
@@ -2034,10 +2095,10 @@ impl<'p> Printer<'_, 'p> {
         self.symbol_of_type_parameter(found) != self.symbol_of_type_parameter(parameter)
     }
 
-    /// `typeParameterToName`, with `GenerateNamesForShadowedTypeParams` if there is an enclosing declaration.
+    /// `typeParameterToName`
     fn type_parameter_to_name(&mut self, parameter: TypeId) -> String {
         let raw = self.name_of_type_parameter(parameter);
-        if self.enclosing_declaration.is_none() {
+        if self.flags & GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS == 0 {
             return raw;
         }
         if let Some(named) = self
@@ -2070,16 +2131,42 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// `enterNewScope`, as far as the names of type parameters go. What it returns is for `leave_scope`.
-    fn enter_new_scope(&mut self, type_parameters: &[TypeId]) -> (usize, usize, usize) {
+    fn enter_new_scope(
+        &mut self,
+        type_parameters: &[TypeId],
+        is_instantiated: bool,
+    ) -> (usize, usize, usize) {
         let outer = (
             self.type_parameter_names.len(),
             self.type_parameter_name_counts.len(),
             self.fake_scope_type_parameters.len(),
         );
+        // `pushFakeScope("params", ..)`, which lies around that of the type parameters.
         if self.enclosing_declaration.is_some() {
+            for &type_parameter in type_parameters {
+                let TypeData::TypeParam(file, tp, _) = *self.c.data(type_parameter) else {
+                    continue;
+                };
+                let bound = self.c.bound(file);
+                let symbol = bound.type_param_symbol[tp.idx()];
+                if symbol.is_some()
+                    && bound.symbols[symbol.idx()]
+                        .flags
+                        .contains(SymFlags::PARAMETER)
+                {
+                    let name = self.text(self.c.hir(file)[tp].name);
+                    self.fake_scope_type_parameters
+                        .push((name, (!is_instantiated).then_some(type_parameter)));
+                }
+            }
+        }
+        if self.enclosing_declaration.is_some()
+            && self.flags & GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS != 0
+        {
             for &parameter in type_parameters {
                 let name = self.type_parameter_to_name(parameter);
-                self.fake_scope_type_parameters.push((name, parameter));
+                self.fake_scope_type_parameters
+                    .push((name, Some(parameter)));
             }
         }
         outer
@@ -2178,17 +2265,7 @@ impl<'p> Printer<'_, 'p> {
             if written.is_some() {
                 let declared = self.c.type_from_node(file, written);
                 if self.c.instantiate(declared, self.mapper) == constraint {
-                    let length_before = self.approximate_length;
-                    let node = self.type_node_to_node(file, written);
-                    // What counts is how long it is in the source, which is not kept of the default library.
-                    let length = if self.c.hir(file).text.is_empty() {
-                        node.text.len()
-                    } else {
-                        let start = self.c.hir(file)[written].pos;
-                        self.c.end_of_type_node(file, written).saturating_sub(start) as usize
-                    };
-                    self.approximate_length = length_before + length + 1;
-                    return node;
+                    return self.reuse_type_node(file, written);
                 }
             }
         }
@@ -2672,7 +2749,7 @@ impl<'p> Printer<'_, 'p> {
                     return self.elided_information_placeholder();
                 }
                 self.visited_types.push(ty);
-                let reused = self.type_node_to_node(file, node);
+                let reused = self.reuse_type_node(file, node);
                 self.visited_types.retain(|&visited| visited != ty);
                 return reused;
             }
@@ -2833,8 +2910,9 @@ impl<'p> Printer<'_, 'p> {
     ) -> Vec<String> {
         let no_truncation = self.flags & NO_TRUNCATION != 0;
         if self.check_truncation_length() {
+            // `NewNotEmittedTypeElement`: one element, which is written as nothing.
             return if no_truncation {
-                Vec::new()
+                vec![String::new()]
             } else {
                 vec!["...;".to_owned()]
             };
@@ -3864,37 +3942,11 @@ impl<'p> Printer<'_, 'p> {
         expanded
     }
 
-    /// `serializeTypeForDeclaration`, `pseudoTypeEquivalentToType`: the annotation of `parameter`, if there is an enclosing
-    /// declaration and the annotation still is what the parameter comes to.
-    fn annotation_to_reuse(&mut self, parameter: &Parameter) -> Option<(FileId, TypeNodeId)> {
-        if self.flags & REUSES_TYPE_NODES == 0 {
-            return None;
-        }
-        let (file, declaration) = parameter.declaration?;
-        let written = self.c.hir(file)[declaration].ty;
-        if written.is_none() {
-            return None;
-        }
-        let declared = self.c.type_from_node(file, written);
-        let declared = self.c.instantiate(declared, self.mapper);
-        let is_equivalent = declared == parameter.ty
-            || parameter.optional && declared == self.c.without_undefined(parameter.ty);
-        is_equivalent.then_some((file, written))
-    }
-
     /// `symbolToParameterDeclaration`
     fn parameter_text(&mut self, parameter: &Parameter) -> String {
-        let has_enclosing_declaration = self.enclosing_declaration.is_some();
-        let node = if has_enclosing_declaration {
-            self.serialize_type_of_parameter(parameter)
-        } else {
-            match self.annotation_to_reuse(parameter) {
-                Some((file, written)) => self.type_node_to_node(file, written),
-                None => self.type_to_node(parameter.ty),
-            }
-        };
+        let node = self.serialize_type_of_parameter(parameter);
         self.approximate_length += parameter.name_length + 3;
-        let library_alias = if has_enclosing_declaration {
+        let library_alias = if self.enclosing_declaration.is_some() {
             None
         } else {
             self.library_alias_of_parameter(parameter)
@@ -3945,17 +3997,6 @@ impl<'p> Printer<'_, 'p> {
         }
         let Some(predicate) = self.c.sig_predicate(signature) else {
             let returned = self.c.sig_return_for_inference(signature);
-            if self.flags & REUSES_TYPE_NODES != 0
-                && let Some((file, func, _)) = self.c.sig_decl(signature)
-            {
-                let written = self.c.hir(file)[func].ret;
-                if written.is_some() {
-                    let declared = self.c.type_from_node(file, written);
-                    if self.c.instantiate(declared, self.mapper) == returned {
-                        return self.type_node_to_node(file, written).text;
-                    }
-                }
-            }
             return self.type_to_node(returned).text;
         };
         let mut text = String::new();
@@ -4105,7 +4146,11 @@ impl<'p> Printer<'_, 'p> {
         let declared = self.signature_parameters(signature);
         let expanded = self.expanded_parameters(&declared);
         let own_type_parameters = self.c.sig_type_params(signature).into_vec();
-        let outer_scope = self.enter_new_scope(&own_type_parameters);
+        let is_instantiated = self.c.sig_decl(signature).is_some_and(|declared| {
+            let mapping = self.c.p.types.mapping(declared.2);
+            mapping.iter().any(|pair| pair.0 != pair.1)
+        });
+        let outer_scope = self.enter_new_scope(&own_type_parameters, is_instantiated);
         self.approximate_length += 3;
         let mut type_parameters = Vec::new();
         let mut own_type_parameters = self.c.sig_type_params(signature).into_vec();
@@ -4212,9 +4257,44 @@ impl<'p> Printer<'_, 'p> {
         } else {
             None
         };
-        let constraint = match over_keyof {
+        let generates_names = self.flags & GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS != 0;
+        // `getModifiersTypeFromMappedType`
+        let modifiers = over_keyof.map(|(declared, _)| self.c.instantiate(declared, mapper));
+        // `isHomomorphicMappedTypeWithNonHomomorphicInstantiation`: declared over `keyof T`, instantiated with a `T` that is not a
+        // type parameter.
+        let is_homomorphic_with_non_homomorphic_instantiation = generates_names
+            && matches!(over_keyof, Some((declared, true)) if matches!(self.c.data(declared), TypeData::TypeParam(..)))
+            && modifiers.is_some_and(|modifiers| {
+                let modifiers = self.c.force(modifiers);
+                !matches!(self.c.data(modifiers), TypeData::TypeParam(..))
+            });
+        let needs_modifier_preserving_wrapper =
+            generates_names && matches!(over_keyof, Some((_, false))) && {
+                let keys = self.c.mapped_keys(ty);
+                let keys = self.c.force(keys);
+                !(matches!(self.c.data(keys), TypeData::TypeParam(..))
+                    && self
+                        .c
+                        .constraint_of_type_param(keys)
+                        .is_some_and(|constraint| {
+                            matches!(self.c.data(constraint), TypeData::Keyof(_))
+                        }))
+            };
+        let new_type_variable = if is_homomorphic_with_non_homomorphic_instantiation
+            || needs_modifier_preserving_wrapper
+        {
+            let key = self.c.mapped_type_param(ty);
+            self.c
+                .renamed_type_param(key, self.c.files().atoms.intern(b"T"))
+        } else {
+            None
+        };
+        let new_name = new_type_variable.map(|variable| self.type_parameter_to_name(variable));
+        let constraint = match (&new_name, over_keyof) {
+            (Some(new_name), Some((_, true))) => format!("keyof {new_name}"),
+            (Some(new_name), _) => new_name.clone(),
             // `isMappedTypeWithKeyofConstraintDeclaration`: `keyof` stays, whatever it comes to.
-            Some((declared, true)) => {
+            (None, Some((declared, true))) => {
                 let of = self.c.instantiate(declared, mapper);
                 let of = self.type_to_node(of);
                 format!("keyof {}", of.emit(TYPE_OPERATOR))
@@ -4225,7 +4305,7 @@ impl<'p> Printer<'_, 'p> {
             }
         };
         let parameter = self.c.mapped_type_param(ty);
-        let outer_scope = self.enter_new_scope(&[parameter]);
+        let outer_scope = self.enter_new_scope(&[parameter], false);
         let name = if self.enclosing_declaration.is_some() {
             self.type_parameter_to_name(parameter)
         } else {
@@ -4235,7 +4315,19 @@ impl<'p> Printer<'_, 'p> {
             Some(name_type) => format!(" as {}", self.type_to_node(name_type).text),
             None => String::new(),
         };
-        let template = self.c.mapped_template(ty);
+        let template = match (new_type_variable, over_keyof) {
+            (Some(new_type_variable), Some((declared, true))) => {
+                let target = self.c.type_from_node(file, node);
+                let template = self.c.mapped_template(target);
+                let target_parameter = self.c.mapped_type_param(target);
+                let to_new_type_variable = self.c.mapper_from(
+                    &[target_parameter, declared],
+                    &[parameter, new_type_variable],
+                );
+                self.c.instantiate(template, to_new_type_variable)
+            }
+            _ => self.c.mapped_template(ty),
+        };
         // The circle may go through a type alias, which is `any` then. That has no alias.
         let template = match self.c.data(template) {
             TypeData::LazyAlias { .. } if self.c.p.mapped_types_with_errors.get(&ty).is_some() => {
@@ -4264,10 +4356,43 @@ impl<'p> Printer<'_, 'p> {
             MappedModifier::Add => "?",
             MappedModifier::Remove => "-?",
         };
-        Node::simple(format!(
+        let result = format!(
             "{{ {readonly}[{name} in {constraint}{renamed}]{question}: {}; }}",
             template.text
-        ))
+        );
+        let (Some(new_name), Some((declared, is_written_with_keyof)), Some(modifiers)) =
+            (new_name, over_keyof, modifiers)
+        else {
+            return Node::simple(result);
+        };
+        let (check, infer_constraint) = if is_written_with_keyof {
+            let original_constraint = match self.c.constraint_of_type_param(declared) {
+                Some(constraint) => self.c.instantiate(constraint, mapper),
+                None => TypeId::UNKNOWN,
+            };
+            let original_constraint = if original_constraint == TypeId::UNKNOWN {
+                String::new()
+            } else {
+                let constraint = self.type_to_node(original_constraint);
+                format!(" extends {}", constraint.emit(CONDITIONAL + 1))
+            };
+            (self.type_to_node(modifiers), original_constraint)
+        } else {
+            let keys = self.c.mapped_keys(ty);
+            let check = self.type_to_node(keys);
+            let modifiers = self.type_to_node(modifiers);
+            (
+                check,
+                format!(" extends keyof {}", modifiers.emit(TYPE_OPERATOR)),
+            )
+        };
+        Node::new(
+            format!(
+                "{} extends infer {new_name}{infer_constraint} ? {result} : never",
+                check.emit(UNION)
+            ),
+            CONDITIONAL,
+        )
     }
 
     /// `typeToTypeNodeOrCircularityElision`
@@ -4336,158 +4461,5 @@ impl<'p> Printer<'_, 'p> {
         let declared = self.c.type_from_node(file, node);
         let ty = self.c.instantiate(declared, self.mapper);
         self.type_to_node(ty)
-    }
-
-    fn type_nodes_to_nodes(&mut self, file: FileId, list: IdList<TypeNodeId>) -> Vec<Node> {
-        let nodes: Vec<TypeNodeId> = self.c.hir(file).ids(list).collect();
-        let mut result = Vec::with_capacity(nodes.len());
-        for node in nodes {
-            result.push(self.type_node_to_node(file, node));
-        }
-        result
-    }
-
-    /// `tryReuseExistingNodeHelper`: `node` as it is written. A reference to a type parameter, and syntax that declares something, is
-    /// written as the type it denotes.
-    fn type_node_to_node(&mut self, file: FileId, node: TypeNodeId) -> Node {
-        if node.is_none() {
-            return Node::simple("any");
-        }
-        if self.enclosing_declaration.is_some() {
-            return self.reuse_type_node(file, node);
-        }
-        if self.depth >= MAXIMUM_DEPTH || self.c.is_stack_low() {
-            return self.elided_information_placeholder();
-        }
-        self.depth += 1;
-        let result = self.type_node_to_node_worker(file, node);
-        self.depth -= 1;
-        result
-    }
-
-    /// Whether `tryVisitSimpleTypeNode` gives up on `node`: at the bottom of the `keyof`s and indexed accesses it consists of is a
-    /// type parameter that the mapper of the signature being written replaces (`tryVisitTypeReference`).
-    fn is_remapped_simple_type_node(&mut self, file: FileId, node: TypeNodeId) -> bool {
-        match self.c.hir(file)[node].kind {
-            TypeNodeKind::Ref { .. } => {
-                let declared = self.c.type_from_node(file, node);
-                matches!(self.c.data(declared), TypeData::TypeParam(..))
-                    && self.c.instantiate(declared, self.mapper) != declared
-            }
-            TypeNodeKind::IndexedAccess { obj: of, .. } | TypeNodeKind::Keyof(of) => {
-                self.is_remapped_simple_type_node(file, of)
-            }
-            _ => false,
-        }
-    }
-
-    fn type_node_to_node_worker(&mut self, file: FileId, node: TypeNodeId) -> Node {
-        let hir = self.c.hir(file);
-        match hir[node].kind {
-            TypeNodeKind::Keyword(keyword) => Node::simple(match keyword {
-                Keyword::Any => "any",
-                Keyword::Unknown => "unknown",
-                Keyword::Never => "never",
-                Keyword::Void => "void",
-                Keyword::Undefined => "undefined",
-                Keyword::Null => "null",
-                Keyword::String => "string",
-                Keyword::Number => "number",
-                Keyword::Boolean => "boolean",
-                Keyword::BigInt => "bigint",
-                Keyword::Symbol => "symbol",
-                Keyword::Object => "object",
-                Keyword::This => "this",
-                Keyword::Intrinsic => "intrinsic",
-            }),
-            TypeNodeKind::Ref { name, args } => {
-                let declared = self.c.type_from_node(file, node);
-                if matches!(self.c.data(declared), TypeData::TypeParam(..)) {
-                    return self.resolved_type_node_to_node(file, node);
-                }
-                let names: Vec<String> = hir.ids(name).map(|part| self.text(part)).collect();
-                let arguments = self.type_nodes_to_nodes(file, args);
-                Node {
-                    text: format!("{}{}", names.join("."), type_arguments_text(arguments)),
-                    precedence: NON_ARRAY,
-                    reference: match &names[..] {
-                        [only] => Some(only.clone()),
-                        _ => None,
-                    },
-                }
-            }
-            TypeNodeKind::StringLit(value) => {
-                let quote = match hir.text.get(hir[node].pos as usize) {
-                    Some(b'\'') => '\'',
-                    _ => '"',
-                };
-                Node::simple(quoted(&self.text(value), quote, false))
-            }
-            TypeNodeKind::NumberLit(index) => Node::simple(crate::atom::number_to_string(
-                hir.numbers.get(index as usize).copied().unwrap_or(0.0),
-            )),
-            TypeNodeKind::BoolLit(value) => Node::simple(if value { "true" } else { "false" }),
-            TypeNodeKind::Array(element) => {
-                let element = self.type_node_to_node(file, element);
-                Node::new(format!("{}[]", element.emit(POSTFIX)), POSTFIX)
-            }
-            TypeNodeKind::Tuple(elems) => {
-                let mut parts = Vec::with_capacity(elems.len());
-                for e in elems.iter() {
-                    let elem = hir[e];
-                    let ty = self.type_node_to_node(file, elem.ty);
-                    let dots = if elem.rest { "..." } else { "" };
-                    let question = if elem.optional { "?" } else { "" };
-                    parts.push(if elem.name.is_some() {
-                        format!("{dots}{}{question}: {}", self.text(elem.name), ty.text)
-                    } else if elem.optional {
-                        format!("{}?", ty.emit(POSTFIX))
-                    } else {
-                        format!("{dots}{}", ty.text)
-                    });
-                }
-                Node::simple(format!("[{}]", parts.join(", ")))
-            }
-            TypeNodeKind::Union(list) => {
-                let nodes = self.type_nodes_to_nodes(file, list);
-                Node::new(join_nodes(nodes, " | ", TYPE_OPERATOR), UNION)
-            }
-            TypeNodeKind::Intersection(list) => {
-                let nodes = self.type_nodes_to_nodes(file, list);
-                Node::new(join_nodes(nodes, " & ", TYPE_OPERATOR), INTERSECTION)
-            }
-            TypeNodeKind::IndexedAccess { obj, index } => {
-                if self.is_remapped_simple_type_node(file, obj) {
-                    return self.resolved_type_node_to_node(file, node);
-                }
-                let object = self.type_node_to_node(file, obj);
-                let index = self.type_node_to_node(file, index);
-                Node::new(format!("{}[{}]", object.emit(POSTFIX), index.text), POSTFIX)
-            }
-            TypeNodeKind::Keyof(of) => {
-                if self.is_remapped_simple_type_node(file, of) {
-                    return self.resolved_type_node_to_node(file, node);
-                }
-                let of = self.type_node_to_node(file, of);
-                Node::new(format!("keyof {}", of.emit(TYPE_OPERATOR)), TYPE_OPERATOR)
-            }
-            TypeNodeKind::Readonly(of) => {
-                let of = self.type_node_to_node(file, of);
-                Node::new(format!("readonly {}", of.emit(POSTFIX)), TYPE_OPERATOR)
-            }
-            TypeNodeKind::Typeof { name, args, .. } => {
-                let names: Vec<String> = hir.ids(name).map(|part| self.text(part)).collect();
-                let arguments = self.type_nodes_to_nodes(file, args);
-                Node::new(
-                    format!(
-                        "typeof {}{}",
-                        names.join("."),
-                        type_arguments_text(arguments)
-                    ),
-                    TYPE_OPERATOR,
-                )
-            }
-            _ => self.resolved_type_node_to_node(file, node),
-        }
     }
 }

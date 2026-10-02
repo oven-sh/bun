@@ -5483,6 +5483,85 @@ impl<'p> Checker<'p> {
         true
     }
 
+    /// `combineUnionOrIntersectionParameters`. Each parameter is a new symbol: it has a name and no declaration.
+    fn combine_union_or_intersection_parameters(
+        &mut self,
+        left: &[SigParam],
+        right: &[SigParam],
+        is_union: bool,
+    ) -> Vec<SigParam> {
+        let (left_count, right_count) = (self.parameter_count(left), self.parameter_count(right));
+        let (longest_count, longest, shorter) = if left_count >= right_count {
+            (left_count, left, right)
+        } else {
+            (right_count, right, left)
+        };
+        let either_has_rest =
+            self.has_effective_rest_parameter(left) || self.has_effective_rest_parameter(right);
+        let needs_extra_rest = either_has_rest && !self.has_effective_rest_parameter(longest);
+        // `minArgumentCount`: the greater of the two as declared, where a rest parameter counts for nothing, tuple or not. Here it
+        // is what may be left out that says how many arguments it takes.
+        let least = Self::min_args(left).max(Self::min_args(right));
+        let mut params = Vec::with_capacity(longest_count + 1);
+        for i in 0..longest_count {
+            // `tryGetTypeAtPosition`: where one of them takes nothing, that counts as `unknown`.
+            let a = self.param_type_at(longest, i).unwrap_or(TypeId::UNKNOWN);
+            let b = self.param_type_at(shorter, i).unwrap_or(TypeId::UNKNOWN);
+            let combined = if is_union {
+                self.intersection(&[a, b])
+            } else {
+                self.union(&[a, b])
+            };
+            let is_rest = either_has_rest && !needs_extra_rest && i == longest_count - 1;
+            let left_name = if i < left_count {
+                self.parameter_name_at_position(left, i)
+            } else {
+                String::new()
+            };
+            let right_name = if i < right_count {
+                self.parameter_name_at_position(right, i)
+            } else {
+                String::new()
+            };
+            let name = if left_name == right_name || right_name.is_empty() {
+                left_name
+            } else if left_name.is_empty() {
+                right_name
+            } else {
+                String::new()
+            };
+            let name = if name.is_empty() {
+                format!("arg{i}")
+            } else {
+                name
+            };
+            params.push(SigParam {
+                name: self.files().atoms.intern(name.as_bytes()),
+                ty: if is_rest {
+                    self.array_of(combined)
+                } else {
+                    combined
+                },
+                optional: !is_rest && i >= least,
+                rest: is_rest,
+                has_declaration: false,
+            });
+        }
+        if needs_extra_rest {
+            let element = self
+                .param_type_at(shorter, longest_count)
+                .unwrap_or(TypeId::ANY);
+            params.push(SigParam {
+                name: known::args,
+                ty: self.array_of(element),
+                optional: false,
+                rest: true,
+                has_declaration: false,
+            });
+        }
+        params
+    }
+
     /// `combineUnionOrIntersectionMemberSignatures`: of a union, parameters intersect and results unite; of an intersection the
     /// other way round.
     pub(super) fn combine_member_signatures(
@@ -5507,55 +5586,7 @@ impl<'p> Checker<'p> {
             left_type_params
         };
         let (lp, rp) = (self.sig_params(left), self.sig_params(right));
-        let (left_count, right_count) = (self.parameter_count(&lp), self.parameter_count(&rp));
-        let (longest_count, longest, shorter) = if left_count >= right_count {
-            (left_count, &lp, &rp)
-        } else {
-            (right_count, &rp, &lp)
-        };
-        let either_has_rest =
-            self.has_effective_rest_parameter(&lp) || self.has_effective_rest_parameter(&rp);
-        let needs_extra_rest = either_has_rest && !self.has_effective_rest_parameter(longest);
-        // `minArgumentCount`: the greater of the two as declared, where a rest parameter counts for nothing, tuple or not. Here it
-        // is what may be left out that says how many arguments it takes.
-        let least = Self::min_args(&lp).max(Self::min_args(&rp));
-        let mut params = Vec::with_capacity(longest_count + 1);
-        for i in 0..longest_count {
-            // `tryGetTypeAtPosition`: where one of them takes nothing, that counts as `unknown`.
-            let a = self.param_type_at(longest, i).unwrap_or(TypeId::UNKNOWN);
-            let b = self.param_type_at(shorter, i).unwrap_or(TypeId::UNKNOWN);
-            let combined = if is_union {
-                self.intersection(&[a, b])
-            } else {
-                self.union(&[a, b])
-            };
-            let is_rest = either_has_rest && !needs_extra_rest && i == longest_count - 1;
-            let name = longest
-                .get(i)
-                .or(longest.last())
-                .map_or(Atom::NONE, |p| p.name);
-            params.push(SigParam {
-                name,
-                ty: if is_rest {
-                    self.array_of(combined)
-                } else {
-                    combined
-                },
-                optional: !is_rest && i >= least,
-                rest: is_rest,
-            });
-        }
-        if needs_extra_rest {
-            let element = self
-                .param_type_at(shorter, longest_count)
-                .unwrap_or(TypeId::ANY);
-            params.push(SigParam {
-                name: known::args,
-                ty: self.array_of(element),
-                optional: false,
-                rest: true,
-            });
-        }
+        let params = self.combine_union_or_intersection_parameters(&lp, &rp, is_union);
         // `getReturnTypeOfSignature`, of a composite
         let (a, b) = (self.sig_return(left), self.sig_return(right));
         let ret = if is_union {
@@ -5572,12 +5603,17 @@ impl<'p> Checker<'p> {
             }),
             (l, r) => l.or(r),
         };
-        // `Signature.composite`
-        let mut of: Vec<SigId> = match self.p.types.sig(left) {
-            SigData::Synth { of, .. } if !of.is_empty() => of.to_vec(),
-            _ => vec![left],
-        };
-        of.push(right);
+        // `Signature.composite`. `of` has no `isUnion`: whoever reads it takes it for the members of a union.
+        let mut of: Vec<SigId> = Vec::new();
+        if is_union {
+            match self.p.types.sig(left) {
+                SigData::Synth { of: members, .. } if !members.is_empty() => {
+                    of.extend_from_slice(members);
+                }
+                _ => of.push(left),
+            }
+            of.push(right);
+        }
         self.p.types.intern_sig(SigData::Synth {
             type_params: type_params.into(),
             params: params.into(),

@@ -430,17 +430,59 @@ describe("web worker", () => {
       const [{ data }] = await once(worker, "message");
       expect(data).toBe("closing");
       worker.terminate();
-      // The close code here is terminate()'s, as for any worker stopped by its parent.
+      // The close code is terminate()'s: the worker never reached the checkpoint that consumes close().
       const [close] = await once(worker, "close");
-      expect(close.type).toBe("close");
+      expect(close.code).toBe(1);
     });
 
-    test("a throw after close() is still reported to the parent", async () => {
-      const worker = workerFromSource(`self.close(); throw new Error("boom");`);
-      const { promise, resolve, reject } = Promise.withResolvers<string>();
-      worker.onerror = e => resolve(e.message);
-      worker.addEventListener("close", e => reject(new Error(`closed (${e.code}) without an error event`)));
-      expect(await promise).toContain("boom");
+    test("from a 'beforeExit' listener with the entry still pending, the close code is 0, not 13", async () => {
+      const { messages, code } = await messagesUntilClose(
+        workerFromSource(`
+          process.on("exit", code => postMessage("exit:" + code));
+          process.on("beforeExit", () => self.close());
+          await new Promise(() => {});
+        `),
+      );
+      expect(messages).toEqual(["exit:0"]);
+      expect(code).toBe(0);
+    });
+
+    test("a promise the closing task rejects is still reported to the parent", async () => {
+      const worker = workerFromSource(`self.onmessage = async () => { self.close(); throw new Error("boom"); };`);
+      const messages: any[] = [];
+      worker.onerror = e => messages.push("error:" + e.message);
+      await once(worker, "open");
+      worker.postMessage("go");
+      const [close] = await once(worker, "close");
+      expect(messages).toEqual(["error:boom"]);
+      expect(close.code).toBe(1);
+    });
+
+    test("a throw after close() is still reported to the parent, before the 'exit' listeners", async () => {
+      const worker = workerFromSource(`
+        process.on("exit", code => postMessage("exit:" + code));
+        self.close();
+        throw new Error("boom");
+      `);
+      const messages: any[] = [];
+      worker.addEventListener("message", e => messages.push(e.data));
+      worker.onerror = e => messages.push("error:" + e.message);
+      const [close] = await once(worker, "close");
+      expect(messages).toEqual(["error:boom", "exit:1"]);
+      expect(close.code).toBe(1);
+    });
+
+    test("a checkpoint beneath the calling script does not end its task", async () => {
+      const { messages, code } = await messagesUntilClose(
+        workerFromSource(`
+          queueMicrotask(() => postMessage("microtask"));
+          self.close();
+          require("bun:jsc").drainMicrotasks();
+          postMessage("after the nested checkpoint");
+        `),
+      );
+      expect(messages).toEqual(["microtask", "after the nested checkpoint"]);
+      expect(code).toBe(0);
     });
 
     for (const when of ["synchronously", "from a microtask"] as const) {

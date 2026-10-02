@@ -3093,8 +3093,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JS
 
 // ====================== end conditional builtin globals ======================
 
-extern "C" uint8_t Bun__getExitCode(void* bunVM);
-extern "C" void Process__dispatchOnExit(Zig::GlobalObject*, uint8_t exitCode);
 // The task that called WorkerGlobalScope.close() has ended: stop the worker, as process.exit() does.
 extern "C" void WebWorker__close(void* bunVM);
 
@@ -3172,15 +3170,15 @@ uint8_t GlobalObject::drainMicrotasks()
     }
 
     // WorkerGlobalScope.close() was called by the task this checkpoint ends: the worker stops now, as
-    // process.exit() stops it (its 'exit' listeners, then the stop), and whatever was queued behind the
-    // task (the rest of a message batch, a timer, a completion) is discarded at the gates the stop closes.
+    // process.exit() stops it, and whatever was queued behind the task (the rest of a message batch, a
+    // timer, a completion) is discarded at the gates the stop closes. A checkpoint beneath script (a
+    // nested wait inside a host function) is not the end of the task: the script runs on.
     auto* clientData = WebCore::clientData(vm);
-    if (clientData->workerCloseRequested) [[unlikely]] {
+    if (clientData->workerCloseRequested && !vm.entryScope) [[unlikely]] {
         clientData->workerCloseRequested = false;
-        Process__dispatchOnExit(this, Bun__getExitCode(bunVM()));
-        if (auto result = endedByException(); result && *result == 1)
-            return 1;
         WebWorker__close(bunVM());
+        // An 'exit' listener that threw is reported as uncaught; the stop stands.
+        (void)endedByException();
         return 1;
     }
 

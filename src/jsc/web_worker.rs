@@ -211,11 +211,15 @@ extern "C" fn WebWorker__getMessagingProxy(vm: &VirtualMachine) -> *mut c_void {
 }
 
 /// `WorkerGlobalScope.close()`: the task that called it has ended (its
-/// checkpoint ran, the worker's 'exit' listeners too). Stop the worker as
-/// `process.exit()` does, with the exit code as it stands. Worker thread.
+/// checkpoint ran). Stop the worker as `process.exit()` does: the worker's
+/// 'exit' listeners, then the stop, with the exit code as it stands. Worker
+/// thread.
 ///
-/// An entry that threw in that same task is reported first: once the stop
-/// closes the gate, nothing is reported to the parent any more.
+/// What that task left uncaught (an entry that threw, a promise it rejected
+/// and nobody handled) is the worker's error and is reported first, as it
+/// would be had the task ended on its own: once the stop closes the gate,
+/// nothing reaches the parent any more. That report runs the 'exit'
+/// listeners (code 1) and requests the stop itself.
 #[unsafe(no_mangle)]
 extern "C" fn WebWorker__close(vm: &VirtualMachine) {
     let Some(worker) = vm.worker_ref() else {
@@ -223,8 +227,15 @@ extern "C" fn WebWorker__close(vm: &VirtualMachine) {
     };
     if let Some(promise) = vm.pending_internal_promise() {
         // SAFETY: the VM's entry promise, held strongly by the VM.
-        let _ = unsafe { worker.observe_entry(vm, promise) };
+        if let EntryOutcome::Stop = unsafe { worker.observe_entry(vm, promise) } {
+            return;
+        }
     }
+    let _ = vm.global().handle_rejected_promises();
+    if worker.has_requested_terminate() {
+        return;
+    }
+    virtual_machine::ExitHandler::dispatch_on_exit(vm);
     worker.exit();
 }
 
@@ -989,6 +1000,8 @@ impl WebWorker {
             // SAFETY: rooted by `entry_promise`.
             if unsafe { (*promise).status() } == jsc::js_promise::Status::Pending
                 && vm.exit_handler.exit_code == 0
+                // A 'beforeExit' listener that called close() or process.exit() chose the code.
+                && !self.exit_called.load(Ordering::Relaxed)
             {
                 vm.as_mut().exit_handler.exit_code = 13;
             }

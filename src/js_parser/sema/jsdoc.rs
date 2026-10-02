@@ -846,7 +846,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         // `parseTypeReference` at a token that is none: the name is missing (1110), and the token stays.
         if !self.is_in_lexer && self.token == Token::Unknown {
             self.error_at_token(1110);
-            self.p.emit_type(ts::TypeData::Missing, self.start as u32);
+            self.p.emit_type_ref(StoreStr::EMPTY, self.start as u32);
             return self.p.last_type();
         }
         self.enter_lexer();

@@ -524,10 +524,11 @@ pub enum SigData {
         mapper: MapperId,
     },
     /// The constructor a class without one has: `new (...) => instance`.
-    /// `base`: which of the construct signatures of what it extends it takes after.
+    /// `base`: the construct signature of the base constructor type that `getDefaultConstructSignatures` cloned, with the type
+    /// arguments of the `extends` clause. `None`: the base constructor type has none.
     DefaultConstruct {
         class: Sym,
-        base: u32,
+        base: Option<SigId>,
         mapper: MapperId,
     },
     /// The construct signature of a class made from its constructor `func`.
@@ -840,7 +841,11 @@ fn is_sig_local(data: &SigData, file: FileId) -> bool {
         SigData::Decl {
             file: f, mapper, ..
         } => *f == file || mapper.is_local(),
-        SigData::DefaultConstruct { class, mapper, .. } => class.file == file || mapper.is_local(),
+        SigData::DefaultConstruct {
+            class,
+            base,
+            mapper,
+        } => class.file == file || base.is_local() || mapper.is_local(),
         SigData::Construct {
             class,
             file: f,
@@ -1407,6 +1412,15 @@ impl TypeStore {
             _ => false,
         };
         let mut flags = self.flags_of(data);
+        // `getObjectTypeInstantiation`: of a target with alias type arguments no outer type parameter is left out.
+        if !matches!(data, TypeData::Union(_) | TypeData::Intersection(_))
+            && let Some((_, type_arguments)) = made.1.as_ref().and_then(|p| p.alias.as_ref())
+            && type_arguments
+                .iter()
+                .any(|&t| self.flags(t).contains(TypeFlags::HAS_TYPE_VARIABLES))
+        {
+            flags |= TypeFlags::HAS_TYPE_VARIABLES;
+        }
         // Unlike the others, it is not handed on by what the type is made of.
         flags.set(TypeFlags::MAY_BE_REDUCED, may_be_reduced);
         let has_lazy_member = match &data {

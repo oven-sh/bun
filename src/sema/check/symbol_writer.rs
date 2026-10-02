@@ -355,7 +355,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             | VisitedKind::HeritageClausePropertyAccess(node, index) => {
                 let scope = bound.type_scope[node.idx()];
                 let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
-                    return Some(Found::Undeclared("unknown".to_owned()));
+                    return None;
                 };
                 if scope.is_none() {
                     return None;

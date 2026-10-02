@@ -279,28 +279,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `explain_renamed`, and the same in what is related to the error.
-    pub(super) fn explain_renamed_throughout(&self, start: u32, code: u32, from: &str, to: &str) {
-        self.explain_renamed(start, code, from, to);
-        if let Some(note) = self
-            .notes
-            .borrow_mut()
-            .iter_mut()
-            .rev()
-            .find(|n| n.start == start && n.code == code)
-        {
-            for arg in note
-                .related
-                .iter_mut()
-                .flat_map(|related| &mut related.args)
-            {
-                if arg.as_str() == from {
-                    *arg = to.to_owned();
-                }
-            }
-        }
-    }
-
     /// The source text of `file` from `start` to `end`.
     pub(super) fn source_text(&self, file: FileId, start: u32, end: u32) -> String {
         let text = &self.hir(file).text;

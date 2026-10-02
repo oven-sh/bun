@@ -883,7 +883,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn missing_type(&mut self) -> Result<(), Error> {
         if self.should_keep_types() {
             let pos = self.token_start();
-            self.emit_type(TypeData::Missing, pos);
+            self.emit_type_ref(StoreStr::EMPTY, pos);
         }
         // While only trying, nothing is said. If the trial succeeds, it is run again for its errors.
         if self.lexer.is_log_disabled {
@@ -4162,7 +4162,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut ty = syntax.last_type;
         while ty.is_some() {
             match syntax.ast[ty].data {
-                TypeData::Missing => return true,
+                TypeData::Reference { name, .. } if syntax.ast[name][0].text.slice().is_empty() => {
+                    return true;
+                }
                 TypeData::Function(signature) => ty = syntax.ast[signature].return_type,
                 _ => break,
             }

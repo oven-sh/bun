@@ -1022,9 +1022,12 @@ impl<'a> Spans<'a> {
         at
     }
 
-    /// `A.B.C` at `at`. An empty name stands for one that is missing after its dot.
+    /// `A.B.C` at `at`. An empty name stands for one that is missing.
     fn entity_name(self, at: usize, names: IdList<Atom>) -> usize {
-        let mut end = word_end(self.text, at);
+        let mut end = match self.hir.ids(names).next() {
+            Some(known::empty) => at,
+            _ => word_end(self.text, at),
+        };
         for name in self.hir.ids(names).skip(1) {
             let dot = self.eat(end, b".");
             if dot == end {
@@ -1501,22 +1504,16 @@ impl<'a> Spans<'a> {
                 } else if self.byte(pos) == b'*' {
                     // JSDoc's `*`
                     pos + 1
-                } else if self.byte(pos) == b'.' && self.eat_name(pos + 1) != pos + 1 {
-                    // `parseEntityName`: a name that is missing goes on behind its dots like any other.
-                    let mut at = pos;
-                    loop {
-                        let dot = self.eat(at, b".");
-                        let end = self.eat_name(dot);
-                        if dot == at || end == dot {
-                            break;
-                        }
-                        at = end;
-                    }
-                    at
                 } else {
-                    // A type that is missing.
+                    // One the lowering made: the `null` of JSDoc's `T?`.
                     return skip_trivia_back(self.text, pos);
                 }
+            }
+            // A type that is missing.
+            TypeNodeKind::Ref { name, args }
+                if args.is_empty() && self.hir.ids(name).eq([known::empty]) =>
+            {
+                return skip_trivia_back(self.text, pos);
             }
             TypeNodeKind::Ref { name, args } => self.type_args(args, self.entity_name(pos, name)),
             TypeNodeKind::StringLit(_) => self.quoted(pos),
@@ -2654,16 +2651,6 @@ impl Checker<'_> {
             .text
             .get((start as usize).saturating_sub(1)..=start as usize)?;
         (!from_before.contains(&b'@')).then_some(start)
-    }
-
-    /// Whether `node` is where a type must be and none starts: a reference to a type whose name is missing, which the lowered tree
-    /// keeps as an `any` that is not written. So it keeps JSDoc's `*` and `?`, and `unique T`.
-    pub(super) fn is_missing_type(&self, file: FileId, node: TypeNodeId) -> bool {
-        let spans = self.spans(file);
-        let pos = spans.type_pos(node);
-        !spans.is_written_keyword(node)
-            && !matches!(spans.byte(pos), b'*' | b'?' | b'.')
-            && spans.word_at(pos) != b"unique"
     }
 
     /// The range of each name of the entity name `A.B.C` that is written at `pos`, up to a name that is missing.

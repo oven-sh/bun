@@ -391,31 +391,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `createDeferredTypeReference`: `JSX.IntrinsicClassAttributes` as a type that goes by that name, if it is an alias and `ty` is
-    /// the reference that is all it stands for.
-    pub(super) fn jsx_class_attributes_by_name(
-        &mut self,
-        file: FileId,
-        ty: TypeId,
-    ) -> Option<TypeId> {
-        if !matches!(self.data(ty), TypeData::Ref { args, .. } if !args.is_empty()) {
-            return None;
-        }
-        let alias = self.jsx_symbol(file, known::IntrinsicClassAttributes)?;
-        let flags = self.files().flags(alias);
-        if !flags.contains(SymFlags::TYPE_ALIAS)
-            || flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-            || self.declared_type(alias) != ty
-        {
-            return None;
-        }
-        let args = self.local_type_params_of_symbol(alias);
-        Some(self.intern(TypeData::LazyAlias {
-            sym: alias,
-            args: args.to_vec().into(),
-        }))
-    }
-
     /// `checkJsxChildren`: the children that count, and what each is.
     pub(super) fn jsx_child_types(&mut self, file: FileId, e: ExprId) -> Vec<(ExprId, TypeId)> {
         let hir = self.hir(file);

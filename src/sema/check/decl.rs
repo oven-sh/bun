@@ -2135,8 +2135,14 @@ impl<'p> Checker<'p> {
                 })
             }
             TypeNodeKind::Object(members) => {
+                // `emptyTypeLiteralType`, unless it is the body of an alias.
                 if members.is_empty() {
-                    return TypeId::EMPTY_OBJECT;
+                    return match self.alias_for_type_node(file, scope, node) {
+                        Some((alias, type_arguments)) => {
+                            self.with_alias(TypeId::EMPTY_OBJECT, alias, &type_arguments)
+                        }
+                        None => TypeId::EMPTY_OBJECT,
+                    };
                 }
                 let mapper = self.identity_mapper_for_node(file, scope, node);
                 self.intern(TypeData::Anon {
@@ -3366,26 +3372,15 @@ impl<'p> Checker<'p> {
     /// Only the base constructor type counts: the base types may be empty (the base signature returns `any`, `object`, a type
     /// parameter). `None` if the base constructor type has no such signature.
     pub(super) fn default_construct_base_sig(&mut self, mut sig: SigId) -> Option<SigId> {
-        let mut visited: SmallVec<[Sym; 4]> = SmallVec::new();
         loop {
             sig = match *self.p.types.sig(sig) {
                 SigData::WithReturn { sig: inner, .. } => inner,
-                SigData::DefaultConstruct {
-                    class,
-                    base,
-                    mapper,
-                } => {
-                    let base_sig = *self.base_constructor_sigs(class).get(base as usize)?;
-                    if visited.contains(&class) {
-                        return None;
-                    }
-                    visited.push(class);
-                    self.instantiate_sig(base_sig, mapper)
+                SigData::DefaultConstruct { base, mapper, .. } => {
+                    self.instantiate_sig(base?, mapper)
                 }
-                _ => break,
+                _ => return Some(sig),
             };
         }
-        Some(sig)
     }
 
     #[inline]

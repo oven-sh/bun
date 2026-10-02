@@ -6042,9 +6042,7 @@ impl<'p> Checker<'p> {
                     return Some(self.hir(file)[func].flags & (Flags::PRIVATE | Flags::PROTECTED));
                 }
                 // `getDefaultConstructSignatures`: a clone of one of the base class, declared where that one is.
-                SigData::DefaultConstruct { class, base, .. } => {
-                    sig = *self.base_constructor_sigs(class).get(base as usize)?;
-                }
+                SigData::DefaultConstruct { base, .. } => sig = base?,
                 _ => return None,
             }
         }

@@ -611,7 +611,7 @@ impl Checker<'_> {
                     if steps == 32 || self.base_types(of).is_empty() {
                         return;
                     }
-                    let Some(&inherited) = self.base_constructor_sigs(of).get(base as usize) else {
+                    let Some(inherited) = base else {
                         return;
                     };
                     sig = inherited;

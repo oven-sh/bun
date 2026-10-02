@@ -103,9 +103,16 @@ impl<'p> Checker<'p> {
         let (keeps_alias, is_reference) = match (hir[node].kind, self.data(ty)) {
             (TypeNodeKind::Union(_), TypeData::Union(_))
             | (TypeNodeKind::IndexedAccess { .. }, TypeData::IndexedAccess { .. }) => (true, false),
+            // `getIndexedAccessTypeOrUndefined`: what a union of keys finds is a union made with the alias.
+            (TypeNodeKind::IndexedAccess { index, .. }, TypeData::Union(_)) => {
+                let index = self.type_from_node(file, index);
+                let index = self.force(index);
+                (index != TypeId::BOOLEAN && self.is_union(index), false)
+            }
             (TypeNodeKind::Array(_), TypeData::Ref { .. }) => (true, true),
-            // `[]` is its target, and a tuple type with a variadic element is never deferred.
-            (TypeNodeKind::Tuple(elems), TypeData::Tuple { .. }) => (
+            // `[]` is its target, and a tuple type with a variadic element is never deferred. `getTupleTargetType`: `[...X[]]` is an
+            // array.
+            (TypeNodeKind::Tuple(elems), TypeData::Tuple { .. } | TypeData::Ref { .. }) => (
                 !elems.is_empty()
                     && !elems
                         .iter()
@@ -140,11 +147,23 @@ impl<'p> Checker<'p> {
         let Some((alias, type_arguments)) = self.stored_alias(ty) else {
             return result;
         };
-        if result == ty || !self.takes_alias_of(ty, result) {
+        let takes_alias = match (self.data(ty), self.data(result)) {
+            // `getIndexedAccessTypeOrUndefined`: what a union of keys finds is a union made with the alias.
+            (TypeData::IndexedAccess { index, .. }, TypeData::Union(_)) => {
+                let index = self.instantiate(*index, mapper);
+                let index = self.force(index);
+                index != TypeId::BOOLEAN && self.is_union(index)
+            }
+            _ => self.takes_alias_of(ty, result),
+        };
+        if !takes_alias {
             return result;
         }
-        let type_arguments = self.instantiate_all(type_arguments, mapper);
-        self.with_alias(result, *alias, &type_arguments)
+        let instantiated = self.instantiate_all(type_arguments, mapper);
+        if result == ty && instantiated[..] == type_arguments[..] {
+            return ty;
+        }
+        self.with_alias(result, *alias, &instantiated)
     }
 
     /// Whether `result`, an instantiation of `ty`, is of a kind that the alias given to `instantiateTypeWithAlias` ends up on:
@@ -159,7 +178,8 @@ impl<'p> Checker<'p> {
             | (TypeData::IndexedAccess { .. }, TypeData::IndexedAccess { .. })
             | (TypeData::LazyAlias { .. }, TypeData::LazyAlias { .. })
             | (TypeData::Fns { .. }, TypeData::Fns { .. })
-            | (TypeData::Cond { .. }, TypeData::Cond { .. }) => true,
+            | (TypeData::Cond { .. }, TypeData::Cond { .. })
+            | (TypeData::Synth(_), TypeData::Synth(_)) => true,
             (TypeData::Anon { origin: a, .. }, TypeData::Anon { origin: b, .. }) => a == b,
             _ => false,
         }

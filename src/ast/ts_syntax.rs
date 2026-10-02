@@ -221,10 +221,8 @@ pub struct Type {
 
 #[derive(Copy, Clone)]
 pub enum TypeData {
-    /// Where a type must be and none starts, which is an error. It has no width.
-    Missing,
     Keyword(Keyword),
-    /// `A.B.C<Args>`
+    /// `A.B.C<Args>`. Where a type must be and none starts, the one name is empty.
     Reference {
         name: Span<Name>,
         args: IdList<Type>,

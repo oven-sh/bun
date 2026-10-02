@@ -106,8 +106,6 @@ impl Builder<'_> {
         }
         let ts::Type { data, loc } = self.ts[id];
         let kind = match data {
-            // `parseTypeReference` with a missing name resolves to the error type, which behaves and prints like `any`.
-            ts::TypeData::Missing => TypeNodeKind::Keyword(Keyword::Any),
             ts::TypeData::Keyword(k) => TypeNodeKind::Keyword(keyword(k)),
             ts::TypeData::Reference { name, args } => match self.jsdoc_intended_type(name, args) {
                 Some(kind) => kind,

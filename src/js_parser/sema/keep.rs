@@ -306,7 +306,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             TypeData::Reference { args, .. } => args.is_empty(),
             TypeData::Import(import) => ast[import].args.is_empty(),
             TypeData::Keyword(Keyword::Void | Keyword::Null | Keyword::This) => false,
-            TypeData::Keyword(_) | TypeData::Missing => true,
+            TypeData::Keyword(_) => true,
             _ => false,
         }
     }
@@ -323,8 +323,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             TypeData::Import(import) if ast[import].args.is_empty() => ast[ast[import].name].into(),
             // `void.x`, `null.x` and `this.x` are not qualified names. Ignore the suffix.
             TypeData::Keyword(Keyword::Void | Keyword::Null | Keyword::This) => return,
-            // `resolveEntityName`: nothing is looked up in a name whose first part is missing.
-            TypeData::Missing => return,
             // `string.x` is a qualified name whose first part is spelled like a keyword.
             TypeData::Keyword(keyword) => smallvec::smallvec![Name {
                 text: StoreStr::new(keyword_text(keyword)),
@@ -357,7 +355,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 syntax.ast[reference].data = TypeData::Reference { name, args }
             }
             (TypeData::Import(import), Some(args)) => syntax.ast[import].args = args,
-            (TypeData::Missing, _) => {}
             _ => syntax.last_type = TypeId::NONE,
         }
     }

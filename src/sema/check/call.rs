@@ -2109,11 +2109,7 @@ impl<'p> Checker<'p> {
     pub(super) fn declared_sig(&mut self, sig: SigId) -> SigId {
         let mut sig = self.p.types.sig_origin(sig);
         for _ in 0..64 {
-            let SigData::DefaultConstruct { class, base, .. } = *self.p.types.sig(sig) else {
-                break;
-            };
-            // One that extends itself, by whatever way round, has no base signatures, and so no declaration.
-            let Some(&of) = self.base_constructor_sigs(class).get(base as usize) else {
+            let SigData::DefaultConstruct { base: Some(of), .. } = *self.p.types.sig(sig) else {
                 break;
             };
             sig = self.p.types.sig_origin(of);

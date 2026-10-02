@@ -12,9 +12,8 @@ use super::errors_order::Named;
 use super::errors_x_modules::suggested_import_extension;
 use super::errors_x_statements::{is_said_by_the_binder, is_said_by_the_parser};
 use super::*;
-use crate::bind::{
-    ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, TableId,
-};
+use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
+use crate::program::SymbolTable;
 use smallvec::SmallVec;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -2096,6 +2095,10 @@ impl Checker<'_> {
             let Some(first) = hir.ids(name).next() else {
                 continue;
             };
+            // `resolveEntityName`: `NodeIsMissing(name)`
+            if first == known::empty {
+                continue;
+            }
             let start = hir.types[i].pos;
             // `getTypeFromTypeReference`: no symbol is looked for.
             if self
@@ -2814,7 +2817,7 @@ impl Checker<'_> {
         }
         // A library that is missing comes before a letter that is.
         if !is_name_of_a_library_feature(self.files().atoms.bytes(name))
-            && self.is_something_similar_in_scope(file, scope, name, SymFlags::VALUE)
+            && what_is_similar_in_scope(self, file, scope, name, SymFlags::VALUE).is_some()
         {
             return 2552;
         }
@@ -2998,7 +3001,7 @@ impl Checker<'_> {
     ) -> u32 {
         let text = self.files().atoms.bytes(name);
         if !is_name_of_a_library_feature(text)
-            && self.is_something_similar_in_scope(file, scope, name, meaning)
+            && what_is_similar_in_scope(self, file, scope, name, meaning).is_some()
         {
             let code = did_you_mean(meaning);
             self.explain(start, code, |c| {
@@ -3249,62 +3252,6 @@ impl Checker<'_> {
                 ClassOwner::Stmt(s) => Parent::Stmt(s),
             };
         }
-    }
-
-    /// Whether a name close enough to `name` to have been meant can be seen from `scope`.
-    fn is_something_similar_in_scope(
-        &self,
-        file: FileId,
-        mut scope: ScopeId,
-        name: Atom,
-        meaning: SymFlags,
-    ) -> bool {
-        let files = self.files();
-        let bound = self.bound(file);
-        let text = files.atoms.bytes(name);
-        let fits = |sym: Sym| self.is_spelling_candidate(sym, meaning);
-        while scope.is_some() {
-            let s = &bound.scopes[scope.idx()];
-            let exports = if s.symbol.is_some() {
-                bound.symbols[s.symbol.idx()].exports
-            } else {
-                TableId::NONE
-            };
-            for table in [s.locals, exports] {
-                for &(candidate, id) in bound.table(table) {
-                    if is_close(text, files.atoms.bytes(candidate)) && fits(files.sym(file, id)) {
-                        return true;
-                    }
-                }
-            }
-            scope = s.parent;
-        }
-        // `getPrimitiveTypeAliasSuggestions`: the names of the primitive types count as type aliases, each where what wraps it is declared.
-        let primitives: [(&[u8], Atom); 6] = [
-            (b"string", known::String),
-            (b"number", known::Number),
-            (b"boolean", known::Boolean),
-            (b"object", known::Object),
-            (b"bigint", known::BigInt),
-            (b"symbol", known::Symbol),
-        ];
-        if meaning.intersects(SymFlags::TYPE_ALIAS)
-            && primitives.iter().any(|&(primitive, wrapper)| {
-                is_close(text, primitive) && files.globals.contains_key(&wrapper)
-            })
-        {
-            return true;
-        }
-        // `undefinedSymbol`, a property, and `globalThisSymbol`, a module, are entries of `globals` too.
-        if meaning.intersects(SymFlags::VARIABLE) && is_close(text, b"undefined")
-            || meaning.intersects(SymFlags::MODULE) && is_close(text, b"globalThis")
-        {
-            return true;
-        }
-        files
-            .globals
-            .iter()
-            .any(|(&candidate, &sym)| is_close(text, files.atoms.bytes(candidate)) && fits(sym))
     }
 }
 
@@ -3654,8 +3601,7 @@ fn closest<'a>(
     best.map(|best| best.3)
 }
 
-/// `getSuggestedSymbolForNonexistentSymbol`: what `is_something_similar_in_scope` comes upon. Each table is looked into on its own
-/// (`getSuggestionForSymbolNameLookup`), and the first that has something close decides.
+/// `getSuggestedSymbolForNonexistentSymbol`
 fn what_is_similar_in_scope(
     c: &Checker<'_>,
     file: FileId,
@@ -3671,72 +3617,90 @@ fn what_is_similar_in_scope(
 fn similar_in_scope_and_where(
     c: &Checker<'_>,
     file: FileId,
-    mut scope: ScopeId,
+    scope: ScopeId,
     name: Atom,
     meaning: SymFlags,
 ) -> Option<(Meant, bool)> {
     let (files, bound) = (c.files(), c.bound(file));
     let text = files.atoms.bytes(name);
-    let fits = |candidate: Atom, sym: Sym| {
-        is_close(text, files.atoms.bytes(candidate)) && c.is_spelling_candidate(sym, meaning)
-    };
-    while scope.is_some() {
-        let s = &bound.scopes[scope.idx()];
-        // `Resolve`: the locals of a script are not in scope. They are among the globals.
-        if s.kind == ScopeKind::File && s.symbol.is_none() {
-            break;
+    let (mut word, mut is_among_locals) = (None, false);
+    // `getSuggestionForSymbolNameLookup`
+    let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
+        is_among_locals = matches!(table, SymbolTable::Locals(..));
+        if let Some(found) = held.filter(|&sym| files.means(sym, meaning)) {
+            return Some(found);
         }
-        let exports = if s.symbol.is_some() {
-            bound.symbols[s.symbol.idx()].exports
-        } else {
-            TableId::NONE
+        let fits = |&(candidate, sym): &(Atom, Sym)| {
+            is_close(text, files.atoms.bytes(candidate)) && c.is_spelling_candidate(sym, meaning)
         };
-        for table in [s.locals, exports] {
-            let candidates = bound
-                .table(table)
-                .iter()
-                .map(|&(candidate, id)| (candidate, files.sym(file, id)))
-                .filter(|&(candidate, sym)| fits(candidate, sym))
-                .map(|(candidate, sym)| (files.atoms.bytes(candidate), Meant::Symbol(sym)));
-            if let Some(meant) = closest(c, text, candidates) {
-                let leads_to_export = table == s.locals
-                    && matches!(s.kind, ScopeKind::File | ScopeKind::Module(_))
-                    && matches!(meant, Meant::Symbol(sym)
-                        if sym.file == file && bound.refused_exports.contains(&sym.id)
-                            || bound.table(exports).iter().any(|&(_, id)| files.sym(file, id) == sym));
-                return Some((meant, leads_to_export));
+        let named =
+            |(candidate, sym): (Atom, Sym)| (files.atoms.bytes(candidate), Meant::Symbol(sym));
+        let meant = match table {
+            SymbolTable::Locals(file, scope) => {
+                let s = &bound.scopes[scope.idx()];
+                // `IsGlobalSourceFile`: what a script declares is among the globals.
+                if s.kind == ScopeKind::File && s.symbol.is_none() {
+                    return None;
+                }
+                let locals = bound.table(s.locals).iter();
+                let locals = locals.map(|&(candidate, id)| (candidate, files.sym(file, id)));
+                closest(c, text, locals.filter(fits).map(named))
+            }
+            SymbolTable::Exports(container) => closest(
+                c,
+                text,
+                files.each_export(container).filter(fits).map(named),
+            ),
+            SymbolTable::Globals => {
+                // `getPrimitiveTypeAliasSuggestions`. `undefinedSymbol` and `globalThisSymbol` are entries of `globals`.
+                let primitives: [(&'static str, Atom); 6] = [
+                    ("string", known::String),
+                    ("number", known::Number),
+                    ("boolean", known::Boolean),
+                    ("object", known::Object),
+                    ("bigint", known::BigInt),
+                    ("symbol", known::Symbol),
+                ];
+                let words = primitives
+                    .into_iter()
+                    .filter(|&(_, wrapper)| {
+                        meaning.intersects(SymFlags::TYPE_ALIAS)
+                            && files.globals.contains_key(&wrapper)
+                    })
+                    .map(|(primitive, _)| primitive)
+                    .chain(
+                        meaning
+                            .intersects(SymFlags::VARIABLE)
+                            .then_some("undefined"),
+                    )
+                    .chain(meaning.intersects(SymFlags::MODULE).then_some("globalThis"))
+                    .map(|word| (word.as_bytes(), Meant::Word(word)));
+                let globals = files
+                    .globals
+                    .iter()
+                    .map(|(&candidate, &sym)| (candidate, sym));
+                closest(c, text, globals.filter(fits).map(named).chain(words))
+            }
+        };
+        match meant? {
+            Meant::Symbol(sym) => Some(sym),
+            Meant::Word(meant) => {
+                word = Some(meant);
+                None
             }
         }
-        scope = s.parent;
+    };
+    let found = files.resolve_with(file, scope, name, meaning, false, lookup);
+    if let Some(word) = word {
+        return Some((Meant::Word(word), false));
     }
-    // `getPrimitiveTypeAliasSuggestions`, `undefinedSymbol` and `globalThisSymbol` are looked into together with `globals`.
-    let primitives: [(&'static str, Atom); 6] = [
-        ("string", known::String),
-        ("number", known::Number),
-        ("boolean", known::Boolean),
-        ("object", known::Object),
-        ("bigint", known::BigInt),
-        ("symbol", known::Symbol),
-    ];
-    let words = primitives
-        .into_iter()
-        .filter(|&(_, wrapper)| {
-            meaning.intersects(SymFlags::TYPE_ALIAS) && files.globals.contains_key(&wrapper)
-        })
-        .map(|(primitive, _)| primitive)
-        .chain(
-            meaning
-                .intersects(SymFlags::VARIABLE)
-                .then_some("undefined"),
-        )
-        .chain(meaning.intersects(SymFlags::MODULE).then_some("globalThis"))
-        .map(|word| (word.as_bytes(), Meant::Word(word)));
-    let globals = files
-        .globals
-        .iter()
-        .filter(|&(&candidate, &sym)| fits(candidate, sym))
-        .map(|(&candidate, &sym)| (files.atoms.bytes(candidate), Meant::Symbol(sym)));
-    closest(c, text, globals.chain(words)).map(|meant| (meant, false))
+    let sym = found.ok()??;
+    let declared = files.symbol(sym);
+    let leads_to_export = is_among_locals
+        && (sym.file == file && bound.refused_exports.contains(&sym.id)
+            || declared.parent.is_some()
+                && files.export(files.sym(sym.file, declared.parent), declared.name) == Some(sym));
+    Some((Meant::Symbol(sym), leads_to_export))
 }
 
 /// `symbolToString` of `getSuggestedSymbolForNonexistentSymbol`: the name that may have been meant by `name`, which nothing that is a

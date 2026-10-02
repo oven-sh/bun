@@ -619,7 +619,7 @@ impl Checker<'_> {
         // which has to be known.
         let sym = self.class_sym(file, class);
         if self.base_types(sym).is_empty()
-            && let Some(&first) = self.base_constructor_sigs(sym).first()
+            && let Some(&first) = self.super_constructor_sigs(sym).first()
         {
             let instance = self.sig_return(first);
             if !self.is_known(instance) {
@@ -796,7 +796,7 @@ impl Checker<'_> {
                     if steps > 64 || self.base_types(class).is_empty() {
                         return None;
                     }
-                    sig = *self.base_constructor_sigs(class).get(base as usize)?;
+                    sig = base?;
                 }
                 _ => return None,
             }

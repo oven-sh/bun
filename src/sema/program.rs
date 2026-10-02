@@ -300,6 +300,16 @@ impl Module {
     }
 }
 
+/// A table `NameResolver.Resolve` looks into.
+#[derive(Copy, Clone)]
+pub enum SymbolTable {
+    /// `location.Locals()`
+    Locals(FileId, ScopeId),
+    /// `symbol.Exports`
+    Exports(Sym),
+    Globals,
+}
+
 pub struct Files {
     pub atoms: Interner,
     pub options: Options,
@@ -567,7 +577,7 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                             key,
                             value,
                             pos: p.name_pos,
-                            start: 0,
+                            start: p.name_pos,
                         }
                     })
                     .collect();
@@ -3370,10 +3380,27 @@ impl Files {
     pub fn resolve(
         &self,
         file: FileId,
+        scope: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+        reports_errors: bool,
+    ) -> Result<Option<Sym>, (u32, MemberId)> {
+        // `getSymbol`
+        let lookup = &mut |_: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
+            held.filter(|&sym| self.means(sym, meaning))
+        };
+        self.resolve_with(file, scope, name, meaning, reports_errors, lookup)
+    }
+
+    /// The same. `lookup`: `NameResolver.Lookup`, which is given the table, what it holds under `name`, and the meaning.
+    pub fn resolve_with(
+        &self,
+        file: FileId,
         mut scope: ScopeId,
         name: Atom,
         meaning: SymFlags,
         reports_errors: bool,
+        lookup: &mut dyn FnMut(SymbolTable, Option<Sym>, SymFlags) -> Option<Sym>,
     ) -> Result<Option<Sym>, (u32, MemberId)> {
         let bound = self.bound(file);
         // `lastLocation`: the kind of the scope the search has just left.
@@ -3388,16 +3415,16 @@ impl Files {
             {
                 // Nil, whatever is found. The property remembered last, the outermost, is the one the error is about.
                 return Err(self
-                    .resolve(file, s.parent, name, meaning, true)
+                    .resolve_with(file, s.parent, name, meaning, true, lookup)
                     .err()
                     .unwrap_or(invalid));
             }
             // The `infer`s of a conditional type are seen from its true branch, not from the `extends` clause that declares them.
-            if !matches!(from, ScopeKind::Extends)
-                && let Some(id) = bound.lookup(s.locals, name)
-            {
-                let sym = self.sym(file, id);
-                if self.means(sym, meaning) && bound.is_seen_from(from, self.flags(sym), meaning) {
+            if !matches!(from, ScopeKind::Extends) {
+                let held = bound.lookup(s.locals, name).map(|id| self.sym(file, id));
+                if let Some(sym) = lookup(SymbolTable::Locals(file, scope), held, meaning)
+                    && bound.is_seen_from(from, self.flags(sym), meaning)
+                {
                     return Ok(Some(sym));
                 }
             }
@@ -3410,9 +3437,10 @@ impl Files {
                 };
                 // What only an export specifier put there is not in scope. That is settled before it is asked what it stands for, which
                 // may be the very name that is looked for.
-                if let Some(sym) = self.export(self.sym(file, s.symbol), name)
-                    && !self.flags(sym).contains(SymFlags::EXPORT_ONLY)
-                    && self.means(sym, visible)
+                let container = self.sym(file, s.symbol);
+                let held = self.export(container, name);
+                if !held.is_some_and(|sym| self.flags(sym).contains(SymFlags::EXPORT_ONLY))
+                    && let Some(sym) = lookup(SymbolTable::Exports(container), held, visible)
                 {
                     return Ok(Some(sym));
                 }
@@ -3420,7 +3448,8 @@ impl Files {
             from = s.kind;
             scope = s.parent;
         }
-        Ok(self.global(name, meaning))
+        let held = self.globals.get(&name).copied();
+        Ok(lookup(SymbolTable::Globals, held, meaning))
     }
 
     // ───────────────────────────── modules and aliases ─────────────────────────────

@@ -2012,11 +2012,6 @@ impl<'p> Checker<'p> {
         )
     }
 
-    /// The base signatures that `getDefaultConstructSignatures` clones. `SigData::DefaultConstruct { base, .. }` indexes this list.
-    pub fn base_constructor_sigs(&mut self, class: Sym) -> Vec<SigId> {
-        self.base_constructors(class, true).1
-    }
-
     /// `getInstantiatedConstructorsForTypeArguments` for the `extends` clause of `class`: the candidates of `super(..)`, and the
     /// signatures `resolveBaseTypesOfClass` takes the base type from. The type argument count is checked in JavaScript too.
     pub(super) fn super_constructor_sigs(&mut self, class: Sym) -> Vec<SigId> {
@@ -2115,8 +2110,12 @@ impl<'p> Checker<'p> {
                     // there, which may be none; one of its own if what it extends cannot be made at all. It goes by the base
                     // constructor alone, whatever the base types are.
                     let (can_be_made, fitting) = self.base_constructors(sym, true);
-                    let ways = if can_be_made { fitting.len() } else { 1 };
-                    for base in 0..ways as u32 {
+                    let bases = if can_be_made {
+                        fitting.into_iter().map(Some).collect()
+                    } else {
+                        vec![None]
+                    };
+                    for base in bases {
                         b.shape.construct.push(self.p.types.intern_sig(
                             SigData::DefaultConstruct {
                                 class: sym,

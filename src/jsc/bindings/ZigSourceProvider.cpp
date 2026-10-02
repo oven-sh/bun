@@ -595,8 +595,8 @@ extern "C" void Bun__StaticHeap__map(const uint8_t* bytes, size_t length, int fi
     auto codeRange = JSC::aotImageCodeRange({ bytes, length });
     off_t offsetOfCodeImage = *fileOffset - static_cast<off_t>(*sizeOfCodeImage);
     bool ok = codeRange && !(codeRange->first % WTF::pageSize())
-        && Region::map(Region::Arena::Image, fd, offsetOfCodeImage, codeRange->first)
-        && Region::map(Region::Arena::Image, fd, offsetOfCodeImage + codeRange->first, codeRange->second, codeRange->first, true);
+        && Region::map(Region::Arena::Image, Region::Access::Read, fd, offsetOfCodeImage, codeRange->first)
+        && Region::map(Region::Arena::Image, Region::Access::ReadAndExecute, fd, offsetOfCodeImage + codeRange->first, codeRange->second, codeRange->first);
     s_imageIsAtItsAddress = ok;
     ok = ok && JSC::StaticHeap::map(image, fd, *fileOffset);
     if (isInExecutable)
@@ -605,24 +605,6 @@ extern "C" void Bun__StaticHeap__map(const uint8_t* bytes, size_t length, int fi
         return failed("it is for another build of the engine, or its place is taken, or the thread has atoms");
     if (verbose)
         fprintf(stderr, "[aot] static heap: %zu bytes\n", image.size());
-#if OS(DARWIN)
-    // BUN_STATIC_HEAP_READONLY=log: logs a stack trace for the first write to each page.
-    if (const char* mode = getenv("BUN_STATIC_HEAP_READONLY"); mode && (!strcmp(mode, "log") || !strcmp(mode, "logall"))) {
-        struct sigaction action { };
-        action.sa_flags = SA_SIGINFO;
-        action.sa_sigaction = [](int signal, siginfo_t* info, void*) {
-            if (!JSC::StaticHeap::contains(info->si_addr)) {
-                ::signal(signal, SIG_DFL);
-                return;
-            }
-            fprintf(stderr, "[static-heap-write] %p\n", info->si_addr);
-            void* stack[14];
-            backtrace_symbols_fd(stack, backtrace(stack, 14), 2);
-            mprotect(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(info->si_addr) & ~static_cast<uintptr_t>(16383)), 16384, PROT_READ | PROT_WRITE);
-        };
-        sigaction(SIGBUS, &action, nullptr);
-    }
-#endif
 #else
     UNUSED_PARAM(bytes);
     UNUSED_PARAM(length);

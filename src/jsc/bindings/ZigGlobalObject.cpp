@@ -611,9 +611,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 return nullptr;
             }
             if (Bun__hasStandaloneModuleGraph()) {
-                // The static heap refers to it by its address.
-                if (JSC::StaticHeap::isFirst(vm))
-                    JSC::StaticHeap::placeNextCell(vm, JSC::StaticHeap::addressOfGlobalObject());
                 return Zig::GlobalObject::create(vm, structure, &Zig::StandaloneGlobalObject::globalObjectMethodTable());
             }
             return Zig::GlobalObject::create(

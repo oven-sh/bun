@@ -1242,7 +1242,7 @@ impl CompletionStruct for JSBundleCompletionTask {
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
-    ) -> bun_bundler::Result<&'a mut Transpiler<'a>> {
+    ) -> bun_bundler::Result<Box<Transpiler<'a>>> {
         let config = &self.config;
         let opts = api::TransformOptions {
             define: if config.define.count() > 0 {
@@ -1277,29 +1277,12 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
 
         let log: *mut bun_ast::Log = &raw mut self.log;
-        let t = Transpiler::init(bump, log, opts, Some(self.env))?;
-        let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
-
-        // Post-init field wiring.
-        // Reborrow through a raw ptr so `&mut self` is usable
-        // again after handing `&'a mut Transpiler` (which is tied to `bump`,
-        // not `self`) to the trait method.
-        let tp: *mut Transpiler<'a> = transpiler;
-        // SAFETY: `tp` aliases nothing in `self`; lives in `bump`.
-        if let Err(err) = self.configure_bundler(unsafe { &mut *tp }, bump) {
-            // `tp` lives in `bump`, whose bulk-free skips `Transpiler::drop`.
-            // On the Ok path `generate_in_new_thread` runs `drop_in_place` on
-            // the returned pointer; on the Err path it never sees `tp`, so the
-            // embedded global-heap state (options/resolver Vecs/Boxes) would
-            // leak. SAFETY: `tp` is the unique `&'a mut` slot from
-            // `bump.alloc`; the reborrow above has ended and nothing else
-            // holds a reference to it.
-            unsafe { core::ptr::drop_in_place(tp) };
-            return Err(err);
-        }
-        // SAFETY: `tp` was the unique `&'a mut` slot from `bump.alloc`; the
-        // reborrow above has ended.
-        Ok(unsafe { &mut *tp })
+        // Boxed before `configure_bundler`: `configure_linker` stores the
+        // transpiler's own field addresses, so it must already sit at its
+        // final address.
+        let mut transpiler = Box::new(Transpiler::init(bump, log, opts, Some(self.env))?);
+        self.configure_bundler(&mut transpiler, bump)?;
+        Ok(transpiler)
     }
 
     fn init_and_run<'a>(

@@ -86,15 +86,12 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// `Transpiler<'a>` has borrow-carrying fields (`arena: &'a Arena`,
     /// `resolver: Resolver<'a>`) that cannot be zero-init'd, so the allocate +
     /// configure pair is folded into one trait call returning the
-    /// arena-allocated, fully-configured transpiler.
-    // The returned `&'a mut Transpiler<'a>` is arena-allocated via `bump.alloc(...)`
-    // (bumpalo `Bump`), which hands out `&mut` from `&self` through interior
-    // mutability — the standard arena pattern `mut_from_ref` cannot see through.
-    #[allow(clippy::mut_from_ref)]
+    /// fully-configured transpiler. The box owns it, so its global-heap
+    /// state (options, resolver caches) drops on every path.
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
-    ) -> Result<&'a mut Transpiler<'a>, crate::Error>;
+    ) -> Result<Box<Transpiler<'a>>, crate::Error>;
 
     /// Constructs the `BundleV2`, wires `plugins`/`completion`/`file_map`,
     /// and runs the bundle.
@@ -272,23 +269,23 @@ impl<C: CompletionStruct> BundleThread<C> {
         let heap = Arena::new();
 
         let bump = &heap;
-        // Stack-owned (not `bump.alloc`'d) so `ASTMemoryAllocator::drop`
-        // runs on every return path and recycles its pooled `mi_heap` /
-        // `AstAllocState`. `Scope::drop` restores the AST-alloc thread-locals.
         let mut ast_memory_store = bun_ast::ASTMemoryAllocator::default();
         let _ast_scope = ast_memory_store.enter();
 
         // Allocate + configure folded — see `create_and_configure_transpiler` doc.
-        let transpiler = completion.create_and_configure_transpiler(bump)?;
+        let mut transpiler = completion.create_and_configure_transpiler(bump)?;
 
         transpiler.resolver.generation = generation;
 
-        // Construction + run delegated — see
-        // `init_and_run` doc. Reborrow `transpiler` through a raw ptr so
-        // `completion` can be borrowed again below.
-        let transpiler_ptr: *mut Transpiler<'_> = transpiler;
+        // Construction + run delegated — see `init_and_run` doc. It takes
+        // `&'a mut Transpiler<'a>`, a borrow for the whole arena lifetime
+        // that the borrow checker cannot take out of the box local. Reborrow
+        // through a raw ptr instead; `transpiler` is not used again until it
+        // drops at scope end.
+        let transpiler_ptr: *mut Transpiler<'_> = &raw mut *transpiler;
         let run = completion.init_and_run(
-            // SAFETY: `transpiler` lives in `bump` for the duration of `heap`.
+            // SAFETY: the box keeps `*transpiler_ptr` alive and unaliased
+            // until this function returns.
             unsafe { &mut *transpiler_ptr },
             bump,
             // `WorkPool::get()` returns `&'static ThreadPool`; pass as raw so
@@ -311,25 +308,6 @@ impl<C: CompletionStruct> BundleThread<C> {
         if run.is_ok() {
             completion.complete_on_bundle_thread();
         }
-
-        // `transpiler` is arena-allocated, but its containers (`Resolver`
-        // caches, `BundleOptions` strings, …) live on the global heap as
-        // `Vec`/`Box`/`HashMap`, so dropping `heap` (`mi_heap_destroy`)
-        // reclaims the struct bytes but never runs `Transpiler::drop` —
-        // leaking the resolver's directory/file caches per `Bun.build()`
-        // call. LSan does not flag the mimalloc-backed parts (mimalloc
-        // bypasses the ASAN `malloc` interceptor), so the symptom is
-        // RSS-only: ~32 MB/build linear growth in the bun-build-api "does
-        // not leak sourcemap JSON" test.
-        //
-        // SAFETY: `transpiler_ptr` is the unique `&'a mut` slot returned by
-        // `bump.alloc(...)` in `create_and_configure_transpiler`; nothing
-        // else holds a reference to it past `init_and_run` (`set_transpiler`
-        // was cleared by `deinit_without_freeing_arena`). The arena bytes
-        // themselves are bulk-freed afterwards by `heap`'s `Drop` —
-        // `drop_in_place` only releases the *embedded global-heap* state, so
-        // there is no double free.
-        unsafe { core::ptr::drop_in_place(transpiler_ptr) };
 
         run
     }

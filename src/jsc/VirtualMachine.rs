@@ -3614,7 +3614,9 @@ pub fn process_fetch_log(
 
     let msg_to_js = |msg: bun_ast::Msg| -> JSValue {
         take(match msg.metadata {
-            bun_ast::Metadata::Build => BuildMessage::create(global_this, msg),
+            bun_ast::Metadata::Build | bun_ast::Metadata::Code(_) => {
+                BuildMessage::create(global_this, msg)
+            }
             bun_ast::Metadata::Resolve(_) => {
                 ResolveMessage::create(global_this, &msg, referrer_utf8.slice())
             }

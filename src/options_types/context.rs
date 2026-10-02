@@ -41,6 +41,8 @@ pub struct ContextData {
     pub parallel: bool,
     pub sequential: bool,
     pub no_exit_on_error: bool,
+    /// `--lint` on `bun` or `bun run`: the operands are checked and none is run.
+    pub lint: bool,
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
@@ -82,6 +84,7 @@ impl Default for ContextData {
             parallel: false,
             sequential: false,
             no_exit_on_error: false,
+            lint: false,
             preloads: Vec::new(),
             has_loaded_global_config: false,
         }

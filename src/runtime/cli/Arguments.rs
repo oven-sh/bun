@@ -339,6 +339,8 @@ const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     parse_param!(
         "--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)"
     ),
+    // No help text, which hides it. `parse` reads it for `AutoCommand` and `RunCommand` only.
+    parse_param!("--lint"),
 ];
 
 const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
@@ -564,6 +566,8 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--windows-copyright <STR>        When using --compile targeting Windows, set the executable copyright"
         ),
+        // No help text, which hides it. `parse` reads it only to refuse it: a flag that is not in the table is dropped.
+        parse_param!("--lint"),
     ],
     maybe_bake_debug_params!(),
 );
@@ -651,6 +655,8 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
         "--update-timings                 After the run, write measured per-file durations to the first --timings file (only this shard's files under --shard; merged with what was read otherwise)."
     ),
+    // No help text, which hides it. `parse_test_command_options` reads it only to refuse it: a flag that is not in the table is dropped.
+    parse_param!("--lint"),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
     TEST_ONLY_PARAMS,
@@ -910,6 +916,15 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         let mut temp = bun_paths::path_buffer_pool::get();
         Box::<[u8]>::from(bun_core::getcwd(&mut temp)?.as_bytes())
     };
+
+    // A lint run returns here, ahead of bunfig.toml and of every flag below. `node` shares `RUN_TABLE` and never lints.
+    if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) && args.flag(b"--lint") {
+        return Ok(accept_lint(&args, ctx, cwd));
+    }
+    // `bun build` does no lint run: the flag is refused ahead of bunfig.toml, whether or not the variable that turns it on is set.
+    if cmd == CommandTag::BuildCommand && args.flag(b"--lint") {
+        cli::lint_command::refuse("bun build");
+    }
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
     // (uses_global_options=false). bunx picks up no-orphans via the
@@ -1752,6 +1767,46 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     Ok(opts)
 }
 
+/// Reads `BUN_FEATURE_FLAG_EXPERIMENTAL_LINT` by the truth rule of `env_var::feature_flag`, whose macro declares a flag inside `bun_core` only.
+fn lint_is_enabled() -> bool {
+    bun_core::getenv_z(bun_core::zstr!("BUN_FEATURE_FLAG_EXPERIMENTAL_LINT")).is_some_and(|value| {
+        !strings::eql_any_case_insensitive_ascii(value, &[b"", b"0", b"false", b"no", b"off"])
+    })
+}
+
+/// Exits with 1 unless a lint run may start. Else marks `ctx` as one and gives it the working directory and the operands, all that such a run reads.
+#[cold]
+#[inline(never)]
+fn accept_lint(
+    args: &clap::Args<clap::Help>,
+    ctx: Context<'_>,
+    cwd: Box<[u8]>,
+) -> api::TransformOptions {
+    // Checked first: this is refused whether or not BUN_FEATURE_FLAG_EXPERIMENTAL_LINT is set.
+    cli::lint_command::refuse_in_bun_options();
+    if !lint_is_enabled() {
+        bun_core::err_generic!(
+            "--lint is experimental. Set the environment variable BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 to enable it"
+        );
+        Global::exit(1);
+    }
+    // Refused, not dropped as the other flags of a lint run are: each selects a run mode of its own.
+    if args.flag(b"--sequential") {
+        cli::lint_command::refuse("--sequential");
+    }
+    if args.flag(b"--workspaces") {
+        cli::lint_command::refuse("--workspaces");
+    }
+    if args.flag(b"--interactive") {
+        cli::lint_command::refuse("--interactive");
+    }
+    ctx.lint = true;
+    ctx.args.absolute_working_dir = Some(cwd);
+    ctx.positionals = slice_to_owned(args.positionals());
+    ctx.passthrough = slice_to_owned(args.remaining());
+    ctx.args.clone()
+}
+
 /// Cold path: `bun test` option-group parsing — timeout / coverage / reporter /
 /// shard / parallel / seed / etc. Split out of [`parse`] so the `bun run <script>`
 /// and bare-`bun <file>` hot path (`USES_GLOBAL_OPTIONS` ⇒ `parse` runs on every
@@ -1759,6 +1814,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 #[cold]
 #[inline(never)]
 fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
+    // `bun test` does no lint run: the flag is refused ahead of the options below and of bunfig.toml, with the variable that turns it on set or not.
+    if args.flag(b"--lint") {
+        cli::lint_command::refuse("bun test");
+    }
+
     if let Some(timeout_ms) = args.option(b"--timeout") {
         if !timeout_ms.is_empty() {
             ctx.test_options.default_timeout_ms = match strings::parse_int::<u32>(timeout_ms, 10) {
@@ -2282,6 +2342,7 @@ fn parse_build_command_options(
             Output::err_generic("--compile-exec-argv requires --compile", ());
             Global::crash();
         }
+        cli::lint_command::refuse_in_exec_argv(compile_exec_argv);
         ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
     }
 

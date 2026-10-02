@@ -14,9 +14,10 @@ use bun_ast::import_record::{Flags as ImportRecordFlags, ImportRecord};
 use crate::defines::Define;
 use crate::lexer as js_lexer;
 use crate::p::P;
+use crate::parse::syntax_errors::SyntaxErrors;
 use crate::parser::{
-    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
-    WrapMode,
+    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, ScopeOrder,
+    StatementScope, WrapMode,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -82,7 +83,7 @@ impl<'a> ParsedOnly<'_, 'a> {
         self.starts()?.class_elements.get(&at.start).copied()
     }
     fn starts(&self) -> Option<&crate::p::StartsForParseOnly> {
-        self.p.starts_for_parse_only.as_ref()
+        self.p.starts_for_parse_only.as_deref()
     }
     pub fn import_path(&self, import_record_index: u32) -> &[u8] {
         self.p
@@ -91,6 +92,61 @@ impl<'a> ParsedOnly<'_, 'a> {
             .get(import_record_index as usize)
             .map_or(&[], |record| record.path.text)
     }
+}
+
+/// What `Parser::parse_for_lint` parsed: the tree as written, and what the parse pass keeps beside it.
+pub struct ParsedForLint<'p, 'a> {
+    /// The statements the parse pass keeps, unvisited: nothing is folded or bound.
+    pub stmts: &'p [js_ast::Stmt],
+    /// The scopes of the parse pass in the order a visit pass enters them; a flattened scope leaves `None`.
+    pub scopes_in_order: &'p [Option<ScopeOrder<'a>>],
+    /// The symbols the parse pass declared; a `Ref` whose tag is `Symbol` indexes them.
+    pub symbols: &'p [js_ast::Symbol],
+    /// The side table of the parse pass: what has no place in the tree.
+    pub sidecar: &'p crate::p::StartsForParseOnly,
+    /// The arena the parse pass allocates in, type nodes included.
+    pub arena: &'a Arena,
+    /// The module paths of the file, by the `import_record_index` of a statement or an expression.
+    pub import_records: &'p [ImportRecord],
+    /// The name of the file says that all of it is ambient.
+    pub is_declaration_file: bool,
+    source: &'a bun_ast::Source,
+    allocated_names: &'p [&'a [u8]],
+}
+
+impl<'a> ParsedForLint<'_, 'a> {
+    /// An unvisited identifier is its spelling, and a declared one the name of its symbol.
+    pub fn name_of(&self, r#ref: js_ast::Ref) -> &'a [u8] {
+        use js_ast::base::RefTag;
+        match r#ref.tag() {
+            RefTag::Symbol => self
+                .symbols
+                .get(r#ref.inner_index() as usize)
+                .map_or(&[], |symbol| symbol.original_name.slice()),
+            RefTag::SourceContentsSlice => {
+                let start = r#ref.source_index() as usize;
+                self.source
+                    .contents
+                    .get(start..start + r#ref.inner_index() as usize)
+                    .unwrap_or(&[])
+            }
+            RefTag::AllocatedName => self
+                .allocated_names
+                .get(r#ref.inner_index() as usize)
+                .copied()
+                .unwrap_or(&[]),
+            RefTag::Invalid => &[],
+        }
+    }
+}
+
+/// `tspath.IsDeclarationFileName`: the base name ends in `.d.ts`, `.d.cts` or `.d.mts`, or in `.ts` after a `.d.`.
+fn is_declaration_file_name(file_name: &[u8]) -> bool {
+    let base = bun_paths::resolve_path::basename(file_name);
+    base.ends_with(b".d.ts")
+        || base.ends_with(b".d.cts")
+        || base.ends_with(b".d.mts")
+        || (base.ends_with(b".ts") && strings::contains(base, b".d."))
 }
 
 pub struct Parser<'a> {
@@ -442,7 +498,7 @@ impl<'a> Parser<'a> {
             self.bump, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
-        p.starts_for_parse_only = Some(Default::default());
+        p.starts_for_parse_only = Some(Box::default());
         if p.lexer.token == js_lexer::T::THashbang {
             p.lexer.next()?;
         }
@@ -461,6 +517,106 @@ impl<'a> Parser<'a> {
         Ok(f(&ParsedOnly {
             stmts: stmts.as_slice(),
             p,
+        }))
+    }
+
+    /// Parses for a lint run and visits nothing: no `// @bun` shortcut, no transpiler cache, a declaration file is ambient.
+    #[cold]
+    pub fn parse_for_lint<R>(
+        self,
+        f: impl FnOnce(&ParsedForLint<'_, 'a>) -> R,
+    ) -> Result<R, Error> {
+        self.parse_for_lint_with_codes(&mut SyntaxErrors::default(), f)
+    }
+
+    /// `parse_for_lint`. Where the parse fails, `errors` gets what the reference reports for the messages that it logged.
+    #[cold]
+    pub fn parse_for_lint_with_codes<R>(
+        self,
+        errors: &mut SyntaxErrors,
+        f: impl FnOnce(&ParsedForLint<'_, 'a>) -> R,
+    ) -> Result<R, Error> {
+        if self.options.ts {
+            self._parse_for_lint::<true, R>(errors, f)
+        } else {
+            self._parse_for_lint::<false, R>(errors, f)
+        }
+    }
+
+    #[cold]
+    fn _parse_for_lint<const TS: bool, R>(
+        self,
+        errors: &mut SyntaxErrors,
+        f: impl FnOnce(&ParsedForLint<'_, 'a>) -> R,
+    ) -> Result<R, Error> {
+        let Parser {
+            options,
+            lexer,
+            log,
+            source,
+            define,
+            bump,
+            orig_error_count,
+        } = self;
+        let action_guard =
+            bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(source.path.text));
+        let is_declaration_file = TS && is_declaration_file_name(source.path.text);
+        let mut __p = init_p!(P<'_, TS, false>;
+            bump, log, source, define, lexer, options);
+        // SAFETY: `init_p!` only yields after `init` succeeded.
+        let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
+        p.starts_for_parse_only = Some(crate::p::StartsForParseOnly::for_lint());
+        p.start_syntax_errors(orig_error_count);
+        let parsed: Result<_, Error> = 'parse: {
+            if p.lexer.token == js_lexer::T::THashbang
+                && let Err(err) = p.lexer.next()
+            {
+                break 'parse Err(err.into());
+            }
+            if p.log().errors > orig_error_count {
+                break 'parse Err(crate::Error::SyntaxError);
+            }
+            let mut opts = ParseStatementOptions {
+                scope: StatementScope::Module,
+                is_typescript_declare: is_declaration_file,
+                ..Default::default()
+            };
+            match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
+                // An error that the parser only logs fails the parse all the same.
+                Ok(_) if p.log().errors > orig_error_count => Err(crate::Error::SyntaxError),
+                Ok(stmts) => Ok(stmts),
+                Err(crate::Error::StackOverflow) => {
+                    p.log().add_error(
+                        Some(p.source),
+                        p.lexer.loc(),
+                        b"Maximum call stack size exceeded",
+                    );
+                    Err(crate::Error::SyntaxError)
+                }
+                Err(err) => Err(err),
+            }
+        };
+        let stmts = match parsed {
+            Ok(stmts) => stmts,
+            Err(err) => {
+                // The codes of the reference for what the parse logged go to the caller.
+                p.finish_syntax_errors(errors);
+                return Err(err);
+            }
+        };
+        drop(action_guard);
+        let mut sidecar = p.starts_for_parse_only.take().unwrap_or_default();
+        sidecar.attached.sort();
+        Ok(f(&ParsedForLint {
+            stmts: stmts.as_slice(),
+            scopes_in_order: p.scopes_in_order.as_slice(),
+            symbols: p.symbols.as_slice(),
+            sidecar: &sidecar,
+            arena: bump,
+            import_records: p.import_records.items(),
+            is_declaration_file,
+            source,
+            allocated_names: p.allocated_names.as_slice(),
         }))
     }
 
@@ -2624,3 +2780,118 @@ struct PragmaState {
 pub type MacroContext = Option<*mut c_void>;
 #[cfg(not(target_arch = "wasm32"))]
 pub type MacroContext = crate::Macro::MacroContext;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What `check` says of the lint parse of `text` as the file `path`. `None`: it does not parse.
+    fn lint_parse<R>(
+        path: &'static [u8],
+        text: &'static [u8],
+        loader: bun_ast::Loader,
+        check: impl FnOnce(&ParsedForLint<'_, '_>) -> R,
+    ) -> Option<R> {
+        let arena = Arena::new();
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+        let _ast_scope = ast_memory_allocator.enter();
+        let source = bun_ast::Source::init_path_string(path, text);
+        let mut options = Options::init(Default::default(), loader);
+        options.features.no_macros = true;
+        options.features.dont_bundle_twice = true;
+        let define = Define::default();
+        let mut log = bun_ast::Log::init();
+        let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+        parser.parse_for_lint(check).ok()
+    }
+
+    fn statement_count(
+        path: &'static [u8],
+        text: &'static [u8],
+        loader: bun_ast::Loader,
+    ) -> Option<usize> {
+        lint_parse(path, text, loader, |parsed| parsed.stmts.len())
+    }
+
+    #[test]
+    fn declaration_file_names_are_those_of_tsc() {
+        let cases: [(&[u8], bool); 11] = [
+            (b"/a.d.ts", true),
+            (b"/a.d.mts", true),
+            (b"/a.d.cts", true),
+            (b"/a.d.css.ts", true),
+            (b"/a.d.css.mts", false),
+            (b"/d.ts", false),
+            (b"/.d.ts", true),
+            (b"/dir.d.ts/a.ts", false),
+            (b"/a.ts", false),
+            (b"/a.d.tsx", false),
+            (b"C:\\dir.d.x\\a.d.ts", true),
+        ];
+        for (name, expected) in cases {
+            assert_eq!(
+                is_declaration_file_name(name),
+                expected,
+                "{}",
+                bstr::BStr::new(name)
+            );
+        }
+    }
+
+    #[test]
+    fn parses_javascript_typescript_and_jsx() {
+        use bun_ast::Loader;
+        let javascript = b"let a = 1;\nfunction f() {}\n";
+        let jsx = b"const e = <p id=\"a\">{f(1)}</p>;\n";
+        let typescript = b"interface I {\n  a: string;\n}\nconst x = { a: \"\" } as I;\n";
+        let tsx = b"const e = <p>{1 as number}</p>;\n";
+        let annotated = b"let a: number = 1;\n";
+        let cases: [(&'static [u8], &'static [u8], Loader, Option<usize>); 5] = [
+            (b"/a.js", javascript, Loader::Js, Some(2)),
+            (b"/a.jsx", jsx, Loader::Jsx, Some(1)),
+            (b"/a.ts", typescript, Loader::Ts, Some(1)),
+            (b"/a.tsx", tsx, Loader::Tsx, Some(1)),
+            (b"/a.js", annotated, Loader::Js, None),
+        ];
+        for (path, text, loader, expected) in cases {
+            let count = statement_count(path, text, loader);
+            assert_eq!(count, expected, "{}", bstr::BStr::new(text));
+        }
+    }
+
+    #[test]
+    fn a_declaration_file_is_ambient() {
+        let text: &'static [u8] = b"export const x: number;\nexport function f(): void;\n";
+        let is_declaration_file = |path: &'static [u8]| {
+            lint_parse(path, text, bun_ast::Loader::Ts, |parsed| {
+                parsed.is_declaration_file
+            })
+        };
+        assert_eq!(is_declaration_file(b"/a.d.ts"), Some(true));
+        assert_eq!(is_declaration_file(b"/a.d.mts"), Some(true));
+        assert_eq!(is_declaration_file(b"/a.ts"), None);
+    }
+
+    #[test]
+    fn takes_no_shortcut_for_a_bundled_file() {
+        let text = b"// @bun\nlet a = 1;\n";
+        let count = statement_count(b"/a.js", text, bun_ast::Loader::Js);
+        assert_eq!(count, Some(1));
+    }
+
+    #[test]
+    fn an_unvisited_identifier_is_its_spelling() {
+        let text = b"let answer = 42;\nanswer;\n";
+        let name = lint_parse(b"/a.ts", text, bun_ast::Loader::Ts, |parsed| {
+            let last = parsed.stmts.last().map(|stmt| &stmt.data);
+            let Some(js_ast::StmtData::SExpr(statement)) = last else {
+                return Vec::new();
+            };
+            let js_ast::ExprData::EIdentifier(identifier) = &statement.value.data else {
+                return Vec::new();
+            };
+            parsed.name_of(identifier.ref_).to_vec()
+        });
+        assert_eq!(name.as_deref(), Some(&b"answer"[..]));
+    }
+}

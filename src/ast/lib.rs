@@ -1151,6 +1151,15 @@ impl Msg {
 
     // `to_js`/`from_js` live as extension-trait methods in `bun_logger_jsc`.
 
+    /// The number of the TypeScript diagnostic that this message is, if it is one.
+    #[inline]
+    pub fn code(&self) -> Option<u32> {
+        match self.metadata {
+            Metadata::Code(code) => Some(code),
+            Metadata::Build | Metadata::Resolve(_) => None,
+        }
+    }
+
     pub fn count(&self, builder: &mut StringBuilder) {
         self.data.count(builder);
         for note in self.notes.iter() {
@@ -1227,7 +1236,12 @@ impl Msg {
 pub enum Metadata {
     Build,
     Resolve(MetadataResolve),
+    /// The number of a TypeScript diagnostic: `Code(1005)` is TS1005. `write_format` prints no code.
+    Code(u32),
 }
+
+// `Metadata::Code` fits in the bytes that `Msg` had before it.
+const _: () = assert!(core::mem::size_of::<Msg>() == 152);
 
 #[derive(Copy, Clone)]
 pub struct MetadataResolve {
@@ -2087,6 +2101,29 @@ impl Log {
         })
     }
 
+    /// An error that is the TypeScript diagnostic `code` and has that diagnostic's text.
+    #[cold]
+    pub fn add_range_error_with_code(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        code: u32,
+        text: Cow<'static, [u8]>,
+        notes: Box<[Data]>,
+    ) {
+        self.errors += 1;
+        // Only `Range::NONE` skips the line scan, which panics on a negative start.
+        let r = if r.loc.start < 0 { Range::NONE } else { r };
+        let data = self.tracked_range_data(source, r, text);
+        self.add_msg(Msg {
+            kind: Kind::Err,
+            data,
+            metadata: Metadata::Code(code),
+            notes,
+            redact_sensitive_information: false,
+        })
+    }
+
     pub fn add_msg(&mut self, msg: Msg) {
         self.msgs.push(msg);
     }
@@ -2869,6 +2906,7 @@ pub mod stmt;
 pub mod symbol;
 pub mod ts;
 pub mod use_directive;
+pub mod walk;
 
 pub mod lexer_log;
 pub use lexer_log::LexerLog;
@@ -3508,5 +3546,81 @@ mod line_column_tracker_tests {
         let bmp_source = Source::init_path_string(b"t.js" as &[u8], bmp);
         let bmp_pos = bmp_source.init_error_position(usize2loc(bmp.len() - 1));
         assert_eq!(bmp_pos.column_count, 19);
+    }
+}
+
+#[cfg(test)]
+mod msg_code_tests {
+    use super::*;
+
+    #[test]
+    fn coded_error_keeps_its_code() {
+        let contents: &[u8] = b"let x: = 1;";
+        let source = Source::init_path_string(b"code-test.ts" as &[u8], contents);
+        let mut log = Log::init();
+        log.add_range_error_with_code(
+            Some(&source),
+            Range {
+                loc: Loc { start: 7 },
+                len: 1,
+            },
+            1110,
+            Cow::Borrowed(b"Type expected."),
+            Box::default(),
+        );
+        assert_eq!(log.errors, 1);
+        let msg = &log.msgs[0];
+        assert_eq!(msg.kind, Kind::Err);
+        assert_eq!(msg.code(), Some(1110));
+        assert_eq!(&*msg.data.text, b"Type expected.");
+        let location = msg.data.location.as_ref().expect("location");
+        assert_eq!((location.line, location.column), (1, 8));
+        assert_eq!((location.offset, location.length), (7, 1));
+        assert_eq!(msg.clone().code(), Some(1110));
+
+        let mut other = Log::init();
+        log.append_to_with_recycled(&mut other, true);
+        assert_eq!(other.errors, 1);
+        assert_eq!(other.msgs[0].code(), Some(1110));
+
+        let mut printed = String::new();
+        other.msgs[0]
+            .write_format::<false>(&mut printed)
+            .expect("write");
+        assert_eq!(
+            printed,
+            "1 | let x: = 1;\n           ^\nerror: Type expected.\n    at code-test.ts:1:8"
+        );
+    }
+
+    #[test]
+    fn coded_error_without_a_position() {
+        let contents: &[u8] = b"let x: = 1;";
+        let source = Source::init_path_string(b"code-test.ts" as &[u8], contents);
+        let mut log = Log::init();
+        log.add_range_error_with_code(
+            Some(&source),
+            Range {
+                loc: Loc::EMPTY,
+                len: 3,
+            },
+            1005,
+            alloc_print(format_args!("'{}' expected.", ";")),
+            Box::default(),
+        );
+        let msg = &log.msgs[0];
+        assert_eq!(msg.code(), Some(1005));
+        assert_eq!(&*msg.data.text, b"';' expected.");
+        let location = msg.data.location.as_ref().expect("location");
+        assert_eq!(&*location.file, b"code-test.ts");
+        assert_eq!((location.line, location.column), (-1, -1));
+        assert_eq!((location.offset, location.length), (0, 0));
+    }
+
+    #[test]
+    fn other_messages_have_no_code() {
+        let mut log = Log::init();
+        log.add_error(None, Loc::EMPTY, b"plain" as &[u8]);
+        assert_eq!(log.msgs[0].code(), None);
     }
 }

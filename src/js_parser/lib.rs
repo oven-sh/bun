@@ -26,6 +26,11 @@ pub mod scan;
 pub mod typescript;
 pub mod visit;
 
+#[cfg(test)]
+mod native_test_shims;
+#[cfg(test)]
+mod type_sink_tests;
+
 pub use p::P;
 pub use parse::parse_entry::{Options as ParserOptions, Parser};
 

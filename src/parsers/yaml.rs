@@ -3331,6 +3331,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let AliasCheck::Count(counter) = &mut self.alias_check else {
             return Ok(());
         };
+        counter.events.push(AliasEvent::MergeKey);
         let is_map = |node: &Expr| matches!(node.data, ast::ExprData::EObject(_));
         let aliased = counter.alias_site(value);
         if let Some(site) = aliased
@@ -3555,6 +3556,8 @@ enum AliasEvent {
     MergeAlias(usize),
     /// These `events` of a sequence that is the source of a `<<`, once more.
     MergeItems(usize, usize, usize),
+    /// A `<<`, which is a scalar written in the node but not kept in it.
+    MergeKey,
 }
 
 /// A collection node's identity, for pointer comparison.
@@ -3831,6 +3834,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             AliasEvent::MergeItems(sequence, start, end) => {
                 self.replay_alias_events(start, end, Some(sequence))?;
             }
+            AliasEvent::MergeKey => {}
         }
         Ok(())
     }
@@ -3879,8 +3883,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 let target = &counter.anchors[target];
                 largest = largest.max(target.count * target.alias_count);
             }
-            // The `<<` is a scalar.
-            if matches!(event, AliasEvent::MergeAlias(_)) {
+            if matches!(event, AliasEvent::MergeKey) {
                 largest = largest.max(1.0);
             }
         }

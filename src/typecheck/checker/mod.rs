@@ -72,29 +72,50 @@ pub mod symboltracker;
 pub mod types;
 pub mod utilities;
 
-// A module that holds only methods of the checker exports no name, and its glob then re-exports nothing.
-#[allow(unused_imports)]
-pub use {
-    c01_data::*, c02_program_checker::*, c03_init::*, c04_name_resolution_hooks::*,
-    c05_check_source_file::*, c06_check_members_type_nodes::*, c07_check_functions::*,
-    c08_check_statements::*, c09_check_classes_interfaces::*, c10_check_enums_modules_imports::*,
-    c11_check_variables_decorators::*, c12_iteration_types::*, c13_check_aliases_unused::*,
-    c14_expressions::*, c15_calls::*, c16_function_expressions_collisions::*,
-    c17_unary_meta_yield::*, c18_identifiers_property_access_this::*,
-    c19_assertions_binary_operators::*, c20_object_literals_spread::*,
-    c21_resolved_symbols_diagnostics::*, c22_symbols_merge::*, c23_alias_targets::*,
-    c24_external_modules::*, c25_entity_names::*, c26_exports_late_binding::*,
-    c27_resolve_alias::*, c28_types_of_symbols::*, c29_constraints::*, c30_type_keys::*,
-    c31_binding_patterns_widening::*, c32_type_resolution::*, c33_members_base_types_signatures::*,
-    c34_return_types::*, c35_resolve_members::*, c36_properties_apparent_types::*,
-    c37_instantiation::*, c38_type_nodes_references::*, c39_declared_types_enums::*,
-    c40_type_nodes_conditional_tuples::*, c41_new_types::*, c42_literal_types::*,
-    c43_unions_intersections::*, c44_index_indexed_access::*,
-    c45_base_constraints_normalization::*, c46_mark_references::*, c47_promised_mapped_template::*,
-    c48_contextual_types::*, c49_call_arguments_decorator_signatures::*,
-    c50_contextual_properties_inference_context::*, c51_type_facts_awaited::*,
-    c52_symbol_at_location::*, emitresolver::*, flow::*, grammarchecks::*, inference::*, jsdoc::*,
-    jsx::*, links::*, mapper::*, nodebuilder::*, nodebuilderimpl::*, nodebuilderscopes::*,
-    nodecopy::*, printer::*, pseudotypenodebuilder::*, relater::*, symbolaccessibility::*,
-    symboltracker::*, types::*, utilities::*,
-};
+// A module that holds only methods of the checker exports no name and has no glob here.
+pub use c01_data::*;
+pub use c02_program_checker::*;
+pub use c06_check_members_type_nodes::*;
+pub use c09_check_classes_interfaces::*;
+pub use c10_check_enums_modules_imports::*;
+pub use c12_iteration_types::*;
+pub use c13_check_aliases_unused::*;
+pub use c21_resolved_symbols_diagnostics::*;
+pub use c22_symbols_merge::*;
+pub use c23_alias_targets::*;
+pub use c24_external_modules::*;
+pub use c26_exports_late_binding::*;
+pub use c28_types_of_symbols::*;
+pub use c30_type_keys::*;
+pub use c33_members_base_types_signatures::*;
+pub use c34_return_types::*;
+pub use c35_resolve_members::*;
+pub use c36_properties_apparent_types::*;
+pub use c37_instantiation::*;
+pub use c38_type_nodes_references::*;
+pub use c40_type_nodes_conditional_tuples::*;
+pub use c42_literal_types::*;
+pub use c43_unions_intersections::*;
+pub use c44_index_indexed_access::*;
+pub use c45_base_constraints_normalization::*;
+pub use c46_mark_references::*;
+pub use c47_promised_mapped_template::*;
+pub use c49_call_arguments_decorator_signatures::*;
+pub use c50_contextual_properties_inference_context::*;
+pub use c51_type_facts_awaited::*;
+pub use emitresolver::*;
+pub use flow::*;
+pub use grammarchecks::*;
+pub use inference::*;
+pub use jsdoc::*;
+pub use jsx::*;
+pub use links::*;
+pub use mapper::*;
+pub use nodebuilder::*;
+pub use nodebuilderimpl::*;
+pub use nodebuilderscopes::*;
+pub use relater::*;
+pub use symbolaccessibility::*;
+pub use symboltracker::*;
+pub use types::*;
+pub use utilities::*;

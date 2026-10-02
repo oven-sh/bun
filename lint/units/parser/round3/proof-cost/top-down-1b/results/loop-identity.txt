@@ -1,0 +1,42 @@
+# Does the loop reproduce a release build? The unpatched src/js_parser of main (bc7a813b10), compiled by paren-expr-seam/run.py and
+# linked by paren-expr-seam/relink.py through r3cycle.sh, against the release build of main (/workspace/base/bun-profile.bc7a813b1).
+# The bottom-up pass found the bitcode of the rlib identical; this is the linked binary. 2026-10-02.
+16:25:19 start load 667.10
+main0 exit 0  16:31:32
+main0 rc 0 seconds 24 ['libbun_js_parser-185fe25973f3a1f8.rlib', 'libbun_js_parser-185fe25973f3a1f8.rmeta', 'rustc.log']
+main0: compile 25 s, link 246 s
+bun_js_parser text         863  1,400,688
+IDENT 1176  OFFSETS 0  CONSTS 0  DIFF 0  ONLY-A 0  ONLY-B 0  LINT-ONLY 0
+PASS
+section .text: identical (58185397 bytes)
+section .rodata: identical (19804908 bytes)
+section .data: identical (59648 bytes)
+16:32:05 done
+
+# the loop on a tree with sites (r3cycle.sh ref, then r3cycle.sh site1 ... cgjs)
+15:43:47 start load 420.01
+ref rc 0 seconds 20 ['libbun_js_parser-185fe25973f3a1f8.rlib', 'libbun_js_parser-185fe25973f3a1f8.rmeta', 'rustc.log']
+ref: compile 20 s, link 461 s
+bun_js_parser text         863  1,400,475
+P<false, false>            281    412,456
+P<true, false>             319    475,518
+P<false, true>              91    133,696
+P<true, true>              131    190,997
+ref exit 0  15:51:50
+site1 rc 0 seconds 21 ['libbun_js_parser-185fe25973f3a1f8.rlib', 'libbun_js_parser-185fe25973f3a1f8.rmeta', 'rustc.log']
+site1: compile 22 s, link 233 s
+bun_js_parser text         864  1,400,706
+P<false, false>            281    412,456
+P<true, false>             320    475,749
+P<false, true>              91    133,696
+P<true, true>              131    190,997
+strict   IDENT 822  OFFSETS 0  CONSTS 0  DIFF 0  ONLY-A 0  ONLY-B 0  LINT-ONLY 0 | PASS
+skipper  IDENT 32  OFFSETS 0  CONSTS 0  DIFF 0  ONLY-A 0  ONLY-B 0  LINT-ONLY 0 | PASS
+ts       IDENT 350  OFFSETS 0  CONSTS 0  DIFF 4  ONLY-A 0  ONLY-B 0  LINT-ONLY 1
+strict   16 reads of the field in 15 functions matching /^(?!.*(<true, ?false>|_parse::?<true>))/
+ref      16 reads of the field in 15 functions matching /^(?!.*(<true, ?false>|_parse::?<true>))/
+== js-control
+classes of the parser      Ir   2,911,879,943 ->   2,911,879,943 (+0)  Bc    321,498,342 ->    321,498,342 (+0)  Bi   35,878,822 ->   35,878,822 (+0)
+0 classes of the parser differ
+tests 0 (Bc of b on the lines of the sites); Bc b - a of the parser +0; functions: none differ
+site1 exit 0  15:58:28

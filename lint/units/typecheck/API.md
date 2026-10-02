@@ -2286,3 +2286,98 @@ At `609c902233`, 18 callees, each called by its upstream name with upstream's pa
 - `c47`: `get_optional_expression_type(expr_type, expression) -> TypeId` (29187).
 - `c18` (no file): `is_node_within_class(node, class_declaration) -> bool` (12051).
 - `crate::core::Map` as the contract has it (`get` and `set` with its `bool`), for `cached_signatures`.
+
+## Checker: type keys (`checker/c30_type_keys.rs`)
+
+Commit `1c1db7d342`, written by the job that commits the worktree. The file holds checker.go 17471-17775 whole and in
+upstream order (layer T-KEYS): `CacheHashKey` with `IsZero`, `keyBuilder` with its 14 methods, the 12 key functions and
+the three tests that close the range, 30 functions. No function is a stand-in. PORT_STATUS.md has the row.
+
+NOT compiled by cargo when this was written: it does not reach the file while a module of `checker/mod.rs` has no file.
+"Verified" below says what was checked instead.
+
+### How a caller writes the calls
+
+- `CacheHashKey { hi, lo }` is `Copy`, `Eq`, `Ord`, `Hash`, `Debug` and `Default` (the zero key).
+  `CacheHashKey::of(bytes)` is `CacheHashKey(xxh3.Hash128(bytes))` and `CacheHashKey(xxh3.HashString128(s))`, and
+  `key.is_zero()` is `IsZero`.
+- `KeyBuilder::default()` is `var b keyBuilder`. `write_byte(u8)`, `write_string(&[u8])`, `write_uint32(u32)`,
+  `write_uint64(u64)`, `write_int(isize)`, `write_type(TypeId)`, `write_types(List<'_, TypeId>)`,
+  `write_node_id(NodeId)`, `write_node(NodeId)` (nothing for the nil node) and `hash()` need no checker.
+  `write_symbol(c, symbol)` and `write_alias(c, alias)` take `&Checker` (a `&mut Checker` is accepted), and
+  `write_generic_type_references(c, source, target, ignore_constraints) -> bool` takes `&mut Checker`.
+- Free functions, re-exported as `crate::checker`, with upstream's parameter order after the checker:
+  - no checker: `get_type_list_key(types)`, `get_tuple_key(element_infos: List<'_, TupleElementInfo>, readonly)`,
+    `get_template_type_key(texts: List<'_, Text<'_>>, types)`, `get_node_list_key(nodes: List<'_, NodeId>)`;
+  - `&Checker`: `get_alias_key(c, alias)`, `get_union_key(c, types, origin, alias)`,
+    `get_intersection_key(c, types, flags, alias)`, `get_type_alias_instantiation_key(c, type_arguments, alias)`,
+    `get_type_instantiation_key(c, type_arguments, alias, single_signature)`,
+    `get_indexed_access_key(c, object_type, index_type, access_flags, alias)`,
+    `get_conditional_type_key(c, type_arguments, alias, for_constraint)`, `is_non_deferred_type_reference(c, t)`,
+    `is_unconstrained_type_parameter(c, tp)`;
+  - `&mut Checker`, because `get_type_arguments` and `get_constraint_of_type_parameter` resolve:
+    `get_relation_key(c, source, target, intersection_state, is_identity, ignore_constraints) -> (CacheHashKey, bool)`
+    and `is_type_reference_with_generic_arguments(c, t)`.
+
+### Differences from upstream and from the contract
+
+- The digest. Upstream keeps `xxh3.Hash128` of the byte stream. The contract
+  (`checker-data-model-contract/top-down/data/decisions.tsv`, row "cache keys") keeps `Wyhash11` and `Wyhash` of
+  `bun_wyhash`. The file keeps two XXH64 digests of the byte stream, `bun_core::hash::xxhash64` under the seeds 0 (`lo`)
+  and 0x9E3779B97F4A7C15 (`hi`): `src/typecheck/Cargo.toml` has no `bun_wyhash` dependency, and the manifest was not a
+  file of the step that wrote this one. The names, the fields and the derives are the contract's. A key is only
+  compared, as a map key or a set member, and no key reaches output, so the digest changes no answer. With
+  `bun_wyhash.workspace = true` in the manifest (and the line in `Cargo.lock`) the contract's digest is the two lines of
+  `CacheHashKey::of`: `hi: bun_wyhash::Wyhash11::hash(0, bytes)` and `lo: bun_wyhash::hash(bytes)`. `xxhash64` is a C++
+  function of `bun_highway`: a test binary of the crate that makes a key needs the symbol `highway_xxhash64`, beside
+  the native functions of `bun_core` that the crate already calls (`StackCheck`, `strings`). The test
+  `the_five_signature_keys_differ` of `c01_data.rs` makes five keys.
+- The bytes of a key are upstream's. `t.id` is the `TypeId`, `ast.GetNodeId` is `ast::get_node_id` (the id of the node
+  table), and `ast.GetSymbolId` is `Ast::get_symbol_id`, which gives a symbol its id at the first request, as upstream
+  does: a key that names a symbol is such a request.
+- `overflowBuffer == nil` is `overflow_buffer.is_empty()`: a spill of no byte leaves the slice nil. A write into the
+  inline buffer goes through `get_mut`; the spill before it makes the room, so no byte is dropped.
+- The closure `writeTypeReference` is the private method `write_type_reference`, with `depth`, `ignore_constraints`,
+  the list of type parameters and `constrained` as parameters. `slices.Index` with the append is a `match` on
+  `position`.
+- `getUnionKey` panics for an origin that is no union, intersection or index type: `c.fail` and the zero key, as the
+  contract's test `cache_keys_hash_upstream_bytes` expects.
+- A stack test is the first statement of `is_type_reference_with_generic_arguments`: it records `StackLimit` and
+  answers false, and `get_relation_key` then makes the plain key (`s` and the two type ids).
+- `is_unconstrained_type_parameter` reads `Type.Target` through `type_target`: for a type without a target that is a
+  fault and the error type, whose nil symbol gives false. Upstream has no caller of this function and none of
+  `getNodeListKey`.
+
+### Verified
+
+- `sh round2-layer7-checker/c30-probe.sh` on the tree of `fdf519158d`: exit 0, "probe ok". It runs `rustc` and
+  `clippy-driver` alone, no cargo. (1) One crate holds the real `c30_type_keys.rs` and `checker/types.rs`, the real
+  `core/golang.rs`, the flag and id files of `ast/` and the collections that `types.rs` names, and a stand-in for every
+  other name whose signature the generator reads from the file of the tree that defines it (`Ast::sym`, `parent`,
+  `get_symbol_id`, `as_type_parameter_declaration`, the three node tests, `fail`, `bad_cast`, `stack_limit`, `list_of`,
+  `get_type_arguments`, `get_constraint_of_type_parameter`, `IntersectionFlags`, `IntersectionState`); `bun_core` is a
+  stand-in crate with `hash::xxhash64`, after the generator found that signature in `src/bun_core/util.rs` and the
+  dependency in the manifest. It compiles under `#![deny(warnings)]` with `unused_imports`, `unused_variables`,
+  `unused_mut`, `unused_assignments` and `unreachable_pub` denied. (2) `clippy-driver` with the clippy table of the
+  workspace, `clippy::all` and the repository's `clippy.toml` prints nothing. (3) A program drives the functions that
+  need no checker and compares each key with the digest of a plain byte stream: 399,549 random writes in 2,000
+  builders with a digest after each write, the exact fill of the inline buffer by each kind of write (184 to 192
+  bytes before an 8-byte write, 192 and 193 bytes of one string), the key of the contract's test that spills twice,
+  and the keys of type lists, tuples, template literal types and node lists. (4) `rustfmt --check --edition 2024`.
+- `python3 round2-layer7-checker/ranges.py c30_type_keys`: 30 of 30 functions of the range have a `fn` of their name
+  in the file. `python3 round2-layer7-checker/globs.py --names`: no `pub` name of the module is a name of another
+  globbed module, and no name of this range is left among the names that files import and no module exports.
+- `python3 round2-layer7-checker/c30-callsites.py`: 45 calls in 12 files (`c29`, `c33`, `c37` to `c41`, `c43`, `c44`,
+  `c47`, `flow.rs`, `relater.rs`) give as many arguments as the definitions take, and 13 names are imported at 26
+  sites. Each call was also read against the signature.
+- Read against upstream statement by statement. No two comment lines are adjacent; no `unwrap`, `expect`, `panic`,
+  `todo`, `unimplemented`, `unreachable`, `unsafe` or slice index.
+- Not checked: the real crate through cargo. The functions that read the checker (`write_symbol`, `write_alias`,
+  `write_generic_type_references`, the keys and tests that take the checker) were compiled and not run. The stand-in
+  signatures are those of the tree at the time of the run.
+
+### What this file expects and the tree does not have
+
+- Nothing of its own: every name that the file uses has a definition in the tree of `fdf519158d`.
+- The maps that its callers key with a `CacheHashKey` are `crate::core::Map` (section C of the look-ahead).
+- For the contract's digest: `bun_wyhash.workspace = true` in `src/typecheck/Cargo.toml`, as above.

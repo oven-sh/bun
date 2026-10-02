@@ -1,7 +1,9 @@
 import { $ } from "bun";
+import { dlopen, ptr } from "bun:ffi";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { isWindows, tempDir, tempDirWithFiles } from "harness";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -70,6 +72,77 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .exitCode(0)
       .fileEquals("somedir/hello.txt", "hi!\n")
       .runAsTest("doesn't fail on EBUSY when copying multiple files that are the same");
+
+    // On Windows a task whose error names its own source (any errno) or its
+    // target (EBUSY) is held back until every operand has been copied. It is
+    // excused if a sibling task succeeded on the same source or target; a
+    // held-back error that nothing excuses has to be reported AND fail the
+    // command. Holding a file open with dwShareMode = 0 makes every copy that
+    // involves it fail with EBUSY deterministically.
+    describe.skipIf(!isWindows)("held-back errors", () => {
+      const busy = (path: string) => p(`cp: Device or resource busy: $TEMP_DIR/${path}\n`);
+
+      test.concurrent("excused because a sibling copied the same target: exits 0", async () => {
+        using dir = tempDir("cp-ebusy", { "sub": { "same.txt": "from sub\n" }, "same.txt": "locked\n", "out": {} });
+        await whileOpenedExclusively(join(String(dir), "same.txt"), () =>
+          TestBuilder.command`cp sub/same.txt same.txt out`
+            .ensureTempDir(String(dir))
+            .stderr("")
+            .exitCode(0)
+            .fileEquals("out/same.txt", "from sub\n")
+            .run(),
+        );
+      });
+
+      test.concurrent("not excused, error names the target (file copy): exits 1", async () => {
+        using dir = tempDir("cp-ebusy", { "locked.txt": "locked\n", "out": {} });
+        await whileOpenedExclusively(join(String(dir), "locked.txt"), () =>
+          TestBuilder.command`cp locked.txt out/copy.txt`
+            .ensureTempDir(String(dir))
+            .stderr(busy("out/copy.txt"))
+            .exitCode(1)
+            .doesNotExist("out/copy.txt")
+            .run(),
+        );
+      });
+
+      test.concurrent("not excused, error names the source (cp -R cannot open the directory): exits 1", async () => {
+        using dir = tempDir("cp-ebusy", { "lockeddir": { "a.txt": "a\n" }, "out": {} });
+        await whileOpenedExclusively(join(String(dir), "lockeddir"), () =>
+          TestBuilder.command`cp -R lockeddir out/lockeddir`
+            .ensureTempDir(String(dir))
+            .stderr(busy("lockeddir"))
+            .exitCode(1)
+            .doesNotExist("out/lockeddir")
+            .run(),
+        );
+      });
+
+      test.concurrent("not excused by an operand that copied a different file: exits 1", async () => {
+        using dir = tempDir("cp-ebusy", { "free.txt": "free\n", "locked.txt": "locked\n", "out": {} });
+        await whileOpenedExclusively(join(String(dir), "locked.txt"), () =>
+          TestBuilder.command`cp free.txt locked.txt out`
+            .ensureTempDir(String(dir))
+            .stderr(busy("out/locked.txt"))
+            .exitCode(1)
+            .fileEquals("out/free.txt", "free\n")
+            .doesNotExist("out/locked.txt")
+            .run(),
+        );
+      });
+
+      test.concurrent("every unexcused failure is reported: exits 1", async () => {
+        using dir = tempDir("cp-ebusy", { "locked.txt": "locked\n", "out": {} });
+        await whileOpenedExclusively(join(String(dir), "locked.txt"), () =>
+          TestBuilder.command`cp locked.txt locked.txt out`
+            .ensureTempDir(String(dir))
+            .stderr(busy("out/locked.txt") + busy("out/locked.txt"))
+            .exitCode(1)
+            .doesNotExist("out/locked.txt")
+            .run(),
+        );
+      });
+    });
   });
 
   describe("uutils ported", () => {
@@ -172,6 +245,42 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .runAsTest("cp_recurse");
   });
 });
+
+/**
+ * Holds a Win32 handle to `path` (a file or a directory) with `dwShareMode = 0`
+ * while `fn` runs, so every other attempt to open it, including the one
+ * `CopyFileW` or a directory walk makes, fails with a sharing violation (EBUSY).
+ */
+async function whileOpenedExclusively<T>(path: string, fn: () => Promise<T>): Promise<T> {
+  const k32 = dlopen("kernel32.dll", {
+    CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "u64" },
+    CloseHandle: { args: ["u64"], returns: "i32" },
+    GetLastError: { args: [], returns: "u32" },
+  });
+  const INVALID_HANDLE_VALUE = 0xffffffffffffffffn;
+  const GENERIC_READ = 0x80000000;
+  const OPEN_EXISTING = 3;
+  // Required to open a directory; has no effect on a file.
+  const FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+
+  const wpath = Buffer.from(path + "\0", "utf16le");
+  const handle = k32.symbols.CreateFileW(
+    ptr(wpath),
+    GENERIC_READ,
+    0,
+    null,
+    OPEN_EXISTING,
+    FILE_FLAG_BACKUP_SEMANTICS,
+    null,
+  );
+  if (handle === INVALID_HANDLE_VALUE) throw new Error(`CreateFileW(${path}) failed: ${k32.symbols.GetLastError()}`);
+  try {
+    return await fn();
+  } finally {
+    k32.symbols.CloseHandle(handle);
+    k32.close();
+  }
+}
 
 function expectSortedOutput(expected: string) {
   return (stdout: string, tempdir: string) =>

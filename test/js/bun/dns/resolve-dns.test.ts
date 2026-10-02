@@ -1,6 +1,7 @@
 import { SystemError, dns } from "bun";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, withoutAggressiveGC } from "harness";
+import nodeDns from "node:dns";
 import { isIP, isIPv4, isIPv6 } from "node:net";
 import { join } from "node:path";
 
@@ -13,9 +14,73 @@ const invalidHostnames = ["adsfa.asdfasdf.asdf.com"]; // known invalid
 // 30s timeout).
 const malformedHostnames = [" ", ".", " .", "localhost:80", "this is not a hostname", "a..b", "foo bar.example.com"];
 
+// The c-ares backend sends DNS packets to the servers on bun's c-ares channel,
+// so its cases put a server from this file there and never ask the machine's
+// resolver. The system and libc backends ask the OS resolver, which a test
+// cannot redirect. `.test` is reserved (RFC 6761): only the server in this
+// file resolves `fakeHostname`.
+const fakeHostname = "cares.resolve-dns.test";
+const fakeRecords = new Map([
+  [1, { address: "192.0.2.1", rdata: Buffer.from([192, 0, 2, 1]) }], // A
+  [28, { address: "2001:db8::1", rdata: Buffer.from("20010db8000000000000000000000001", "hex") }], // AAAA
+]);
+
+// Answers `fakeHostname` from `fakeRecords` and every other name with
+// NXDOMAIN, as the only server on bun's c-ares channel until `close()`.
+async function startFakeDns() {
+  const questions: string[] = [];
+  const server = await Bun.udpSocket({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(socket, query, port, address) {
+        const labels: string[] = [];
+        let offset = 12;
+        while (query[offset]) {
+          labels.push(query.toString("latin1", offset + 1, offset + 1 + query[offset]));
+          offset += 1 + query[offset];
+        }
+        // A datagram without a whole question is not from c-ares. It gets no reply.
+        if (query.length < offset + 5) return;
+        const name = labels.join(".").toLowerCase();
+        const qtype = query.readUInt16BE(offset + 1);
+        questions.push(name);
+        const exists = name === fakeHostname;
+        const rdata = exists ? fakeRecords.get(qtype)?.rdata : undefined;
+        // The reply is the header and the question with these set: QR + RD, RA +
+        // rcode (3 is NXDOMAIN), one question, the answer count, no other records.
+        const reply = Buffer.from(query.subarray(0, offset + 5));
+        reply.set([0x81, exists ? 0x80 : 0x83, 0, 1, 0, rdata ? 1 : 0, 0, 0, 0, 0], 2);
+        // 0xc00c points at the name in the question. Class IN, TTL 60.
+        const answer = rdata ? [Buffer.from([0xc0, 0x0c, 0, qtype, 0, 1, 0, 0, 0, 60, 0, rdata.length]), rdata] : [];
+        socket.send(Buffer.concat([reply, ...answer]), port, address);
+      },
+    },
+  });
+  const machineServers = nodeDns.getServers();
+  nodeDns.setServers([`127.0.0.1:${server.port}`]);
+  return {
+    questions,
+    close() {
+      nodeDns.setServers(machineServers);
+      server.close();
+    },
+  };
+}
+
 describe("dns", () => {
   describe.each(backends)("lookup() [backend: %s]", backend => {
-    describe.each(validHostnames)("%s", hostname => {
+    const usesFakeDns = backend === "c-ares";
+    const resolvableHostnames = usesFakeDns ? ["localhost", fakeHostname] : validHostnames;
+    let fakeDns: Awaited<ReturnType<typeof startFakeDns>> | undefined;
+    if (usesFakeDns) {
+      beforeAll(async () => {
+        fakeDns = await startFakeDns();
+      });
+      afterAll(() => fakeDns?.close());
+    }
+
+    describe.each(resolvableHostnames)("%s", hostname => {
       test.each([
         {
           options: { backend },
@@ -82,9 +147,13 @@ describe("dns", () => {
             expect(ttl).toBeInteger();
           }
         });
+        if (hostname === fakeHostname) {
+          const fakeAddresses = [...fakeRecords.values()].map(record => record.address);
+          expect(result.map(({ address }) => address).sort()).toEqual(fakeAddresses.filter(expectedAddress).sort());
+        }
       });
     });
-    test.each(validHostnames)("%s [parallel x 10]", async hostname => {
+    test.each(resolvableHostnames)("%s [parallel x 10]", async hostname => {
       const results = await Promise.all(
         // @ts-expect-error
         Array.from({ length: 10 }, () => dns.lookup(hostname, { backend })),
@@ -110,6 +179,8 @@ describe("dns", () => {
         code: "DNS_ENOTFOUND",
         name: "DNSException",
       });
+      // The NXDOMAIN is the fake server's, and not one from the machine's resolver.
+      if (usesFakeDns) expect(fakeDns?.questions).toContain(hostname);
     });
 
     test.concurrent.each(malformedHostnames)("'%s'", async hostname => {

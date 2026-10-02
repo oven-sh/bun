@@ -281,11 +281,6 @@ impl FileRoute {
             return;
         };
 
-        // Every non-streaming outcome — bodiless status codes
-        // (304/204/205/307/308), HEAD, non-streamable files, and the JS-exception
-        // early returns — is `Serve::Done`, so neither the fd nor the route ref
-        // (or the server's pending_requests counter) can leak regardless of
-        // which branch ran.
         match route.serve(fd, path, &mut req, resp, method) {
             Serve::Done => {
                 #[cfg(windows)]
@@ -403,14 +398,12 @@ impl FileRoute {
         resp.write_mark();
         self.write_headers(resp);
 
-        // Bodiless statuses end before the range switch so a 304 emits no
-        // Content-Range. FileResponseStream ships via sendfile/write(), so a
-        // null-body status must never start it; 307/308 routes skip it too.
-        if HTTPStatusText::is_null_body(status_code) || matches!(status_code, 307 | 308) {
+        // 1xx/204/304 end at the blank line (RFC 9112 §6.3). 205 and 412 carry Content-Length: 0.
+        if HTTPStatusText::is_null_body(status_code) && status_code != 205 {
             resp.end_without_body(resp.should_close_connection());
             return Serve::Done;
         }
-        if status_code == 412 {
+        if matches!(status_code, 205 | 412) {
             resp.end(b"", resp.should_close_connection());
             return Serve::Done;
         }

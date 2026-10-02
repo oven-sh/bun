@@ -51,9 +51,13 @@ const clientConnected = await new Promise<boolean>(resolve => {
   client.on("error", () => resolve(false));
   client.on("close", () => resolve(false));
 });
+// stop(true) has to close the server side by itself. Its close handler runs
+// when the callback returns, before the client can see any outcome, so a close
+// that only the cleanup below causes does not count.
+const serverClosedFirst = events.includes("close");
 // If the server left the connection open, this closes it, so the events are
 // printed and the test fails on them and not on a timeout.
 client.destroy();
 await serverClosed.promise;
 
-console.log(JSON.stringify({ events, clientConnected }));
+console.log(JSON.stringify({ events, clientConnected, serverClosedFirst }));

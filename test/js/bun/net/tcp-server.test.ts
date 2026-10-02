@@ -329,7 +329,11 @@ describe("TLS listener: stop(true) from inside a selection callback", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ events: ["returned", "handshake:false", "close"], clientConnected: false });
+    expect(JSON.parse(stdout)).toEqual({
+      events: ["returned", "handshake:false", "close"],
+      clientConnected: false,
+      serverClosedFirst: true,
+    });
     expect(exitCode).toBe(0);
   });
 });

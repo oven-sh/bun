@@ -2520,7 +2520,9 @@ and no `LiveList`. "Verified" below says what was checked instead.
   `tuple_types_definitely_unrelated(c, source, target)`, `new_inference_info(c, type_parameter)`,
   `clone_inference_info(c, info)`, `clear_cached_inferences(c, inferences)`, `has_inference_candidates(c, info)`,
   `has_inference_candidates_or_default(c, info)`, `has_type_parameter_default(c, tp)`,
-  `has_overlapping_inferences(c, a, b)`. The five `has_*` and `get_*_for_type` ones take `&Checker`.
+  `has_overlapping_inferences(c, a, b)`. `new_inference_info`, `clone_inference_info` and `clear_cached_inferences`
+  take `&mut Checker`; the four `has_*`, `get_inference_info_for_type`,
+  `get_single_type_variable_from_intersection_types` and `tuple_types_definitely_unrelated` take `&Checker`.
 - These only read and take `&self`: `is_tuple_type_structure_matching`, `is_type_closely_matched_by`,
   `get_combined_type_flags`, `is_from_inference_blocked_source`, `is_skip_direct_inference_node`,
   `get_mapper_from_context`. Every other method takes `&mut self`.

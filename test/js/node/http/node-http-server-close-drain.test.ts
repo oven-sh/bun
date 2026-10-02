@@ -987,8 +987,7 @@ test("--hot reload: the connections of the last run of the script belong to the 
   expect(stderr.replaceAll(/^DEBUG:.*\n/gm, "")).toBe("");
   expect(stdout).toBe('{"socketServerIsThisServer":true,"connections":1,"afterSweep":"closed"}\n');
   expect(exitCode).toBe(0);
-  // A debug build needs seconds to start, and then to run the script twice.
-}, 30_000);
+});
 
 // Node runs a nextTick of the listener after its parser completed the message,
 // so the connection is idle there. How many reads its request head took makes

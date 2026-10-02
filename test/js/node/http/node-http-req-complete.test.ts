@@ -582,8 +582,6 @@ describe("server.closeIdleConnections() from the listener of a request", () => {
     ["the 'end' listener of the request", (sweep, req, res) => (res.end(req.url), req.on("end", sweep).resume())],
   ];
   const atEnd = "the 'end' listener of the request";
-  // Bun keeps the connection there: uWS still has a chunked body open in the callback of its last chunk.
-  const atEndOfChunked = typeof Bun === "undefined" ? [atEnd] : [];
   const withoutBody = [
     "process.nextTick",
     "queueMicrotask",
@@ -608,10 +606,13 @@ describe("server.closeIdleConnections() from the listener of a request", () => {
     [
       "a chunked body in the read of the head",
       [`POST ${head}Transfer-Encoding: chunked\r\n\r\n${chunks}`],
-      ["setImmediate", ...atEndOfChunked],
+      ["setImmediate", atEnd],
     ],
-    ["a chunked body in a later read", [`POST ${head}Transfer-Encoding: chunked\r\n\r\n`, chunks], atEndOfChunked],
+    ["a chunked body in a later read", [`POST ${head}Transfer-Encoding: chunked\r\n\r\n`, chunks], [atEnd]],
   ];
+  // Bun answers the next request there, so "kept": uWS still has a chunked body open in the callback of its last chunk.
+  const todoInBun = (shape: string, place: string) =>
+    typeof Bun !== "undefined" && shape.includes("chunked") && place === atEnd;
 
   function connection(port: number, payload: string) {
     const socket = send(port, payload, () => {});
@@ -671,15 +672,22 @@ describe("server.closeIdleConnections() from the listener of a request", () => {
   }
 
   for (const [name, parts, closed] of shapes) {
+    const hasBody = parts.join("").startsWith("POST");
+    const applicable = places.filter(([place]) => hasBody || place !== "the 'data' listener of the request");
+    const expected = (place: string) => (closed.includes(place) ? "closed" : "kept");
+    const rows = applicable.filter(([place]) => !todoInBun(name, place));
     test(name, async () => {
-      const hasBody = parts.join("").startsWith("POST");
-      const rows = places.filter(([place]) => hasBody || place !== "the 'data' listener of the request");
       const outcomes = await Promise.all(rows.map(([, place]) => sweepAt(parts, place)));
       assert.deepStrictEqual(
         Object.fromEntries(rows.map(([place], i) => [place, outcomes[i]])),
-        Object.fromEntries(rows.map(([place]) => [place, closed.includes(place) ? "closed" : "kept"])),
+        Object.fromEntries(rows.map(([place]) => [place, expected(place)])),
       );
     });
+    for (const [place, run] of applicable.filter(([place]) => todoInBun(name, place))) {
+      test(`${name}, ${place}`, { todo: true }, async () => {
+        assert.strictEqual(await sweepAt(parts, run), expected(place));
+      });
+    }
   }
 });
 

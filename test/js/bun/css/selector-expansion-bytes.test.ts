@@ -80,8 +80,17 @@ test("fat multi-argument :lang() selectors under the expansion count cap error i
 
 test("fat functional pseudo-element arguments are weighed like ::part() names", () => {
   // ~31 KB inputs; each expanded to ~500 MB of output before these payloads were measured.
-  for (const pseudo of ["view-transition-group", "view-transition-old", "picker"]) {
-    const css = fatNestedList(15, 1000, (ident, i) => `.a${i}::${pseudo}(${ident})`);
+  const pseudoElements = [
+    (ident: string) => `::view-transition-group(${ident})`,
+    (ident: string) => `::view-transition-old(${ident})`,
+    (ident: string) => `::view-transition-group-children(${ident})`,
+    // The classes of a view transition part are as input-controlled as its name.
+    (ident: string) => `::view-transition-new(*.${ident})`,
+    (ident: string) => `::view-transition-image-pair(.${ident}.${ident})`,
+    (ident: string) => `::picker(${ident})`,
+  ];
+  for (const pseudoElement of pseudoElements) {
+    const css = fatNestedList(15, 1000, (ident, i) => `.a${i}${pseudoElement(ident)}`);
     expect(minifyOutcome(css)).toMatch(/^error:.*bytes of selectors/);
   }
 });

@@ -488,7 +488,7 @@ fn edit_update_entries(
                             .unwrap_or_else(|| bun_core::out_of_memory());
                         let tag = dependency::Tag::infer(version_literal);
 
-                        // npm ranges only (and dist-tags with --latest); `catalog:` is handled by edit_catalogs_*.
+                        // npm ranges only (and dist-tags with --latest); `catalog:` is handled by record_catalog_entries and edit_catalogs_after_update.
                         if tag != dependency::Tag::Npm
                             && (tag != dependency::Tag::DistTag || !update_to_latest)
                         {

@@ -164,6 +164,17 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await expectInSync(dir);
   });
 
+  test.each(GROUPS.flatMap(group => [[], ["no-deps"], ["-r"]].map(args => [group, args] as const)))(
+    "bun update --latest moves a %s entry with args %j",
+    async (group, args) => {
+      const dir = await setup({ "package.json": root({ [group]: { "no-deps": "^1.0.0" } }) });
+      await run(dir, "update", ...args, "--latest");
+      expect((await pkg(dir))[group]).toStrictEqual({ "no-deps": "^2.0.0" });
+      expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
+      await expectInSync(dir);
+    },
+  );
+
   test.each([
     ["*", "2.0.0"],
     ["1", "1.1.0"],

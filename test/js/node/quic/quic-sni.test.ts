@@ -107,6 +107,48 @@ test("an identity with several cert/key pairs installs a matching pair", async (
   }
 });
 
+// lsquic can free a connection in the engine pass that completes its
+// handshake, before the session reports anything. The session's own
+// certificate is then read from the context the servername selected. This
+// client destroys itself once it has its 1-RTT keys, so its Finished and its
+// CONNECTION_CLOSE are sent before the listener, on this thread, reads either.
+test("session.certificate is the identity the servername selected once the connection is gone", async () => {
+  const reported = Promise.withResolvers<unknown>();
+  await using server = await listen(
+    session => {
+      ignoreErrors(session);
+      session.closed.catch(() => {});
+      session.onhandshake = info =>
+        reported.resolve({
+          servername: info.servername,
+          certificate: session.certificate?.subject.match(/CN=([^\s,]+)/)?.[1],
+          // A getter that only a live connection answers.
+          remoteTransportParams: session.remoteTransportParams,
+        });
+    },
+    { sni: { "*": identity1, "agent2.example": identity2 }, alpn: ["quic-test"] },
+  );
+
+  const client = await connect(server.address, {
+    alpn: "quic-test",
+    servername: "agent2.example",
+    verifyPeer: "manual",
+    keylog: true,
+    onkeylog(line) {
+      if (line.startsWith("CLIENT_TRAFFIC_SECRET_0")) this.destroy();
+    },
+    onerror() {},
+  });
+  client.opened.catch(() => {});
+  client.closed.catch(() => {});
+
+  expect(await reported.promise).toEqual({
+    servername: "agent2.example",
+    certificate: "agent2",
+    remoteTransportParams: undefined,
+  });
+});
+
 test("setSNIContexts() rejects a non-object and a closed endpoint", async () => {
   const endpoint = new QuicEndpoint();
   expect(() => endpoint.setSNIContexts("nope" as any)).toThrow(

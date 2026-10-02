@@ -260,6 +260,8 @@ const tlsExtension = (type: number, body: Uint8Array) => Buffer.concat([u16(type
 const transportParameter = (id: number, value: Uint8Array) => Buffer.concat([varint(id), vec8(value)]);
 // RFC 8410: the SubjectPublicKeyInfo of an X25519 key is this prefix and the 32 key bytes.
 const x25519SpkiPrefix = Buffer.from("302a300506032b656e032100", "hex");
+/** The `max_datagram_frame_size` transport parameter this client sends. */
+export const maxDatagramFrameSize = 1000;
 
 function clientHello(alpn: string, keyShare: Uint8Array, sourceConnectionId: Uint8Array) {
   const transportParameters = Buffer.concat([
@@ -271,6 +273,7 @@ function clientHello(alpn: string, keyShare: Uint8Array, sourceConnectionId: Uin
     transportParameter(0x08, varint(16)), // initial_max_streams_bidi
     transportParameter(0x09, varint(16)), // initial_max_streams_uni
     transportParameter(0x0f, sourceConnectionId), // initial_source_connection_id
+    transportParameter(0x20, varint(maxDatagramFrameSize)), // max_datagram_frame_size (RFC 9221)
   ]);
   const extensions = Buffer.concat([
     tlsExtension(0x0000, vec16(Buffer.concat([bytes(0), vec16(Buffer.from("localhost"))]))), // server_name

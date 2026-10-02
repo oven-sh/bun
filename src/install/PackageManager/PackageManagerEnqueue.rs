@@ -1393,56 +1393,36 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 let needs_ctx =
                     this.lockfile.buffers.resolutions[id as usize] == invalid_package_id;
 
-                // An already-resolved dependency (install-phase re-enqueue
-                // after the shared clone finished) is pinned: its install
-                // context is keyed on the stored SHA, and a branch
-                // committish's current tip may differ.
-                let pinned: Option<Vec<u8>> = if needs_ctx {
-                    None
-                } else {
-                    let pkg_id = this.lockfile.buffers.resolutions[id as usize];
-                    let pkg_res = this.lockfile.packages.items_resolution()[pkg_id as usize];
-                    // SAFETY: tag checked — `value.git` is the active union arm.
-                    (pkg_res.tag == ResolutionTag::Git)
-                        .then(|| this.lockfile.str(&pkg_res.git().resolved).to_vec())
-                };
-                let resolved = match pinned {
-                    Some(resolved) => resolved,
+                // Waits on a `git log` task; `run_tasks` fills `git_commits` and re-enters here.
+                let committish = this.lockfile.str_detached(&dep.committish);
+                let commit_id = Task::Id::for_git_commit(url, committish);
+                let resolved = match this.git_commits.get(&commit_id) {
+                    Some(resolved) => resolved.clone(),
                     None => {
-                        // Waits on a `git log` task; `run_tasks` fills `git_commits` and re-enters here.
-                        let committish = this.lockfile.str_detached(&dep.committish);
-                        let commit_id = Task::Id::for_git_commit(url, committish);
-                        match this.git_commits.get(&commit_id) {
-                            Some(resolved) => resolved.clone(),
-                            None => {
-                                let entry = this
-                                    .task_queue
-                                    .get_or_put_context(commit_id, ())
-                                    .expect("unreachable");
-                                if !entry.found_existing {
-                                    *entry.value_ptr = TaskCallbackList::default();
-                                }
-                                entry.value_ptr.push(ctx);
-
-                                if dependency.behavior.is_peer() && !install_peer {
-                                    this.peer_dependencies.write_item(id)?;
-                                    return Ok(());
-                                }
-
-                                if this.has_created_network_task(
-                                    commit_id,
-                                    dependency.behavior.is_required(),
-                                ) {
-                                    return Ok(());
-                                }
-
-                                let task = enqueue_git_commit(
-                                    this, commit_id, clone_id, alias, url, committish,
-                                );
-                                this.enqueue_git_task(task);
-                                return Ok(());
-                            }
+                        let entry = this
+                            .task_queue
+                            .get_or_put_context(commit_id, ())
+                            .expect("unreachable");
+                        if !entry.found_existing {
+                            *entry.value_ptr = TaskCallbackList::default();
                         }
+                        entry.value_ptr.push(ctx);
+
+                        if dependency.behavior.is_peer() && !install_peer {
+                            this.peer_dependencies.write_item(id)?;
+                            return Ok(());
+                        }
+
+                        if this
+                            .has_created_network_task(commit_id, dependency.behavior.is_required())
+                        {
+                            return Ok(());
+                        }
+
+                        let task =
+                            enqueue_git_commit(this, commit_id, clone_id, alias, url, committish);
+                        this.enqueue_git_task(task);
+                        return Ok(());
                     }
                 };
                 let checkout_id = Task::Id::for_git_checkout(url, &resolved);

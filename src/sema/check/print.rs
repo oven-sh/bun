@@ -78,7 +78,7 @@ impl Checker<'_> {
     }
 
     /// `TypeToTypeNode` with the flags of `typeWriterWalker.writeTypeOrSymbol`.
-    fn type_to_string_for_baseline_with(
+    pub(super) fn type_to_string_for_baseline_with(
         &mut self,
         ty: TypeId,
         enclosing_declaration: Option<Enclosing>,
@@ -97,16 +97,6 @@ impl Checker<'_> {
 
     pub fn type_to_string_for_baseline(&mut self, ty: TypeId) -> String {
         self.type_to_string_for_baseline_with(ty, None)
-    }
-
-    /// `type_to_string_for_baseline` with an `enclosingDeclaration`: the scope of `node.Parent`.
-    pub fn type_to_string_for_baseline_at(
-        &mut self,
-        ty: TypeId,
-        file: FileId,
-        scope: ScopeId,
-    ) -> String {
-        self.type_to_string_for_baseline_with(ty, Some(Enclosing::at_scope(file, scope)))
     }
 
     /// `getTypeNameForErrorDisplay`
@@ -2732,8 +2722,8 @@ impl<'p> Printer<'_, 'p> {
             }
     }
 
-    /// The same for a function expression that initializes a variable at the top of a file or a namespace: the variable, unless that
-    /// is the enclosing declaration.
+    /// The same for a function expression that initializes a variable at the top of a file or a namespace: the variable. If that is
+    /// the enclosing declaration, the function expression itself.
     fn variable_of_function_expression(&self, ty: TypeId) -> Option<Sym> {
         let TypeData::Fns { decls, .. } = self.c.data(ty) else {
             return None;
@@ -2755,14 +2745,17 @@ impl<'p> Printer<'_, 'p> {
         {
             return None;
         }
-        // `symbol.ValueDeclaration.Parent != b.ctx.enclosingDeclaration`
-        if self
-            .enclosing_declaration
-            .is_some_and(|at| (at.file, at.variable) == (file, declaration))
+        // `symbol.ValueDeclaration.Parent != b.ctx.enclosingDeclaration`. One without a name goes by that of the variable anyway.
+        let own = bound.fn_symbol[func.idx()];
+        let symbol = if own.is_some()
+            && self
+                .enclosing_declaration
+                .is_some_and(|at| (at.file, at.variable) == (file, declaration))
         {
-            return None;
-        }
-        let symbol = bound.pat_symbol[hir[declaration].pat.idx()];
+            own
+        } else {
+            bound.pat_symbol[hir[declaration].pat.idx()]
+        };
         symbol.is_some().then(|| self.c.files().sym(file, symbol))
     }
 
@@ -4491,9 +4484,33 @@ impl<'p> Printer<'_, 'p> {
         if self.check_truncation_length() {
             return self.elided_information_placeholder();
         }
-        let check = self.c.cond_piece(ty, 0);
-        let check = self.type_to_node(check);
+        let check_type = self.c.cond_piece(ty, 0);
+        let check = self.type_to_node(check_type);
         self.approximate_length += 15;
+        let (_, _, mut mapper, nodes) = self.c.cond_origin(ty);
+        // What is checked was a type parameter and is one no more: a new one keeps the type distributive.
+        let root_check_type = self.c.type_from_node(file, nodes[0]);
+        let new_type_variable = if self.flags & GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS != 0
+            && !self.c.is_type_param(check_type)
+        {
+            self.c
+                .renamed_type_param(root_check_type, self.c.files().atoms.intern(b"T"))
+        } else {
+            None
+        };
+        let new_name = new_type_variable.map(|new_param| {
+            self.approximate_length += 37;
+            // `prependTypeMapping`
+            let mut pairs = self.c.p.types.mapping(mapper).to_vec();
+            pairs.retain(|pair| pair.0 != root_check_type);
+            pairs.push((root_check_type, new_param));
+            mapper = self.c.p.types.mapper(pairs);
+            self.type_parameter_to_name(new_param)
+        });
+        let piece = |printer: &mut Self, which: usize| {
+            let declared = printer.c.type_from_node(file, nodes[which]);
+            printer.c.instantiate(declared, mapper)
+        };
         let mut declared = Vec::new();
         self.c.collect_infer_params(file, extends, &mut declared);
         let infer_type_parameters = declared
@@ -4501,24 +4518,28 @@ impl<'p> Printer<'_, 'p> {
             .map(|parameter| self.c.type_param(file, parameter))
             .collect();
         let saved = std::mem::replace(&mut self.infer_type_parameters, infer_type_parameters);
-        let extends = self.c.cond_piece(ty, 1);
+        let extends = piece(self, 1);
         let extends = self.type_to_node(extends);
         self.infer_type_parameters = saved;
-        let when_true = self.c.cond_piece(ty, 2);
+        let when_true = piece(self, 2);
         let when_true = self.type_to_node_or_circularity_elision(when_true);
-        let when_false = self.c.cond_piece(ty, 3);
+        let when_false = piece(self, 3);
         let when_false = self.type_to_node_or_circularity_elision(when_false);
         // In the `extends` clause a conditional type is in parentheses.
-        Node::new(
-            format!(
-                "{} extends {} ? {} : {}",
-                check.emit(UNION),
-                extends.emit(CONDITIONAL + 1),
-                when_true.text,
-                when_false.text
-            ),
-            CONDITIONAL,
-        )
+        let extends = extends.emit(CONDITIONAL + 1);
+        let (yes, no) = (when_true.text, when_false.text);
+        let text = match new_name {
+            // The first makes `T` a type parameter, the second gives it what is checked for a constraint, the third is the test.
+            Some(t) => {
+                let constraint = check.clone().emit(CONDITIONAL + 1);
+                let check = check.emit(UNION);
+                format!(
+                    "{check} extends infer {t} ? {t} extends {constraint} ? {t} extends {extends} ? {yes} : {no} : never : never"
+                )
+            }
+            None => format!("{} extends {extends} ? {yes} : {no}", check.emit(UNION)),
+        };
+        Node::new(text, CONDITIONAL)
     }
 
     // ───────────────────────────── type nodes ─────────────────────────────

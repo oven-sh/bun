@@ -4116,9 +4116,17 @@ impl<'p> Checker<'p> {
         right: ExprId,
     ) -> TypeId {
         let is_assignment = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. });
+        // `&&=`, `||=`, `??=`: whatever comes of the two, what is on the right is put where the left is.
+        if is_assignment && matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) {
+            let (l, r, is_sure) = self.check_operands(file, left, right);
+            if is_sure {
+                self.check_assignment_operator(file, op, left, right, l, r);
+            }
+        }
         match op {
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                if let Some((l, r)) = self.operand_types_if_sure(file, left, right)
+                let (l, r, is_sure) = self.check_operands(file, left, right);
+                if is_sure
                     && self.check_for_disallowed_es_symbol_operand(file, e, op, left, right, l, r)
                 {
                     let l = self.check_non_null_type(file, left, l);
@@ -4130,9 +4138,8 @@ impl<'p> Checker<'p> {
             }
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
                 // `CheckModeTypeOnly`: while a loop is under way the operands may be narrower than they are.
-                if let Some((l, r)) = self.operand_types_if_sure(file, left, right)
-                    && self.flow_loops.is_empty()
-                {
+                let (l, r, is_sure) = self.check_operands(file, left, right);
+                if is_sure && self.flow_loops.is_empty() {
                     let hir = self.hir(file);
                     let is_equality = matches!(op, BinOp::EqEq | BinOp::EqEqEq);
                     // A JavaScript file reports only `===` and `!==`.
@@ -4150,17 +4157,14 @@ impl<'p> Checker<'p> {
             }
             // `checkInExpression`, `checkInstanceOfExpression`
             BinOp::In | BinOp::Instanceof => {
-                let uncertain = self.uncertain;
-                let (l, r) = (
-                    self.type_of_expr(file, left),
-                    self.type_of_expr(file, right),
-                );
-                self.uncertain = uncertain;
+                let (l, r, is_sure) = self.check_operands(file, left, right);
                 if l == TypeId::SILENT_NEVER || r == TypeId::SILENT_NEVER {
-                    TypeId::SILENT_NEVER
-                } else {
-                    TypeId::BOOLEAN
+                    return TypeId::SILENT_NEVER;
                 }
+                if is_sure && op == BinOp::In {
+                    self.check_in_expression(file, left, right, l, r);
+                }
+                TypeId::BOOLEAN
             }
             BinOp::Comma => {
                 self.look_at(file, left);
@@ -4285,7 +4289,7 @@ impl<'p> Checker<'p> {
                 if self.check_for_disallowed_es_symbol_operand(file, e, op, left, right, l, r)
                     && is_assignment
                 {
-                    self.check_assignment_operator(file, left, l, result);
+                    self.check_assignment_operator(file, op, left, right, l, result);
                 }
                 result
             }
@@ -4331,7 +4335,7 @@ impl<'p> Checker<'p> {
                 };
                 if left_ok && right_ok {
                     if is_assignment {
-                        self.check_assignment_operator(file, left, l, result);
+                        self.check_assignment_operator(file, op, left, right, l, result);
                     }
                     if matches!(op, BinOp::Shl | BinOp::Shr | BinOp::UShr) {
                         self.check_shift_count(file, e, op, left, right);

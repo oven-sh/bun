@@ -37,9 +37,11 @@ impl Checker<'_> {
             }
             let e = ExprId(i as u32);
             match hir.exprs[i].kind {
-                ExprKind::Binary { .. } | ExprKind::Assign { op: Some(_), .. } => {
-                    check_binary_like(self, file, e, out)
-                }
+                ExprKind::Binary {
+                    op: BinOp::Instanceof,
+                    left,
+                    right,
+                } => check_instanceof(self, file, e, left, right, out),
                 ExprKind::Assign {
                     op: None,
                     target,
@@ -535,28 +537,6 @@ pub(super) fn is_literal_expression_of_object(hir: &File, e: ExprId) -> bool {
     is_literal && !is_parenthesized(hir, e)
 }
 
-/// `checkBinaryLikeExpression`, of `instanceof`, `in`, `&&=`, `||=` and `??=`: on to what has a function of its own.
-fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec<Diagnostic>) {
-    let hir = c.hir(file);
-    let (op, left, right, is_assignment) = match hir[e].kind {
-        ExprKind::Binary { op, left, right } => (op, left, right, false),
-        ExprKind::Assign {
-            op: Some(op),
-            target,
-            value,
-        } => (op, target, value, true),
-        _ => return,
-    };
-    match op {
-        BinOp::Instanceof => check_instanceof(c, file, e, left, right, out),
-        BinOp::In => check_right_operand_of_in(c, file, right, out),
-        BinOp::And | BinOp::Or | BinOp::Nullish if is_assignment => {
-            check_assignment_operator(c, file, left, right, out)
-        }
-        _ => {}
-    }
-}
-
 // ───────────────────────────── what is assigned to ─────────────────────────────
 
 /// `checkReferenceExpression`
@@ -1029,28 +1009,8 @@ fn check_instanceof(
     );
 }
 
-/// `checkInExpression`, once the right operand has been found to be an object: 2638
-fn check_right_operand_of_in(
-    c: &mut Checker<'_>,
-    file: FileId,
-    right: ExprId,
-    out: &mut Vec<Diagnostic>,
-) {
-    let ty = c.type_of_expr(file, right);
-    if !c.is_known(ty) || c.is_uncertain(file, right) {
-        return;
-    }
-    let there = c.non_null_type(ty);
-    if c.is_assignable(there, TypeId::OBJECT) && has_empty_object_intersection(c, ty) {
-        let start = c.error_start_of(file, right);
-        out.push(Diagnostic { start, code: 2638 });
-        let end = c.error_end_of(file, right);
-        c.explain_to(start, end, 2638, |c| vec![c.type_to_string(ty)]);
-    }
-}
-
 /// `hasEmptyObjectIntersection`
-fn has_empty_object_intersection(c: &mut Checker<'_>, ty: TypeId) -> bool {
+pub(super) fn has_empty_object_intersection(c: &mut Checker<'_>, ty: TypeId) -> bool {
     for &part in c.parts(ty) {
         // The `{}` that is left of `unknown`, as opposed to one that is written or stands for instances nothing is known of.
         if part == TypeId::UNKNOWN_EMPTY_OBJECT {

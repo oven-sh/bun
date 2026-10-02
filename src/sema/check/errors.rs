@@ -10,6 +10,7 @@
 use super::errors_modules::fully_qualified_name;
 use super::errors_order::Named;
 use super::errors_x_modules::suggested_import_extension;
+use super::errors_x_operators::{has_empty_object_intersection, type_of_property_of_type};
 use super::errors_x_statements::{is_said_by_the_binder, is_said_by_the_parser};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
@@ -37,13 +38,17 @@ pub struct Checked {
     suggestions: Vec<(u32, u32)>,
 }
 
+/// What `getControlFlowContainer` finds.
 #[derive(Copy, Clone, Debug)]
-enum Container {
+pub(super) enum Container {
     File,
+    /// `IsFunctionLike`
     Fn(FnId),
+    /// `IsModuleBlock`
     Module(ModuleId),
+    /// `IsPropertyDeclaration`
     Member(MemberId),
-    /// Somewhere that is never the place a variable is declared in.
+    /// In a type literal, whose parent is not kept. It is equal to nothing: no variable is declared there.
     Other,
 }
 
@@ -178,7 +183,6 @@ impl Checker<'_> {
         pass!(check_names);
         pass!(check_type_argument_counts);
         pass!(check_properties_initialized);
-        pass!(check_operators);
         pass!(check_writes);
         pass!(check_property_accesses);
         pass!(check_calls);
@@ -1670,7 +1674,7 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let parent = bound.expr_parent[e.idx()];
         if hir.kind == FileKind::Declaration
-            || bound.is_unchecked(e.idx())
+            || matches!(parent, Parent::None)
             || !is_automatic && bound.is_in_type_query(e)
         {
             return true;
@@ -1713,13 +1717,9 @@ impl Checker<'_> {
         }
         // `isOuterVariable`, which goes by where the flow starts before that is moved out of function expressions.
         let declared_in = bound.stmt_parent[stmt.idx()];
-        let (container, is_around_both) = self.flow_container_past(file, parent, declared_in);
-        let container_of_declaration = if is_around_both {
-            container
-        } else {
-            self.flow_container(file, declared_in)
-        };
-        if container == container_of_declaration {
+        if self.get_control_flow_container(file, parent)
+            == self.get_control_flow_container(file, declared_in)
+        {
             return false;
         }
         // `isNeverInitialized`: what has been done to it by the time this runs cannot be told, unless nothing ever gives it a value.
@@ -1827,61 +1827,60 @@ impl Checker<'_> {
         }
     }
 
-    /// What the flow of control is followed within: from inside, what is declared outside has whatever value it was left with.
-    /// `getControlFlowContainer`
-    fn flow_container(&self, file: FileId, parent: Parent) -> Container {
-        self.flow_container_past(file, parent, Parent::None).0
-    }
-
-    /// The same, and whether `through` is on the way out to it: from there on the way is the same for whoever gets there.
-    fn flow_container_past(
-        &self,
-        file: FileId,
-        mut parent: Parent,
-        through: Parent,
-    ) -> (Container, bool) {
-        let bound = self.bound(file);
-        let mut is_passed = false;
-        let container = loop {
-            is_passed |= parent == through;
-            parent = match parent {
-                Parent::Expr(x) => bound.expr_parent[x.idx()],
-                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
-                Parent::VarInit(d) => Parent::Stmt(bound.var_stmt[d.idx()]),
-                Parent::Prop(p) => Parent::Expr(bound.prop_owner[p.idx()]),
-                Parent::Case(c) => Parent::Stmt(bound.case_stmt[c.idx()]),
-                // The default of a binding element is worked out where the pattern is.
-                Parent::PatPropDefault(_) | Parent::PatElemDefault(_) => self.outward(file, parent),
-                // What decorates a member or a parameter is inside of the member.
-                Parent::Decorator(_, DecoratorOwner::Member(m)) => break Container::Member(m),
-                Parent::Decorator(_, DecoratorOwner::Param(p)) => {
-                    break Container::Fn(bound.param_fn[p.idx()]);
+    /// `getControlFlowContainer`, of what is directly in `parent`.
+    pub(super) fn get_control_flow_container(&self, file: FileId, mut parent: Parent) -> Container {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        loop {
+            let func = match parent {
+                Parent::FnBody(f) => f,
+                Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
+                    bound.param_fn[p.idx()]
                 }
-                Parent::ClassExtends(c) | Parent::Decorator(c, DecoratorOwner::Class(_)) => {
-                    match bound.class_owner[c.idx()] {
-                        ClassOwner::Expr(x) => bound.expr_parent[x.idx()],
-                        ClassOwner::Stmt(s) => bound.stmt_parent[s.idx()],
+                // Its name and its decorators are inside of a member.
+                Parent::MethodKey(p) => match hir[hir[p].value].kind {
+                    ExprKind::Fn(f) => f,
+                    _ => return Container::Other,
+                },
+                Parent::MemberKey(m)
+                | Parent::MemberInit(m)
+                | Parent::Decorator(_, DecoratorOwner::Member(m)) => {
+                    match bound.member_owner[m.idx()] {
+                        _ if hir[m].func.is_some() => hir[m].func,
+                        MemberOwner::Class(_) => return Container::Member(m),
+                        // A property signature is none.
+                        MemberOwner::Interface(i) => {
+                            parent = Parent::Stmt(hir[i].stmt);
+                            continue;
+                        }
+                        MemberOwner::TypeLiteral(_) | MemberOwner::None => return Container::Other,
                     }
                 }
-                Parent::PropKey(owner, _) if owner.is_some() => bound.expr_parent[owner.idx()],
-                Parent::FnBody(_) | Parent::ParamDefault(_) => {
-                    let f = match parent {
-                        Parent::FnBody(f) => f,
-                        Parent::ParamDefault(p) => bound.param_fn[p.idx()],
-                        _ => unreachable!(),
-                    };
-                    match self.what_runs_in_place(file, f) {
-                        Some(it) => it,
-                        None => break Container::Fn(f),
-                    }
+                Parent::Module(m) => return Container::Module(m),
+                Parent::File => return Container::File,
+                Parent::None => return Container::Other,
+                Parent::Expr(x) if x.is_none() => return Container::Other,
+                Parent::PropKey(_, p) => {
+                    parent = Parent::Expr(bound.prop_owner[p.idx()]);
+                    continue;
                 }
-                Parent::MemberInit(m) => break Container::Member(m),
-                Parent::Module(m) => break Container::Module(m),
-                Parent::File => break Container::File,
-                _ => break Container::Other,
+                Parent::PatKey(p) => {
+                    parent = self.outward(file, Parent::PatPropDefault(p));
+                    continue;
+                }
+                Parent::EnumInit(m) => {
+                    parent = Parent::Stmt(hir[bound.enum_member_owner[m.idx()]].stmt);
+                    continue;
+                }
+                _ => {
+                    parent = self.outward(file, parent);
+                    continue;
+                }
             };
-        };
-        (container, is_passed)
+            match self.what_runs_in_place(file, func) {
+                Some(it) => parent = it,
+                None => return Container::Fn(func),
+            }
+        }
     }
 
     /// `getControlFlowContainer`: a static block is not like a function, and a function expression that is called where it is written
@@ -4313,18 +4312,9 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
         18026 => c.note(start, start + 2, code, Vec::new()),
         // `scanConflictMarkerTrivia`: the seven characters of the marker.
         1185 => c.note(start, start + 7, code, Vec::new()),
-        // `parseFunctionOrConstructorTypeToError`: said of the type and the blanks before it. A constructor type is kept where its
-        // `new` ends.
+        // `parseFunctionOrConstructorTypeToError`: said of the type and the blanks before it.
         1385..=1388 => {
-            let mut head = skip_trivia(text, at);
-            if matches!(code, 1386 | 1388) {
-                let words: [&[u8]; 2] = [b"abstract", b"new"];
-                for word in words {
-                    if text.get(head..).is_some_and(|rest| rest.starts_with(word)) {
-                        head = skip_trivia(text, head + word.len());
-                    }
-                }
-            }
+            let head = skip_trivia(text, at);
             let written = hir
                 .types
                 .iter()
@@ -4640,183 +4630,9 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
 // ───────────────────────────── operators ─────────────────────────────
 
 impl Checker<'_> {
-    fn check_operators(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let index = self.exprs_by_kind(file);
-        for e in super::errors_small::in_file_order([
-            index.of(ExprTag::Binary),
-            index.of(ExprTag::Assign),
-        ]) {
-            let i = e.idx();
-            if bound.is_unchecked(i) {
-                continue;
-            }
-            match hir.exprs[i].kind {
-                // `checkInExpression`
-                ExprKind::Binary {
-                    op: BinOp::In,
-                    left,
-                    right,
-                } => {
-                    // `#x in v`: what is on the left is a name, looked up in the classes around, and no value.
-                    let private_name = match hir[left].kind {
-                        ExprKind::String(name) if is_private_name_at(hir, hir[left].pos) => {
-                            Some(name)
-                        }
-                        _ => None,
-                    };
-                    if let Some(name) = private_name {
-                        // `reportNonexistentProperty`: one that none of them declares is missed in what is on the right, as it is.
-                        if !self.bound(file).private_class.contains_key(&left)
-                            && !self.enclosing_classes(file, left).is_empty()
-                        {
-                            let object = self.type_of_expr(file, right);
-                            if self.is_known(object) && !self.is_uncertain(file, right) {
-                                let (start, is_unchecked_js) =
-                                    (hir[left].pos, self.is_plain_js(file));
-                                self.report_nonexistent_property(
-                                    file,
-                                    left,
-                                    name,
-                                    start,
-                                    object,
-                                    is_unchecked_js,
-                                );
-                            }
-                        }
-                    } else {
-                        let key = self.type_of_expr(file, left);
-                        if self.is_known(key) {
-                            let key = self.check_not_nullish(file, left, key, out);
-                            let wanted =
-                                self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
-                            let at = self.error_start_of(file, left);
-                            self.check_assignable_with_end_from(
-                                file,
-                                key,
-                                wanted,
-                                at,
-                                |c| error_end_if_read(c, file, left),
-                                ExprId::NONE,
-                                2322,
-                                out,
-                            );
-                        }
-                    }
-                    let object = self.type_of_expr(file, right);
-                    if self.is_known(object) {
-                        let object = self.check_not_nullish(file, right, object, out);
-                        let at = self.error_start_of(file, right);
-                        self.check_assignable_with_end_from(
-                            file,
-                            object,
-                            TypeId::OBJECT,
-                            at,
-                            |c| error_end_if_read(c, file, right),
-                            ExprId::NONE,
-                            2322,
-                            out,
-                        );
-                    }
-                }
-                ExprKind::Assign {
-                    op: Some(BinOp::And | BinOp::Or | BinOp::Nullish),
-                    target,
-                    value,
-                } => self.check_logical_assignment(file, target, value, out),
-                _ => {}
-            }
-        }
-    }
-
     /// Whether the resolver worked `ty` out, all of it. Nothing is said about what it did not.
     pub(super) fn is_known(&self, ty: TypeId) -> bool {
         !self.p.types.flags(ty).contains(TypeFlags::HAS_UNRESOLVED)
-    }
-
-    /// `checkAssignmentOperator`, of `target &&= value`, `target ||= value` and `target ??= value`: 2364, or 2322 if the value does not
-    /// fit where it is put.
-    fn check_logical_assignment(
-        &mut self,
-        file: FileId,
-        target: ExprId,
-        value: ExprId,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let hir = self.hir(file);
-        let at = self.error_start_of(file, target);
-        // `checkReferenceExpression`: what is asserted of a reference is a reference too. A pattern is only one to `=`.
-        let mut reference = target;
-        while let ExprKind::NonNull(x)
-        | ExprKind::As { expr: x, .. }
-        | ExprKind::AsConst(x)
-        | ExprKind::Satisfies { expr: x, .. } = hir[reference].kind
-        {
-            reference = x;
-        }
-        match hir[reference].kind {
-            // `parseSuperExpression`: `super` that nothing follows is a property without a name.
-            ExprKind::Ident(_) | ExprKind::Missing | ExprKind::Super => {}
-            // Of `a?.b ||= 1` it is only said that it cannot be.
-            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } if chain != Chain::No => {
-                return;
-            }
-            ExprKind::Dot { .. } | ExprKind::Index { .. } => {}
-            _ => {
-                out.push(Diagnostic {
-                    start: at,
-                    code: 2364,
-                });
-                self.note(at, error_end_if_read(self, file, target), 2364, Vec::new());
-                return;
-            }
-        }
-        let (left, right) = (
-            self.type_of_expr(file, target),
-            self.type_of_expr(file, value),
-        );
-        // What cannot be written to has the error type, and anything goes into that.
-        if self.is_error_type(left)
-            || self.is_uncertain(file, target)
-            || self.is_uncertain(file, value)
-        {
-            return;
-        }
-        // They give a value as `=` does (`AssignmentKindDefinite`): what is on the right, to what the target is declared as, or
-        // asserted to be.
-        let is_declared = reference == target && !self.bound(file).is_arguments_object(target);
-        let mut wanted = if is_declared {
-            self.declared_type_of_reference(file, target)
-        } else {
-            left
-        };
-        // `checkAssignmentOperator`: `checkPropertyAccessExpression` with `writeOnly`.
-        if is_declared
-            && self.is_known(wanted)
-            && let ExprKind::Dot { obj, name, .. } = hir[target].kind
-        {
-            let object = self.type_of_expr(file, obj);
-            let object = self.non_null_type(object);
-            let (read, written) = (
-                self.type_of_property(object, name),
-                self.write_type_of_property(object, name),
-            );
-            if let Some(written) = written
-                && read != Some(written)
-            {
-                wanted = written;
-            }
-        }
-        self.check_assignable_with_end_from(
-            file,
-            right,
-            wanted,
-            at,
-            |c| error_end_if_read(c, file, target),
-            value,
-            2322,
-            out,
-        );
     }
 
     /// `isGlobalNaN`
@@ -4854,14 +4670,14 @@ impl Checker<'_> {
         }
     }
 
-    /// The types of the two operands of an operator whose result does not go by them, looked at left to right. `None`: one of them
-    /// could not be found out, and nothing is said of the two.
-    pub(super) fn operand_types_if_sure(
+    /// The types of the two operands of an operator whose result does not go by them, looked at left to right, and whether both
+    /// were found out: if not, nothing is said of the two.
+    pub(super) fn check_operands(
         &mut self,
         file: FileId,
         left: ExprId,
         right: ExprId,
-    ) -> Option<(TypeId, TypeId)> {
+    ) -> (TypeId, TypeId, bool) {
         let around = std::mem::replace(&mut self.uncertain, false);
         let (l, r) = (
             self.type_of_expr(file, left),
@@ -4869,7 +4685,51 @@ impl Checker<'_> {
         );
         let is_sure = !self.uncertain && self.is_known(l) && self.is_known(r);
         self.uncertain = around;
-        is_sure.then_some((l, r))
+        (l, r, is_sure)
+    }
+
+    /// `checkInExpression`
+    pub(super) fn check_in_expression(
+        &mut self,
+        file: FileId,
+        left: ExprId,
+        right: ExprId,
+        left_type: TypeId,
+        right_type: TypeId,
+    ) {
+        let hir = self.hir(file);
+        match hir[left].kind {
+            // `#x in v`: what is on the left is a name, looked up in the classes around, and no value. One that none of them
+            // declares is missed in what is on the right, as it is.
+            ExprKind::String(name) if is_private_name_at(hir, hir[left].pos) => {
+                if !self.bound(file).private_class.contains_key(&left)
+                    && !self.enclosing_classes(file, left).is_empty()
+                {
+                    let (start, is_unchecked_js) = (hir[left].pos, self.is_plain_js(file));
+                    self.report_nonexistent_property(
+                        file,
+                        left,
+                        name,
+                        start,
+                        right_type,
+                        is_unchecked_js,
+                    );
+                }
+            }
+            _ => {
+                let key = self.check_non_null_type(file, left, left_type);
+                let wanted = self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
+                let at = self.place_of_written_expr(file, left);
+                self.check_type_assignable_to(key, wanted, Some(at), None);
+            }
+        }
+        let object = self.check_non_null_type(file, right, right_type);
+        let at = self.place_of_written_expr(file, right);
+        if self.check_type_assignable_to(object, TypeId::OBJECT, Some(at), None)
+            && has_empty_object_intersection(self, right_type)
+        {
+            self.error(at, 2638, &[Arg::Type(right_type)]);
+        }
     }
 
     /// `getErrorRangeForNode` of `e`, parentheses around it not counted.
@@ -5133,14 +4993,17 @@ impl Checker<'_> {
         false
     }
 
-    /// `checkAssignmentOperator`, of `left op= ..` for an operator that makes `result` of two values: 2364 2779, or 2322 if that does
-    /// not fit where it is put. `left_type`: what `left` is known to hold, `null` and `undefined` ruled out.
+    /// `checkAssignmentOperator`, of `left op= right`: 2364 2779, or 2322 2412 if `right_type` does not fit where it is put.
+    /// `left_type`: `checkExpression(left)`, for an arithmetic operator with `null` and `undefined` ruled out. `right_type`: what
+    /// is put there, which is what such an operator makes of the two.
     pub(super) fn check_assignment_operator(
         &mut self,
         file: FileId,
+        op: BinOp,
         left: ExprId,
+        right: ExprId,
         left_type: TypeId,
-        result: TypeId,
+        right_type: TypeId,
     ) {
         let hir = self.hir(file);
         // A setter may take more than the getter gives: `checkPropertyAccessExpression` with `writeOnly`, `AccessFlagsWriting`.
@@ -5171,12 +5034,35 @@ impl Checker<'_> {
         if !self.check_reference_expression(file, left, 2364, 2779) {
             return;
         }
-        // `checkIdentifier`, `getFlowTypeOfAccessExpression`: a literal counts for all of its kind.
-        let wanted = self.base_of_literal(wanted);
-        if !self.is_assignable(result, wanted) {
-            let at = self.place_of_written_expr(file, left);
-            self.check_type_assignable_to(result, wanted, Some(at), None);
+        // `isExactOptionalPropertyMismatch`. The property is looked up in the type of the object itself: one that is possibly
+        // `undefined` or `null` has no such property.
+        let mut head_message = None;
+        if self.p.files.options.exact_optional_property_types
+            && !is_parenthesized(hir, left)
+            && let ExprKind::Dot { obj, name, .. } = hir[left].kind
+            && self.maybe_type_of_kind(right_type, |_, t| t.is_undefined())
+        {
+            let object = self.type_of_expr(file, obj);
+            if type_of_property_of_type(self, object, name)
+                .is_some_and(|declared| self.contains_missing_type(declared))
+            {
+                head_message = Some(2412);
+            }
         }
+        // `AssignmentKindDefinite` has what the target is declared as. Of what is read first a literal counts for all of its kind:
+        // `checkIdentifier`, `getFlowTypeOfAccessExpression`.
+        if !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) {
+            wanted = self.base_of_literal(wanted);
+        }
+        let at = self.place_of_written_expr(file, left);
+        self.check_type_assignable_to_and_optionally_elaborate(
+            right_type,
+            wanted,
+            Some(at),
+            Some((file, right)),
+            head_message,
+            None,
+        );
     }
 
     /// `getBaseTypeOfLiteralTypeForComparison`: `1` and `2` are compared as numbers, and a member of an enum as the string or the number
@@ -5200,11 +5086,6 @@ impl Checker<'_> {
             TypeData::BoolLit { .. } => TypeId::BOOLEAN,
             _ => m,
         })
-    }
-
-    /// `number | bigint`. `made`: it, from the first time it is asked for.
-    fn number_or_bigint(&mut self, made: &mut Option<TypeId>) -> TypeId {
-        *made.get_or_insert_with(|| self.union(&[TypeId::NUMBER, TypeId::BIGINT]))
     }
 
     /// `checkNonNullType`, for a pass.
@@ -5386,10 +5267,8 @@ impl Checker<'_> {
     }
 
     /// 2628 to 2632, 2539, 2588: a name that cannot be assigned to. 2540: a property that can only be read.
-    /// 2364, 2357: something that is neither.
     fn check_writes(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut numeric = None;
         let index = self.exprs_by_kind(file);
         let (assignments, unaries) = (index.of(ExprTag::Assign), index.of(ExprTag::Unary));
         // What may be written to: the target of an assignment, of `++` or `--` or of the head of a loop, and in it whatever
@@ -5433,7 +5312,7 @@ impl Checker<'_> {
         }
         written.sort_unstable();
         written.dedup();
-        for e in super::errors_small::in_file_order([&written[..], assignments, unaries]) {
+        for e in written {
             let i = e.idx();
             if bound.is_unchecked(i) {
                 continue;
@@ -5458,35 +5337,6 @@ impl Checker<'_> {
                 } => self.check_property_write(file, e, obj, name, name_pos, out),
                 ExprKind::Index { obj, index, .. } => {
                     self.check_element_write(file, e, obj, index, out)
-                }
-                // What `op=` assigns to is looked at once the operands have been: `check_operators`.
-                ExprKind::Assign {
-                    op: None, target, ..
-                } => {
-                    if !self.can_be_written_to(file, target, true) {
-                        let start = self.error_start_of(file, target);
-                        out.push(Diagnostic { start, code: 2364 });
-                        self.note(start, self.error_end_of(file, target), 2364, Vec::new());
-                    }
-                }
-                ExprKind::Unary {
-                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                    operand,
-                } => {
-                    let ty = self.type_of_expr(file, operand);
-                    if !self.is_known(ty) {
-                        continue;
-                    }
-                    // `checkNonNullType`, whose errors `check_operators` has reported.
-                    let ty = self.check_not_nullish(file, operand, ty, &mut Vec::new());
-                    let numeric = self.number_or_bigint(&mut numeric);
-                    if self.is_assignable(ty, numeric)
-                        && !self.can_be_written_to(file, operand, false)
-                    {
-                        let start = self.error_start_of(file, operand);
-                        out.push(Diagnostic { start, code: 2357 });
-                        self.note(start, self.error_end_of(file, operand), 2357, Vec::new());
-                    }
                 }
                 _ => {}
             }
@@ -5674,32 +5524,6 @@ impl Checker<'_> {
         (is_declared && !self.is_hidden_in_union(parts, name)).then_some(is_readonly)
     }
 
-    /// `checkReferenceExpression`: a name or a property, whatever is asserted of it. That it may be no optional chain (2777 2779) is said
-    /// with the operators. `patterns_too`: `e` is what `=` assigns to, where `checkBinaryLikeExpression` takes an object or array literal
-    /// for a pattern, if it stands there as it is: in parentheses, or with something asserted of it, it is an expression like any other.
-    fn can_be_written_to(&self, file: FileId, mut e: ExprId, patterns_too: bool) -> bool {
-        let hir = self.hir(file);
-        if patterns_too && matches!(hir[e].kind, ExprKind::Object(_) | ExprKind::Array(_)) {
-            return !is_parenthesized(self.hir(file), e);
-        }
-        loop {
-            match hir[e].kind {
-                // Where an expression is left out there is a name that is not written, and after a `super` that nothing follows a
-                // property without one: `parseSuperExpression`.
-                ExprKind::Ident(_)
-                | ExprKind::Missing
-                | ExprKind::Super
-                | ExprKind::Dot { .. }
-                | ExprKind::Index { .. } => return true,
-                ExprKind::NonNull(x)
-                | ExprKind::As { expr: x, .. }
-                | ExprKind::AsConst(x)
-                | ExprKind::Satisfies { expr: x, .. } => e = x,
-                _ => return false,
-            }
-        }
-    }
-
     /// Why the name `e` cannot be given a value, if it cannot. `checkIdentifier`
     fn why_not_assignable(&self, file: FileId, e: ExprId, name: Atom) -> Option<u32> {
         let sym = self.symbol_of_identifier(file, e, name)?;
@@ -5736,7 +5560,8 @@ impl Checker<'_> {
         if prop.flags.contains(PropFlags::ACCESSOR) || !matches!(hir[obj].kind, ExprKind::This) {
             return false;
         }
-        let Container::Fn(f) = self.flow_container(file, bound.expr_parent[e.idx()]) else {
+        let Container::Fn(f) = self.get_control_flow_container(file, bound.expr_parent[e.idx()])
+        else {
             return false;
         };
         if hir[f].kind != FnKind::Constructor {

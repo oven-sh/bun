@@ -145,21 +145,10 @@ impl OddLists {
 }
 
 /// Where the type `node`, which is all of an element or an argument, starts as it is written: parentheses around a type are not
-/// kept, nor is the `new` of a constructor type.
+/// kept.
 fn start_of_type(hir: &hir::File, node: TypeNodeId) -> u32 {
     let text: &[u8] = &hir.text;
     let mut at = hir[node].pos as usize;
-    if let TypeNodeKind::Fn(f) = hir[node].kind
-        && hir[f].kind == FnKind::ConstructorType
-    {
-        let words: [&[u8]; 2] = [b"new", b"abstract"];
-        for word in words {
-            let end = skip_trivia_back(text, at);
-            if text[..end].ends_with(word) {
-                at = end - word.len();
-            }
-        }
-    }
     // `(T)`, `| T`: a bar before the whole of a type leads it.
     loop {
         let end = skip_trivia_back(text, at);

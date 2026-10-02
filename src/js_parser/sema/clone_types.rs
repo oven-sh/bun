@@ -174,7 +174,7 @@ impl Builder<'_> {
                 TypeNodeKind::Intersection(self.clone_type_list(members))
             }
             ts::TypeData::Function(signature) => {
-                TypeNodeKind::Fn(self.clone_signature(signature, Atom::NONE, None))
+                TypeNodeKind::Fn(self.clone_signature(signature, Atom::NONE, Some(pos(loc))))
             }
             ts::TypeData::Object(members) => TypeNodeKind::Object(self.clone_members(members)),
             ts::TypeData::Conditional {

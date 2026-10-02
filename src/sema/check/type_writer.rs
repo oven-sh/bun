@@ -1,6 +1,7 @@
 //! The type at every expression and declaration name of a file: what TypeScript's test harness writes into `.types` baselines
 //! (`typeWriterWalker`, `GetTypeAtLocation`).
 
+use super::enclosing_declaration::Enclosing;
 use super::visit_node::{VisitedKind, VisitedNode};
 use super::*;
 use crate::bind::{
@@ -117,7 +118,11 @@ impl Checker<'_> {
             self.enclosing_module_specifier_mode =
                 self.mode_of_module_specifier_of_declaration(file, decl);
         }
-        let text = self.type_to_string_for_baseline_at(ty, file, scope);
+        let enclosing_declaration = Enclosing {
+            variable: self.parent_variable_declaration(file, kind),
+            ..Enclosing::at_scope(file, scope)
+        };
+        let text = self.type_to_string_for_baseline_with(ty, Some(enclosing_declaration));
         self.enclosing_module_specifier_mode = None;
         if let Some(index) = repeated {
             walk.text_of_expr[index] = Some((ty, text.clone()));
@@ -169,8 +174,9 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match kind {
             // `IsBindingElement(node.Parent)`, `IsLabelName(node)`, `IsMetaProperty(node.Parent)`,
-            // `IsPropertyAccessOrQualifiedName(node.Parent)`
+            // `IsPropertyAccessOrQualifiedName(node.Parent)`, `isIntrinsicJsxTag`
             VisitedKind::BindingPropertyName(_)
+            | VisitedKind::JsxIntrinsicTagName(..)
             | VisitedKind::Label(_)
             | VisitedKind::ImportDeferName(_)
             | VisitedKind::AccessName(_) => true,
@@ -215,6 +221,26 @@ impl Checker<'_> {
                 matches!(hir[import].target, ImportEqualsTarget::Entity(entity) if entity.len() > 1)
             }
             _ => false,
+        }
+    }
+
+    /// `node.Parent`, if that is a variable declaration.
+    fn parent_variable_declaration(&self, file: FileId, kind: VisitedKind) -> VarDeclId {
+        let bound = self.bound(file);
+        match kind {
+            VisitedKind::BindingName(pat) => match bound.pat_parent[pat.idx()] {
+                PatParent::Var(declaration) => declaration,
+                _ => VarDeclId::NONE,
+            },
+            VisitedKind::Expression(e) | VisitedKind::Parenthesized(e, _)
+                if self.is_child_of_parent_of_expr(file, kind) =>
+            {
+                match bound.expr_parent[e.idx()] {
+                    Parent::VarInit(declaration) => declaration,
+                    _ => VarDeclId::NONE,
+                }
+            }
+            _ => VarDeclId::NONE,
         }
     }
 

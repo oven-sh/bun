@@ -6,7 +6,7 @@
 //! `checkUnusedRenamedBindingElements`, `widenTypeForVariableLikeDeclaration`, `reportErrorsFromWidening`,
 //! `reportWideningErrorsInType` and `reportImplicitAny` of TypeScript 7.0.2's checker.go.
 
-use super::errors::Diagnostic;
+use super::errors::{Container, Diagnostic};
 use super::*;
 use crate::bind::{
     ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeKind, UNREACHABLE,
@@ -131,23 +131,8 @@ impl Pass<'_, '_> {
         }
     }
 
-    /// What has `below` for a computed name, of the members of classes and the methods of object literals.
-    fn named_by(&self, below: ExprId) -> Node {
-        let key = PropKey::Computed(below);
-        if let Some(m) = self.hir.members.iter().position(|m| m.key == key) {
-            return self.member_or_its_function(MemberId(m as u32));
-        }
-        if let Some(p) = self.hir.props.iter().find(|p| p.key == key)
-            && p.value.is_some()
-            && let ExprKind::Fn(f) = self.hir[p.value].kind
-        {
-            return Node::Fn(f);
-        }
-        Node::Lost
-    }
-
-    /// The node `slot` is a place in. `below`: the expression that is in that place, if it is one.
-    fn node_of(&self, slot: Parent, below: ExprId) -> Node {
+    /// The node `slot` is a place in.
+    fn node_of(&self, slot: Parent) -> Node {
         let (hir, bound) = (self.hir, self.bound);
         match slot {
             Parent::None => Node::Lost,
@@ -162,17 +147,13 @@ impl Pass<'_, '_> {
                 Node::Expr(bound.prop_owner[p.idx()])
             }
             Parent::Prop(_) => Node::Lost,
-            Parent::PropKey(owner, _) if owner.is_some() => Node::Expr(owner),
-            // In a pattern.
-            Parent::PropKey(..) | Parent::PatKey(_) => match hir
-                .pat_props
-                .iter()
-                .find(|p| p.key == PropKey::Computed(below))
-            {
-                Some(p) => self.around_pattern(p.value),
-                None => Node::Lost,
+            Parent::PropKey(_, p) => Node::Expr(bound.prop_owner[p.idx()]),
+            Parent::PatKey(p) => self.around_pattern(hir[p].value),
+            Parent::MemberKey(m) => self.member_or_its_function(m),
+            Parent::MethodKey(p) => match hir[hir[p].value].kind {
+                ExprKind::Fn(f) => Node::Fn(f),
+                _ => Node::Lost,
             },
-            Parent::MemberKey(_) | Parent::MethodKey(_) => self.named_by(below),
             Parent::MemberInit(m) => Node::Initializer(m),
             Parent::FnBody(f) => Node::Body(f),
             Parent::EnumInit(m) => Node::Enum(bound.enum_member_owner[m.idx()]),
@@ -195,8 +176,8 @@ impl Pass<'_, '_> {
             _ => Node::Lost,
         };
         match node {
-            Node::Expr(e) => self.node_of(bound.expr_parent[e.idx()], e),
-            Node::Stmt(s) => self.node_of(bound.stmt_parent[s.idx()], ExprId::NONE),
+            Node::Expr(e) => self.node_of(bound.expr_parent[e.idx()]),
+            Node::Stmt(s) => self.node_of(bound.stmt_parent[s.idx()]),
             Node::Body(f) | Node::Params(f) => Node::Fn(f),
             Node::Fn(f) => match bound.fns[f.idx()].owner {
                 FnOwner::Expr(e) => self.parent(Node::Expr(e)),
@@ -210,32 +191,8 @@ impl Pass<'_, '_> {
                 ClassOwner::Expr(e) => self.parent(Node::Expr(e)),
                 ClassOwner::Stmt(s) => self.parent(Node::Stmt(s)),
             },
-            Node::Enum(en) => match hir
-                .stmts
-                .iter()
-                .position(|s| matches!(s.kind, StmtKind::Enum(x) if x == en))
-            {
-                Some(s) => self.parent(Node::Stmt(StmtId(s as u32))),
-                None => Node::Lost,
-            },
+            Node::Enum(en) => self.parent(Node::Stmt(hir[en].stmt)),
             Node::Module(_) | Node::File | Node::Lost => Node::Lost,
-        }
-    }
-
-    /// `getControlFlowContainer`
-    fn control_flow_container(&self, mut node: Node) -> Node {
-        loop {
-            node = self.parent(node);
-            match node {
-                Node::Fn(f)
-                    if self.hir[f].kind != FnKind::StaticBlock
-                        && !self.c.is_immediately_invoked(self.file, f) =>
-                {
-                    return node;
-                }
-                Node::Module(_) | Node::File | Node::Property(_) | Node::Lost => return node,
-                _ => {}
-            }
         }
     }
 }
@@ -516,7 +473,8 @@ impl Pass<'_, '_> {
         {
             return None;
         }
-        let Node::Fn(f) = self.control_flow_container(Node::Expr(e)) else {
+        let parent = bound.expr_parent[e.idx()];
+        let Container::Fn(f) = self.c.get_control_flow_container(self.file, parent) else {
             return None;
         };
         let FnOwner::Member(constructor) = bound.fns[f.idx()].owner else {
@@ -600,12 +558,14 @@ impl Pass<'_, '_> {
             }
             _ => return None,
         };
-        let container = self.control_flow_container(Node::Expr(e));
+        let container_of = |e: ExprId| {
+            self.c
+                .get_control_flow_container(file, self.bound.expr_parent[e.idx()])
+        };
         if file != self.file
             // The left side of `f[key] = value` is not a property access.
             || !matches!(hir[first].kind, ExprKind::Assign { target, .. } if matches!(hir[target].kind, ExprKind::Dot { .. }))
-            || container == Node::Lost
-            || container != self.control_flow_container(Node::Expr(first))
+            || container_of(e) != container_of(first)
             // `isThisPropertyAccessInConstructor`: the property type is `autoType`, which `getFlowTypeOfProperty` resolves.
             || self.c.auto_this_property(self.file, e, object, name).is_some()
         {

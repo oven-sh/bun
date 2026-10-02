@@ -1616,7 +1616,13 @@ impl<'p> Checker<'p> {
         }
         // `getTypeArguments` of a deferred type reference asks for the default when the reference is used. Here it is asked for where
         // the reference is written, which may be while the default is worked out.
-        let default = if self.stack.contains(&Query::TypeNode(of, node)) {
+        let is_under_way = self.stack.contains(&Query::TypeNode(of, node));
+        // What leaves type arguments out needs their defaults, which may be this one.
+        let is_complete = is_under_way
+            && self
+                .deferrable_alias_reference(of, node)
+                .is_none_or(|(alias, args)| self.type_argument_arity(alias).1 == args.len());
+        let default = if is_complete {
             self.deferred_type_argument(of, node)
         } else {
             self.type_from_node(of, node)

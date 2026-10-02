@@ -728,13 +728,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Saves what precedes the `(` of a function type: `new`, `abstract new` and type parameters. `pos` is the offset after `new`.
+    /// Saves what precedes the `(` of a function type: `new`, `abstract new` and type parameters. `pos` is the offset after `new`,
+    /// `start` that of the first word.
     pub(crate) fn set_fn_type_head(
         &mut self,
         kind: SignatureKind,
         flags: Flags,
         type_parameters: SkipTypeParameterResult,
         pos: u32,
+        start: u32,
     ) {
         let syntax = self.type_syntax_mut();
         let type_params = match type_parameters {
@@ -746,6 +748,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             flags,
             type_params,
             pos,
+            start,
         });
     }
 
@@ -761,6 +764,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             flags: Flags::empty(),
             type_params: Some(Span::EMPTY),
             pos: open_paren,
+            start: open_paren,
         });
         let return_type = self.last_type();
         let (Some(type_params), Some(params), true) =
@@ -778,7 +782,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             open_paren_loc: loc(open_paren),
             loc: loc(head.pos),
         });
-        self.emit_type(TypeData::Function(signature), head.pos);
+        self.emit_type(TypeData::Function(signature), head.start);
     }
 
     // ───────────────────────────── object type members ─────────────────────────────
@@ -1588,6 +1592,7 @@ pub(crate) struct FnTypeHead {
     /// `None` if unusable.
     type_params: Option<Span<TypeParam>>,
     pos: u32,
+    start: u32,
 }
 
 /// `None` for `get` and `set`, which are not modifiers.

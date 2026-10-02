@@ -1293,6 +1293,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut has_leading_ampersand = false;
         // Saw "abstract" directly before "new".
         let mut is_abstract = false;
+        let mut abstract_pos = 0;
         // Offset of the "typeof" directly before "import".
         let mut typeof_pos = None;
         // The type starts with "(". Parentheses have no node.
@@ -1578,6 +1579,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             flags,
                             type_parameters,
                             fn_type_start,
+                            if is_abstract { abstract_pos } else { pos },
                         );
                     }
                     self.skip_type_script_paren_or_fn_type::<GET_METADATA, KEEP>(
@@ -1594,6 +1596,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             SignatureKind::FunctionType,
                             Flags::empty(),
                             type_parameters,
+                            pos,
                             pos,
                         );
                     }
@@ -1788,6 +1791,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // "let foo: abstract new () => {}" added in TypeScript 4.2
                             if self.lexer.token == T::TNew {
                                 is_abstract = true;
+                                abstract_pos = pos;
                                 continue;
                             }
                             if KEEP {

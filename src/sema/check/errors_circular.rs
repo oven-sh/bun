@@ -241,31 +241,31 @@ impl Checker<'_> {
             ) {
                 continue;
             }
-            if hir[member].kind == MemberKind::Property {
+            // `getTypeOfSymbol`: the properties and accessors among the declarations of one symbol are one property, known by the
+            // first.
+            let all: SmallVec<[(FileId, MemberId); 2]> =
+                if bound.member_owner[i] == MemberOwner::None {
+                    SmallVec::new()
+                } else {
+                    self.declarations_of_member(file, MemberDeclaration::Member(member))
+                        .iter()
+                        .filter_map(|&(of, declaration)| match declaration {
+                            MemberDeclaration::Member(m)
+                                if matches!(
+                                    self.hir(of)[m].kind,
+                                    MemberKind::Property | MemberKind::Getter | MemberKind::Setter
+                                ) =>
+                            {
+                                Some((of, m))
+                            }
+                            _ => None,
+                        })
+                        .collect()
+                };
+            if all.first() == Some(&(file, member)) {
+                self.type_of_member_declarations(&all);
+            } else if hir[member].kind == MemberKind::Property {
                 self.type_of_member_declaration(file, member);
-                continue;
-            }
-            if bound.member_owner[i] == MemberOwner::None {
-                continue;
-            }
-            // `getTypeOfAccessors`: the accessors among the declarations of one symbol are one property, known by the first.
-            let both: SmallVec<[(FileId, MemberId); 2]> = self
-                .declarations_of_member(file, MemberDeclaration::Member(member))
-                .iter()
-                .filter_map(|&(of, declaration)| match declaration {
-                    MemberDeclaration::Member(m)
-                        if matches!(
-                            self.hir(of)[m].kind,
-                            MemberKind::Getter | MemberKind::Setter
-                        ) =>
-                    {
-                        Some((of, m))
-                    }
-                    _ => None,
-                })
-                .collect();
-            if both.first() == Some(&(file, member)) {
-                self.type_of_member_declarations(&both);
             }
         }
         for i in 0..hir.fns.len() {

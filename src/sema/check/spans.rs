@@ -1322,30 +1322,6 @@ impl<'a> Spans<'a> {
 
     // ───────────────────────────── types ─────────────────────────────
 
-    /// Where `node` starts. The `new` of a constructor type is not counted in where it is said to be.
-    fn type_start(self, node: TypeNodeId) -> usize {
-        let mut at = self.type_pos(node);
-        if let Some(&TypeNode {
-            kind: TypeNodeKind::Fn(f),
-            ..
-        }) = self.hir.types.get(node.idx())
-            && self
-                .hir
-                .fns
-                .get(f.idx())
-                .is_some_and(|f| f.kind == FnKind::ConstructorType)
-        {
-            let words: [&[u8]; 2] = [b"new", b"abstract"];
-            for word in words {
-                let end = skip_trivia_back(self.text, at);
-                if self.text[..end].ends_with(word) {
-                    at = end - word.len();
-                }
-            }
-        }
-        at
-    }
-
     /// How many `(` are written right before `pos`, at `floor` or later. Parentheses around a type are not kept.
     fn parens_before(self, floor: usize, pos: usize) -> usize {
         let (mut at, mut count) = (pos, 0);
@@ -1368,7 +1344,7 @@ impl<'a> Spans<'a> {
     /// that `node` is the first part of starts, which the parentheses before that are around. 0 for a type that is part of no other.
     fn ty_in(self, node: TypeNodeId, floor: usize) -> usize {
         let mut end = self.non_null_suffix(self.ty(node));
-        for _ in 0..self.parens_before(floor, self.type_start(node)) {
+        for _ in 0..self.parens_before(floor, self.type_pos(node)) {
             end = self.non_null_suffix(self.eat(end, b")"));
         }
         end
@@ -1944,7 +1920,7 @@ impl Checker<'_> {
         floor: u32,
     ) -> usize {
         let spans = self.spans(file);
-        spans.parens_before(floor as usize, spans.type_start(node))
+        spans.parens_before(floor as usize, spans.type_pos(node))
     }
 
     /// Where the last of the types `args` ends, parentheses included: the end of the list, before its `>`. 0 for an empty list.

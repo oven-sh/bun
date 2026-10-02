@@ -225,14 +225,32 @@ describe("IOWriter file output redirection", () => {
     // command caused the same file descriptor to be closed twice, resulting
     // in an EBADF error. The issue was that two separate IOWriter instances
     // were created for the same fd when both stdout and stderr were redirected.
-    TestBuilder.command`pwd &> pwd_output.txt`.exitCode(0).runAsTest("builtin pwd with &> redirect");
+    TestBuilder.command`pwd &> pwd_output.txt`
+      .exitCode(0)
+      .fileEquals("pwd_output.txt", "$TEMP_DIR\n")
+      .runAsTest("builtin pwd with &> redirect");
 
     TestBuilder.command`echo "hello" &> echo_output.txt`
       .exitCode(0)
       .fileEquals("echo_output.txt", "hello\n")
       .runAsTest("builtin echo with &> redirect");
 
-    TestBuilder.command`pwd &>> append_output.txt`.exitCode(0).runAsTest("builtin pwd with &>> append redirect");
+    TestBuilder.command`pwd extra-arg &> stderr_output.txt`
+      .exitCode(1)
+      .stderr("")
+      .fileEquals("stderr_output.txt", "pwd: too many arguments\n")
+      .runAsTest("builtin stderr with &> redirect");
+
+    TestBuilder.command`pwd &>> append_output.txt`
+      .file("append_output.txt", "existing line\n")
+      .exitCode(0)
+      .fileEquals("append_output.txt", "existing line\n$TEMP_DIR\n")
+      .runAsTest("builtin pwd with &>> append redirect");
+
+    TestBuilder.command`pwd &>> new_append_output.txt`
+      .exitCode(0)
+      .fileEquals("new_append_output.txt", "$TEMP_DIR\n")
+      .runAsTest("builtin pwd with &>> redirect creates a missing file");
   });
 });
 

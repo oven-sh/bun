@@ -9,15 +9,14 @@
 //! the same trampolines at runtime per `us_socket_context_t`.
 
 use bun_jsc::JsResult;
-use bun_ptr::ThisPtr;
+use bun_ptr::{RefPtr, ThisPtr};
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_uws::{ConnectingSocket, NewSocketHandler};
-use bun_uws_sys::thunk;
 use bun_uws_sys::thunk::ExtSlot;
 use bun_uws_sys::vtable::Handler as VHandler;
-use bun_uws_sys::{CloseCode, us_bun_verify_error_t, us_socket_t};
+use bun_uws_sys::{us_bun_verify_error_t, us_socket_t};
 
 use crate::api;
 use crate::ipc as IPC;
@@ -47,7 +46,7 @@ fn wrap<const SSL: bool>(s: *mut us_socket_t) -> NewSocketHandler<SSL> {
 /// Every handler returns the exception it left pending and never reports it;
 /// [`RawPtrHandler`] — the one trampoline from uSockets into these — folds it
 /// ([`fold`]).
-pub trait RawSocketEvents<const SSL: bool>: Sized {
+pub(crate) trait RawSocketEvents<const SSL: bool>: Sized {
     const HAS_ON_OPEN: bool = false;
 
     fn on_open(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) -> JsResult<()> {
@@ -93,7 +92,7 @@ pub trait RawSocketEvents<const SSL: bool>: Sized {
     }
 }
 
-pub struct RawPtrHandler<T, const SSL: bool>(core::marker::PhantomData<T>);
+pub(crate) struct RawPtrHandler<T, const SSL: bool>(core::marker::PhantomData<T>);
 
 impl<T, const SSL: bool> VHandler for RawPtrHandler<T, SSL>
 where
@@ -146,27 +145,8 @@ where
         fold(T::on_end(this, wrap::<SSL>(s)));
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
-        // Close FIRST, then notify — same order `main`'s `configure()`
-        // trampoline used. The handler may re-enter `connectInner`
-        // synchronously (node:net `autoSelectFamily` falls back to the
-        // next address from inside the JS `connectError` callback); on
-        // Windows/libuv, starting the next attempt's `uv_poll_t` while
-        // this half-open one is still active and then closing it
-        // *afterwards* leaves the second poll never delivering
-        // writable/error → process hang (Win11-aarch64
-        // double-connect.test, test-net-server-close).
-        //
-        // Safe for TLS too: `us_internal_ssl_close` short-circuits
-        // SEMI_SOCKET straight to `close_raw`, and `close_raw` skips
-        // dispatch for SEMI_SOCKET, so no `on_handshake`/`on_close` lands
-        // in JS before we read `ext`/`this`.
-        let this = *ext;
-        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
-        // deref (`s` is a live socket passed by the trampoline).
-        us_socket_t::opaque_mut(s).close(CloseCode::failure);
-        if let Some(t) = this {
-            fold(T::on_connect_error(t, wrap::<SSL>(s), code));
-        }
+        let Some(this) = *ext else { return };
+        fold(T::on_connect_error(this, wrap::<SSL>(s), code));
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
         let Some(this) = *ConnectingSocket::opaque_mut(c).ext::<Option<ThisPtr<T>>>() else {
@@ -189,7 +169,10 @@ where
     }
 }
 
-impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttpUpgradeClient<SSL> {
+impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttpUpgradeClient<SSL>
+where
+    Self: bun_http_jsc::websocket_client::websocket_proxy_tunnel::IntoUpgradeClientRef,
+{
     const HAS_ON_OPEN: bool = true;
 
     fn on_open(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
@@ -248,7 +231,7 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
         Ok(())
     }
     fn on_writable(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.handle_writable(s);
         Ok(())
     }
@@ -258,27 +241,27 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
         code: i32,
         reason: *mut c_void,
     ) -> JsResult<()> {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.handle_close(s, code, reason);
         Ok(())
     }
     fn on_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.handle_timeout(s);
         Ok(())
     }
     fn on_long_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.handle_timeout(s);
         Ok(())
     }
     fn on_end(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.handle_end(s);
         Ok(())
     }
     fn on_connect_error(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, code: i32) -> JsResult<()> {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.handle_connect_error(s, code);
         Ok(())
     }
@@ -288,7 +271,7 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
         ok: i32,
         err: bun_uws::us_bun_verify_error_t,
     ) -> JsResult<()> {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.handle_handshake(s, ok, err);
         Ok(())
     }
@@ -548,7 +531,7 @@ trait NsSocketEvents<Owner, const SSL: bool> {
     }
 }
 
-pub struct NsHandler<Owner, H, const SSL: bool>(core::marker::PhantomData<(Owner, H)>);
+pub(crate) struct NsHandler<Owner, H, const SSL: bool>(core::marker::PhantomData<(Owner, H)>);
 
 impl<Owner, H, const SSL: bool> VHandler for NsHandler<Owner, H, SSL>
 where
@@ -597,16 +580,8 @@ where
         fold(H::on_end(this, wrap::<SSL>(s)));
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
-        // Close before notify — see RawPtrHandler::on_connect_error.
-        let this = ext.get();
-        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
-        // deref (`s` is a live socket passed by the trampoline).
-        us_socket_t::opaque_mut(s).close(CloseCode::failure);
-        // SAFETY: snapshot of the ext slot taken before close; unique heap
-        // owner, single-threaded dispatch (same contract as `ExtSlot::owner_mut`).
-        if let Some(t) = unsafe { thunk::ext_owner(&this) } {
-            fold(H::on_connect_error(t, wrap::<SSL>(s), code));
-        }
+        let Some(this) = ext.owner_mut() else { return };
+        fold(H::on_connect_error(this, wrap::<SSL>(s), code));
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
         let Some(this) = ConnectingSocket::opaque_mut(c)
@@ -641,7 +616,7 @@ where
 // This adapter just lifts the word out of the slot, so the `*anyopaque` here
 // is intentional and irreducible — it IS the tagged-pointer encoding, not a
 // type we forgot to name.
-pub struct HTTPClient<const SSL: bool>;
+pub(crate) struct HTTPClient<const SSL: bool>;
 
 // Each event is written out by hand; `HAS_ON_*` is simply left unset
 // for events the upstream `Handler<SSL>` doesn't define.
@@ -692,13 +667,7 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
         HttpH::<SSL>::on_end(owner.as_ptr(), wrap::<SSL>(s));
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
-        // Close before notify — see RawPtrHandler::on_connect_error. SEMI_SOCKET
-        // close skips dispatch, so the tagged owner survives the close.
-        let owner = *ext;
-        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
-        // deref (`s` is a live socket passed by the trampoline).
-        us_socket_t::opaque_mut(s).close(CloseCode::failure);
-        let Some(owner) = owner else { return };
+        let Some(owner) = *ext else { return };
         HttpH::<SSL>::on_connect_error(owner.as_ptr(), wrap::<SSL>(s), code);
     }
     fn on_connecting_error(cs: *mut ConnectingSocket, code: i32) {
@@ -723,6 +692,8 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
 }
 
 // ── WebSocket client ────────────────────────────────────────────────────────
+pub(crate) type WSUpgradeClient<const SSL: bool> =
+    websocket_upgrade_client::NewHttpUpgradeClient<SSL>;
 pub(crate) type WSUpgrade<const SSL: bool> =
     RawPtrHandler<websocket_upgrade_client::NewHttpUpgradeClient<SSL>, SSL>;
 pub(crate) type WSClient<const SSL: bool> = RawPtrHandler<websocket_client::WebSocket<SSL>, SSL>;
@@ -745,7 +716,7 @@ pub(crate) type Valkey<const SSL: bool> =
 // Ext is `*IPC.SendQueue` for both child-side `process.send` and parent-side
 // `Bun.spawn({ipc})`. The IPC handlers are free functions, not
 // methods on SendQueue, so we adapt manually here.
-pub struct SpawnIPC;
+pub(crate) struct SpawnIPC;
 
 use IPC::IPCHandlers::PosixSocket as IpcH;
 type IpcS = NewSocketHandler<false>;

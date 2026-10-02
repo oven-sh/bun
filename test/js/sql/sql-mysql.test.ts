@@ -4,6 +4,7 @@ import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerEnabled, tempDir
 import path from "path";
 import {
   listeningServer,
+  mysqlAckSessionSetup,
   mysqlColumnDefinition,
   mysqlHandshakeV10,
   mysqlLenencInt,
@@ -153,6 +154,39 @@ if (isDockerEnabled()) {
           await container.ready;
           sql = new SQL(getOptions());
         });
+
+        test.skipIf(image.image !== "mysql_tls")(
+          "a BunFile tls option is the CA that the server certificate is verified against",
+          async () => {
+            await container.ready;
+            // getOptions() passes the issuing CA as `tls: Bun.file(ca.pem)`: the
+            // chain and the hostname are verified (verify-full) and the query runs.
+            {
+              await using db = new SQL({ ...getOptions(), max: 1 });
+              expect(db.options.sslMode).toBe(4); // SSLMode.verify_full
+              expect(await db`select 1 as x`).toEqual([{ x: 1 }]);
+            }
+            // The server certificate does not chain to this unrelated CA, so the
+            // connection must be refused instead of proceeding over unverified TLS.
+            {
+              await using db = new SQL({
+                ...getOptions(),
+                max: 1,
+                tls: Bun.file(path.join(import.meta.dir, "docker-tls", "server.crt")),
+              });
+              const error = await db`select 1 as x`.then(
+                () => null,
+                e => e,
+              );
+              // Which code depends on whether the server sends its CA in the chain.
+              expect([
+                "SELF_SIGNED_CERT_IN_CHAIN",
+                "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+                "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+              ]).toContain(error?.code);
+            }
+          },
+        );
 
         test("process should exit when idle", async () => {
           expect(
@@ -1250,6 +1284,7 @@ test("MySQL: binary TIME with a very large days field formats without integer wr
           socket.write(mysqlOkPacket(seq + 1));
           return;
         }
+        if (mysqlAckSessionSetup(socket, payload)) return;
         if (payload[0] === COM_STMT_PREPARE) {
           socket.write(mysqlStmtPrepareOk(1, 1, 0, 0));
         } else if (payload[0] === COM_STMT_EXECUTE) {
@@ -1332,6 +1367,7 @@ test("MySQL: a row split across several maximum-size wire packets is reassembled
           socket.write(mysqlOkPacket(seq + 1));
           return;
         }
+        if (mysqlAckSessionSetup(socket, payload)) return;
         if (payload[0] !== COM_QUERY || queryIndex >= lengths.length) {
           socket.end();
           return;

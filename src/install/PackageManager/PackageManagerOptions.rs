@@ -1,7 +1,6 @@
 use crate::bun_schema::api as Api;
 use bun_core::ZStr;
 use bun_core::{Output, env_var};
-use bun_paths::PathBuffer;
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
@@ -73,6 +72,9 @@ pub struct Options {
     pub(crate) save_text_lockfile: Option<bool>,
 
     pub(crate) lockfile_only: bool,
+
+    /// Set by `init_with_runtime`: no install phase, so only a resolve downloads a package.
+    pub(crate) runtime_auto_install: bool,
 
     // `bun pm version` command options
     pub git_tag_version: bool,
@@ -168,6 +170,7 @@ impl Default for Options {
             ca_file_name: b"",
             save_text_lockfile: None,
             lockfile_only: false,
+            runtime_auto_install: false,
             git_tag_version: true,
             allow_same_version: false,
             preid: b"",
@@ -344,7 +347,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [b"install", b"global"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
@@ -357,7 +360,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
         .get()
         .or_else(|| env_var::HOME.get())
     {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 3] = [b".bun", b"install", b"global"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
@@ -392,7 +395,7 @@ pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 1] = [b"bin"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
@@ -405,7 +408,7 @@ pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
         .get()
         .or_else(|| env_var::HOME.get())
     {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [b".bun", b"bin"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()

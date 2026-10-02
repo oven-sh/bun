@@ -568,15 +568,47 @@ declare module "bun:sqlite" {
     ): Database;
 
     /**
-     * See `sqlite3_file_control` for more information.
+     * Call `sqlite3_file_control` on the `main` database.
+     *
+     * SQLite reads the input of `op` from `arg` and writes the output of `op`
+     * to it.
+     *
+     * - A `number` is passed as a 32-bit integer. The value that SQLite writes
+     *   back is not returned.
+     * - A `TypedArray` or `DataView` of at least 8 bytes is passed as is. Use
+     *   it to read the value that SQLite writes back.
+     * - `null` is for an `op` that takes no argument, such as
+     *   `SQLITE_FCNTL_RESET_CACHE`. An `op` that reads its argument reads `-1`:
+     *   `SQLITE_FCNTL_PERSIST_WAL` changes nothing, and
+     *   `SQLITE_FCNTL_CHUNK_SIZE` stores `-1`. For
+     *   `SQLITE_FCNTL_SET_LOCKPROXYFILE`, `null` means no proxy file.
+     *
+     * @returns The SQLite status code. `0` is `SQLITE_OK`. `12` is
+     * `SQLITE_NOTFOUND`: the VFS does not implement `op`, or the database is
+     * in memory.
+     *
+     * @example
+     * ```ts
+     * // -1 asks for the flag. SQLite writes 0 or 1 to the first element.
+     * const flag = new Int32Array([-1, 0]);
+     * db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, flag);
+     * console.log(flag[0]);
+     * ```
+     *
      * @link https://www.sqlite.org/c3ref/file_control.html
      */
-    fileControl(op: number, arg?: ArrayBufferView | number): number;
+    fileControl(op: number, arg: ArrayBufferView | number | null): number;
     /**
-     * See `sqlite3_file_control` for more information.
+     * Call `sqlite3_file_control` on the database with the schema name
+     * `zDbName`: `"main"` or the name of an attached database.
+     *
+     * `arg` and the return value are the same as for `fileControl(op, arg)`.
+     *
+     * @throws {SQLiteError} When `zDbName` is not the name of an open database.
+     *
      * @link https://www.sqlite.org/c3ref/file_control.html
      */
-    fileControl(zDbName: string, op: number, arg?: ArrayBufferView | number): number;
+    fileControl(zDbName: string, op: number, arg: ArrayBufferView | number | null): number;
   }
 
   /**

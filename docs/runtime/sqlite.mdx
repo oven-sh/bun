@@ -653,24 +653,36 @@ Workers can repeat `setCustomSQLite()` with the exact same path. Bun rejects a d
 
 </Note>
 
-### `.fileControl(cmd: number, value: any)`
+### `.fileControl(cmd: number, value: number | TypedArray | null)`
 
 To use the advanced `sqlite3_file_control` API, call `.fileControl(cmd, value)` on your `Database` instance. See [WAL sidecar file cleanup](#wal-sidecar-file-cleanup) for a practical example.
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={6}
 import { Database, constants } from "bun:sqlite";
 
-const db = new Database();
+const db = new Database("mydb.sqlite");
 // Ensure WAL mode is NOT persistent
 // this prevents WAL files from lingering after the database is closed
 db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
 ```
 
-`value` can be:
+SQLite reads the input of `cmd` from `value` and writes the output of `cmd` to it. `value` can be:
 
-- `number`
-- `TypedArray`
-- `undefined` or `null`
+- `number`: Bun passes it as a 32-bit integer. The value that SQLite writes back is not returned.
+- `TypedArray` or `DataView` of at least 8 bytes: Bun passes the memory as is. Use it to read the value that SQLite writes back.
+- `null`: for a `cmd` that takes no argument, such as `SQLITE_FCNTL_RESET_CACHE`. A `cmd` that reads its argument reads `-1`. `SQLITE_FCNTL_PERSIST_WAL` changes nothing, and `SQLITE_FCNTL_CHUNK_SIZE` stores `-1`. For `SQLITE_FCNTL_SET_LOCKPROXYFILE`, `null` means no proxy file.
+
+The return value is the SQLite status code. `0` is `SQLITE_OK`. `12` is `SQLITE_NOTFOUND`: the VFS does not implement `cmd`, or the database is in memory.
+
+```ts db.ts icon="/icons/typescript.svg"
+import { Database, constants } from "bun:sqlite";
+
+const db = new Database("mydb.sqlite");
+// -1 asks for the flag. SQLite writes 0 or 1 to the first element.
+const flag = new Int32Array([-1, 0]);
+db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, flag);
+console.log(flag[0]);
+```
 
 ---
 

@@ -64,6 +64,54 @@ describe("heapStats() mimalloc integration", () => {
     void before;
   });
 
+  // The malloc_* counters are only maintained when mimalloc is built with statistics (MI_STAT, i.e.
+  // debug builds); release builds report 0 for all of them.
+  const tracksMallocStats = heapStats().mimalloc.malloc_normal.total > 0;
+
+  test.skipIf(!tracksMallocStats)("malloc_* counters come back down when a heap is destroyed", () => {
+    // Bun.Transpiler#transformSync allocates everything for the call in a fresh mimalloc heap
+    // (bun_alloc::MimallocArena) and mi_heap_destroy()s it on return, so none of those blocks is
+    // ever passed to mi_free. The exports fill the heap with small blocks (malloc_normal and
+    // malloc_bins); a source this large also makes the call allocate blocks above mimalloc's large
+    // object limit (512 KiB), which are accounted separately in malloc_huge.
+    const source =
+      `/* ${Buffer.alloc(640 * 1024, "x").toString()} */\n` +
+      Array.from({ length: 300 }, (_, i) => `export const e${i} = { a: [${i}, "x"] };`).join("\n");
+    const transpiler = new Bun.Transpiler();
+    const iterations = 10;
+
+    function counters() {
+      // Collect the JS garbage made by the previous heapStats() call so that only the transpiler's
+      // heaps are left in the deltas.
+      Bun.gc(true);
+      const m = heapStats().mimalloc;
+      return {
+        normalBytes: m.malloc_normal.current,
+        hugeBytes: m.malloc_huge.current,
+        binBlocks: m.malloc_bins.reduce((sum: number, bin: any) => sum + bin.current, 0),
+        heapsCreated: m.heaps.total,
+        heapsAlive: m.heaps.current,
+      };
+    }
+
+    transpiler.transformSync(source); // lazily-initialized state (the retained output buffer, ...) must not count
+    const before = counters();
+    for (let i = 0; i < iterations; i++) transpiler.transformSync(source);
+    const after = counters();
+
+    // One heap per call, and none of them survived the call.
+    expect(after.heapsCreated - before.heapsCreated).toBeGreaterThanOrEqual(iterations);
+    expect(after.heapsAlive).toBe(before.heapsAlive);
+
+    // Every destroyed heap used to leave its live blocks in the counters: about 940 KiB in
+    // malloc_normal, 2.25 MiB in malloc_huge and 2,770 blocks in malloc_bins per call (9.6 MB,
+    // 23.6 MB and 27,710 blocks after the loop). Each bound is below what a single call left
+    // behind; the slack is for whatever else the process legitimately keeps across the loop.
+    expect(after.normalBytes - before.normalBytes).toBeLessThan(512 * 1024);
+    expect(after.hugeBytes - before.hugeBytes).toBeLessThan(2 * 1024 * 1024);
+    expect(after.binBlocks - before.binBlocks).toBeLessThan(2000);
+  });
+
   // mimalloc tags its arena mmaps with an app-reserved VM tag (240-255). The old default,
   // 100, is VM_MEMORY_IOACCELERATOR, so profilers reported Bun's heap as GPU memory.
   // The tags are read back from the kernel (mach_vm_region's user_tag), not from vmmap's

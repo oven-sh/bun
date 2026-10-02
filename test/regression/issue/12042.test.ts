@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 
 test("#12042 curl verbose fetch logs form-urlencoded body", async () => {
   using dir = tempDir("issue-12042", {
@@ -43,5 +43,9 @@ await server.stop();
   const output = stdout + stderr;
   const normalized = normalizeBunSnapshot(output, dirPath);
 
-  expect(normalized).toContain('--data-raw "grant_type=client_credentials&client_id=abc&client_secret=xyz');
+  // The body is one quoted argument: '...' for a POSIX shell, "..." on Windows.
+  const quote = isWindows ? '"' : "'";
+  expect(normalized).toContain(
+    `--data-raw ${quote}grant_type=client_credentials&client_id=abc&client_secret=xyz${quote}`,
+  );
 });

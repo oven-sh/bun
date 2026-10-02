@@ -4197,3 +4197,107 @@ it("verbose fetch logging prints [redacted] in place of Authorization credential
   expect(stderr).not.toContain("sekret-token");
   expect(exitCode).toBe(0);
 });
+
+// Windows keeps the "..." form: cmd.exe and PowerShell have no quoting rule in common.
+it.skipIf(isWindows)("verbose fetch curl command is read back by a shell as the request that was sent", async () => {
+  using dir = tempDir("verbose-fetch-curl-paste", {});
+  const marker = (name: string) => join(String(dir), name);
+  const headers = {
+    // Credentials stay in the command: it has to re-run the request as it was sent.
+    "authorization": "Bearer sekret-token",
+    "x-note": `$(touch ${marker("header")})`,
+    "x-quote": `it's "q" \\ back`,
+    "content-type": "text/plain",
+  };
+  const body = `line1\nline2 \`touch ${marker("body")}\` $HOME it's`;
+  // The server chooses this URL. curl would also expand [1-2] in it.
+  const landed = `/landed?a=$(touch\${IFS}${marker("url")})&ids[1-2]=x`;
+
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (new URL(req.url).pathname !== "/hop") return new Response("ok");
+      return new Response(null, { status: 302, headers: { Location: landed } });
+    },
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { SERVER_URL, HEADERS, BODY } = process.env;
+       const init = { method: "POST", headers: JSON.parse(HEADERS), body: BODY };
+       await (await fetch(SERVER_URL + "post", init)).text();
+       await (await fetch(SERVER_URL + "hop")).text();`,
+    ],
+    env: {
+      ...bunEnv,
+      BUN_CONFIG_VERBOSE_FETCH: "curl",
+      SERVER_URL: server.url.href,
+      HEADERS: JSON.stringify(headers),
+      BODY: body,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // A command ends where the request line of the trace starts. A body can make it longer than one line.
+  const commands = [...stderr.matchAll(/^curl --http1\.1 [\s\S]*?(?=\r?\n[> ]*HTTP\/)/gm)].map(match => match[0]);
+  expect(commands).toHaveLength(3);
+
+  // A shell function named `curl` prints the arguments that the real curl would get.
+  async function readBack(shell: string, command: string) {
+    await using proc = Bun.spawn({
+      cmd: [shell, "-c", `curl() { printf '%s\\0' "$@"; }\n${command}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return stdout.split("\0").slice(0, -1);
+  }
+
+  const origin = server.url.origin;
+  // `sh` is dash on Debian and Ubuntu.
+  for (const shell of ["sh", "bash"].filter(shell => Bun.which(shell))) {
+    const [post, hop, redirected] = await Promise.all(commands.map(command => readBack(shell, command)));
+
+    expect(post.slice(0, 4)).toEqual(["--http1.1", `${origin}/post`, "-X", "POST"]);
+    const sent = Object.fromEntries(
+      post.flatMap((arg, i) => {
+        const colon = arg.indexOf(": ");
+        return post[i - 1] === "-H" ? [[arg.slice(0, colon).toLowerCase(), arg.slice(colon + 2)]] : [];
+      }),
+    );
+    expect(sent).toMatchObject(headers);
+    expect(post.slice(-2)).toEqual(["--data-raw", body]);
+    expect(hop.slice(0, 2)).toEqual(["--http1.1", `${origin}/hop`]);
+    expect(redirected.slice(0, 3)).toEqual(["--http1.1", `${origin}${landed}`, "--globoff"]);
+  }
+
+  const created = await Promise.all(["header", "body", "url"].map(name => Bun.file(marker(name)).exists()));
+  expect(created).toEqual([false, false, false]);
+  expect(exitCode).toBe(0);
+});
+
+it("verbose fetch curl command turns off curl globbing for a URL with brackets or braces", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `await (await fetch(process.env.SERVER_URL + "plain")).text();
+       await (await fetch(process.env.SERVER_URL + "glob?ids[1-2]=x")).text();`,
+    ],
+    env: { ...bunEnv, BUN_CONFIG_VERBOSE_FETCH: "curl", SERVER_URL: server.url.href },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  const commands = stderr.split(/\r?\n/).filter(line => line.startsWith("curl --http1.1"));
+  expect(commands.map(command => command.includes(" --globoff"))).toEqual([false, true]);
+  expect(exitCode).toBe(0);
+});

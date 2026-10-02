@@ -130,7 +130,7 @@ Set the `BUN_CONFIG_VERBOSE_FETCH` environment variable to log network requests 
 
 ### Print fetch & node:http requests as curl commands
 
-Set `BUN_CONFIG_VERBOSE_FETCH` to `curl` to print each `fetch()` and `node:http` request as a single-line `curl` command. You can copy-paste the command into your terminal to replicate the request.
+Set `BUN_CONFIG_VERBOSE_FETCH` to `curl` to print each `fetch()` and `node:http` request as a `curl` command. You can copy-paste the command into your terminal to replicate the request.
 
 ```ts index.ts icon="/icons/typescript.svg"
 process.env.BUN_CONFIG_VERBOSE_FETCH = "curl";
@@ -145,7 +145,7 @@ await fetch("https://example.com", {
 ```
 
 ```txt
-[fetch] $ curl --http1.1 "https://example.com/" -X POST -H "content-type: application/json" -H "Connection: keep-alive" -H "User-Agent: Bun/1.3.3" -H "Accept: */*" -H "Host: example.com" -H "Accept-Encoding: gzip, deflate, br" --compressed -H "Content-Length: 13" --data-raw "{\"foo\":\"bar\"}"
+[fetch] $ curl --http1.1 'https://example.com/' -X POST -H 'content-type: application/json' -H 'Connection: keep-alive' -H 'User-Agent: Bun/1.3.3' -H 'Accept: */*' -H 'Host: example.com' -H 'Accept-Encoding: gzip, deflate, br' --compressed -H 'Content-Length: 13' --data-raw '{"foo":"bar"}'
 [fetch] > HTTP/1.1 POST https://example.com/
 [fetch] > content-type: application/json
 [fetch] > Connection: keep-alive
@@ -168,6 +168,8 @@ await fetch("https://example.com", {
 ```
 
 The lines with `[fetch] >` are the request from your local code, and the lines with `[fetch] <` are the response from the remote server.
+
+The `curl` command holds the request as it was sent, with its credentials, so that it can run again. On macOS and Linux, each argument is in single quotes, so a POSIX shell (`sh`, `bash`, `zsh`) expands nothing in it. A body of more than one line makes a command of more than one line. `--globoff` is added when the URL has `[`, `]`, `{` or `}`, because `curl` expands them otherwise. On Windows the arguments are in double quotes and are not escaped for `cmd.exe` or PowerShell, so read a command before you run it there.
 
 To print without the `curl` command, set `BUN_CONFIG_VERBOSE_FETCH` to `true`.
 

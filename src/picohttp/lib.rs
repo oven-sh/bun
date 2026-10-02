@@ -203,14 +203,28 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let header = self.header;
         if header.value_len > 0 {
-            write!(
-                f,
-                "-H \"{}: {}\"",
-                BStr::new(header.name()),
-                BStr::new(header.value())
-            )
+            let parts: [&[u8]; 3] = [header.name(), b": ", header.value()];
+            write!(f, "-H {}", CurlArg(&parts))
         } else {
-            write!(f, "-H \"{}\"", BStr::new(header.name()))
+            write!(f, "-H {}", CurlArg(&[header.name()]))
+        }
+    }
+}
+
+/// One argument of the printed `curl` command: `parts` joined and quoted.
+struct CurlArg<'a>(&'a [&'a [u8]]);
+
+impl fmt::Display for CurlArg<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if cfg!(windows) {
+            // cmd.exe and PowerShell have no quoting rule in common, so Windows keeps the plain form.
+            f.write_str("\"")?;
+            for part in self.0 {
+                write!(f, "{}", BStr::new(part))?;
+            }
+            f.write_str("\"")
+        } else {
+            write!(f, "{}", bun_core::fmt::quote_posix_shell(self.0))
         }
     }
 }
@@ -345,20 +359,31 @@ impl<'a> RequestCurlFormatter<'a> {
 impl fmt::Display for RequestCurlFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let request = self.request;
+        let url = [request.path];
+        let url = CurlArg(&url);
         if enable_ansi_colors_stderr() {
             f.write_str(pretty_fmt!("<r><d>[fetch] $<r> ", true))?;
 
             write!(
                 f,
-                pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{}\"<r>", true),
-                BStr::new(request.path),
+                pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>{}<r>", true),
+                url,
             )?;
         } else {
-            write!(f, "curl --http1.1 \"{}\"", BStr::new(request.path))?;
+            write!(f, "curl --http1.1 {}", url)?;
+        }
+
+        // curl expands `[1-3]` and `{a,b}` in a URL unless globbing is off.
+        if strings::index_of_any(request.path, b"[]{}").is_some() {
+            f.write_str(" --globoff")?;
         }
 
         if request.method != b"GET" {
-            write!(f, " -X {}", BStr::new(request.method))?;
+            if cfg!(windows) || request.method.iter().all(u8::is_ascii_alphanumeric) {
+                write!(f, " -X {}", BStr::new(request.method))?;
+            } else {
+                write!(f, " -X {}", CurlArg(&[request.method]))?;
+            }
         }
 
         if self.ignore_insecure {
@@ -384,11 +409,15 @@ impl fmt::Display for RequestCurlFormatter<'_> {
 
         if !self.body.is_empty() && Self::is_printable_body(content_type) {
             f.write_str(" --data-raw ")?;
-            bun_core::js_printer::write_json_string(
-                self.body,
-                f,
-                bun_core::strings::Encoding::Utf8,
-            )?;
+            if cfg!(windows) {
+                bun_core::js_printer::write_json_string(
+                    self.body,
+                    f,
+                    bun_core::strings::Encoding::Utf8,
+                )?;
+            } else {
+                write!(f, "{}", CurlArg(&[self.body]))?;
+            }
         }
 
         Ok(())

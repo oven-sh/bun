@@ -3337,6 +3337,33 @@ impl<T: Display> Display for NullableFallback<'_, T> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// quotePosixShell
+// ───────────────────────────────────────────────────────────────────────────
+
+/// One word of a POSIX shell command: `parts` joined inside `'...'`. The shell expands nothing in it.
+pub struct QuotePosixShell<'a>(pub(crate) &'a [&'a [u8]]);
+
+pub fn quote_posix_shell<'a>(parts: &'a [&'a [u8]]) -> QuotePosixShell<'a> {
+    QuotePosixShell(parts)
+}
+
+impl Display for QuotePosixShell<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("'")?;
+        for part in self.0 {
+            let mut rest = *part;
+            // `'...'` has no escape for a quote: close it, add `\'`, open it again.
+            while let Some(i) = strings::index_of_char_usize(rest, b'\'') {
+                write!(f, "{}'\\''", bstr::BStr::new(&rest[..i]))?;
+                rest = &rest[i + 1..];
+            }
+            write!(f, "{}", bstr::BStr::new(rest))?;
+        }
+        f.write_str("'")
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // escapePowershell
 // ───────────────────────────────────────────────────────────────────────────
 

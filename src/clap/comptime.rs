@@ -483,8 +483,7 @@ pub struct ComptimeClap<Id> {
     pub(crate) flags: Box<[bool]>,
     pub(crate) pos: Box<[&'static [u8]]>,
     pub(crate) passthrough_positionals: Box<[&'static [u8]]>,
-    /// True when a `--` token directly followed the last positional. That
-    /// token is not part of `passthrough_positionals`.
+    /// A `--` directly after the last positional was dropped from `passthrough_positionals`.
     pub(crate) passthrough_follows_separator: bool,
 
     // The converted params are

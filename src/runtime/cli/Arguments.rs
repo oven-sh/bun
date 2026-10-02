@@ -1033,11 +1033,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     ctx.passthrough = slice_to_owned(args.remaining());
 
     if ctx.parallel || ctx.sequential {
-        // The parser stops at the first script name, so with
-        // `bun run --parallel a b -- --x` the remaining script names and the
-        // `--` separator all land in `remaining()`. Split them here: script
-        // names join `positionals`, and `passthrough` keeps only the
-        // arguments after `--`, the same as a single-script run.
+        // `remaining()` here is: more script names, then `--`, then the arguments for the scripts.
         let remaining = args.remaining();
         let (script_names, after_separator): (&[&[u8]], &[&[u8]]) =
             if args.remaining_follows_separator() {

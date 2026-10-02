@@ -709,8 +709,7 @@ struct GroupInfo {
     count: usize,
 }
 
-/// Appends the arguments after `--` to a script command, each one quoted as a
-/// single shell word. Same escaping as the single-script run path.
+/// Appends each argument as one shell word, quoted like the single-script run path.
 fn append_passthrough(cmd_buf: &mut Vec<u8>, passthrough: &[Box<[u8]>]) {
     for part in passthrough {
         cmd_buf.push(b' ');
@@ -724,8 +723,7 @@ fn append_passthrough(cmd_buf: &mut Vec<u8>, passthrough: &[Box<[u8]>]) {
 
 /// Add configs for a single script name (with pre/post handling).
 /// When `label_prefix` is non-null, labels become "{prefix}:{name}" (for workspace runs).
-/// `passthrough` (the arguments after `--`) is appended to the main script and
-/// to a raw command, never to the pre/post scripts.
+/// `passthrough` goes to the main script or the raw command, never to pre/post scripts.
 ///
 /// Generic over the scripts map value type so both the single-package path
 /// (values borrow the process-lifetime DirInfo-cached package.json) and the
@@ -862,9 +860,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         Global::exit(1);
     }
 
-    // Collect script names from positionals. The arguments after `--`
-    // (`ctx.passthrough`) are not script names: they are appended to every
-    // selected script, the same as the single-script run path.
+    // Collect script names from positionals
     // For RunCommand: positionals[0] is "run", skip it. For AutoCommand: no "run" prefix.
     // Cloned to owned so the &mut ctx borrow below doesn't conflict.
     let mut script_names: Vec<Box<[u8]>> = Vec::new();

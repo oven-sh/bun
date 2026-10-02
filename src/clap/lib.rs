@@ -433,8 +433,7 @@ impl<Id: 'static> Args<Id> {
         self.clap.remaining()
     }
 
-    /// True when a `--` token came right after the last positional. The
-    /// parser drops that token from `remaining()`.
+    /// Whether the parser dropped a `--` that directly followed the last positional.
     pub fn remaining_follows_separator(&self) -> bool {
         self.clap.remaining_follows_separator()
     }

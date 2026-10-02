@@ -1,8 +1,8 @@
 // Writes ../grammar_rows_tests.rs.draft: the tables and the tests that replace the four typescript-grammar*.test.ts files.
 // The draft was never compiled. Run rustfmt on it after it is copied to src/js_parser/parse/grammar_rows_tests.rs.
 // usage: node rust.mjs [family ...]     (reads ../rows.facts.json)
-// The families named are those a lint parse does not read: they go into NOT_READ, and the table and the sixth test get what a parse
-// without lint makes of each source. Without a family the file has five tests and no such column.
+// The families named are those a lint parse does not read: they go into NOT_READ, and the table and a fifth test get what a parse
+// without lint makes of each source. Without a family the file has four tests and no such column.
 import { readFileSync, writeFileSync } from "node:fs";
 import { ts } from "./roots.mjs";
 import { FAMILIES, familyOf } from "./families.mjs";
@@ -351,7 +351,7 @@ for (const row of seen.values()) emit(`    Row { family: ${str(row.family)}, dia
 emit(`];`);
 let text = out.join("\n") + "\n";
 if (notRead.length === 0) {
-  // No family is left out: no column, no constant, no sixth test.
+  // No family is left out: no column, no constant, no fifth test.
   const drop = (from, to) => { const a = text.indexOf(from); const b = text.indexOf(to, a); if (a < 0 || b < 0) throw new Error("no " + from); text = text.slice(0, a) + text.slice(b); };
   drop("    /// What a parse without lint makes of the source:", "}\n\n/// The families that a lint parse reads");
   drop("/// The families that a lint parse reads", "/// What `check` makes of the lint parse");

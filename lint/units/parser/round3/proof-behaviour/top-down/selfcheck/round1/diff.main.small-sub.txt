@@ -1,0 +1,51 @@
+base 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 (7089 sources)
+next 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667 (7089 sources)
+106335 records compared, 21973 differ, in 1642 sources
+!!      808  A>A          unexplained  
+              t.ts.deco        "class C { @d x: readonly A[] extends B ? C : D; }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class C { @d x: readonly A[] extends B ? C : D; }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.ts.deco.keep   "class C { @d x: readonly A[] extends B ? C : D; }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.ts.deco.trim   "class C { @d x: readonly A[] extends B ? C : D; }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.ts.deco        "class C { @d m(a: readonly A[] extends B ? C : D) {} }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m(a) {}\n}\n__legacyDecorateClassTS_3
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m(a) {}\n}\n__legacyDecorateClassTS_3
+!!    20310  R>A          unexplained  
+              t.ts.plain       "class C implements A\n<B> {}"
+                base ["e",[["Expected \"{\" but found \"<\"",2,1],["Expected \";\" but found \">\"",2,3],["Expected identifier but found \"{\"",2,5],["Expected \"}\" but found end of file",2,6]]]
+                next ["o","class C {\n}\n"]
+              t.ts.exp         "class C implements A\n<B> {}"
+                base ["e",[["Expected \"{\" but found \"<\"",2,1],["Expected \";\" but found \">\"",2,3],["Expected identifier but found \"{\"",2,5],["Expected \"}\" but found end of file",2,6]]]
+                next ["o","class C {\n}\n"]
+              t.ts.deco        "class C implements A\n<B> {}"
+                base ["e",[["Expected \"{\" but found \"<\"",2,1],["Expected \";\" but found \">\"",2,3],["Expected identifier but found \"{\"",2,5],["Expected \"}\" but found end of file",2,6]]]
+                next ["o","class C {\n}\n"]
+              t.tsx.plain      "class C implements A\n<B> {}"
+                base ["e",[["Expected \"{\" but found \"<\"",2,1],["Expected \";\" but found \">\"",2,3],["Expected identifier but found \"{\"",2,5],["Expected \"}\" but found end of file",2,6]]]
+                next ["o","class C {\n}\n"]
+              t.tsx.exp        "class C implements A\n<B> {}"
+                base ["e",[["Expected \"{\" but found \"<\"",2,1],["Expected \";\" but found \">\"",2,3],["Expected identifier but found \"{\"",2,5],["Expected \"}\" but found end of file",2,6]]]
+                next ["o","class C {\n}\n"]
+!!      855  R>R          unexplained  
+              t.ts.plain       "function f(): (class: A) => void { return x; }"
+                base ["e",[["Unexpected class",1,16],["Expected \";\" but found \":\"",1,21],["Expected \";\" but found \")\"",1,24],["Unexpected =>",1,26]]]
+                next ["e",[["Expected \")\" but found \":\"",1,21],["Expected \";\" but found \"A\"",1,23],["Unexpected )",1,24]]]
+              t.ts.exp         "function f(): (class: A) => void { return x; }"
+                base ["e",[["Unexpected class",1,16],["Expected \";\" but found \":\"",1,21],["Expected \";\" but found \")\"",1,24],["Unexpected =>",1,26]]]
+                next ["e",[["Expected \")\" but found \":\"",1,21],["Expected \";\" but found \"A\"",1,23],["Unexpected )",1,24]]]
+              t.ts.deco        "function f(): (class: A) => void { return x; }"
+                base ["e",[["Unexpected class",1,16],["Expected \";\" but found \":\"",1,21],["Expected \";\" but found \")\"",1,24],["Unexpected =>",1,26]]]
+                next ["e",[["Expected \")\" but found \":\"",1,21],["Expected \";\" but found \"A\"",1,23],["Unexpected )",1,24]]]
+              t.tsx.plain      "function f(): (class: A) => void { return x; }"
+                base ["e",[["Unexpected class",1,16],["Expected \";\" but found \":\"",1,21],["Expected \";\" but found \")\"",1,24],["Unexpected =>",1,26]]]
+                next ["e",[["Expected \")\" but found \":\"",1,21],["Expected \";\" but found \"A\"",1,23],["Unexpected )",1,24]]]
+              t.tsx.exp        "function f(): (class: A) => void { return x; }"
+                base ["e",[["Unexpected class",1,16],["Expected \";\" but found \":\"",1,21],["Expected \";\" but found \")\"",1,24],["Unexpected =>",1,26]]]
+                next ["e",[["Expected \")\" but found \":\"",1,21],["Expected \";\" but found \"A\"",1,23],["Unexpected )",1,24]]]

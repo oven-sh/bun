@@ -1,0 +1,42 @@
+base 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 (301 sources)
+next 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667 (301 sources)
+2107 records compared, 688 differ, in 236 sources
+!!       30  A>A          unexplained  
+              t.ts.min.ids     "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.tsx.min.ids    "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.min.all     "namespace as {}"
+                base ["o","namespace;"]
+                next ["o",""]
+              t.ts.min.ids     "interface as {}\nfoo()"
+                base ["o","interface;\nfoo();\n"]
+                next ["o","foo();\n"]
+              t.tsx.min.ids    "interface as {}\nfoo()"
+                base ["o","interface;\nfoo();\n"]
+                next ["o","foo();\n"]
+!!      656  R>A          unexplained  
+              t.ts.min.ids     "let x: if;"
+                base ["e",[["Unexpected if",1,8]]]
+                next ["o","let e;\n"]
+              t.tsx.min.ids    "let x: if;"
+                base ["e",[["Unexpected if",1,8]]]
+                next ["o","let e;\n"]
+              t.ts.min.all     "let x: if;"
+                base ["e",[["Unexpected if",1,8]]]
+                next ["o","let e;"]
+              t.ts.min.ids     "let x: class;"
+                base ["e",[["Unexpected class",1,8]]]
+                next ["o","let l;\n"]
+              t.tsx.min.ids    "let x: class;"
+                base ["e",[["Unexpected class",1,8]]]
+                next ["o","let l;\n"]
+!!        2  R>R          unexplained  
+              i.js.plain       "class C { accessor x: T; }"
+                base ["e",[["Expected \";\" but found \"x\"",1,20],["Expected identifier but found \":\"",1,21]]]
+                next ["e",[["Expected \";\" but found \":\"",1,21]]]
+              i.js.plain       "class C { accessor #x: T; }"
+                base ["e",[["Expected \";\" but found \"#x\"",1,20],["Expected identifier but found \":\"",1,22]]]
+                next ["e",[["Expected \";\" but found \":\"",1,22]]]

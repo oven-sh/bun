@@ -1,0 +1,51 @@
+base 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 (209628 sources)
+next 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667 (209628 sources)
+3144420 records compared, 111240 differ, in 7772 sources
+!!     1180  A>A          unexplained  
+              t.ts.deco        "class C { @d x: readonly A[] extends B ? C : D; }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class C { @d x: readonly A[] extends B ? C : D; }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.ts.deco.keep   "class C { @d x: readonly A[] extends B ? C : D; }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.ts.deco.trim   "class C { @d x: readonly A[] extends B ? C : D; }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.ts.deco        "class C { @d m(a: readonly A[] extends B ? C : D) {} }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m(a) {}\n}\n__legacyDecorateClassTS_3
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m(a) {}\n}\n__legacyDecorateClassTS_3
+!!    23760  R>A          unexplained  
+              t.ts.plain       "class C implements +1 {}"
+                base ["e",[["Unexpected +",1,20],["Expected \";\" but found \"{\"",1,23]]]
+                next ["o","class C {\n}\n"]
+              t.ts.exp         "class C implements +1 {}"
+                base ["e",[["Unexpected +",1,20],["Expected \";\" but found \"{\"",1,23]]]
+                next ["o","class C {\n}\n"]
+              t.ts.deco        "class C implements +1 {}"
+                base ["e",[["Unexpected +",1,20],["Expected \";\" but found \"{\"",1,23]]]
+                next ["o","class C {\n}\n"]
+              t.tsx.plain      "class C implements +1 {}"
+                base ["e",[["Unexpected +",1,20],["Expected \";\" but found \"{\"",1,23]]]
+                next ["o","class C {\n}\n"]
+              t.tsx.exp        "class C implements +1 {}"
+                base ["e",[["Unexpected +",1,20],["Expected \";\" but found \"{\"",1,23]]]
+                next ["o","class C {\n}\n"]
+!!    86300  R>R          unexplained  
+              t.ts.plain       "class C { @d m(): keyof<A> { return x; } }"
+                base ["e",[["Expected \"(\" but found \"{\"",1,28],["Unexpected return",1,30],["Expected \";\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+                next ["e",[["Expected \"(\" but found \"{\"",1,28],["Expected \")\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+              t.ts.exp         "class C { @d m(): keyof<A> { return x; } }"
+                base ["e",[["Expected \"(\" but found \"{\"",1,28],["Unexpected return",1,30],["Expected \";\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+                next ["e",[["Expected \"(\" but found \"{\"",1,28],["Expected \")\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+              t.ts.deco        "class C { @d m(): keyof<A> { return x; } }"
+                base ["e",[["Expected \"(\" but found \"{\"",1,28],["Unexpected return",1,30],["Expected \";\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+                next ["e",[["Expected \"(\" but found \"{\"",1,28],["Expected \")\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+              t.tsx.plain      "class C { @d m(): keyof<A> { return x; } }"
+                base ["e",[["Expected \"(\" but found \"{\"",1,28],["Unexpected return",1,30],["Expected \";\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+                next ["e",[["Expected \"(\" but found \"{\"",1,28],["Expected \")\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+              t.tsx.exp        "class C { @d m(): keyof<A> { return x; } }"
+                base ["e",[["Expected \"(\" but found \"{\"",1,28],["Unexpected return",1,30],["Expected \";\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+                next ["e",[["Expected \"(\" but found \"{\"",1,28],["Expected \")\" but found \"x\"",1,37],["Unexpected }",1,42]]]

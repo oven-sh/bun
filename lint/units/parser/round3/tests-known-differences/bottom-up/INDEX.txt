@@ -14,7 +14,7 @@ gen/erased.cjs          sidecar-erased-statements/top-down/oracle.cjs as a modul
 gen/facts.mjs           rows.facts.json: roots, kept tags, erased records, wrapper records, nodes, enums, returns; or tsc's first diagnostic
 gen/families.mjs        the family of a row, the place in main (f4d755a9cf) that decides it, and the kind of free place for a lint parse
 gen/check-families.mjs  the table of the families
-gen/rust.mjs            grammar_rows_tests.rs.draft: the tables and the five tests (a sixth while NOT_READ names a family) for
+gen/rust.mjs            grammar_rows_tests.rs.draft: the tables and the four tests (a fifth while NOT_READ names a family) for
                         src/js_parser/parse/grammar_rows_tests.rs. Run rustfmt on the copy.
 gen/check-outline.mjs   gen/roots.mjs gives the 37 expectations of src/js_parser/type_sink_tests.rs, which pass in the crate today
 gen/check-facts.mjs     gen/erased.cjs with the cut of gen/facts.mjs gives the 40 cases of parse/erased_tests.rs (but the flags of `declare;`),

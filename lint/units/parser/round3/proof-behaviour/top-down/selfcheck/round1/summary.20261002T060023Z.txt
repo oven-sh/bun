@@ -1,0 +1,222 @@
+run     2026-10-02T06:00:23Z  tag round1  steps testrows comments targeted small-sub bench small files runtime
+base    /workspace/base/bun.f4d755a9c  sha256 e9cfacdf4af2477170858e2d713791ef310d90a6e21a5b05dfb0e78be0d9bfe0  1.4.3-canary.1+f4d755a9c
+next    /workspace/head/bun.head  sha256 d0a760e664b2ebb2dac4dd4d1ff1e9e370b57abea77eb69b0fa0c899ff80cbf9  1.4.3-canary.1+23a20afa7  built 2026-10-01T23:29:56Z  workers 4
+tree    /workspace/wt/parser  23a20afa7ee95996f0d044f5df67bbca179d7667  0 modified files
+FAIL  main  testrows  sources 301    x 15 records 4515     differ 3556    crashes 0/0  sha256 of the records 77468c48cc326d5a != a2db0c2c638199df
+        i.ts.plain       R>A         228
+        i.tsx.plain      R>A         192
+        s.ts.deco        R>A         228
+        s.ts.plain       R>A         222
+        s.tsx.plain      R>A         186
+        t.ts.deco        A>A         73
+        t.ts.deco        R>A         228
+        t.ts.deco.keep   A>A         73
+        t.ts.deco.keep   R>A         228
+        t.ts.deco.trim   A>A         73
+        t.ts.deco.trim   R>A         228
+        t.ts.exp         A>A         10
+        t.ts.exp         R>A         228
+        t.ts.plain       A>A         10
+        t.ts.plain       R>A         222
+        t.ts.plain.min   A>A         10
+        t.ts.plain.min   R>A         222
+        t.ts.plain.node  A>A         10
+        t.ts.plain.node  R>A         222
+        t.tsx.deco       A>A         73
+        t.tsx.deco       R>A         192
+        t.tsx.exp        A>A         10
+        t.tsx.exp        R>A         192
+        t.tsx.plain      A>A         10
+        t.tsx.plain      R>A         186
+FAIL  extra testrows  sources 301    x 7  records 2107     differ 688     crashes 0/0  sha256 of the records 499643a35586e131 != 0058a409670f6289
+        i.js.plain       R>A         8
+        i.js.plain       R>R         2
+        s.js.plain       R>A         6
+        t.js.plain       R>A         6
+        t.jsx.plain      R>A         6
+        t.ts.min.all     A>A         10
+        t.ts.min.all     R>A         222
+        t.ts.min.ids     A>A         10
+        t.ts.min.ids     R>A         222
+        t.tsx.min.ids    A>A         10
+        t.tsx.min.ids    R>A         186
+FAIL  main  comments  sources 122    x 15 records 1830     differ 258     crashes 0/0  sha256 of the records 034937f8c0a0039e != 94892bbfc9218ac9
+        i.ts.plain       R>A         18
+        i.tsx.plain      R>A         18
+        s.ts.deco        R>A         18
+        s.ts.plain       R>A         16
+        s.tsx.plain      R>A         16
+        t.ts.deco        R>A         18
+        t.ts.deco.keep   R>A         18
+        t.ts.deco.trim   R>A         18
+        t.ts.exp         R>A         18
+        t.ts.plain       R>A         16
+        t.ts.plain.min   R>A         16
+        t.ts.plain.node  R>A         16
+        t.tsx.deco       R>A         18
+        t.tsx.exp        R>A         18
+        t.tsx.plain      R>A         16
+FAIL  extra comments  sources 122    x 7  records 854      differ 50      crashes 0/0  sha256 of the records 8c63964f6cac16cf != 373ef96b51d54f5d
+        i.js.plain       R>A         2
+        t.ts.min.all     R>A         16
+        t.ts.min.ids     R>A         16
+        t.tsx.min.ids    R>A         16
+FAIL  main  targeted  sources 3952   x 15 records 59280    differ 2423    crashes 0/0  sha256 of the records ba2aed306128816e != 5f848f5e6f742359
+        i.ts.plain       R>A         121
+        i.ts.plain       R>R         46
+        i.tsx.plain      R>A         118
+        i.tsx.plain      R>R         42
+        s.ts.deco        R>A         120
+        s.ts.deco        R>R         47
+        s.ts.plain       R>A         108
+        s.ts.plain       R>R         42
+        s.tsx.plain      R>A         105
+        s.tsx.plain      R>R         38
+        t.ts.deco        A>A         12
+        t.ts.deco        R>A         120
+        t.ts.deco        R>R         47
+        t.ts.deco.keep   A>A         13
+        t.ts.deco.keep   R>A         120
+        t.ts.deco.keep   R>R         47
+        t.ts.deco.trim   A>A         12
+        t.ts.deco.trim   R>A         120
+        t.ts.deco.trim   R>R         47
+        t.ts.exp         A>A         1
+        t.ts.exp         R>A         120
+        t.ts.exp         R>R         47
+        t.ts.plain       A>A         1
+        t.ts.plain       R>A         108
+        t.ts.plain       R>R         42
+        t.ts.plain.min   A>A         1
+        t.ts.plain.min   R>A         108
+        t.ts.plain.min   R>R         42
+        t.ts.plain.node  A>A         1
+        t.ts.plain.node  R>A         108
+        t.ts.plain.node  R>R         42
+        t.tsx.deco       A>A         12
+        t.tsx.deco       R>A         117
+        t.tsx.deco       R>R         43
+        t.tsx.exp        A>A         1
+        t.tsx.exp        R>A         117
+        t.tsx.exp        R>R         43
+        t.tsx.plain      A>A         1
+        t.tsx.plain      R>A         105
+        t.tsx.plain      R>R         38
+FAIL  extra targeted  sources 3952   x 7  records 27664    differ 464     crashes 0/0  sha256 of the records 8d963576d4e66888 != 27e50be6060d926b
+        i.js.plain       R>A         2
+        i.js.plain       R>R         16
+        t.ts.min.all     A>A         1
+        t.ts.min.all     R>A         108
+        t.ts.min.all     R>R         42
+        t.ts.min.ids     A>A         1
+        t.ts.min.ids     R>A         108
+        t.ts.min.ids     R>R         42
+        t.tsx.min.ids    A>A         1
+        t.tsx.min.ids    R>A         105
+        t.tsx.min.ids    R>R         38
+FAIL  main  small-sub sources 7089   x 15 records 106335   differ 21973   crashes 0/0  sha256 of the records 7bdcb1430a3c0315 != 3c3ccbc1f19b4db7
+        i.ts.plain       R>A         1382
+        i.ts.plain       R>R         58
+        i.tsx.plain      R>A         1298
+        i.tsx.plain      R>R         55
+        s.ts.deco        R>A         1382
+        s.ts.deco        R>R         58
+        s.ts.plain       R>A         1382
+        s.ts.plain       R>R         58
+        s.tsx.plain      R>A         1298
+        s.tsx.plain      R>R         55
+        t.ts.deco        A>A         202
+        t.ts.deco        R>A         1382
+        t.ts.deco        R>R         58
+        t.ts.deco.keep   A>A         202
+        t.ts.deco.keep   R>A         1382
+        t.ts.deco.keep   R>R         58
+        t.ts.deco.trim   A>A         202
+        t.ts.deco.trim   R>A         1382
+        t.ts.deco.trim   R>R         58
+        t.ts.exp         R>A         1382
+        t.ts.exp         R>R         58
+        t.ts.plain       R>A         1382
+        t.ts.plain       R>R         58
+        t.ts.plain.min   R>A         1382
+        t.ts.plain.min   R>R         58
+        t.ts.plain.node  R>A         1382
+        t.ts.plain.node  R>R         58
+        t.tsx.deco       A>A         202
+        t.tsx.deco       R>A         1298
+        t.tsx.deco       R>R         55
+        t.tsx.exp        R>A         1298
+        t.tsx.exp        R>R         55
+        t.tsx.plain      R>A         1298
+        t.tsx.plain      R>R         55
+FAIL  extra small-sub sources 7089   x 7  records 49623    differ 4233    crashes 0/0  sha256 of the records 2c5ab7ff4fc64f0a != 7f21fefc04fc9172
+        t.ts.min.all     R>A         1382
+        t.ts.min.all     R>R         58
+        t.ts.min.ids     R>A         1382
+        t.ts.min.ids     R>R         58
+        t.tsx.min.ids    R>A         1298
+        t.tsx.min.ids    R>R         55
+ok    main  bench     sources 329    x 15 records 4935     differ 0       crashes 0/0  sha256 of the records 981bf6fcbb9b977d =
+ok    extra bench     sources 329    x 7  records 2303     differ 0       crashes 0/0  sha256 of the records e1bfa9c6e5f45720 =
+FAIL  main  small     sources 209628 x 15 records 3144420  differ 111240  crashes 0/0  sha256 of the records 2d9f0eb39865624b != 78a1f7428cae3905
+        i.ts.plain       R>A         1614
+        i.ts.plain       R>R         5863
+        i.tsx.plain      R>A         1524
+        i.tsx.plain      R>R         5534
+        s.ts.deco        R>A         1614
+        s.ts.deco        R>R         5863
+        s.ts.plain       R>A         1614
+        s.ts.plain       R>R         5863
+        s.tsx.plain      R>A         1524
+        s.tsx.plain      R>R         5534
+        t.ts.deco        A>A         295
+        t.ts.deco        R>A         1614
+        t.ts.deco        R>R         5863
+        t.ts.deco.keep   A>A         295
+        t.ts.deco.keep   R>A         1614
+        t.ts.deco.keep   R>R         5863
+        t.ts.deco.trim   A>A         295
+        t.ts.deco.trim   R>A         1614
+        t.ts.deco.trim   R>R         5863
+        t.ts.exp         R>A         1614
+        t.ts.exp         R>R         5863
+        t.ts.plain       R>A         1614
+        t.ts.plain       R>R         5863
+        t.ts.plain.min   R>A         1614
+        t.ts.plain.min   R>R         5863
+        t.ts.plain.node  R>A         1614
+        t.ts.plain.node  R>R         5863
+        t.tsx.deco       A>A         295
+        t.tsx.deco       R>A         1524
+        t.tsx.deco       R>R         5534
+        t.tsx.exp        R>A         1524
+        t.tsx.exp        R>R         5534
+        t.tsx.plain      R>A         1524
+        t.tsx.plain      R>R         5534
+FAIL  extra small     sources 209628 x 7  records 1467396  differ 22018   crashes 0/0  sha256 of the records 4b4a01e5fbdadff0 != 48ec06acf6e40910
+        i.js.plain       R>R         6
+        t.ts.min.all     R>A         1614
+        t.ts.min.all     R>R         5863
+        t.ts.min.ids     R>A         1614
+        t.ts.min.ids     R>R         5863
+        t.tsx.min.ids    R>A         1524
+        t.tsx.min.ids    R>R         5534
+FAIL  files           10777 files, 60331 records, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 10777 files, 60331 records, bun 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667  sha256 e038127e86e8bf3e != ef4ab9e6564485da
+        t.ts.exp         R>R test/bundler/transpiler/esbuild-decorator-tests.ts
+        t.ts.deco        R>R test/bundler/transpiler/esbuild-decorator-tests.ts
+        t.ts.deco.keep   R>R test/bundler/transpiler/esbuild-decorator-tests.ts
+        t.ts.deco.trim   R>R test/bundler/transpiler/esbuild-decorator-tests.ts
+        s.ts.deco        R>R test/bundler/transpiler/esbuild-decorator-tests.ts
+        i.ts.plain       R>R test/bundler/transpiler/esbuild-decorator-tests.ts
+60331 records compared, 6 differ
+FAIL  runtime testrows  301 modules, 0 evaluated | 301 modules, 0 evaluated  base: versions 33 entries 74  next: versions 34 entries 298  sha256 580d0f25123f8737 != f3f9826e2b1b736c
+        entries only of the base 0, only of the binary under test 224, of both with other bytes 5
+FAIL  runtime comments  122 modules, 0 evaluated | 122 modules, 0 evaluated  base: versions 33 entries 101  next: versions 34 entries 117  sha256 fd0b1276f239d73a != 86fa0b2107e5dcdc
+        entries only of the base 0, only of the binary under test 16, of both with other bytes 0
+FAIL  runtime targeted  3952 modules, 0 evaluated | 3952 modules, 0 evaluated  base: versions 33 entries 1990  next: versions 34 entries 2098  sha256 97b3758ec5df97dc != e80241693697553f
+        entries only of the base 0, only of the binary under test 108, of both with other bytes 1
+FAIL  runtime small-sub 7089 modules, 0 evaluated | 7089 modules, 0 evaluated  base: versions 33 entries 2053  next: versions 34 entries 3435  sha256 eca8475cf2b5cec9 != a43dabe869d912bf
+        entries only of the base 0, only of the binary under test 1382, of both with other bytes 0
+FAIL  runtime bench     329 modules, 0 evaluated | 329 modules, 0 evaluated  base: versions 33 entries 328  next: versions 34 entries 328  sha256 53ef4aa301bb26cb != 95f96fe2c9d6b116
+        entries only of the base 0, only of the binary under test 0, of both with other bytes 0
+RESULT  FAIL: 16 of 18 pairs of runs differ or did not run

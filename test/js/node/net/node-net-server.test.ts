@@ -45,6 +45,43 @@ describe("net.createServer listen", () => {
     );
   });
 
+  it("should call the listening callback when backlog is undefined", done => {
+    const { mustCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer();
+    server.on("error", failOnError(server, done));
+
+    server.listen(
+      0,
+      "127.0.0.1",
+      undefined,
+      mustCall(() => {
+        const address = server.address() as AddressInfo;
+        expect(address.address).toStrictEqual("127.0.0.1");
+        server.close();
+        done();
+      }),
+    );
+  });
+
+  it("should read the listening callback from the last argument", done => {
+    const { mustCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer();
+    server.on("error", failOnError(server, done));
+
+    server.listen(
+      0,
+      "127.0.0.1",
+      undefined,
+      undefined,
+      mustCall(() => {
+        server.close();
+        done();
+      }),
+    );
+  });
+
   it("should listen on IPv4", done => {
     const { mustCall } = createCallCheckCtx(done);
 

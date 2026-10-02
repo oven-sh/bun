@@ -3336,20 +3336,23 @@ describe("a dispatch that throws while an earlier response on the connection is 
       });
     });
   }
-  it.concurrent("a write() that rejects its chunk throws in the dispatch, not at the turn of the response", async () => {
-    expect(await run("bad-chunk")).toEqual({
-      result: {
-        events: [
-          "request /first",
-          "request /second",
-          'uncaught: The "chunk" argument must be of type string or an instance of Buffer or Uint8Array. Received type number (123)',
-        ],
-        bodies: ["first-done"],
-        closed: false,
-      },
-      exitCode: 0,
-    });
-  });
+  it.concurrent(
+    "a write() that rejects its chunk throws in the dispatch, not at the turn of the response",
+    async () => {
+      expect(await run("bad-chunk")).toEqual({
+        result: {
+          events: [
+            "request /first",
+            "request /second",
+            'uncaught: The "chunk" argument must be of type string or an instance of Buffer or Uint8Array. Received type number (123)',
+          ],
+          bodies: ["first-done"],
+          closed: false,
+        },
+        exitCode: 0,
+      });
+    },
+  );
   // The response ahead has ended, and most of its 8 MB are still in the send buffer when the
   // connection is reset at the turn of the response behind it. A destroyed queued response
   // resets the connection in the same way, with no throw.

@@ -1197,6 +1197,14 @@ impl NodeHTTPResponse {
             && !self.is_socket_closed_or_closing()
     }
 
+    /// A response that waits for the connection has an end in its record.
+    fn recorded_end(&self) -> bool {
+        self.queued_output
+            .get()
+            .as_ref()
+            .is_some_and(|queued| queued.ended)
+    }
+
     /// The checks of `write_head_impl` that read the state of the connection, for a response that has none yet.
     fn check_head_not_recorded(&self, global_object: &JSGlobalObject) -> JsResult<()> {
         let Some(queued) = self.queued_output.get() else {
@@ -1429,11 +1437,7 @@ fn validate_status_message(global_object: &JSGlobalObject, status_message: &[u8]
 
 /// Calls `f` with the status line after "HTTP/1.1 ": the code and its reason phrase.
 #[inline(always)]
-fn with_status_text<R>(
-    status_code: i32,
-    status_message: &[u8],
-    f: impl FnOnce(&[u8]) -> R,
-) -> R {
+fn with_status_text<R>(status_code: i32, status_message: &[u8], f: impl FnOnce(&[u8]) -> R) -> R {
     if status_message.is_empty() {
         if let Some(status_text) =
             HTTPStatusText::get(u16::try_from(status_code).expect("int cast"))
@@ -1557,7 +1561,7 @@ impl NodeHTTPResponse {
         if !self.is_queued() {
             return Ok(JSValue::UNDEFINED);
         }
-        if self.queued_output.get().as_ref().is_some_and(|queued| queued.ended) {
+        if self.recorded_end() {
             return err_throw(
                 global_object,
                 ErrorCode::ERR_HTTP_HEADERS_SENT,
@@ -2585,7 +2589,7 @@ impl NodeHTTPResponse {
                 JSValue::js_number_from_int32(0)
             });
         }
-        if self.queued_output.get().as_ref().is_some_and(|queued| queued.ended) {
+        if self.recorded_end() {
             return err_throw(
                 global_object,
                 ErrorCode::ERR_STREAM_WRITE_AFTER_END,

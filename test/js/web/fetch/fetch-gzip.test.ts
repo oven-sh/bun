@@ -1031,6 +1031,7 @@ describe("Content-Encoding: deflate, zlib-wrapped or raw", () => {
     wb15: deflateSync(plain),
     twoReadings, // fetch() must return the zlib reading
   };
+  // Node or curl accept each of these bodies: https://github.com/oven-sh/bun/issues/44428
   const fails: Record<string, Buffer> = {
     rawPassing1950: rawStartingWith(0x78, 769), // 78 01: raw deflate that starts with a valid zlib header
     lyingWindow,

@@ -412,7 +412,7 @@ import { createConnection } from "./database-driver";
 function parseConfig(config: any) {
   return JSON.parse(
     JSON.stringify(config).replace(
-      /\${([^:-]+)(?::([^}]+))?}/g,
+      /\${([^:}]+)(?::-([^}]*))?}/g,
       (_, key, defaultValue) => process.env[key] || defaultValue || "",
     ),
   );

@@ -2664,7 +2664,7 @@ declare module "bun" {
    * @example
    * ```js
    * const file = Bun.file("./hello.json");
-   * console.log(file.type); // "application/json"
+   * console.log(file.type); // "application/json;charset=utf-8"
    * console.log(await file.text()); // '{"hello":"world"}'
    * ```
    *
@@ -4823,7 +4823,7 @@ declare module "bun" {
    * @example
    * ```js
    * const file = Bun.file("./hello.json");
-   * console.log(file.type); // "application/json"
+   * console.log(file.type); // "application/json;charset=utf-8"
    * console.log(await file.json()); // { hello: "world" }
    * ```
    *
@@ -4872,7 +4872,7 @@ declare module "bun" {
    * @example
    * ```js
    * const file = Bun.file(new TextEncoder().encode("./hello.json"));
-   * console.log(file.type); // "application/json"
+   * console.log(file.type); // "application/json;charset=utf-8"
    * ```
    *
    * @param path The path to the file as a byte buffer (the buffer is copied). If the path starts with `s3://`, the file behaves like {@link S3File}
@@ -5063,14 +5063,13 @@ declare module "bun" {
    *
    * ws.addEventListener("open", () => {
    *   console.log("Connected to server");
+   *   ws.send("Hello, server!");
    * });
    *
    * ws.addEventListener("message", (event) => {
    *   console.log("Received message:", event.data);
+   *   ws.terminate();
    * });
-   *
-   * ws.send("Hello, server!");
-   * ws.terminate();
    * ```
    */
   interface WebSocket extends EventTarget {
@@ -8001,6 +8000,7 @@ declare module "bun" {
        * });
        *
        * proc.terminal.write("echo hello\n");
+       * proc.terminal.write("exit\n"); // bash runs until it reads `exit`
        * await proc.exited;
        * proc.terminal.close();
        * ```
@@ -8813,6 +8813,9 @@ declare module "bun" {
    * // Write to the terminal
    * terminal.write("echo hello\n");
    *
+   * // bash runs until it reads `exit`
+   * terminal.write("exit\n");
+   *
    * // Wait for process to exit
    * await proc.exited;
    *
@@ -9268,13 +9271,13 @@ declare module "bun" {
      * @example
      * ```js
      * const glob = new Glob("*.{ts,tsx}");
-     * const scannedFiles = Array.from(glob.scan({ cwd: './src' }))
+     * const scannedFiles = Array.from(glob.scanSync({ cwd: './src' }))
      * ```
      *
      * @example
      * ```js
      * const glob = new Glob("*.{ts,tsx}");
-     * for (const path of glob.scan()) {
+     * for (const path of glob.scanSync()) {
      *   // do something
      * }
      * ```

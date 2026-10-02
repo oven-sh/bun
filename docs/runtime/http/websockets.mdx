@@ -109,7 +109,7 @@ Once the upgrade succeeds, Bun sends a `101 Switching Protocols` response per th
 {/* prettier-ignore */}
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({
-  fetch(req, server) {
+  async fetch(req, server) {
     const sessionId = await generateSessionId();
     server.upgrade(req, {
       headers: { // [!code ++]

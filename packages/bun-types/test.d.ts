@@ -915,7 +915,7 @@ declare module "bun:test" {
      *
      * @example
      * expect(1).not.toBe(0);
-     * expect(null).not.toBeNull();
+     * expect(undefined).not.toBeNull();
      *
      * @example
      * expect(42).toEqual(42); // will pass
@@ -976,7 +976,7 @@ declare module "bun:test" {
      * expect(100 + 23).toBe(123);
      * expect("d" + "og").toBe("dog");
      * expect([123]).toBe([123]); // fail, use toEqual()
-     * expect(3 + 0.14).toBe(3.14); // fail, use toBeCloseTo()
+     * expect(0.1 + 0.2).toBe(0.3); // fail, use toBeCloseTo()
      *
      * // TypeScript errors:
      * expect("hello").toBe(3.14); // typescript error + fail
@@ -1497,7 +1497,7 @@ declare module "bun:test" {
      * expect({ c: new Date() }).toMatchInlineSnapshot({ c: expect.any(Date) });
      * expect({ c: new Date() }).toMatchInlineSnapshot({ c: expect.any(Date) }, `
      * {
-     *   "v": Any<Date>,
+     *   "c": Any<Date>,
      * }
      * `);
      *
@@ -1754,7 +1754,7 @@ declare module "bun:test" {
      *
      * @example
      * expect(new Date()).toBeValidDate();
-     * expect(new Date(null)).not.toBeValidDate();
+     * expect(new Date("invalid")).not.toBeValidDate();
      * expect("2020-03-01").not.toBeValidDate();
      */
     toBeValidDate(): void;

@@ -654,6 +654,87 @@ tree, and no `.bits()`, `^` or `!` on a flag value in `printer/`.
 | `nodebuilder/types.go` 25-66 (`Flags`, 33 constants) | `nodebuilder/types.rs` 81-116 | translated | |
 | `nodebuilder/types.go` 68-78 (`InternalFlags`, 5 constants) | `nodebuilder/types.rs` 118-124 | translated | |
 
+## Pseudo checker (`pseudochecker`)
+
+The four files of `pseudochecker/` (599 lines: `mod.rs` 8, `checker.rs` 16, `lookup.rs` 34, `type.rs` 541) came in
+with `1eb0da9d53` and are unchanged since. `mod.rs` declares one module per upstream file and re-exports the three:
+the two files of `checker/` that import the package write `crate::pseudochecker::{PseudoChecker, PseudoType, ..}`
+(`nodebuilderimpl.rs` 49, `pseudotypenodebuilder.rs` 5).
+
+Layer 6 of round 2 declares the directory: the line `pub mod pseudochecker;` of `lib.rs` is `fd055451b0` (written by
+the job that commits the worktree, under its message "typecheck: compile the port, work in progress"; the commit holds
+that line, the line `pub mod nodebuilder;` and nothing else). The four files name `crate::ast::{Ast, NodeId}`
+(`ast/reader.rs` 164, `ast/ids.rs` 61, re-exported by `ast/mod.rs` 53 and 44), `Ast::unhandled` (`ast/reader.rs` 299),
+`NodeId::NIL` (`ast/ids.rs` 22) and `std::sync::Arc`. `lib.rs` had `ast` before the line, so no file of the directory,
+no other file and no line of `src/typecheck/Cargo.toml` changed for it. It names none of `module`, `nodebuilder` and
+`printer`.
+
+One commit of this step is wrong and stays in the history: `99726bb441` ("typecheck: declare the pseudochecker module
+in lib.rs") adds the line a second time. It was made from the index 20 minutes after `fd055451b0` had the line, and
+the check before it counted the inserted lines (one) and did not look for the line in its base. The tree of
+`99726bb441` declares the module twice, which the compiler refuses (a name that is defined twice; no compiler was run
+on that tree). `a8df180054`, 38 seconds later, has the line once, and so has every tree after it. The worktree never
+had the line twice.
+
+No `cargo check`, no `cargo clippy` and no `cargo test` was run with these commits (the directory has no test): the
+survey that follows them is the first cargo compile of the four files in the real crate, so the states below are
+`translated` until that run passes. What was checked when the line was written:
+
+- By reading the tree of `c73680fe1d`, each name against its definition. `Ast` is `Copy`;
+  `unhandled<T: Default>(self, message: &'static str, node: NodeId) -> T` records a fault of the kind `Panic` with the
+  kind of the node and answers `T::default()`; `NodeId::NIL` is a `const`, so the 13 statics of `type.rs` are constant
+  expressions. `ast/deepclone.rs` and its two lines of `ast/mod.rs` (`a518aba15d`, `c73680fe1d`) add `NodeClone` and
+  `deep_clone_node` to what `ast` exports: neither is a name of the four files.
+- The look-ahead of the round-7 survey is reported as: `rustc` alone from a scratch root with the modules of layers 1
+  to 5 and `pub mod pseudochecker;`, cargo's flags and the rust lints of the workspace: exit 0, no error, no warning.
+  Its log (`/tmp/rdr-sweep-r7.log`) was not on the machine when the line was written, so it was not read.
+- `rustc` alone from a scratch root in `/tmp` (not kept): `pseudochecker/mod.rs` by `#[path]`, which reaches the other
+  three files, beside a module `ast` of 16 lines that has `NodeId`, `NodeId::NIL`, `Ast` and `Ast::unhandled` with the
+  signatures of the real ones, `#![deny(warnings)]` and the nine rust lints of the workspace denied: exit 0, no
+  warning. The real `ast` was not part of that scratch.
+- `clippy-driver` on the same root with the clippy table of the workspace (`conventions-scratch/data/clippy_flags.txt`,
+  which a script found equal to the 91 entries of the table in the `Cargo.toml` of `c73680fe1d`) and the repository's
+  `clippy.toml`: exit 1, the three errors of the next paragraph and nothing else.
+- `rustfmt --check --edition 2024 src/typecheck/pseudochecker/mod.rs`, which follows the three `mod` lines: exit 0.
+  The same on `lib.rs` of `c73680fe1d` alone (`--config skip_children=true`): exit 0.
+- `python3 /workspace/notes/lint/tools/undeclared.py src/typecheck` on the tree of `c73680fe1d`: 117 of 180 files are
+  reached, and no file of `pseudochecker/` is outside (the 63 files of the three directories of layer 7 are).
+- The four files have no `unsafe`, `unwrap()`, `expect(`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` and no
+  `allow(`, and no run of two comment lines.
+- Read side by side with upstream: `checker.go` 14-21 and `type.go` 19-376, every type, constructor and cast; no
+  difference was found besides the ones of the last column and of the two paragraphs after the next. `lookup.go` was
+  read for the names of its 36 functions and for their callers, not for its bodies.
+
+Open, and not fixed by this step: clippy refuses three lines of `lookup.rs`. `clippy::trivially_copy_pass_by_ref`,
+which the workspace denies, fires on the `&self` of `get_return_type_of_signature` (line 8), `get_type_of_accessor`
+(17) and `get_type_of_declaration` (22): `PseudoChecker` is `Copy` and two bytes, the limit is eight, and `clippy.toml`
+has `avoid-breaking-exported-api = false`. `cargo check`, which the survey runs, does not run clippy, and this step
+declared the line and changed no file that compiles. `cargo clippy -p bun_typecheck` reports the three until the
+receivers are `self` (what clippy proposes, and what `NodeBuilderImpl` of the same commit has) or `PseudoChecker` is
+not `Copy`. The four calls of the tree (`checker/nodebuilderimpl.rs` 3096, 3404, 3409 and 3425 of `c73680fe1d`) are
+method calls on the field `pc` and compile with either.
+
+What `lookup.rs` does where upstream's code is not ported, as `1eb0da9d53` wrote it and this layer did not change it:
+the four functions that `checker/nodebuilderimpl.rs` calls record a fault with the upstream name
+(`a.unhandled::<()>("PseudoChecker.GetTypeOfDeclaration", node)` and the like; `could_already_refer_to_undefined_type`
+with the nil node) and answer no pseudo type (`None`) or `false`, so the node builder serializes the type of the
+checker. They are not entries of the stand-in log of `internal.rs`: that log is a field of the checker
+(`checker/c02_program_checker.rs` 392), which this package does not name, and the fault has the kind `Panic`. A count
+of the stand-ins by that log, or by a grep for `stand_in(`, does not find the four.
+
+The casts of `type.rs` (nine `as_pseudo_type_*` of a pseudo type, four `as_pseudo_*` of an object element) answer a
+static empty record for a value of another kind, where upstream's type assertion panics (`type.go` 92, 114, 128, 152,
+166, 199, 215, 347, 375 and 280, 297, 314, 331). They record no fault: a cast has no tree context to record on.
+
+| upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
+| --- | --- | --- | --- |
+| `pseudochecker/checker.go` 14-21 (`PseudoChecker`, `NewPseudoChecker`) | `pseudochecker/checker.rs` | translated | `new_pseudo_checker` answers the record by value (`Copy`, `Default`) where upstream answers a pointer: the node builder state of `checker/nodebuilderimpl.rs` holds it as a field |
+| `pseudochecker/type.go` 19-80 (`PseudoTypeKind`, 20 kinds; `PseudoType`; `newPseudoType`; the nine values `PseudoTypeUndefined` to `PseudoTypeTrue`) | `pseudochecker/type.rs` 5-81 | translated | `*PseudoType` is `Arc<PseudoType>`, and one that can be nil is `PseudoTypeRef`; the data is a private enum (`pseudoTypeData`, `PseudoTypeDefault`, `PseudoTypeBase` and `AsPseudoType` have no counterpart); each of the nine values is a function that makes a new value (`pseudo_type_undefined()` and the like): upstream compares none of them by pointer |
+| `pseudochecker/type.go` 82-216 and 335-376 (the nine records of a pseudo type, their 12 constructors and 9 casts; `PseudoParameter`, `NewPseudoParameter`) | `pseudochecker/type.rs` 83-255 and 436-541 | translated | a cast of another kind (paragraph above); `[]*PseudoParameter` is `Vec<PseudoParameter>`, `[]*ast.TypeParameterDeclaration` is `Vec<NodeId>`, `[]*PseudoType` is `Vec<PseudoTypeRef>` |
+| `pseudochecker/type.go` 218-333 (`PseudoObjectElement`, its four kinds, `Signature`, the four records, their constructors and casts) | `pseudochecker/type.rs` 257-434 | translated | `AsPseudoObjectElement`, `pseudoObjectElementData` and `newPseudoObjectElement` have no counterpart; a cast of another kind (paragraph above); `Signature` reads the data where upstream switches on the kind; the `*PseudoParameter` of a set accessor is `Option<PseudoParameter>` |
+| `pseudochecker/lookup.go` 11-28, 34-67, 578-595 (`GetReturnTypeOfSignature`, `GetTypeOfAccessor`, `GetTypeOfDeclaration`, `CouldAlreadyReferToUndefinedType`) | `pseudochecker/lookup.rs` | not ported: the four record a fault and answer nil or `false` (paragraph above) | the four bodies; `could_already_refer_to_undefined_type` takes `a: Ast` first |
+| `pseudochecker/lookup.go` 30-32 (`GetTypeOfExpression`), 482-492 (`IsInConstContext`) and the 30 functions that are not exported (69-480, 494-576, 597-729) | | not started | no file of the tree calls the two exported ones: upstream's one caller outside the package is `checker/pseudotypenodebuilder.go` 97 (`IsInConstContext`, in `pseudoTypeToNode`, which `checker/pseudotypenodebuilder.rs` does not have) |
+
 ## Emit printer (`printer`)
 
 The 13 files of `printer/` (4,841 lines) came in with `5b2df1d046` (the three writers and the writer interface),

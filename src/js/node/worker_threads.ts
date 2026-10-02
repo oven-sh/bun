@@ -338,7 +338,7 @@ const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
 // stdio and control ports.
 const BUN_WORKER_PARENT_PORT_KEY = "@@bunWorkerThreadsParentPort";
 
-const { makePortReadable, makePortWritable } = require("internal/worker/stdio");
+const { kFlushSync, makePortReadable, makePortWritable } = require("internal/worker/stdio");
 
 // The parent always sends stdout and stderr ports; stdin only for { stdin: true }.
 // With the ports registered on the global, process.stdin/stdout/stderr's native
@@ -824,6 +824,18 @@ function emitGuarded(worker: Worker, name: string, value: unknown) {
   }
 }
 
+// Delivers what the worker wrote to a stdio port and the port did not deliver. A 'data' listener that throws ends one message, not the drain.
+function drainStdio(port: MessagePort, stream: import("node:stream").Readable) {
+  let entry;
+  while ((entry = _receiveMessageOnPort(port)) !== undefined) {
+    try {
+      stream[kFlushSync]({ data: entry.message });
+    } catch (err) {
+      reportUncaughtException(err);
+    }
+  }
+}
+
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
@@ -951,6 +963,9 @@ class Worker extends EventEmitter {
         // user-supplied value so it can't trigger env sharing on its own.
         options = { ...options, shareEnv: undefined } as NodeWorkerOptions;
       }
+      // node starts its port before the thread too. A started port delivers what the worker writes before its 'error' and 'exit', however soon the worker ends: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L305-L383
+      this.#stdoutPort.start();
+      this.#stderrPort.start();
       this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
       // Create the readables eagerly so the worker's writev is ack'd even when
       // worker.stdout/stderr is never touched; only captured streams ref their
@@ -1199,7 +1214,7 @@ class Worker extends EventEmitter {
     }
   }
 
-  // The order of node's kOnExit: the last messages, the exit state, the stdio EOF, then 'exit'. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L393-L410
+  // The order of node's kOnExit: the last messages, the last stdio chunks, the exit state, the stdio EOF, then 'exit'. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L393-L410
   #exit(code: number) {
     // Revoke the eval blob: URL now that the worker has exited; the
     // FinalizationRegistry remains only as a GC safety net.
@@ -1215,6 +1230,8 @@ class Worker extends EventEmitter {
       }
       this.#publicPort.close();
     }
+    if (this.#stdout) drainStdio(this.#stdoutPort, this.#stdout);
+    if (this.#stderr) drainStdio(this.#stderrPort, this.#stderr);
     this.#exited = true;
     // End captured stdio readables when the worker exits, even if it was
     // terminated before its own streams finished.

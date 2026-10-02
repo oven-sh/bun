@@ -11,7 +11,10 @@
 
 const kFlushSync = Symbol("kFlushSync");
 
-type PortReadable = import("node:stream").Readable & { endFromOwner?(): void };
+type PortReadable = import("node:stream").Readable & {
+  endFromOwner?(): void;
+  [kFlushSync]?(event: { data: Uint8Array[] | null }): void;
+};
 
 // Readable fed by a MessagePort (worker.stdout/stderr on the parent, process.stdin
 // in the worker). The peer posts arrays of Buffers; null signals EOF.
@@ -67,6 +70,8 @@ function makePortReadable(port: MessagePort, incrementsPortRef: boolean) {
       port.removeEventListener("message", onMessage);
     }
   };
+  // Lets the parent deliver a message that it took from the port itself when the worker has exited.
+  stream[kFlushSync] = onMessage;
   return stream;
 }
 

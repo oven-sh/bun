@@ -3471,10 +3471,8 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
-    const queued = this[kPipelinedQueuedState];
-    if (queued !== undefined) {
+    if (this[kPipelinedQueuedState] !== undefined) {
       // It never gets the socket. Like in Node, it ends with no event.
-      queued.ended = true;
       this.finished = true;
       return this;
     }

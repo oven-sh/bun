@@ -32,6 +32,8 @@
 #include "MoveOnlyFunction.h"
 
 #include <wtf/Assertions.h>
+#include <wtf/HashFunctions.h>
+#include <wtf/text/StringHasher.h>
 
 namespace uWS {
 
@@ -149,49 +151,12 @@ private:
         return {names.data() + node.nameOffset, node.nameLength};
     }
 
-    static uint64_t hashWord(uint64_t hash, uint64_t word) {
-        hash = (hash ^ word) * 0xff51afd7ed558ccdull;
-        return hash ^ (hash >> 32);
-    }
-
-    static uint64_t hashBytes(std::string_view name) {
-        const char *data = name.data();
-        size_t size = name.size();
-        uint64_t hash = size * 0x9e3779b97f4a7c15ull;
-        if (size >= 8) {
-            /* Whole words, then the last eight bytes, which can overlap */
-            uint64_t word;
-            for (; size > 8; data += 8, size -= 8) {
-                memcpy(&word, data, 8);
-                hash = hashWord(hash, word);
-            }
-            memcpy(&word, data + size - 8, 8);
-            return hashWord(hash, word);
-        }
-        if (size >= 4) {
-            uint32_t head, tail;
-            memcpy(&head, data, 4);
-            memcpy(&tail, data + size - 4, 4);
-            return hashWord(hash, ((uint64_t) head << 32) | tail);
-        }
-        if (size) {
-            uint64_t word = ((uint64_t) (unsigned char) data[0] << 16) | ((uint64_t) (unsigned char) data[size / 2] << 8) | (unsigned char) data[size - 1];
-            return hashWord(hash, word);
-        }
-        return hash;
-    }
-
     static uint32_t hashName(std::string_view name) {
-        return (uint32_t) hashBytes(name);
+        return StringHasher::computeHashAndMaskTop8Bits(byteCast<Latin1Character>(std::span<const char>(name.data(), name.size())));
     }
 
-    static uint64_t hashKey(uint32_t parent, bool isHighPriority, std::string_view name) {
-        uint64_t hash = hashBytes(name);
-        hash ^= (((uint64_t) parent << 1) | (uint64_t) isHighPriority) * 0x9e3779b97f4a7c15ull;
-        hash ^= hash >> 29;
-        hash *= 0xbf58476d1ce4e5b9ull;
-        hash ^= hash >> 32;
-        return hash;
+    static uint32_t hashKey(uint32_t parent, bool isHighPriority, std::string_view name) {
+        return WTF::pairIntHash(hashName(name), (parent << 1) | (uint32_t) isHighPriority);
     }
 
     uint32_t lookupFind(uint32_t parent, std::string_view name, bool isHighPriority) {

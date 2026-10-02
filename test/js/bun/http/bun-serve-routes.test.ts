@@ -1315,6 +1315,24 @@ describe("uWS::HttpRouter", () => {
     });
   });
 
+  // The name hash has 24 bits, so 12,000 sibling names have several pairs with
+  // the same hash. The second name of a pair takes one more step to find.
+  test("sibling names with equal hashes reach their own handlers", () => {
+    const count = 12_000;
+    const lines: string[] = [];
+    for (let i = 0; i < count; i++) lines.push(`add M GET /name-${i} 0`);
+    lines.push("sort", "steps");
+    for (let i = 0; i < count; i++) lines.push(`route GET /name-${i}`, "steps");
+    const output = httpRouterScript(lines.join("\n")).split("\n");
+    const wrong: number[] = [];
+    const stepCounts = new Set<string>();
+    for (let i = 0; i < count; i++) {
+      if (output[1 + i * 2] !== `1 ${i}()`) wrong.push(i);
+      stepCounts.add(output[2 + i * 2]);
+    }
+    expect({ wrong, someNamesTookMoreSteps: stepCounts.size > 1 }).toEqual({ wrong: [], someNamesTookMoreSteps: true });
+  });
+
   // The cases of uWebSockets' tests/HttpRouter.cpp (Apache-2.0), with its
   // handler names as comments.
   describe("uWebSockets router tests", () => {

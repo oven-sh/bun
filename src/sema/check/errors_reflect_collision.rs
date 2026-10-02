@@ -155,10 +155,7 @@ impl Checker<'_> {
                 continue;
             }
             // `GetRootDeclaration`
-            let mut root = bound.pat_parent[i];
-            while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) = root {
-                root = bound.pat_parent[outer.idx()];
-            }
+            let root = root_declaration(bound, PatId(i as u32));
             let name = (pat.pos, self.end_of_name_at(file, pat.pos));
             let (at, range) = match root {
                 // `const Reflect = require("m")` in JavaScript is an alias, and looked at no further.
@@ -297,12 +294,8 @@ impl Checker<'_> {
                 }
                 Parent::Module(m) => {
                     scopes.push(BlockScope::Module(m));
-                    let declaration = hir
-                        .stmts
-                        .iter()
-                        .position(|s| matches!(s.kind, StmtKind::Module(x) if x == m));
-                    match declaration {
-                        Some(s) => bound.stmt_parent[s],
+                    match bound.stmt_parent.get(hir[m].stmt.idx()) {
+                        Some(&parent) => parent,
                         None => return scopes,
                     }
                 }

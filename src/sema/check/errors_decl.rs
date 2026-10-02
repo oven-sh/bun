@@ -8,10 +8,7 @@
 use super::errors::Diagnostic;
 use super::errors_order::Named;
 use super::*;
-use crate::bind::{
-    Decl, FnOwner, MemberDeclaration, MemberOwner, Parent, PatParent, SymbolId, flags_of_member,
-    member_flags,
-};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, SymbolId, flags_of_member};
 use smallvec::SmallVec;
 
 impl Checker<'_> {
@@ -32,8 +29,7 @@ impl Checker<'_> {
                 continue;
             }
             // `NodeIsPresent(fn.Body())`: written, whether or not it is kept.
-            let has_body =
-                !matches!(func.body, FnBody::None) || func.flags.contains(Flags::BODY_DROPPED);
+            let has_body = has_body(&func);
             for p in func.params.iter() {
                 let param = &hir[p];
                 if param.flags.contains(Flags::PARAMETER_PROPERTY)
@@ -413,11 +409,11 @@ impl Checker<'_> {
                 hir[m].kind == MemberKind::Property
                     && bound.member_owner[m.idx()] != MemberOwner::None
             })
-            .map(MemberDeclaration::Member);
+            .map(Decl::Member);
         let parameter_properties = (0..hir.params.len() as u32)
             .map(ParamId)
             .filter(|&p| hir[p].flags.contains(Flags::PARAMETER_PROPERTY))
-            .map(MemberDeclaration::Parameter);
+            .map(Decl::ParameterProperty);
         for declaration in properties.chain(parameter_properties) {
             let declarations = self.declarations_of_member(file, declaration);
             if declarations.len() > 1 {
@@ -459,16 +455,11 @@ impl Checker<'_> {
     }
 
     /// From the type parameters of the declaration that `declaration` is written in to those its symbol goes by.
-    fn mapper_of_member_declaration(
-        &mut self,
-        file: FileId,
-        declaration: MemberDeclaration,
-    ) -> MapperId {
+    fn mapper_of_member_declaration(&mut self, file: FileId, declaration: Decl) -> MapperId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let member = match declaration {
-            MemberDeclaration::Member(m) => m,
-            MemberDeclaration::Parameter(p) => match bound.fns[bound.param_fn[p.idx()].idx()].owner
-            {
+            Decl::Member(m) => m,
+            Decl::ParameterProperty(p) => match bound.fns[bound.param_fn[p.idx()].idx()].owner {
                 FnOwner::Member(constructor) => constructor,
                 _ => return MapperId::IDENTITY,
             },
@@ -483,13 +474,10 @@ impl Checker<'_> {
     }
 
     /// `getWidenedTypeForVariableLikeDeclaration`, of one declaration of a property.
-    fn type_of_declared_member(
-        &mut self,
-        (file, declaration): (FileId, MemberDeclaration),
-    ) -> TypeId {
+    fn type_of_declared_member(&mut self, (file, declaration): (FileId, Decl)) -> TypeId {
         let ty = match declaration {
-            MemberDeclaration::Parameter(p) => self.type_of_param(file, p),
-            MemberDeclaration::Member(m) => {
+            Decl::ParameterProperty(p) => self.type_of_param(file, p),
+            Decl::Member(m) => {
                 let ty = self.type_of_member_declaration(file, m);
                 let flags = self.hir(file)[m].flags;
                 if !flags.contains(Flags::OPTIONAL) || !self.is_known(ty) {
@@ -510,17 +498,13 @@ impl Checker<'_> {
     fn compare_with_value_declaration(
         &mut self,
         file: FileId,
-        declaration: MemberDeclaration,
-        declarations: &[(FileId, MemberDeclaration)],
+        declaration: Decl,
+        declarations: &[(FileId, Decl)],
         out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
-        let is_value = |d: &&(FileId, MemberDeclaration)| {
-            matches!(
-                d.1,
-                MemberDeclaration::Member(_) | MemberDeclaration::Parameter(_)
-            )
-        };
+        let is_value =
+            |d: &&(FileId, Decl)| matches!(d.1, Decl::Member(_) | Decl::ParameterProperty(_));
         // The first is `symbol.ValueDeclaration`.
         let Some(&first) = declarations.iter().find(is_value) else {
             return;
@@ -532,9 +516,9 @@ impl Checker<'_> {
         let accessors: Vec<(FileId, MemberId)> = declarations
             .iter()
             .filter_map(|&(of, d)| match d {
-                MemberDeclaration::Member(m)
+                Decl::Member(m)
                     if flags_of_member(&self.hir(of)[m])
-                        .is_some_and(|flags| flags.0 & member_flags::ACCESSOR != 0) =>
+                        .is_some_and(|flags| flags.0.intersects(SymFlags::ACCESSOR)) =>
                 {
                     Some((of, m))
                 }
@@ -543,7 +527,7 @@ impl Checker<'_> {
             .collect();
         let of_symbol = match accessors.first() {
             Some(&(of, m)) => {
-                let mapper = self.mapper_of_member_declaration(of, MemberDeclaration::Member(m));
+                let mapper = self.mapper_of_member_declaration(of, Decl::Member(m));
                 let ty = self.type_of_member_declarations(&accessors);
                 self.instantiate(ty, mapper)
             }
@@ -567,13 +551,11 @@ impl Checker<'_> {
             return;
         }
         let (start, end, code) = match declaration {
-            MemberDeclaration::Parameter(p) => {
+            Decl::ParameterProperty(p) => {
                 let name = hir[p].pat;
                 (hir[name].pos, self.end_of_pat(file, name), 2403)
             }
-            MemberDeclaration::Member(m) => {
-                (hir[m].name_pos, self.end_of_member_name(file, m), 2717)
-            }
+            Decl::Member(m) => (hir[m].name_pos, self.end_of_member_name(file, m), 2717),
             _ => return,
         };
         out.push(Diagnostic { start, code });
@@ -587,10 +569,8 @@ impl Checker<'_> {
         self.relate(start, code, |c| {
             // `GetErrorRangeForNode`: all of a parameter, the name of a member.
             let at = match first {
-                (of, MemberDeclaration::Parameter(p)) => {
-                    (of, c.hir(of)[p].pos, c.end_of_param(of, p))
-                }
-                (of, MemberDeclaration::Member(m)) => {
+                (of, Decl::ParameterProperty(p)) => (of, c.hir(of)[p].pos, c.end_of_param(of, p)),
+                (of, Decl::Member(m)) => {
                     let from = c.hir(of)[m].name_pos;
                     // The text of the default library is not kept.
                     let to = if c.hir(of).text.is_empty() {

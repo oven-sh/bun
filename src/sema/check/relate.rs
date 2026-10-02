@@ -6163,10 +6163,7 @@ impl<'p> Checker<'p> {
             _ => return None,
         };
         match self.bound(file).member_owner[member.idx()] {
-            crate::bind::MemberOwner::Class(c) => Some(
-                self.files()
-                    .sym(file, self.bound(file).class_symbol[c.idx()]),
-            ),
+            crate::bind::MemberOwner::Class(c) => Some(self.class_sym(file, c)),
             _ => None,
         }
     }
@@ -6679,7 +6676,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    fn fixed_length(flags: &[ElemFlags]) -> usize {
+    pub(super) fn fixed_length(flags: &[ElemFlags]) -> usize {
         flags
             .iter()
             .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
@@ -6760,7 +6757,7 @@ impl<'p> Checker<'p> {
         params: &[SigParam],
         pos: usize,
     ) -> TypeId {
-        let rest = self.params_as_tuple(params, pos);
+        let rest = self.rest_type_at_position(params, pos, false);
         match self.array_element(rest) {
             Some(element) if self.is_any(element) => TypeId::ANY,
             _ => rest,

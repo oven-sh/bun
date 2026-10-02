@@ -749,9 +749,7 @@ impl<'p> Checker<'p> {
         else {
             return self.resolve_untyped_call(file, self.hir(file)[id].args);
         };
-        let class = self
-            .files()
-            .sym(file, self.bound(file).class_symbol[class.idx()]);
+        let class = self.class_sym(file, class);
         let sigs = self.super_constructor_sigs(class);
         if sigs.is_empty() {
             return self.resolve_untyped_call(file, self.hir(file)[id].args);
@@ -812,7 +810,8 @@ impl<'p> Checker<'p> {
         if is_new
             && !sigs.is_empty()
             && (self
-                .why_constructor_not_accessible(file, call, sigs[0])
+                .inaccessible_constructor(file, call, sigs[0])
+                .map(|(code, _)| code)
                 .is_some()
                 || self.has_abstract_construct_signature(callee))
         {
@@ -1562,8 +1561,7 @@ impl<'p> Checker<'p> {
     pub(super) fn implementation_signature(&mut self, failed: SigId) -> Option<SigId> {
         let (file, func, _) = self.sig_decl(self.p.types.sig_origin(failed))?;
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let has_body =
-            |f: &Func| !matches!(f.body, FnBody::None) || f.flags.contains(Flags::BODY_DROPPED);
+        let has_body = |f: &Func| has_body(&f);
         match bound.fns[func.idx()].owner {
             FnOwner::Stmt(_) => {
                 let symbol = bound.fn_symbol[func.idx()];
@@ -2172,10 +2170,6 @@ impl<'p> Checker<'p> {
         sig
     }
 
-    pub(super) fn reorder_candidates(&mut self, sigs: &[SigId]) -> Vec<SigId> {
-        self.candidates_in_order(sigs).into_vec()
-    }
-
     /// `reorderCandidates`: the order overloads are tried in. Of one thing declared in several places, what a later place declares
     /// goes first; signatures that ask for a literal go before all others.
     pub(super) fn candidates_in_order(&mut self, sigs: &[SigId]) -> List<'p, SigId> {
@@ -2531,10 +2525,7 @@ impl<'p> Checker<'p> {
             this,
             of: Box::new([]),
         });
-        Some(self.synth(Shape {
-            call: vec![sig],
-            ..Shape::default()
-        }))
+        Some(self.type_of_signature(sig, false))
     }
 
     /// `plain_arguments_say`, with `candidate` there to be asked what it expects.
@@ -2610,7 +2601,7 @@ impl<'p> Checker<'p> {
             } else {
                 &mut lesser_pairs
             };
-            said.push((type_params[k], self.inferred_type(&inference, k)));
+            said.push((type_params[k], self.get_inferred_type(&inference, k, false)));
         }
         let mapper_of = |c: &Self, pairs: Vec<(TypeId, TypeId)>| {
             if pairs.is_empty() {
@@ -4273,7 +4264,7 @@ impl<'p> Checker<'p> {
                 (
                     inference.params[k],
                     if known {
-                        self.inferred_type(inference, k)
+                        self.get_inferred_type(inference, k, false)
                     } else {
                         TypeId::UNRESOLVED
                     },
@@ -4391,7 +4382,7 @@ impl<'p> Checker<'p> {
                 let candidate = &from_result.candidates[i];
                 // Found where something is taken rather than given, for lack of better.
                 let ty = if candidate.covariant.is_empty() {
-                    self.inferred_type(from_result, i)
+                    self.get_inferred_type(from_result, i, false)
                 } else {
                     self.union(&candidate.covariant)
                 };
@@ -4621,10 +4612,7 @@ impl<'p> Checker<'p> {
                             this,
                             of: Box::new([]),
                         });
-                        self.synth(Shape {
-                            call: vec![plain],
-                            ..Shape::default()
-                        })
+                        self.type_of_signature(plain, false)
                     }
                     _ => expected,
                 };
@@ -5728,21 +5716,6 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// The generic `sig` with its type parameters as they are when it is called the way `expected` is.
-    fn instantiate_sig_in_context_of(&mut self, sig: SigId, expected: SigId) -> SigId {
-        self.instantiate_sig_in_context(sig, expected, false)
-    }
-
-    /// `instantiateSignatureInContextOf`. `with_result`: what `expected` returns says something too, though less than what it takes.
-    pub(super) fn instantiate_sig_in_context(
-        &mut self,
-        sig: SigId,
-        expected: SigId,
-        with_result: bool,
-    ) -> SigId {
-        self.instantiate_sig_in_context_under(sig, expected, with_result, None)
-    }
-
     /// `instantiate_sig_in_context`. `stand_ins`: see `Inference::stand_ins`.
     pub(super) fn instantiate_sig_in_context_under(
         &mut self,
@@ -5790,7 +5763,7 @@ impl<'p> Checker<'p> {
             self.infer(&mut inference, source, target, 0);
         }
         if let Some(target_rest) = target_rest {
-            let rest = self.params_as_tuple(&sp, param_count);
+            let rest = self.rest_type_at_position(&sp, param_count, false);
             self.infer(&mut inference, rest, target_rest, 0);
         }
         if with_result {
@@ -6522,7 +6495,10 @@ impl<'p> Checker<'p> {
             let mut index = 1u32;
             let unique = loop {
                 let mut augmented = text[..base_len].to_vec();
-                augmented.extend_from_slice(index.to_string().as_bytes());
+                augmented.extend_from_slice(bun_core::fmt::itoa(
+                    &mut bun_core::fmt::ItoaBuf::new(),
+                    index,
+                ));
                 let augmented = self.files().atoms.intern(&augmented);
                 if !names.contains(&augmented) {
                     break augmented;
@@ -6641,7 +6617,7 @@ impl<'p> Checker<'p> {
         );
         let context = self.non_nullable(context);
         let expected = self.single_signature(context, construct, false)?;
-        let sig = self.instantiate_sig_in_context_of(generic, expected);
+        let sig = self.instantiate_sig_in_context_under(generic, expected, false, None);
         Some(self.type_of_signature(sig, construct))
     }
 
@@ -6763,7 +6739,7 @@ impl<'p> Checker<'p> {
         }
         let mapper = self.p.types.mapper(settled);
         let expected = self.instantiate_sig(expected, mapper);
-        let sig = self.instantiate_sig_in_context_of(generic, expected);
+        let sig = self.instantiate_sig_in_context_under(generic, expected, false, None);
         self.type_of_signature(sig, construct)
     }
 
@@ -8296,7 +8272,7 @@ impl<'p> Checker<'p> {
                 return m;
             }
             if !candidate.covariant.is_empty() || !candidate.contravariant.is_empty() {
-                let inferred = c.inferred_type(as_it_stands, i);
+                let inferred = c.get_inferred_type(as_it_stands, i, false);
                 if !c.is_any(inferred) && inferred != TypeId::UNKNOWN {
                     return m;
                 }
@@ -8381,7 +8357,7 @@ impl<'p> Checker<'p> {
                     && self.mentions(param, inference.params[i])
                     && !self.has_open_constraint(inference, i)
                 {
-                    let fixed = self.inferred_type(inference, i);
+                    let fixed = self.get_inferred_type(inference, i, false);
                     inference.candidates[i].fixed = Some(fixed);
                     inference.clear_cached_inferences();
                 }
@@ -8450,7 +8426,7 @@ impl<'p> Checker<'p> {
                 pairs.push((p, fixed));
             } else if open.iter().any(|&ty| self.mentions(ty, p)) {
                 // `nonFixingMapper`, for what is taken. What only the result mentions stays as it is.
-                pairs.push((p, self.inferred_type(inference, i)));
+                pairs.push((p, self.get_inferred_type(inference, i, false)));
             }
         }
         if pairs.is_empty() {

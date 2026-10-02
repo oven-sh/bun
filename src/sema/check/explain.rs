@@ -409,30 +409,6 @@ impl Checker<'_> {
         }
     }
 
-    /// The error `code` last noted at `start` is reported at `to` instead, and ends at `end`.
-    pub(super) fn explain_moved(&self, start: u32, code: u32, to: u32, end: u32) {
-        if let Some(note) = self
-            .notes
-            .borrow_mut()
-            .iter_mut()
-            .rev()
-            .find(|n| n.start == start && n.code == code)
-        {
-            note.start = to;
-            note.end = end;
-            // What is said of the same node goes along.
-            for related in &mut note.related {
-                if matches!(related.code, 6212 | 6213)
-                    && let Some(at) = &mut related.at
-                    && at.1 == start
-                {
-                    at.1 = to;
-                    at.2 = end;
-                }
-            }
-        }
-    }
-
     /// `errors` as they are shown, with what has been noted of them.
     pub(super) fn explain_errors(
         &mut self,

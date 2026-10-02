@@ -59,13 +59,23 @@ bitflags::bitflags! {
         /// `SymbolFlagsAssignment`: what `bindDeferredExpandoAssignment` declares.
         const ASSIGNMENT = 1 << 23;
         const OBJECT_LITERAL = 1 << 24;
+        const TYPE_LITERAL = 1 << 17;
+        const METHOD = 1 << 25;
+        const CONSTRUCTOR = 1 << 26;
+        const GET_ACCESSOR = 1 << 27;
+        const SET_ACCESSOR = 1 << 28;
+        const SIGNATURE = 1 << 29;
+        const REPLACEABLE_BY_METHOD = 1 << 30;
 
         const ENUM = Self::REGULAR_ENUM.bits() | Self::CONST_ENUM.bits();
         const VARIABLE = Self::FUNCTION_SCOPED_VARIABLE.bits() | Self::BLOCK_SCOPED_VARIABLE.bits();
+        const ACCESSOR = Self::GET_ACCESSOR.bits() | Self::SET_ACCESSOR.bits();
+        const CLASS_MEMBER = Self::METHOD.bits() | Self::ACCESSOR.bits() | Self::PROPERTY.bits();
         const VALUE = Self::VARIABLE.bits() | Self::FUNCTION.bits() | Self::CLASS.bits() | Self::ENUM.bits()
-            | Self::VALUE_MODULE.bits() | Self::ENUM_MEMBER.bits() | Self::PROPERTY.bits() | Self::OBJECT_LITERAL.bits();
+            | Self::VALUE_MODULE.bits() | Self::ENUM_MEMBER.bits() | Self::PROPERTY.bits() | Self::OBJECT_LITERAL.bits()
+            | Self::METHOD.bits() | Self::ACCESSOR.bits();
         const TYPE = Self::CLASS.bits() | Self::INTERFACE.bits() | Self::ENUM.bits() | Self::TYPE_PARAMETER.bits()
-            | Self::TYPE_ALIAS.bits() | Self::ENUM_MEMBER.bits();
+            | Self::TYPE_ALIAS.bits() | Self::ENUM_MEMBER.bits() | Self::TYPE_LITERAL.bits();
         const NAMESPACE = Self::VALUE_MODULE.bits() | Self::NAMESPACE_MODULE.bits() | Self::ENUM.bits();
         const MODULE = Self::VALUE_MODULE.bits() | Self::NAMESPACE_MODULE.bits();
         /// `SymbolFlagsModuleMember`: what is in scope in a module or a namespace for being exported from it.
@@ -75,7 +85,11 @@ bitflags::bitflags! {
         const FUNCTION_SCOPED_VARIABLE_EXCLUDES = Self::VALUE.bits() & !Self::FUNCTION_SCOPED_VARIABLE.bits();
         const BLOCK_SCOPED_VARIABLE_EXCLUDES = Self::VALUE.bits();
         const PARAMETER_EXCLUDES = Self::VALUE.bits();
-        const PROPERTY_EXCLUDES = Self::VALUE.bits() & !Self::PROPERTY.bits();
+        const PROPERTY_EXCLUDES = Self::VALUE.bits() & !(Self::PROPERTY.bits() | Self::ACCESSOR.bits());
+        const METHOD_EXCLUDES = Self::VALUE.bits() & !Self::METHOD.bits();
+        const GET_ACCESSOR_EXCLUDES = Self::VALUE.bits() & !(Self::SET_ACCESSOR.bits() | Self::PROPERTY.bits());
+        const SET_ACCESSOR_EXCLUDES = Self::VALUE.bits() & !(Self::GET_ACCESSOR.bits() | Self::PROPERTY.bits());
+        const ACCESSOR_EXCLUDES = Self::VALUE.bits() & !Self::PROPERTY.bits();
         const ENUM_MEMBER_EXCLUDES = Self::VALUE.bits() | Self::TYPE.bits();
         const FUNCTION_EXCLUDES = Self::VALUE.bits() & !(Self::FUNCTION.bits() | Self::VALUE_MODULE.bits() | Self::CLASS.bits());
         const CLASS_EXCLUDES = (Self::VALUE.bits() | Self::TYPE.bits())
@@ -131,6 +145,15 @@ pub enum Decl {
     ObjectLiteral(ExprId),
     /// `module` and `exports` in a CommonJS module.
     CommonJsVariable,
+    /// A member of a class, an interface or a type literal.
+    Member(MemberId),
+    /// `IsParameterPropertyDeclaration`: the property.
+    ParameterProperty(ParamId),
+    /// `this.name = value` in a member of a class, in JavaScript: the assignment.
+    ThisProperty(ExprId),
+    /// A member of an object literal or an attribute of a JSX element.
+    Property(PropId),
+    TypeLiteral(TypeNodeId),
 }
 
 /// `JSDeclarationKind`, without `JSDeclarationKindProperty`: what an assignment or a call declares in a JavaScript file.
@@ -307,8 +330,9 @@ pub struct Symbol {
     /// `Parent`, as `declareSymbolEx` sets it: the module, namespace or enum among whose exports it is declared, be it refused there.
     /// `NONE` for a local.
     pub parent: SymbolId,
-    /// What a module, namespace or enum exports.
+    /// What a module, namespace or enum exports, and the static side of a class.
     pub exports: TableId,
+    pub members: TableId,
     /// `ExportSymbol`, of the local symbol of what a module or a namespace exports.
     pub export_symbol: SymbolId,
 }
@@ -481,121 +505,34 @@ pub enum MemberOwner {
     TypeLiteral(TypeNodeId),
 }
 
-/// What `declareSymbolEx` enters in `symbol.Members` or `symbol.Exports` of a class or an interface, or in `symbol.Members` of a type
-/// literal, an object literal or the attributes of a JSX element.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
-pub enum MemberDeclaration {
-    /// Of a class or an interface: it is in `symbol.Members`, next to the properties.
-    TypeParameter(TypeParamId),
-    /// A property, a method or an accessor.
-    Member(MemberId),
-    /// `IsParameterPropertyDeclaration`
-    Parameter(ParamId),
-    /// `this.name = value` in a member of a class, in JavaScript: the assignment.
-    Assignment(ExprId),
-    /// A member of an object literal or an attribute of a JSX element.
-    Property(PropId),
-}
-
-/// `SymbolFlags`, as far as the symbols of members have them.
-pub mod member_flags {
-    pub const PROPERTY: u8 = 1;
-    pub const METHOD: u8 = 2;
-    pub const GET_ACCESSOR: u8 = 4;
-    pub const SET_ACCESSOR: u8 = 8;
-    pub const ACCESSOR: u8 = GET_ACCESSOR | SET_ACCESSOR;
-    pub const VALUE: u8 = PROPERTY | METHOD | ACCESSOR;
-    pub const TYPE_PARAMETER: u8 = 16;
-    pub const REPLACEABLE_BY_METHOD: u8 = 32;
-    pub const PROPERTY_EXCLUDES: u8 = VALUE & !(PROPERTY | ACCESSOR);
-    pub const METHOD_EXCLUDES: u8 = VALUE & !METHOD;
-    pub const GET_ACCESSOR_EXCLUDES: u8 = VALUE & !(SET_ACCESSOR | PROPERTY);
-    pub const SET_ACCESSOR_EXCLUDES: u8 = VALUE & !(GET_ACCESSOR | PROPERTY);
-    pub const ACCESSOR_EXCLUDES: u8 = VALUE & !PROPERTY;
-
-    /// `getExcludedSymbolFlags`
-    pub fn excluded(flags: u8) -> u8 {
-        [
-            (PROPERTY, PROPERTY_EXCLUDES),
-            (METHOD, METHOD_EXCLUDES),
-            (GET_ACCESSOR, GET_ACCESSOR_EXCLUDES),
-            (SET_ACCESSOR, SET_ACCESSOR_EXCLUDES),
-        ]
-        .iter()
-        .filter(|kind| flags & kind.0 != 0)
-        .fold(0, |excluded, kind| excluded | kind.1)
-    }
-}
-
-/// The name a member is declared under, and in which table of its container.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct MemberKey {
-    pub name: Atom,
-    /// `GetSymbolNameForPrivateIdentifier`: `#a` is not `"#a"`.
-    pub is_private: bool,
-    /// `symbol.Exports`, not `symbol.Members`.
-    pub is_static: bool,
-}
-
-/// A call of `declareSymbolEx`: the name, the node, `includes` and `excludes`. No node: `prototype`, which
-/// `bindClassLikeDeclaration` makes without a declaration.
-pub type DeclaredMember = (MemberKey, Option<MemberDeclaration>, u8, u8);
-
-/// `includes` and `excludes` of a member of an object literal or an attribute of a JSX element.
-pub fn flags_of_property(kind: PropKind) -> Option<(u8, u8)> {
-    use member_flags::*;
+/// `bind`: `includes` and `excludes` of a member of an object literal or an attribute of a JSX element.
+pub fn flags_of_property(kind: PropKind) -> Option<(SymFlags, SymFlags)> {
     Some(match kind {
-        PropKind::Init | PropKind::Shorthand => (PROPERTY, PROPERTY_EXCLUDES),
+        PropKind::Init | PropKind::Shorthand => (SymFlags::PROPERTY, SymFlags::PROPERTY_EXCLUDES),
         // `IsObjectLiteralMethod`
-        PropKind::Method => (METHOD, VALUE),
-        PropKind::Getter => (GET_ACCESSOR, GET_ACCESSOR_EXCLUDES),
-        PropKind::Setter => (SET_ACCESSOR, SET_ACCESSOR_EXCLUDES),
+        PropKind::Method => (SymFlags::METHOD, SymFlags::VALUE),
+        PropKind::Getter => (SymFlags::GET_ACCESSOR, SymFlags::GET_ACCESSOR_EXCLUDES),
+        PropKind::Setter => (SymFlags::SET_ACCESSOR, SymFlags::SET_ACCESSOR_EXCLUDES),
         PropKind::Spread => return None,
     })
 }
 
-/// `bindPropertyWorker`, `bindPropertyOrMethodOrAccessor`: `includes` and `excludes` of a property, a method or an accessor of a
-/// class, an interface or a type literal.
-pub fn flags_of_member(member: &Member) -> Option<(u8, u8)> {
-    use member_flags::*;
+/// `bind`, `bindPropertyWorker`: `includes` and `excludes` of a member of a class, an interface or a type literal.
+pub fn flags_of_member(member: &Member) -> Option<(SymFlags, SymFlags)> {
     Some(match member.kind {
         MemberKind::Property if member.flags.contains(Flags::ACCESSOR) => {
-            (ACCESSOR, ACCESSOR_EXCLUDES)
+            (SymFlags::ACCESSOR, SymFlags::ACCESSOR_EXCLUDES)
         }
-        MemberKind::Property => (PROPERTY, PROPERTY_EXCLUDES),
-        MemberKind::Method => (METHOD, METHOD_EXCLUDES),
-        MemberKind::Getter => (GET_ACCESSOR, GET_ACCESSOR_EXCLUDES),
-        MemberKind::Setter => (SET_ACCESSOR, SET_ACCESSOR_EXCLUDES),
-        _ => return None,
+        MemberKind::Property => (SymFlags::PROPERTY, SymFlags::PROPERTY_EXCLUDES),
+        MemberKind::Method => (SymFlags::METHOD, SymFlags::METHOD_EXCLUDES),
+        MemberKind::Getter => (SymFlags::GET_ACCESSOR, SymFlags::GET_ACCESSOR_EXCLUDES),
+        MemberKind::Setter => (SymFlags::SET_ACCESSOR, SymFlags::SET_ACCESSOR_EXCLUDES),
+        MemberKind::Constructor => (SymFlags::CONSTRUCTOR, SymFlags::empty()),
+        MemberKind::CallSignature | MemberKind::ConstructSignature | MemberKind::IndexSignature => {
+            (SymFlags::SIGNATURE, SymFlags::empty())
+        }
+        MemberKind::StaticBlock => return None,
     })
-}
-
-/// `bindPropertyOrMethodOrAccessor`: what the members `props` of an object literal, or the attributes of a JSX element, declare.
-/// `HasDynamicName`: a computed name is in no table (`bindAnonymousDeclaration`).
-pub fn for_each_declared_property(
-    f: &File,
-    props: Span<PropId>,
-    mut declare: impl FnMut(DeclaredMember),
-) {
-    for p in props.iter() {
-        let PropKey::Name(name) = f[p].key else {
-            continue;
-        };
-        let Some((includes, excludes)) = flags_of_property(f[p].kind) else {
-            continue;
-        };
-        let key = MemberKey {
-            name,
-            is_private: false,
-            is_static: false,
-        };
-        declare((
-            key,
-            Some(MemberDeclaration::Property(p)),
-            includes,
-            excludes,
-        ));
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -789,14 +726,9 @@ pub struct Bound {
     pub pat_parent: Vec<PatParent>,
     pub pat_symbol: Vec<SymbolId>,
     pub prop_owner: Vec<ExprId>,
-    /// `symbol.Declarations` of the symbols of members that have more than one declaration, one symbol after the other. See
-    /// `declarations_of_member`.
-    pub member_declarations: Few<MemberDeclaration>,
-    /// By each of those declarations: the run of `member_declarations` that is its symbol. An empty run: it has no symbol.
-    pub member_symbol: FxHashMap<MemberDeclaration, (u32, u32)>,
-    /// The declarations whose symbol is in no table though they have a name: what the symbol of that name excludes, and the
-    /// assignments of JavaScript that a method replaces. Sorted.
-    pub members_in_no_table: Few<MemberDeclaration>,
+    pub member_symbol: Vec<SymbolId>,
+    /// `node.Symbol`, of a parameter property and of a member of an object literal that has symbols.
+    pub property_symbol: FxHashMap<Decl, SymbolId>,
     pub member_owner: Vec<MemberOwner>,
     /// The scope the type, the function and the initializer of a member are written in.
     pub member_scope: Vec<ScopeId>,
@@ -882,129 +814,28 @@ pub const UNREACHABLE: FlowId = FlowId(0);
 impl Bound {
     /// `symbol.Declarations` of the symbol of `p`, a member of an object literal or a JSX attribute.
     pub fn declarations_of_literal_member(&self, p: PropId) -> SmallVec<[PropId; 2]> {
-        self.declarations_of_member(&MemberDeclaration::Property(p))
-            .iter()
+        let Some(symbol) = self.property_symbol.get(&Decl::Property(p)) else {
+            return smallvec::smallvec![p];
+        };
+        let declarations = self.symbols[symbol.idx()].decls.iter();
+        declarations
             .filter_map(|declaration| match *declaration {
-                MemberDeclaration::Property(p) => Some(p),
+                Decl::Property(p) => Some(p),
                 _ => None,
             })
             .collect()
     }
 
-    /// `symbol.Declarations` of `declaration.Symbol`, in this file. None: a `this.name = value` that declares nothing, because a
-    /// member of the class declares `name`.
-    pub fn declarations_of_member<'a>(
-        &'a self,
-        declaration: &'a MemberDeclaration,
-    ) -> &'a [MemberDeclaration] {
-        match self.member_symbol.get(declaration) {
-            Some(&(start, len)) => &self.member_declarations[start as usize..][..len as usize],
-            None => std::slice::from_ref(declaration),
-        }
-    }
-
-    /// Whether `declaration`, which has a name, has a symbol that is not the one its container has under that name.
-    pub fn is_member_in_no_table(&self, declaration: MemberDeclaration) -> bool {
-        self.members_in_no_table.binary_search(&declaration).is_ok()
-    }
-
-    /// What is declared in the tables of a class, an interface or a type literal while its declaration `owner` is bound, in that
-    /// order. `HasDynamicName`: a computed name is in no table (`bindAnonymousDeclaration`). Call, construct and index signatures
-    /// and constructors exclude nothing and nothing excludes them.
-    pub fn for_each_declared_member(
-        &self,
-        f: &File,
-        owner: MemberOwner,
-        mut declare: impl FnMut(DeclaredMember),
-    ) {
-        use member_flags::*;
-        let (type_params, members, class) = match owner {
-            MemberOwner::Class(class) => (f[class].type_params, f[class].members, Some(class)),
-            MemberOwner::Interface(interface) => {
-                (f[interface].type_params, f[interface].members, None)
-            }
-            MemberOwner::TypeLiteral(node) => match f[node].kind {
-                TypeNodeKind::Object(members) => (Span::EMPTY, members, None),
-                _ => return,
-            },
-            MemberOwner::None => return,
+    /// Whether `m`, which has a name, has a symbol that is not the one its container has under that name.
+    pub fn is_member_in_no_table(&self, m: MemberId) -> bool {
+        let Some(symbol) = self.symbols.get(self.member_symbol[m.idx()].idx()) else {
+            return false;
         };
-        let key = |name: Atom, is_static: bool| MemberKey {
-            name,
-            is_private: false,
-            is_static,
-        };
-        // `bindClassLikeDeclaration`
-        if class.is_some() {
-            declare((key(known::prototype, true), None, PROPERTY, 0));
-        }
-        // `bindTypeParameter`. `SymbolFlagsTypeParameterExcludes` has nothing a member is.
-        for parameter in type_params.iter() {
-            let declaration = MemberDeclaration::TypeParameter(parameter);
-            declare((
-                key(f[parameter].name, false),
-                Some(declaration),
-                TYPE_PARAMETER,
-                0,
-            ));
-        }
-        // `bindThisPropertyAssignment`: where each is written.
-        let mut assignments: SmallVec<[(u32, bool, Atom, ExprId); 8]> = SmallVec::new();
-        if let Some(class) = class
-            && !self.this_properties.is_empty()
-        {
-            for is_static in [false, true] {
-                for &(_, _, name, e) in self.this_properties_of(class, is_static) {
-                    assignments.push((f[e].pos, is_static, name, e));
-                }
-            }
-            assignments.sort_unstable_by_key(|assignment| (assignment.0, assignment.3));
-        }
-        let mut assignments = assignments.into_iter().peekable();
-        let mut declare_assignments_before = |pos: u32, declare: &mut dyn FnMut(DeclaredMember)| {
-            while let Some((_, is_static, name, e)) = assignments.next_if(|next| next.0 < pos) {
-                let declaration = MemberDeclaration::Assignment(e);
-                let includes = PROPERTY | REPLACEABLE_BY_METHOD;
-                declare((key(name, is_static), Some(declaration), includes, 0));
-            }
-        };
-        for m in members.iter() {
-            let member = &f[m];
-            declare_assignments_before(member.name_pos, &mut declare);
-            // `bindParameter`
-            if member.kind == MemberKind::Constructor && class.is_some() && member.func.is_some() {
-                for parameter in f[member.func].params.iter() {
-                    if f[parameter].flags.contains(Flags::PARAMETER_PROPERTY)
-                        && let PatKind::Ident(name) = f[f[parameter].pat].kind
-                    {
-                        let declaration = MemberDeclaration::Parameter(parameter);
-                        declare((
-                            key(name, false),
-                            Some(declaration),
-                            PROPERTY,
-                            PROPERTY_EXCLUDES,
-                        ));
-                    }
-                }
-                continue;
-            }
-            let (name, is_private) = match member.key {
-                PropKey::Name(name) => (name, false),
-                PropKey::Private(name) => (name, true),
-                PropKey::Computed(_) | PropKey::None => continue,
-            };
-            let Some((includes, excludes)) = flags_of_member(member) else {
-                continue;
-            };
-            let key = MemberKey {
-                name,
-                is_private,
-                // `declareClassMember`: only a class has a static side.
-                is_static: class.is_some() && member.flags.contains(Flags::STATIC),
-            };
-            declare((key, Some(MemberDeclaration::Member(m)), includes, excludes));
-        }
-        declare_assignments_before(u32::MAX, &mut declare);
+        let container = &self.symbols[symbol.parent.idx()];
+        symbol.name != known::computed
+            && [container.members, container.exports]
+                .iter()
+                .all(|&table| self.lookup(table, symbol.name) != Some(self.member_symbol[m.idx()]))
     }
 
     /// `GetAssignmentTarget`: what gives `e` a value, if `e` is what it is given to or part of a pattern that is.
@@ -1279,7 +1110,14 @@ impl Bound {
             Decl::EnumMember(it) => self.enum_member_symbol[it.idx()],
             Decl::Module(it) => self.module_symbol[it.idx()],
             Decl::TypeParam(it) => self.type_param_symbol[it.idx()],
-            Decl::Expando(it) | Decl::ObjectLiteral(it) => self.expr_symbol[it.idx()],
+            Decl::Expando(it) | Decl::ObjectLiteral(it) | Decl::ThisProperty(it) => {
+                self.expr_symbol[it.idx()]
+            }
+            Decl::Member(it) => self.member_symbol[it.idx()],
+            Decl::ParameterProperty(_) | Decl::Property(_) => {
+                let symbol = self.property_symbol.get(&decl);
+                symbol.map_or(SymbolId::NONE, |&symbol| symbol)
+            }
             _ => SymbolId::NONE,
         }
     }
@@ -1331,7 +1169,12 @@ impl Bound {
             Decl::ModuleExports(_)
             | Decl::ExportsProperty(_)
             | Decl::Expando(_)
-            | Decl::ObjectLiteral(_) => ScopeId::NONE,
+            | Decl::ObjectLiteral(_)
+            | Decl::ThisProperty(_)
+            | Decl::Property(_) => ScopeId::NONE,
+            Decl::Member(it) => self.member_scope[it.idx()],
+            Decl::ParameterProperty(it) => self.fns[self.param_fn[it.idx()].idx()].scope,
+            Decl::TypeLiteral(it) => self.type_scope[it.idx()],
         }
     }
 
@@ -1390,6 +1233,10 @@ impl Bound {
     /// `NameResolver.Resolve`, the restrictions on the locals of a function and of a conditional type: whether one with `flags` is
     /// seen by a search for `meaning` that has just left a scope of kind `from`.
     pub fn is_seen_from(&self, from: ScopeKind, flags: SymFlags, meaning: SymFlags) -> bool {
+        // Of the members of a class or an interface the type parameters alone are in scope, as types: `class C<T> { T = 1 }`.
+        if flags.contains(SymFlags::TYPE_PARAMETER) && !meaning.intersects(SymFlags::TYPE) {
+            return false;
+        }
         let f = match from {
             ScopeKind::TypeParamList(f) | ScopeKind::Param(f) | ScopeKind::ReturnType(f) => f,
             // The `infer`s of a conditional type are seen from its true branch alone.

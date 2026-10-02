@@ -243,10 +243,9 @@ impl<'p> Printer<'_, 'p> {
         // `requiresAddingImplicitUndefined`
         let requires_undefined = match node {
             SyntaxNode::Param(p) => {
-                let in_function = self
-                    .enclosing_declaration
-                    .is_some_and(|at| self.c.is_function_like_declaration(at));
-                self.c.iso_requires_implicit_undefined(file, p, in_function)
+                let enclosing_declaration = self.enclosing_declaration;
+                self.c
+                    .requires_adding_implicit_undefined(file, p, enclosing_declaration)
             }
             SyntaxNode::Member(m) => {
                 is_optional_reverse_mapped
@@ -920,16 +919,19 @@ impl<'p> Printer<'_, 'p> {
             Some(symbol) if self.c.is_symbol_accessible_at(symbol, meaning, false, at) => {
                 self.track_symbol(symbol, meaning);
                 let (starts_with_global_this, chain) =
-                    self.c.lookup_symbol_chain_at(symbol, is_typeof, true, at);
+                    self.c
+                        .lookup_symbol_chain_at(symbol, is_typeof, true, at, Vec::new());
                 (!starts_with_global_this).then(|| chain[0])
             }
             _ => None,
         };
         // Otherwise `getExternalModuleFileFromDeclaration`.
         let module = parent
-            .filter(|&parent| self.is_external_module(parent))
+            .filter(|&parent| self.c.is_external_module_symbol(parent))
             .unwrap_or(target);
-        let name = self.c.specifier_for_module_symbol_at(module, at);
+        let name = self
+            .c
+            .specifier_for_module_symbol(module, at.file, ResolutionMode::None);
         if name.contains("/node_modules/") {
             self.encountered_error = true;
             self.report(Report::LikelyUnsafeImportRequired(
@@ -1720,7 +1722,7 @@ impl<'p> Printer<'_, 'p> {
         };
         if self
             .c
-            .intended_type_of_jsdoc_reference(file, existing)
+            .get_intended_type_from_jsdoc_type_reference(file, existing)
             .is_some()
         {
             return false;

@@ -764,19 +764,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `isConstructorAccessible`: 2673, 2674
-    pub(super) fn why_constructor_not_accessible(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        sig: SigId,
-    ) -> Option<u32> {
-        self.inaccessible_constructor(file, e, sig)
-            .map(|(code, _)| code)
-    }
-
     /// The same, and the class that declares the constructor.
-    fn inaccessible_constructor(
+    pub(super) fn inaccessible_constructor(
         &mut self,
         file: FileId,
         e: ExprId,
@@ -808,10 +797,7 @@ impl Checker<'_> {
         let enclosing: Vec<Sym> = self
             .enclosing_classes(file, e)
             .into_iter()
-            .map(|c| {
-                self.files()
-                    .sym(file, self.bound(file).class_symbol[c.idx()])
-            })
+            .map(|c| self.class_sym(file, c))
             .collect();
         if enclosing.contains(&class) {
             return None;
@@ -1289,9 +1275,7 @@ impl Checker<'_> {
         if constructors.len() < 2 {
             return None;
         }
-        let implementation = constructors.iter().copied().find(|&f| {
-            !matches!(hir[f].body, FnBody::None) || hir[f].flags.contains(Flags::BODY_DROPPED)
-        })?;
+        let implementation = constructors.iter().copied().find(|&f| has_body(&hir[f]))?;
         // The mapper the construct signatures of the class have as they are declared.
         let statics = self.type_of_symbol(class);
         let mapper = self.signatures(statics, true).iter().find_map(|&sig| {
@@ -1872,15 +1856,7 @@ impl Checker<'_> {
             && matches!(node, CallLike::Call(c) if self.is_promise_resolve_arity_error(file, e, c))
         {
             // In JavaScript there is no type argument to put `void` in.
-            let path = self.files().module(file).path.as_str();
-            if [".js", ".jsx", ".mjs", ".cjs"]
-                .iter()
-                .any(|extension| path.ends_with(extension))
-            {
-                2810
-            } else {
-                2794
-            }
+            if self.hir(file).is_js { 2810 } else { 2794 }
         } else {
             2554
         };

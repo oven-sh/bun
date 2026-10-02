@@ -21,7 +21,7 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberDeclaration, MemberOwner, Parent, SymbolId};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
 use crate::resolve::ScriptTarget;
 use crate::util::{FxHashSet, group_by_key};
 use smallvec::SmallVec;
@@ -1920,12 +1920,12 @@ impl Checker<'_> {
                     continue;
                 }
                 // `GetDeclarationOfKind(symbol, KindSetAccessor)`
-                let declaration = MemberDeclaration::Member(getter);
+                let declaration = Decl::Member(getter);
                 let setter = self
                     .declarations_of_member(file, declaration)
                     .into_iter()
                     .find_map(|declaration| match declaration {
-                        (of, MemberDeclaration::Member(m))
+                        (of, Decl::Member(m))
                             if of == file && hir[m].kind == MemberKind::Setter =>
                         {
                             Some(m)
@@ -2318,7 +2318,7 @@ impl Checker<'_> {
             return;
         }
         // By symbol. The constructors are one.
-        let mut entries: Vec<(Option<(FileId, MemberDeclaration)>, Overload)> = Vec::new();
+        let mut entries: Vec<(Option<(FileId, Decl)>, Overload)> = Vec::new();
         for &(of, members, kind, id) in lists {
             let hir = self.hir(of);
             for m in members.iter() {
@@ -2329,7 +2329,7 @@ impl Checker<'_> {
                 let (symbol, checked, at) = if member.kind == MemberKind::Constructor {
                     (None, Flags::PRIVATE | Flags::PROTECTED, member.start)
                 } else {
-                    let declaration = MemberDeclaration::Member(m);
+                    let declaration = Decl::Member(m);
                     (
                         self.declarations_of_member(of, declaration)
                             .first()
@@ -2356,7 +2356,7 @@ impl Checker<'_> {
                 entries.push((symbol, overload));
             }
         }
-        entries.sort_by_key(|e| e.0);
+        group_by_key(&mut entries, |e| e.0);
         let mut group = Vec::new();
         let mut start = 0;
         while start < entries.len() {

@@ -1,153 +1,64 @@
 //! The members whose names the checker works out: `getResolvedMembersOrExportsOfSymbol`, `lateBindMember`, `getLateBoundSymbol`.
-//! The binder has the symbols of the members it can name (`Files::declarations_of_member`).
 
 use super::*;
-use crate::bind::{
-    Decl, DeclaredMember, FnOwner, MemberDeclaration, MemberOwner, ScopeKind, flags_of_member,
-    flags_of_property, for_each_declared_property, member_flags,
-};
+use crate::bind::{Decl, flags_of_member, flags_of_property};
+use crate::program::get_excluded_symbol_flags;
 
-/// What has `symbol.Members`.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub(super) enum MemberContainer {
-    /// A class or an interface.
-    Symbol(Sym),
-    TypeLiteral(FileId, TypeNodeId),
-    ObjectLiteral(FileId, ExprId),
+/// What `lateBindMember` and `combineSymbolTables` report.
+pub(super) enum LateBoundConflict {
+    /// `lateBindMember`: the name, the declarations of the symbols that have it, early and late, and the one they refuse.
+    Refused(Atom, Vec<(FileId, Decl)>, (FileId, Decl)),
+    /// `reportMergeSymbolError`: the declarations of the early bound symbol, and those of the late bound one.
+    NotMerged(Vec<(FileId, Decl)>, Vec<(FileId, Decl)>),
 }
 
 /// The symbols with `CheckFlagsLate` of one side of a container, after `combineSymbolTables`.
 pub(super) struct LateBoundSymbols {
     /// `symbol.Declarations` of each: those of the early bound symbol of that name come first, if the two go together.
-    declarations: Vec<Vec<(FileId, MemberDeclaration)>>,
+    declarations: Vec<Vec<(FileId, Decl)>>,
     /// Which of them a declaration is a declaration of.
-    symbol_of: FxHashMap<(FileId, MemberDeclaration), u32>,
+    symbol_of: FxHashMap<(FileId, Decl), u32>,
+    pub(super) conflicts: Vec<LateBoundConflict>,
 }
 
 /// `None`: no name is worked out there.
 pub(super) type LateBoundMembers = Option<Arc<LateBoundSymbols>>;
 
 impl<'p> Checker<'p> {
-    /// `getLateBoundSymbol(getMergedSymbol(declaration.Symbol)).Declarations`
+    /// `getSymbolOfDeclaration(declaration).Declarations`
     pub(super) fn declarations_of_member(
         &mut self,
         file: FileId,
-        declaration: MemberDeclaration,
-    ) -> List<'p, (FileId, MemberDeclaration)> {
-        let late = self
-            .container_of_member(file, declaration)
-            .and_then(|(container, is_static)| self.late_bound_members(container, is_static));
-        match late
-            .as_ref()
-            .and_then(|late| Some((late, *late.symbol_of.get(&(file, declaration))?)))
-        {
-            Some((late, symbol)) => List::Own(late.declarations[symbol as usize].clone()),
-            None => self.files().declarations_of_member(file, declaration),
-        }
-    }
-
-    /// `declaration.Symbol.Parent`, and whether `declaration` is in its `Exports`.
-    fn container_of_member(
-        &self,
-        file: FileId,
-        declaration: MemberDeclaration,
-    ) -> Option<(MemberContainer, bool)> {
+        declaration: Decl,
+    ) -> List<'p, (FileId, Decl)> {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        let class = |class: ClassId| files.sym(file, bound.class_symbol[class.idx()]);
-        let interface = |it: InterfaceId| files.sym(file, bound.interface_symbol[it.idx()]);
-        let of_member = |member: MemberId| {
-            Some(match bound.member_owner[member.idx()] {
-                MemberOwner::Class(it) => MemberContainer::Symbol(class(it)),
-                MemberOwner::Interface(it) => MemberContainer::Symbol(interface(it)),
-                MemberOwner::TypeLiteral(node) => MemberContainer::TypeLiteral(file, node),
-                MemberOwner::None => return None,
-            })
-        };
-        Some(match declaration {
-            MemberDeclaration::Member(member) => (
-                of_member(member)?,
-                hir[member].flags.contains(Flags::STATIC),
-            ),
-            MemberDeclaration::Parameter(parameter) => {
-                match bound.fns[bound.param_fn[parameter.idx()].idx()].owner {
-                    FnOwner::Member(constructor) => (of_member(constructor)?, false),
-                    _ => return None,
-                }
-            }
-            MemberDeclaration::TypeParameter(parameter) => {
-                let scope = bound.type_param_scope[parameter.idx()];
-                match bound.scopes.get(scope.idx())?.kind {
-                    ScopeKind::Class(it) => (MemberContainer::Symbol(class(it)), false),
-                    ScopeKind::Interface(it) => (MemberContainer::Symbol(interface(it)), false),
-                    _ => return None,
-                }
-            }
-            MemberDeclaration::Assignment(assignment) => {
-                let (it, is_static, _) = bound.this_property(hir, assignment)?;
-                (MemberContainer::Symbol(class(it)), is_static)
-            }
-            MemberDeclaration::Property(property) => {
-                let owner = bound.prop_owner[property.idx()];
-                if owner.is_none() || !matches!(hir[owner].kind, ExprKind::Object(_)) {
-                    return None;
-                }
-                (MemberContainer::ObjectLiteral(file, owner), false)
-            }
-        })
-    }
-
-    /// `getMembersOfDeclaration`, of each declaration of `container`: the file, and the members or the properties.
-    fn members_of_container(
-        &self,
-        container: MemberContainer,
-    ) -> Vec<(FileId, Result<MemberOwner, Span<PropId>>)> {
-        let symbol = match container {
-            MemberContainer::Symbol(symbol) => symbol,
-            MemberContainer::TypeLiteral(file, node) => {
-                return vec![(file, Ok(MemberOwner::TypeLiteral(node)))];
-            }
-            MemberContainer::ObjectLiteral(file, e) => match self.hir(file)[e].kind {
-                ExprKind::Object(props) => return vec![(file, Err(props))],
-                _ => return Vec::new(),
-            },
-        };
-        let files = self.files();
-        let mut all = Vec::new();
-        for part in files.parts(symbol).iter() {
-            let bound = self.bound(part.file);
-            for &decl in &bound.symbols[part.id.idx()].decls {
-                match decl {
-                    Decl::Class(it) if bound.class_symbol[it.idx()] == part.id => {
-                        all.push((part.file, Ok(MemberOwner::Class(it))));
-                    }
-                    Decl::Interface(it) if bound.interface_symbol[it.idx()] == part.id => {
-                        all.push((part.file, Ok(MemberOwner::Interface(it))));
-                    }
-                    _ => {}
-                }
-            }
+        let symbol = bound.symbol_of_declaration(declaration);
+        if symbol.is_none() {
+            return match declaration {
+                // "A symbol already exists, so don't add this as a declaration."
+                Decl::ThisProperty(_) => List::default(),
+                _ => List::One((file, declaration)),
+            };
         }
-        all
-    }
-
-    /// `getDeclarationName`, of the name `[e]` where `IsSignedNumericLiteral(e)`: `TokenToString(operator) + operand.Text()`.
-    fn declaration_name_of_signed_numeric_literal(&self, file: FileId, e: ExprId) -> Option<Atom> {
-        let hir = self.hir(file);
-        let ExprKind::Unary { op, operand } = hir[e].kind else {
-            return None;
+        let parent = bound.symbols[symbol.idx()].parent;
+        let is_static = match declaration {
+            Decl::Member(member) => hir[member].flags.contains(Flags::STATIC),
+            Decl::ThisProperty(e) => bound.this_property(hir, e).is_some_and(|it| it.1),
+            _ => false,
         };
-        let ExprKind::Number(number) = hir[operand].kind else {
-            return None;
-        };
-        let sign = if op == UnOp::Plus { '+' } else { '-' };
-        let text = crate::atom::number_to_string(hir.numbers[number as usize]);
-        Some(self.files().atoms.intern_str(&format!("{sign}{text}")))
+        if parent.is_some()
+            && let Some(late) = self.late_bound_members(files.sym(file, parent), is_static)
+            && let Some(&symbol) = late.symbol_of.get(&(file, declaration))
+        {
+            return List::Own(late.declarations[symbol as usize].clone());
+        }
+        files.decls_of(files.sym(file, symbol))
     }
 
     /// `getResolvedMembersOrExportsOfSymbol`, as far as it adds to what the binder has.
-    fn late_bound_members(
+    pub(super) fn late_bound_members(
         &mut self,
-        container: MemberContainer,
+        container: Sym,
         is_static: bool,
     ) -> LateBoundMembers {
         if let Some(known) = self.late_bound_members.get(&(container, is_static)) {
@@ -156,100 +67,98 @@ impl<'p> Checker<'p> {
         // "In the event we recursively resolve the members/exports of the symbol, we set the initial value of
         // resolvedMembers/resolvedExports to the early-bound members/exports of the symbol."
         self.late_bound_members.insert((container, is_static), None);
-        let lists = self.members_of_container(container);
-        // Those with a computed name, each with `symbol.Flags`.
-        let mut computed: Vec<(FileId, MemberDeclaration, PropKey, u8)> = Vec::new();
-        for &(file, list) in &lists {
+        let files = self.files();
+        // `getMembersOfDeclaration`: those with a dynamic name, each with `decl.Symbol().Flags`.
+        let mut computed: Vec<(FileId, Decl, PropKey, SymFlags)> = Vec::new();
+        for &(file, decl) in files.decls_of(container).iter() {
             let hir = self.hir(file);
-            let members = match list {
-                Ok(MemberOwner::Class(it)) => hir[it].members,
-                Ok(MemberOwner::Interface(it)) => hir[it].members,
-                Ok(MemberOwner::TypeLiteral(node)) => match hir[node].kind {
+            let is_dynamic =
+                |key: PropKey| matches!(key, PropKey::Computed(e) if is_dynamic_name(hir, e));
+            let members = match decl {
+                Decl::Class(it) => hir[it].members,
+                Decl::Interface(it) => hir[it].members,
+                Decl::TypeLiteral(node) => match hir[node].kind {
                     TypeNodeKind::Object(members) => members,
                     _ => continue,
                 },
-                Ok(MemberOwner::None) => continue,
-                Err(props) => {
-                    for p in props.iter() {
-                        if let (PropKey::Computed(_), Some(flags)) =
-                            (hir[p].key, flags_of_property(hir[p].kind))
-                        {
-                            computed.push((
-                                file,
-                                MemberDeclaration::Property(p),
-                                hir[p].key,
-                                flags.0,
-                            ));
+                Decl::ObjectLiteral(e) => {
+                    let ExprKind::Object(props) = hir[e].kind else {
+                        continue;
+                    };
+                    for p in props.iter().filter(|&p| is_dynamic(hir[p].key)) {
+                        if let Some(flags) = flags_of_property(hir[p].kind) {
+                            computed.push((file, Decl::Property(p), hir[p].key, flags.0));
                         }
                     }
                     continue;
                 }
+                _ => continue,
             };
-            for m in members.iter() {
-                if let (PropKey::Computed(_), Some(flags)) = (hir[m].key, flags_of_member(&hir[m]))
+            for m in members.iter().filter(|&m| is_dynamic(hir[m].key)) {
+                if let Some(flags) = flags_of_member(&hir[m])
                     && hir[m].flags.contains(Flags::STATIC) == is_static
                 {
-                    computed.push((file, MemberDeclaration::Member(m), hir[m].key, flags.0));
+                    computed.push((file, Decl::Member(m), hir[m].key, flags.0));
                 }
             }
         }
+        let early_symbol = |name: Atom| match is_static {
+            true => files.export(container, name),
+            false => files.member(container, name),
+        };
         // `lateBindMember`. `symbol.Flags` and `symbol.Declarations`, and which symbol `lateSymbols` has under a name.
-        let mut late: Vec<(u8, Vec<(FileId, MemberDeclaration)>)> = Vec::new();
-        let mut late_symbols: FxHashMap<Atom, usize> = FxHashMap::default();
+        let mut late: Vec<(SymFlags, Vec<(FileId, Decl)>)> = Vec::new();
+        let mut late_symbols: Vec<(Atom, usize)> = Vec::new();
+        let mut conflicts = Vec::new();
         for (file, declaration, key, flags) in computed {
-            // `hasLateBindableName`. A literal is named by the binder, which keeps the sign: `[+1]` declares `+1` and is the property `1`.
-            let name = match key {
-                PropKey::Computed(e) if is_signed_numeric_literal(self.hir(file), e) => {
-                    self.declaration_name_of_signed_numeric_literal(file, e)
-                }
-                _ => self.declared_member_name(file, key),
-            };
-            let Some(name) = name else {
+            // `hasLateBindableName`
+            let Some(name) = self.declared_member_name(file, key) else {
                 continue;
             };
-            let mut index = *late_symbols.entry(name).or_insert(late.len());
+            let mut index = match late_symbols.iter().find(|it| it.0 == name) {
+                Some(it) => it.1,
+                None => {
+                    late_symbols.push((name, late.len()));
+                    late.len()
+                }
+            };
             if let Some(there) = late.get_mut(index)
-                && there.0 & member_flags::excluded(flags) != 0
+                && there.0.intersects(get_excluded_symbol_flags(flags))
             {
-                const ACCESSOR: u8 = member_flags::ACCESSOR;
-                if there.0 & ACCESSOR != 0 && there.0 & ACCESSOR != flags & ACCESSOR {
-                    there.0 |= ACCESSOR;
+                // "If we have an existing early-bound member, combine its declarations so that we can report an error at each
+                // declaration."
+                let mut declarations = early_symbol(name).map_or(Vec::new(), |it| files.decls(it));
+                declarations.extend_from_slice(&there.1);
+                conflicts.push(LateBoundConflict::Refused(
+                    name,
+                    declarations,
+                    (file, declaration),
+                ));
+                let accessor = SymFlags::ACCESSOR;
+                if there.0.intersects(accessor) && there.0 & accessor != flags & accessor {
+                    there.0 |= accessor;
                 }
                 index = late.len();
             }
             if index == late.len() {
-                late.push((0, Vec::new()));
+                late.push((SymFlags::empty(), Vec::new()));
             }
             late[index].0 |= flags;
             late[index].1.push((file, declaration));
         }
-        // `combineSymbolTables`: `symbol.Flags` of the early bound symbol of each of those names, and a declaration of it.
-        let mut early: Vec<(u8, Option<(FileId, MemberDeclaration)>)> = vec![(0, None); late.len()];
-        for &(file, list) in late.first().map_or(&[][..], |_| &lists[..]) {
-            let (hir, bound) = (self.hir(file), self.bound(file));
-            let note = |(key, declaration, includes, _): DeclaredMember| {
-                if let Some(declaration) = declaration
-                    && key.is_static == is_static
-                    && !key.is_private
-                    && let Some(&index) = late_symbols.get(&key.name)
-                    && !bound.is_member_in_no_table(declaration)
-                    && !bound.declarations_of_member(&declaration).is_empty()
-                {
-                    early[index].0 |= includes;
-                    early[index].1.get_or_insert((file, declaration));
-                }
+        // `combineSymbolTables`
+        for (name, index) in late_symbols {
+            let Some(early) = early_symbol(name) else {
+                continue;
             };
-            match list {
-                Ok(owner) => bound.for_each_declared_member(hir, owner, note),
-                Err(props) => for_each_declared_property(hir, props, note),
-            }
-        }
-        for (symbol, (flags, declaration)) in late.iter_mut().zip(early) {
-            if let Some((file, declaration)) = declaration
-                && flags & member_flags::excluded(symbol.0) == 0
+            let (target, source) = (files.flags(early), late[index].0);
+            if target.intersects(get_excluded_symbol_flags(source))
+                && !(source | target).contains(SymFlags::ASSIGNMENT)
             {
-                let early = self.files().declarations_of_member(file, declaration);
-                symbol.1.splice(0..0, early.iter().copied());
+                let (early, late) = (files.decls(early), late[index].1.clone());
+                conflicts.push(LateBoundConflict::NotMerged(early, late));
+            } else {
+                late[index].1.splice(0..0, files.decls(early));
             }
         }
         let late: LateBoundMembers = (!late.is_empty()).then(|| {
@@ -264,6 +173,7 @@ impl<'p> Checker<'p> {
             Arc::new(LateBoundSymbols {
                 declarations,
                 symbol_of,
+                conflicts,
             })
         });
         self.late_bound_members

@@ -515,9 +515,8 @@ impl<'p> Checker<'p> {
     fn type_param_has_one_declaration(&self, file: FileId, tp: TypeParamId) -> bool {
         let bound = self.bound(file);
         let symbol = bound.type_param_symbol[tp.idx()];
-        let declaration = crate::bind::MemberDeclaration::TypeParameter(tp);
-        (symbol.is_none() || bound.symbols[symbol.idx()].decls.len() == 1)
-            && self.files().declarations_of_member(file, declaration).len() == 1
+        let files = self.files();
+        symbol.is_none() || files.decls_of(files.sym(file, symbol)).len() == 1
     }
 
     fn type_param_names_in_scope(&mut self, file: FileId, scope: ScopeId) -> SmallVec<[Atom; 8]> {
@@ -1296,7 +1295,7 @@ impl<'p> Checker<'p> {
             if self.bound(file).infer_positions.is_empty() {
                 return None;
             }
-            return self.inferred_type_param_constraint(param, file, tp);
+            return self.inferred_type_param_constraint(param, file, tp, false);
         }
         let mut constraint = self.type_from_node(of, node);
         // To extend `any` is to extend nothing in particular. What a mapped type ranges over are keys all the same.
@@ -1467,11 +1466,12 @@ impl<'p> Checker<'p> {
 
     /// `getInferredTypeParameterConstraint`: what follows for `infer T` from where it is written.
     #[inline(never)]
-    fn inferred_type_param_constraint(
+    pub(super) fn inferred_type_param_constraint(
         &mut self,
         param: TypeId,
         file: FileId,
         tp: TypeParamId,
+        omit_type_references: bool,
     ) -> Option<TypeId> {
         use crate::bind::InferPosition;
         let bound = self.bound(file);
@@ -1493,17 +1493,19 @@ impl<'p> Checker<'p> {
         {
             return None;
         }
-        if let Some(known) = self.p.inferred_constraints.get(&param) {
-            return known;
-        }
-        if !self.enter(Query::InferredConstraint(param)) {
-            return None;
+        if !omit_type_references {
+            if let Some(known) = self.p.inferred_constraints.get(&param) {
+                return known;
+            }
+            if !self.enter(Query::InferredConstraint(param)) {
+                return None;
+            }
         }
         let mut inferences = Vec::new();
         for &decl in decls {
             let Decl::TypeParam(p) = decl else { continue };
             match position_of(p) {
-                Some(InferPosition::TypeArgument(node, index)) => {
+                Some(InferPosition::TypeArgument(node, index)) if !omit_type_references => {
                     let hir = self.hir(file);
                     let TypeNodeKind::Ref { name, args } = hir[node].kind else {
                         continue;
@@ -1563,10 +1565,10 @@ impl<'p> Checker<'p> {
                     let mapper = self.mapper_from(&[key], &[over]);
                     inferences.push(self.instantiate(template, mapper));
                 }
-                None => {}
+                Some(InferPosition::TypeArgument(..)) | None => {}
             }
         }
-        let holds = self.leave();
+        let holds = !omit_type_references && self.leave();
         let constraint = if inferences.is_empty() {
             None
         } else {
@@ -2251,32 +2253,6 @@ impl<'p> Checker<'p> {
         types
     }
 
-    /// `getIntendedTypeFromJSDocTypeReference`, of a name with type arguments, which `checkNoTypeArguments` objects to.
-    fn jsdoc_primitive_with_type_arguments(
-        &mut self,
-        file: FileId,
-        node: TypeNodeId,
-    ) -> Option<TypeId> {
-        let hir = self.hir(file);
-        let TypeNodeKind::Ref { name, args } = hir[node].kind else {
-            return None;
-        };
-        if args.is_empty() || name.len() != 1 || !hir.is_in_jsdoc(hir[node].pos) {
-            return None;
-        }
-        Some(match self.files().atoms.bytes(hir.id_at(name, 0)) {
-            b"String" => TypeId::STRING,
-            b"Number" => TypeId::NUMBER,
-            b"BigInt" => TypeId::BIGINT,
-            b"Boolean" => TypeId::BOOLEAN,
-            b"Void" => TypeId::VOID,
-            b"Undefined" => self.undefined_as_declared(),
-            b"Null" => self.null_as_declared(),
-            b"Function" | b"function" => self.global_ref(known::Function, &[]),
-            _ => return None,
-        })
-    }
-
     fn type_from_node_uncached(&mut self, file: FileId, node: TypeNodeId) -> TypeId {
         let hir = self.hir(file);
         let scope = self.bound(file).type_scope[node.idx()];
@@ -2644,7 +2620,8 @@ impl<'p> Checker<'p> {
                 self.written_type_reference(sym, &args)
             }
             TypeNodeKind::Ref { name, args } => {
-                if let Some(intended) = self.intended_type_of_jsdoc_reference(file, node) {
+                if let Some(intended) = self.get_intended_type_from_jsdoc_type_reference(file, node)
+                {
                     return intended;
                 }
                 let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
@@ -2653,13 +2630,6 @@ impl<'p> Checker<'p> {
                     let args = self.types_from_nodes(file, args);
                     return self.unresolved_name_type(&names, &args);
                 };
-                // `getIntendedTypeFromJSDocTypeReference`
-                if self.is_jsdoc_object_with_arguments(file, node) {
-                    let key = self.type_from_node(file, hir.id_at(args, 0));
-                    if !self.is_valid_index_key_type(key) {
-                        return TypeId::ANY;
-                    }
-                }
                 // `resolveEntityName`: an alias is followed as far as the first symbol that is a type.
                 let target = match self.combined_symbol_of_alias(found) {
                     Some(combined) => Some(combined),
@@ -2702,33 +2672,21 @@ impl<'p> Checker<'p> {
                     let params = self.local_type_params_of_symbol(sym);
                     args = self.fill_type_args_as(&params, &args, true);
                 }
-                let ty = if most != 0
-                    && !is_class_or_interface
-                    && flags.contains(SymFlags::TYPE_ALIAS)
-                    // `getIntendedTypeFromJSDocTypeReference` instantiates `Record` for `Object<K, V>` under no alias.
-                    && !self.is_jsdoc_object_with_arguments(file, node)
-                {
+                if most != 0 && !is_class_or_interface && flags.contains(SymFlags::TYPE_ALIAS) {
                     self.type_from_type_alias_reference(file, node, sym, &args)
                 } else {
                     self.written_type_reference(sym, &args)
-                };
-                ty
+                }
             }
         }
     }
 
-    /// `getIntendedTypeFromJSDocTypeReference`, of what the parser has not replaced already. The name is not looked up then.
-    pub(super) fn intended_type_of_jsdoc_reference(
+    /// `getIntendedTypeFromJSDocTypeReference`
+    pub(super) fn get_intended_type_from_jsdoc_type_reference(
         &mut self,
         file: FileId,
         node: TypeNodeId,
     ) -> Option<TypeId> {
-        if let Some(primitive) = self.jsdoc_primitive_with_type_arguments(file, node) {
-            return Some(primitive);
-        }
-        if self.p.files.options.no_implicit_any {
-            return None;
-        }
         let hir = self.hir(file);
         let TypeNodeKind::Ref { name, args } = hir[node].kind else {
             return None;
@@ -2736,12 +2694,42 @@ impl<'p> Checker<'p> {
         if name.len() != 1 || !hir.is_in_jsdoc(hir[node].pos) {
             return None;
         }
-        match self.files().atoms.bytes(hir.id_at(name, 0)) {
-            b"Object" => Some(TypeId::ANY),
-            b"array" if args.is_empty() => Some(self.array_of(TypeId::ANY)),
-            b"promise" if args.is_empty() => Some(self.promise_of(TypeId::ANY)),
-            _ => None,
+        let name = hir.id_at(name, 0);
+        let no_implicit_any = self.p.files.options.no_implicit_any;
+        let ty = match self.files().atoms.bytes(name) {
+            b"String" => TypeId::STRING,
+            b"Number" => TypeId::NUMBER,
+            b"BigInt" => TypeId::BIGINT,
+            b"Boolean" => TypeId::BOOLEAN,
+            b"Void" => TypeId::VOID,
+            b"Undefined" => self.undefined_as_declared(),
+            b"Null" => self.null_as_declared(),
+            b"Function" | b"function" => self.global_ref(known::Function, &[]),
+            b"array" if args.is_empty() && !no_implicit_any => {
+                return Some(self.array_of(TypeId::ANY));
+            }
+            b"promise" if args.is_empty() && !no_implicit_any => {
+                return Some(self.promise_of(TypeId::ANY));
+            }
+            b"Object" if args.len() == 2 => {
+                if let Some(record) = self.global_type_symbol(known::Record) {
+                    let key = self.type_from_node(file, hir.id_at(args, 0));
+                    if self.is_valid_index_key_type(key) {
+                        let value = self.type_from_node(file, hir.id_at(args, 1));
+                        return Some(self.written_type_reference(record, &[key, value]));
+                    }
+                }
+                return Some(TypeId::ANY);
+            }
+            b"Object" if !no_implicit_any => TypeId::ANY,
+            _ => return None,
+        };
+        // `checkNoTypeArguments`
+        if !args.is_empty() {
+            let at = (file, hir[node].pos, self.end_of_type_node(file, node));
+            self.error(at, 2315, &[Arg::Atom(name)]);
         }
+        Some(ty)
     }
 
     /// The first type alias declaration of `sym`.
@@ -2750,19 +2738,6 @@ impl<'p> Checker<'p> {
             Decl::Alias(alias) => Some((file, alias)),
             _ => None,
         })
-    }
-
-    /// Whether `node` is written `Object<K, V>` in a JSDoc comment. The parser makes `Record<K, V>` of it.
-    pub(super) fn is_jsdoc_object_with_arguments(&self, file: FileId, node: TypeNodeId) -> bool {
-        let hir = self.hir(file);
-        let pos = hir[node].pos;
-        matches!(hir[node].kind, TypeNodeKind::Ref { name, args }
-            if args.len() == 2 && name.len() == 1 && hir.id_at(name, 0) == known::Record)
-            && hir.is_in_jsdoc(pos)
-            && hir
-                .text
-                .get(pos as usize..)
-                .is_some_and(|text| text.starts_with(b"Object"))
     }
 
     /// `isLocalTypeAlias`: whether the type alias `sym` is declared inside a function.
@@ -3288,7 +3263,7 @@ impl<'p> Checker<'p> {
         let params = self.sig_params(sig);
         let hir = self.hir(file);
         if hir[hir[func].params.at(index)].flags.contains(Flags::REST) {
-            return Some(self.params_as_tuple(&params, index));
+            return Some(self.rest_type_at_position(&params, index, false));
         }
         Some(self.param_type_at(&params, index).unwrap_or(TypeId::ANY))
     }

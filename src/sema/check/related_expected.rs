@@ -1,28 +1,11 @@
 //! Where what is expected of a part of an expression comes from: the related information `elaborateError` adds to its errors.
 
-use super::errors::Diagnostic;
 use super::explain::Related;
 use super::related::Place;
 use super::*;
 use crate::bind::{Decl, FnOwner};
 
 impl Checker<'_> {
-    /// The end of `elaborateElement`, for who has noted the error. `said`: the error about the property or the element `name` of what
-    /// is held against `target`.
-    pub(super) fn relate_expected_property(
-        &mut self,
-        said: Option<Diagnostic>,
-        target: TypeId,
-        name: Atom,
-    ) {
-        let Some(said) = said else {
-            return;
-        };
-        self.relate(said.start, said.code, |c| {
-            c.expected_property(target, name).into_iter().collect()
-        });
-    }
-
     /// The end of `elaborateElement`: the related information of the error about the property or the element `name` of what is held
     /// against `target`.
     pub(super) fn expected_property(&mut self, target: TypeId, name: Atom) -> Option<Related> {

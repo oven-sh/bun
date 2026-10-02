@@ -171,6 +171,11 @@ known_atoms! {
     computed = "computed=",
     assignment_declaration = "assignment=",
     missing = "missing=",
+    constructor_declaration = "constructor=",
+    call_signature = "call=",
+    construct_signature = "new=",
+    index_signature = "index=",
+    type_literal = "type=",
 }
 
 /// What the name of a property that a symbol names starts with: `InternalSymbolNamePrefix` and `@`. No text has the byte 0xFE in

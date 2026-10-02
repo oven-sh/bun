@@ -1306,12 +1306,7 @@ impl Checker<'_> {
             _ => return,
         };
         // `GetRootDeclaration`: the variable or the parameter it is part of, which is where it is asked from.
-        let mut root = pattern;
-        while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) =
-            bound.pat_parent[root.idx()]
-        {
-            root = outer;
-        }
+        let root = root_pattern(bound, pattern);
         let around = match bound.pat_parent[root.idx()] {
             PatParent::Var(d) => Parent::VarInit(d),
             PatParent::Param(param) => Parent::ParamDefault(param),
@@ -1367,7 +1362,7 @@ impl Checker<'_> {
         }
         // `getTypeForBindingElementParent`
         let given = if is_implied && pattern == root {
-            self.type_implied_by_pattern(file, pattern)
+            self.implied_by_pattern(file, pattern, false)
                 .unwrap_or(TypeId::ANY)
         } else {
             self.type_for_binding_element_parent(file, first, pattern)
@@ -1614,7 +1609,7 @@ impl Checker<'_> {
         let at = self.place_of_token(file, start);
         let missing = self.declaration_name_at(file, start);
         // The static side and what is promised are asked for a `#x` by its text, which is the name of no property.
-        let is_private = self.files().atoms.bytes(name).first() == Some(&b'#');
+        let is_private = self.is_private_name(name);
         // `TypeFlagsPrimitive`: `boolean`, and an enum, which is the union of its members.
         let is_enum = match self
             .parts(containing)
@@ -1718,7 +1713,7 @@ impl Checker<'_> {
     /// It is what `containing` promises that has `name`: `await` was forgotten. `GetPromisedTypeOfPromise`
     fn is_property_of_what_is_promised(&mut self, containing: TypeId, name: Atom) -> bool {
         // It is asked for a `#x` by its text, which is the name of no property.
-        if self.files().atoms.bytes(name).first() == Some(&b'#') {
+        if self.is_private_name(name) {
             return false;
         }
         let promised = match self.is_global_ref(containing, known::Promise) {

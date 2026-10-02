@@ -70,20 +70,6 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `newFunctionType`
-    fn function_type(
-        &mut self,
-        this: Option<TypeId>,
-        params: &[(&[u8], TypeId)],
-        ret: TypeId,
-    ) -> TypeId {
-        let sig = self.synthetic_signature(this, params, ret);
-        self.synth(Shape {
-            call: vec![sig],
-            ..Shape::default()
-        })
-    }
-
     /// `getGlobalType` with `reportErrors`: that there is none is said, of no file.
     fn global_type(&mut self, name: &[u8], args: &[TypeId]) -> Option<TypeId> {
         let found = self
@@ -250,11 +236,18 @@ impl<'p> Checker<'p> {
                 let (target, result, context) = match hir[m].kind {
                     MemberKind::Method => (value, value, &b"ClassMethodDecoratorContext"[..]),
                     MemberKind::Getter => {
-                        let getter = self.function_type(None, &[], value);
+                        let getter = {
+                            let sig = self.synthetic_signature(None, &[], value);
+                            self.type_of_signature(sig, false)
+                        };
                         (getter, getter, &b"ClassGetterDecoratorContext"[..])
                     }
                     MemberKind::Setter => {
-                        let setter = self.function_type(None, &[(b"value", value)], TypeId::VOID);
+                        let setter = {
+                            let sig =
+                                self.synthetic_signature(None, &[(b"value", value)], TypeId::VOID);
+                            self.type_of_signature(sig, false)
+                        };
                         (setter, setter, &b"ClassSetterDecoratorContext"[..])
                     }
                     MemberKind::Property if is_accessor_field => (
@@ -265,7 +258,11 @@ impl<'p> Checker<'p> {
                     // `newClassFieldDecoratorInitializerMutatorType`
                     MemberKind::Property => (
                         TypeId::UNDEFINED,
-                        self.function_type(Some(this), &[(b"value", value)], value),
+                        {
+                            let sig =
+                                self.synthetic_signature(Some(this), &[(b"value", value)], value);
+                            self.type_of_signature(sig, false)
+                        },
                         &b"ClassFieldDecoratorContext"[..],
                     ),
                     _ => return None,
@@ -471,7 +468,7 @@ impl<'p> Checker<'p> {
             }
             if !hir.has_parse_diagnostics
                 && !written.is_parenthesized
-                && !self.is_decorator_member_or_call(file, e)
+                && self.invalid_syntax_in_decorator(file, e).is_some()
             {
                 out.push(Diagnostic {
                     start: written.start,
@@ -528,37 +525,6 @@ impl<'p> Checker<'p> {
                 }
                 ExprKind::Ident(_) => return found,
                 _ => return Some(whole),
-            }
-        }
-    }
-
-    /// `checkGrammarDecorator`: whether `e`, which is not in parentheses, is a name, `a.b.c`, or a call of either.
-    fn is_decorator_member_or_call(&self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
-        let (mut node, mut can_have_call) = (e, true);
-        loop {
-            // A parenthesized expression further in is not an identifier.
-            if node != e && is_parenthesized(hir, node) {
-                return false;
-            }
-            match hir[node].kind {
-                ExprKind::Instantiation { expr: inner, .. } | ExprKind::NonNull(inner) => {
-                    node = inner
-                }
-                ExprKind::Call(c) => {
-                    if !can_have_call || hir[c].chain == Chain::Start {
-                        return false;
-                    }
-                    (node, can_have_call) = (hir[c].callee, false);
-                }
-                ExprKind::Dot { obj, chain, .. } => {
-                    if chain == Chain::Start {
-                        return false;
-                    }
-                    (node, can_have_call) = (obj, false);
-                }
-                ExprKind::Ident(_) => return true,
-                _ => return false,
             }
         }
     }

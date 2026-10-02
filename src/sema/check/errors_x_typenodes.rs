@@ -316,17 +316,6 @@ fn is_variadic_element(hir: &hir::File, elem: &TupleElem) -> bool {
     tuple_element_flags(hir, elem) == ElemFlags::VARIADIC
 }
 
-/// A key that says which member is meant whatever the type parameters around it are.
-fn is_plain_key(hir: &hir::File, node: TypeNodeId) -> bool {
-    match hir[node].kind {
-        TypeNodeKind::StringLit(_)
-        | TypeNodeKind::NumberLit(_)
-        | TypeNodeKind::Keyword(Keyword::String | Keyword::Number) => true,
-        TypeNodeKind::Union(members) => hir.ids(members).all(|m| is_plain_key(hir, m)),
-        _ => false,
-    }
-}
-
 /// The arguments of the message `why_not_a_key_of` chose for `object[keys]`: of 4105 the name of the property, of 2536 both types.
 fn arguments_of_refused_key(
     c: &mut Checker<'_>,

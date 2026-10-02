@@ -12,7 +12,9 @@ use bun_sema::hir::Flags;
 
 use super::TypeSyntax;
 use crate::Error;
-use crate::lexer::{LexerSnapshot, T};
+use crate::lexer::{
+    LexerSnapshot, T, is_identifier_continue, is_identifier_start, peek_unicode_escape,
+};
 use crate::p::P;
 use crate::parse::lists::ListKind;
 
@@ -356,44 +358,13 @@ fn is_word_part(c: u8) -> bool {
     is_word_start(c) || c.is_ascii_digit()
 }
 
-/// `peekUnicodeEscape`: the code point that the `\uXXXX` or `\u{X}` at `at` stands for, and where the escape ends.
-fn unicode_escape(text: &[u8], at: usize) -> Option<(u32, usize)> {
-    if text.get(at) != Some(&b'\\') || text.get(at + 1) != Some(&b'u') {
-        return None;
-    }
-    let is_extended = text.get(at + 2) == Some(&b'{');
-    let start = at + 2 + usize::from(is_extended);
-    let (mut end, mut value) = (start, 0u32);
-    while let Some(digit) = text.get(end).and_then(|&c| (c as char).to_digit(16)) {
-        if !is_extended && end == start + 4 {
-            break;
-        }
-        value = value.saturating_mul(16).saturating_add(digit);
-        end += 1;
-    }
-    if is_extended {
-        return (end > start && value <= 0x10FFFF && text.get(end) == Some(&b'}'))
-            .then_some((value, end + 1));
-    }
-    (end == start + 4).then_some((value, end))
-}
-
-/// `IsIdentifierPart` if `is_part`, else `IsIdentifierStart`, of a code point.
-fn is_word_code_point(c: u32, is_part: bool) -> bool {
-    match u8::try_from(c) {
-        Ok(c) if is_part => is_word_part(c),
-        Ok(c) => is_word_start(c),
-        Err(_) => true,
-    }
-}
-
 /// `scanIdentifierParts`: where the identifier that goes on at `at` ends.
 fn end_of_word_parts(text: &[u8], mut at: usize) -> usize {
     loop {
         match text.get(at) {
             Some(&c) if is_word_part(c) => at += 1,
-            Some(b'\\') => match unicode_escape(text, at) {
-                Some((c, end)) if is_word_code_point(c, true) => at = end,
+            Some(b'\\') => match peek_unicode_escape(text, at) {
+                Some((c, len)) if is_identifier_continue(c) => at += len,
                 _ => return at,
             },
             _ => return at,
@@ -406,10 +377,15 @@ pub(crate) fn unescaped_name(text: &[u8]) -> Vec<u8> {
     let mut name = Vec::with_capacity(text.len());
     let mut at = 0;
     while let Some(&c) = text.get(at) {
-        match unicode_escape(text, at).and_then(|(c, end)| Some((char::from_u32(c)?, end))) {
-            Some((c, end)) => {
+        let escape = if c == b'\\' {
+            peek_unicode_escape(text, at)
+        } else {
+            None
+        };
+        match escape.and_then(|(c, len)| Some((char::from_u32(c as u32)?, len))) {
+            Some((c, len)) => {
                 name.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
-                at = end;
+                at += len;
             }
             None => {
                 name.push(c);
@@ -699,9 +675,9 @@ impl<'p, 'a> Reader<'p, 'a> {
             b'.' => Token::Dot,
             b'`' => Token::Backtick,
             b'(' | b')' | b'>' | b'#' => Token::Other,
-            b'\\' => match unicode_escape(text, pos) {
-                Some((c, after)) if is_word_code_point(c, false) => {
-                    end = end_of_word_parts(text, after);
+            b'\\' => match peek_unicode_escape(text, pos) {
+                Some((c, len)) if is_identifier_start(c) => {
+                    end = end_of_word_parts(text, pos + len);
                     Token::Word
                 }
                 _ => Token::Unknown,

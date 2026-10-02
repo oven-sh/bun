@@ -195,7 +195,7 @@ impl Checker<'_> {
                 let wanted = if matches!(s.kind, ScopeKind::Enum(_)) {
                     SymFlags::ENUM_MEMBER
                 } else {
-                    SymFlags::VALUE.difference(SymFlags::ENUM_MEMBER)
+                    SymFlags::VALUE.intersection(SymFlags::MODULE_MEMBER)
                 };
                 let Some(found) = files.export(files.sym(file, s.symbol), name) else {
                     continue;
@@ -482,6 +482,7 @@ impl Checker<'_> {
                 && !bound.symbols.iter().any(|s| {
                     s.name == name
                         && s.flags.intersects(SymFlags::VALUE | SymFlags::ALIAS)
+                        && !s.flags.intersects(SymFlags::CLASS_MEMBER)
                         && !s.flags.contains(SymFlags::TRANSIENT)
                 })
         };
@@ -607,10 +608,7 @@ fn step_out(c: &Checker<'_>, file: FileId, parent: Parent) -> Parent {
     match parent {
         Parent::EnumInit(member) => {
             let owner = bound.enum_member_owner[member.idx()];
-            let statement = (0..hir.stmts.len() as u32)
-                .map(StmtId)
-                .find(|&s| matches!(hir[s].kind, StmtKind::Enum(en) if en == owner));
-            Parent::Stmt(statement.unwrap_or(StmtId::NONE))
+            Parent::Stmt(hir[owner].stmt)
         }
         Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
         // The name of a method or an accessor is part of the function; that of a property is worked out where the class is.

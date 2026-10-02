@@ -2617,8 +2617,13 @@ impl<'p> Checker<'p> {
     /// The values a namespace merged with a function, a class or an enum exports.
     fn add_namespace_exports(&mut self, b: &mut Builder, sym: Sym) {
         for (name, export) in self.exports_in_order(sym) {
-            // What assignments alone declare is left to `add_expandos`.
-            let is_expando = |d: &(FileId, Decl)| matches!(d.1, Decl::Expando(_));
+            // What assignments alone declare is left to `add_expandos`, the static members to `add_members`.
+            let is_expando = |d: &(FileId, Decl)| {
+                matches!(
+                    d.1,
+                    Decl::Expando(_) | Decl::Member(_) | Decl::ThisProperty(_)
+                )
+            };
             if self.symbol_is_value(export)
                 && !b.has(name)
                 && !self.files().decls_of(export).iter().all(is_expando)
@@ -2643,10 +2648,7 @@ impl<'p> Checker<'p> {
         readonly: bool,
     ) -> Shape {
         let mut b = Builder::default();
-        let fixed = flags
-            .iter()
-            .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-            .unwrap_or(flags.len());
+        let fixed = Self::fixed_length(flags);
         for i in 0..fixed {
             let optional = flags[i].contains(ElemFlags::OPTIONAL);
             let ty = if optional {
@@ -4039,14 +4041,14 @@ impl<'p> Checker<'p> {
     /// `getTypeOfSymbol(member.Symbol)`, as far as this file declares it, if `member` is the first declaration of its symbol: that
     /// is what `member_types` keeps a type by. Of a later declaration, what that alone says.
     pub(super) fn type_of_member_declaration(&mut self, file: FileId, member: MemberId) -> TypeId {
-        use crate::bind::MemberDeclaration;
-        let declaration = MemberDeclaration::Member(member);
-        let all = self.bound(file).declarations_of_member(&declaration);
+        let (declaration, bound) = (Decl::Member(member), self.bound(file));
+        let symbol = bound.symbols.get(bound.member_symbol[member.idx()].idx());
+        let all = symbol.map_or(&[][..], |symbol| &symbol.decls[..]);
         if all.len() > 1 && all[0] == declaration {
             let members: SmallVec<[(FileId, MemberId); 4]> = all
                 .iter()
                 .filter_map(|of_symbol| match *of_symbol {
-                    MemberDeclaration::Member(m) => Some((file, m)),
+                    Decl::Member(m) => Some((file, m)),
                     _ => None,
                 })
                 .collect();
@@ -4131,11 +4133,14 @@ impl<'p> Checker<'p> {
             MemberKind::Property if !self.has_get_or_set_accessor(members) => {
                 // `reportErrors`: `getTypeOfSymbol` asks. Of a later declaration by itself it is
                 // `getWidenedTypeForVariableLikeDeclaration(node, false)`.
-                let value_declaration = (file, crate::bind::MemberDeclaration::Member(first));
+                let value_declaration = (file, crate::bind::Decl::Member(first));
                 let reports_errors = members.len() > 1
                     || self
                         .files()
-                        .declarations_of_member(file, value_declaration.1)
+                        .decls_of(self.files().sym(
+                            file,
+                            self.bound(file).symbol_of_declaration(value_declaration.1),
+                        ))
                         .first()
                         .is_none_or(|&it| it == value_declaration);
                 let value_declaration = UntypedProperty::Member(first);
@@ -5234,10 +5239,7 @@ impl<'p> Checker<'p> {
             return None;
         };
         let elems = self.type_arguments(apparent);
-        let fixed = flags
-            .iter()
-            .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-            .unwrap_or(flags.len());
+        let fixed = Self::fixed_length(flags);
         Some(if fixed < flags.len() {
             self.tuple_element_union(&elems[fixed..], &flags[fixed..])
         } else {

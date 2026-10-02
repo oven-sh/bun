@@ -1437,34 +1437,6 @@ impl<'a> Lexer<'a> {
         self.token = tables::keyword(self.identifier).unwrap_or(T::TIdentifier);
     }
 
-    /// `peekUnicodeEscape`: the code point the escape at `at`, a backslash, stands for, and how many bytes it takes.
-    #[cold]
-    fn peek_unicode_escape(&self, at: usize) -> Option<(CodePoint, usize)> {
-        let t = &self.contents[at..];
-        if t.get(1) != Some(&b'u') {
-            return None;
-        }
-        let value = |digits: &[u8]| {
-            digits.iter().fold(0u32, |v, &d| {
-                v.saturating_mul(16)
-                    .saturating_add(u32::from(hex_digit_value_u32(u32::from(d)).unwrap_or(0)))
-            })
-        };
-        if t.get(2) == Some(&b'{') {
-            let n = t[3..].iter().take_while(|c| c.is_ascii_hexdigit()).count();
-            if n == 0 || t.get(3 + n) != Some(&b'}') {
-                return None;
-            }
-            let v = value(&t[3..3 + n]);
-            (v <= 0x10FFFF).then_some((v as CodePoint, n + 4))
-        } else {
-            let d = t.get(2..6)?;
-            d.iter()
-                .all(u8::is_ascii_hexdigit)
-                .then(|| (value(d) as CodePoint, 6))
-        }
-    }
-
     /// A JSX name with `\u` escapes in it. TypeScript reads and decodes them (`ScanJsxIdentifier`, `scanIdentifierParts`)
     /// and then objects (`parseIdentifierNameErrorOnUnicodeEscapeSequence`). The name starts at `self.start`; the lexer
     /// is at a backslash. `false`: the backslash starts no escape that can stand here, and nothing was read.
@@ -1478,7 +1450,7 @@ impl<'a> Lexer<'a> {
         let mut has_escape = false;
         loop {
             if self.code_point == 0x5C {
-                let Some((c, len)) = self.peek_unicode_escape(self.end) else {
+                let Some((c, len)) = peek_unicode_escape(self.contents, self.end) else {
                     break;
                 };
                 let fits = if name.is_empty() {
@@ -1607,13 +1579,14 @@ impl<'a> Lexer<'a> {
                     // an identifier character by itself.
                     let is_first =
                         self.end == self.start + usize::from(kind == IdentifierKind::Private);
-                    let fits = self.peek_unicode_escape(self.end).is_some_and(|(c, _)| {
-                        if is_first {
-                            is_identifier_start(c)
-                        } else {
-                            is_identifier_continue(c)
-                        }
-                    });
+                    let fits =
+                        peek_unicode_escape(self.contents, self.end).is_some_and(|(c, _)| {
+                            if is_first {
+                                is_identifier_start(c)
+                            } else {
+                                is_identifier_continue(c)
+                            }
+                        });
                     if !fits && !is_first {
                         // The name ends here. The backslash is the next token.
                         break;
@@ -4644,6 +4617,34 @@ impl<'a> Lexer<'a> {
         // An identifier or keyword cannot immediately follow a numeric literal. It is the next token.
         self.ts_error(range(identifier_start, identifier_end), 1351);
         self.move_to(identifier_start);
+    }
+}
+
+/// `peekUnicodeEscape`: the code point the escape at `at`, a backslash, stands for, and how many bytes it takes.
+#[cold]
+pub(crate) fn peek_unicode_escape(contents: &[u8], at: usize) -> Option<(CodePoint, usize)> {
+    let t = &contents[at..];
+    if t.get(1) != Some(&b'u') {
+        return None;
+    }
+    let value = |digits: &[u8]| {
+        digits.iter().fold(0u32, |v, &d| {
+            v.saturating_mul(16)
+                .saturating_add(u32::from(hex_digit_value_u32(u32::from(d)).unwrap_or(0)))
+        })
+    };
+    if t.get(2) == Some(&b'{') {
+        let n = t[3..].iter().take_while(|c| c.is_ascii_hexdigit()).count();
+        if n == 0 || t.get(3 + n) != Some(&b'}') {
+            return None;
+        }
+        let v = value(&t[3..3 + n]);
+        (v <= 0x10FFFF).then_some((v as CodePoint, n + 4))
+    } else {
+        let d = t.get(2..6)?;
+        d.iter()
+            .all(u8::is_ascii_hexdigit)
+            .then(|| (value(d) as CodePoint, 6))
     }
 }
 

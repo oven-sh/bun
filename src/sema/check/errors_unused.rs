@@ -32,8 +32,6 @@ struct Unused<'a> {
     reads_unknown_members: bool,
     /// By scope: the function, class, interface, enum, alias or namespace declared whose scope it is.
     owner_of_scope: Vec<SymbolId>,
-    stmt_of_module: Vec<StmtId>,
-    stmt_of_enum: Vec<StmtId>,
     stmt_of_import: Vec<StmtId>,
     /// The scopes of ambient type aliases, and of the signatures and `infer` type parameters in the types of ambient variables and
     /// properties. Sorted. Filled only under `noUnusedParameters`.
@@ -104,8 +102,6 @@ impl Checker<'_> {
             read_parameter_properties: Vec::new(),
             reads_unknown_members: false,
             owner_of_scope: vec![SymbolId::NONE; bound.scopes.len()],
-            stmt_of_module: vec![StmtId::NONE; hir.modules.len()],
-            stmt_of_enum: vec![StmtId::NONE; hir.enums.len()],
             stmt_of_import: vec![StmtId::NONE; hir.imports.len()],
             ambient_type_scopes: Vec::new(),
             has_unchecked_returns: false,
@@ -116,8 +112,6 @@ impl Checker<'_> {
         };
         for (i, s) in hir.stmts.iter().enumerate() {
             match s.kind {
-                StmtKind::Module(m) => u.stmt_of_module[m.idx()] = StmtId(i as u32),
-                StmtKind::Enum(e) => u.stmt_of_enum[e.idx()] = StmtId(i as u32),
                 StmtKind::Import(id) => u.stmt_of_import[id.idx()] = StmtId(i as u32),
                 _ => {}
             }
@@ -1475,8 +1469,8 @@ impl Unused<'_> {
                     ClassOwner::Expr(x) => Parent::Expr(x),
                     ClassOwner::Stmt(s) => Parent::Stmt(s),
                 },
-                Around::Enum(e) => Parent::Stmt(self.stmt_of_enum[e.idx()]),
-                Around::Module(m) => Parent::Stmt(self.stmt_of_module[m.idx()]),
+                Around::Enum(e) => Parent::Stmt(self.hir[e].stmt),
+                Around::Module(m) => Parent::Stmt(self.hir[m].stmt),
                 Around::Return(s) => bound.stmt_parent[s.idx()],
             };
         }
@@ -1884,12 +1878,6 @@ impl Unused<'_> {
             return false;
         }
         let (hir, bound) = (self.hir, self.bound);
-        let find = |is_it: &dyn Fn(StmtKind) -> bool| {
-            hir.stmts
-                .iter()
-                .position(|s| is_it(s.kind))
-                .map_or(StmtId::NONE, |i| StmtId(i as u32))
-        };
         let stmt = match decl {
             Decl::Fn(f) => match bound.fns[f.idx()].owner {
                 FnOwner::Stmt(s) => s,
@@ -1899,17 +1887,11 @@ impl Unused<'_> {
                 ClassOwner::Stmt(s) => s,
                 ClassOwner::Expr(_) => StmtId::NONE,
             },
-            Decl::Enum(e) => self.stmt_of_enum[e.idx()],
-            Decl::Module(m) => self.stmt_of_module[m.idx()],
-            Decl::Interface(id) => {
-                find(&|kind: StmtKind| matches!(kind, StmtKind::Interface(other) if other == id))
-            }
-            Decl::Alias(id) => {
-                find(&|kind: StmtKind| matches!(kind, StmtKind::TypeAlias(other) if other == id))
-            }
-            Decl::ImportEquals(id) => {
-                find(&|kind: StmtKind| matches!(kind, StmtKind::ImportEquals(other) if other == id))
-            }
+            Decl::Enum(e) => hir[e].stmt,
+            Decl::Module(m) => hir[m].stmt,
+            Decl::Interface(id) => hir[id].stmt,
+            Decl::Alias(id) => hir[id].stmt,
+            Decl::ImportEquals(id) => hir[id].stmt,
             _ => StmtId::NONE,
         };
         stmt.is_some() && self.statement_has_syntax_error(stmt)

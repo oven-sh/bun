@@ -154,6 +154,7 @@ impl Checker<'_> {
             return self.checked(syntactic, None, Vec::new(), false);
         }
         self.checking = Some(file);
+        self.emit_resolver_links = Default::default();
         if self.p.files.options.emits_first {
             self.inline_const_enums(file);
         }
@@ -202,7 +203,6 @@ impl Checker<'_> {
         self.check_x_operators(file, &mut out);
         self.check_x_enums_names(file, &mut out);
         self.check_reflect_collisions(file, &mut out);
-        self.check_type_arguments_of_jsdoc_primitives(file, &mut out);
         self.check_external_emit_helpers(file, &mut out);
         // It takes back what has been said of decorators that are out of place.
         self.report_decorators(file, &mut out);
@@ -2072,7 +2072,7 @@ impl Checker<'_> {
             let start = hir.types[i].pos;
             // `getTypeFromTypeReference`: no symbol is looked for.
             if self
-                .intended_type_of_jsdoc_reference(file, TypeNodeId(i as u32))
+                .get_intended_type_from_jsdoc_type_reference(file, TypeNodeId(i as u32))
                 .is_some()
             {
                 continue;
@@ -2476,7 +2476,12 @@ impl Checker<'_> {
             let (sym, given) = match hir.types[i].kind {
                 TypeNodeKind::Ref { name, args } => {
                     let mut names = [Atom::NONE; 8];
-                    if name.len() > names.len() {
+                    let node = TypeNodeId(i as u32);
+                    if name.len() > names.len()
+                        || self
+                            .get_intended_type_from_jsdoc_type_reference(file, node)
+                            .is_some()
+                    {
                         continue;
                     }
                     for (slot, part) in names.iter_mut().zip(hir.ids(name)) {
@@ -2672,56 +2677,6 @@ impl Checker<'_> {
                     explain_type_argument_count(self, node.pos, end, 2315, sym);
                 }
             }
-        }
-    }
-
-    /// `getIntendedTypeFromJSDocTypeReference`: in a JSDoc comment `String`, `Void` and the like are primitive types, whatever is declared
-    /// by those names. `checkNoTypeArguments`: 2315, in the place of what was said of the name.
-    fn check_type_arguments_of_jsdoc_primitives(
-        &mut self,
-        file: FileId,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if hir.jsdoc_comments.is_empty() {
-            return;
-        }
-        for (i, node) in hir.types.iter().enumerate() {
-            let TypeNodeKind::Ref { name, args } = node.kind else {
-                continue;
-            };
-            if args.is_empty()
-                || name.len() != 1
-                || bound.is_unchecked_type(i)
-                || !hir.is_in_jsdoc(node.pos)
-            {
-                continue;
-            }
-            let name = hir.id_at(name, 0);
-            if !matches!(
-                self.files().atoms.bytes(name),
-                b"String"
-                    | b"Number"
-                    | b"BigInt"
-                    | b"Boolean"
-                    | b"Void"
-                    | b"Undefined"
-                    | b"Null"
-                    | b"Function"
-                    | b"function"
-            ) {
-                continue;
-            }
-            out.retain(|d| {
-                d.start != node.pos
-                    || !matches!(d.code, 2304 | 2314 | 2552 | 2583 | 2707 | 2709 | 2749)
-            });
-            out.push(Diagnostic {
-                start: node.pos,
-                code: 2315,
-            });
-            let end = self.end_of_type_node(file, TypeNodeId(i as u32));
-            self.explain_to(node.pos, end, 2315, |c| vec![c.atom_text(name)]);
         }
     }
 
@@ -5099,6 +5054,8 @@ impl Files {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match decl {
             Decl::EnumMember(member) => Some(hir[member].loc),
+            Decl::Member(member) => Some(hir[member].loc),
+            Decl::ParameterProperty(parameter) => Some(hir[parameter].loc),
             Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => {
                 match bound.pat_parent[pat.idx()] {
                     PatParent::Param(parameter) => Some(hir[parameter].loc),
@@ -5167,7 +5124,12 @@ impl Files {
             Decl::ModuleExports(e)
             | Decl::ExportsProperty(e)
             | Decl::Expando(e)
+            | Decl::ThisProperty(e)
             | Decl::ObjectLiteral(e) => start_inside_parentheses(hir, e),
+            Decl::Member(member) => hir[member].start,
+            Decl::ParameterProperty(parameter) => hir[parameter].pos,
+            Decl::Property(property) => hir[property].start,
+            Decl::TypeLiteral(node) => hir[node].pos,
             Decl::File | Decl::CommonJsVariable => 0,
         }
     }

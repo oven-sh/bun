@@ -706,7 +706,7 @@ fn check_what_is_named(
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
     let files = Files::load(host, project.options, &project.files);
-    let program = Program::new(files);
+    let program = Program::new(std::sync::Arc::new(files));
     report.files_loaded = program.files.modules.len();
     report.load_time = started.elapsed();
     let after = host.times();

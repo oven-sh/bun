@@ -82,6 +82,7 @@ use crate::table::{Bases, ById, ByIdKept, ByKey, ByNode, ByNodeKept, IdSet, Node
 use crate::types::Prop;
 use crate::types::*;
 use crate::util::{FxHashMap, List};
+use errors_modules::{root_declaration, root_pattern};
 use errors_x_regexp_scanner::{get_spelling_suggestion, spelling_suggestion};
 use errors_x_typenodes::array_element_type_node;
 use errors_x_typenodes::has_parse_diagnostics;
@@ -159,7 +160,7 @@ pub struct Program {
     pub has_unresolved_names: std::sync::atomic::AtomicBool,
     /// Whether anything asked has come back to itself. Nothing else depends on the order things are asked in.
     pub closed_a_circle: AtomicBool,
-    pub files: Files,
+    pub files: Arc<Files>,
     pub types: TypeStore,
 
     expr_types: Slots,
@@ -298,7 +299,7 @@ impl Program {
         ty.is_any() || self.is_unresolved_name(ty)
     }
 
-    pub fn new(files: Files) -> Program {
+    pub fn new(files: Arc<Files>) -> Program {
         let bases = |len: fn(&crate::program::Module) -> usize| {
             Bases::new(files.modules.iter().map(|m| len(m)))
         };
@@ -440,6 +441,8 @@ impl Program {
         };
         let mut checker = Checker {
             p: self,
+            files: &self.files,
+            first_jsx: (None, None),
             auto_array_type: TypeId::NEVER,
             file_at_hand,
             exprs_at_hand,
@@ -511,7 +514,7 @@ impl Program {
             held_for_now: FxHashMap::default(),
             trials: FxHashMap::default(),
             enclosing_module_specifier_mode: None,
-            symbol_chain_cache: Default::default(),
+            emit_resolver_links: Default::default(),
             explains: false,
             only_syntax: false,
             notes: Default::default(),
@@ -696,6 +699,9 @@ struct QueryFrame {
 
 pub struct Checker<'p> {
     pub p: &'p Program,
+    files: &'p Files,
+    /// The JSX node and the fragment of the file being checked that `checkExpression` came to first.
+    first_jsx: (Option<ExprId>, Option<ExprId>),
     /// `autoArrayType`
     auto_array_type: TypeId,
     stack: Vec<Query>,
@@ -710,8 +716,7 @@ pub struct Checker<'p> {
     /// stack was when that began.
     contextual_binding_patterns: Vec<(FileId, PatId, usize)>,
     /// `membersAndExportsLinks`, by container and side.
-    late_bound_members:
-        FxHashMap<(late_bound::MemberContainer, bool), late_bound::LateBoundMembers>,
+    late_bound_members: FxHashMap<(Sym, bool), late_bound::LateBoundMembers>,
     /// `nonExistentProperties`: property accesses whose 2339 message is being printed, with `stack.len()` when printing started.
     reporting_nonexistent: Vec<(FileId, ExprId, usize)>,
     /// How deep the stack was wherever something was asked that TypeScript would not have asked at that point, or not yet.
@@ -832,7 +837,7 @@ pub struct Checker<'p> {
     /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration(enclosingDeclaration)`, while the name of an import or an
     /// export is printed.
     enclosing_module_specifier_mode: Option<ResolutionMode>,
-    symbol_chain_cache: errors_declaration_emit::SymbolChainCache,
+    emit_resolver_links: errors_declaration_emit::EmitResolverLinks,
     /// What is noted of errors is kept: somebody is going to read it.
     explains: bool,
     /// `GetSyntacticDiagnostics`: only what the parser and the scanner say is reported.
@@ -964,12 +969,12 @@ impl<'p> Checker<'p> {
 
     #[inline]
     pub fn hir(&self, file: FileId) -> &'p hir::File {
-        self.p.files.hir(file)
+        self.files.hir(file)
     }
 
     #[inline]
     pub fn bound(&self, file: FileId) -> &'p Bound {
-        self.p.files.bound(file)
+        self.files.bound(file)
     }
 
     #[inline]
@@ -999,14 +1004,21 @@ impl<'p> Checker<'p> {
 
     #[inline(never)]
     fn intern_type_param(&self, file: FileId, tp: TypeParamId) -> TypeId {
-        use crate::bind::MemberDeclaration::TypeParameter;
+        use crate::bind::{Decl::TypeParam, ScopeKind};
         // `getDeclaredTypeOfTypeParameter(getSymbolOfDeclaration(tp))`: the declarations of a class or an interface declare their type
         // parameters in `symbol.Members`, so those of one name are one symbol and one type.
-        let declarations = self.files().declarations_of_member(file, TypeParameter(tp));
+        let (bound, files) = (self.bound(file), self.files());
+        let scope = bound.scopes.get(bound.type_param_scope[tp.idx()].idx());
+        let declarations = match scope.map(|scope| scope.kind) {
+            Some(ScopeKind::Class(_) | ScopeKind::Interface(_)) => {
+                files.decls_of(files.sym(file, bound.type_param_symbol[tp.idx()]))
+            }
+            _ => List::default(),
+        };
         let (of, first) = declarations
             .iter()
             .find_map(|&(of, declaration)| match declaration {
-                TypeParameter(first) => Some((of, first)),
+                TypeParam(first) => Some((of, first)),
                 _ => None,
             })
             .unwrap_or((file, tp));
@@ -1028,7 +1040,7 @@ impl<'p> Checker<'p> {
 
     #[inline]
     fn files(&self) -> &'p Files {
-        &self.p.files
+        self.files
     }
 
     /// `node.Parent` for each type node of `file`, as `getConditionalFlowTypeOfType` walks it. Empty for a file without a

@@ -7,9 +7,7 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{
-    Decl, FnOwner, MemberDeclaration, MemberOwner, Parent, PatParent, Symbol, SymbolId,
-};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, Symbol, SymbolId};
 use smallvec::SmallVec;
 
 type TypeParams = SmallVec<[TypeParamId; 8]>;
@@ -202,10 +200,10 @@ impl Checker<'_> {
                 if bound.member_owner[i] == MemberOwner::None {
                     SmallVec::new()
                 } else {
-                    self.declarations_of_member(file, MemberDeclaration::Member(member))
+                    self.declarations_of_member(file, Decl::Member(member))
                         .iter()
                         .filter_map(|&(of, declaration)| match declaration {
-                            MemberDeclaration::Member(m)
+                            Decl::Member(m)
                                 if matches!(
                                     self.hir(of)[m].kind,
                                     MemberKind::Property | MemberKind::Getter | MemberKind::Setter

@@ -20,7 +20,7 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{Decl, MemberDeclaration, MemberOwner, Parent, PatParent};
+use crate::bind::{Decl, MemberOwner, Parent, PatParent};
 use crate::resolve::{ModuleKind, ScriptTarget};
 
 // ───────────────────────────── the text ─────────────────────────────
@@ -1346,15 +1346,15 @@ impl Checker<'_> {
     fn check_modifiers_of_merged_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // What is compared, whether it is `IsVariableLike`, and where its name is.
-        let describe = |c: &Checker<'_>, (of, declaration): (FileId, MemberDeclaration)| {
+        let describe = |c: &Checker<'_>, (of, declaration): (FileId, Decl)| {
             let hir = c.hir(of);
             match declaration {
-                MemberDeclaration::Member(m) => Some((
+                Decl::Member(m) => Some((
                     compared_modifiers(hir[m].flags),
                     hir[m].kind == MemberKind::Property,
                     hir[m].name_pos,
                 )),
-                MemberDeclaration::Parameter(p) => {
+                Decl::ParameterProperty(p) => {
                     Some((compared_modifiers(hir[p].flags), true, hir[hir[p].pat].pos))
                 }
                 _ => None,
@@ -1366,11 +1366,11 @@ impl Checker<'_> {
                 hir[m].kind == MemberKind::Property
                     && bound.member_owner[m.idx()] != MemberOwner::None
             })
-            .map(MemberDeclaration::Member);
+            .map(Decl::Member);
         let parameter_properties = (0..hir.params.len() as u32)
             .map(ParamId)
             .filter(|&p| hir[p].flags.contains(Flags::PARAMETER_PROPERTY))
-            .map(MemberDeclaration::Parameter);
+            .map(Decl::ParameterProperty);
         for declaration in properties.chain(parameter_properties) {
             let declarations = self.declarations_of_member(file, declaration);
             if declarations.len() < 2 {
@@ -1517,11 +1517,7 @@ impl Checker<'_> {
     /// The statement that declares the enum `member` belongs to.
     fn xs_enum_statement(&self, file: FileId, member: EnumMemberId) -> Option<StmtId> {
         let owner = self.bound(file).enum_member_owner[member.idx()];
-        self.hir(file)
-            .stmts
-            .iter()
-            .position(|s| matches!(s.kind, StmtKind::Enum(e) if e == owner))
-            .map(|s| StmtId(s as u32))
+        Some(self.hir(file)[owner].stmt).filter(|s| s.is_some())
     }
 
     /// `GetContainingFunction`: the nearest function-like node around `e`. Static blocks and properties are not function-like.

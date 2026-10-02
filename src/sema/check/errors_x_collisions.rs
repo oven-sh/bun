@@ -8,14 +8,6 @@ use super::*;
 use crate::bind::{ClassOwner, Decl, MemberOwner, Parent, PatParent};
 use crate::resolve::ScriptTarget;
 
-/// The first statement `is_it` holds for.
-fn statement_where(hir: &hir::File, is_it: impl Fn(StmtKind) -> bool) -> Parent {
-    match hir.stmts.iter().position(|s| is_it(s.kind)) {
-        Some(s) => Parent::Stmt(StmtId(s as u32)),
-        None => Parent::None,
-    }
-}
-
 impl Checker<'_> {
     pub(super) fn check_x_collisions(&self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
@@ -117,13 +109,13 @@ impl Checker<'_> {
                     ),
                     Decl::Enum(e) => (
                         hir[e].flags.contains(Flags::AMBIENT),
-                        statement_where(hir, |kind| matches!(kind, StmtKind::Enum(x) if x == e)),
+                        Parent::Stmt(hir[e].stmt),
                         hir[e].name_pos,
                         self.end_of_token_at(file, hir[e].name_pos),
                     ),
                     Decl::Module(m) => (
                         hir[m].flags.contains(Flags::AMBIENT),
-                        statement_where(hir, |kind| matches!(kind, StmtKind::Module(x) if x == m)),
+                        Parent::Stmt(hir[m].stmt),
                         hir[m].name_pos,
                         self.end_of_token_at(file, hir[m].name_pos),
                     ),
@@ -191,11 +183,10 @@ impl Checker<'_> {
             below = parent;
             parent = match parent {
                 // The way out of a namespace is that of the statement that declares it.
-                Parent::Module(m) => hir
-                    .stmts
-                    .iter()
-                    .position(|s| matches!(s.kind, StmtKind::Module(x) if x == m))
-                    .map_or(Parent::None, |s| bound.stmt_parent[s]),
+                Parent::Module(m) => bound
+                    .stmt_parent
+                    .get(hir[m].stmt.idx())
+                    .map_or(Parent::None, |&parent| parent),
                 _ => self.outward(file, parent),
             };
         }

@@ -142,82 +142,18 @@ impl Checker<'_> {
             self.p.files.options.preserve_const_enums || self.p.files.options.isolated_modules;
         match hir[s].kind {
             // The binder gives a class, an enum or a namespace no flow node: only what it finds out by itself counts for them.
-            StmtKind::Class(_) => self.is_flagged_unreachable(file, flow),
+            StmtKind::Class(_) => flow == UNREACHABLE,
             StmtKind::Enum(e) => {
-                self.is_flagged_unreachable(file, flow)
+                flow == UNREACHABLE
                     && (!hir[e].flags.contains(Flags::CONST) || preserves_const_enums)
             }
             StmtKind::Module(m) => {
-                self.is_flagged_unreachable(file, flow)
+                flow == UNREACHABLE
                     && self
                         .bound(file)
                         .is_instantiated_module(m, preserves_const_enums)
             }
             _ => flow == UNREACHABLE || !self.is_reachable(file, flow),
-        }
-    }
-
-    /// `NodeFlagsUnreachable`, of what is bound at `flow`: the binder knows that control does not get there, whatever the types say.
-    fn is_flagged_unreachable(&self, file: FileId, flow: FlowId) -> bool {
-        flow == UNREACHABLE
-            || !self.is_reachable_for_binder(file, flow, &mut Vec::new(), &mut Vec::new())
-    }
-
-    /// Whether there is a way to `flow` from where a function, a namespace or the file starts. What is called where it is written
-    /// starts nothing (`bindContainer`).
-    fn is_reachable_for_binder(
-        &self,
-        file: FileId,
-        mut flow: FlowId,
-        seen: &mut Vec<FlowId>,
-        reduced: &mut Vec<(FlowId, FlowId)>,
-    ) -> bool {
-        let bound = self.bound(file);
-        loop {
-            match bound.flow[flow.idx()] {
-                Flow::Unreachable => return false,
-                Flow::Start { .. } | Flow::StartInvoked { .. } => return true,
-                Flow::Assign { before, .. }
-                | Flow::Cond { before, .. }
-                | Flow::ArrayMutation { before, .. }
-                | Flow::Call { before, .. }
-                | Flow::Switch { before, .. } => flow = before,
-                Flow::Reduce {
-                    before,
-                    label,
-                    instead,
-                } => {
-                    reduced.push((label, instead));
-                    let reachable =
-                        self.is_reachable_for_binder(file, before, &mut Vec::new(), reduced);
-                    reduced.pop();
-                    return reachable;
-                }
-                Flow::Label { start, len } => {
-                    if seen.contains(&flow) {
-                        return false;
-                    }
-                    seen.push(flow);
-                    let (start, len) = match reduced.iter().rev().find(|r| r.0 == flow) {
-                        Some(&(_, instead)) => match bound.flow[instead.idx()] {
-                            Flow::Label { start, len } => (start, len),
-                            _ => (start, len),
-                        },
-                        None => (start, len),
-                    };
-                    return bound
-                        .edges(start, len)
-                        .iter()
-                        .any(|&edge| self.is_reachable_for_binder(file, edge, seen, reduced));
-                }
-                Flow::Loop { start, len } => match bound.edges(start, len).first() {
-                    Some(&entry) if !seen.contains(&flow) => {
-                        seen.push(flow);
-                        flow = entry;
-                    }
-                    _ => return false,
-                },
-            }
         }
     }
 
@@ -441,7 +377,7 @@ impl Checker<'_> {
         // `NodeFlagsHasExplicitReturn`: the binder passes over a `return` that it knows control does not get to.
         let has_explicit_return = bound
             .ids(bound.fns[func.idx()].returns)
-            .any(|s| !self.is_flagged_unreachable(file, bound.stmt_flow[s.idx()]));
+            .any(|s| bound.stmt_flow[s.idx()] != UNREACHABLE);
         let start = if error_node.is_some() {
             start_of_return_type(hir, error_node)
         } else {
@@ -540,7 +476,7 @@ impl Checker<'_> {
     ) {
         let hir = self.hir(file);
         let f = &hir[func];
-        let has_body = !matches!(f.body, FnBody::None) || f.flags.contains(Flags::BODY_DROPPED);
+        let has_body = has_body(&f);
         if !f.flags.contains(Flags::GENERATOR) || f.ret.is_none() || !has_body {
             return;
         }
@@ -624,20 +560,12 @@ impl Checker<'_> {
                     reduced.pop();
                     return is_post_super;
                 }
-                Flow::Label { start, len } => {
+                Flow::Label { .. } => {
                     if seen.contains(&flow) {
                         return true;
                     }
                     seen.push(flow);
-                    let (start, len) = match reduced.iter().rev().find(|r| r.0 == flow) {
-                        Some(&(_, instead)) => match bound.flow[instead.idx()] {
-                            Flow::Label { start, len } => (start, len),
-                            _ => (start, len),
-                        },
-                        None => (start, len),
-                    };
-                    return bound
-                        .edges(start, len)
+                    return super::flow::branch_label_antecedents(bound, flow, reduced)
                         .iter()
                         .all(|&edge| self.is_post_super(file, edge, seen, reduced));
                 }

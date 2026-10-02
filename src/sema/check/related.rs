@@ -18,6 +18,9 @@ impl Checker<'_> {
     /// `getErrorRangeForNode` of a declaration: its name, or where it starts if it has none.
     pub(super) fn place_of_declaration(&self, file: FileId, decl: Decl) -> Option<Place> {
         let start = self.declaration_name_start(file, decl)?;
+        if let Decl::Member(_) | Decl::Property(_) = decl {
+            return Some((file, start, self.end_of_name_at(file, start).max(start)));
+        }
         Some(self.place_of_token(file, start))
     }
 

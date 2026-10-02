@@ -140,8 +140,13 @@ impl Checker<'_> {
         code: u32,
         args: &[Arg<'_>],
     ) -> Reported {
-        let mut diagnostic = self.new_diagnostic(at, code, args);
-        diagnostic.message_chain.extend(chain);
+        let Some(mut chain) = chain else {
+            return self.new_diagnostic(at, code, args);
+        };
+        // `NewDiagnosticChain`
+        let mut diagnostic = self.new_diagnostic((chain.file, chain.start, chain.end), code, args);
+        diagnostic.related_information = std::mem::take(&mut chain.related_information);
+        diagnostic.message_chain.push(chain);
         diagnostic
     }
 

@@ -64,10 +64,7 @@ impl Checker<'_> {
                 }
                 continue;
             }
-            if decl.ret.is_some()
-                || !matches!(decl.body, FnBody::None)
-                || decl.flags.contains(Flags::BODY_DROPPED)
-            {
+            if decl.ret.is_some() || has_body(&decl) {
                 continue;
             }
             // Nothing to go by: no body, and nothing said.
@@ -204,12 +201,7 @@ impl Checker<'_> {
                 continue;
             }
             // `WalkUpBindingElementsAndPatterns`
-            let mut root = pattern;
-            while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) =
-                bound.pat_parent[root.idx()]
-            {
-                root = outer;
-            }
+            let root = root_pattern(bound, pattern);
             let is_annotated = match bound.pat_parent[root.idx()] {
                 PatParent::Var(d) => hir[d].ty.is_some(),
                 PatParent::Param(p) => hir[p].ty.is_some(),

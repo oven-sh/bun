@@ -55,27 +55,12 @@ impl Eq for Reference {}
 pub(super) struct FlowMemo {
     /// `getEffectsSignature`, by call.
     effects_signatures: FxHashMap<(FileId, ExprId), Option<SigId>>,
-    /// The `Flow::Call` nodes of the file `idle_calls_of` for whose calls `effects_signatures` has `None`: a bit for each flow node.
-    idle_calls: Vec<u64>,
-    idle_calls_of: Option<FileId>,
     /// `getKeyPropertyName` and its map, by union and property name.
     key_properties: FxHashMap<(TypeId, Atom), Option<std::rc::Rc<FxHashMap<TypeId, TypeId>>>>,
-    /// What each test of the file `tests_of` is about, by the flow node of the test.
-    tests: Vec<About>,
-    tests_of: Option<FileId>,
-    /// The same for the tests of other files.
-    other_tests: FxHashMap<(FileId, FlowId), About>,
     /// `getAssignmentReducedType`, by declared and assigned type.
     assignment_reduced_types: FxHashMap<(TypeId, TypeId), TypeId>,
     /// `getNarrowedType`, by type, candidate, `assumeTrue` and `checkDerived`.
     narrowed_types: FxHashMap<(TypeId, TypeId, bool, bool), TypeId>,
-    /// `narrowTypeByEquality`, by the type, the type compared with as it is written, whether it is `==` that compares and whether
-    /// they are equal.
-    equal_types: FxHashMap<(TypeId, TypeId, bool, bool), TypeId>,
-    /// `type_of_discriminant`, by the type, the name, `?.` and `!`.
-    discriminant_types: FxHashMap<(TypeId, Atom, bool, bool), Option<(TypeId, bool)>>,
-    /// `members_with_discriminant`, by the type, the name and what the property is narrowed to.
-    discriminated_types: FxHashMap<(TypeId, Atom, TypeId), TypeId>,
     /// `flowLoopCache`, by the loop label and `getFlowReferenceKey`: the declared and the initial type, then the reference.
     flow_loop_cache: FxHashMap<FlowLoopKey, SmallVec<[(Reference, TypeId); 1]>>,
 }
@@ -84,12 +69,6 @@ pub(super) struct FlowMemo {
 type FlowLoopKey = (FileId, FlowId, TypeId, TypeId);
 
 impl FlowMemo {
-    #[inline]
-    fn is_idle_call(&self, file: FileId, flow: FlowId) -> bool {
-        self.idle_calls_of == Some(file)
-            && self.idle_calls[flow.idx() / 64] & 1 << (flow.idx() % 64) != 0
-    }
-
     fn cached_flow_loop_type(&self, key: &FlowLoopKey, reference: &Reference) -> Option<TypeId> {
         let cached = self.flow_loop_cache.get(key)?;
         cached.iter().find(|c| c.0 == *reference).map(|c| c.1)
@@ -177,9 +156,7 @@ struct Walk {
     labels: Labels,
     /// The `finally` blocks being gone back through: where each starts, and the label whose edges count instead.
     reduced: Vec<(FlowId, FlowId)>,
-    /// Loops being worked out, and what has reached them so far.
-    loops: SmallVec<[(FlowId, TypeId); 2]>,
-    /// For each of `loops`: what was found at labels during this round, which holds as long as `loops` stays as it is.
+    /// For each loop being worked out: what was found at labels during this round.
     round_labels: Vec<Labels>,
     steps: u32,
     /// How many invocations of `getTypeAtFlowNode` would be under way, one inside the other.
@@ -189,61 +166,6 @@ struct Walk {
 }
 
 const MAX_STEPS: u32 = 2_000_000;
-
-/// A number for a name or for `this`, which two of them may share. 0 for whatever else a reference can start with.
-fn root_key(root: Root) -> u32 {
-    match root {
-        Root::Symbol(symbol) => symbol.0 << 2 | 1,
-        Root::Global(name) => name.0 << 2 | 2,
-        Root::This => 3,
-        Root::Super | Root::ImportMeta | Root::NewTarget | Root::Pattern(_) | Root::Params(_) => 0,
-    }
-}
-
-/// What a test can say something about.
-#[derive(Copy, Clone, Default)]
-struct About {
-    /// 0: the test has not been looked into.
-    state: u32,
-    /// What `narrow` compares a reference with: the `root_key` of what each starts with, and the number of the property it goes on
-    /// with plus one, `ALONE` if it does not go on, 0 if that cannot be told or makes no difference.
-    chains: [(u32, u32); 3],
-}
-
-impl About {
-    const ALONE: u32 = u32::MAX;
-    const KNOWN: u32 = 1;
-    /// There is more than `chains` holds, or a key that it takes asking to know the name of.
-    const ANYTHING: u32 = 2;
-
-    fn add(&mut self, root: u32, first: u32) {
-        for chain in &mut self.chains {
-            if chain.0 == 0 {
-                *chain = (root, first);
-                return;
-            }
-            if chain.0 == root && (chain.1 == first || chain.1 == 0) {
-                return;
-            }
-        }
-        self.state |= About::ANYTHING;
-    }
-
-    /// Whether one of `chains` can be `reference`, go through it, or be what its last property is a property of.
-    fn concerns(&self, reference: &Reference) -> bool {
-        let root = root_key(reference.root);
-        if root == 0 || self.state & About::ANYTHING != 0 {
-            return true;
-        }
-        let Some(first) = reference.path.first() else {
-            return self.chains.iter().any(|chain| chain.0 == root);
-        };
-        let first = first.0.wrapping_add(1);
-        self.chains
-            .iter()
-            .any(|chain| chain.0 == root && (chain.1 == 0 || chain.1 == first))
-    }
-}
 
 /// `getTypeAtFlowNode`: the invocation that finds this many under way gives up.
 const MAX_FLOW_DEPTH: u32 = 2000;
@@ -351,6 +273,19 @@ fn not_equal_facts_from_typeof_switch(witnesses: &[Atom], from: usize, to: usize
         .fold(0, |all, (_, &name)| all | typeof_ne_facts(name))
 }
 
+/// `getBranchLabelAntecedents`
+pub(super) fn branch_label_antecedents<'b>(
+    bound: &'b Bound,
+    flow: FlowId,
+    reduced: &[(FlowId, FlowId)],
+) -> &'b [FlowId] {
+    let reduced = reduced.iter().rev().find(|r| r.0 == flow);
+    match bound.flow[reduced.map_or(flow, |r| r.1).idx()] {
+        Flow::Label { start, len } => bound.edges(start, len),
+        _ => &[],
+    }
+}
+
 impl Walk {
     fn new(
         reference: Reference,
@@ -370,7 +305,6 @@ impl Walk {
             },
             labels: Labels::default(),
             reduced: Vec::new(),
-            loops: SmallVec::new(),
             round_labels: Vec::new(),
             steps: 0,
             depth: 0,
@@ -943,11 +877,9 @@ impl<'p> Checker<'p> {
                 .files()
                 .global(name, SymFlags::VALUE)
                 .filter(|&sym| self.files().flags(sym).contains(SymFlags::CONST))?;
-            return Some(
-                self.files()
-                    .atoms
-                    .intern(format!("\0{}.{}", sym.file.0, sym.id.0).as_bytes()),
-            );
+            let (file, id) = (sym.file.0.to_le_bytes(), sym.id.0.to_le_bytes());
+            let key = [&[0][..], &file[..], &id[..]].concat();
+            return Some(self.files().atoms.intern(&key));
         }
         if !matches!(
             self.bound(file).symbols[symbol.idx()].decls.first(),
@@ -956,19 +888,9 @@ impl<'p> Checker<'p> {
         {
             return None;
         }
-        // A zero byte, and the number of the symbol in decimal.
-        let mut key = [0u8; 11];
-        let mut from = key.len();
-        let mut number = symbol.0;
-        loop {
-            from -= 1;
-            key[from] = b'0' + (number % 10) as u8;
-            number /= 10;
-            if number == 0 {
-                break;
-            }
-        }
-        Some(self.files().atoms.intern(&key[from - 1..]))
+        // A zero byte, and the number of the symbol.
+        let [a, b, c, d] = symbol.0.to_le_bytes();
+        Some(self.files().atoms.intern(&[0, a, b, c, d]))
     }
 
     /// Whether `e` is the first `len` steps of `reference`. `isMatchingReference`, with `e` for the target: `satisfies` is looked
@@ -1716,23 +1638,6 @@ impl<'p> Checker<'p> {
     /// What the property that `access` is to holds in `ty`, and whether it can hold nothing in some member. `None`: nothing is made
     /// of the property.
     fn type_of_discriminant(&mut self, ty: TypeId, access: Access) -> Option<(TypeId, bool)> {
-        let key = (ty, access.name, access.optional, access.non_null);
-        if let Some(&known) = self.flow_memo.discriminant_types.get(&key) {
-            return known;
-        }
-        let (found, is_memoizable) =
-            self.run_memoizable(|c| c.type_of_discriminant_uncached(ty, access));
-        if is_memoizable && !self.uncertain && !self.is_stack_low() {
-            self.flow_memo.discriminant_types.insert(key, found);
-        }
-        found
-    }
-
-    fn type_of_discriminant_uncached(
-        &mut self,
-        ty: TypeId,
-        access: Access,
-    ) -> Option<(TypeId, bool)> {
         let name = access.name;
         let remove_nullable = self.p.files.options.strict_null_checks
             && (access.optional || access.non_null)
@@ -1757,10 +1662,7 @@ impl<'p> Checker<'p> {
                 && self.prop_ref(apparent, name).is_none()
             {
                 let elems = self.type_arguments(apparent);
-                let fixed = flags
-                    .iter()
-                    .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-                    .unwrap_or(flags.len());
+                let fixed = Self::fixed_length(flags);
                 prop_types.push(if fixed < flags.len() {
                     self.tuple_element_union(&elems[fixed..], &flags[fixed..])
                 } else {
@@ -1795,24 +1697,14 @@ impl<'p> Checker<'p> {
 
     /// The members of `ty` whose property `name` can hold some of `narrowed`.
     fn members_with_discriminant(&mut self, ty: TypeId, name: Atom, narrowed: TypeId) -> TypeId {
-        let key = (ty, name, narrowed);
-        if let Some(&known) = self.flow_memo.discriminated_types.get(&key) {
-            return known;
-        }
-        let (left, is_memoizable) = self.run_memoizable(|c| {
-            c.filter(ty, |c, m| {
-                let discriminant = c
-                    .type_of_property_or_index_signature(m, name)
-                    .unwrap_or(TypeId::UNKNOWN);
-                !discriminant.is_never()
-                    && !narrowed.is_never()
-                    && c.are_comparable(narrowed, discriminant)
-            })
-        });
-        if is_memoizable && !self.uncertain && !self.is_stack_low() {
-            self.flow_memo.discriminated_types.insert(key, left);
-        }
-        left
+        self.filter(ty, |c, m| {
+            let discriminant = c
+                .type_of_property_or_index_signature(m, name)
+                .unwrap_or(TypeId::UNKNOWN);
+            !discriminant.is_never()
+                && !narrowed.is_never()
+                && c.are_comparable(narrowed, discriminant)
+        })
     }
 
     /// `getTypeOfPropertyOrIndexSignatureOfType`: what only an index signature gives may be missing.
@@ -1829,212 +1721,6 @@ impl<'p> Checker<'p> {
     }
 
     // ───────────────────────────── tests ─────────────────────────────
-
-    /// Whether `narrow` may make something of the test `expr`, that of the flow node `flow`, for `reference`. If not, it would ask
-    /// nothing and hand back the type it is given.
-    fn is_test_about(&mut self, reference: &Reference, flow: FlowId, expr: ExprId) -> bool {
-        let file = reference.file;
-        let memo = &self.flow_memo;
-        let known = if memo.tests_of == Some(file) {
-            memo.tests[flow.idx()]
-        } else {
-            memo.other_tests
-                .get(&(file, flow))
-                .copied()
-                .unwrap_or_default()
-        };
-        if known.state != 0 {
-            return known.concerns(reference);
-        }
-        self.look_into_test(file, flow, expr).concerns(reference)
-    }
-
-    #[inline(never)]
-    fn look_into_test(&mut self, file: FileId, flow: FlowId, expr: ExprId) -> About {
-        let mut about = About {
-            state: About::KNOWN,
-            ..About::default()
-        };
-        self.note_test(file, expr, 0, &mut about);
-        let nodes = self.bound(file).flow.len();
-        let memo = &mut self.flow_memo;
-        // Nearly all walks are in the file whose errors are being looked for.
-        if self.checking == Some(file) && memo.tests_of != Some(file) {
-            memo.tests_of = Some(file);
-            memo.tests.clear();
-            memo.tests.resize(nodes, About::default());
-        }
-        if memo.tests_of == Some(file) {
-            memo.tests[flow.idx()] = about;
-        } else {
-            memo.other_tests.insert((file, flow), about);
-        }
-        about
-    }
-
-    /// Adds to `about` all that `narrow` compares a reference with when it is given the test `e`. `level`: how many constants that
-    /// hold a test have been looked through.
-    fn note_test(&self, file: FileId, e: ExprId, level: u32, about: &mut About) {
-        if about.state & About::ANYTHING != 0 {
-            return;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        self.note_chain(file, e, true, About::ALONE, about);
-        match hir[e].kind {
-            // `const ok = test; if (ok)`
-            ExprKind::Ident(_) if level < 5 => {
-                let symbol = bound.expr_symbol[e.idx()];
-                if symbol.is_some()
-                    && bound.symbols[symbol.idx()].flags.contains(SymFlags::CONST)
-                    && let &[Decl::Var(pat)] = &bound.symbols[symbol.idx()].decls[..]
-                    && let PatParent::Var(d) = bound.pat_parent[pat.idx()]
-                    && hir[d].ty.is_none()
-                    && hir[d].init.is_some()
-                {
-                    self.note_test(file, hir[d].init, level + 1, about);
-                }
-            }
-            ExprKind::Call(c) => {
-                let call = &hir[c];
-                for argument in hir.ids(call.args) {
-                    self.note_chain(file, argument, false, About::ALONE, about);
-                }
-                // What it is called on. `x.hasOwnProperty("a")` says something of `x.a`. For any other method `x.method` will do,
-                // which is about less than `x`.
-                if let ExprKind::Dot { obj, name, .. } = hir[call.callee].kind {
-                    if self.files().atoms.bytes(name) == b"hasOwnProperty" {
-                        self.note_chain(file, obj, false, 0, about);
-                    } else {
-                        self.note_chain(file, call.callee, false, About::ALONE, about);
-                    }
-                }
-            }
-            ExprKind::NonNull(x) | ExprKind::Satisfies { expr: x, .. } => {
-                self.note_test(file, x, level, about);
-            }
-            ExprKind::Unary {
-                op: UnOp::Not,
-                operand,
-            } => self.note_test(file, operand, level, about),
-            ExprKind::Assign { value, .. } => self.note_test(file, value, level, about),
-            ExprKind::Binary { op, left, right } => match op {
-                BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
-                    let (l, r) = (
-                        self.reference_candidate(file, left),
-                        self.reference_candidate(file, right),
-                    );
-                    for (side, other) in [(l, r), (r, l)] {
-                        match hir[side].kind {
-                            ExprKind::Unary {
-                                op: UnOp::Typeof,
-                                operand,
-                            } => self.note_chain(file, operand, true, About::ALONE, about),
-                            // `test(x) === true`
-                            _ if matches!(hir[other].kind, ExprKind::True | ExprKind::False) => {
-                                self.note_test(file, side, level, about);
-                            }
-                            _ => self.note_chain(file, side, true, About::ALONE, about),
-                        }
-                    }
-                }
-                BinOp::Instanceof => self.note_chain(file, left, false, About::ALONE, about),
-                // `"a" in x` says something of `x.a`.
-                BinOp::In => self.note_chain(file, right, false, 0, about),
-                BinOp::Comma => self.note_test(file, right, level, about),
-                BinOp::And | BinOp::Or => {
-                    self.note_test(file, left, level, about);
-                    self.note_test(file, right, level, about);
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-    }
-
-    /// Adds to `about` what `e`, which a reference is compared with, starts with: all that `matches_prefix` and
-    /// `optional_chain_contains` go through on their way in. `is_whole`: `e` is asked whether it is a `discriminant_access`,
-    /// which a constant can stand for: `const k = x.kind`, `const { kind: k } = x`. `first`: what to put down for how it goes on
-    /// if it does not.
-    fn note_chain(
-        &self,
-        file: FileId,
-        e: ExprId,
-        mut is_whole: bool,
-        mut first: u32,
-        about: &mut About,
-    ) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut at = e;
-        loop {
-            at = match hir[at].kind {
-                ExprKind::Ident(name) => {
-                    let symbol = bound.expr_symbol[at.idx()];
-                    if symbol.is_none() {
-                        about.add(root_key(Root::Global(name)), first);
-                        return;
-                    }
-                    about.add(root_key(Root::Symbol(symbol)), first);
-                    if is_whole
-                        && bound.symbols[symbol.idx()].flags.contains(SymFlags::CONST)
-                        && let &[Decl::Var(pat) | Decl::Param(pat)] =
-                            &bound.symbols[symbol.idx()].decls[..]
-                    {
-                        let (declaration, is_element) = match bound.pat_parent[pat.idx()] {
-                            PatParent::Prop(of, _) | PatParent::Elem(of, _) => {
-                                (bound.pat_parent[of.idx()], true)
-                            }
-                            parent => (parent, false),
-                        };
-                        if let PatParent::Var(d) = declaration
-                            && hir[d].init.is_some()
-                            && match hir[hir[d].init].kind {
-                                ExprKind::Dot { .. } | ExprKind::Index { .. } => true,
-                                ExprKind::Ident(_) => is_element,
-                                _ => false,
-                            }
-                        {
-                            self.note_chain(file, hir[d].init, false, About::ALONE, about);
-                        }
-                    }
-                    return;
-                }
-                ExprKind::This => {
-                    about.add(root_key(Root::This), first);
-                    return;
-                }
-                ExprKind::Dot { obj, name, .. } => {
-                    is_whole = false;
-                    first = name.0.wrapping_add(1);
-                    obj
-                }
-                ExprKind::Index { obj, index, .. } => {
-                    // `access_key` asks what such a key holds.
-                    if matches!(hir[index].kind, ExprKind::Ident(_) | ExprKind::Dot { .. }) {
-                        about.state |= About::ANYTHING;
-                        return;
-                    }
-                    is_whole = false;
-                    first = 0;
-                    obj
-                }
-                ExprKind::Call(c) if hir[c].chain != Chain::No => {
-                    is_whole = false;
-                    hir[c].callee
-                }
-                ExprKind::NonNull(x) => {
-                    is_whole = false;
-                    x
-                }
-                ExprKind::Assign { target, .. } => target,
-                ExprKind::Binary {
-                    op: BinOp::Comma,
-                    right,
-                    ..
-                } => right,
-                _ => return,
-            };
-        }
-    }
 
     fn narrow(&mut self, reference: &Reference, ty: TypeId, e: ExprId, sense: bool) -> TypeId {
         let file = reference.file;
@@ -2553,28 +2239,6 @@ impl<'p> Checker<'p> {
             self.uncertain = true;
             return ty;
         }
-        let key = (ty, as_written, loose, sense);
-        if let Some(&known) = self.flow_memo.equal_types.get(&key) {
-            return known;
-        }
-        let (narrowed, is_memoizable) =
-            self.run_memoizable(|c| c.narrow_by_equal_type(ty, as_written, value_ty, loose, sense));
-        if is_memoizable && !self.uncertain && !self.is_stack_low() {
-            self.flow_memo.equal_types.insert(key, narrowed);
-        }
-        narrowed
-    }
-
-    /// `ty`, of which it is known whether it is equal (`sense`) to something of the type `as_written`, `value_ty` as an annotation
-    /// would name it. `loose`: equal the way `==` has it.
-    fn narrow_by_equal_type(
-        &mut self,
-        ty: TypeId,
-        as_written: TypeId,
-        value_ty: TypeId,
-        loose: bool,
-        sense: bool,
-    ) -> TypeId {
         if value_ty.is_null() || value_ty.is_undefined() {
             if !self.p.files.options.strict_null_checks {
                 return ty;
@@ -4281,22 +3945,6 @@ impl<'p> Checker<'p> {
             return declared;
         };
         let is_automatic = self.is_automatic_type(declared);
-        // Nothing but `[]` was ever assigned to it: where it is being filled it is an array of anything, whatever is in it
-        // by then. Not looking spares asking what is being put in it while working out what that is expected to be.
-        if declared == self.auto_array_type
-            && let Root::Symbol(s) = reference.root
-            && !bound.symbols[s.idx()].flags.contains(SymFlags::ASSIGNED)
-            && bound.symbols[s.idx()].decls.len() == 1
-            && self.is_evolving_array_operation_target(file, e)
-        {
-            if self.is_flow_too_deep(&reference, flow) {
-                self.disable_flow_analysis(file);
-                // `reportFlowControlError`
-                self.p.flows_too_deep.insert((file, e), ());
-                return TypeId::ERROR;
-            }
-            return declared;
-        }
         let crossing = if !reference.path.is_empty() {
             // `getTypeAtFlowNode` stops at the start of a function for a property or element access expression. `a.b` in `typeof a.b`
             // is a qualified name, and goes on.
@@ -4411,18 +4059,9 @@ impl<'p> Checker<'p> {
         pat: PatId,
         declared: TypeId,
     ) -> TypeId {
-        if declared == TypeId::UNRESOLVED
-            || declared.is_never()
-            || declared == TypeId::VOID
-            || declared == TypeId::SYMBOL
-        {
-            return declared;
-        }
-        let hir = self.hir(file);
-        let bound = self.bound(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
         // From the inside out.
-        let mut names = [Atom::NONE; 6];
-        let mut count = 0;
+        let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
         let mut at = pat;
         let init = loop {
             let name = match bound.pat_parent[at.idx()] {
@@ -4435,31 +4074,15 @@ impl<'p> Checker<'p> {
                         return declared;
                     };
                     at = parent;
-                    let mut digits = [0u8; 10];
-                    let mut from = digits.len();
-                    let mut index = e.0 - elems.start;
-                    loop {
-                        from -= 1;
-                        digits[from] = b'0' + (index % 10) as u8;
-                        index /= 10;
-                        if index == 0 {
-                            break;
-                        }
-                    }
-                    Some(self.files().atoms.intern(&digits[from..]))
+                    Some(self.number_name((e.0 - elems.start) as f64))
                 }
                 PatParent::Var(d) => break hir[d].init,
                 _ => return declared,
             };
             let Some(name) = name else { return declared };
-            // `getLiteralPropertyNameText`: a string or a number, not a symbol.
-            if count == names.len() || self.files().atoms.is_symbol_name(name) {
-                return declared;
-            }
-            names[count] = name;
-            count += 1;
+            names.push(name);
         };
-        self.narrow_path_of(file, init, &names[..count], declared)
+        self.narrow_path_of(file, init, &names, declared)
     }
 
     /// `getFlowTypeOfDestructuring` of `e`, an element of an array literal or the value of a property of an object literal that is
@@ -4470,21 +4093,13 @@ impl<'p> Checker<'p> {
         e: ExprId,
         declared: TypeId,
     ) -> TypeId {
-        if declared == TypeId::UNRESOLVED
-            || declared.is_never()
-            || declared == TypeId::VOID
-            || declared == TypeId::SYMBOL
-        {
-            return declared;
-        }
         let (hir, bound) = (self.hir(file), self.bound(file));
         // From the inside out.
-        let mut names = [Atom::NONE; 6];
-        let mut count = 0;
+        let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
         let mut at = e;
         // `getParentElementAccess`. It goes by what is written right around a literal: one in parentheses is in nothing it knows.
         let init = loop {
-            if count > 0 && is_parenthesized(hir, at) {
+            if !names.is_empty() && is_parenthesized(hir, at) {
                 return declared;
             }
             let name = match bound.expr_parent[at.idx()] {
@@ -4505,20 +4120,15 @@ impl<'p> Checker<'p> {
                         op: None,
                         target,
                         value,
-                    } if count > 0 && target == at => break value,
+                    } if !names.is_empty() && target == at => break value,
                     _ => return declared,
                 },
                 _ => return declared,
             };
             let Some(name) = name else { return declared };
-            // `getLiteralPropertyNameText`: a string or a number, not a symbol.
-            if count == names.len() || self.files().atoms.is_symbol_name(name) {
-                return declared;
-            }
-            names[count] = name;
-            count += 1;
+            names.push(name);
         };
-        self.narrow_path_of(file, init, &names[..count], declared)
+        self.narrow_path_of(file, init, &names, declared)
     }
 
     /// `getSyntheticElementAccess`, and `getFlowTypeOfReference` of it: what `init.a.b`, declared as `declared`, is known to be where
@@ -4531,7 +4141,17 @@ impl<'p> Checker<'p> {
         declared: TypeId,
     ) -> TypeId {
         // What is in parentheses is not told where control is, no more than a call or a comma is.
-        if init.is_none() || is_parenthesized(self.hir(file), init) {
+        if init.is_none()
+            || is_parenthesized(self.hir(file), init)
+            || declared == TypeId::UNRESOLVED
+        {
+            return declared;
+        }
+        // `getLiteralPropertyNameText`: a string or a number, not a symbol.
+        if names
+            .iter()
+            .any(|&name| self.files().atoms.is_symbol_name(name))
+        {
             return declared;
         }
         let flow = self.bound(file).expr_flow[init.idx()];
@@ -5049,8 +4669,6 @@ impl<'p> Checker<'p> {
             NonNull,
         }
         let mut pending: SmallVec<[Pending; 8]> = SmallVec::new();
-        // How many tests were not put off because they are about something else. They count as if they had been.
-        let mut passed = 0;
         let mut flow = start;
         let depth = walk.depth;
         let mut incomplete = false;
@@ -5060,7 +4678,7 @@ impl<'p> Checker<'p> {
                 break walk.declared;
             }
             // This is one invocation of `getTypeAtFlowNode`, and what is put off stands for one more each, inside it.
-            walk.depth = depth + 1 + pending.len() as u32 + passed;
+            walk.depth = depth + 1 + pending.len() as u32;
             if walk.depth > MAX_FLOW_DEPTH {
                 walk.too_deep = true;
                 break TypeId::ERROR;
@@ -5136,14 +4754,7 @@ impl<'p> Checker<'p> {
                     expr,
                     sense,
                 } => {
-                    // An array that is being filled is looked at by every test.
-                    if self.is_automatic_type(walk.declared)
-                        || self.is_test_about(&walk.reference, flow, expr)
-                    {
-                        pending.push(Pending::Cond(expr, sense));
-                    } else {
-                        passed += 1;
-                    }
+                    pending.push(Pending::Cond(expr, sense));
                     flow = before;
                 }
                 Flow::Switch {
@@ -5156,17 +4767,13 @@ impl<'p> Checker<'p> {
                     flow = before;
                 }
                 Flow::Call { before, call } => {
-                    if !self.flow_memo.is_idle_call(file, flow) {
-                        // `getTypeAtFlowCall`
-                        match self.effects_signature_and_is_kept(file, call) {
-                            (Some(sig), _) => match self.sig_predicate(sig) {
-                                Some(predicate) if predicate.asserts => {
-                                    pending.push(Pending::Assert(call));
-                                }
-                                _ => break TypeId::UNREACHABLE_NEVER,
-                            },
-                            (None, true) => self.note_idle_call(file, flow),
-                            (None, false) => {}
+                    // `getTypeAtFlowCall`
+                    if let Some(sig) = self.effects_signature(file, call) {
+                        match self.sig_predicate(sig) {
+                            Some(predicate) if predicate.asserts => {
+                                pending.push(Pending::Assert(call));
+                            }
+                            _ => break TypeId::UNREACHABLE_NEVER,
                         }
                     }
                     flow = before;
@@ -5262,10 +4869,6 @@ impl<'p> Checker<'p> {
                     {
                         break cached;
                     }
-                    if let Some(&(_, so_far)) = walk.loops.iter().find(|l| l.0 == flow) {
-                        incomplete = true;
-                        break FlowType::new(so_far, true).ty;
-                    }
                     // `flowLoopStack` belongs to the checker: a walk with the same key, started while another walk follows a back edge
                     // of this loop, gets the union of the antecedent types found so far, marked incomplete.
                     if let Some(i) = self.flow_loops.iter().rposition(|l| {
@@ -5295,7 +4898,6 @@ impl<'p> Checker<'p> {
                     // is not looked at.
                     if entry != walk.declared {
                         // One pass: each back edge sees the types of the antecedents before it.
-                        walk.loops.push((flow, entry));
                         walk.round_labels.push(Labels::default());
                         self.flow_loops.push((
                             flow,
@@ -5320,9 +4922,6 @@ impl<'p> Checker<'p> {
                             if !types.contains(&t) {
                                 types.push(t);
                                 let so_far = self.union_or_evolving_with(&types, false);
-                                if let Some(own) = walk.loops.last_mut() {
-                                    own.1 = so_far;
-                                }
                                 if let Some(shared) = self.flow_loops.last_mut() {
                                     shared.4 = so_far;
                                 }
@@ -5330,7 +4929,6 @@ impl<'p> Checker<'p> {
                         }
                         self.flow_loops.pop();
                         walk.round_labels.pop();
-                        walk.loops.pop();
                         if let Some(cached) = restarted {
                             incomplete = false;
                             break cached;
@@ -5461,8 +5059,18 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getAssignmentReducedType`, of a union and something other than `any`, `never` and the union itself.
+    /// `getAssignmentReducedType`
     fn assignment_reduced_type(&mut self, declared: TypeId, assigned: TypeId) -> TypeId {
+        if declared == assigned {
+            return declared;
+        }
+        self.uncertain |= !self.is_known(assigned);
+        if self.is_any(assigned) {
+            return declared;
+        }
+        if assigned.is_never() {
+            return assigned;
+        }
         let key = (declared, assigned);
         if let Some(&known) = self.flow_memo.assignment_reduced_types.get(&key) {
             return known;
@@ -5494,218 +5102,144 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// What the reference is right after `target` was assigned. `None`: the assignment is to something else.
+    /// `getTypeAtFlowAssignment`, of an assignment that is not compound. `None`: on from `flow.Antecedent`.
     fn type_at_assignment(
         &mut self,
         walk: &Walk,
         flow: FlowId,
         target: FlowTarget,
     ) -> Option<TypeId> {
-        let file = walk.reference.file;
-        let hir = self.hir(file);
-        let bound = self.bound(file);
-        // `getInitialOrAssignedType`: what is assigned counts the way the reference itself does (`getNarrowableTypeForReference`).
-        let at = walk.reference.at;
-        let narrowable = |c: &mut Self, assigned: TypeId| {
-            if at.is_some() {
-                c.narrowable_type(file, at, assigned)
-            } else {
-                assigned
-            }
+        let (reference, declared) = (&walk.reference, walk.declared);
+        let file = reference.file;
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let declares = |pat: PatId| reference.root == Root::Symbol(bound.pat_symbol[pat.idx()]);
+        // `isMatchingReference(f.reference, node)`, or else `containsMatchingReference(f.reference, node)`
+        let is_matching = match target {
+            FlowTarget::Var(d) if declares(hir[d].pat) => reference.path.is_empty(),
+            FlowTarget::Pat(p) if declares(p) => reference.path.is_empty(),
+            FlowTarget::Expr(e) if self.matches(reference, e) => true,
+            FlowTarget::Expr(e) if self.is_proper_prefix(reference, e) => false,
+            _ => return None,
         };
-        // `getAssignmentReducedType`
-        let reduce = |c: &mut Self, declared: TypeId, assigned: TypeId| -> TypeId {
-            if !c.is_union(declared) {
-                return declared;
+        if !self.is_reachable(file, flow) {
+            return Some(TypeId::UNREACHABLE_NEVER);
+        }
+        if !is_matching {
+            // "A matching dotted name might also be an expando property on a function *expression*"
+            if let FlowTarget::Var(d) = target
+                && let Some(init) = hir[d].init.some()
+                && (hir.is_js
+                    || matches!(
+                        hir[d].kind,
+                        VarKind::Const | VarKind::Using | VarKind::AwaitUsing
+                    ))
+                && matches!(hir[init].kind, ExprKind::Fn(f) if matches!(hir[f].kind, FnKind::Expr | FnKind::Arrow))
+                && !is_parenthesized(hir, init)
+            {
+                return None;
             }
-            let assigned = narrowable(c, assigned);
-            if declared == assigned {
-                return declared;
-            }
-            c.uncertain |= !c.is_known(assigned);
-            if c.is_any(assigned) {
-                return declared;
-            }
-            if assigned.is_never() {
-                return assigned;
-            }
-            c.assignment_reduced_type(declared, assigned)
-        };
-        let is_automatic = self.is_automatic_type(walk.declared);
-        // What `getInitialOrAssignedType` gives, held against `autoType` or `autoArrayType`.
-        let widened_for_auto = |c: &mut Self, declared: TypeId, assigned: TypeId| -> TypeId {
-            let assigned = narrowable(c, assigned);
-            let assigned = c.widen_literal(assigned);
-            if c.is_assignable(assigned, declared) {
-                assigned
-            } else {
-                c.array_of(TypeId::ANY)
-            }
-        };
-        let assigned_to_auto = |c: &mut Self, declared: TypeId, value: ExprId| -> TypeId {
+            return Some(declared);
+        }
+        if self.is_automatic_type(declared) {
             // `isEmptyArrayAssignment`
-            if matches!(hir[value].kind, ExprKind::Array(items) if items.is_empty())
+            let value = match target {
+                FlowTarget::Var(d) => hir[d].init,
+                FlowTarget::Expr(e) => match bound.expr_parent[e.idx()] {
+                    Parent::Expr(parent) => match hir[parent].kind {
+                        ExprKind::Assign { value, .. } => value,
+                        _ => ExprId::NONE,
+                    },
+                    _ => ExprId::NONE,
+                },
+                FlowTarget::Pat(_) => ExprId::NONE,
+            };
+            if value.is_some()
+                && matches!(hir[value].kind, ExprKind::Array(items) if items.is_empty())
                 && !is_parenthesized(hir, value)
             {
-                return c.evolving_array(TypeId::NEVER);
+                return Some(self.evolving_array(TypeId::NEVER));
             }
-            c.eager.push(c.stack.len());
-            let assigned = c.type_of_declaration_initializer(file, value);
-            c.eager.pop();
-            widened_for_auto(c, declared, assigned)
-        };
-        match target {
-            FlowTarget::Var(d) => {
-                let symbol = bound.pat_symbol[hir[d].pat.idx()];
-                if walk.reference.root != Root::Symbol(symbol) {
-                    return None;
-                }
-                if !self.is_reachable(file, flow) {
-                    return Some(TypeId::UNREACHABLE_NEVER);
-                }
-                let init = hir[d].init;
-                if !walk.reference.path.is_empty() {
-                    // What is put on a function that a constant holds is looked for further back than the constant. In a JavaScript file
-                    // that goes for any variable.
-                    if (hir.is_js
-                        || matches!(
-                            hir[d].kind,
-                            VarKind::Const | VarKind::Using | VarKind::AwaitUsing
-                        ))
-                        && init.is_some()
-                        && matches!(hir[init].kind, ExprKind::Fn(f) if matches!(hir[f].kind, FnKind::Expr | FnKind::Arrow))
-                        && !is_parenthesized(hir, init)
-                    {
-                        return None;
-                    }
-                    return Some(walk.declared);
-                }
-                if is_automatic && init.is_some() {
-                    return Some(assigned_to_auto(self, walk.declared, init));
-                }
-                // What is assigned only matters if it can tell alternatives apart. It is not looked at otherwise, and may well
-                // depend on this.
-                if !self.is_union(walk.declared) {
-                    return Some(walk.declared);
-                }
-                // `getInitialTypeOfVariableDeclaration`: `string` for the variable of a `for`-`in`.
-                match self.initial_type_of_pat(file, hir[d].pat) {
-                    Some(assigned) => Some(reduce(self, walk.declared, assigned)),
-                    None => Some(walk.declared),
-                }
-            }
-            FlowTarget::Pat(p) => {
-                if walk.reference.root != Root::Symbol(bound.pat_symbol[p.idx()]) {
-                    return None;
-                }
-                if !self.is_reachable(file, flow) {
-                    return Some(TypeId::UNREACHABLE_NEVER);
-                }
-                if !walk.reference.path.is_empty() || !is_automatic && !self.is_union(walk.declared)
-                {
-                    return Some(walk.declared);
-                }
-                let assigned = self.initial_type_of_pat(file, p);
-                if is_automatic {
-                    let assigned = assigned.unwrap_or(TypeId::ERROR);
-                    return Some(widened_for_auto(self, walk.declared, assigned));
-                }
-                match assigned {
-                    Some(assigned) => Some(reduce(self, walk.declared, assigned)),
-                    None => Some(walk.declared),
-                }
-            }
-            FlowTarget::Expr(e) => {
-                // `bindDeleteExpressionFlow`: only `delete a.b`, written just so, is an assignment.
-                let mut operand = e;
-                while let Parent::Expr(p) = bound.expr_parent[operand.idx()]
-                    && matches!(
-                        hir[p].kind,
-                        ExprKind::NonNull(_)
-                            | ExprKind::As { .. }
-                            | ExprKind::Satisfies { .. }
-                            | ExprKind::AsConst(_)
-                    )
-                {
-                    operand = p;
-                }
-                let is_deleted = matches!(bound.expr_parent[operand.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
-                if is_deleted
-                    && (operand != e
-                        || !matches!(hir[e].kind, ExprKind::Dot { .. })
-                        || is_parenthesized(hir, e))
-                {
-                    return None;
-                }
-                if self.matches(&walk.reference, e) {
-                    if !self.is_reachable(file, flow) {
-                        return Some(TypeId::UNREACHABLE_NEVER);
-                    }
-                    // `x = v`, and `x ??= v` on the path where it assigns
-                    if let crate::bind::Parent::Expr(parent) = bound.expr_parent[e.idx()]
-                        && let ExprKind::Assign { op: None | Some(BinOp::And | BinOp::Or | BinOp::Nullish), target, value } = hir[parent].kind
-                        && target == e
-                        // Not `[x = d] = v`, where `d` is only for want of anything better.
-                        && !self.is_assignment_target(file, parent)
-                    {
-                        if is_automatic {
-                            return Some(assigned_to_auto(self, walk.declared, value));
-                        }
-                        let declared = if self.is_in_compound_like_assignment(file, e) {
-                            self.base_type_of_literal_type(walk.declared)
-                        } else {
-                            walk.declared
-                        };
-                        if !self.is_union(declared) {
-                            return Some(declared);
-                        }
-                        // `getTypeOfExpression` checks an expression again while it is being checked, and ends at the loop
-                        // (`recheck_in_flow_loop`). Past a resolution, which hides the loop, `enter` refuses, so a cycle through a value
-                        // assigned on a back edge may not be one in TypeScript. `mark_circle_from` tells which are.
-                        let in_loop = !walk.loops.is_empty();
-                        if in_loop {
-                            self.eager.push(self.stack.len());
-                            self.loop_values.push(self.stack.len());
-                        }
-                        let assigned = self.type_of_declaration_initializer(file, value);
-                        if in_loop {
-                            self.loop_values.pop();
-                            self.eager.pop();
-                        }
-                        return Some(reduce(self, declared, assigned));
-                    }
-                    // `getAssignedType` of what is deleted is `undefined`.
-                    if is_deleted {
-                        return Some(if is_automatic {
-                            TypeId::UNDEFINED
-                        } else {
-                            reduce(self, walk.declared, TypeId::UNDEFINED)
-                        });
-                    }
-                    if !is_automatic && !self.is_union(walk.declared) {
-                        return Some(walk.declared);
-                    }
-                    // `[x] = v`, `({ a: x } = v)`
-                    let assigned = self.destructured_type(file, e);
-                    if is_automatic {
-                        let assigned = assigned.unwrap_or(TypeId::ERROR);
-                        return Some(widened_for_auto(self, walk.declared, assigned));
-                    }
-                    return Some(match assigned {
-                        Some(assigned) => reduce(self, walk.declared, assigned),
-                        None => walk.declared,
-                    });
-                }
-                if self.is_proper_prefix(&walk.reference, e) {
-                    return Some(if self.is_reachable(file, flow) {
-                        walk.declared
-                    } else {
-                        TypeId::UNREACHABLE_NEVER
-                    });
-                }
-                None
-            }
+            let assigned = self.initial_or_assigned_type(walk, target);
+            let assigned = self.widen_literal(assigned);
+            return Some(if self.is_assignable(assigned, declared) {
+                assigned
+            } else {
+                self.array_of(TypeId::ANY)
+            });
         }
+        let declared = match target {
+            FlowTarget::Expr(e) if self.is_in_compound_like_assignment(file, e) => {
+                self.base_type_of_literal_type(declared)
+            }
+            _ => declared,
+        };
+        // "we only need to evaluate the assigned type if the declared type is a union type"
+        if !self.is_union(declared) {
+            return Some(declared);
+        }
+        let assigned = self.initial_or_assigned_type(walk, target);
+        Some(self.assignment_reduced_type(declared, assigned))
+    }
+
+    /// `getInitialOrAssignedType`
+    fn initial_or_assigned_type(&mut self, walk: &Walk, target: FlowTarget) -> TypeId {
+        let file = walk.reference.file;
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let ty = match target {
+            FlowTarget::Var(d) if hir[d].init.is_some() => {
+                Some(self.type_of_assigned_value(walk, hir[d].init, true))
+            }
+            FlowTarget::Var(d) => self.initial_type_of_pat(file, hir[d].pat),
+            FlowTarget::Pat(p) => self.initial_type_of_pat(file, p),
+            // `getAssignedType`
+            FlowTarget::Expr(e) => match bound.expr_parent[e.idx()] {
+                Parent::Expr(parent) => match hir[parent].kind {
+                    // Not `[x = d] = v`, where `d` is only for want of anything better.
+                    ExprKind::Assign { target, value, .. }
+                        if target == e && !self.is_assignment_target(file, parent) =>
+                    {
+                        Some(self.type_of_assigned_value(walk, value, false))
+                    }
+                    ExprKind::Unary {
+                        op: UnOp::Delete, ..
+                    } => Some(TypeId::UNDEFINED),
+                    _ => self.destructured_type(file, e),
+                },
+                _ => self.destructured_type(file, e),
+            },
+        };
+        let ty = ty.unwrap_or(TypeId::ERROR);
+        match walk.reference.at.some() {
+            Some(at) => self.narrowable_type(file, at, ty),
+            None => ty,
+        }
+    }
+
+    /// `getTypeOfInitializer`, `getTypeOfExpression(node.Right)`. `getTypeOfExpression` checks an expression again while it is being
+    /// checked, and ends at the loop (`recheck_in_flow_loop`). Past a resolution, which hides the loop, `enter` refuses, so a cycle
+    /// through a value assigned on a back edge may not be one in TypeScript. `mark_circle_from` tells which are.
+    fn type_of_assigned_value(
+        &mut self,
+        walk: &Walk,
+        value: ExprId,
+        is_initializer: bool,
+    ) -> TypeId {
+        let is_automatic = self.is_automatic_type(walk.declared);
+        let in_loop = !is_automatic && !is_initializer && !walk.round_labels.is_empty();
+        if is_automatic || in_loop {
+            self.eager.push(self.stack.len());
+        }
+        if in_loop {
+            self.loop_values.push(self.stack.len());
+        }
+        let ty = self.type_of_declaration_initializer(walk.reference.file, value);
+        if in_loop {
+            self.loop_values.pop();
+        }
+        if is_automatic || in_loop {
+            self.eager.pop();
+        }
+        ty
     }
 
     /// `getInitialType`: what the initializer gives `pat`. `None` where TypeScript has its error type.
@@ -5919,35 +5453,6 @@ impl<'p> Checker<'p> {
         self.matches(reference, array)
     }
 
-    /// Whether `getTypeAtFlowNode` gets `MAX_FLOW_DEPTH` deep going straight back from `flow`, for an array nothing is assigned to
-    /// after its declaration. Nothing met is looked into, and where ways meet it is not followed any further.
-    fn is_flow_too_deep(&mut self, reference: &Reference, mut flow: FlowId) -> bool {
-        let (hir, bound) = (self.hir(reference.file), self.bound(reference.file));
-        let mut nested = 0;
-        loop {
-            let (before, is_nested) = match bound.flow[flow.idx()] {
-                Flow::ArrayMutation { before, expr } => {
-                    (before, self.is_mutation_of(reference, expr))
-                }
-                Flow::Cond { before, .. } | Flow::Switch { before, .. } => (before, true),
-                Flow::Call { before, .. } => (before, false),
-                Flow::Assign { before, target } => {
-                    if matches!(target, FlowTarget::Var(d) if reference.root == Root::Symbol(bound.pat_symbol[hir[d].pat.idx()]))
-                    {
-                        return false;
-                    }
-                    (before, false)
-                }
-                _ => return false,
-            };
-            nested += is_nested as u32;
-            if nested >= MAX_FLOW_DEPTH {
-                return true;
-            }
-            flow = before;
-        }
-    }
-
     /// `getTypeAtFlowArrayMutation`: the array `ty` after `expr`, which is done to it.
     fn after_array_mutation(&mut self, file: FileId, ty: TypeId, expr: ExprId) -> TypeId {
         if !matches!(self.data(ty), TypeData::EvolvingArray(_)) {
@@ -6127,44 +5632,17 @@ impl<'p> Checker<'p> {
     /// `getEffectsSignature`, of a call that is a statement: the signature called, if it says that it asserts something or that it
     /// never returns.
     pub(super) fn effects_signature(&mut self, file: FileId, call: ExprId) -> Option<SigId> {
-        self.effects_signature_and_is_kept(file, call).0
-    }
-
-    /// The same, and whether `effects_signatures` has it.
-    fn effects_signature_and_is_kept(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-    ) -> (Option<SigId>, bool) {
         if let Some(&known) = self.flow_memo.effects_signatures.get(&(file, call)) {
-            return (known, true);
+            return known;
         }
         let mut took_resolving = false;
         let (sig, is_memoizable) =
             self.run_memoizable(|c| c.effects_signature_uncached(file, call, &mut took_resolving));
         // `explicit_type_of_symbol` says nothing where the stack is low.
-        let is_kept = is_memoizable && !took_resolving && !self.is_stack_low();
-        if is_kept {
+        if is_memoizable && !took_resolving && !self.is_stack_low() {
             self.flow_memo.effects_signatures.insert((file, call), sig);
         }
-        (sig, is_kept)
-    }
-
-    /// `effects_signatures` has `None` for the call of the flow node `flow`.
-    #[inline(never)]
-    fn note_idle_call(&mut self, file: FileId, flow: FlowId) {
-        // Nearly all walks are in the file whose errors are being looked for.
-        if self.checking != Some(file) {
-            return;
-        }
-        let words = self.bound(file).flow.len() / 64 + 1;
-        let memo = &mut self.flow_memo;
-        if memo.idle_calls_of != Some(file) {
-            memo.idle_calls_of = Some(file);
-            memo.idle_calls.clear();
-            memo.idle_calls.resize(words, 0);
-        }
-        memo.idle_calls[flow.idx() / 64] |= 1 << (flow.idx() % 64);
+        sig
     }
 
     /// `took_resolving`: the answer is as good as the resolution of the call, which keeps track of that itself.
@@ -6281,9 +5759,7 @@ impl<'p> Checker<'p> {
                 | Flow::Cond { before, .. }
                 | Flow::ArrayMutation { before, .. } => flow = before,
                 Flow::Call { before, call } => {
-                    if !self.flow_memo.is_idle_call(file, flow)
-                        && let Some(sig) = self.effects_signature(file, call)
-                    {
+                    if let Some(sig) = self.effects_signature(file, call) {
                         match self.sig_predicate(sig) {
                             // It never returns.
                             None => return false,
@@ -6329,20 +5805,12 @@ impl<'p> Checker<'p> {
                     reduced.pop();
                     return reachable;
                 }
-                Flow::Label { start, len } => {
+                Flow::Label { .. } => {
                     if seen.contains(&flow) {
                         return false;
                     }
                     seen.push(flow);
-                    let (start, len) = match reduced.iter().rev().find(|r| r.0 == flow) {
-                        Some(&(_, instead)) => match bound.flow[instead.idx()] {
-                            Flow::Label { start, len } => (start, len),
-                            _ => (start, len),
-                        },
-                        None => (start, len),
-                    };
-                    return bound
-                        .edges(start, len)
+                    return branch_label_antecedents(bound, flow, reduced)
                         .iter()
                         .any(|&edge| self.is_reachable_inner(file, edge, seen, reduced));
                 }

@@ -48,14 +48,20 @@ impl<'p> Checker<'p> {
 
     /// `getNameFromJsxElementAttributesContainer`
     fn jsx_name_from_container(&mut self, file: FileId, container: Atom) -> JsxName {
-        let Some(ty) = self.jsx_type(file, container) else {
+        let Some(symbol) = self.jsx_symbol(file, container) else {
             return JsxName::Missing;
         };
+        let ty = self.declared_type(symbol);
         match self.members(ty) {
             Some(members) => match &members.shape().props[..] {
                 [] => JsxName::Empty,
                 [only] => JsxName::Name(only.name),
-                _ => JsxName::Missing,
+                _ => {
+                    if let Some(at) = self.place_of_symbol(symbol) {
+                        self.error(at, 2608, &[Arg::Atom(container)]);
+                    }
+                    JsxName::Missing
+                }
             },
             None => JsxName::Missing,
         }
@@ -376,7 +382,16 @@ impl<'p> Checker<'p> {
             JsxName::Empty => self.sig_return(sig),
             JsxName::Name(name) => match self.jsx_props_from_member(sig, name) {
                 Some(props) => props,
-                None => return TypeId::UNKNOWN,
+                None => {
+                    let hir = self.hir(file);
+                    if let ExprKind::Jsx(j) = hir[e].kind
+                        && !hir[j].attrs.is_empty()
+                    {
+                        let at = (file, hir[e].pos, hir[j].opening_end);
+                        self.error(at, 2607, &[Arg::Atom(name)]);
+                    }
+                    return TypeId::UNKNOWN;
+                }
             },
         };
         let attributes = self.jsx_managed_attributes(file, e, attributes);
@@ -462,6 +477,7 @@ impl<'p> Checker<'p> {
             return TypeId::UNRESOLVED;
         };
         let jsx = &hir[j];
+        let children_property_name = self.jsx_children_property_name(file);
         // `emptyJsxObjectType`, which is what everything is spread onto.
         let empty = self.synth(Shape {
             literal: Literalness::JsxAttributes,
@@ -527,8 +543,22 @@ impl<'p> Checker<'p> {
         }
         let children = self.jsx_child_types(file, e);
         if !children.is_empty()
-            && let JsxName::Name(name) = self.jsx_children_property_name(file)
+            && let JsxName::Name(name) = children_property_name
         {
+            // It is said of the attributes together.
+            if let (Some(first), Some(last)) =
+                (jsx.attrs.iter().next(), jsx.attrs.iter().next_back())
+                && jsx.attrs.iter().any(|p| {
+                    hir[p].kind != PropKind::Spread
+                        && self.member_name(file, hir[p].key) == Some(name)
+                })
+            {
+                self.error(
+                    (file, hir[first].start, hir[last].end),
+                    2710,
+                    &[Arg::Atom(name)],
+                );
+            }
             let ty = if let [(_, only)] = children[..] {
                 only
             } else {

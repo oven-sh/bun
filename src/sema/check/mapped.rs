@@ -828,10 +828,7 @@ impl<'p> Checker<'p> {
         {
             let elems = self.type_arguments(apparent);
             let at: f64 = self.files().atoms.text(name).parse().unwrap_or(f64::NAN);
-            let variable = flags
-                .iter()
-                .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-                .unwrap_or(flags.len());
+            let variable = Self::fixed_length(flags);
             if at >= 0.0 && at < variable as f64 && at.fract() == 0.0 {
                 let n = at as usize;
                 return Some(if flags[n].contains(ElemFlags::OPTIONAL) {
@@ -1676,10 +1673,7 @@ impl<'p> Checker<'p> {
             let elems = self.type_arguments(t);
             // `instantiateMappedTupleType`: up to the first rest or variadic element each is looked up by its place. From there
             // on places are not known: what is spread is mapped as a whole, the others as the element of an array of their own.
-            let fixed = flags
-                .iter()
-                .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-                .unwrap_or(flags.len());
+            let fixed = Self::fixed_length(flags);
             let mut new_elems = Vec::with_capacity(elems.len());
             let mut new_flags = Vec::with_capacity(elems.len());
             for (i, &f) in flags.iter().enumerate() {
@@ -1755,10 +1749,7 @@ impl<'p> Checker<'p> {
         flags: &[ElemFlags],
         readonly: bool,
     ) -> TypeId {
-        let fixed = flags
-            .iter()
-            .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-            .unwrap_or(flags.len());
+        let fixed = Self::fixed_length(flags);
         let mut keys: Vec<TypeId> = (0..fixed)
             .map(|i| self.string_literal(self.number_name(i as f64), false))
             .collect();

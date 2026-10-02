@@ -5,8 +5,7 @@ use super::enclosing_declaration::Enclosing;
 use super::visit_node::{VisitedKind, VisitedNode};
 use super::*;
 use crate::bind::{
-    ClassOwner, Decl, FnOwner, MemberDeclaration, MemberOwner, Parent, PatParent, SymbolId,
-    flags_of_member, member_flags,
+    ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, SymbolId, flags_of_member,
 };
 
 /// `typeWriterResult`
@@ -268,9 +267,7 @@ impl Checker<'_> {
                 if self.is_child_of_parent_of_expr(file, node.kind)
                     && let Parent::ClassExtends(c) = self.bound(file).expr_parent[e.idx()]
                 {
-                    let class = self
-                        .files()
-                        .sym(file, self.bound(file).class_symbol[c.idx()]);
+                    let class = self.class_sym(file, c);
                     if let Some(&base) = self.base_types(class).first()
                         && !base.is_any()
                     {
@@ -633,26 +630,26 @@ impl Checker<'_> {
         let name = prop.name;
         // `declareSymbolEx`, `mergeSymbol`, `lateBindMember`: what the symbol of that name refused has a symbol of its own.
         let in_table = match Self::value_declaration(&prop) {
-            Some(PropSource::Members(list)) => list
-                .first()
-                .map(|&(of, first)| (of, MemberDeclaration::Member(first))),
+            Some(PropSource::Members(list)) => {
+                list.first().map(|&(of, first)| (of, Decl::Member(first)))
+            }
             Some(&PropSource::Parameter(of, parameter)) => {
-                Some((of, MemberDeclaration::Parameter(parameter)))
+                Some((of, Decl::ParameterProperty(parameter)))
             }
             _ => None,
         };
         let has_own_symbol = match in_table {
             Some(first) => !self
-                .declarations_of_member(file, MemberDeclaration::Member(m))
+                .declarations_of_member(file, Decl::Member(m))
                 .contains(&first),
             // Put together of declarations that have type parameters of their own: what the binder says. `prototype`, which
             // `bindClassLikeDeclaration` declares without a declaration, refuses a late bound member too.
             None => {
-                bound.is_member_in_no_table(MemberDeclaration::Member(m))
+                bound.is_member_in_no_table(m)
                     || name == known::prototype
                         && member.flags.contains(Flags::STATIC)
                         && flags_of_member(&member)
-                            .is_some_and(|(_, excludes)| excludes & member_flags::PROPERTY != 0)
+                            .is_some_and(|(_, excludes)| excludes.contains(SymFlags::PROPERTY))
             }
         };
         let prop = if has_own_symbol {

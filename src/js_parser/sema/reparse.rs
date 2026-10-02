@@ -62,22 +62,12 @@ fn modifiers_of(flags: Flags) -> Flags {
     flags.difference(Flags::GENERATOR | Flags::OPTIONAL | Flags::BODY_DROPPED | Flags::MISSING_BODY)
 }
 
-/// `IsValidIdentifier`. What is not ASCII is taken for a letter.
+/// `IsValidIdentifier`
 fn is_valid_identifier(text: &[u8]) -> bool {
-    let unescaped;
-    let text = if bun_core::strings::contains_char(text, b'\\') {
-        unescaped = jsdoc::unescaped_name(text);
-        &unescaped[..]
-    } else {
-        text
-    };
-    let is_start = |c: u8| c.is_ascii_alphabetic() || matches!(c, b'_' | b'$') || c >= 0x80;
-    match text.split_first() {
-        Some((&first, rest)) => {
-            is_start(first) && rest.iter().all(|&c| is_start(c) || c.is_ascii_digit())
-        }
-        None => false,
+    if bun_core::strings::contains_char(text, b'\\') {
+        return bun_core::lexer::is_identifier(&jsdoc::unescaped_name(text));
     }
+    bun_core::lexer::is_identifier(text)
 }
 
 impl<'p, 'a> Lower<'p, 'a> {
@@ -411,9 +401,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     /// `addDeepCloneReparse`, of the type of a type expression.
     fn reparse_type(&mut self, expr: TypeExpr) -> TypeNodeId {
         self.note_checker_errors(expr.pos, expr.end);
-        let outer = std::mem::replace(&mut self.b.in_jsdoc, true);
         let mut ty = self.b.clone_type(expr.ty);
-        self.b.in_jsdoc = outer;
         let file = &mut self.b.file;
         if ty.is_none() {
             ty = file.ty(TypeNodeKind::Keyword(Keyword::Any), expr.pos);
@@ -1052,10 +1040,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         };
         let start = class_name.name.first().map_or(0, |first| first.start);
         self.note_checker_errors(start, class_name.end);
-        let outer = std::mem::replace(&mut self.b.in_jsdoc, true);
-        let args = self.b.clone_type_list(type_args);
-        self.b.in_jsdoc = outer;
-        args
+        self.b.clone_type_list(type_args)
     }
 
     /// `@augments`, `@extends`: the type arguments go to the `extends` clause, if that names the same class.

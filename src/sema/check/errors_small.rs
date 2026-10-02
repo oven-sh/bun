@@ -409,8 +409,7 @@ impl Checker<'_> {
             }
             // Of a body that is missing or out of place something else is said, and nothing more: 1005, 1318, 1183.
             let is_in_type = matches!(bound.fns[f].owner, FnOwner::Member(m) if !matches!(bound.member_owner[m.idx()], MemberOwner::Class(_)));
-            let has_body =
-                !matches!(func.body, FnBody::None) || func.flags.contains(Flags::BODY_DROPPED);
+            let has_body = has_body(&func);
             let needs_none = func.flags.contains(Flags::ABSTRACT) || is_in_type;
             let is_body_wrong = if has_body {
                 needs_none
@@ -728,8 +727,7 @@ impl Checker<'_> {
     ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `IsIdentifier`: only those are looked at, and a private name is not one.
-        if matches!(hir[tested].kind, ExprKind::Dot { name, .. } if self.files().atoms.bytes(name).first() == Some(&b'#'))
-        {
+        if matches!(hir[tested].kind, ExprKind::Dot { name, .. } if self.is_private_name(name)) {
             return false;
         }
         let same_variable = |a: ExprId, b: ExprId| matches!((hir[a].kind, hir[b].kind), (ExprKind::Ident(x), ExprKind::Ident(y)) if x == y && bound.expr_symbol[a.idx()] == bound.expr_symbol[b.idx()]);

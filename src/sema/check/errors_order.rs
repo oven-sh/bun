@@ -237,10 +237,7 @@ impl Checker<'_> {
 
     /// The statement that declares the enum `en`.
     fn stmt_of_enum(&self, file: FileId, en: EnumId) -> Option<StmtId> {
-        let hir = self.hir(file);
-        (0..hir.stmts.len() as u32)
-            .map(StmtId)
-            .find(|&s| matches!(hir[s].kind, StmtKind::Enum(x) if x == en))
+        Some(self.hir(file)[en].stmt).filter(|s| s.is_some())
     }
 
     /// `isBlockScopedNameDeclaredBeforeUse` of the variable `pat` of the declaration `decl`, used at `e` (a name, or `a.b.c`) of the

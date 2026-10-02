@@ -8,9 +8,7 @@ use super::enclosing_declaration::Enclosing;
 
 use super::errors_isolated_declarations::Node as SyntaxNode;
 use super::*;
-use crate::bind::{
-    ClassOwner, Decl, FnOwner, InferPosition, MemberOwner, Parent, ScopeId, ScopeKind, SymbolId,
-};
+use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, ScopeId, ScopeKind, SymbolId};
 
 #[path = "print_node_reuse.rs"]
 mod node_reuse;
@@ -121,13 +119,7 @@ impl Checker<'_> {
             | ALLOW_UNIQUE_ES_SYMBOL_TYPE
             | GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS
             | IGNORE_ERRORS;
-        with_printer(self, enclosing_declaration, None, flags, |printer| {
-            printer.type_to_node(ty).text
-        })
-    }
-
-    pub fn type_to_string_for_baseline(&mut self, ty: TypeId) -> String {
-        self.type_to_string_for_baseline_with(ty, None)
+        self.type_to_type_node(ty, enclosing_declaration, flags, None)
     }
 
     /// `getTypeNameForErrorDisplay`
@@ -351,18 +343,13 @@ impl<'p> Checker<'p> {
     pub(super) fn type_to_type_node(
         &mut self,
         ty: TypeId,
-        enclosing_declaration: Enclosing,
+        enclosing_declaration: Option<Enclosing>,
         flags: u32,
-        tracker: &mut dyn SymbolTracker<'p>,
+        tracker: Option<&mut dyn SymbolTracker<'p>>,
     ) -> String {
-        let enclosing_declaration = Some(enclosing_declaration);
-        with_printer(
-            self,
-            enclosing_declaration,
-            Some(tracker),
-            flags,
-            |printer| printer.type_to_node(ty).text,
-        )
+        with_printer(self, enclosing_declaration, tracker, flags, |printer| {
+            printer.type_to_node(ty).text
+        })
     }
 
     /// `NodeBuilder.SerializeTypeForExpression`
@@ -1457,19 +1444,6 @@ impl<'p> Printer<'_, 'p> {
 
     // ───────────────────────────── symbols ─────────────────────────────
 
-    /// `core.Some(symbol.Declarations, hasNonGlobalAugmentationExternalModuleSymbol)`
-    fn is_external_module(&self, symbol: Sym) -> bool {
-        let files = self.c.files();
-        files
-            .decls(symbol)
-            .into_iter()
-            .any(|(file, decl)| match decl {
-                Decl::File => files.module(file).is_module(),
-                Decl::Module(m) => matches!(self.c.hir(file)[m].name, ModuleName::String(_)),
-                _ => false,
-            })
-    }
-
     /// `getSpecifierForModuleSymbol` without an enclosing file: the name of the symbol without its quotes.
     fn specifier_of_module(&self, symbol: Sym) -> String {
         let files = self.c.files();
@@ -1790,7 +1764,7 @@ impl<'p> Printer<'_, 'p> {
     fn symbol_to_text(&mut self, symbol: Sym) -> String {
         let name = self.name_of_symbol_as_written(symbol, true);
         if name.starts_with(|first: char| first == '"' || first == '\'')
-            && self.is_external_module(symbol)
+            && self.c.is_external_module_symbol(symbol)
         {
             return quoted(&self.specifier_of_module(symbol), '"', true);
         }
@@ -1806,7 +1780,7 @@ impl<'p> Printer<'_, 'p> {
         depth: u32,
     ) -> Option<Vec<Sym>> {
         let files = self.c.files();
-        let is_module = self.is_external_module(symbol);
+        let is_module = self.c.is_external_module_symbol(symbol);
         let name = files.symbol(symbol).name;
         let is_global = name.is_some() && files.globals.get(&name) == Some(&symbol);
         if is_global && !is_module {
@@ -1852,7 +1826,7 @@ impl<'p> Printer<'_, 'p> {
     ) -> (bool, Vec<Sym>) {
         let found = self
             .c
-            .lookup_symbol_chain_at(symbol, is_value, yields_module, at);
+            .lookup_symbol_chain_at(symbol, is_value, yields_module, at, Vec::new());
         let first = if found.0 { None } else { found.1.first() };
         if at.fake_scope == 0
             || !self.is_name_of_fake_local(symbol)
@@ -1887,7 +1861,7 @@ impl<'p> Printer<'_, 'p> {
             }
         }
         self.c
-            .lookup_symbol_chain_in_fake_scopes_at(symbol, is_value, yields_module, at, locals)
+            .lookup_symbol_chain_at(symbol, is_value, yields_module, at, locals)
     }
 
     fn is_name_of_fake_local(&self, symbol: Sym) -> bool {
@@ -2021,7 +1995,7 @@ impl<'p> Printer<'_, 'p> {
         }
         let type_arguments = type_arguments_text(type_arguments);
         let query = if is_type_of { "typeof " } else { "" };
-        if !starts_with_global_this && self.is_external_module(chain[0]) {
+        if !starts_with_global_this && self.c.is_external_module_symbol(chain[0]) {
             let (specifier, attributes) = self.import_type_specifier(chain[0]);
             if self.flags & ALLOW_NODE_MODULES_RELATIVE_PATHS == 0
                 && attributes.is_empty()
@@ -2059,9 +2033,11 @@ impl<'p> Printer<'_, 'p> {
         if let Some(at) = self.enclosing_declaration {
             let allows_node_modules_relative_paths =
                 self.flags & ALLOW_NODE_MODULES_RELATIVE_PATHS != 0;
-            let (specifier, mode) =
-                self.c
-                    .import_type_specifier_at(module, at, allows_node_modules_relative_paths);
+            let (specifier, mode) = self.c.import_type_specifier_and_mode(
+                module,
+                at.file,
+                allows_node_modules_relative_paths,
+            );
             // Empty: `paths` or `rootDirs` have a say, which is not worked out.
             if !specifier.is_empty() {
                 let attributes = match mode {
@@ -2564,55 +2540,6 @@ impl<'p> Printer<'_, 'p> {
         self.mapper = outer.mapper;
     }
 
-    /// `getInferredTypeParameterConstraint(t, omitTypeReferences = true)`
-    fn inferred_constraint_without_references(&mut self, parameter: TypeId) -> Option<TypeId> {
-        let TypeData::TypeParam(file, tp, _) = *self.c.data(parameter) else {
-            return None;
-        };
-        let bound = self.c.bound(file);
-        let symbol = bound.type_param_symbol[tp.idx()];
-        if symbol.is_none() {
-            return None;
-        }
-        let any_key = [TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL];
-        let mut inferences = Vec::new();
-        for &decl in &bound.symbols[symbol.idx()].decls {
-            let Decl::TypeParam(declaration) = decl else {
-                continue;
-            };
-            let Ok(at) = bound
-                .infer_positions
-                .binary_search_by_key(&declaration, |entry| entry.0)
-            else {
-                continue;
-            };
-            match bound.infer_positions[at].1 {
-                InferPosition::TypeArgument(..) => {}
-                InferPosition::Rest => inferences.push(self.c.array_of(TypeId::UNKNOWN)),
-                InferPosition::Template => inferences.push(TypeId::STRING),
-                InferPosition::MappedKey => inferences.push(self.c.union(&any_key)),
-                InferPosition::MappedTemplate(checked) => {
-                    let mapped = self.c.hir(file)[checked];
-                    let template = self.c.type_from_node(file, mapped.ty);
-                    let key = self.c.type_param(file, mapped.param);
-                    let written = self.c.hir(file)[mapped.param].constraint;
-                    let over = if written.is_some() {
-                        self.c.type_from_node(file, written)
-                    } else {
-                        self.c.union(&any_key)
-                    };
-                    let mapper = self.c.mapper_from(&[key], &[over]);
-                    inferences.push(self.c.instantiate(template, mapper));
-                }
-            }
-        }
-        if inferences.is_empty() {
-            None
-        } else {
-            Some(self.c.intersection(&inferences))
-        }
-    }
-
     /// A type parameter where it is used: its name, or `infer T` in the `extends` type that declares it.
     fn type_parameter_to_node(&mut self, ty: TypeId) -> Node {
         let name = self.type_parameter_to_name(ty);
@@ -2628,10 +2555,14 @@ impl<'p> Printer<'_, 'p> {
         self.approximate_length += name.len() + 6;
         // A constraint that follows from where `infer T` is written is left out.
         if let Some(constraint) = self.c.constraint_of_type_param(ty) {
-            let is_implied = match self.inferred_constraint_without_references(ty) {
-                Some(inferred) => self.c.is_identical(constraint, inferred),
-                None => false,
+            let inferred = match *self.c.data(ty) {
+                TypeData::TypeParam(file, tp, _) => {
+                    self.c.inferred_type_param_constraint(ty, file, tp, true)
+                }
+                _ => None,
             };
+            let is_implied =
+                inferred.is_some_and(|inferred| self.c.is_identical(constraint, inferred));
             if !is_implied {
                 self.approximate_length += 9;
                 let constraint = self.type_to_node(constraint);
@@ -3552,8 +3483,20 @@ impl<'p> Printer<'_, 'p> {
         } else {
             '"'
         };
+        // `links.nameType`. `checkObjectLiteral` takes it from the member the property is made of, whatever else declares the name, and
+        // `createSymbolWithType` passes it on.
+        let made_of = match &prop.source {
+            PropSource::Copy(_, parts, _) => parts.first().unwrap_or(prop),
+            _ => prop,
+        };
         let has_name_type = matches!(prop.source, PropSource::Mapped(..))
-            || written.first().is_some_and(|w| w.is_computed);
+            || match &made_of.source {
+                PropSource::Literal(file, member) => {
+                    self.written_name_of_literal_property(*file, *member)
+                        .is_computed
+                }
+                _ => written.first().is_some_and(|w| w.is_computed),
+            };
         let is_identifier = is_identifier_text(&name);
         let is_numeric = self.c.is_numeric_name(prop.name);
         // `getPropertyNameNodeForSymbolFromNameType`

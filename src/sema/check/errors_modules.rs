@@ -93,15 +93,6 @@ impl Checker<'_> {
         meaning: SymFlags,
         out: &mut Vec<Diagnostic>,
     ) {
-        // `SymbolFlagsModuleMember`
-        const MODULE_MEMBER: SymFlags = SymFlags::VARIABLE
-            .union(SymFlags::FUNCTION)
-            .union(SymFlags::CLASS)
-            .union(SymFlags::INTERFACE)
-            .union(SymFlags::ENUM)
-            .union(SymFlags::MODULE)
-            .union(SymFlags::TYPE_ALIAS)
-            .union(SymFlags::ALIAS);
         let (files, hir) = (self.files(), self.hir(file));
         let Some(mut namespace) = files.resolve_name(file, scope, names[0], SymFlags::NAMESPACE)
         else {
@@ -160,7 +151,7 @@ impl Checker<'_> {
             };
             let is_candidate = |&(other, sym): &(Atom, Sym)| {
                 other != known::export_equals
-                    && files.flags(sym).intersects(MODULE_MEMBER)
+                    && files.flags(sym).intersects(SymFlags::MODULE_MEMBER)
                     && is_close(text, files.atoms.bytes(other))
             };
             let is_misspelt = exports.iter().any(is_candidate);
@@ -326,7 +317,11 @@ impl Checker<'_> {
             if is_all_written && number_repeated(&written).is_empty() {
                 continue;
             }
-            self.report_refused_members_of_object_literal(file, props, out);
+            let container = bound.expr_symbol[literal.idx()];
+            if !is_all_written && container.is_some() {
+                let container = self.files().sym(file, container);
+                self.report_conflicts_of_late_bound_members(file, container, false, out);
+            }
             let mut seen: SmallVec<[(Atom, u8); 8]> = SmallVec::new();
             for p in props.iter() {
                 let prop = &hir[p];
@@ -829,13 +824,16 @@ pub(super) fn fully_qualified_name(c: &mut Checker<'_>, sym: Sym) -> String {
 }
 
 /// `GetRootDeclaration`: the variable or the parameter whose binding pattern contains `pat`.
-pub(super) fn root_declaration(bound: &Bound, mut pat: PatId) -> PatParent {
-    loop {
-        match bound.pat_parent[pat.idx()] {
-            PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,
-            root => return root,
-        }
+pub(super) fn root_declaration(bound: &Bound, pat: PatId) -> PatParent {
+    bound.pat_parent[root_pattern(bound, pat).idx()]
+}
+
+/// Its name: the outermost binding pattern that contains `pat`.
+pub(super) fn root_pattern(bound: &Bound, mut pat: PatId) -> PatId {
+    while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) = bound.pat_parent[pat.idx()] {
+        pat = outer;
     }
+    pat
 }
 
 /// Where the name after the one that ends at `end` is written: past the dot and what is around it. The text of a declaration file is not

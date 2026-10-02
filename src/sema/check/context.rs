@@ -158,12 +158,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// What a pattern says of what it destructures: `[a, b]` wants a pair, `{ a }` something with an `a`.
-    /// `None` for a plain name.
-    pub(super) fn type_implied_by_pattern(&mut self, file: FileId, pat: PatId) -> Option<TypeId> {
-        self.implied_by_pattern(file, pat, false)
-    }
-
     /// The same as what the initializer of the pattern is expected to be. The names of the pattern that its own defaults
     /// mention are anything meanwhile: what they are depends on the initializer.
     pub(super) fn context_implied_by_pattern(
@@ -174,7 +168,7 @@ impl<'p> Checker<'p> {
         self.implied_by_pattern(file, pat, true)
     }
 
-    fn implied_by_pattern(
+    pub(super) fn implied_by_pattern(
         &mut self,
         file: FileId,
         pat: PatId,
@@ -287,16 +281,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `GetRootDeclaration`: the variable or the parameter that the pattern `pat` is part of belongs to.
-    fn root_of_pattern(&self, file: FileId, mut pat: PatId) -> PatParent {
-        loop {
-            match self.bound(file).pat_parent[pat.idx()] {
-                PatParent::Prop(parent, _) | PatParent::Elem(parent, _) => pat = parent,
-                root => return root,
-            }
-        }
-    }
-
     /// `getTypeFromBindingPattern`
     fn implied_by_pattern_inner(
         &mut self,
@@ -320,7 +304,7 @@ impl<'p> Checker<'p> {
                 if implied.is_some() {
                     c.contextual.pop();
                 }
-                let root = c.root_of_pattern(file, pat);
+                let root = root_declaration(c.bound(file), pat);
                 // `checkDeclarationInitializer`: below a parameter a default may as well have what its own pattern has defaults for.
                 let ty = if matches!(root, PatParent::Param(_)) {
                     c.padded_for_pattern(file, pat, ty)
@@ -677,10 +661,7 @@ impl<'p> Checker<'p> {
             // `getContextualTypeForDecorator`
             Parent::Decorator(_, owner) => {
                 let sig = self.decorator_call_signature(file, owner)?;
-                Some(self.synth(Shape {
-                    call: vec![sig],
-                    ..Shape::default()
-                }))
+                Some(self.type_of_signature(sig, false))
             }
             Parent::PatPropDefault(p) => {
                 self.contextual_type_for_default_of_element(file, hir[p].value)
@@ -1065,10 +1046,7 @@ impl<'p> Checker<'p> {
                 .is_ok_and(|n| n >= 0.0)
         {
             let elems = self.type_arguments(part);
-            let fixed = flags
-                .iter()
-                .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-                .unwrap_or(flags.len());
+            let fixed = Self::fixed_length(flags);
             if let Some(rest) = self.tuple_slice_element(elems, flags, fixed, 0) {
                 return Some(rest);
             }
@@ -2534,7 +2512,7 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         let own = hir[func].params.at(index);
         if hir[own].flags.contains(Flags::REST) {
-            let rest = self.params_as_tuple(&params, index);
+            let rest = self.rest_type_at_position(&params, index, false);
             // `[...T[]]` is `T[]`.
             if let TypeData::Tuple { flags, .. } = self.data(rest)
                 && let ([e], [f]) = (self.type_arguments(rest), &**flags)

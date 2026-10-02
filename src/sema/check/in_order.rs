@@ -27,6 +27,25 @@ impl Checker<'_> {
         }
     }
 
+    /// `checkSourceFile(file)` by a checker that shares nothing, as every checker of tsgo's: what is said once, of whoever asks first,
+    /// goes by the order in which THAT one asks. `read`: what it noted on the way.
+    pub(super) fn check_source_file_alone<R>(
+        &self,
+        file: FileId,
+        read: impl FnOnce(&Checker<'_>) -> R,
+    ) -> R {
+        // Nobody else can ask about a file that nothing refers to.
+        if crate::local::file() == file.0 {
+            return read(self);
+        }
+        let program = Program::new(Arc::clone(&self.p.files));
+        let mut checker = program.checker();
+        (checker.stack_base, checker.stack_limit) = (self.stack_base, self.stack_limit);
+        (checker.deadline, checker.checking) = (self.deadline, Some(file));
+        checker.check_source_file(file);
+        read(&checker)
+    }
+
     /// `checkSourceElements`
     fn check_source_elements(&mut self, file: FileId, statements: IdList<StmtId>) {
         for s in self.hir(file).ids(statements) {

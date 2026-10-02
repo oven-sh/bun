@@ -21,8 +21,6 @@ pub(crate) struct Builder<'a> {
     pub(crate) classes_around: u32,
     /// `IsInJSFile`
     pub(crate) is_js: bool,
-    /// `NodeFlagsJSDoc`: the type being cloned is written in a JSDoc comment.
-    pub(crate) in_jsdoc: bool,
     /// Where the first token of the statement being made is: a decorator, a modifier or its keyword.
     pub(crate) statement_start: u32,
 }
@@ -261,7 +259,6 @@ impl<'a> Builder<'a> {
             statement_modifiers: Vec::new(),
             classes_around: 0,
             is_js,
-            in_jsdoc: false,
             statement_start: 0,
         }
     }

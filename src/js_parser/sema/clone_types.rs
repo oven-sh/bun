@@ -113,12 +113,9 @@ impl Builder<'_> {
         let ts::Type { data, loc, end } = self.ts[id];
         let kind = match data {
             ts::TypeData::Keyword(k) => TypeNodeKind::Keyword(keyword(k)),
-            ts::TypeData::Reference { name, args } => match self.jsdoc_intended_type(name, args) {
-                Some(kind) => kind,
-                None => TypeNodeKind::Ref {
-                    name: self.clone_names(name),
-                    args: self.clone_type_list(args),
-                },
+            ts::TypeData::Reference { name, args } => TypeNodeKind::Ref {
+                name: self.clone_names(name),
+                args: self.clone_type_list(args),
             },
             ts::TypeData::StringLiteral(text) => TypeNodeKind::StringLit(self.atom(&text)),
             ts::TypeData::NumberLiteral(number) => {
@@ -350,46 +347,6 @@ impl Builder<'_> {
         if !self.is_js {
             self.file.early_errors.push((at, code));
         }
-    }
-
-    /// `getIntendedTypeFromJSDocTypeReference`, as far as no compiler option has a say: what some names stand for in a JSDoc comment.
-    fn jsdoc_intended_type(
-        &mut self,
-        name: ts::Span<ts::Name>,
-        args: ts::IdList<ts::Type>,
-    ) -> Option<TypeNodeKind> {
-        if !self.in_jsdoc {
-            return None;
-        }
-        let &[ts::Name { text, .. }] = &self.ts[name] else {
-            return None;
-        };
-        // `Object<K, V>` is `Record<K, V>`.
-        if args.len() == 2 && &*text == b"Object" {
-            return Some(TypeNodeKind::Ref {
-                name: self.file.list(&[known::Record]),
-                args: self.clone_type_list(args),
-            });
-        }
-        if !args.is_empty() {
-            return None;
-        }
-        Some(TypeNodeKind::Keyword(match &*text {
-            b"String" => Keyword::String,
-            b"Number" => Keyword::Number,
-            b"BigInt" => Keyword::BigInt,
-            b"Boolean" => Keyword::Boolean,
-            b"Void" => Keyword::Void,
-            b"Undefined" => Keyword::Undefined,
-            b"Null" => Keyword::Null,
-            b"function" => {
-                return Some(TypeNodeKind::Ref {
-                    name: self.file.list(&[known::Function]),
-                    args: IdList::EMPTY,
-                });
-            }
-            _ => return None,
-        }))
     }
 
     /// `operand | keyword`

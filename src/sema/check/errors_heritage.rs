@@ -52,9 +52,7 @@ impl Checker<'_> {
     fn check_class_heritage(&mut self, file: FileId, c: ClassId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
         let class = &hir[c];
-        let sym = self
-            .files()
-            .sym(file, self.bound(file).class_symbol[c.idx()]);
+        let sym = self.class_sym(file, c);
         let class_type = self.declared_type(sym);
         if !self.is_known(class_type) {
             return;

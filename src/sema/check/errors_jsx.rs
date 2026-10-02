@@ -1,478 +1,19 @@
 //! Errors about JSX: 17004 2874 2875 2879 and what is said in their place, 7026 and 2339 for tags that are not components, 2604 2322
 //! 2769 6229 for what a tag takes, 2558 2743 2344 for its type arguments, 2745 2746 2747 2710 for children, 2783 for what a spread
-//! overwrites, 2786.
+//! overwrites, 2786, 2609 17016 17017, and the grammar: 17000 17001 2639 18007.
 //!
 //! Follows `checkJsxOpeningLikeElementOrOpeningFragment`, `checkJsxPreconditions`, `getIntrinsicTagSymbol`,
 //! `getJsxNamespace`, `getJsxFactoryEntity`, `getJsxNamespaceContainerForImplicitImport`, `getJSXFragmentType`,
 //! `resolveJsxOpeningLikeElement`, `elaborateJsxComponents` and `checkJsxReturnAssignableToAppropriateBound` of TypeScript 7.0.2's
-//! jsx.go, and `markJsxAliasReferenced`, `checkNodeDeferred`, `checkSpreadPropOverrides`, `getTypeArgumentArityError` and
+//! jsx.go, and `markJsxAliasReferenced`, `checkSpreadPropOverrides`, `getTypeArgumentArityError` and
 //! `getCandidateForOverloadFailure` of its checker.go.
 
 use super::errors::Diagnostic;
 use super::jsx::JsxName;
 use super::relate::Relation;
 use super::*;
-use crate::bind::{Parent, ScopeId};
+use crate::bind::ScopeId;
 use crate::resolve::JsxEmit;
-
-/// What `checkNodeDeferred` puts off until the statements of the file have been checked.
-enum DeferredNode {
-    /// `checkFunctionExpressionOrObjectLiteralMethodDeferred`. For an accessor of an object literal, `checkAccessorDeclaration`.
-    Function(FnId),
-    /// `checkClassExpressionDeferred`
-    ClassExpression(ClassId),
-    /// `checkJsxElementDeferred`, `checkJsxSelfClosingElementDeferred`
-    JsxElement(JsxId),
-    /// The operand of `void`.
-    VoidOperand(ExprId),
-}
-
-/// Walks a file as `checkSourceFile` does, as far as the syntax tells, for the order in which `checkJsxElement`,
-/// `checkJsxSelfClosingElement` and `checkJsxFragment` are first called.
-struct JsxCheckOrder<'c, 'p> {
-    checker: &'c mut Checker<'p>,
-    file: FileId,
-    deferred: std::collections::VecDeque<DeferredNode>,
-    /// By `ExprId`: `checkExpression` has been called.
-    is_checked: Vec<bool>,
-    /// By `FnId`: `getReturnTypeFromBody` has been called.
-    has_return_type: Vec<bool>,
-    /// By `FnId`: a candidate is written in it.
-    holds_candidate: Vec<bool>,
-    reached: Vec<ExprId>,
-}
-
-impl<'c, 'p> JsxCheckOrder<'c, 'p> {
-    /// The JSX elements and fragments of `file` in that order. Empty unless there are several `candidates` to choose from.
-    fn of(checker: &'c mut Checker<'p>, file: FileId, candidates: &[ExprId]) -> Vec<ExprId> {
-        if candidates.len() < 2 {
-            return Vec::new();
-        }
-        let (hir, bound) = (checker.hir(file), checker.bound(file));
-        let mut holds_candidate = vec![false; hir.fns.len()];
-        for &e in candidates {
-            let mut parent = bound.expr_parent[e.idx()];
-            while !matches!(parent, Parent::None | Parent::File) {
-                match parent {
-                    Parent::FnBody(func) => holds_candidate[func.idx()] = true,
-                    Parent::ParamDefault(p) => {
-                        holds_candidate[bound.param_fn[p.idx()].idx()] = true
-                    }
-                    _ => {}
-                }
-                parent = checker.outward(file, parent);
-            }
-        }
-        let mut order = JsxCheckOrder {
-            checker,
-            file,
-            deferred: Default::default(),
-            is_checked: vec![false; hir.exprs.len()],
-            has_return_type: vec![false; hir.fns.len()],
-            holds_candidate,
-            reached: Vec::new(),
-        };
-        for s in hir.ids(hir.body) {
-            order.check_source_element(s);
-        }
-        order.check_deferred_nodes();
-        order.reached
-    }
-
-    /// `checkDeferredNodes`: what is deferred meanwhile goes to the end of the queue.
-    fn check_deferred_nodes(&mut self) {
-        let hir = self.checker.hir(self.file);
-        while let Some(node) = self.deferred.pop_front() {
-            match node {
-                DeferredNode::Function(func) => {
-                    if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
-                        self.check_function_like_declaration(func);
-                    } else {
-                        self.get_return_type_from_body(func);
-                        self.check_function_body(func);
-                    }
-                }
-                DeferredNode::ClassExpression(class) => self.check_class_members(class),
-                DeferredNode::JsxElement(jsx) => {
-                    let jsx = &hir[jsx];
-                    let tag = match self.checker.jsx_intrinsic_tag_name(self.file, jsx.tag) {
-                        Some(_) => ExprId::NONE,
-                        None => jsx.tag,
-                    };
-                    self.check_expression(tag);
-                    for p in jsx.attrs.iter() {
-                        self.check_expression(hir[p].value);
-                    }
-                    for child in hir.ids(jsx.children) {
-                        self.check_expression(child);
-                    }
-                    // `checkJsxReturnAssignableToAppropriateBound`
-                    if let Some(func) = self.called_function(tag) {
-                        self.get_return_type_from_body(func);
-                    }
-                }
-                DeferredNode::VoidOperand(e) => self.check_expression(e),
-            }
-        }
-    }
-
-    /// `checkSourceElement`
-    fn check_source_element(&mut self, s: StmtId) {
-        if s.is_none() {
-            return;
-        }
-        let hir = self.checker.hir(self.file);
-        match hir[s].kind {
-            StmtKind::Expr(e)
-            | StmtKind::Throw(e)
-            | StmtKind::ExportDefault(e)
-            | StmtKind::ExportAssign(e) => self.check_expression(e),
-            // `checkReturnStatement` asks for the return type of the function first.
-            StmtKind::Return(e) => {
-                if let Some(func) = self.checker.enclosing_fn(self.file, Parent::Stmt(s)) {
-                    self.get_return_type_from_body(func);
-                }
-                self.check_expression(e);
-            }
-            StmtKind::Var(decls) => {
-                for d in decls.iter() {
-                    self.check_binding_pattern(hir[d].pat);
-                    self.check_expression(hir[d].init);
-                }
-            }
-            StmtKind::Fn(func) => self.check_function_like_declaration(func),
-            StmtKind::Class(class) => {
-                self.check_expression(hir[class].extends);
-                self.check_class_members(class);
-            }
-            StmtKind::If { test, yes, no } => {
-                self.check_expression(test);
-                self.check_source_element(yes);
-                self.check_source_element(no);
-            }
-            StmtKind::For {
-                init,
-                test,
-                update,
-                body,
-            } => {
-                self.check_source_element(init);
-                self.check_expression(test);
-                self.check_expression(update);
-                self.check_source_element(body);
-            }
-            StmtKind::ForIn { left, expr, body }
-            | StmtKind::ForOf {
-                left, expr, body, ..
-            } => {
-                self.check_source_element(left);
-                self.check_expression(expr);
-                self.check_source_element(body);
-            }
-            StmtKind::While { test, body } => {
-                self.check_expression(test);
-                self.check_source_element(body);
-            }
-            StmtKind::DoWhile { body, test } => {
-                self.check_source_element(body);
-                self.check_expression(test);
-            }
-            StmtKind::Block(list) => {
-                for s in hir.ids(list) {
-                    self.check_source_element(s);
-                }
-            }
-            StmtKind::Switch { expr, cases } => {
-                self.check_expression(expr);
-                for c in cases.iter() {
-                    self.check_expression(hir[c].test);
-                    for s in hir.ids(hir[c].body) {
-                        self.check_source_element(s);
-                    }
-                }
-            }
-            StmtKind::Try {
-                block,
-                handler,
-                finalizer,
-                ..
-            } => {
-                self.check_source_element(block);
-                self.check_source_element(handler);
-                self.check_source_element(finalizer);
-            }
-            StmtKind::Labeled { body, .. } => self.check_source_element(body),
-            StmtKind::Module(module) => {
-                for s in hir.ids(hir[module].body) {
-                    self.check_source_element(s);
-                }
-            }
-            StmtKind::Enum(e) => {
-                for m in hir[e].members.iter() {
-                    self.check_expression(hir[m].init);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// `checkVariableLikeDeclaration`, of the elements of a binding pattern.
-    fn check_binding_pattern(&mut self, pat: PatId) {
-        if pat.is_none() {
-            return;
-        }
-        let hir = self.checker.hir(self.file);
-        match hir[pat].kind {
-            PatKind::Missing | PatKind::Ident(_) => {}
-            PatKind::Object(props) => {
-                for p in props.iter() {
-                    if let PropKey::Computed(key) = hir[p].key {
-                        self.check_expression(key);
-                    }
-                    self.check_binding_pattern(hir[p].value);
-                    self.check_expression(hir[p].default);
-                }
-            }
-            PatKind::Array(elems) => {
-                for e in elems.iter() {
-                    self.check_binding_pattern(hir[e].pat);
-                    self.check_expression(hir[e].default);
-                }
-            }
-        }
-    }
-
-    /// `checkSignatureDeclaration`
-    fn check_parameters(&mut self, func: FnId) {
-        let hir = self.checker.hir(self.file);
-        for p in hir[func].params.iter() {
-            self.check_binding_pattern(hir[p].pat);
-            self.check_expression(hir[p].default);
-        }
-    }
-
-    fn check_function_body(&mut self, func: FnId) {
-        let hir = self.checker.hir(self.file);
-        match hir[func].body {
-            FnBody::Block(list) => {
-                for s in hir.ids(list) {
-                    self.check_source_element(s);
-                }
-            }
-            FnBody::Expr(e) => self.check_expression(e),
-            FnBody::None => {}
-        }
-    }
-
-    /// `checkFunctionOrMethodDeclaration`, `checkConstructorDeclaration`, `checkAccessorDeclaration`: the body is not deferred.
-    fn check_function_like_declaration(&mut self, func: FnId) {
-        if func.is_none() {
-            return;
-        }
-        self.check_parameters(func);
-        // `checkAccessorDeclaration` asks for `getTypeOfAccessors` before the body.
-        if self.checker.hir(self.file)[func].kind == FnKind::Getter {
-            self.get_return_type_from_body(func);
-        }
-        self.check_function_body(func);
-    }
-
-    fn check_class_members(&mut self, class: ClassId) {
-        let hir = self.checker.hir(self.file);
-        for m in hir[class].members.iter() {
-            let member = &hir[m];
-            if let PropKey::Computed(key) = member.key {
-                self.check_expression(key);
-            }
-            self.check_function_like_declaration(member.func);
-            self.check_expression(member.init);
-        }
-    }
-
-    /// `getReturnTypeFromBody`, which `getReturnTypeOfSignature` calls once for a function without a return type annotation.
-    fn get_return_type_from_body(&mut self, func: FnId) {
-        let (hir, bound) = (self.checker.hir(self.file), self.checker.bound(self.file));
-        if hir[func].ret.is_some() || std::mem::replace(&mut self.has_return_type[func.idx()], true)
-        {
-            return;
-        }
-        match hir[func].body {
-            FnBody::Expr(body) => self.check_expression(body),
-            FnBody::Block(_) => {
-                let info = &bound.fns[func.idx()];
-                // `checkAndAggregateReturnExpressionTypes`
-                for s in bound.ids(info.returns) {
-                    if let StmtKind::Return(value) = hir[s].kind {
-                        self.check_expression(value);
-                    }
-                }
-                // `checkAndAggregateYieldOperandTypes`
-                if hir[func].flags.contains(Flags::GENERATOR) {
-                    for y in bound.ids(info.yields) {
-                        if let ExprKind::Yield { value, .. } = hir[y].kind {
-                            self.check_expression(value);
-                        }
-                    }
-                }
-            }
-            FnBody::None => {}
-        }
-    }
-
-    /// The initializer `getTypeOfSymbol` checks for the variable the identifier `e` names, if that has no type annotation.
-    fn variable_initializer(&self, e: ExprId) -> Option<ExprId> {
-        use crate::bind::{Decl, PatParent};
-        let (hir, bound) = (self.checker.hir(self.file), self.checker.bound(self.file));
-        let symbol = bound.expr_symbol[e.idx()];
-        if symbol.is_none() {
-            return None;
-        }
-        let &[Decl::Var(pat)] = &bound.symbols[symbol.idx()].decls[..] else {
-            return None;
-        };
-        let mut parent = bound.pat_parent[pat.idx()];
-        while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) = parent {
-            parent = bound.pat_parent[outer.idx()];
-        }
-        match parent {
-            PatParent::Var(d) if hir[d].ty.is_none() => hir[d].init.some(),
-            _ => None,
-        }
-    }
-
-    /// The function whose signature a call of `callee` resolves to, where the syntax tells: a function expression, or the name of a
-    /// function declaration or of a variable initialized with a function expression.
-    fn called_function(&self, callee: ExprId) -> Option<FnId> {
-        let (hir, bound) = (self.checker.hir(self.file), self.checker.bound(self.file));
-        let function_expression = |e: ExprId| match hir[e].kind {
-            ExprKind::Fn(func) => Some(func),
-            _ => None,
-        };
-        let ExprKind::Ident(_) = hir[callee.some()?].kind else {
-            return function_expression(callee);
-        };
-        let symbol = bound.expr_symbol[callee.idx()];
-        if symbol.is_some()
-            && let &[crate::bind::Decl::Fn(func)] = &bound.symbols[symbol.idx()].decls[..]
-        {
-            return Some(func);
-        }
-        function_expression(self.variable_initializer(callee)?)
-    }
-
-    /// `checkExpression`
-    fn check_expression(&mut self, e: ExprId) {
-        if e.is_none()
-            || self.checker.is_stack_low()
-            || std::mem::replace(&mut self.is_checked[e.idx()], true)
-        {
-            return;
-        }
-        let hir = self.checker.hir(self.file);
-        match hir[e].kind {
-            ExprKind::Ident(_) => {
-                if let Some(init) = self.variable_initializer(e) {
-                    self.check_expression(init);
-                }
-            }
-            ExprKind::Template { exprs, .. } | ExprKind::Array(exprs) => {
-                for x in hir.ids(exprs) {
-                    self.check_expression(x);
-                }
-            }
-            ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
-                let call = &hir[c];
-                self.check_expression(call.callee);
-                for x in hir.ids(call.args) {
-                    self.check_expression(x);
-                }
-                // `checkCallExpression`: `getReturnTypeOfSignature` of the signature the call resolves to.
-                if matches!(hir[e].kind, ExprKind::Call(_))
-                    && let Some(func) = self.called_function(call.callee)
-                {
-                    self.get_return_type_from_body(func);
-                }
-            }
-            ExprKind::Object(props) => {
-                for p in props.iter() {
-                    if let PropKey::Computed(key) = hir[p].key {
-                        self.check_expression(key);
-                    }
-                    self.check_expression(hir[p].value);
-                }
-            }
-            // `checkFunctionExpressionOrObjectLiteralMethod`
-            ExprKind::Fn(func) => {
-                self.deferred.push_back(DeferredNode::Function(func));
-                // `checkObjectLiteral` does no more than defer an accessor.
-                if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
-                    return;
-                }
-                // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod`
-                if hir[func].ret.is_none()
-                    && self.holds_candidate[func.idx()]
-                    && self.checker.contextual_signature(self.file, func).is_some()
-                {
-                    self.get_return_type_from_body(func);
-                }
-                self.check_parameters(func);
-            }
-            // `checkClassExpression`
-            ExprKind::Class(class) => {
-                self.check_expression(hir[class].extends);
-                self.deferred
-                    .push_back(DeferredNode::ClassExpression(class));
-            }
-            // `checkVoidExpression`
-            ExprKind::Unary {
-                op: UnOp::Void,
-                operand,
-            } => self.deferred.push_back(DeferredNode::VoidOperand(operand)),
-            ExprKind::Dot { obj: x, .. }
-            | ExprKind::Unary { operand: x, .. }
-            | ExprKind::Spread(x)
-            | ExprKind::Await(x)
-            | ExprKind::Yield { value: x, .. }
-            | ExprKind::As { expr: x, .. }
-            | ExprKind::Satisfies { expr: x, .. }
-            | ExprKind::AsConst(x)
-            | ExprKind::NonNull(x)
-            | ExprKind::Instantiation { expr: x, .. } => self.check_expression(x),
-            ExprKind::ImportCall { args, .. } => self.check_expression(hir.id_at(args, 0)),
-            ExprKind::Index {
-                obj: a, index: b, ..
-            }
-            | ExprKind::Binary {
-                left: a, right: b, ..
-            }
-            | ExprKind::Assign {
-                target: a,
-                value: b,
-                ..
-            } => {
-                self.check_expression(a);
-                self.check_expression(b);
-            }
-            ExprKind::Cond { test, yes, no } => {
-                self.check_expression(test);
-                self.check_expression(yes);
-                self.check_expression(no);
-            }
-            // `checkJsxElement` and `checkJsxSelfClosingElement` defer what is in the element. `checkJsxFragment` does not.
-            ExprKind::Jsx(jsx) => {
-                self.reached.push(e);
-                if hir[jsx].tag.is_some() {
-                    self.deferred.push_back(DeferredNode::JsxElement(jsx));
-                } else {
-                    for child in hir.ids(hir[jsx].children) {
-                        self.check_expression(child);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
 
 impl Checker<'_> {
     pub(super) fn check_jsx(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
@@ -520,6 +61,14 @@ impl Checker<'_> {
         let is_missing = |c: &Self, scope: ScopeId, name: Atom| {
             c.files().resolve_name(file, scope, name, meaning).is_none()
         };
+        // `checkJsxFragment`: whoever says what makes elements has to say what makes fragments.
+        let says_factory = !options.jsx_factory.is_empty();
+        let lacks_fragment_factory = matches!(
+            jsx,
+            JsxEmit::React | JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
+        ) && (says_factory || hir.jsx_pragmas.factory.is_some())
+            && options.jsx_fragment_factory.is_empty()
+            && hir.jsx_pragmas.fragment_factory.is_none();
         let intrinsic_elements = self.jsx_type(file, known::IntrinsicElements);
         let mut elements: Vec<ExprId> = self
             .exprs_by_kind(file)
@@ -529,21 +78,18 @@ impl Checker<'_> {
             .filter(|e| !bound.is_unchecked(e.idx()))
             .collect();
         elements.sort_unstable_by_key(|&e| hir[e].pos);
-        // What is said once for the file is said of what is checked first.
+        // What is said once for the file is said of what is checked first. What the walk does not reach comes last, in source order.
         let (mut first, mut first_fragment) = (None, None);
         if runtime_is_missing || checks_fragment_type {
+            let reached = if elements.len() > 1 {
+                self.check_source_file_alone(file, |checker| checker.first_jsx)
+            } else {
+                (None, None)
+            };
             let is_fragment =
-                |e: ExprId| matches!(hir[e].kind, ExprKind::Jsx(j) if hir[j].tag.is_none());
-            let candidates: Vec<ExprId> = elements
-                .iter()
-                .copied()
-                .filter(|&e| runtime_is_missing || is_fragment(e))
-                .collect();
-            let reached = JsxCheckOrder::of(self, file, &candidates);
-            // What the walk does not reach comes last, in source order.
-            let mut in_order = reached.iter().chain(&candidates).copied();
-            first = in_order.clone().next();
-            first_fragment = in_order.find(|&e| is_fragment(e));
+                |e: &ExprId| matches!(hir[*e].kind, ExprKind::Jsx(j) if hir[j].tag.is_none());
+            first = reached.0.or(elements.first().copied());
+            first_fragment = reached.1.or(elements.iter().copied().find(is_fragment));
         }
         for e in elements {
             let ExprKind::Jsx(j) = hir[e].kind else {
@@ -553,9 +99,11 @@ impl Checker<'_> {
             let start = hir[e].pos;
             // Where the opening tag ends, which is all there is to an element that closes itself.
             let end = element.opening_end;
+            if element.tag.is_some() {
+                self.check_grammar_jsx_element(file, j);
+            }
             if jsx == JsxEmit::None {
-                out.push(Diagnostic { start, code: 17004 });
-                self.note(start, end, 17004, Vec::new());
+                self.error((file, start, end), 17004, &[]);
             }
             if runtime_is_missing && first == Some(e) {
                 // `checkJsxElement` passes the whole element to `getJsxElementTypeAt`. In a file that is emitted before it is checked,
@@ -568,18 +116,14 @@ impl Checker<'_> {
                     if no_implicit_any {
                         self.error_on_implicit_any_module(file, spec, mode, (start, end), out);
                     }
-                } else {
-                    let code = if runtime_is_no_module { 2306 } else { 2875 };
-                    out.push(Diagnostic { start, code });
-                    self.explain_to(start, end, code, |c| {
-                        let Some(spec) = runtime else {
-                            return Vec::new();
-                        };
-                        vec![match c.files().module(file).imported_file(spec) {
-                            Some(found) if code == 2306 => c.files().module(found).path.clone(),
-                            _ => c.atom_text(spec),
-                        }]
-                    });
+                } else if let Some(spec) = runtime {
+                    match self.files().module(file).imported_file(spec) {
+                        Some(found) => {
+                            let path = self.files().module(found).path.as_bytes();
+                            self.error((file, start, end), 2306, &[Arg::Bytes(path)])
+                        }
+                        None => self.error((file, start, end), 2875, &[Arg::Atom(spec)]),
+                    };
                 }
             }
             // `resolveName`, from the tag outwards. What `checkAndReportErrorForMissingPrefix` says of a tag that is spelled like what is
@@ -608,7 +152,14 @@ impl Checker<'_> {
                     let name = fragment_factory;
                     self.explain_missing_jsx_factory(file, scope, (start, end), code, name);
                 }
-                self.check_jsx_fragment(file, e, out);
+                self.check_jsx_fragment(file, e);
+                if lacks_fragment_factory {
+                    let at = (file, start, self.end_inside_parentheses(file, e));
+                    self.error(at, if says_factory { 17016 } else { 17017 }, &[]);
+                }
+                for child in hir.ids(element.children) {
+                    self.check_jsx_expression(file, child);
+                }
                 continue;
             }
             if factory_is_missing {
@@ -618,9 +169,20 @@ impl Checker<'_> {
                 self.explain_missing_jsx_factory(file, scope, at, code, factory);
             }
             self.check_jsx_attributes(file, e, out);
-            self.check_jsx_children_given_twice(file, e, out);
+            // `resolveUntypedCall`, `resolveErrorCall`: the attributes are looked at whatever becomes of the tag.
+            if !element.attrs.is_empty() && !element.children.is_empty() {
+                self.jsx_attributes_type(file, e);
+            }
+            for p in element.attrs.iter() {
+                if hir[p].kind != PropKind::Spread {
+                    self.check_grammar_jsx_expression(file, hir[p].value);
+                }
+            }
+            for child in hir.ids(element.children) {
+                self.check_jsx_expression(file, child);
+            }
             self.check_spread_overrides(file, element.attrs);
-            self.check_jsx_component(file, e, out);
+            self.check_jsx_component(file, e);
             // `checkJsxElementDeferred`: `getIntrinsicTagSymbol` of the opening element, then of the closing one, each by its own name.
             // A closing name that is not intrinsic is an expression, checked like any other.
             let opening_name = self.jsx_intrinsic_tag_name(file, element.tag);
@@ -634,33 +196,111 @@ impl Checker<'_> {
                 (closing_name, element.close_pos, true),
             ] {
                 let Some(name) = name else { continue };
-                let code = match intrinsic_elements {
-                    None if no_implicit_any => 7026,
-                    None => continue,
+                let at = (file, start, if is_closing { element.end } else { end });
+                match intrinsic_elements {
+                    None if no_implicit_any => {
+                        self.error(at, 7026, &[Arg::Bytes(b"IntrinsicElements")]);
+                    }
                     Some(elements)
-                        if !self.is_known(elements)
-                            || self.type_of_property(elements, name).is_some() =>
+                        if self.is_known(elements)
+                            && self.type_of_property(elements, name).is_none() =>
                     {
-                        continue;
+                        self.error(
+                            at,
+                            2339,
+                            &[Arg::Atom(name), Arg::Bytes(b"JSX.IntrinsicElements")],
+                        );
                     }
-                    Some(_) => 2339,
-                };
-                out.push(Diagnostic { start, code });
-                let end = if is_closing { element.end } else { end };
-                self.explain_to(start, end, code, |c| {
-                    if code == 7026 {
-                        vec!["IntrinsicElements".to_owned()]
-                    } else {
-                        vec![c.atom_text(name), "JSX.IntrinsicElements".to_owned()]
-                    }
-                });
+                    _ => {}
+                }
             }
+        }
+    }
+
+    /// `checkGrammarJsxElement`. The call to `checkGrammarTypeArguments` is not ported here.
+    fn check_grammar_jsx_element(&mut self, file: FileId, j: JsxId) -> bool {
+        let hir = self.hir(file);
+        let jsx = &hir[j];
+        // `checkGrammarJsxName`: a namespaced name `a:b` is lowered to a string. `IsIntrinsicJsxName` tests the namespace.
+        if matches!(
+            self.p.files.options.jsx,
+            JsxEmit::React | JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
+        ) && let ExprKind::String(name) = hir[jsx.tag].kind
+        {
+            let name = self.files().atoms.bytes(name);
+            if let Some(colon) = name.iter().position(|&c| c == b':')
+                && !(name[0].is_ascii_lowercase() || name[..colon].contains(&b'-'))
+            {
+                let start = hir[jsx.tag].pos;
+                let end = jsx_tag_name_end(&hir.text, start as usize) as u32;
+                self.grammar_error_on_node((file, start, end), 2639, &[]);
+            }
+        }
+        let mut seen: Vec<PropKey> = Vec::new();
+        for p in jsx.attrs.iter() {
+            let attr = &hir[p];
+            if attr.kind == PropKind::Spread {
+                continue;
+            }
+            if seen.contains(&attr.key) {
+                let at = (file, attr.pos, self.end_of_jsx_attr_name(file, p));
+                return self.grammar_error_on_node(at, 17001, &[]);
+            }
+            seen.push(attr.key);
+            // The parser places the `Missing` of `name={}` at the `{`.
+            if attr.value.is_some() && matches!(hir[attr.value].kind, ExprKind::Missing) {
+                let start = hir[attr.value].pos;
+                let at = (file, start, self.end_of_bracket_at(file, start));
+                return self.grammar_error_on_node(at, 17000, &[]);
+            }
+        }
+        false
+    }
+
+    /// `checkGrammarJsxExpression`, of what is written in braces.
+    fn check_grammar_jsx_expression(&mut self, file: FileId, x: ExprId) -> bool {
+        let hir = self.hir(file);
+        let is_comma_sequence = x.is_some()
+            && !is_parenthesized(hir, x)
+            && matches!(
+                hir[x].kind,
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    ..
+                }
+            );
+        is_comma_sequence && {
+            let at = (file, self.start_of(file, x), self.end_of_expr(file, x));
+            self.grammar_error_on_node(at, 18007, &[])
+        }
+    }
+
+    /// `checkJsxExpression`, of a child. A tuple type is no array type. `t != c.anyType`: the error type is reported too.
+    fn check_jsx_expression(&mut self, file: FileId, child: ExprId) {
+        let hir = self.hir(file);
+        let ExprKind::Spread(spread) = hir[child].kind else {
+            self.check_grammar_jsx_expression(file, child);
+            return;
+        };
+        self.check_grammar_jsx_expression(file, spread);
+        let ty = self.type_of_expr(file, spread);
+        if self.is_known(ty)
+            && !self.is_uncertain(file, spread)
+            && ty != TypeId::ANY
+            && !self.is_array(ty)
+            && let Some(brace) = brace_before(hir, self.start_of(file, spread), true)
+        {
+            self.error(
+                (file, brace, self.end_of_bracket_at(file, brace)),
+                2609,
+                &[],
+            );
         }
     }
 
     /// `resolveJsxOpeningLikeElement` of the fragment `e`, which is a call of what fragments are made with: 2322 and what says more,
     /// of its children. Of several candidates, and of one that is generic, nothing is said.
-    fn check_jsx_fragment(&mut self, file: FileId, e: ExprId, out: &mut Vec<Diagnostic>) {
+    fn check_jsx_fragment(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
         let ExprKind::Jsx(j) = hir[e].kind else {
             return;
@@ -686,10 +326,9 @@ impl Checker<'_> {
         if self.is_untyped_function_call(fragment, apparent, sigs.len(), 0) {
             return;
         }
+        let at = (file, hir[e].pos, hir[j].opening_end);
         if sigs.is_empty() {
-            let (start, end) = (hir[e].pos, hir[j].opening_end);
-            out.push(Diagnostic { start, code: 2604 });
-            self.explain_to(start, end, 2604, |c| vec![c.source_text(file, start, end)]);
+            self.error(at, 2604, &[Arg::Bytes(text_of(hir, at.1, at.2))]);
             return;
         }
         let [sig] = sigs[..] else {
@@ -711,8 +350,7 @@ impl Checker<'_> {
         {
             return;
         }
-        let (start, end) = (hir[e].pos, hir[j].opening_end);
-        self.report_not_assignable_with_end(given, props, start, end, 2322, out);
+        self.check_type_assignable_to(given, props, Some(at), None);
     }
 
     /// `onFailedToResolveSymbol`: whatever `why_no_jsx_factory` has it say, it says of `name`, which is looked for from `scope` and is
@@ -739,13 +377,6 @@ impl Checker<'_> {
         }
     }
 
-    /// Notes the name of the tag of `e` as it is written, which is what the error `code` at that name is about.
-    fn explain_by_tag_name(&mut self, file: FileId, e: ExprId, code: u32) {
-        let hir = self.hir(file);
-        let (start, end) = (tag_name_start(hir, e), tag_name_end(hir, e));
-        self.explain_to(start, end, code, |c| vec![c.source_text(file, start, end)]);
-    }
-
     /// `resolveJsxOpeningLikeElement` and `checkApplicableSignatureForJsxCallLikeElement`: 2322 and what says more, 2558 2604 2743 2769.
     fn check_jsx_attributes(&mut self, file: FileId, e: ExprId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
@@ -754,6 +385,7 @@ impl Checker<'_> {
         };
         let jsx = &hir[j];
         let (tag_name, tag_end) = (tag_name_start(hir, e), tag_name_end(hir, e));
+        let at = (file, tag_name, tag_end);
         // The last of several candidates.
         let mut last_candidate = None;
         let wanted: Vec<TypeId> = match self.jsx_intrinsic_tag_name(file, jsx.tag) {
@@ -795,11 +427,7 @@ impl Checker<'_> {
                     return;
                 }
                 if sigs.is_empty() {
-                    out.push(Diagnostic {
-                        start: tag_name,
-                        code: 2604,
-                    });
-                    self.explain_by_tag_name(file, e, 2604);
+                    self.error(at, 2604, &[Arg::Bytes(text_of(hir, tag_name, tag_end))]);
                     return;
                 }
                 // `chooseOverload` skips every signature then, so `reportCallResolutionErrors` has no argument error to report.
@@ -811,9 +439,8 @@ impl Checker<'_> {
                     self.report_type_argument_arity(file, jsx.type_args, &sigs, out);
                     return;
                 }
-                let candidates = self.reorder_candidates(&sigs);
-                if self.report_jsx_type_argument_constraints(file, jsx.type_args, &candidates, out)
-                {
+                let candidates = self.candidates_in_order(&sigs).into_vec();
+                if self.report_jsx_type_argument_constraints(file, jsx.type_args, &candidates) {
                     return;
                 }
                 if sigs.len() == 1 {
@@ -833,95 +460,98 @@ impl Checker<'_> {
         if wanted.iter().any(|&t| !self.is_known(t)) {
             return;
         }
+        let (mut diags, mut related) = (Vec::new(), Vec::new());
         // No signature applies then, whatever the attributes are.
         if self.jsx_intrinsic_tag_name(file, jsx.tag).is_none()
             && let Some((least, factory, most)) = self.jsx_tag_expects_too_many_arguments(file, e)
         {
-            out.push(Diagnostic {
-                start: tag_name,
-                code: if wanted.len() > 1 { 2769 } else { 6229 },
-            });
-            self.explain_to(tag_name, tag_end, 6229, |c| {
-                // `entityNameToString`
-                let tag = c.source_text(file, tag_name, tag_end);
-                vec![
-                    tag.split_whitespace().collect::<String>(),
-                    least.to_string(),
-                    factory,
-                    most.to_string(),
-                ]
-            });
+            // `entityNameToString`
+            let mut tag = text_of(hir, tag_name, tag_end).to_vec();
+            tag.retain(|c| !c.is_ascii_whitespace());
+            let mut diagnostic = self.new_diagnostic(
+                at,
+                6229,
+                &[
+                    Arg::Bytes(&tag),
+                    Arg::Number(least),
+                    Arg::Bytes(&factory),
+                    Arg::Number(most),
+                ],
+            );
             // `getSymbolAtLocation(tagName).ValueDeclaration`
-            self.relate(tag_name, 6229, |c| {
-                let at = match hir[jsx.tag].kind {
-                    ExprKind::Ident(name) => c
-                        .symbol_of_identifier(file, jsx.tag, name)
-                        .filter(|&sym| c.files().flags(sym).intersects(SymFlags::VALUE))
-                        .and_then(|sym| c.place_of_symbol(sym)),
-                    ExprKind::Dot { obj, name, .. } => {
-                        let object = c.type_of_expr(file, obj);
-                        let object = c.apparent_type(object);
-                        let prop = c.prop_ref(object, name);
-                        prop.and_then(|(prop, _)| c.place_of_prop(prop))
-                    }
-                    _ => None,
+            let declared = match hir[jsx.tag].kind {
+                ExprKind::Ident(name) => self
+                    .symbol_of_identifier(file, jsx.tag, name)
+                    .filter(|&sym| self.files().flags(sym).intersects(SymFlags::VALUE))
+                    .and_then(|sym| self.place_of_symbol(sym)),
+                ExprKind::Dot { obj, name, .. } => {
+                    let object = self.type_of_expr(file, obj);
+                    let object = self.apparent_type(object);
+                    let prop = self.prop_ref(object, name);
+                    prop.and_then(|(prop, _)| self.place_of_prop(prop))
+                }
+                _ => None,
+            };
+            if let Some(declared) = declared {
+                diagnostic.add_related_info(self.new_diagnostic(
+                    declared,
+                    2728,
+                    &[Arg::Bytes(&tag)],
+                ));
+            }
+            diags.push(diagnostic);
+            if let Some(last) = last_candidate {
+                related = self.last_overload_declared_here(last);
+            }
+        } else {
+            // Nothing is said on the strength of what is not known.
+            for p in jsx.attrs.iter() {
+                let ty = if hir[p].kind == PropKind::Spread {
+                    self.type_of_expr(file, hir[p].value)
+                } else {
+                    self.type_of_literal_prop(file, p)
                 };
-                let tag = c.source_text(file, tag_name, tag_end);
-                let tag = tag.split_whitespace().collect::<String>();
-                at.map(|at| c.declared_here(at, tag)).into_iter().collect()
-            });
-            if wanted.len() > 1 {
-                self.explain_under(tag_name, 6229, 2770, Vec::new());
-                self.explain_under(tag_name, 2770, 2769, Vec::new());
-                if let Some(last) = last_candidate {
-                    self.relate(tag_name, 2769, |c| c.last_overload_declared_here(last));
+                if !self.is_known(ty)
+                    || hir[p].value.is_some() && self.is_uncertain(file, hir[p].value)
+                {
+                    return;
                 }
             }
-            return;
-        }
-        // Nothing is said on the strength of what is not known.
-        for p in jsx.attrs.iter() {
-            let ty = if hir[p].kind == PropKind::Spread {
-                self.type_of_expr(file, hir[p].value)
-            } else {
-                self.type_of_literal_prop(file, p)
-            };
-            if !self.is_known(ty) || hir[p].value.is_some() && self.is_uncertain(file, hir[p].value)
+            let given = self.jsx_attributes_type(file, e);
+            let counts_children = matches!(self.jsx_children_property_name(file), JsxName::Name(_));
+            if !self.is_known(given)
+                || self.is_any(given)
+                || counts_children
+                    && self
+                        .jsx_child_types(file, e)
+                        .iter()
+                        .any(|c| !self.is_known(c.1))
             {
                 return;
             }
-        }
-        let given = self.jsx_attributes_type(file, e);
-        let counts_children = matches!(self.jsx_children_property_name(file), JsxName::Name(_));
-        if !self.is_known(given)
-            || self.is_any(given)
-            || counts_children
-                && self
-                    .jsx_child_types(file, e)
-                    .iter()
-                    .any(|c| !self.is_known(c.1))
-        {
-            return;
-        }
-        if wanted.iter().any(|&props| self.is_assignable(given, props)) {
-            return;
-        }
-        // Of several signatures, what is wrong with the last is what is said.
-        let Some(&props) = wanted.last() else { return };
-        let mut said = Vec::new();
-        if !self.elaborate_jsx_components(file, e, given, props, &mut said) {
-            self.report_not_assignable_with_end(given, props, tag_name, tag_end, 2322, &mut said);
-        }
-        if wanted.len() > 1 {
-            let related = self.related_to_last_jsx_candidate(file, e, last_candidate, given);
-            for d in &mut said {
-                self.explain_under(d.start, d.code, 2770, Vec::new());
-                self.explain_under(d.start, 2770, 2769, Vec::new());
-                d.code = 2769;
-                self.relate(d.start, 2769, |_| related.clone());
+            if wanted.iter().any(|&props| self.is_assignable(given, props)) {
+                return;
+            }
+            // Of several signatures, what is wrong with the last is what is said.
+            let Some(&props) = wanted.last() else { return };
+            if !self.elaborate_jsx_components(file, e, given, props, Some(&mut diags)) {
+                self.check_type_assignable_to_ex(given, props, Some(at), None, Some(&mut diags));
+            }
+            if let Some(last) = last_candidate {
+                related = self.related_to_last_jsx_candidate(file, e, last, given);
             }
         }
-        out.append(&mut said);
+        // `reportCallResolutionErrors`
+        for mut diagnostic in diags {
+            if wanted.len() > 1 {
+                diagnostic = self.new_diagnostic_chain(Some(diagnostic), at, 2770, &[]);
+                diagnostic = self.new_diagnostic_chain(Some(diagnostic), at, 2769, &[]);
+                let related = related.iter().cloned();
+                let related = related.filter_map(super::explain::Related::into_reported);
+                diagnostic.related_information.extend(related);
+            }
+            self.add_diagnostic(diagnostic);
+        }
     }
 
     /// What `reportCallResolutionErrors` relates to each thing it says of `last`, the last of several candidates for the element
@@ -930,12 +560,9 @@ impl Checker<'_> {
         &mut self,
         file: FileId,
         e: ExprId,
-        last: Option<SigId>,
+        last: SigId,
         given: TypeId,
     ) -> Vec<super::explain::Related> {
-        let Some(last) = last else {
-            return Vec::new();
-        };
         if !self.explains {
             return Vec::new();
         }
@@ -964,7 +591,6 @@ impl Checker<'_> {
         file: FileId,
         type_args: IdList<TypeNodeId>,
         candidates: &[SigId],
-        out: &mut Vec<Diagnostic>,
     ) -> bool {
         if type_args.is_empty() {
             return false;
@@ -989,14 +615,8 @@ impl Checker<'_> {
         };
         let hir = self.hir(file);
         let node = hir.id_at(type_args, index);
-        self.report_not_assignable_with_end(
-            argument,
-            constraint,
-            hir[node].pos,
-            self.end_of_type_node(file, node),
-            2344,
-            out,
-        );
+        let at = (file, hir[node].pos, self.end_of_type_node(file, node));
+        self.check_type_assignable_to(argument, constraint, Some(at), Some(2344));
         true
     }
 
@@ -1006,7 +626,7 @@ impl Checker<'_> {
         &mut self,
         file: FileId,
         e: ExprId,
-    ) -> Option<(usize, String, usize)> {
+    ) -> Option<(usize, Vec<u8>, usize)> {
         let (hir, files) = (self.hir(file), self.files());
         let ExprKind::Jsx(j) = hir[e].kind else {
             return None;
@@ -1063,8 +683,8 @@ impl Checker<'_> {
         if least <= most {
             return None;
         }
-        let factory: Vec<String> = names.iter().map(|&name| self.atom_text(name)).collect();
-        Some((least, factory.join("."), most))
+        let factory: Vec<&[u8]> = names.iter().map(|&name| files.atoms.bytes(name)).collect();
+        Some((least, factory.join(&b'.'), most))
     }
 
     /// `elaborateJsxComponents`
@@ -1074,7 +694,7 @@ impl Checker<'_> {
         e: ExprId,
         source: TypeId,
         target: TypeId,
-        out: &mut Vec<Diagnostic>,
+        mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
         let hir = self.hir(file);
         let ExprKind::Jsx(j) = hir[e].kind else {
@@ -1092,24 +712,30 @@ impl Checker<'_> {
             if self.files().atoms.bytes(name).contains(&b'-') {
                 continue;
             }
-            let said = out.len();
-            let end = self.end_of_jsx_attr_name(file, p);
-            reported |= self.elaborate_element_with_end(
-                file, source, target, prop.pos, end, prop.value, name, 2322, out,
+            let (at, mut diags) = (
+                (file, prop.pos, self.end_of_jsx_attr_name(file, p)),
+                Vec::new(),
             );
+            let output = Some(&mut diags);
+            reported |=
+                self.elaborate_element(source, target, at, prop.value, false, name, None, output);
             // `elaborateDidYouMeanToCallOrConstruct` is asked of the braces around the value before it is asked of the value: what it
             // says, which is all that is said where the value starts, is said where they start.
-            if prop.value.is_some() && out.len() > said {
-                let value = self.start_of(file, prop.value);
-                if let Some(brace) = brace_before(hir, value, false) {
-                    for d in &mut out[said..] {
-                        if d.start == value {
-                            let end = self.end_of_bracket_at(file, brace);
-                            self.explain_moved(value, d.code, brace, end);
-                            d.start = brace;
+            let value = prop.value.some().map(|value| self.start_of(file, value));
+            let brace = value.and_then(|value| brace_before(hir, value, false));
+            for mut diagnostic in diags {
+                if let Some(brace) = brace
+                    && Some(diagnostic.start) == value
+                {
+                    let end = self.end_of_bracket_at(file, brace);
+                    (diagnostic.start, diagnostic.end) = (brace, end);
+                    for related in &mut diagnostic.related_information {
+                        if matches!(related.code, 6212 | 6213) && Some(related.start) == value {
+                            (related.start, related.end) = (brace, end);
                         }
                     }
                 }
+                self.report_diagnostic(diagnostic, diagnostic_output.as_deref_mut());
             }
         }
         let children = self.jsx_child_types(file, e);
@@ -1147,86 +773,75 @@ impl Checker<'_> {
             let given = c.type_of_property(source, name).unwrap_or(TypeId::UNKNOWN);
             c.is_assignable(given, wanted)
         };
-        let (tag_name, tag_end) = (tag_name_start(hir, e), tag_name_end(hir, e));
-        if children.len() > 1 {
-            if !lists.is_never() {
-                reported |=
-                    self.elaborate_jsx_children(file, e, &children, lists, (name, wanted), out);
-            } else if !is_related(self) {
-                out.push(Diagnostic {
-                    start: tag_name,
-                    code: 2746,
-                });
-                self.explain_to(tag_name, tag_end, 2746, |c| {
-                    vec![c.atom_text(name), c.type_to_string(wanted)]
-                });
-                reported = true;
-            }
-        } else if !others.is_never() {
+        let diagnostic = if children.len() > 1 && !lists.is_never() {
+            let expected = (name, wanted);
+            return reported
+                | self.elaborate_jsx_children(
+                    file,
+                    e,
+                    &children,
+                    lists,
+                    expected,
+                    diagnostic_output,
+                );
+        } else if children.len() == 1 && !others.is_never() {
             // `getElaborationElementForJsxChild`
             let (child, _) = children[0];
-            let Some(at) = self.jsx_child_start(file, e, &children, 0) else {
+            let Some(start) = self.jsx_child_start(file, e, &children, 0) else {
                 return reported;
             };
-            if is_jsx_text(hir, e, child) {
-                // `elaborateElement`, with nothing to go into: whatever is wrong with text, the same is said of it.
-                let is_generic = self.is_generic_object_type(target)
-                    || matches!(self.data(wanted), TypeData::IndexedAccess { .. });
-                if !is_generic && self.type_of_property(source, name).is_some() && !is_related(self)
-                {
-                    out.push(Diagnostic {
-                        start: at,
-                        code: 2747,
-                    });
-                    self.explain_jsx_text_child(file, e, at, (name, wanted));
-                    let said = Diagnostic {
-                        start: at,
-                        code: 2747,
-                    };
-                    self.relate_expected_property(Some(said), target, name);
-                    reported = true;
-                }
-            } else {
+            if !is_jsx_text(hir, e, child) {
                 let inner = match hir[child].kind {
                     ExprKind::Spread(x) => x,
                     _ => child,
                 };
-                let end = self.jsx_child_end(file, child, at);
-                reported |= self.elaborate_element_with_end(
-                    file, source, target, at, end, inner, name, 2322, out,
-                );
+                let at = (file, start, self.jsx_child_end(file, child, start));
+                let output = diagnostic_output;
+                return reported
+                    | self.elaborate_element(source, target, at, inner, false, name, None, output);
             }
+            // `elaborateElement`, with nothing to go into: whatever is wrong with text, the same is said of it.
+            if self.is_generic_object_type(target)
+                || matches!(self.data(wanted), TypeData::IndexedAccess { .. })
+                || self.type_of_property(source, name).is_none()
+                || is_related(self)
+            {
+                return reported;
+            }
+            let mut diagnostic =
+                self.invalid_textual_child_diagnostic(file, e, start, (name, wanted));
+            let related = self.expected_property(target, name);
+            let related = related.and_then(super::explain::Related::into_reported);
+            diagnostic.related_information.extend(related);
+            diagnostic
         } else if !is_related(self) {
-            out.push(Diagnostic {
-                start: tag_name,
-                code: 2745,
-            });
-            self.explain_to(tag_name, tag_end, 2745, |c| {
-                vec![c.atom_text(name), c.type_to_string(wanted)]
-            });
-            reported = true;
-        }
-        reported
+            let at = (file, tag_name_start(hir, e), tag_name_end(hir, e));
+            let code = if children.len() > 1 { 2746 } else { 2745 };
+            self.new_diagnostic(at, code, &[Arg::Atom(name), Arg::Type(wanted)])
+        } else {
+            return reported;
+        };
+        self.report_diagnostic(diagnostic, diagnostic_output);
+        true
     }
 
-    /// `getInvalidTextualChildDiagnostic`: notes what 2747 says of the text that starts at `at` in the element `e`.
-    /// `expected`: the name the children go by, and what the tag takes under that name.
-    fn explain_jsx_text_child(
+    /// `getInvalidTextualChildDiagnostic`, of the text that starts at `start` in the element `e`. `expected`: the name the children go
+    /// by, and what the tag takes under that name.
+    fn invalid_textual_child_diagnostic(
         &mut self,
         file: FileId,
         e: ExprId,
-        at: u32,
+        start: u32,
         expected: (Atom, TypeId),
-    ) {
+    ) -> Reported {
         let hir = self.hir(file);
-        let (tag_name, tag_end) = (tag_name_start(hir, e), tag_name_end(hir, e));
-        self.explain_to(at, jsx_text_end(hir, at), 2747, |c| {
-            vec![
-                c.source_text(file, tag_name, tag_end),
-                c.atom_text(expected.0),
-                c.type_to_string(expected.1),
-            ]
-        });
+        let tag = text_of(hir, tag_name_start(hir, e), tag_name_end(hir, e));
+        let args = [
+            Arg::Bytes(tag),
+            Arg::Atom(expected.0),
+            Arg::Type(expected.1),
+        ];
+        self.new_diagnostic((file, start, jsx_text_end(hir, start)), 2747, &args)
     }
 
     /// `elaborateIterableOrArrayLikeTargetElementwise` over `generateJsxChildren`: each of the `children` of `e` is held against what
@@ -1239,7 +854,7 @@ impl Checker<'_> {
         children: &[(ExprId, TypeId)],
         target: TypeId,
         expected: (Atom, TypeId),
-        out: &mut Vec<Diagnostic>,
+        mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
         let hir = self.hir(file);
         // `isArrayOrTupleLikeType`
@@ -1278,18 +893,14 @@ impl Checker<'_> {
                 return false;
             };
             if is_jsx_text(hir, e, child) {
-                said.push(Diagnostic {
-                    start: at,
-                    code: 2747,
-                });
-                self.explain_jsx_text_child(file, e, at, expected);
+                said.push(self.invalid_textual_child_diagnostic(file, e, at, expected));
                 continue;
             }
             let inner = match hir[child].kind {
                 ExprKind::Spread(x) => x,
                 _ => child,
             };
-            if !self.elaborate(file, inner, given, wanted, 2322, &mut said) {
+            if !self.elaborate_error(file, inner, false, given, wanted, None, Some(&mut said)) {
                 let end = self.jsx_child_end(file, child, at);
                 // `removeMissingType`
                 let name = self.number_name(i as f64);
@@ -1298,11 +909,20 @@ impl Checker<'_> {
                     .prop_of(apparent, name)
                     .is_some_and(|(prop, _)| prop.flags.contains(PropFlags::OPTIONAL));
                 let wanted = self.remove_missing_type(wanted, target_is_optional);
-                self.report_not_assignable_with_end(given, wanted, at, end, 2322, &mut said);
+                let output = Some(&mut said);
+                self.check_type_assignable_to_ex(
+                    given,
+                    wanted,
+                    Some((file, at, end)),
+                    None,
+                    output,
+                );
             }
         }
         let reported = !said.is_empty();
-        out.append(&mut said);
+        for diagnostic in said {
+            self.report_diagnostic(diagnostic, diagnostic_output.as_deref_mut());
+        }
         reported
     }
 
@@ -1362,54 +982,6 @@ impl Checker<'_> {
         } else {
             self.end_of_expr(file, child)
         }
-    }
-
-    /// `createJsxAttributesTypeFromAttributesProperty`: 2710, an attribute by the name the children go by, next to children.
-    fn check_jsx_children_given_twice(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let hir = self.hir(file);
-        let ExprKind::Jsx(j) = hir[e].kind else {
-            return;
-        };
-        let jsx = &hir[j];
-        let Some(first) = jsx.attrs.iter().next() else {
-            return;
-        };
-        if !hir
-            .ids(jsx.children)
-            .any(|child| !matches!(hir[child].kind, ExprKind::Missing))
-        {
-            return;
-        }
-        let JsxName::Name(name) = self.jsx_children_property_name(file) else {
-            return;
-        };
-        let mut is_given = false;
-        for p in jsx.attrs.iter() {
-            let prop = &hir[p];
-            if prop.kind != PropKind::Spread {
-                is_given |= self.member_name(file, prop.key) == Some(name);
-                continue;
-            }
-            // `hasSpreadAnyType`
-            let ty = self.type_of_expr(file, prop.value);
-            let ty = self.reduced(ty);
-            if self.is_any(ty) {
-                return;
-            }
-        }
-        if !is_given {
-            return;
-        }
-        // It is said of the attributes together, which start where the first does.
-        let start = hir[first].start;
-        out.push(Diagnostic { start, code: 2710 });
-        let end = jsx.attrs.iter().next_back().map_or(0, |last| hir[last].end);
-        self.explain_to(start, end, 2710, |c| vec![c.atom_text(name)]);
     }
 
     /// `checkSpreadPropOverrides`: 2783, what is written only to be overwritten by what is spread after it.
@@ -1476,35 +1048,47 @@ impl Checker<'_> {
         }
     }
 
-    /// 2786: what the tag stands for has to be something an element can be made of.
-    fn check_jsx_component(&mut self, file: FileId, e: ExprId, out: &mut Vec<Diagnostic>) {
+    /// The end of `checkJsxOpeningLikeElementOrOpeningFragment`, `checkJsxReturnAssignableToAppropriateBound`: 2786.
+    fn check_jsx_component(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
         let ExprKind::Jsx(j) = hir[e].kind else {
             return;
         };
         let tag = hir[j].tag;
-        let tag_name = tag_name_start(hir, e);
+        let at = (file, tag_name_start(hir, e), tag_name_end(hir, e));
         let intrinsic = self.jsx_intrinsic_tag_name(file, tag);
+        let mut diags = Vec::new();
         // `JSX.ElementType` says it all, if it is there.
         if let Some(allowed) = self.jsx_element_type_constraint(file) {
             let given = match intrinsic {
                 Some(name) => self.string_literal(name, false),
                 None => self.type_of_expr(file, tag),
             };
-            if self.is_known(allowed) && self.is_known(given) && !self.is_assignable(given, allowed)
-            {
-                out.push(Diagnostic {
-                    start: tag_name,
-                    code: 2786,
-                });
-                self.explain_unusable_jsx_component(file, e, given, allowed, 18053);
-            }
-            return;
+            let output = Some(&mut diags);
+            self.check_type_assignable_to_ex(given, allowed, Some(at), Some(18053), output);
+        } else if intrinsic.is_none() {
+            self.check_jsx_return_assignable_to_appropriate_bound(file, e, at, &mut diags);
         }
-        if intrinsic.is_some() {
-            return;
+        if let Some(first) = diags.pop() {
+            let tag = Arg::Bytes(text_of(hir, at.1, at.2));
+            let diagnostic = self.new_diagnostic_chain(Some(first), at, 2786, &[tag]);
+            self.add_diagnostic(diagnostic);
         }
-        // `checkJsxReturnAssignableToAppropriateBound`
+    }
+
+    /// `checkJsxReturnAssignableToAppropriateBound`, as far as `diags`.
+    fn check_jsx_return_assignable_to_appropriate_bound(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        at: (FileId, u32, u32),
+        diags: &mut Vec<Reported>,
+    ) {
+        let hir = self.hir(file);
+        let ExprKind::Jsx(j) = hir[e].kind else {
+            return;
+        };
+        let tag = hir[j].tag;
         let component = self.type_of_expr(file, tag);
         if !self.is_known(component) || self.is_any(component) || self.is_uncertain(file, tag) {
             return;
@@ -1561,42 +1145,8 @@ impl Checker<'_> {
                 2789,
             )
         };
-        if let Some(bound) = bound
-            && self.is_known(made)
-            && self.is_known(bound)
-            && !self.is_assignable(made, bound)
-        {
-            out.push(Diagnostic {
-                start: tag_name,
-                code: 2786,
-            });
-            self.explain_unusable_jsx_component(file, e, made, bound, head);
-        }
-    }
-
-    /// Notes what 2786 says at the name of the tag of `e`. It goes on top of `head`, which says that `source` is not the `target` an
-    /// element can be made of, and of the reasons for that.
-    fn explain_unusable_jsx_component(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        source: TypeId,
-        target: TypeId,
-        head: u32,
-    ) {
-        if !self.explains {
-            return;
-        }
-        let hir = self.hir(file);
-        let (start, end) = (tag_name_start(hir, e), tag_name_end(hir, e));
-        let name = vec![self.source_text(file, start, end)];
-        let mut said = Vec::new();
-        self.report_not_assignable_with_end(source, target, start, end, head, &mut said);
-        match said.first() {
-            Some(first) if first.start == start => {
-                self.explain_under(start, first.code, 2786, name)
-            }
-            _ => self.note(start, end, 2786, name),
+        if let Some(bound) = bound {
+            self.check_type_assignable_to_ex(made, bound, Some(at), Some(head), Some(diags));
         }
     }
 
@@ -1613,7 +1163,7 @@ impl Checker<'_> {
         let ExprKind::Jsx(j) = hir[e].kind else {
             return None;
         };
-        let candidates = self.reorder_candidates(sigs);
+        let candidates = self.candidates_in_order(sigs).into_vec();
         // Asked first: it asks what the element takes, which is the question that is opened next.
         let given = if candidates.len() > 1 {
             self.jsx_attributes_type(file, e)
@@ -1711,6 +1261,10 @@ fn parse_isolated_entity_name(atoms: &crate::atom::Interner, text: &[u8]) -> Opt
                 .map(|name| atoms.intern(name.trim_ascii()))
                 .collect()
         })
+}
+
+fn text_of(hir: &hir::File, start: u32, end: u32) -> &[u8] {
+    &hir.text[start as usize..end as usize]
 }
 
 /// Where the name in the opening tag of the element `e` starts.

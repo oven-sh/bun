@@ -26,10 +26,7 @@ impl<'p> Checker<'p> {
             Query::Symbol(sym) => self.files().flags(sym).intersects(SymFlags::VARIABLE),
             Query::Pat(file, pat) => {
                 let (hir, bound) = (self.hir(file), self.bound(file));
-                let mut root = bound.pat_parent[pat.idx()];
-                while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) = root {
-                    root = bound.pat_parent[outer.idx()];
-                }
+                let root = root_declaration(bound, pat);
                 matches!(root, PatParent::Var(d) if hir[d].ty.is_none() && hir[d].init.is_some())
             }
             _ => false,

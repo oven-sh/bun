@@ -183,7 +183,7 @@ impl<'p> Checker<'p> {
             PRIORITY_NO_CONSTRAINTS | PRIORITY_ALWAYS_STRICT,
         );
         (0..params.len())
-            .map(|i| self.inferred_type(&inference, i))
+            .map(|i| self.get_inferred_type(&inference, i, false))
             .collect()
     }
 
@@ -241,7 +241,8 @@ impl<'p> Checker<'p> {
         // Two instantiations of one alias: infer between the type arguments only. Without type arguments there is nothing to infer.
         if let Some((alias, sources, targets, _)) = self.same_alias(source, target) {
             if !sources.is_empty() {
-                self.infer_from_type_arguments_of(n, alias, &sources, &targets);
+                let variances = self.variances_of(alias);
+                self.infer_from_type_arguments(n, &sources, &targets, &variances);
             }
             return;
         }
@@ -330,7 +331,7 @@ impl<'p> Checker<'p> {
             TypeData::Intersection(target_parts)
                 if !target_parts
                     .iter()
-                    .all(|&t| self.is_object_type(t) && !self.is_generic_mapped(t)) =>
+                    .all(|&t| self.is_object_type(t) && !self.is_generic_mapped_type(t)) =>
             {
                 // From `string[] & { extra: any }` to `string[] & T`: `{ extra: any }` for `T`. But to `string[] & Iterable<T>` the
                 // `string[]` stays, and gives `string` for `T`.
@@ -416,7 +417,8 @@ impl<'p> Checker<'p> {
                     && !are_both_deferred =>
             {
                 let (sa, ta) = (self.type_arguments(source), self.type_arguments(target));
-                self.infer_from_type_arguments_of(n, *st, sa, ta);
+                let variances = self.variances_of(*st);
+                self.infer_from_type_arguments(n, sa, ta, &variances);
             }
             (
                 TypeData::Tuple {
@@ -494,7 +496,7 @@ impl<'p> Checker<'p> {
             }
             _ => {
                 let mut source = self.reduced(source);
-                if self.is_generic_mapped(source) && self.is_generic_mapped(target) {
+                if self.is_generic_mapped_type(source) && self.is_generic_mapped_type(target) {
                     self.invoke_once(n, source, target, Self::infer_from_generic_mapped_types);
                 }
                 if let Some(relation) = n.stand_ins
@@ -549,16 +551,6 @@ impl<'p> Checker<'p> {
             _ if is_stand_in(source) => Some(Parts::new()),
             _ => None,
         }
-    }
-
-    fn is_generic_mapped(&mut self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::Anon {
-                origin: Origin::Mapped(..),
-                ..
-            }
-        ) && self.is_generic(ty)
     }
 
     /// What `inferFromTypes` does once it has found the type parameter `target` is.
@@ -624,21 +616,6 @@ impl<'p> Checker<'p> {
             parts.sort_by(|&a, &b| self.compare_types(a, b));
         }
         parts
-    }
-
-    /// `inferFromTypeArguments`, between two instantiations of `of`.
-    fn infer_from_type_arguments_of(
-        &mut self,
-        n: &mut Inference,
-        of: Sym,
-        sources: &[TypeId],
-        targets: &[TypeId],
-    ) {
-        if let Some(known) = self.p.variances.get_ref(&of) {
-            return self.infer_from_type_arguments(n, sources, targets, known);
-        }
-        let variances = self.variances_of(of);
-        self.infer_from_type_arguments(n, sources, targets, &variances);
     }
 
     /// `inferFromTypeArguments`
@@ -1065,7 +1042,8 @@ impl<'p> Checker<'p> {
             && (st == tt || self.is_array(source) && self.is_array(target))
         {
             let (sa, ta) = (self.type_arguments(source), self.type_arguments(target));
-            self.infer_from_type_arguments_of(n, *st, sa, ta);
+            let variances = self.variances_of(*st);
+            self.infer_from_type_arguments(n, sa, ta, &variances);
             return;
         }
         // Tuples of one make are references to one generic type as well.
@@ -1088,7 +1066,7 @@ impl<'p> Checker<'p> {
             self.infer_from_type_arguments(n, se, te, &[]);
             return;
         }
-        if self.is_generic_mapped(source) && self.is_generic_mapped(target) {
+        if self.is_generic_mapped_type(source) && self.is_generic_mapped_type(target) {
             self.infer_from_generic_mapped_types(n, source, target);
         }
         if matches!(
@@ -1315,10 +1293,7 @@ impl<'p> Checker<'p> {
         end_skip_count: usize,
     ) -> TypeId {
         let end = elems.len().saturating_sub(end_skip_count);
-        let fixed = flags
-            .iter()
-            .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-            .unwrap_or(flags.len());
+        let fixed = Self::fixed_length(flags);
         if index > fixed {
             // `getRestArrayTypeOfTupleType`: an array of all there is from the first element without a fixed place on.
             return match self.element_type_of_slice(elems, flags, fixed, 0) {
@@ -2133,13 +2108,8 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// The parameters from `from` on, as the tuple a rest parameter would collect them in.
-    pub fn params_as_tuple(&mut self, params: &[SigParam], from: usize) -> TypeId {
-        self.rest_type_at_position(params, from, false)
-    }
-
     /// `getRestTypeAtPosition`
-    fn rest_type_at_position(
+    pub(super) fn rest_type_at_position(
         &mut self,
         params: &[SigParam],
         from: usize,
@@ -2335,11 +2305,6 @@ impl<'p> Checker<'p> {
         }
         let ret = self.sig_return(sig);
         self.is_type_parameter_at_top_level(ret, param, 0)
-    }
-
-    /// `getCommonSupertype`
-    pub fn common_supertype(&mut self, types: &[TypeId]) -> TypeId {
-        self.common_supertype_under(types, None)
     }
 
     /// `getCommonSupertype`. `stand_ins`: `stand_ins_among` the types.
@@ -2552,13 +2517,13 @@ impl<'p> Checker<'p> {
         self.related(source, target, relation)
     }
 
-    /// What parameter `index` is, going by what has been seen so far. Does not settle it.
-    pub(super) fn inferred_type(&mut self, n: &Inference, index: usize) -> TypeId {
-        self.get_inferred_type(n, index, false)
-    }
-
     /// `getInferredType`. `is_fixed`: it is being settled, because something has to know it before everything has been seen.
-    fn get_inferred_type(&mut self, n: &Inference, index: usize, is_fixed: bool) -> TypeId {
+    pub(super) fn get_inferred_type(
+        &mut self,
+        n: &Inference,
+        index: usize,
+        is_fixed: bool,
+    ) -> TypeId {
         let c = &n.candidates[index];
         if let Some(fixed) = c.fixed {
             return fixed;
@@ -2729,7 +2694,7 @@ impl<'p> Checker<'p> {
     /// Every parameter as it stands.
     pub(super) fn inference_mapper(&mut self, n: &Inference) -> MapperId {
         let types: SmallVec<[TypeId; 4]> = (0..n.params.len())
-            .map(|i| self.inferred_type(n, i))
+            .map(|i| self.get_inferred_type(n, i, false))
             .collect();
         self.mapper_from(&n.params, &types)
     }

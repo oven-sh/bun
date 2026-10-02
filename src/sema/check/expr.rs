@@ -1044,7 +1044,7 @@ impl<'p> Checker<'p> {
         };
         let (left, stops) = self.left_type_of_property_access(file, obj, chain);
         let target = self.target_kind(file, e);
-        let is_private = self.files().atoms.bytes(name).first() == Some(&b'#');
+        let is_private = self.is_private_name(name);
         // `parseRightSideOfDot`: in `typeof a.#b` the name is missing.
         if is_private && bound.is_in_type_query(e) {
             return (left.map_or_else(|any| any, |_| TypeId::ERROR), stops);
@@ -1870,12 +1870,20 @@ impl<'p> Checker<'p> {
                 let args = self.types_from_nodes(file, type_args);
                 self.with_type_arguments(ty, &args, InstantiationExpression::Expr(file, e))
             }
-            // `checkJsxFragment`: `any` where `getJsxElementTypeAt` is the error type.
-            ExprKind::Jsx(j) if hir[j].tag.is_none() => match self.jsx_element_type(file) {
-                ty if self.is_error_type(ty) => TypeId::ANY,
-                ty => ty,
-            },
-            ExprKind::Jsx(_) => self.jsx_element_type(file),
+            ExprKind::Jsx(j) => {
+                let is_fragment = hir[j].tag.is_none();
+                if self.checking == Some(file) {
+                    self.first_jsx.0 = self.first_jsx.0.or(Some(e));
+                    if is_fragment {
+                        self.first_jsx.1 = self.first_jsx.1.or(Some(e));
+                    }
+                }
+                match self.jsx_element_type(file) {
+                    // `checkJsxFragment`: `any` where `getJsxElementTypeAt` is the error type.
+                    ty if is_fragment && self.is_error_type(ty) => TypeId::ANY,
+                    ty => ty,
+                }
+            }
             ExprKind::ImportCall { args, .. } => {
                 self.type_of_import_call(file, self.hir(file).id_at(args, 0))
             }
@@ -5052,7 +5060,7 @@ impl<'p> Checker<'p> {
         let ExprKind::Jsx(j) = hir[e].kind else {
             return None;
         };
-        let candidates = self.reorder_candidates(sigs);
+        let candidates = self.candidates_in_order(sigs).into_vec();
         // Whichever is chosen, the same is expected. So of the constructors of a class, which all take what its instances say.
         let declared = self.jsx_effective_first_argument(file, e, candidates[0], construct);
         if candidates[1..]

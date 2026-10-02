@@ -8,10 +8,7 @@ use super::enclosing_declaration::Enclosing;
 use super::errors_misc::QueriedThisContainer;
 use super::visit_node::{VisitedKind, VisitedNode};
 use super::*;
-use crate::bind::{
-    ClassOwner, Decl, FnOwner, MemberDeclaration, MemberOwner, Parent, PatParent, ScopeId,
-    ScopeKind,
-};
+use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::util::FxHashSet;
 
 /// `typeWriterResult`
@@ -26,12 +23,7 @@ pub struct SymbolAtLocation {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Declaration {
     Bound(Decl),
-    Member(MemberId),
-    /// A parameter property.
-    Parameter(ParamId),
-    /// A property of an object literal, or a JSX attribute.
-    Property(PropId),
-    /// An assignment declaration, or an object literal.
+    /// A function expression or an object literal.
     Expression(ExprId),
     /// A type literal or a mapped type.
     TypeNode(TypeNodeId),
@@ -166,7 +158,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                         .is_some();
                 let mut name = "default".to_owned();
                 if !chain.is_empty() {
-                    name = self.symbol_chain_to_string(starts_with_global_this, &chain, scope);
+                    name = self.symbol_chain_to_string(starts_with_global_this, &chain);
                     if !is_its_own_parent {
                         push_access(&mut name, "default", false);
                     }
@@ -184,7 +176,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 ),
                 declarations
                     .iter()
-                    .map(|&(file, member)| (file, Declaration::Member(member)))
+                    .map(|&(file, member)| (file, Declaration::Bound(Decl::Member(member))))
                     .collect(),
             ),
         };
@@ -1096,144 +1088,57 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     // ───────────────────────────── `symbol.Declarations` ─────────────────────────────
 
     fn declarations_of_symbol(&mut self, symbol: Sym) -> Vec<(FileId, Declaration)> {
-        // Those of a class or an interface are declared among its members.
-        if let [(file, Decl::TypeParam(parameter))] = self.c.files().decls_of(symbol)[..] {
-            return self.declarations_of_member(file, MemberDeclaration::TypeParameter(parameter));
-        }
-        let exported = self.declarations_of_symbol_alone(symbol);
-        match self.static_member_of_the_name(symbol) {
-            Some((file, member)) => {
-                let members = self.declarations_of_member_alone(file, member);
-                self.in_order_of_binding(members, exported)
-            }
-            None => exported,
-        }
-    }
-
-    /// The declarations of one symbol that we keep as two, in the order the binder comes to them: in one file, as they are written.
-    fn in_order_of_binding(
-        &self,
-        mut first: Vec<(FileId, Declaration)>,
-        mut second: Vec<(FileId, Declaration)>,
-    ) -> Vec<(FileId, Declaration)> {
-        if let (Some(&(file, a)), Some(&(other, b))) = (first.first(), second.first())
-            && file == other
-            && self.pos_of_declaration(file, b) < self.pos_of_declaration(file, a)
-        {
-            std::mem::swap(&mut first, &mut second);
-        }
-        first.append(&mut second);
-        first
-    }
-
-    /// `declareClassMember`, `declareModuleMember`: the static members of a class and what a namespace that is one with the class
-    /// exports are in one table, `symbol.Exports`. The static member that is one symbol with `symbol`, which is no value.
-    fn static_member_of_the_name(&self, symbol: Sym) -> Option<(FileId, MemberDeclaration)> {
         let files = self.c.files();
-        let declared = files.symbol(symbol);
-        if declared.parent.is_none() || declared.flags.intersects(SymFlags::VALUE) {
-            return None;
+        match files.decls_of(symbol).first() {
+            Some(&(file, first)) if files.flags(symbol).intersects(SymFlags::CLASS_MEMBER) => {
+                self.declarations_of_member(file, first)
+            }
+            _ => {
+                let declarations = files.decls_of(symbol);
+                let bound = |&(file, decl): &(FileId, Decl)| (file, Declaration::Bound(decl));
+                declarations.iter().map(bound).collect()
+            }
         }
-        let class = files.sym(symbol.file, declared.parent);
-        if !files.flags(class).contains(SymFlags::CLASS)
-            || files.export(class, declared.name) != Some(symbol)
-        {
-            return None;
-        }
-        files.decls_of(class).iter().find_map(|&(file, decl)| {
-            let Decl::Class(class) = decl else {
-                return None;
-            };
-            let hir = self.c.hir(file);
-            let member = hir[class].members.iter().find(|&m| {
-                hir[m].flags.contains(Flags::STATIC) && hir[m].key == PropKey::Name(declared.name)
-            })?;
-            Some((file, MemberDeclaration::Member(member)))
-        })
     }
 
-    /// The other way: what is exported under the name of the static member `declaration`, if it is no value.
-    fn export_of_the_name(&self, file: FileId, declaration: MemberDeclaration) -> Option<Sym> {
-        let MemberDeclaration::Member(member) = declaration else {
-            return None;
-        };
-        let (hir, files) = (self.c.hir(file), self.c.files());
-        let PropKey::Name(name) = hir[member].key else {
-            return None;
-        };
-        if !hir[member].flags.contains(Flags::STATIC) {
-            return None;
-        }
-        let export = files.export(self.container_of_member(file, member)?, name)?;
-        (!files.flags(export).intersects(SymFlags::VALUE)).then_some(export)
-    }
-
-    fn declarations_of_symbol_alone(&mut self, symbol: Sym) -> Vec<(FileId, Declaration)> {
-        let mut declarations = Vec::new();
-        for &part in self.c.files().parts(symbol).iter() {
-            let of_part = self.c.files().symbol(part).decls.iter();
-            declarations.extend(of_part.map(|&decl| (part.file, Declaration::Bound(decl))));
-        }
-        declarations
-    }
-
-    /// `symbol.Declarations`, of the symbol of a member.
+    /// `getSymbolOfDeclaration(declaration).Declarations`
     fn declarations_of_member(
         &mut self,
         file: FileId,
-        declaration: MemberDeclaration,
-    ) -> Vec<(FileId, Declaration)> {
-        let members = self.declarations_of_member_alone(file, declaration);
-        match self.export_of_the_name(file, declaration) {
-            Some(export) => {
-                let exported = self.declarations_of_symbol_alone(export);
-                self.in_order_of_binding(members, exported)
-            }
-            None => members,
-        }
-    }
-
-    fn declarations_of_member_alone(
-        &mut self,
-        file: FileId,
-        declaration: MemberDeclaration,
+        declaration: Decl,
     ) -> Vec<(FileId, Declaration)> {
         let declarations = self.c.declarations_of_member(file, declaration);
-        let of_member = |&(file, declaration): &(FileId, MemberDeclaration)| {
-            let declaration = match declaration {
-                MemberDeclaration::TypeParameter(it) => Declaration::Bound(Decl::TypeParam(it)),
-                MemberDeclaration::Member(member) => Declaration::Member(member),
-                MemberDeclaration::Parameter(parameter) => Declaration::Parameter(parameter),
-                MemberDeclaration::Assignment(assignment) => Declaration::Expression(assignment),
-                MemberDeclaration::Property(property) => Declaration::Property(property),
-            };
-            (file, declaration)
-        };
-        declarations.iter().map(of_member).collect()
+        let bound = |&(file, decl): &(FileId, Decl)| (file, Declaration::Bound(decl));
+        declarations.iter().map(bound).collect()
     }
 
     fn declarations_of_property(&mut self, prop: &Prop, depth: u32) -> Vec<(FileId, Declaration)> {
         match &prop.source {
             PropSource::Members(list) => match list.first() {
-                Some(&(file, member)) => {
-                    self.declarations_of_member(file, MemberDeclaration::Member(member))
-                }
+                Some(&(file, member)) => self.declarations_of_member(file, Decl::Member(member)),
                 None => Vec::new(),
             },
             PropSource::Parameter(file, parameter) => {
-                self.declarations_of_member(*file, MemberDeclaration::Parameter(*parameter))
+                self.declarations_of_member(*file, Decl::ParameterProperty(*parameter))
             }
             PropSource::Literal(file, property) => {
-                self.declarations_of_member(*file, MemberDeclaration::Property(*property))
+                self.declarations_of_member(*file, Decl::Property(*property))
             }
             PropSource::Symbol(symbol) => self.declarations_of_symbol(*symbol),
             PropSource::Assigned(file, assignments) => {
                 // `this.name = value` is one symbol with a member `name` that comes after it.
-                let of_this = assignments.first().map(|&first| {
-                    self.declarations_of_member(*file, MemberDeclaration::Assignment(first))
-                });
+                let of_this = assignments
+                    .first()
+                    .map(|&first| self.declarations_of_member(*file, Decl::ThisProperty(first)));
+                let is_this = |d: &(FileId, Declaration)| {
+                    matches!(d.1, Declaration::Bound(Decl::ThisProperty(_)))
+                };
                 match of_this {
-                    Some(declarations) if declarations.len() > 1 => declarations,
+                    Some(declarations)
+                        if declarations.len() > 1 && declarations.iter().any(is_this) =>
+                    {
+                        declarations
+                    }
                     _ => assignments
                         .iter()
                         .map(|&assignment| (*file, Declaration::Expression(assignment)))
@@ -1345,9 +1250,6 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     },
                 ),
             },
-            Declaration::Member(member) => return hir[member].loc.pos,
-            Declaration::Parameter(parameter) => return hir[parameter].loc.pos,
-            Declaration::Property(property) => (hir[property].start, Flags::empty()),
             Declaration::Expression(e) => {
                 (self.c.start_inside_parentheses(file, e), Flags::empty())
             }
@@ -1400,7 +1302,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             )
         };
         (
-            self.symbol_chain_to_string(starts_with_global_this, &chain, at),
+            self.symbol_chain_to_string(starts_with_global_this, &chain),
             self.declarations_of_symbol(symbol),
         )
     }
@@ -1437,21 +1339,23 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             _ => {}
         }
         let declarations = self.declarations_of_property(prop, 0);
-        if let Some(alias) = self.c.accessible_alias_of_property_at(prop, self.file, at) {
-            return (
-                self.symbol_chain_to_string(false, &[alias], at),
-                declarations,
-            );
+        if let Some(alias) = self
+            .c
+            .accessible_alias_of_property(prop, Enclosing::at_scope(self.file, at))
+        {
+            return (self.symbol_chain_to_string(false, &[alias]), declarations);
         }
         // `getNameOfSymbolAsWritten`: as the first declaration writes it.
         let source = match declarations.first() {
-            Some(&(file, Declaration::Member(member))) => {
+            Some(&(file, Declaration::Bound(Decl::Member(member)))) => {
                 PropSource::Members(vec![(file, member)].into())
             }
-            Some(&(file, Declaration::Parameter(parameter))) => {
+            Some(&(file, Declaration::Bound(Decl::ParameterProperty(parameter)))) => {
                 PropSource::Parameter(file, parameter)
             }
-            Some(&(file, Declaration::Property(property))) => PropSource::Literal(file, property),
+            Some(&(file, Declaration::Bound(Decl::Property(property)))) => {
+                PropSource::Literal(file, property)
+            }
             _ => prop.source.clone(),
         };
         let name = self.c.prop_to_string(&Prop {
@@ -1521,7 +1425,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 if chain.is_empty() {
                     return name;
                 }
-                self.symbol_chain_to_string(starts_with_global_this, &chain, at)
+                self.symbol_chain_to_string(starts_with_global_this, &chain)
             }
         };
         push_access(&mut text, &name, false);
@@ -1529,19 +1433,14 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     }
 
     /// `createExpressionFromSymbolChain`
-    fn symbol_chain_to_string(
-        &mut self,
-        starts_with_global_this: bool,
-        chain: &[Sym],
-        at: ScopeId,
-    ) -> String {
+    fn symbol_chain_to_string(&mut self, starts_with_global_this: bool, chain: &[Sym]) -> String {
         let mut text = String::new();
         if starts_with_global_this {
             text.push_str("globalThis");
         }
         for (index, &symbol) in chain.iter().enumerate() {
             let is_initial = index == 0 && !starts_with_global_this;
-            let name = self.get_name_of_symbol_as_written(symbol, is_initial, at);
+            let name = self.get_name_of_symbol_as_written(symbol, is_initial);
             if is_initial {
                 text = name;
             } else {
@@ -1554,12 +1453,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
 
     /// `getNameOfSymbolAsWritten`, and the specifier `createExpressionFromSymbolChain` writes for an external module. `is_initial`:
     /// `FlagsInInitialEntityName`.
-    fn get_name_of_symbol_as_written(
-        &mut self,
-        symbol: Sym,
-        is_initial: bool,
-        at: ScopeId,
-    ) -> String {
+    fn get_name_of_symbol_as_written(&mut self, symbol: Sym, is_initial: bool) -> String {
         let files = self.c.files();
         let declared = files.symbol(symbol);
         // `InternalSymbolNameMissing`: a class declaration without a name that is no default export. The binder keeps it as `default`.
@@ -1582,34 +1476,16 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         }
         let name = self.c.symbol_to_string(symbol);
         // `startsWithSingleOrDoubleQuote`: a function that `declare module "m" {}` adds to goes by its own name.
-        if name.starts_with(['"', '\'']) && self.is_external_module(symbol) {
-            let specifier = self
-                .c
-                .specifier_for_module_symbol_at(symbol, Enclosing::at_scope(self.file, at));
+        if name.starts_with(['"', '\'']) && self.c.is_external_module_symbol(symbol) {
+            let specifier =
+                self.c
+                    .specifier_for_module_symbol(symbol, self.file, ResolutionMode::None);
             // `getSpecifierForModuleSymbol`: without a file, `StripQuotes(symbol.Name)` (`isAmbientModuleSymbolName`).
             if !specifier.is_empty() {
                 return super::print::quoted(&specifier, '"', true);
             }
         }
         name
-    }
-
-    /// `core.Some(symbol.Declarations, hasNonGlobalAugmentationExternalModuleSymbol)`
-    fn is_external_module(&self, symbol: Sym) -> bool {
-        let files = self.c.files();
-        files
-            .decls(symbol)
-            .into_iter()
-            .any(|(file, decl)| match decl {
-                // `IsExternalOrCommonJSModule`, which a JSON file is not.
-                Decl::File => {
-                    files.module(file).is_module() && self.c.hir(file).kind != FileKind::Json
-                }
-                Decl::Module(module) => {
-                    matches!(self.c.hir(file)[module].name, ModuleName::String(_))
-                }
-                _ => false,
-            })
     }
 }
 

@@ -1,7 +1,6 @@
 //! The types of values that have names: variables, parameters, functions, classes, imports; and what functions return.
 
 use super::decl::declarations_of;
-use super::errors_modules::root_declaration;
 use super::related::Place;
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, ScopeKind, UNREACHABLE};
@@ -349,16 +348,20 @@ impl<'p> Checker<'p> {
                 }
             }
         }
+        // `declareClassMember`, `bindClassLikeDeclaration`: the static members of a class and its `prototype` are among its exports, each
+        // one symbol with what a namespace that is merged with the class exports under the name.
+        let name = self.files().symbol(sym).name;
+        if flags.intersects(SymFlags::CLASS_MEMBER)
+            && let Some(class) = self.files().parent_of_symbol(sym)
+            && self.files().flags(class).contains(SymFlags::CLASS)
+            && self.files().export(class, name) == Some(self.files().canonical(sym))
+        {
+            let statics = self.type_of_class_value(class);
+            return self
+                .type_of_property(statics, name)
+                .unwrap_or(TypeId::ERROR);
+        }
         if !flags.intersects(SymFlags::VALUE) {
-            // `declareClassMember`: a static member shares one symbol with the export of the same name from a namespace merged
-            // with the class.
-            if let Some(class) = self.files().static_member_of_same_name(sym) {
-                let statics = self.type_of_class_value(class);
-                let name = self.files().symbol(sym).name;
-                return self
-                    .type_of_property(statics, name)
-                    .unwrap_or(TypeId::ERROR);
-            }
             // A symbol that is not a value has the error type.
             return TypeId::ERROR;
         }
@@ -2226,7 +2229,7 @@ impl<'p> Checker<'p> {
             // `getTypeFromBindingPattern`: what the pattern itself implies.
             if !is_name {
                 return self
-                    .type_implied_by_pattern(file, decl.pat)
+                    .implied_by_pattern(file, decl.pat, false)
                     .unwrap_or(TypeId::ANY);
             }
             // `widenTypeForVariableLikeDeclaration`, of nothing. `getTypeOfVariableOrParameterOrPropertyWorker` goes by
@@ -2311,7 +2314,9 @@ impl<'p> Checker<'p> {
         {
             // `assignParameterType`: if `unknown` is all that is expected, the pattern says what it is.
             if ty == TypeId::UNKNOWN && !matches!(hir[param.pat].kind, PatKind::Ident(_)) {
-                return self.type_implied_by_pattern(file, param.pat).unwrap_or(ty);
+                return self
+                    .implied_by_pattern(file, param.pat, false)
+                    .unwrap_or(ty);
             }
             if param.default.is_none() {
                 return if param.flags.contains(Flags::OPTIONAL) {
@@ -2354,7 +2359,7 @@ impl<'p> Checker<'p> {
             };
         }
         // `getTypeFromBindingPattern`, of a rest parameter too: `any[]` is for one of which nothing at all is known.
-        if let Some(implied) = self.type_implied_by_pattern(file, param.pat) {
+        if let Some(implied) = self.implied_by_pattern(file, param.pat, false) {
             return implied;
         }
         if param.flags.contains(Flags::REST) {
@@ -2498,12 +2503,11 @@ impl<'p> Checker<'p> {
         func: FnId,
         wanted: FnKind,
     ) -> Option<FnId> {
-        use crate::bind::MemberDeclaration;
         let bound = self.bound(file);
         let accessor = match bound.fns[func.idx()].owner {
-            FnOwner::Member(m) => MemberDeclaration::Member(m),
+            FnOwner::Member(m) => Decl::Member(m),
             FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
-                Parent::Prop(p) => MemberDeclaration::Property(p),
+                Parent::Prop(p) => Decl::Property(p),
                 _ => return None,
             },
             _ => return None,
@@ -2514,13 +2518,11 @@ impl<'p> Checker<'p> {
             .filter(|declaration| declaration.0 == file)
             .find_map(|(_, declaration)| {
                 let other = match declaration {
-                    MemberDeclaration::Member(m) => hir[m].func,
-                    MemberDeclaration::Property(p) if hir[p].value.is_some() => {
-                        match hir[hir[p].value].kind {
-                            ExprKind::Fn(f) => f,
-                            _ => FnId::NONE,
-                        }
-                    }
+                    Decl::Member(m) => hir[m].func,
+                    Decl::Property(p) if hir[p].value.is_some() => match hir[hir[p].value].kind {
+                        ExprKind::Fn(f) => f,
+                        _ => FnId::NONE,
+                    },
                     _ => FnId::NONE,
                 };
                 (other.is_some() && hir[other].kind == wanted).then_some(other)

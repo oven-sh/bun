@@ -998,10 +998,12 @@ impl Checker<'_> {
             let (args, sym) = match hir.types[i].kind {
                 TypeNodeKind::Ref { name, args } => {
                     let mut names = [Atom::NONE; 8];
-                    // No symbol is recorded for `Object<K, V>` in a JSDoc comment.
+                    let node = TypeNodeId(i as u32);
                     if args.is_empty()
                         || name.len() > names.len()
-                        || self.is_jsdoc_object_with_arguments(file, TypeNodeId(i as u32))
+                        || self
+                            .get_intended_type_from_jsdoc_type_reference(file, node)
+                            .is_some()
                     {
                         continue;
                     }
@@ -1793,19 +1795,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `elaborateError`, for who still has an `out`.
-    pub(super) fn elaborate(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        source: TypeId,
-        target: TypeId,
-        head: u32,
-        out: &mut Vec<Diagnostic>,
-    ) -> bool {
-        self.elaborate_from(file, e, false, source, target, head, out)
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn elaborate_from(
         &mut self,
@@ -1834,7 +1823,7 @@ impl Checker<'_> {
     /// `elaborateError`: takes the complaint that `e`, of type `source`, does not fit `target` to the part of `e` that is to blame.
     /// `is_effective`: `e` is what `getEffectiveCheckNode` leaves, so the parentheses around it are no part of it.
     #[allow(clippy::too_many_arguments)]
-    fn elaborate_error(
+    pub(super) fn elaborate_error(
         &mut self,
         file: FileId,
         e: ExprId,
@@ -2121,39 +2110,10 @@ impl Checker<'_> {
         self.indexed_access_if_any(ty, key, false)
     }
 
-    /// `elaborateElement`, for who still has an `out`.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn elaborate_element_with_end(
-        &mut self,
-        file: FileId,
-        source: TypeId,
-        target: TypeId,
-        at: u32,
-        end: u32,
-        next: ExprId,
-        name: Atom,
-        head: u32,
-        out: &mut Vec<Diagnostic>,
-    ) -> bool {
-        let (at, head, mut diags) = ((file, at, end), Some(head), Vec::new());
-        let is_elaborated = self.elaborate_element(
-            source,
-            target,
-            at,
-            next,
-            false,
-            name,
-            head,
-            Some(&mut diags),
-        );
-        self.put_out(diags, out);
-        is_elaborated
-    }
-
     /// `elaborateElement`: the property or the element is written at `prop`, `next` is its value if it has one to go into.
     /// `is_effective`: `next` is what `getEffectiveCheckNode` leaves, so the parentheses around it are no part of it.
     #[allow(clippy::too_many_arguments)]
-    fn elaborate_element(
+    pub(super) fn elaborate_element(
         &mut self,
         source: TypeId,
         target: TypeId,

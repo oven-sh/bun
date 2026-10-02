@@ -2,10 +2,7 @@
 //! which declarations in different files are one symbol, what an alias stands for.
 
 use crate::atom::{Atom, Interner, known, number_to_string};
-use crate::bind::{
-    self, Bound, Decl, MemberDeclaration, MemberKey, MemberOwner, ScopeId, ScopeKind, SymFlags,
-    Symbol, SymbolId, member_flags,
-};
+use crate::bind::{self, Bound, Decl, ScopeId, ScopeKind, SymFlags, Symbol, SymbolId};
 use crate::hir::{self, *};
 use crate::json::{Expression, ExpressionKind, Json, PropertyName};
 use crate::resolve::{
@@ -13,7 +10,7 @@ use crate::resolve::{
     is_javascript, is_relative, join, known_extension, lib_name, parent_dir,
 };
 use crate::table::{Bases, ByNode, ByNodeKept, RawWord};
-use crate::util::{FxHashMap, FxHashSet, List, group_by_key};
+use crate::util::{FxHashMap, FxHashSet, List};
 use crate::verify::{Place, Problem};
 use smallvec::SmallVec;
 use std::borrow::Cow;
@@ -397,20 +394,15 @@ pub struct Files {
     merged_symbols: FxHashMap<Sym, Sym>,
     /// `symbol.Declarations` of a transient symbol: the symbols of the binder that have them, in the order they were merged.
     merged_parts: FxHashMap<Sym, Vec<Sym>>,
-    /// `merged_parts`, and among them, in the order they came, those that could not be made one with what was there before. They add
-    /// nothing to the symbol. They are errors.
-    every_part: FxHashMap<Sym, Vec<Sym>>,
     /// While symbols are put together: `name_means_instead`.
     stand_ins: Vec<(Sym, SymbolId)>,
     /// `symbol.Exports` of a transient symbol.
     merged_exports: FxHashMap<Sym, SymbolMap>,
-    /// `symbol.Declarations` of the symbols of members that are declared in more than one part of a class or an interface.
-    merged_members: Vec<Box<[(FileId, MemberDeclaration)]>>,
-    /// Which of `merged_members`, by the first declaration in each part.
-    merged_member: FxHashMap<(FileId, MemberDeclaration), u32>,
-    /// The pairs `mergeSymbol` refused to make one symbol of, where what a module passes on with `export *`, what a pattern declares or
-    /// a name that only stands for something was added to: what was there, and what was to be added.
-    pub refused_merges: Vec<(Sym, Sym)>,
+    /// `symbol.Members` of a transient symbol.
+    merged_members: FxHashMap<Sym, SymbolMap>,
+    /// `reportMergeSymbolError`: the pairs `mergeSymbol` refused to make one symbol of. What was there, what was to be added, and how many
+    /// `parts` the first had by then.
+    pub refused_merges: Vec<(Sym, Sym, u32)>,
     /// The aliases `resolveAlias` found to be circular (2303) while `mergeSymbol` resolved the target of a merge. Their `aliasTarget`
     /// stays `unknownSymbol`, even if the merge breaks the cycle.
     pub circular_at_merge: Vec<Sym>,
@@ -1559,18 +1551,8 @@ fn is_global_augmentation(module: &Module, symbol: SymbolId) -> bool {
     })
 }
 
-/// `SymbolFlagsModuleMember`: what the body of a module or namespace sees of what it exports.
-const MODULE_MEMBER: SymFlags = SymFlags::VARIABLE
-    .union(SymFlags::FUNCTION)
-    .union(SymFlags::CLASS)
-    .union(SymFlags::INTERFACE)
-    .union(SymFlags::ENUM)
-    .union(SymFlags::MODULE)
-    .union(SymFlags::TYPE_ALIAS)
-    .union(SymFlags::ALIAS);
-
 /// `getExcludedSymbolFlags`
-fn get_excluded_symbol_flags(flags: SymFlags) -> SymFlags {
+pub(crate) fn get_excluded_symbol_flags(flags: SymFlags) -> SymFlags {
     [
         (
             SymFlags::BLOCK_SCOPED_VARIABLE,
@@ -1588,6 +1570,9 @@ fn get_excluded_symbol_flags(flags: SymFlags) -> SymFlags {
         (SymFlags::REGULAR_ENUM, SymFlags::REGULAR_ENUM_EXCLUDES),
         (SymFlags::CONST_ENUM, SymFlags::CONST_ENUM_EXCLUDES),
         (SymFlags::VALUE_MODULE, SymFlags::VALUE_MODULE_EXCLUDES),
+        (SymFlags::METHOD, SymFlags::METHOD_EXCLUDES),
+        (SymFlags::GET_ACCESSOR, SymFlags::GET_ACCESSOR_EXCLUDES),
+        (SymFlags::SET_ACCESSOR, SymFlags::SET_ACCESSOR_EXCLUDES),
         (SymFlags::TYPE_PARAMETER, SymFlags::TYPE_PARAMETER_EXCLUDES),
         (SymFlags::TYPE_ALIAS, SymFlags::TYPE_ALIAS_EXCLUDES),
         (SymFlags::ALIAS, SymFlags::ALIAS_EXCLUDES),
@@ -1595,6 +1580,11 @@ fn get_excluded_symbol_flags(flags: SymFlags) -> SymFlags {
     .iter()
     .filter(|kind| flags.contains(kind.0))
     .fold(SymFlags::empty(), |excluded, kind| excluded | kind.1)
+    .difference(if flags.contains(SymFlags::REPLACEABLE_BY_METHOD) {
+        SymFlags::METHOD
+    } else {
+        SymFlags::empty()
+    })
 }
 
 impl Files {
@@ -1971,11 +1961,9 @@ impl Files {
             pattern_augmentations: FxHashMap::default(),
             merged_symbols: FxHashMap::default(),
             merged_parts: FxHashMap::default(),
-            every_part: FxHashMap::default(),
             stand_ins: Vec::new(),
             merged_exports: FxHashMap::default(),
-            merged_members: Vec::new(),
-            merged_member: FxHashMap::default(),
+            merged_members: FxHashMap::default(),
             refused_merges: Vec::new(),
             circular_at_merge: Vec::new(),
             resolved_at_merge: Vec::new(),
@@ -2729,7 +2717,7 @@ impl Files {
                                 .intersects(get_excluded_symbol_flags(self.flags(addition)))
                             {
                                 let resolved = self.canonical(resolved);
-                                self.refused_merges.push((resolved, addition));
+                                self.refuse_merge(resolved, addition);
                                 continue;
                             }
                             self.merge_symbol(found, addition, false);
@@ -2786,94 +2774,7 @@ impl Files {
         for &whole in self.merged_parts.keys() {
             self.memo.whole.insert(whole, Some(whole));
         }
-        self.merge_members();
         self.is_merged = true;
-    }
-
-    /// `mergeSymbolTable`, of `Members` and `Exports` of the classes and interfaces that are made of several parts: a member of one
-    /// part is one symbol with the member of that name of the parts before, unless `getExcludedSymbolFlags` says otherwise.
-    fn merge_members(&mut self) {
-        let (mut merged_members, mut merged_member) = (Vec::new(), FxHashMap::default());
-        // What the parts have in their tables: the name, which part, `includes`, and the first declaration of the symbol.
-        let mut declared: Vec<(MemberKey, usize, u8, MemberDeclaration)> = Vec::new();
-        for (&whole, parts) in &self.merged_parts {
-            if !self
-                .flags(whole)
-                .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-            {
-                continue;
-            }
-            declared.clear();
-            for (index, &part) in parts.iter().enumerate() {
-                let (hir, bound) = (self.hir(part.file), self.bound(part.file));
-                for &decl in &bound.symbols[part.id.idx()].decls {
-                    let owner = match decl {
-                        Decl::Class(class) if bound.class_symbol[class.idx()] == part.id => {
-                            MemberOwner::Class(class)
-                        }
-                        Decl::Interface(interface)
-                            if bound.interface_symbol[interface.idx()] == part.id =>
-                        {
-                            MemberOwner::Interface(interface)
-                        }
-                        _ => continue,
-                    };
-                    bound.for_each_declared_member(
-                        hir,
-                        owner,
-                        |(key, declaration, includes, _)| {
-                            if let Some(declaration) = declaration
-                                && !bound.is_member_in_no_table(declaration)
-                                && let Some(&first) =
-                                    bound.declarations_of_member(&declaration).first()
-                            {
-                                declared.push((key, index, includes, first));
-                            }
-                        },
-                    );
-                }
-            }
-            group_by_key(&mut declared, |member| member.0);
-            for of_name in declared.chunk_by(|a, b| a.0 == b.0) {
-                let (mut flags, mut declarations, mut firsts) = (0, Vec::new(), Vec::new());
-                for of_part in of_name.chunk_by(|a, b| a.1 == b.1) {
-                    let source = of_part.iter().fold(0, |flags, member| flags | member.2);
-                    // `reportMergeSymbolError`: it stays a symbol of its own.
-                    if flags & member_flags::excluded(source) != 0 {
-                        continue;
-                    }
-                    flags |= source;
-                    let (file, first) = (parts[of_part[0].1].file, of_part[0].3);
-                    let own = self.bound(file).declarations_of_member(&first);
-                    declarations.extend(own.iter().map(|&declaration| (file, declaration)));
-                    firsts.push((file, first));
-                }
-                if firsts.len() > 1 {
-                    let index = merged_members.len() as u32;
-                    merged_member.extend(firsts.into_iter().map(|first| (first, index)));
-                    merged_members.push(declarations.into_boxed_slice());
-                }
-            }
-        }
-        (self.merged_members, self.merged_member) = (merged_members, merged_member);
-    }
-
-    /// `symbol.Declarations` of `declaration.Symbol`, which is a member or a type parameter of a class, an interface or a type
-    /// literal in `file`.
-    pub fn declarations_of_member(
-        &self,
-        file: FileId,
-        declaration: MemberDeclaration,
-    ) -> List<'_, (FileId, MemberDeclaration)> {
-        let own = self.bound(file).declarations_of_member(&declaration);
-        match own
-            .first()
-            .and_then(|&first| self.merged_member.get(&(file, first)))
-        {
-            Some(&index) => List::Kept(&self.merged_members[index as usize]),
-            None if own.len() == 1 => List::One((file, declaration)),
-            None => List::Own(own.iter().map(|&declaration| (file, declaration)).collect()),
-        }
     }
 
     fn symbol_mut(&mut self, sym: Sym) -> &mut Symbol {
@@ -2889,6 +2790,7 @@ impl Files {
             decls: bind::Decls::Many(Box::default()),
             parent: SymbolId::NONE,
             exports: bind::TableId::NONE,
+            members: bind::TableId::NONE,
             export_symbol: SymbolId::NONE,
         });
         Sym {
@@ -2957,6 +2859,7 @@ impl Files {
             decls: bind::Decls::Many(Box::default()),
             parent: SymbolId::NONE,
             exports: bind::TableId::NONE,
+            members: bind::TableId::NONE,
             export_symbol: SymbolId::NONE,
         };
         (links, symbol)
@@ -2974,8 +2877,6 @@ impl Files {
         };
         let parts = self.parts(symbol).into_vec();
         self.merged_parts.insert(clone, parts);
-        let every_part = self.every_part(symbol).into_vec();
-        self.every_part.insert(clone, every_part);
         let exports = self.exports_in_table(symbol).into_iter().collect();
         self.merged_exports.insert(clone, exports);
         clone
@@ -3101,8 +3002,8 @@ impl Files {
     /// `symbol`. It takes over what the tables have for `symbol`: from now on `canonical` leads past that.
     fn clone_symbol(&mut self, symbol: Sym) -> Sym {
         let parts = self.merged_parts.remove(&symbol);
-        let every_part = self.every_part.remove(&symbol);
         let exports = self.merged_exports.remove(&symbol);
+        let members = self.merged_members.remove(&symbol);
         let symbols = &mut self.modules[symbol.file.idx()].bound.symbols;
         let cloned = &symbols[symbol.id.idx()];
         let clone = Symbol {
@@ -3111,6 +3012,7 @@ impl Files {
             decls: bind::Decls::Many(cloned.decls.as_slice().into()),
             parent: cloned.parent,
             exports: cloned.exports,
+            members: cloned.members,
             export_symbol: cloned.export_symbol,
         };
         let result = Sym {
@@ -3120,13 +3022,47 @@ impl Files {
         symbols.push(clone);
         self.merged_parts
             .insert(result, parts.unwrap_or_else(|| vec![symbol]));
-        self.every_part
-            .insert(result, every_part.unwrap_or_else(|| vec![symbol]));
         if let Some(exports) = exports {
             self.merged_exports.insert(result, exports);
         }
+        if let Some(members) = members {
+            self.merged_members.insert(result, members);
+        }
         self.record_merged_symbol(result, symbol);
         result
+    }
+
+    /// `symbol.Members`
+    pub fn members_in_table(&self, sym: Sym) -> Vec<(Atom, Sym)> {
+        match self.merged_members.get(&sym) {
+            Some(table) => table.to_vec(),
+            None => {
+                let (file, bound) = (sym.file, self.bound(sym.file));
+                bound
+                    .table(bound.symbols[sym.id.idx()].members)
+                    .iter()
+                    .map(|&(n, id)| (n, Sym { file, id }))
+                    .collect()
+            }
+        }
+    }
+
+    /// `symbol.Members[name]`
+    pub fn member(&self, sym: Sym, name: Atom) -> Option<Sym> {
+        match self.merged_members.get(&sym) {
+            Some(table) => table.get(&name).map(|&member| self.canonical(member)),
+            None => {
+                let bound = self.bound(sym.file);
+                let member = bound.lookup(bound.symbols[sym.id.idx()].members, name)?;
+                Some(self.sym(sym.file, member))
+            }
+        }
+    }
+
+    /// `reportMergeSymbolError`
+    fn refuse_merge(&mut self, target: Sym, source: Sym) {
+        let parts = self.parts(target).len() as u32;
+        self.refused_merges.push((target, source, parts));
     }
 
     /// `symbol.Exports`
@@ -3159,25 +3095,15 @@ impl Files {
         if target_flags.intersects(get_excluded_symbol_flags(source_flags))
             && !(source_flags | target_flags).contains(SymFlags::ASSIGNMENT)
         {
-            // Two aliases are never one: the first keeps the name.
-            if is_alias || unidirectional {
-                self.refused_merges.push((target, source));
-                return target;
-            }
+            self.refuse_merge(target, source);
             // What cannot be one symbol with what has the name adds nothing to it: two classes, a class and a variable. It stays what
-            // its own declarations are about, and the name goes on meaning the first wherever it is used.
-            let refused = self.every_part(source).into_vec();
-            for &part in &refused {
-                self.name_means_instead(part, target);
+            // its own declarations are about, and the name goes on meaning the first wherever it is used. Two aliases are never
+            // one, and nothing refers to a member by its name alone.
+            if !is_alias && !unidirectional && !source_flags.intersects(SymFlags::CLASS_MEMBER) {
+                for part in self.parts(source).into_vec() {
+                    self.name_means_instead(part, target);
+                }
             }
-            self.symbol_mut(target).flags |= SymFlags::MERGED;
-            self.merged_parts
-                .entry(target)
-                .or_insert_with(|| vec![target]);
-            self.every_part
-                .entry(target)
-                .or_insert_with(|| vec![target])
-                .extend(refused);
             return target;
         }
         if !target_flags.contains(SymFlags::TRANSIENT) {
@@ -3192,7 +3118,7 @@ impl Files {
                             .flags(found)
                             .intersects(get_excluded_symbol_flags(source_flags)) =>
                     {
-                        self.refused_merges.push((target, source));
+                        self.refuse_merge(target, source);
                         return source;
                     }
                     Some(found) => {
@@ -3213,15 +3139,24 @@ impl Files {
             target = self.clone_symbol(resolved);
         }
         self.symbol_mut(target).flags |= source_flags;
-        let (parts, every_part) = (
-            self.parts(source).into_vec(),
-            self.every_part(source).into_vec(),
-        );
+        let parts = self.parts(source).into_vec();
         self.merged_parts.entry(target).or_default().extend(parts);
-        self.every_part
-            .entry(target)
-            .or_default()
-            .extend(every_part);
+        // `mergeSymbolTable(GetMembers(target), source.Members, ..)`
+        let source_members = self.members_in_table(source);
+        if !source_members.is_empty() && !self.merged_members.contains_key(&target) {
+            let table = self.members_in_table(target).into_iter().collect();
+            self.merged_members.insert(target, table);
+        }
+        for (name, source_symbol) in source_members {
+            let merged = match self.merged_members[&target].get(&name).copied() {
+                Some(existing) => self.merge_symbol(existing, source_symbol, unidirectional),
+                None => self.get_merged_symbol(source_symbol),
+            };
+            self.merged_members
+                .entry(target)
+                .or_default()
+                .insert(name, merged);
+        }
         let source_exports = self.exports_in_table(source);
         if !source_exports.is_empty() || self.symbol(target).exports.is_some() {
             if target != self.global_this_symbol && !self.merged_exports.contains_key(&target) {
@@ -3259,6 +3194,7 @@ impl Files {
             decls: bind::Decls::Many(Box::default()),
             parent,
             exports: bind::TableId::NONE,
+            members: bind::TableId::NONE,
             export_symbol: SymbolId::NONE,
         });
         self.stand_ins.push((refused, stand_in));
@@ -3443,19 +3379,6 @@ impl Files {
         List::One(sym)
     }
 
-    /// `parts`, and what was refused as a part, in the order they came.
-    pub fn every_part(&self, sym: Sym) -> List<'_, Sym> {
-        if self.symbol(sym).flags.contains(SymFlags::MERGED) {
-            if let Some(parts) = self.every_part.get(&sym) {
-                return List::Kept(parts);
-            }
-            if let Some(made) = self.transient_symbol(sym) {
-                return self.every_part(made.target);
-            }
-        }
-        List::One(sym)
-    }
-
     pub fn global(&self, name: Atom, meaning: SymFlags) -> Option<Sym> {
         let sym = *self.globals.get(&name)?;
         self.means(sym, meaning).then_some(sym)
@@ -3538,10 +3461,6 @@ impl Files {
                 seen_symbols.push(target);
             }
             flags |= self.flags(target);
-            // The static member is a property, which is a value.
-            if self.static_member_of_same_name(target).is_some() {
-                flags |= SymFlags::PROPERTY;
-            }
             symbol = target;
         }
         flags
@@ -3563,37 +3482,6 @@ impl Files {
         } else {
             self.sym(sym.file, exported)
         }
-    }
-
-    /// `declareClassMember`: a static member is declared in the exports of its class, so it is one symbol with the export of the same
-    /// name from a namespace merged with the class. Returns the class if `sym` is such an export.
-    pub fn static_member_of_same_name(&self, sym: Sym) -> Option<Sym> {
-        let symbol = self.symbol(sym);
-        if symbol.parent.is_none() {
-            return None;
-        }
-        let class = self.sym(sym.file, symbol.parent);
-        if !self.flags(class).contains(SymFlags::CLASS) {
-            return None;
-        }
-        let name = PropKey::Name(symbol.name);
-        let has_static_member = self.decls_of(class).iter().any(|&(file, decl)| {
-            let Decl::Class(c) = decl else { return false };
-            let hir = self.hir(file);
-            hir[c].members.iter().any(|m| {
-                let member = &hir[m];
-                member.flags.contains(Flags::STATIC)
-                    && member.key == name
-                    && matches!(
-                        member.kind,
-                        MemberKind::Property
-                            | MemberKind::Method
-                            | MemberKind::Getter
-                            | MemberKind::Setter
-                    )
-            })
-        });
-        has_static_member.then_some(class)
     }
 
     /// `getExternalModuleMember`: what is imported by name from `export = value` may be a property of the value, which only the type of
@@ -3749,7 +3637,7 @@ impl Files {
                 // An enum sees its members, which a namespace it is one with does not.
                 let visible = match s.kind {
                     ScopeKind::Enum(_) => meaning & SymFlags::ENUM_MEMBER,
-                    _ => meaning & MODULE_MEMBER,
+                    _ => meaning & SymFlags::MODULE_MEMBER,
                 };
                 // What only an export specifier put there is not in scope. That is settled before it is asked what it stands for, which
                 // may be the very name that is looked for.

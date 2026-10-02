@@ -435,9 +435,7 @@ impl Checker<'_> {
             }
         };
         let Some(name) = name else { return };
-        if self.files().atoms.bytes(name).first() == Some(&b'#')
-            && matches!(hir[operand].kind, ExprKind::Dot { .. })
-        {
+        if self.is_private_name(name) && matches!(hir[operand].kind, ExprKind::Dot { .. }) {
             self.error((file, start, end), 18011, &[]);
         }
         let object = self.type_of_expr(file, obj);

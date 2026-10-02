@@ -1,4 +1,3 @@
-use super::member_flags::*;
 use super::*;
 use crate::atom::known;
 use crate::util::{group_by_key, number_repeated};
@@ -64,6 +63,8 @@ pub(super) struct Binder<'f> {
     cur_fn: FnId,
     /// The member of a class whose type or initializer is being gone through, with no function and no type literal in between.
     cur_member: MemberId,
+    /// `thisContainer`, if it is a member of a class.
+    this_member: MemberId,
     returns: Vec<u32>,
     yields: Vec<u32>,
     /// `seenThisKeyword`
@@ -96,6 +97,7 @@ impl<'f> Binder<'f> {
         b.pat_symbol = vec![SymbolId::NONE; f.pats.len()];
         b.prop_owner = vec![ExprId::NONE; f.props.len()];
         b.member_owner = vec![MemberOwner::None; f.members.len()];
+        b.member_symbol = vec![SymbolId::NONE; f.members.len()];
         b.member_scope = vec![ScopeId::NONE; f.members.len()];
         b.param_fn = vec![FnId::NONE; f.params.len()];
         b.type_param_symbol = vec![SymbolId::NONE; f.type_params.len()];
@@ -168,6 +170,7 @@ impl<'f> Binder<'f> {
             labels: Vec::new(),
             cur_fn: FnId::NONE,
             cur_member: MemberId::NONE,
+            this_member: MemberId::NONE,
             returns: Vec::new(),
             yields: Vec::new(),
             seen_this: false,
@@ -196,6 +199,14 @@ impl<'f> Binder<'f> {
         self.b.symbols[symbol.idx()].exports
     }
 
+    /// `GetMembers`
+    fn get_members(&mut self, symbol: SymbolId) -> TableId {
+        if self.b.symbols[symbol.idx()].members.is_none() {
+            self.b.symbols[symbol.idx()].members = self.new_table();
+        }
+        self.b.symbols[symbol.idx()].members
+    }
+
     /// `newSymbol`
     fn new_symbol(&mut self, flags: SymFlags, name: Atom) -> SymbolId {
         self.b.symbols.push(Symbol {
@@ -204,6 +215,7 @@ impl<'f> Binder<'f> {
             decls: Decls::Many(Box::default()),
             parent: SymbolId::NONE,
             exports: TableId::NONE,
+            members: TableId::NONE,
             export_symbol: SymbolId::NONE,
         });
         SymbolId(self.b.symbols.len() as u32 - 1)
@@ -224,7 +236,13 @@ impl<'f> Binder<'f> {
             Decl::EnumMember(it) => b.enum_member_symbol[it.idx()] = symbol,
             Decl::Module(it) => b.module_symbol[it.idx()] = symbol,
             Decl::TypeParam(it) => b.type_param_symbol[it.idx()] = symbol,
-            Decl::Expando(it) | Decl::ObjectLiteral(it) => b.expr_symbol[it.idx()] = symbol,
+            Decl::Expando(it) | Decl::ObjectLiteral(it) | Decl::ThisProperty(it) => {
+                b.expr_symbol[it.idx()] = symbol;
+            }
+            Decl::Member(it) => b.member_symbol[it.idx()] = symbol,
+            Decl::ParameterProperty(_) | Decl::Property(_) => {
+                b.property_symbol.insert(decl, symbol);
+            }
             _ => {}
         }
     }
@@ -266,6 +284,18 @@ impl<'f> Binder<'f> {
                 PatKind::Ident(name) => name,
                 _ => Atom::NONE,
             },
+            Decl::ParameterProperty(it) => match f[f[it].pat].kind {
+                PatKind::Ident(name) => name,
+                _ => Atom::NONE,
+            },
+            Decl::Member(it) => match f[it].kind {
+                MemberKind::Constructor => known::constructor_declaration,
+                MemberKind::CallSignature => known::call_signature,
+                MemberKind::ConstructSignature => known::construct_signature,
+                MemberKind::IndexSignature => known::index_signature,
+                _ => self.name_of_property_name(f[it].key),
+            },
+            Decl::Property(it) => self.name_of_property_name(f[it].key),
             // `parseFunctionDeclaration`: the name that is missing is an identifier without text, unless it may be left out.
             Decl::Fn(it) if f[it].name.is_none() && !f[it].flags.contains(Flags::DEFAULT) => {
                 known::empty
@@ -301,7 +331,7 @@ impl<'f> Binder<'f> {
             },
             Decl::ModuleExports(_) => known::export_equals,
             // `GetElementOrPropertyAccessName`
-            Decl::ExportsProperty(e) | Decl::Expando(e) => {
+            Decl::ExportsProperty(e) | Decl::Expando(e) | Decl::ThisProperty(e) => {
                 return match (f[e].kind, define_property_call(f, e)) {
                     (ExprKind::Assign { target, .. }, _) => match f[target].kind {
                         ExprKind::Dot { name, .. } => name,
@@ -312,13 +342,36 @@ impl<'f> Binder<'f> {
                     _ => Atom::NONE,
                 };
             }
-            Decl::File | Decl::ObjectLiteral(_) | Decl::CommonJsVariable => Atom::NONE,
+            Decl::File | Decl::ObjectLiteral(_) | Decl::CommonJsVariable | Decl::TypeLiteral(_) => {
+                Atom::NONE
+            }
         };
         if name.is_some() { name } else { known::missing }
     }
 
-    /// `declareSymbolEx`: the declarations of one name in one table are one symbol if they go together. One that is refused gets a
-    /// symbol of its own, which no name leads to.
+    /// `getDeclarationName`, of the name of a member. `known::computed`: `HasDynamicName`.
+    fn name_of_property_name(&self, key: PropKey) -> Atom {
+        match key {
+            PropKey::Name(name) => name,
+            // `GetSymbolNameForPrivateIdentifier`: `#a` is not `"#a"`.
+            PropKey::Private(name) => {
+                let text = [&b"\xFE"[..], self.atoms.bytes(name)].concat();
+                self.atoms.intern(&text)
+            }
+            // `IsSignedNumericLiteral`: `TokenToString(operator) + operand.Text()`
+            PropKey::Computed(e) => match self.f[e].kind {
+                ExprKind::Unary { op, operand } if is_signed_numeric_literal(self.f, e) => {
+                    let sign: &[u8] = if op == UnOp::Plus { b"+" } else { b"-" };
+                    let text = [sign, self.atoms.bytes(self.literal_name(operand))].concat();
+                    self.atoms.intern(&text)
+                }
+                _ => known::computed,
+            },
+            PropKey::None => Atom::NONE,
+        }
+    }
+
+    /// `declareSymbol`
     fn declare_symbol(
         &mut self,
         table: TableId,
@@ -327,38 +380,70 @@ impl<'f> Binder<'f> {
         includes: SymFlags,
         excludes: SymFlags,
     ) -> SymbolId {
+        self.declare_symbol_ex(table, parent, decl, includes, excludes, false)
+    }
+
+    /// `declareSymbolEx`: the declarations of one name in one table are one symbol if they go together. One that is refused gets a
+    /// symbol of its own, which no name leads to.
+    fn declare_symbol_ex(
+        &mut self,
+        table: TableId,
+        parent: SymbolId,
+        decl: Decl,
+        includes: SymFlags,
+        excludes: SymFlags,
+        is_replaceable_by_method: bool,
+    ) -> SymbolId {
         // "The exported symbol for an export default function/class node is always named "default""
         let name = if parent.is_some() && self.modifier_flags(decl).contains(Flags::DEFAULT) {
             known::default
         } else {
             self.get_declaration_name(decl)
         };
+        // `InternalSymbolNameMissing`, `HasDynamicName`
+        let is_in_no_table = name.is_none() || name == known::missing || name == known::computed;
         let existing = self.tables[table.idx()].get(&name).copied();
-        let is_refused = existing.is_some_and(|existing| {
-            let there = &self.b.symbols[existing.idx()];
-            // `Resolve`: the name of a class expression comes after what is declared in the class, and refuses none of it.
-            let is_own_name = matches!(there.decls[0], Decl::Class(c) if matches!(self.b.class_owner[c.idx()], ClassOwner::Expr(_)));
-            // "Assignment declarations are allowed to merge with variables, no matter what other flags they have."
-            let (variable, assignment) = (SymFlags::VARIABLE, SymFlags::ASSIGNMENT);
-            let is_assignment = includes.intersects(variable) && there.flags.contains(assignment)
-                || includes.contains(assignment) && there.flags.intersects(variable);
-            there.flags.intersects(excludes) && !is_own_name && !is_assignment
-        });
+        let existing = existing.filter(|_| !is_in_no_table);
+        let there = existing.map_or(SymFlags::empty(), |it| self.b.symbols[it.idx()].flags);
+        let is_replaceable = there.contains(SymFlags::REPLACEABLE_BY_METHOD);
+        // "A symbol already exists, so don't add this as a declaration."
+        if let Some(existing) = existing
+            && is_replaceable_by_method
+            && !is_replaceable
+        {
+            return existing;
+        }
+        // "Assignment declarations are allowed to merge with variables, no matter what other flags they have."
+        let (variable, assignment) = (SymFlags::VARIABLE, SymFlags::ASSIGNMENT);
+        let is_assignment = includes.intersects(variable) && there.contains(assignment)
+            || includes.contains(assignment) && there.intersects(variable);
         let symbol = match existing {
-            // `InternalSymbolNameMissing`, `HasDynamicName`: in no table. A function or a class is kept as `default`.
-            _ if name == known::missing && matches!(decl, Decl::Fn(_) | Decl::Class(_)) => {
-                self.new_symbol(SymFlags::empty(), known::default)
+            Some(existing) if !there.intersects(excludes) || !is_replaceable && is_assignment => {
+                existing
             }
-            _ if name == known::missing || name.is_none() => {
-                self.new_symbol(SymFlags::empty(), name)
-            }
-            Some(existing) if !is_refused => existing,
             _ => {
-                let symbol = self.new_symbol(SymFlags::empty(), name);
-                if let Some(existing) = existing {
-                    self.report_redeclaration(existing, includes, decl);
-                } else {
-                    self.tables[table.idx()].insert(name, symbol);
+                // A function or a class without a name is kept as `default`.
+                let is_kept =
+                    name == known::missing && matches!(decl, Decl::Fn(_) | Decl::Class(_));
+                let kept = if is_kept { known::default } else { name };
+                let symbol = self.new_symbol(SymFlags::empty(), kept);
+                match existing {
+                    Some(existing) if !is_replaceable => {
+                        self.report_redeclaration(existing, includes, decl);
+                        // "we mark the symbol as a full accessor such that all subsequent declarations are considered conflicting"
+                        let accessor = SymFlags::ACCESSOR;
+                        if there.intersects(accessor) && there & accessor != includes & accessor {
+                            self.b.symbols[existing.idx()].flags |= accessor;
+                        }
+                    }
+                    _ if is_in_no_table => {}
+                    // "Javascript constructor-declared symbols can be discarded in favor of prototype symbols like methods."
+                    _ => {
+                        self.tables[table.idx()].insert(name, symbol);
+                        if is_replaceable_by_method {
+                            self.b.symbols[symbol.idx()].flags |= SymFlags::REPLACEABLE_BY_METHOD;
+                        }
+                    }
                 }
                 symbol
             }
@@ -1150,16 +1235,11 @@ impl<'f> Binder<'f> {
         self.tables[exports.idx()].get(&name).copied()
     }
 
-    /// Whether something that is no assignment declares `name` among the exports of `symbol`: a namespace that is one with it, or
-    /// a class, whose static members and `prototype` are there.
+    /// Whether something that is no assignment declares `name` among the exports of `symbol`.
     fn has_export(&self, symbol: SymbolId, name: Atom) -> bool {
         let flags = |existing: SymbolId| self.b.symbols[existing.idx()].flags;
         self.export_of(symbol, name)
             .is_some_and(|existing| !flags(existing).contains(SymFlags::ASSIGNMENT))
-            || self.b.symbols[symbol.idx()].decls.iter().any(|&d| {
-                matches!(d, Decl::Class(c) if name == known::prototype
-                    || self.f[c].members.iter().any(|m| self.f[m].flags.contains(Flags::STATIC) && self.f[m].key == PropKey::Name(name)))
-            })
     }
 
     /// `GetContainerFlags`: an object literal and the attributes of a JSX element are containers without locals, so `lookupName`
@@ -1411,7 +1491,6 @@ impl<'f> Binder<'f> {
             .sort_unstable_by_key(|p| p.0);
         self.bind_deferred_expando_assignments();
         self.collect_this_properties();
-        self.declare_member_symbols();
         // Tables, flat.
         self.b.tables.reserve_exact(self.tables.len());
         self.b
@@ -2492,16 +2571,33 @@ impl<'f> Binder<'f> {
 
     // ───────────────────────────── functions and classes ─────────────────────────────
 
-    /// `bindTypeParameter`: among the locals of `scope`.
+    /// `bindTypeParameter`: among the members of a class or an interface, where those of all its declarations are, or else among the
+    /// locals of `scope`. `Resolve` looks among the locals. The name of a class expression is there first.
     fn bind_type_parameter(&mut self, p: TypeParamId, scope: ScopeId) -> SymbolId {
         self.b.type_param_scope[p.idx()] = scope;
-        self.declare_symbol(
-            self.b.scopes[scope.idx()].locals,
+        let s = &self.b.scopes[scope.idx()];
+        let locals = s.locals;
+        let container = match s.kind {
+            ScopeKind::Class(c) => self.b.class_symbol[c.idx()],
+            ScopeKind::Interface(i) => self.b.interface_symbol[i.idx()],
+            _ => SymbolId::NONE,
+        };
+        let table = if container.is_some() {
+            self.get_members(container)
+        } else {
+            locals
+        };
+        let symbol = self.declare_symbol(
+            table,
             SymbolId::NONE,
             Decl::TypeParam(p),
             SymFlags::TYPE_PARAMETER,
             SymFlags::TYPE_PARAMETER_EXCLUDES,
-        )
+        );
+        self.tables[locals.idx()]
+            .entry(self.f[p].name)
+            .or_insert(symbol);
+        symbol
     }
 
     /// `list_of`: the function they are the type parameters of, if it is one.
@@ -2564,6 +2660,13 @@ impl<'f> Binder<'f> {
         let saved_this =
             std::mem::replace(&mut self.seen_this, std::mem::take(&mut self.this_in_name));
         let outer_member = std::mem::replace(&mut self.cur_member, MemberId::NONE);
+        let outer_this = self.this_member;
+        if f.kind != FnKind::Arrow {
+            self.this_member = match owner {
+                FnOwner::Member(m) if is_class_member => m,
+                _ => MemberId::NONE,
+            };
+        }
         // `requiresScopeChangeWorker` enters no function, but goes through a static block as through any statement.
         let outer_scope_change = self.scope_change_of;
         if f.kind != FnKind::StaticBlock {
@@ -2670,6 +2773,17 @@ impl<'f> Binder<'f> {
             }
             let flags = SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::PARAMETER;
             self.pat(param.pat, PatParent::Param(p), flags);
+            // `bindParameter`: "If this is a property-parameter, then also declare the property symbol into the containing class."
+            if param.flags.contains(Flags::PARAMETER_PROPERTY)
+                && f.kind == FnKind::Constructor
+                && self.this_member.is_some()
+                && let MemberOwner::Class(c) = self.b.member_owner[self.this_member.idx()]
+            {
+                let class = self.b.class_symbol[c.idx()];
+                let (members, property) = (self.get_members(class), Decl::ParameterProperty(p));
+                let (flags, excludes) = (SymFlags::PROPERTY, SymFlags::PROPERTY_EXCLUDES);
+                self.declare_symbol(members, class, property, flags, excludes);
+            }
             self.scope_change_of = FnId::NONE;
         }
         if has_param_scope {
@@ -2745,6 +2859,7 @@ impl<'f> Binder<'f> {
         };
         self.seen_this = saved_this || propagates && self.seen_this;
         self.cur_member = outer_member;
+        self.this_member = outer_this;
         self.scope_change_of = outer_scope_change;
         (
             self.flow,
@@ -2793,6 +2908,21 @@ impl<'f> Binder<'f> {
             } else {
                 self.bind_anonymous_declaration(decl, flags, Atom::NONE);
             }
+        }
+        // `bindClassLikeDeclaration`: "Every class automatically contains a static property member named 'prototype'".
+        let symbol = self.b.class_symbol[id.idx()];
+        let exports = self.get_exports(symbol);
+        let prototype = self.new_symbol(SymFlags::PROPERTY, known::prototype);
+        self.b.symbols[prototype.idx()].parent = symbol;
+        if let Some(exported) = self.tables[exports.idx()].insert(known::prototype, prototype)
+            && let Some(&decl) = self.b.symbols[exported.idx()].decls.first()
+        {
+            self.b.redeclarations.push(Redeclaration {
+                symbol: exported,
+                count: 0,
+                decl,
+                code: 2300,
+            });
         }
         self.type_params(c.type_params, FnId::NONE);
         if c.extends.is_some() {
@@ -2949,9 +3079,30 @@ impl<'f> Binder<'f> {
             } else {
                 FnId::NONE
             };
+        // `b.container.Symbol()`
+        let container = match owner {
+            MemberOwner::Class(c) => self.b.class_symbol[c.idx()],
+            MemberOwner::Interface(i) => self.b.interface_symbol[i.idx()],
+            MemberOwner::TypeLiteral(node) if !members.is_empty() => {
+                let (decl, flags) = (Decl::TypeLiteral(node), SymFlags::TYPE_LITERAL);
+                self.bind_anonymous_declaration(decl, flags, known::type_literal)
+            }
+            _ => SymbolId::NONE,
+        };
         for m in members.iter() {
             self.b.member_owner[m.idx()] = owner;
             let member = &self.f[m];
+            // `bindPropertyOrMethodOrAccessor`, `declareClassMember`
+            if let Some((includes, excludes)) = flags_of_member(member) {
+                let is_static =
+                    matches!(owner, MemberOwner::Class(_)) && member.flags.contains(Flags::STATIC);
+                let table = if is_static {
+                    self.get_exports(container)
+                } else {
+                    self.get_members(container)
+                };
+                self.declare_symbol(table, container, Decl::Member(m), includes, excludes);
+            }
             let seen_this = self.seen_this;
             let constructor = if member.kind == MemberKind::Property && !self.is_static(m, owner) {
                 constructor
@@ -3011,6 +3162,7 @@ impl<'f> Binder<'f> {
                 MemberId::NONE
             };
             let outer_member = std::mem::replace(&mut self.cur_member, of_class);
+            let outer_this = std::mem::replace(&mut self.this_member, of_class);
             let is_static = self.is_static(m, owner);
             if is_static {
                 self.push_scope(ScopeKind::StaticMember, SymbolId::NONE);
@@ -3052,6 +3204,7 @@ impl<'f> Binder<'f> {
                 self.pop_scope();
             }
             self.cur_member = outer_member;
+            self.this_member = outer_this;
         }
     }
 
@@ -3633,6 +3786,7 @@ impl<'f> Binder<'f> {
                     self.expando_assignments.push((id, self.scope));
                 }
                 self.jsdoc_type(JsDocTypeOwner::Assign(id));
+                self.bind_this_property_assignment(id);
                 self.expr(target, me);
                 self.expr(value, me);
                 // `bindModuleExportsAssignment`, `bindExportsOrObjectDefineProperty`: wherever it is written, it is the file that exports.
@@ -3749,6 +3903,31 @@ impl<'f> Binder<'f> {
         self.in_assignment_pattern = around_in_pattern;
         self.scope_change_of = scope_change_of;
         self.is_reached = around_reached;
+    }
+
+    /// `bindThisPropertyAssignment`, `getThisClassAndSymbolTable`. A name that is worked out declares nothing here.
+    fn bind_this_property_assignment(&mut self, e: ExprId) {
+        let decl = Decl::ThisProperty(e);
+        if self.this_member.is_none()
+            || assignment_declaration_kind(self.f, e) != JsDeclarationKind::ThisProperty
+            || self.get_declaration_name(decl).is_none()
+            || matches!(self.f[e].kind, ExprKind::Assign { target, .. }
+                if matches!(self.f[target].kind, ExprKind::Dot { name_pos, .. } if is_private_name_at(self.f, name_pos)))
+        {
+            return;
+        }
+        let MemberOwner::Class(c) = self.b.member_owner[self.this_member.idx()] else {
+            return;
+        };
+        let (class, member) = (self.b.class_symbol[c.idx()], &self.f[self.this_member]);
+        let table =
+            if member.flags.contains(Flags::STATIC) || member.kind == MemberKind::StaticBlock {
+                self.get_exports(class)
+            } else {
+                self.get_members(class)
+            };
+        let flags = SymFlags::PROPERTY | SymFlags::ASSIGNMENT;
+        self.declare_symbol_ex(table, class, decl, flags, SymFlags::empty(), true);
     }
 
     /// `bindExportsOrObjectDefineProperty`, of the call `Object.defineProperty(exports, key, descriptor)`: the file exports a variable
@@ -3916,113 +4095,22 @@ impl<'f> Binder<'f> {
         }
     }
 
-    /// The symbols of the members of classes, interfaces and type literals, once the file is bound: the declarations of one class or
-    /// interface have one pair of tables, and in JavaScript `this.name = value` declares a property.
-    fn declare_member_symbols(&mut self) {
-        let f = self.f;
-        let mut containers: Vec<(SymbolId, u32, MemberOwner)> =
-            Vec::with_capacity(f.classes.len() + f.interfaces.len());
-        for (i, class) in f.classes.iter().enumerate() {
-            let owner = MemberOwner::Class(ClassId(i as u32));
-            containers.push((self.b.class_symbol[i], class.name_pos, owner));
-        }
-        for (i, interface) in f.interfaces.iter().enumerate() {
-            let owner = MemberOwner::Interface(InterfaceId(i as u32));
-            containers.push((self.b.interface_symbol[i], interface.name_pos, owner));
-        }
-        // The declarations of a symbol, in the order they are bound in.
-        containers.sort_unstable_by_key(|container| (container.0, container.1));
-        let mut rest = &containers[..];
-        while let Some(first) = rest.first() {
-            let len = if first.0.is_some() {
-                rest.iter().take_while(|next| next.0 == first.0).count()
-            } else {
-                1
-            };
-            let (declarations, after) = rest.split_at(len);
-            self.declare_members(|b, declare| {
-                for container in declarations {
-                    b.for_each_declared_member(f, container.2, &mut *declare);
-                }
-            });
-            rest = after;
-        }
-        for (i, node) in f.types.iter().enumerate() {
-            if matches!(node.kind, TypeNodeKind::Object(_)) {
-                let owner = MemberOwner::TypeLiteral(TypeNodeId(i as u32));
-                self.declare_members(|b, declare| b.for_each_declared_member(f, owner, declare));
-            }
-        }
-        self.b.members_in_no_table.as_mut_slice().sort_unstable();
-    }
-
-    /// `declareSymbolEx`, for all that is declared in the tables of one class, interface, type literal, object literal or JSX element,
-    /// which `each` lists. What the symbol in the table excludes gets a symbol of its own, which is in no table.
-    fn declare_members(&mut self, each: impl Fn(&Bound, &mut dyn FnMut(DeclaredMember))) {
-        // Nearly always every name is declared once.
-        let mut keys: SmallVec<[MemberKey; 32]> = SmallVec::new();
-        each(&self.b, &mut |member| keys.push(member.0));
-        let repeated = number_repeated(&keys);
-        if repeated.is_empty() {
-            return;
-        }
-        // The two symbol tables, for the names that are repeated: `symbol.Flags` and `symbol.Declarations`.
-        let mut table: SmallVec<[(u8, SmallVec<[MemberDeclaration; 4]>); 4]> =
-            smallvec::smallvec![(0, SmallVec::new()); repeated.len()];
-        let mut declared: SmallVec<[DeclaredMember; 16]> = SmallVec::new();
-        each(&self.b, &mut |member| {
-            if repeated.contains_key(&member.0) {
-                declared.push(member);
-            }
-        });
-        for (key, declaration, includes, excludes) in declared {
-            let (flags, declarations) = &mut table[repeated[&key]];
-            if *flags != 0 && includes & !*flags & REPLACEABLE_BY_METHOD != 0 {
-                // "A symbol already exists, so don't add this as a declaration."
-                self.b
-                    .member_symbol
-                    .extend(declaration.map(|it| (it, (0, 0))));
-                continue;
-            }
-            if *flags & excludes != 0 {
-                if *flags & REPLACEABLE_BY_METHOD == 0 {
-                    if *flags & ACCESSOR != 0 && *flags & ACCESSOR != includes & ACCESSOR {
-                        *flags |= ACCESSOR;
-                    }
-                    self.b.members_in_no_table.extend(declaration);
-                    continue;
-                }
-                // "Javascript constructor-declared symbols can be discarded in favor of prototype symbols like methods."
-                *flags = 0;
-                let discarded = std::mem::take(declarations);
-                self.b.members_in_no_table.extend_from_slice(&discarded);
-                self.note_member_symbol(&discarded);
-            }
-            *flags |= includes;
-            declarations.extend(declaration);
-        }
-        for (_, declarations) in &table {
-            self.note_member_symbol(declarations);
-        }
-    }
-
-    fn note_member_symbol(&mut self, declarations: &[MemberDeclaration]) {
-        if declarations.len() < 2 {
-            return;
-        }
-        let run = (
-            self.b.member_declarations.len() as u32,
-            declarations.len() as u32,
-        );
-        self.b.member_declarations.extend_from_slice(declarations);
-        for &declaration in declarations {
-            self.b.member_symbol.insert(declaration, run);
-        }
-    }
-
     fn props(&mut self, props: Span<PropId>, owner: ExprId) {
-        let f = self.f;
-        self.declare_members(|_, declare| for_each_declared_property(f, props, declare));
+        // Only where a name is written twice or is worked out: `PropSource::Literal` is the symbol of any other.
+        let names: SmallVec<[PropKey; 16]> = props.iter().map(|p| self.f[p].key).collect();
+        let written = names.iter().filter_map(|key| key.name());
+        if names.iter().any(|key| matches!(key, PropKey::Computed(_)))
+            || !number_repeated(&written.collect::<SmallVec<[Atom; 16]>>()).is_empty()
+        {
+            let (decl, flags) = (Decl::ObjectLiteral(owner), SymFlags::OBJECT_LITERAL);
+            let container = self.bind_anonymous_declaration(decl, flags, known::object_literal);
+            let members = self.get_members(container);
+            for p in props.iter() {
+                if let Some((includes, excludes)) = flags_of_property(self.f[p].kind) {
+                    self.declare_symbol(members, container, Decl::Property(p), includes, excludes);
+                }
+            }
+        }
         let in_pattern = self.in_assignment_pattern;
         let is_literal = matches!(self.f[owner].kind, ExprKind::Object(_));
         for p in props.iter() {

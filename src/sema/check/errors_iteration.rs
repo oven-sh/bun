@@ -949,12 +949,7 @@ impl Checker<'_> {
             PatParent::Prop(_, prop) => hir[prop].default,
             PatParent::Elem(_, elem) => hir[elem].default,
         };
-        let mut root = pat;
-        while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) =
-            bound.pat_parent[root.idx()]
-        {
-            root = outer;
-        }
+        let root = root_pattern(bound, pat);
         let mut at = hir[pat].pos;
         // The parameter, if the error is about the whole of it. A variable or a binding element is pointed at by its name.
         let mut parameter = ParamId::NONE;

@@ -7,6 +7,7 @@
 //! outermost first, and the answer does not depend on who asked.
 
 use super::Checker;
+use super::root_declaration;
 use crate::bind::{Parent, PatParent};
 use crate::hir::{ExprId, FnId, PatId};
 use crate::program::FileId;
@@ -45,10 +46,7 @@ impl Checker<'_> {
             return false;
         }
         let bound = self.bound(file);
-        let mut root = bound.pat_parent[pat.idx()];
-        while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) = root {
-            root = bound.pat_parent[outer.idx()];
-        }
+        let root = root_declaration(bound, pat);
         match root {
             PatParent::Param(p) => self.prepare_fn(file, bound.param_fn[p.idx()]),
             PatParent::Var(d) => {

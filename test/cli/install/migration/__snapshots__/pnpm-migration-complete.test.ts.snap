@@ -255,9 +255,11 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
   },
   "catalog": {
     "react": "18.2.0",
+    "react-dom": "18.2.0",
   },
   "catalogs": {
     "tools": {
+      "eslint": "8.56.0",
       "lodash": "4.17.21",
     },
   },

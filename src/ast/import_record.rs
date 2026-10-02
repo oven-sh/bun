@@ -113,6 +113,28 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 19;
+
+        /// The file was found only after the `?query#fragment` of `original_path` was removed.
+        const RESOLVED_WITHOUT_URL_SUFFIX = 1 << 20;
+    }
+}
+
+impl ImportRecord {
+    /// Where the `?query#fragment` of a URL starts. It can also be part of a file name (`./C#/logo.png`).
+    #[inline]
+    pub fn url_suffix_start(specifier: &[u8]) -> Option<usize> {
+        bun_core::strings::index_of_any(specifier, b"?#")
+    }
+
+    /// The `?query#fragment` that was removed from `original_path` to find the file, or empty.
+    pub fn removed_url_suffix(&self) -> &'static [u8] {
+        if !self.flags.contains(Flags::RESOLVED_WITHOUT_URL_SUFFIX) {
+            return b"";
+        }
+        match Self::url_suffix_start(self.original_path) {
+            Some(i) => &self.original_path[i..],
+            None => b"",
+        }
     }
 }
 

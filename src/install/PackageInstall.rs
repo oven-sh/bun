@@ -2256,16 +2256,29 @@ impl<'a> PackageInstall<'a> {
         manager: &mut PackageManager,
         package_id: PackageID,
         resolution_tag: resolution::Tag,
+        force_refresh_tarball: bool,
+        tarball_fetched_this_run: bool,
     ) -> bool {
         let state = manager.get_preinstall_state(package_id);
+        // A URL/local tarball's cache key is its URL/path, not its content, so a
+        // requested refresh must re-fetch. `Done` means this run already did.
+        if force_refresh_tarball && state != crate::PreinstallState::Done {
+            return true;
+        }
         match state {
             crate::PreinstallState::Done => false,
+            _ if tarball_fetched_this_run => {
+                manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
+                false
+            }
             _ => {
+                let pinned_integrity = &manager.cache_pin(package_id);
                 let exists = if self.patch.is_none() {
                     crate::package_manager::directories::is_package_in_cache_at(
                         self.cache_dir,
                         self.cache_dir_subpath,
                         resolution_tag,
+                        pinned_integrity,
                     )
                 } else {
                     let idx =
@@ -2279,6 +2292,7 @@ impl<'a> PackageInstall<'a> {
                         self.cache_dir,
                         &non_patched,
                         resolution_tag,
+                        pinned_integrity,
                     )
                 };
                 if exists {

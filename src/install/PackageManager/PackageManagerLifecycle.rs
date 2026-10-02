@@ -21,9 +21,14 @@ use crate::lifecycle_script_runner::{
 };
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
+use crate::package_manager_real::options::OfflineMode;
+use crate::package_manager_task as PmTask;
 use crate::resolution_real::Tag as ResolutionTag;
+use bun_install::Resolution;
 use bun_install::lockfile::{Lockfile, Package};
-use bun_install::{PackageID, PackageManager, PreinstallState, invalid_package_id};
+use bun_install::{
+    DependencyID, Integrity, PackageID, PackageManager, PreinstallState, invalid_package_id,
+};
 
 impl PackageManager {
     pub(crate) fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
@@ -161,7 +166,8 @@ impl PackageManager {
                 let in_cache = if patch_hash.is_some() {
                     directories::is_folder_in_cache(self, folder_path)
                 } else {
-                    directories::is_package_in_cache(self, folder_path, pkg.resolution.tag)
+                    let pin = self.cache_pin(pkg.meta.id);
+                    directories::is_package_in_cache(self, folder_path, pkg.resolution.tag, &pin)
                 };
                 if in_cache {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
@@ -186,8 +192,13 @@ impl PackageManager {
                         });
                     // Owned NUL-terminated copy.
                     let non_patched_path = ZBox::from_bytes(&folder_path.as_bytes()[..idx]);
-                    if directories::is_package_in_cache(self, &non_patched_path, pkg.resolution.tag)
-                    {
+                    let pin = self.cache_pin(pkg.meta.id);
+                    if directories::is_package_in_cache(
+                        self,
+                        &non_patched_path,
+                        pkg.resolution.tag,
+                        &pin,
+                    ) {
                         self.set_preinstall_state(pkg.meta.id, PreinstallState::ApplyPatch);
                         // yay step 1 is already done for us
                         return PreinstallState::ApplyPatch;
@@ -465,6 +476,102 @@ impl PackageManager {
         }
 
         set
+    }
+
+    /// Whether the command asks to update `dependency_id`: named on the
+    /// command line (`bun add` / `bun install <pkg-or-url>` / `bun update
+    /// <pkg>`) and in the command's update scope, or a direct dependency of
+    /// the workspaces a bare `bun update` (or `-r` / `--filter`) targets. The
+    /// same test the resolve phase applies to npm versions.
+    pub fn dependency_is_update_request(&self, dependency_id: DependencyID) -> bool {
+        // `dependency_id` may be `invalid_dependency_id` (a root entry).
+        let Some(dep) = self
+            .lockfile
+            .buffers
+            .dependencies
+            .get(dependency_id as usize)
+        else {
+            return false;
+        };
+        if !self.update_requests.is_empty() {
+            let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+            return self
+                .update_requests
+                .iter()
+                .any(|request| request.matches(dep, string_buf))
+                && crate::update_scope::UpdateScope::of(self)
+                    .contains_dependency(&self.lockfile, dependency_id);
+        }
+        if !self.to_update {
+            return false;
+        }
+        if let Some(targets) = self.update_target_workspaces.as_deref() {
+            return self
+                .lockfile
+                .is_dependency_of_workspace_in(targets, dependency_id);
+        }
+        let root_id = self
+            .lockfile
+            .get_workspace_package_id(self.workspace_name_hash);
+        self.lockfile.packages.items_dependencies()[root_id as usize].contains(dependency_id)
+    }
+
+    /// Whether a URL/local tarball dependency should be re-fetched this run.
+    /// Its cache key is the URL/path, not the content, so new bytes hide behind
+    /// the same key. Requires `--force` or the dependency named on the command
+    /// line, a run that saves the lockfile (so it records the new hash),
+    /// network access, and no global-store key derived from the current hash.
+    pub fn should_refresh_tarball(
+        &self,
+        dependency_id: DependencyID,
+        package_id: PackageID,
+        tag: ResolutionTag,
+    ) -> bool {
+        tag.is_tarball_cache_keyed_by_url()
+            && self.options.do_.save_lockfile()
+            && self.options.offline != OfflineMode::Offline
+            && !self.integrity_pinned_packages.contains(&package_id)
+            && (self.options.enable.force_install()
+                || self.dependency_is_update_request(dependency_id))
+    }
+
+    /// The integrity another lockfile row already pins for the same URL/local
+    /// tarball, so a new row on that tarball (an alias, a renamed key) is
+    /// verified against it instead of fetched unchecked. Only unresolved rows
+    /// reach this scan.
+    pub(crate) fn pinned_integrity_for_tarball(&self, resolution: &Resolution) -> Integrity {
+        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        let pkgs = self.lockfile.packages.slice();
+        let metas = pkgs.items_meta();
+        for (i, res) in pkgs.items_resolution().iter().enumerate() {
+            if res.tag == resolution.tag
+                && metas[i].integrity.tag.is_supported()
+                && res.eql(resolution, string_buf, string_buf)
+            {
+                return metas[i].integrity;
+            }
+        }
+        Integrity::default()
+    }
+
+    /// The integrity a URL/local tarball cache folder must carry to count as a
+    /// hit for `package_id`: the lockfile pin, or none when `--no-verify`
+    /// turned verification off.
+    pub(crate) fn cache_pin(&self, package_id: PackageID) -> Integrity {
+        if !self.options.do_.verify_integrity() {
+            return Integrity::default();
+        }
+        self.lockfile.packages.items_meta()[package_id as usize].integrity
+    }
+
+    /// Whether a fetch for this tarball already completed this run. Extract
+    /// success takes the task's callback list but keeps the key, so an empty
+    /// list means done; a non-empty list is still in flight and a new enqueue
+    /// should join it.
+    pub fn tarball_fetch_drained_this_run(&self, url: &[u8]) -> bool {
+        self.task_queue
+            .get(&PmTask::Id::for_tarball(url))
+            .is_some_and(|callbacks| callbacks.is_empty())
     }
 }
 

@@ -9,6 +9,7 @@ use bun_http::{self as http, AsyncHTTP};
 use bun_threading::thread_pool::Batch as ThreadPoolBatch;
 
 use crate::extract_tarball;
+use crate::integrity::Integrity;
 use crate::network_task::Callback as NetworkTaskCallback;
 use crate::npm;
 use crate::patch_install::{Callback as PatchTaskCallback, PatchTask};
@@ -1202,6 +1203,19 @@ fn run_tasks_erased(
                 manager.extracted_count += 1;
                 bun_core::analytics::Features::extracted_packages_inc();
 
+                // Install phase: the row is known up front and the installer
+                // below reads the cache against its pin.
+                let refresh_target_package_id = package_id;
+                persist_refreshed_tarball_integrity(
+                    manager,
+                    dependency_id,
+                    refresh_target_package_id,
+                    resolution.tag,
+                    alias,
+                    task.data_extract().integrity,
+                    log_level,
+                );
+
                 if cb.has_on_extract {
                     if cb.is_package_installer {
                         cb.package_installer(extract_ctx)
@@ -1302,6 +1316,22 @@ fn run_tasks_erased(
                         None::<fn(())>,
                         install_peer,
                     )?;
+                }
+
+                // Resolve phase: the callbacks above can dedupe the dependency
+                // onto an existing row instead of the one
+                // `process_extracted_tarball_package` appended. That row keeps
+                // the stale pin unless it is persisted here.
+                if refresh_target_package_id == INVALID_PACKAGE_ID {
+                    persist_refreshed_tarball_integrity(
+                        manager,
+                        dependency_id,
+                        manager.lockfile.buffers.resolutions[dependency_id as usize],
+                        resolution.tag,
+                        alias,
+                        task.data_extract().integrity,
+                        log_level,
+                    );
                 }
 
                 manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
@@ -2064,6 +2094,14 @@ pub fn generate_network_task_for_tarball<'a>(
     // so the task's drop never closes them.
     let cache_dir = directories::get_cache_directory(this);
     let temp_dir = directories::get_temporary_directory(this).handle.fd();
+    // A refreshed tarball may have new bytes; drop the pinned integrity so
+    // `ExtractTarball::run` recomputes it instead of rejecting them.
+    let integrity =
+        if this.should_refresh_tarball(dependency_id, package.meta.id, package.resolution.tag) {
+            Integrity::default()
+        } else {
+            package.meta.integrity
+        };
     // Backref address only — stored, not dereffed in this function. The tag is
     // immediately popped by the next `this` use; that's fine for a stored
     // back-pointer.
@@ -2105,7 +2143,7 @@ pub fn generate_network_task_for_tarball<'a>(
         dependency_id,
         skip_verify: false,
         in_trusted_dependencies: this.lockfile.in_trusted_dependencies(pkg_name),
-        integrity: package.meta.integrity,
+        integrity,
         url: strings::StringOrTinyString::init_append_if_needed(
             url,
             &mut crate::network_task::filename_store_appender(),
@@ -2237,4 +2275,42 @@ fn process_dependency_list_for_ctx(
         },
         install_peer,
     )
+}
+
+/// A refreshed URL/local tarball's integrity was recomputed from the new
+/// bytes. Persist it over the stale pin of `package_id` so the lockfile and
+/// the cache tag agree.
+fn persist_refreshed_tarball_integrity(
+    manager: &mut PackageManager,
+    dependency_id: DependencyID,
+    package_id: PackageID,
+    resolution_tag: crate::resolution::Tag,
+    alias: &[u8],
+    new_integrity: Integrity,
+    log_level: Options::LogLevel,
+) {
+    if package_id == INVALID_PACKAGE_ID
+        || !new_integrity.tag.is_supported()
+        || !manager.should_refresh_tarball(dependency_id, package_id, resolution_tag)
+    {
+        return;
+    }
+    let meta = &mut manager.lockfile.packages.items_meta_mut()[package_id as usize];
+    let old_integrity = meta.integrity;
+    if log_level != Options::LogLevel::Silent
+        && old_integrity.tag.is_supported()
+        && bun_core::bytes_of(&old_integrity) != bun_core::bytes_of(&new_integrity)
+    {
+        bun_core::warn!(
+            "{} changed since it was last installed; updating its integrity in the lockfile (was {}, now {})",
+            bstr::BStr::new(alias),
+            old_integrity,
+            new_integrity,
+        );
+    }
+    meta.integrity = new_integrity;
+    manager
+        .options
+        .enable
+        .set(Enable::FORCE_SAVE_LOCKFILE, true);
 }

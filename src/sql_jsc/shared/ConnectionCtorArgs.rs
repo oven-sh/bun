@@ -86,6 +86,12 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
                 return Ok(None);
             }
 
+            if !tls_config.set_host(&hostname_str) {
+                return Err(global_object.throw_invalid_arguments(format_args!(
+                    "hostname must not contain null bytes"
+                )));
+            }
+
             // We always request the cert so we can verify it and manually
             // abort if the hostname doesn't match. Built here (not at STARTTLS
             // time) so cert/CA errors throw synchronously; the per-VM weak

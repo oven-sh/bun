@@ -460,34 +460,68 @@ pub mod api {
         /// the default-constructed config — callers that pass
         /// `tls: true` get an SSLConfig with no overrides.
         #[derive(Default)]
-        pub struct SSLConfig(Option<NonNull<c_void>>);
+        pub struct SSLConfig {
+            handle: Option<NonNull<c_void>>,
+            /// The host the connection dials, set by [`set_host`](Self::set_host):
+            /// the TLS server name when the options set none. An owned `dupe_z`
+            /// C string; a thin pointer because both connection structs embed this.
+            host: Option<NonNull<c_char>>,
+        }
 
         // SAFETY: the boxed `bun_runtime::socket::SSLConfig` is `Send` (only
-        // `CString`/`Vec`/`AtomicU64` fields); the handle moves between
-        // construction and the connection struct on the same JS thread anyway.
+        // `CString`/`Vec`/`AtomicU64` fields) and `host` is an owned heap
+        // C string; the handle moves between construction and the connection
+        // struct on the same JS thread anyway.
         unsafe impl Send for SSLConfig {}
 
         impl Drop for SSLConfig {
             fn drop(&mut self) {
-                if let Some(p) = self.0.take() {
+                if let Some(p) = self.handle.take() {
                     // SAFETY: `p` was returned by `ssl_config_from_js` and not
                     // yet freed (Option::take guarantees single drop).
                     unsafe { (hooks().ssl_config_free)(p.as_ptr()) }
+                }
+                if let Some(host) = self.host.take() {
+                    // SAFETY: `host` was returned by `dupe_z` in `set_host`
+                    // and not yet freed (Option::take guarantees single drop).
+                    unsafe { bun_core::free_sensitive(host.as_ptr()) }
                 }
             }
         }
 
         impl SSLConfig {
-            /// `SSLConfig.server_name` — the SNI hostname C string, or null
-            /// when unset / default.
+            /// The TLS server name as a C string: `SSLConfig.server_name` when
+            /// the options set one (an empty string counts), else the dialed
+            /// host. Null when neither is set.
             #[inline]
             pub(crate) fn server_name(&self) -> *const c_char {
-                match self.0 {
+                let configured = match self.handle {
                     None => core::ptr::null(),
                     // SAFETY: live boxed SSLConfig; hook returns a borrow into
                     // its `Option<CString>` field, valid for `self`'s lifetime.
                     Some(p) => unsafe { (hooks().ssl_config_server_name)(p.as_ptr()) },
+                };
+                if !configured.is_null() {
+                    return configured;
                 }
+                self.host
+                    .map_or(core::ptr::null(), |host| host.as_ptr().cast_const())
+            }
+
+            /// Records the host the connection dials, unless the options name
+            /// a server. `false` when the host has a NUL byte: a C string
+            /// would end there.
+            #[must_use]
+            pub(crate) fn set_host(&mut self, host: &bun_core::String) -> bool {
+                if !self.server_name().is_null() {
+                    return true;
+                }
+                let host = host.to_utf8();
+                if bun_core::strings::contains_char(&host, 0) {
+                    return false;
+                }
+                self.host = NonNull::new(bun_core::dupe_z(&host).cast_mut());
+                true
             }
 
             /// [`server_name`](Self::server_name) as the name a certificate carries: an IPv6 literal without its brackets. Empty when unset.
@@ -496,7 +530,8 @@ pub mod api {
                 if server_name.is_null() {
                     return b"";
                 }
-                // SAFETY: NUL-terminated C string that the boxed SSLConfig owns.
+                // SAFETY: NUL-terminated C string that `self` owns: the boxed
+                // SSLConfig's name or the `host` copy.
                 let name = unsafe { core::ffi::CStr::from_ptr(server_name) }.to_bytes();
                 bun_core::ip_address::strip_ipv6_brackets(name)
             }
@@ -504,7 +539,7 @@ pub mod api {
             /// `SSLConfig.reject_unauthorized` — non-zero rejects on verify error.
             #[inline]
             pub(crate) fn reject_unauthorized(&self) -> i32 {
-                match self.0 {
+                match self.handle {
                     None => 0,
                     // SAFETY: live boxed SSLConfig.
                     Some(p) => unsafe { (hooks().ssl_config_reject_unauthorized)(p.as_ptr()) },
@@ -517,8 +552,8 @@ pub mod api {
                 if server_name.is_null() {
                     return None;
                 }
-                // SAFETY: NUL-terminated C string owned by the boxed SSLConfig
-                // for `self`'s lifetime.
+                // SAFETY: NUL-terminated C string that `self` owns for its
+                // lifetime: the boxed SSLConfig's name or the `host` copy.
                 let name = unsafe { bun_core::ffi::cstr(server_name) };
                 let bare = bun_core::ip_address::strip_ipv6_brackets(name.to_bytes());
                 let bracketed = bare.len() != name.to_bytes().len();
@@ -538,7 +573,10 @@ pub mod api {
                     debug_assert!(p.is_null());
                     return Err(JsError::Thrown);
                 }
-                Ok(NonNull::new(p).map(|p| Self(Some(p))))
+                Ok(NonNull::new(p).map(|p| Self {
+                    handle: Some(p),
+                    host: None,
+                }))
             }
 
             /// `SSLConfig.asUSocketsForClientVerification` — projects to the
@@ -548,7 +586,7 @@ pub mod api {
             pub(crate) fn as_usockets_for_client_verification(
                 &self,
             ) -> bun_uws::us_bun_socket_context_options_t {
-                match self.0 {
+                match self.handle {
                     None => bun_uws::us_bun_socket_context_options_t {
                         request_cert: 1,
                         reject_unauthorized: 0,

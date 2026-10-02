@@ -12,7 +12,7 @@
 
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isIPv6, tls as localhostTls } from "harness";
+import { bunEnv, bunExe, isIPv6, tls as localhostTls } from "harness";
 import type net from "node:net";
 import tls from "node:tls";
 import {
@@ -24,6 +24,8 @@ import {
   mysqlOkPacket,
   mysqlReadPackets,
   pgAuthenticationOk,
+  pgCommandComplete,
+  pgReadFrontendMessages,
   pgReadyForQuery,
   pgSSLResponse,
 } from "./wire-frames";
@@ -50,7 +52,7 @@ function upgrade(rawSocket: net.Socket, leftover: Buffer, servernames: (string |
   return socket;
 }
 
-/** Answers SSLRequest with 'S', upgrades, then accepts any StartupMessage. */
+/** Answers SSLRequest with 'S', upgrades, accepts any StartupMessage, then acks each simple query (LISTEN is one). */
 async function postgresServer(host: string): Promise<MockServer> {
   const servernames: (string | false)[] = [];
   const { server, port } = await listeningServer(rawSocket => {
@@ -60,7 +62,17 @@ async function postgresServer(host: string): Promise<MockServer> {
       // until it has the one-byte answer.
       rawSocket.write(pgSSLResponse("S"));
       const socket = upgrade(rawSocket, chunk.subarray(8), servernames);
-      socket.once("data", () => socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()])));
+      socket.once("data", () => {
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+        let buffered = Buffer.alloc(0);
+        socket.on("data", (data: Buffer) => {
+          buffered = pgReadFrontendMessages(Buffer.concat([buffered, data]), (type, body) => {
+            if (type !== 0x51 /* Query: "VERB ...\0" */) return;
+            const verb = body.toString("utf8", 0, body.indexOf(0x20));
+            socket.write(Buffer.concat([pgCommandComplete(verb), pgReadyForQuery()]));
+          });
+        });
+      });
     });
   }, host);
   return { port, servernames, close: () => server.close() };
@@ -113,10 +125,12 @@ async function connect(url: string, tlsOptions: Bun.TLSOptions): Promise<unknown
   }
 }
 
-describe.concurrent.each([
+const adapters = [
   ["PostgreSQL", "postgres", postgresServer],
   ["MySQL", "mysql", mysqlServer],
-] as const)("%s TLS to an IP-literal host", (_, scheme, startServer) => {
+] as const;
+
+describe.concurrent.each(adapters)("%s TLS to an IP-literal host", (_, scheme, startServer) => {
   async function withServer<T>(host: string, fn: (server: MockServer) => Promise<T>): Promise<T> {
     const server = await startServer(host);
     try {
@@ -159,5 +173,192 @@ describe.concurrent.each([
       expect(await connect(url, { ca: localhostTls.cert, serverName: "localhost" })).toBe("CONNECTED");
       expect(server.servernames).toEqual(["localhost"]);
     });
+  });
+});
+
+// A `tls` option with no sslmode string (`tls: true`, `tls: {}`, an object with no
+// `serverName`) reaches the native connection with no server name. The connection then
+// names the host it dials: as SNI when the host is a DNS name, and as the name that
+// verify-full matches. The mocks listen on 127.0.0.1 and the clients dial "localhost".
+
+type Options = Bun.SQL.PostgresOrMySQLOptions;
+
+/** The SNI of each TLS handshake that `use(sql)` makes against a new mock on `host`. */
+async function servernamesOf(
+  startServer: (host: string) => Promise<MockServer>,
+  create: (port: number) => SQL,
+  use: (sql: SQL) => Promise<unknown> = sql => sql.connect(),
+  host = "127.0.0.1",
+) {
+  const server = await startServer(host);
+  try {
+    const sql = create(server.port);
+    try {
+      await use(sql);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+    }
+    return server.servernames;
+  } finally {
+    server.close();
+  }
+}
+
+/** Runs `script` in a child process and returns what it printed. A build that aborts on the script then fails one test only. */
+async function runInChild(script: string, env: Record<string, string>) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trim(), exitCode };
+}
+
+describe.concurrent.each(adapters)("%s TLS with no serverName in the options", (_, adapter, startServer) => {
+  const options = (port: number, hostname = "localhost"): Options => ({
+    adapter,
+    hostname,
+    port,
+    username: "u",
+    database: "db",
+    max: 1,
+  });
+
+  test.each([
+    ["tls: true", { tls: true }],
+    ["ssl: true", { ssl: true }],
+    ["tls: {}", { tls: {} }],
+    ["tls: { rejectUnauthorized: false }", { tls: { rejectUnauthorized: false } }],
+  ] as [string, Options][])("%s sends the host as SNI", async (_, tlsOptions) => {
+    const servernames = await servernamesOf(startServer, port => new SQL({ ...options(port), ...tlsOptions }));
+    expect(servernames).toEqual(["localhost"]);
+  });
+
+  test("tls: true next to a connection URL sends the URL host as SNI", async () => {
+    const servernames = await servernamesOf(
+      startServer,
+      port => new SQL(`${adapter}://u@localhost:${port}/db`, { tls: true, max: 1 }),
+    );
+    expect(servernames).toEqual(["localhost"]);
+  });
+
+  test("each connection of a pool sends the host as SNI", async () => {
+    const servernames = await servernamesOf(
+      startServer,
+      port => new SQL({ ...options(port), max: 3, tls: true }),
+      async sql => {
+        const reserved = await Promise.all([sql.reserve(), sql.reserve(), sql.reserve()]);
+        for (const connection of reserved) connection.release();
+      },
+    );
+    expect(servernames).toEqual(["localhost", "localhost", "localhost"]);
+  });
+
+  test("tls: true assigned to sql.options after construction sends the host as SNI", async () => {
+    const servernames = await servernamesOf(startServer, port => {
+      const sql = new SQL({ ...options(port), tls: "require" });
+      sql.options.tls = true;
+      return sql;
+    });
+    expect(servernames).toEqual(["localhost"]);
+  });
+
+  test.each(["serverName", "servername"])("an own tls.%s is sent in place of the host", async key => {
+    const servernames = await servernamesOf(
+      startServer,
+      port => new SQL({ ...options(port), tls: { [key]: "db.example" } }),
+    );
+    expect(servernames).toEqual(["db.example"]);
+  });
+
+  test("an empty tls.serverName sends no SNI", async () => {
+    const servernames = await servernamesOf(
+      startServer,
+      port => new SQL({ ...options(port), tls: { serverName: "" } }),
+    );
+    expect(servernames).toEqual([false]);
+  });
+
+  test("an IPv4 literal host is not sent as SNI", async () => {
+    const servernames = await servernamesOf(startServer, port => new SQL({ ...options(port, "127.0.0.1"), tls: true }));
+    expect(servernames).toEqual([false]);
+  });
+
+  test.skipIf(!isIPv6())("a bracketed IPv6 URL host is not sent as SNI", async () => {
+    const servernames = await servernamesOf(
+      startServer,
+      port => new SQL(`${adapter}://u@[::1]:${port}/db`, { tls: true, max: 1 }),
+      undefined,
+      "::1",
+    );
+    expect(servernames).toEqual([false]);
+  });
+
+  // The next two cases run in a child process: a debug build that does not
+  // name the host aborts on each of them.
+  const child = (body: string) => `
+    const { ADAPTER: adapter, PORT: port, CA: ca } = process.env;
+    const options = { adapter, hostname: "localhost", port: Number(port), username: "u", database: "db", max: 1 };
+    let sql;
+    ${body}
+    try {
+      await sql.connect();
+      console.log("CONNECTED");
+    } catch (e) {
+      console.log(e.message);
+    }
+    await sql.close({ timeout: 0 });
+  `;
+
+  test("verify-full matches the certificate against the host when the tls object has no serverName", async () => {
+    const server = await startServer("127.0.0.1");
+    try {
+      const { stdout, exitCode } = await runInChild(
+        child(`sql = new Bun.SQL({ ...options, tls: "verify-full" }); sql.options.tls = { ca };`),
+        { ADAPTER: adapter, PORT: String(server.port), CA: localhostTls.cert },
+      );
+      expect(stdout).toBe("CONNECTED");
+      expect(server.servernames).toEqual(["localhost"]);
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a host with a NUL byte is rejected before it becomes the TLS name", async () => {
+    const { stdout, exitCode } = await runInChild(
+      child(`sql = new Bun.SQL({ ...options, hostname: "local\\0host", tls: true });`),
+      { ADAPTER: adapter, PORT: "1" },
+    );
+    expect(stdout).toBe("hostname must not contain null bytes");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("TLS with no serverName in the options", () => {
+  const options = (adapter: "mariadb" | "postgres", port: number): Options => ({
+    adapter,
+    hostname: "localhost",
+    port,
+    username: "u",
+    database: "db",
+    max: 1,
+    tls: true,
+  });
+
+  test("the mariadb adapter sends the host as SNI", async () => {
+    const servernames = await servernamesOf(mysqlServer, port => new SQL(options("mariadb", port)));
+    expect(servernames).toEqual(["localhost"]);
+  });
+
+  test("the sql.listen() connection sends the host as SNI", async () => {
+    const servernames = await servernamesOf(
+      postgresServer,
+      port => new SQL(options("postgres", port)),
+      sql => sql.listen("channel", () => {}),
+    );
+    expect(servernames).toEqual(["localhost"]);
   });
 });

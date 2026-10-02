@@ -9478,6 +9478,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // returned up the `_parse → parse → cache → transpiler` chain (see
         // `js_parser::Result` PERF NOTE).
         Ok(Box::new(js_ast::Ast {
+            coverage_ignore_next_lines: if self.lexer.coverage_directive_candidate {
+                let lines =
+                    crate::lexer::coverage_ignore_next_lines(self.source, &self.lexer.all_comments);
+                (!lines.is_empty()).then(|| lines.into_boxed_slice())
+            } else {
+                None
+            },
             runtime_imports,
             module_scope,
             exports_ref: self.exports_ref,
@@ -9733,7 +9740,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // ─── Hoisted post-init mutations (were `this.* = ...` after the
         // literal in the by-value-return shape; now precomputed so the
         // literal below is the *only* write to `*out`). ───
-        lexer.track_comments = opts.features.minify_identifiers;
+        lexer.track_comments |= opts.features.minify_identifiers
+            || (opts.capture_coverage_directives && lexer.coverage_directive_candidate);
         let track_scope_uses = opts.bundle && !opts.features.minify_identifiers;
         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
 

@@ -208,6 +208,20 @@ coverageIgnoreSourcemaps = true  # default false
   transpilation process.
 </Warning>
 
+## Ignoring the next source line
+
+Put `/* istanbul ignore next */` on its own line to exclude the next original source line from line coverage reports and line thresholds:
+
+```ts
+export function choose(flag: boolean) {
+  if (flag) return 1;
+  /* istanbul ignore next */
+  return 2;
+}
+```
+
+The directive applies to exactly one original-source line when coverage uses source maps (the default). It does not skip blank lines to find the next statement, and it does not change function coverage totals. With `coverageIgnoreSourcemaps = true`, the report uses generated source positions, so this original-source directive is not applied.
+
 ## Coverage Defaults
 
 By default, coverage reports:

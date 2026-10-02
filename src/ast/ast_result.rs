@@ -21,6 +21,10 @@ type ImportRecordList<'a> = crate::import_record::List<'a>;
 pub type TopLevelSymbolToParts = ArrayHashMap<Ref, AstVec<u32>, AutoContext, AstAlloc>;
 
 pub struct Ast<'a> {
+    /// Original source lines hidden from Bun's line coverage reporter by
+    /// `/* istanbul ignore next */` comments. Empty unless runtime coverage
+    /// capture was requested and the source contains a directive.
+    pub coverage_ignore_next_lines: Option<Box<[u32]>>,
     pub approximate_newline_count: usize,
     pub has_lazy_export: bool,
     pub runtime_imports: runtime::Imports,
@@ -109,6 +113,7 @@ pub struct Ast<'a> {
 impl<'a> Ast<'a> {
     pub fn empty_in(arena: &'a bun_alloc::MimallocArena) -> Self {
         Self {
+            coverage_ignore_next_lines: None,
             approximate_newline_count: 0,
             has_lazy_export: false,
             runtime_imports: Default::default(),

@@ -848,7 +848,7 @@ pub mod parse_worker {
                     match res {
                         bun_js_parser::Result::Ast(ast) => Ok(JSAst::init(*ast)),
                         bun_js_parser::Result::Cached
-                        | bun_js_parser::Result::AlreadyBundled(_) => {
+                        | bun_js_parser::Result::AlreadyBundled(..) => {
                             unreachable!("bundler parse never yields Cached/AlreadyBundled")
                         }
                     }

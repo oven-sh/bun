@@ -48,6 +48,39 @@ use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
 use crate::timer;
 use crate::webcore::blob::BlobExt as _;
 
+unsafe extern "C" {
+    fn BunTest__shouldGenerateCodeCoverage(source_url: &bun_core::String) -> bool;
+}
+
+/// Registers parser-captured original-source coverage lines after an async
+/// transpile job returns to the JS thread and before its SourceProvider is made.
+#[unsafe(no_mangle)]
+extern "C" fn BunTest__setCodeCoverageIgnoredLines(
+    source_url: &bun_core::String,
+    ignored_source_hash: u64,
+    ignored_lines: *const u32,
+    ignored_lines_len: usize,
+) {
+    // The caller only dispatches for source URLs accepted by
+    // `BunTest__shouldGenerateCodeCoverage`; an empty slice clears any mask
+    // left by an earlier load of the same URL.
+    let ignored_lines = if ignored_lines_len == 0 {
+        Vec::new()
+    } else {
+        if ignored_lines.is_null() {
+            return;
+        }
+        // SAFETY: RuntimeTranspilerStore calls this synchronously on the JS
+        // thread with a slice owned by the live job for the duration of call.
+        unsafe { core::slice::from_raw_parts(ignored_lines, ignored_lines_len).to_vec() }
+    };
+    bun_sourcemap_jsc::code_coverage::set_ignored_lines(
+        source_url,
+        ignored_source_hash,
+        ignored_lines,
+    );
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Per-VM runtime state
 // ════════════════════════════════════════════════════════════════════════════
@@ -2544,12 +2577,14 @@ fn transpile_source_code_inner(
                         is_symlink: path.is_symlink,
                     }
                 };
+                let coverage_enabled = unsafe { (*jsc_vm).transpiler.options.code_coverage };
                 let parse_options = ParseOptions {
                     // SAFETY: `arena_ptr` points at the `Box<Arena>` interior
                     // held by `arena_guard`; the guard outlives `parse_result`.
                     arena: unsafe { &*arena_ptr },
                     path: parse_path,
                     loader,
+                    capture_coverage_directives: coverage_enabled,
                     dirname_fd: bun_sys::Fd::INVALID,
                     file_descriptor: None,
                     // SAFETY: `input_file_fd_ptr` points at this frame's
@@ -2640,6 +2675,27 @@ fn transpile_source_code_inner(
                     note_compile_cache_parse_failure(path, loader, module_type);
                     return Err(crate::Error::ParseError);
                 };
+
+                if coverage_enabled && parse_result.loader.is_javascript_like() {
+                    let source_url = input_specifier.create_if_different(path.text);
+                    // Keep this in step with Zig::SourceProvider::create so ignored lines only
+                    // enter the handoff for files that will get a coverage mapping.
+                    if unsafe { BunTest__shouldGenerateCodeCoverage(&source_url) } {
+                        let ignored_source_hash =
+                            bun_wyhash::hash(parse_result.source.contents.as_ref());
+                        let ignored_lines = parse_result
+                            .ast
+                            .coverage_ignore_next_lines
+                            .take()
+                            .map(Vec::from)
+                            .unwrap_or_default();
+                        bun_sourcemap_jsc::code_coverage::set_ignored_lines(
+                            &source_url,
+                            ignored_source_hash,
+                            ignored_lines,
+                        );
+                    }
+                }
 
                 // `.wasm` discovered post-parse: recurse with
                 // the parsed source as virtual.
@@ -4247,6 +4303,15 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                 }
             }
 
+            let code_coverage_enabled = unsafe { (*jsc_vm).transpiler.options.code_coverage };
+            let coverage_eligible = if code_coverage_enabled {
+                let source_url = specifier.create_if_different(lr.path.text);
+                // Compute eligibility before the store claims a job slot; the
+                // callback must not reborrow the VM while the job lives in it.
+                unsafe { BunTest__shouldGenerateCodeCoverage(&source_url) }
+            } else {
+                false
+            };
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             // `lr.path` borrows `_specifier`, which the store immediately
             // heap-duplicates inside `transpile()`.
@@ -4260,6 +4325,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                     concurrent_loader,
                     lr.package_json,
                     module_loader,
+                    coverage_eligible,
                 )
             };
         }

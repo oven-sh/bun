@@ -48,6 +48,16 @@ use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsResult, ResolvedSource
 // `JSC_PARSER_CACHE_VTABLE` (see RuntimeTranspilerCache.rs).
 use bun_ast::RuntimeTranspilerCache;
 
+unsafe extern "C" {
+    // Synchronously copies this job-owned slice on the JS thread; it must not retain the pointer.
+    fn BunTest__setCodeCoverageIgnoredLines(
+        source_url: &bun_core::String,
+        ignored_source_hash: u64,
+        ignored_lines: *const u32,
+        ignored_lines_len: usize,
+    );
+}
+
 bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -324,6 +334,7 @@ impl RuntimeTranspilerStore {
         loader: Loader,
         package_json: Option<&PackageJSON>,
         module_loader: JSValue,
+        coverage_eligible: bool,
     ) -> *mut c_void {
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
         // heap::take on `path.text`.
@@ -375,6 +386,9 @@ impl RuntimeTranspilerStore {
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
                 parse_error: None,
+                coverage_eligible,
+                coverage_ignored_lines: Vec::new(),
+                coverage_ignored_source_hash: 0,
                 work_task: WorkPoolTask {
                     node: Default::default(),
                     callback: TranspilerJob::run_from_worker_thread,
@@ -433,6 +447,13 @@ pub struct TranspilerJob {
     pub(crate) generation_number: u32,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
+    /// Eligibility is computed before the job crosses to a worker thread.
+    pub(crate) coverage_eligible: bool,
+    /// Original-source coverage lines carried from the worker to the JS-thread
+    /// SourceProvider handoff.
+    pub(crate) coverage_ignored_lines: Vec<u32>,
+    /// Hash of the original source those line numbers refer to.
+    pub(crate) coverage_ignored_source_hash: u64,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
     pub(crate) resolved_source: ResolvedSource,
     pub(crate) work_task: WorkPoolTask,
@@ -549,6 +570,20 @@ impl TranspilerJob {
                 (out, Ok(resolved_source))
             }
         };
+        if self.coverage_eligible
+            && let Ok(resolved_source) = &result
+        {
+            // SAFETY: the JS-thread callback copies this job-owned slice before
+            // returning; both pointer and source URL remain live for the call.
+            unsafe {
+                BunTest__setCodeCoverageIgnoredLines(
+                    &resolved_source.source_url,
+                    self.coverage_ignored_source_hash,
+                    self.coverage_ignored_lines.as_ptr(),
+                    self.coverage_ignored_lines.len(),
+                );
+            }
+        }
 
         self.promise.deinit();
         self.module_loader.deinit();
@@ -806,6 +841,7 @@ impl TranspilerJob {
             arena: &arena,
             path,
             loader,
+            capture_coverage_directives: transpiler.options.code_coverage,
             dirname_fd: Fd::INVALID,
             file_descriptor: None,
             // SAFETY: `input_file_fd` is a stack local declared above and
@@ -918,6 +954,16 @@ impl TranspilerJob {
             self.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
+        if self.coverage_eligible {
+            self.coverage_ignored_source_hash =
+                bun_wyhash::hash(parse_result.source.contents.as_ref());
+        }
+        self.coverage_ignored_lines = parse_result
+            .ast
+            .coverage_ignore_next_lines
+            .take()
+            .map(Vec::from)
+            .unwrap_or_default();
 
         if is_watcher_enabled && input_file_fd.is_valid() {
             if !is_node_override

@@ -2376,9 +2376,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
     return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end - start, encoding);
 }
 
-// https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.h#L325-L330
-// Node's native writers reject a non-string value and never coerce it, so its
-// toString() does not run.
+// Node's native writers reject a non-string value and never coerce it (THROW_AND_RETURN_IF_NOT_STRING, src/node_errors.h).
 static JSString* stringArgumentOrThrow(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value)
 {
     if (value.isString()) [[likely]]
@@ -2594,11 +2592,10 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
             return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, view);
         }
     } else if (encodingValue.toBoolean(lexicalGlobalObject)) [[unlikely]] {
-        // Any other truthy encoding is coerced, and an object's toString() can detach or resize the buffer.
-        // So the bounds are checked again, in the order of Node's writers: utf8, latin1 and ascii check the
-        // bounds and then the value. The others check the value, then throw for offset and clamp length.
+        // Coercing any other truthy encoding can run user code that detaches or resizes the buffer, so the bounds are checked again.
         encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
         RETURN_IF_EXCEPTION(scope, {});
+        // Node's utf8, latin1 and ascii writers check the bounds before the value. Its other writers check the value first.
         const bool boundsBeforeValue = encoding == WebCore::BufferEncodingType::utf8
             || encoding == WebCore::BufferEncodingType::latin1
             || encoding == WebCore::BufferEncodingType::ascii;

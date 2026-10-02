@@ -592,3 +592,63 @@ The lines that the tests of the scratch run: `c04` 23 of 23, `c21` 36 of 72, `c2
 
 `c04` and `c21` are also the place of rows of step 5, which this commit does not contain: `c04` 1505-2180 (N-DIAG),
 `c21` 14052-14168 (D-SINK).
+
+## Node builder types (`nodebuilder`)
+
+`nodebuilder/mod.rs` (4 lines) and `nodebuilder/types.rs` (124) came in with `5b2df1d046`; `2936f8152a` added line 79
+of `types.rs` (`pub(crate) use define_flags;`). The two files are unchanged since. `mod.rs` declares `types.rs` and
+re-exports it: the five files of `checker/` that import the package write `crate::nodebuilder::{Flags, InternalFlags,
+SymbolTracker}`.
+
+Layer 6 of round 2 declares the directory: the line `pub mod nodebuilder;` of `lib.rs` is `fd055451b0` (written by the
+job that commits the worktree, under its message "typecheck: compile the port, work in progress"; the commit holds
+that line, the line `pub mod pseudochecker;` and nothing else). `types.rs` names `crate::ast::{NodeId, SymbolFlags,
+SymbolId}` (`ast/ids.rs` 61 and 64, `ast/symbolflags.rs` 4, re-exported by `ast/mod.rs` 42 and 54) and `std::ops`:
+`lib.rs` had `ast` before the line, so no other file and no line of `src/typecheck/Cargo.toml` changed for this
+directory.
+
+The directory and `printer/` compile only together. `types.rs` has a flag macro of its own (`define_flags!`, lines 30
+to 77) and re-exports it to the crate on line 79. Outside the file, four files of `printer/` name the macro and nothing
+else does (`emitcontext.rs` 6, `emitflags.rs` 2, `printer.rs` 12, `utilities.rs` 7, each as
+`crate::nodebuilder::types::define_flags`), and the workspace denies `unused_imports`. So a tree whose `lib.rs` declares
+`nodebuilder` and not `printer` has one error, `nodebuilder/types.rs:79:16: unused import: define_flags`. The tree of
+`fd055451b0` is such a tree: `pub mod printer;` was not in `lib.rs` when this was written. The answer to that error is
+the line `pub mod printer;`, not a change of line 79.
+
+No `cargo check`, no `cargo clippy` and no `cargo test` was run with that commit (the directory has no test): the
+survey that follows it is the first cargo compile of the two files in the real crate, so the state below is
+`translated` until that run passes. What was checked when the line was written:
+
+- Read side by side with upstream (`nodebuilder/types.go`, 78 lines). By a script over both files: the 33 constants of
+  `Flags` and the 5 of `InternalFlags` are equal in order, in name (the Go name without its prefix, in UPPER_SNAKE) and
+  in value, and the 12 methods of `SymbolTracker` are in upstream's order under their snake_case names. By reading:
+  each method has upstream's parameter order and result, with `SymbolId` for `*ast.Symbol`, `NodeId` for `*ast.Node`
+  and `*ast.SourceFile`, `&[u8]` for `string`, and `&mut self` as the receiver. `Flags` is `u32` and `InternalFlags` is
+  `i32`, as upstream's `uint32` and `int32`.
+- `rustc` alone from a scratch root in `/tmp` (not kept): the two files by `#[path]`, three tuple structs in place of
+  `crate::ast`, `#![deny(warnings)]` and the nine rust lints of the workspace denied. With one more module that
+  imports `crate::nodebuilder::types::define_flags` and calls it, as the four files of `printer/` do: exit 0, no
+  warning. Without that module: the one error above and nothing else. `clippy-driver` on the first variant with the
+  clippy table of the workspace: exit 0. The real `ast` was not part of that scratch.
+- The look-ahead of the round-7 survey is reported with the same two results (`rustc` alone from a scratch root with
+  the modules of layers 1 to 5, `module`, `nodebuilder` and `pseudochecker`: that one error; with `printer` and its own
+  errors gone: no error and no warning in `nodebuilder/`). Its log (`/tmp/rdr-sweep-r7.log`) was not on the machine
+  when the line was written, so it was not read.
+- `rustfmt --check --edition 2024 src/typecheck/nodebuilder/mod.rs`, which follows the `mod` line: exit 0. The text of
+  `lib.rs` with the new line through `rustfmt --edition 2024` on standard input: no difference.
+- `python3 /workspace/notes/lint/tools/undeclared.py src/typecheck` on the tree with the line: 99 of 179 files are
+  reached, and no file of `nodebuilder/` is outside.
+- The two files have no `unsafe` block, `unwrap()`, `expect(`, `panic!`, `todo!`, `unimplemented!`, `unreachable!`, no
+  `allow(` and no run of two comment lines.
+
+The crate has two macros of the name `define_flags!`, and they differ. The one of `ast/flags.rs` makes `NONE` itself
+and has `bits`, `from_bits`, `^`, `^=` and `!`: the seven flag files of `ast/` call it, and `checker_flags!` of
+`checker/types.rs` does. The one of `nodebuilder/types.rs` takes `NONE = 0` as an entry and has none of those five:
+`types.rs` and the four files of `printer/` call it. A grep finds no `from_bits` on a type of the second macro in the
+tree, and no `.bits()`, `^` or `!` on a flag value in `printer/`.
+
+| upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
+| --- | --- | --- | --- |
+| `nodebuilder/types.go` 8-23 (`SymbolTracker`, 12 methods) | `nodebuilder/types.rs` 4-27 | translated | |
+| `nodebuilder/types.go` 25-66 (`Flags`, 33 constants) | `nodebuilder/types.rs` 81-116 | translated | |
+| `nodebuilder/types.go` 68-78 (`InternalFlags`, 5 constants) | `nodebuilder/types.rs` 118-124 | translated | |

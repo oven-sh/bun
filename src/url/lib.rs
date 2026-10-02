@@ -434,6 +434,13 @@ impl<'a> URL<'a> {
         strings::eql_case_insensitive_ascii(self.protocol, b"http", true)
     }
 
+    /// `socks5:` or `socks5h:`. Bun sends the target hostname to the proxy for
+    /// both, so callers do not need to tell them apart.
+    #[inline]
+    pub fn is_socks(&self) -> bool {
+        strings::eql_any_case_insensitive_ascii(self.protocol, &[b"socks5", b"socks5h"])
+    }
+
     /// The schemes WHATWG calls special: a `\` ends the authority of these, as a `/` does.
     fn has_special_scheme(&self) -> bool {
         strings::eql_any_case_insensitive_ascii(
@@ -550,6 +557,18 @@ impl<'a> URL<'a> {
 
     pub fn get_port_auto(&self) -> u16 {
         self.get_port().unwrap_or_else(|| self.get_default_port())
+    }
+
+    /// The port to dial for a proxy URL: SOCKS5 defaults to 1080, HTTP(S) to
+    /// its scheme's default.
+    pub fn get_proxy_port_auto(&self) -> u16 {
+        self.get_port().unwrap_or_else(|| {
+            if self.is_socks() {
+                1080
+            } else {
+                self.get_default_port()
+            }
+        })
     }
 
     pub(crate) fn get_default_port(&self) -> u16 {

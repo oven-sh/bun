@@ -4,6 +4,7 @@ use core::fmt;
 
 use bstr::BStr;
 
+use bun_core::fmt::shell_word;
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
@@ -167,28 +168,34 @@ pub struct LoggedHeaderValue<'a> {
     header: &'a Header,
 }
 
-impl LoggedHeaderValue<'_> {
+impl<'a> LoggedHeaderValue<'a> {
     /// `Authorization: <scheme> <credentials>`: the scheme is kept.
-    const SCHEME_HEADERS: [&[u8]; 2] = [b"authorization", b"proxy-authorization"];
+    const SCHEME_HEADERS: [&'static [u8]; 2] = [b"authorization", b"proxy-authorization"];
     /// The whole value is a secret.
-    const SECRET_HEADERS: [&[u8]; 3] = [b"cookie", b"set-cookie", b"x-amz-security-token"];
-}
+    const SECRET_HEADERS: [&'static [u8]; 3] = [b"cookie", b"set-cookie", b"x-amz-security-token"];
 
-impl fmt::Display for LoggedHeaderValue<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    /// The part of the value that prints, then `[redacted]` if a credential was cut.
+    fn parts(&self) -> (&'a [u8], &'static str) {
         let name = self.header.name();
         let value = self.header.value();
         if strings::eql_any_case_insensitive_ascii(name, &Self::SCHEME_HEADERS) {
             let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
-            write!(f, "{}[redacted]", BStr::new(&value[..scheme_len]))
+            (&value[..scheme_len], "[redacted]")
         } else if self.header.is_multiline()
             || strings::eql_any_case_insensitive_ascii(name, &Self::SECRET_HEADERS)
         {
             // A folded continuation line has no name: the header it continues is unknown here.
-            f.write_str("[redacted]")
+            (b"", "[redacted]")
         } else {
-            write!(f, "{}", BStr::new(value))
+            (value, "")
         }
+    }
+}
+
+impl fmt::Display for LoggedHeaderValue<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (value, redacted) = self.parts();
+        write!(f, "{}{}", BStr::new(value), redacted)
     }
 }
 
@@ -233,14 +240,14 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let header = self.header;
         if header.value_len > 0 {
+            let (value, redacted) = header.logged_value().parts();
             write!(
                 f,
-                "-H \"{}: {}\"",
-                BStr::new(header.name()),
-                header.logged_value()
+                "-H {}",
+                shell_word(&[header.name(), b": ", value, redacted.as_bytes()])
             )
         } else {
-            write!(f, "-H \"{}\"", BStr::new(header.name()))
+            write!(f, "-H {}", shell_word(&[header.name()]))
         }
     }
 }
@@ -360,8 +367,9 @@ pub struct RequestCurlFormatter<'a> {
 }
 
 impl<'a> RequestCurlFormatter<'a> {
-    fn is_printable_body(content_type: &[u8]) -> bool {
-        if content_type.is_empty() {
+    fn is_printable_body(content_type: &[u8], body: &[u8]) -> bool {
+        // No argument of a command can hold a NUL.
+        if content_type.is_empty() || body.is_empty() || strings::contains_char(body, 0) {
             return false;
         }
 
@@ -374,19 +382,27 @@ impl<'a> RequestCurlFormatter<'a> {
 
 impl fmt::Display for RequestCurlFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use std::io::Write as _;
+
         let request = self.request;
         // Not `redacted_npm_url`: a UUID in the URL is kept so that the command stays runnable.
-        let url = bun_core::fmt::redacted_url_credentials(request.path);
+        let mut url = Vec::new();
+        write!(
+            &mut url,
+            "{}",
+            bun_core::fmt::redacted_url_credentials(request.path)
+        )
+        .map_err(|_| fmt::Error)?;
         if enable_ansi_colors_stderr() {
             f.write_str(pretty_fmt!("<r><d>[fetch] $<r> ", true))?;
 
             write!(
                 f,
-                pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{}\"<r>", true),
-                url,
+                pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>{}<r>", true),
+                shell_word(&[&url]),
             )?;
         } else {
-            write!(f, "curl --http1.1 \"{}\"", url)?;
+            write!(f, "curl --http1.1 {}", shell_word(&[&url]))?;
         }
 
         if request.method != b"GET" {
@@ -414,13 +430,8 @@ impl fmt::Display for RequestCurlFormatter<'_> {
             }
         }
 
-        if !self.body.is_empty() && Self::is_printable_body(content_type) {
-            f.write_str(" --data-raw ")?;
-            bun_core::js_printer::write_json_string(
-                self.body,
-                f,
-                bun_core::strings::Encoding::Utf8,
-            )?;
+        if Self::is_printable_body(content_type, self.body) {
+            write!(f, " --data-raw {}", shell_word(&[self.body]))?;
         }
 
         Ok(())

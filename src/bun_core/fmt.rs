@@ -3376,6 +3376,143 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
     write_bytes(writer, remain)
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// shellWord
+// ───────────────────────────────────────────────────────────────────────────
+
+/// One argument of a command line that bun prints for a person to paste: the
+/// joined `parts`, quoted so that a POSIX shell (sh, bash, zsh) passes exactly
+/// these bytes. fish and PowerShell read quotes differently, so every form
+/// below also stays data there: the argument can arrive changed, it cannot
+/// run. cmd.exe has no single quotes and is not covered.
+pub struct ShellWord<'a>(pub(crate) &'a [&'a [u8]]);
+
+pub fn shell_word<'a>(parts: &'a [&'a [u8]]) -> ShellWord<'a> {
+    ShellWord(parts)
+}
+
+/// `'`, and U+2018..=U+201B: PowerShell ends a `'...'` string at those too.
+fn is_shell_quote(c: char) -> bool {
+    matches!(c, '\'' | '\u{2018}'..='\u{201b}')
+}
+
+/// C0, DEL and C1.
+fn is_shell_control(c: char) -> bool {
+    matches!(c, '\0'..='\x1f' | '\x7f'..='\u{9f}')
+}
+
+impl ShellWord<'_> {
+    fn chunks(&self) -> impl Iterator<Item = core::str::Utf8Chunk<'_>> {
+        self.0.iter().flat_map(|part| part.utf8_chunks())
+    }
+
+    /// `$'...'`, for a word with a control character or a byte that is not
+    /// UTF-8: it stays on one line, and the terminal gets no ESC or CR.
+    /// dash and fish do not know `$'...'` and read it as `'...'`, so a `'`
+    /// inside is `\047`, never `\'`, and the rest of the line stays quoted.
+    fn fmt_ansi_c(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        fn octal(f: &mut Formatter<'_>, bytes: &[u8]) -> fmt::Result {
+            bytes.iter().try_for_each(|byte| write!(f, "\\{byte:03o}"))
+        }
+
+        f.write_str("$'")?;
+        for chunk in self.chunks() {
+            for c in chunk.valid().chars() {
+                match c {
+                    '\\' => f.write_str("\\\\")?,
+                    '\n' => f.write_str("\\n")?,
+                    '\r' => f.write_str("\\r")?,
+                    '\t' => f.write_str("\\t")?,
+                    c if is_shell_quote(c) || is_shell_control(c) => {
+                        octal(f, c.encode_utf8(&mut [0; 4]).as_bytes())?
+                    }
+                    c => f.write_char(c)?,
+                }
+            }
+            octal(f, chunk.invalid())?;
+        }
+        f.write_str("'")
+    }
+
+    /// `'...'` runs. Only call this for valid UTF-8 with no control character.
+    fn fmt_quoted(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        #[derive(Clone, Copy, PartialEq)]
+        enum In {
+            Single,
+            Double,
+            Nothing,
+        }
+        impl In {
+            fn delimiter(self) -> &'static str {
+                match self {
+                    In::Single => "'",
+                    In::Double => "\"",
+                    In::Nothing => "",
+                }
+            }
+        }
+
+        let mut state = In::Nothing;
+        let mut chars = self
+            .chunks()
+            .flat_map(|chunk| chunk.valid().chars())
+            .peekable();
+        while let Some(c) = chars.next() {
+            let next = if is_shell_quote(c) {
+                In::Double
+            } else if c == '\\'
+                && chars
+                    .peek()
+                    .is_none_or(|&after| after == '\\' || is_shell_quote(after))
+            {
+                // fish reads `\\` and `\'` inside `'...'` as escapes. A backslash
+                // in front of either goes outside the quotes, where `\\` is one
+                // backslash in every shell.
+                In::Nothing
+            } else {
+                In::Single
+            };
+            if state != next {
+                f.write_str(state.delimiter())?;
+                f.write_str(next.delimiter())?;
+                state = next;
+            }
+            if state == In::Nothing {
+                f.write_str("\\\\")?;
+            } else {
+                f.write_char(c)?;
+            }
+        }
+        f.write_str(state.delimiter())
+    }
+}
+
+impl Display for ShellWord<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut empty = true;
+        let mut bare = true;
+        let mut ansi_c = false;
+        for chunk in self.chunks() {
+            ansi_c |= !chunk.invalid().is_empty();
+            for c in chunk.valid().chars() {
+                empty = false;
+                bare &= c.is_ascii_alphanumeric() || c == '-';
+                ansi_c |= is_shell_control(c);
+            }
+        }
+
+        if ansi_c {
+            self.fmt_ansi_c(f)
+        } else if empty {
+            f.write_str("''")
+        } else if bare {
+            self.0.iter().try_for_each(|part| write_bytes(f, part))
+        } else {
+            self.fmt_quoted(f)
+        }
+    }
+}
+
 // js_bindings (fmtString for highlighter.test.ts) lives in src/jsc/fmt_jsc.rs
 // alongside fmt_jsc.bind.ts; bun_core/ stays JSC-free.
 

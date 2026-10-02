@@ -377,6 +377,33 @@ describe("node:inspector", () => {
       expect(() => session.post("Profiler.setSamplingInterval", { interval: -1 })).toThrow();
     });
 
+    test("Profiler.setSamplingInterval rejects values above INT_MAX", async () => {
+      // Node rejects > 2147483647 with ERR_INSPECTOR_COMMAND (-32602 Invalid
+      // parameters). Previously Bun silently accepted these and hit an
+      // out-of-range double-to-int conversion in the native binding.
+      session.post("Profiler.enable");
+      try {
+        expect(session.post("Profiler.setSamplingInterval", { interval: 2147483647 })).toEqual({});
+        expect(() => session.post("Profiler.setSamplingInterval", { interval: 2147483648 })).toThrow(
+          expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND" }),
+        );
+        expect(() => session.post("Profiler.setSamplingInterval", { interval: 3000000000 })).toThrow(
+          expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND" }),
+        );
+
+        // With a callback the error must be delivered to the callback, not thrown.
+        const { promise, resolve } = Promise.withResolvers<any>();
+        session.post("Profiler.setSamplingInterval", { interval: 3000000000 }, (err, res) => resolve({ err, res }));
+        const { err, res } = await promise;
+        expect(err).toMatchObject({ code: "ERR_INSPECTOR_COMMAND" });
+        expect(res).toBeUndefined();
+      } finally {
+        // The sampling interval is process-global; restore the default so
+        // later tests that start the profiler still collect samples.
+        session.post("Profiler.setSamplingInterval", { interval: 1000 });
+      }
+    });
+
     test("double Profiler.start is a no-op", () => {
       session.post("Profiler.enable");
       session.post("Profiler.start");

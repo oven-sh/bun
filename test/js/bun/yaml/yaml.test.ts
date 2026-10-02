@@ -833,6 +833,11 @@ root: &root
           isDebug || isASAN ? 60_000 : 5_000,
         );
 
+        test("an alias does not walk what it refers to each time", () => {
+          const input = `a: &a [${Buffer.alloc(60_000, "[],")}]\nb:\n${Buffer.alloc(100_000, "- *a\n")}`;
+          expect(outcome(input, { maxAliasCount: 1 })).toHaveProperty("value");
+        });
+
         // What is an anchor, an alias or a merge key is the parser's call.
         test.each([
           ["an anchor glued to a verbatim tag", "a: !<t>&x 1\nb: *x"],

@@ -3335,6 +3335,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             counter.events[site.event] = AliasEvent::MergeAlias(site.anchor);
         }
         if let ast::ExprData::EArray(sources) = &value.data {
+            if aliased.is_some() {
+                self.alias_expansion_budget = self
+                    .alias_expansion_budget
+                    .checked_sub(sources.items.slice().len())
+                    .ok_or(ParseError::ExcessiveAliasing)?;
+            }
             for source in sources.items.slice().iter().filter(|source| is_map(source)) {
                 let Some(site) = counter.alias_site(source) else {
                     continue;
@@ -3482,10 +3488,12 @@ impl AliasCounter {
             .filter(|site| collection_id(&self.anchors[site.anchor].node) == collection_id(node))
     }
 
-    /// Whether a scalar that is not an alias is written in `root`.
-    fn has_own_leaf(&self, root: Expr) -> bool {
+    /// Whether a scalar that is not an alias is written in `root`, and the nodes visited to tell.
+    fn has_own_leaf(&self, root: Expr) -> (bool, usize) {
         let mut stack = vec![root];
+        let mut visited = 0;
         while let Some(node) = stack.pop() {
+            visited += 1;
             match &node.data {
                 ast::ExprData::EArray(arr) => stack.extend(
                     arr.items
@@ -3503,10 +3511,10 @@ impl AliasCounter {
                         );
                     }
                 }
-                _ => return true,
+                _ => return (true, visited),
             }
         }
-        false
+        (false, visited)
     }
 }
 
@@ -3516,6 +3524,8 @@ struct AnchorCount {
     count: f64,
     alias_count: f64,
     visited: bool,
+    /// `has_own_leaf` of `node`, once an alias has asked.
+    own_leaf: Option<bool>,
     /// The `events` inside the node.
     start: usize,
     end: usize,
@@ -3624,6 +3634,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             count: 1.0,
             alias_count: 0.0,
             visited: true,
+            own_leaf: None,
             start: 0,
             end: 0,
         });
@@ -3812,16 +3823,23 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     /// That package's `getAliasCount`: the largest count among the leaves written in the node.
     fn alias_count_of(&mut self, id: usize) -> Result<f64, ParseError> {
-        let AliasCheck::Count(counter) = &self.alias_check else {
+        let AliasCheck::Count(counter) = &mut self.alias_check else {
             return Ok(0.0);
         };
         let AnchorCount {
-            node, start, end, ..
+            node,
+            own_leaf,
+            start,
+            end,
+            ..
         } = counter.anchors[id];
         if collection_id(&node).is_none() {
             return Ok(1.0);
         }
-        let mut largest: f64 = if counter.has_own_leaf(node) { 1.0 } else { 0.0 };
+        let (own_leaf, visited) =
+            own_leaf.map_or_else(|| counter.has_own_leaf(node), |known| (known, 0));
+        counter.anchors[id].own_leaf = Some(own_leaf);
+        let mut largest: f64 = if own_leaf { 1.0 } else { 0.0 };
         for event in &counter.events[start..end] {
             if let AliasEvent::Alias(target) | AliasEvent::MergeAlias(target) = *event
                 && counter.anchors[target].visited
@@ -3836,7 +3854,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
         self.alias_expansion_budget = self
             .alias_expansion_budget
-            .checked_sub(end - start)
+            .checked_sub(end - start + visited)
             .ok_or(ParseError::ExcessiveAliasing)?;
         Ok(largest)
     }

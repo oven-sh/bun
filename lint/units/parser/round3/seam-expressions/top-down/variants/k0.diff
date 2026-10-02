@@ -1,6 +1,6 @@
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/mod.rs k0/src/js_parser/parse/mod.rs
+--- head/src/js_parser/parse/mod.rs	2026-10-02 08:38:40.777152362 +0000
++++ k0/src/js_parser/parse/mod.rs	2026-10-02 08:41:24.710055716 +0000
 @@ -708,12 +708,9 @@
  
          // Are these arguments to an arrow function?
@@ -162,9 +162,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
                              }
                          }
                      }
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/parse_fn.rs k0/src/js_parser/parse/parse_fn.rs
+--- head/src/js_parser/parse/parse_fn.rs	2026-10-02 08:38:40.777673480 +0000
++++ k0/src/js_parser/parse/parse_fn.rs	2026-10-02 08:41:24.711472323 +0000
 @@ -640,11 +640,94 @@
          args: &'a mut [G::Arg],
          data: &mut FnOrArrowDataParse,
@@ -263,9 +263,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
          &mut self,
          args: &'a mut [G::Arg],
          data: &mut FnOrArrowDataParse,
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/parse_jsx.rs k0/src/js_parser/parse/parse_jsx.rs
+--- head/src/js_parser/parse/parse_jsx.rs	2026-10-02 08:38:40.777719179 +0000
++++ k0/src/js_parser/parse/parse_jsx.rs	2026-10-02 08:41:25.493426350 +0000
 @@ -23,13 +23,9 @@
          let tag = JSXTag::parse(p)?;
  
@@ -283,9 +283,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
          }
  
          let mut previous_string_with_backslash_loc = bun_ast::Loc::default();
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/parse_prefix.rs k0/src/js_parser/parse/parse_prefix.rs
+--- head/src/js_parser/parse/parse_prefix.rs	2026-10-02 08:38:40.777759973 +0000
++++ k0/src/js_parser/parse/parse_prefix.rs	2026-10-02 08:41:25.488116364 +0000
 @@ -47,10 +47,6 @@
          let loc = p.lexer.loc();
          p.lexer.next()?;
@@ -457,9 +457,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
      /// `<T>x`, `<T>(x)` and `<T>(x) => {}` of a lint parse, at the `<`: an assertion is recorded around its whole operand.
      #[cold]
      #[inline(never)]
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/parse_suffix.rs k0/src/js_parser/parse/parse_suffix.rs
+--- head/src/js_parser/parse/parse_suffix.rs	2026-10-02 08:38:40.778057700 +0000
++++ k0/src/js_parser/parse/parse_suffix.rs	2026-10-02 08:41:25.493089851 +0000
 @@ -26,12 +26,8 @@
              && !p.lexer.has_newline_before
              && (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
@@ -509,9 +509,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
          p.try_skip_type_script_type_arguments_with_backtracking()
      }
  
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/parse_typescript.rs k0/src/js_parser/parse/parse_typescript.rs
+--- head/src/js_parser/parse/parse_typescript.rs	2026-10-02 08:38:40.778147420 +0000
++++ k0/src/js_parser/parse/parse_typescript.rs	2026-10-02 08:41:25.496589941 +0000
 @@ -68,6 +68,20 @@
          Ok(ExprNodeList::from_bump_vec(decorators))
      }

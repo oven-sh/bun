@@ -4,9 +4,10 @@
 #
 #   /workspace/tools/lk bash run-r2.sh <tag> <bun under test> [step ...]
 #
-# steps, default: seams testrows comments targeted bench tscases small files runtime build
+# steps, default: seams seams-bu testrows comments targeted bench tscases small files runtime build
 #   seams .. small   a corpus through harness.all.mjs (34 configurations of Bun.Transpiler), R2_JOBS workers
-#     seams      seams.mjs: the sites outside the type grammar that round 1 changed
+#     seams      seams.mjs: the sites outside the type grammar that round 1 changed, from the lists of the sites
+#     seams-bu   seams-bu.mjs: the same sites, from the diff of f4d755a9cf..23a20afa7e under src/js_parser and src/ast
 #     testrows   the 301 sources of the four test files of round 1 (typescript-grammar*.test.ts)
 #     comments   122 sources with a comment inside a construct
 #     targeted   3,952 sources by construct (with the 1,547 of file 09, the grammar checks of the checker)
@@ -15,16 +16,16 @@
 #     tscases    the single-file units of TypeScript's own tests (ref/typescript-go/_submodules/TypeScript/tests/cases)
 #     small      209,628 sources: 11,646 type forms in 18 contexts
 #   files      every tracked TypeScript and JavaScript file under test/ and src/js of R2_TREE, by the hash of each output
-#   runtime    seams, testrows, comments, targeted and bench as modules that the runtime loads and never evaluates:
+#   runtime    seams, seams-bu, testrows, comments, targeted and bench as modules that the runtime loads and never evaluates:
 #              the entries of the runtime transpiler cache (version, output, source map, module record)
-#   build      seams, testrows and comments through Bun.build, one entry point each: output, source map, messages
+#   build      seams, seams-bu, testrows and comments through Bun.build, as a .ts and as a .js entry point: output, source map, messages
 # env: R2_BASE    the base binary                          default /workspace/base/bun.f4d755a9c
 #      R2_OUT     raw runs, never inside the notes         default /tmp/parser-r2
 #      R2_TREE    the checkout that `files` reads          default /workspace/wt/parser
 #      R2_JOBS    workers of each harness run              default 4
 #      R2_EXPECT  zero (default): every pair is equal. differ: the run is a test of itself against a binary that is
 #                 known to differ (/workspace/head/bun.head, round 1): every corpus pair must differ, and
-#                 seams-seen.mjs must see every group of seams.mjs.
+#                 seams-seen.mjs must see every group of seams.mjs and of seams-bu.mjs.
 #      R2_SAVE    a directory that gets the summary, the tables and the one-line logs (small text files only)
 # Exit code 0 only for "RESULT  OK". A run of the base is kept under R2_OUT by the hashes of the binary, of
 # harness.all.mjs and of the corpus, so a second run only runs the binary under test.
@@ -44,7 +45,7 @@ TSCASES=/workspace/ref/typescript-go/_submodules/TypeScript/tests/cases
 TAG=$1
 NEXT=$(readlink -f "$2")
 shift 2
-[ $# -gt 0 ] || set -- seams testrows comments targeted bench tscases small files runtime build
+[ $# -gt 0 ] || set -- seams seams-bu testrows comments targeted bench tscases small files runtime build
 [ -x "$BASE" ] && [ -x "$NEXT" ] || { echo "missing binary: $BASE or $NEXT"; exit 2; }
 case "$OUT" in /workspace/notes*) echo "R2_OUT must be outside the notes"; exit 2 ;; esac
 case "$EXPECT" in zero | differ) ;; *) echo "R2_EXPECT is zero or differ"; exit 2 ;; esac
@@ -60,7 +61,7 @@ NAPIS=$(env $ENVS "$BASE" "$HARNESS" --list | tail -1 | cut -d' ' -f1)
 
 corpus() {
   case $1 in
-    seams | bench | tscases) echo "$OUT/corpus.$1.json" ;;
+    seams | seams-bu | bench | tscases) echo "$OUT/corpus.$1.json" ;;
     testrows | comments | small | small-sub) echo "$G/corpus.$1.json" ;;
     targeted) echo "$G/corpus.targeted-09.json" ;;
   esac
@@ -68,7 +69,7 @@ corpus() {
 # The corpora that are made here, from their sources, on every run.
 make_corpus() {
   case $1 in
-    seams) (cd "$OUT" && env $ENVS "$BASE" "$G/seams.mjs" "$OUT/corpus.seams.json") > "$OUT/corpus.seams.log" 2>&1 ;;
+    seams | seams-bu) (cd "$OUT" && env $ENVS "$BASE" "$G/$1.mjs" "$OUT/corpus.$1.json") > "$OUT/corpus.$1.log" 2>&1 ;;
     bench) [ -d "$BENCHROOT" ] && (cd "$OUT" && env $ENVS "$BASE" "$OUT/bench-corpus.mjs" "$OUT/corpus.bench.json") > "$OUT/corpus.bench.log" 2>&1 ;;
     tscases) [ -d "$TSCASES" ] && (cd "$OUT" && env $ENVS "$BASE" "$OUT/tscases-corpus.mjs" "$OUT/corpus.tscases.json") > "$OUT/corpus.tscases.log" 2>&1 ;;
     *) true ;;
@@ -365,9 +366,9 @@ pair() {
     "$mark" "$c" "$(field "${b%.jsonl.gz}.log" 1)" "$NAPIS" "${compared:-?}" "${differ:-?}" \
     "$(field "${b%.jsonl.gz}.log" 3)" "$(field "${n%.jsonl.gz}.log" 3)" "$csha" "${bs:0:16}" "$([ "$bs" = "$ns" ] && echo = || echo "!= ${ns:0:16}")"
   if [ "$state" != equal ] && [ -s "$D/diff.$c.jsonl" ]; then
-    if [ "$c" = seams ]; then
-      env $ENVS "$BASE" "$G/seams-seen.mjs" "$D/diff.$c.jsonl" > "$D/seams-seen.txt" 2>&1 || { [ "$EXPECT" = differ ] && mark=FAIL; }
-      sed 's/^/        /' "$D/seams-seen.txt"
+    if [ "$c" = seams ] || [ "$c" = seams-bu ]; then
+      env $ENVS "$BASE" "$G/seams-seen.mjs" "$cfile" "$D/diff.$c.jsonl" > "$D/$c-seen.txt" 2>&1 || { [ "$EXPECT" = differ ] && mark=FAIL; }
+      sed 's/^/        /' "$D/$c-seen.txt"
     else
       env $ENVS "$BASE" "$OUT/classes.mjs" "$D/diff.$c.jsonl" | head -60
     fi
@@ -438,7 +439,7 @@ main() {
   echo "base    $BASE  sha256 $(sha256sum "$BASE" | cut -d' ' -f1)  $(env $ENVS "$BASE" --revision)"
   echo "next    $NEXT  sha256 $(sha256sum "$NEXT" | cut -d' ' -f1)  $NEXT_VERSION  built $(date -u -r "$NEXT" +%FT%TZ)  workers $JOBS"
   echo "tree    $TREE  $(git -C "$TREE" rev-parse HEAD)  $(timeout 120 git -C "$TREE" status --short -uno -- src/js_parser src/ast src/jsc | wc -l) modified files under src/js_parser, src/ast, src/jsc  $(git -C "$TREE" log --oneline f4d755a9cf..HEAD -- src/js_parser src/js_printer src/ast | wc -l) commits after f4d755a9cf under src/js_parser, src/js_printer, src/ast"
-  echo "tools   harness.all.mjs $(sha "$HARNESS") ($NAPIS configurations)  diff.mjs $(sha "$G/diff.mjs")  seams.mjs $(sha "$G/seams.mjs")  run-r2.sh $(sha "$0")"
+  echo "tools   harness.all.mjs $(sha "$HARNESS") ($NAPIS configurations)  diff.mjs $(sha "$G/diff.mjs")  seams.mjs $(sha "$G/seams.mjs")  seams-bu.mjs $(sha "$G/seams-bu.mjs")  run-r2.sh $(sha "$0")"
   case "$(env $ENVS "$BASE" --revision)" in *+f4d755a9c) ;; *) echo "FAIL  the base binary is not a build of f4d755a9cf"; bad=$((bad + 1)) ;; esac
   for c in "$@"; do
     case $c in
@@ -448,13 +449,13 @@ main() {
         ;;
       runtime)
         [ $IS_DEBUG = 0 ] || { echo "skip  runtime: a binary with debug assertions names its cache entries *.debug.pile"; continue; }
-        for r in seams testrows comments targeted bench; do
+        for r in seams seams-bu testrows comments targeted bench; do
           pairs=$((pairs + 1))
           runtime_one "$r" || bad=$((bad + 1))
         done
         ;;
       build)
-        for r in seams testrows comments; do
+        for r in seams seams-bu testrows comments; do
           pairs=$((pairs + 1))
           build_one "$r" || bad=$((bad + 1))
         done
@@ -479,7 +480,7 @@ main "$@" 2>&1 | tee "$D/summary.$(date -u +%Y%m%dT%H%M%SZ).txt"
 status=${PIPESTATUS[0]}
 if [ -n "${R2_SAVE:-}" ]; then
   mkdir -p "$R2_SAVE/$TAG/base"
-  for f in "$D"/summary.*.txt "$D"/diff.*.txt "$D"/seams-seen.txt "$D"/*.log; do
+  for f in "$D"/summary.*.txt "$D"/diff.*.txt "$D"/seams*-seen.txt "$D"/*.log; do
     [ -f "$f" ] && head -c 262144 "$f" > "$R2_SAVE/$TAG/$(basename "$f")"
   done
   cp "$B"/*.log "$R2_SAVE/$TAG/base/" 2>/dev/null

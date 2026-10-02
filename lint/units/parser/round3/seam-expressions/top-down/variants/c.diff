@@ -1,6 +1,6 @@
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/p.rs c/src/js_parser/p.rs
+--- head/src/js_parser/p.rs	2026-10-02 08:38:40.775079604 +0000
++++ c/src/js_parser/p.rs	2026-10-02 08:35:46.022466700 +0000
 @@ -233,6 +233,8 @@
      pub(crate) syntax_errors: crate::parse::syntax_errors::SyntaxErrors,
      /// `Parser::parse_for_lint` made it: `Parser::parse_only` keeps no parentheses.
@@ -10,9 +10,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
  }
  
  /// Where the lists of the side table end at one point of the parse: `StartsForParseOnly::rewind` cuts them back to there.
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/mod.rs c/src/js_parser/parse/mod.rs
+--- head/src/js_parser/parse/mod.rs	2026-10-02 08:38:40.777152362 +0000
++++ c/src/js_parser/parse/mod.rs	2026-10-02 08:35:46.025928431 +0000
 @@ -708,12 +708,9 @@
  
          // Are these arguments to an arrow function?
@@ -360,9 +360,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
  }
  
  /// Where the binding starts that `item`, an entry of a list in parentheses, becomes as a parameter.
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/parse_fn.rs c/src/js_parser/parse/parse_fn.rs
+--- head/src/js_parser/parse/parse_fn.rs	2026-10-02 08:38:40.777673480 +0000
++++ c/src/js_parser/parse/parse_fn.rs	2026-10-02 08:35:46.025085332 +0000
 @@ -640,11 +640,94 @@
          args: &'a mut [G::Arg],
          data: &mut FnOrArrowDataParse,
@@ -473,9 +473,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
          let expr = match p.parse_expr_flagged(Level::Comma, flags) {
              Ok(e) => e,
              Err(err) => {
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/parse_jsx.rs c/src/js_parser/parse/parse_jsx.rs
+--- head/src/js_parser/parse/parse_jsx.rs	2026-10-02 08:38:40.777719179 +0000
++++ c/src/js_parser/parse/parse_jsx.rs	2026-10-02 08:35:46.019470718 +0000
 @@ -23,8 +23,8 @@
          let tag = JSXTag::parse(p)?;
  
@@ -487,9 +487,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
                  p.lint_jsx_type_arguments(loc)?;
              } else {
                  // Pass a flag to the type argument skipper because we need to call
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/parse_prefix.rs c/src/js_parser/parse/parse_prefix.rs
+--- head/src/js_parser/parse/parse_prefix.rs	2026-10-02 08:38:40.777759973 +0000
++++ c/src/js_parser/parse/parse_prefix.rs	2026-10-02 08:35:46.026220167 +0000
 @@ -47,7 +47,7 @@
          let loc = p.lexer.loc();
          p.lexer.next()?;
@@ -652,9 +652,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
                  let value = p.parse_prefix(level, errors.as_deref_mut(), flags)?;
                  (type_node, greater_than, value)
              };
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/parse_typescript.rs c/src/js_parser/parse/parse_typescript.rs
+--- head/src/js_parser/parse/parse_typescript.rs	2026-10-02 08:38:40.778147420 +0000
++++ c/src/js_parser/parse/parse_typescript.rs	2026-10-02 08:35:46.019689542 +0000
 @@ -68,6 +68,20 @@
          Ok(ExprNodeList::from_bump_vec(decorators))
      }

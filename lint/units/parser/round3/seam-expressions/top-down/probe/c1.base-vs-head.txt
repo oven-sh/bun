@@ -1,0 +1,148 @@
+DIFF [ts] "x = a ? 1 + async(b) : c;"
+      base: R Unexpected :
+      head: A "x = a ? 1 + async(b) : c;\n"
+DIFF [tsx] "x = a ? 1 + async(b) : c;"
+      base: R Unexpected :
+      head: A "x = a ? 1 + async(b) : c;\n"
+DIFF [ts] "x = a ? -async(b) : c;"
+      base: R Unexpected :
+      head: A "x = a ? -async(b) : c;\n"
+DIFF [ts] "x = a ? y || async(b) : c;"
+      base: R Unexpected :
+      head: A "x = a ? y || async(b) : c;\n"
+DIFF [ts] "x = a ? typeof async() : c => d;"
+      base: R Unexpected :
+      head: A "x = a ? typeof async() : (c) => d;\n"
+DIFF [ts] "x = a ? 1 + async<T>(b) : c;"
+      base: R Unexpected :
+      head: A "x = a ? 1 + async(b) : c;\n"
+DIFF [ts] "switch (x) { case 1 + async(b): c; }"
+      base: R Unexpected :
+      head: A "switch (x) {\n  case 1 + async(b):\n    c;\n}\n"
+DIFF [tsx] "switch (x) { case 1 + async(b): c; }"
+      base: R Unexpected :
+      head: A "switch (x) {\n  case 1 + async(b):\n    c;\n}\n"
+DIFF [ts] "x = a ? -<T>(b) : c;"
+      base: R Unexpected :
+      head: A "x = a ? -b : c;\n"
+DIFF [ts] "x = a ? !<T>(b) : c => d;"
+      base: R Unexpected :
+      head: A "x = a ? !b : (c) => d;\n"
+DIFF [ts] "x = a ? 1 + <T>(b) : c;"
+      base: R Unexpected :
+      head: A "x = a ? 1 + b : c;\n"
+DIFF [ts] "switch (x) { case -<T>(b): c; }"
+      base: R Unexpected :
+      head: A "switch (x) {\n  case -b:\n    c;\n}\n"
+DIFF [ts] "x = a ? <T>(b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? b : (c) => d;\n"
+DIFF [ts] "x = a ? <T>(b, c) : d => e;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (b, c) : (d) => e;\n"
+DIFF [ts] "x = a ? async <T>(b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? async(b) : (c) => d;\n"
+SAME [tsx] "x = a ? async <T>(b) : c => d;"
+      base: A "x = a ? async(b) : (c) => d;\n"
+DIFF [ts] "x = a ? b ? c : <T>(d) : e => f;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? b ? c : d : (e) => f;\n"
+DIFF [ts] "x = a ? y => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (y) => b : (c) => d;\n"
+DIFF [tsx] "x = a ? y => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (y) => b : (c) => d;\n"
+DIFF [ts] "x = a ? y => ({ y }) : z => ({ z });"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (y) => ({ y }) : (z) => ({ z });\n"
+DIFF [tsx] "x = a ? y => ({ y }) : z => ({ z });"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (y) => ({ y }) : (z) => ({ z });\n"
+DIFF [ts] "x = a ? y => async (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (y) => async(b) : (c) => d;\n"
+DIFF [ts] "x = a ? y => <T>(b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (y) => b : (c) => d;\n"
+DIFF [ts] "x = a ? y => z => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (y) => (z) => b : (c) => d;\n"
+DIFF [ts] "x = a ? y => q ? r : (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (y) => q ? r : b : (c) => d;\n"
+DIFF [ts] "x = a ? async y => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? async (y) => b : (c) => d;\n"
+DIFF [ts] "x = a ? async => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (async) => b : (c) => d;\n"
+DIFF [ts] "x = a ? b ? c : y => (d) : e => f;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? b ? c : (y) => d : (e) => f;\n"
+DIFF [ts] "f(a ? y => (b) : c => d);"
+      base: R Expected ":" but found ")" | Unexpected ;
+      head: A "f(a ? (y) => b : (c) => d);\n"
+DIFF [ts] "x = a ? (y) => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (y) => b : (c) => d;\n"
+DIFF [tsx] "x = a ? (y) => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (y) => b : (c) => d;\n"
+DIFF [ts] "x = a ? (y, z) => ({ y, z }) : c => ({ c });"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (y, z) => ({ y, z }) : (c) => ({ c });\n"
+DIFF [ts] "x = a ? ({ y }: Y) => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? ({ y }) => b : (c) => d;\n"
+DIFF [ts] "x = a ? async (y) => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? async (y) => b : (c) => d;\n"
+DIFF [ts] "x = a ? <T>(y) => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (y) => b : (c) => d;\n"
+DIFF [ts] "x = a ? <T,>(y) => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (y) => b : (c) => d;\n"
+SAME [tsx] "x = a ? <T,>(y) => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+DIFF [ts] "x = a ? <T>(y: T) => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? (y) => b : (c) => d;\n"
+DIFF [ts] "x = a ? <T>() => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? () => b : (c) => d;\n"
+DIFF [ts] "x = a ? async <T>(y: T) => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? async (y) => b : (c) => d;\n"
+SAME [tsx] "x = a ? async <T>(y: T) => (b) : c => d;"
+      base: R Expected ")" but found ":" | Expected ":" but found "T" | Unexpected )
+DIFF [ts] "x = a ? async <T>() => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+      head: A "x = a ? async () => b : (c) => d;\n"
+SAME [ts] "x = a ? (b) : c => d;"
+      base: A "x = a ? b : (c) => d;\n"
+SAME [tsx] "x = a ? (b) : c => d;"
+      base: A "x = a ? b : (c) => d;\n"
+SAME [ts] "x = a ? (b) : c => d : e;"
+      base: A "x = a ? (b) => d : e;\n"
+SAME [ts] "x = a ? (b): c => (d) : e => f;"
+      base: A "x = a ? b : (c) => (d) => f;\n"
+SAME [ts] "x = a ? (y: T) => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+SAME [ts] "x = a ? () => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+SAME [ts] "x = a ? (...y) => (b) : c => d;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+SAME [ts] "x = a ? b = (c) : d => e;"
+      base: R Expected ":" but found ";" | Unexpected end of file
+SAME [ts] "const f = x => (y): z => w;"
+      base: A "const f = (x) => (y) => w;\n"
+SAME [ts] "const f = a => (b): number => a + b;"
+      base: A "const f = (a) => (b) => a + b;\n"
+SAME [ts] "x = a ? new (b) : c => d;"
+      base: A "x = a ? new b : (c) => d;\n"
+DIFF [ts] "x = a ? new <T>(b) : c => d;"
+      base: R Unexpected :
+      head: A "x = a ? new b : (c) => d;\n"

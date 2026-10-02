@@ -1,6 +1,18 @@
-diff -ru head/src/js_parser/parse/mod.rs g/src/js_parser/parse/mod.rs
+diff -ru head/src/js_parser/p.rs u/src/js_parser/p.rs
+--- head/src/js_parser/p.rs	2026-10-02 08:38:40.775079604 +0000
++++ u/src/js_parser/p.rs	2026-10-02 09:02:09.646357350 +0000
+@@ -233,6 +233,8 @@
+     pub(crate) syntax_errors: crate::parse::syntax_errors::SyntaxErrors,
+     /// `Parser::parse_for_lint` made it: `Parser::parse_only` keeps no parentheses.
+     pub(crate) is_lint: bool,
++    /// Where the expression starts that is the body of an arrow function read between the "?" and the ":" of a conditional expression.
++    pub(crate) body_before_colon: Option<i32>,
+ }
+ 
+ /// Where the lists of the side table end at one point of the parse: `StartsForParseOnly::rewind` cuts them back to there.
+diff -ru head/src/js_parser/parse/mod.rs u/src/js_parser/parse/mod.rs
 --- head/src/js_parser/parse/mod.rs	2026-10-02 08:38:40.777152362 +0000
-+++ g/src/js_parser/parse/mod.rs	2026-10-02 08:44:12.819512778 +0000
++++ u/src/js_parser/parse/mod.rs	2026-10-02 09:02:09.637331021 +0000
 @@ -708,12 +708,9 @@
  
          // Are these arguments to an arrow function?
@@ -58,7 +70,17 @@ diff -ru head/src/js_parser/parse/mod.rs g/src/js_parser/parse/mod.rs
          self.lexer.expect(T::TColon)?;
          Ok(())
      }
-@@ -2276,9 +2257,7 @@
+@@ -2246,6 +2227,9 @@
+             starts
+                 .async_arrow_parameters
+                 .insert(async_range.loc.start, p.lexer.loc().start);
++            if Self::IS_TYPESCRIPT_ENABLED && !SCAN_ONLY {
++                return p.parse_async_prefix_expr_for_lint(async_range.loc, level, flags);
++            }
+         }
+         // "async function() {}"
+         if !p.lexer.has_newline_before && p.lexer.token == T::TFunction {
+@@ -2276,9 +2260,7 @@
                              needs_async_loc: async_range.loc,
                              ..Default::default()
                          };
@@ -69,7 +91,7 @@ diff -ru head/src/js_parser/parse/mod.rs g/src/js_parser/parse/mod.rs
                          p.pop_scope();
                          return Ok(p.new_expr(arrow_body, async_range.loc));
                      }
-@@ -2315,10 +2294,8 @@
+@@ -2315,10 +2297,8 @@
                                  needs_async_loc: args[0].binding.loc,
                                  ..Default::default()
                              };
@@ -81,7 +103,7 @@ diff -ru head/src/js_parser/parse/mod.rs g/src/js_parser/parse/mod.rs
                                  Ok(body) => body,
                                  Err(e) => {
                                      p.pop_scope();
-@@ -2336,19 +2313,16 @@
+@@ -2336,19 +2316,16 @@
                  // "async () => {}"
                  T::TOpenParen => {
                      p.lexer.next()?;
@@ -111,7 +133,7 @@ diff -ru head/src/js_parser/parse/mod.rs g/src/js_parser/parse/mod.rs
                  }
  
                  // "async<T>()"
-@@ -2357,37 +2331,22 @@
+@@ -2357,13 +2334,125 @@
                      if Self::IS_TYPESCRIPT_ENABLED
                          && (!p.is_jsx_enabled() || p.is_ts_arrow_fn_jsx()?)
                      {
@@ -120,24 +142,133 @@ diff -ru head/src/js_parser/parse/mod.rs g/src/js_parser/parse/mod.rs
 -                            p.lint_try_async_type_parameters(&mut lint_type_lists)?
 -                        } else {
 -                            p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking()
--                        };
--                        match skipped {
 +                        match p
 +                            .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
 +                            ) {
++                            SkipTypeParameterResult::DidNotSkipAnything => {}
++                            result => {
++                                p.lexer.next()?;
++                                return p.parse_paren_expr(
++                                    async_range.loc,
++                                    level,
++                                    ParenExprOpts {
++                                        is_async: true,
++                                        force_arrow_fn: result
++                                            == SkipTypeParameterResult::DefinitelyTypeParameters,
++                                        ..Default::default()
++                                    },
++                                );
++                            }
++                        }
++                    }
++                }
++
++                _ => {}
++            }
++        }
++
++        // "async"
++        // "async + 1"
++        let async_ref = p.store_name_in_ref(b"async");
++        Ok(p.new_expr(
++            E::Identifier {
++                ref_: async_ref,
++                ..Default::default()
++            },
++            async_range.loc,
++        ))
++    }
++
++    /// `parse_async_prefix_expr` of a lint parse of TypeScript, after the `async`: the body of an arrow function is read with the flags of the arrow function, and what stands in `(` and `<` is built and recorded.
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn parse_async_prefix_expr_for_lint(
++        &mut self,
++        async_loc: bun_ast::Loc,
++        level: Level,
++        flags: EFlags,
++    ) -> Result<Expr, Error> {
++        let p = self;
++        let flags = p.lint_flags_of_arrow_body(async_loc, flags);
++        if !p.lexer.has_newline_before && p.lexer.token == T::TFunction {
++            return p.parse_fn_expr(async_loc, true);
++        }
++
++        if !p.lexer.has_newline_before && level.lt(Level::Member) {
++            match p.lexer.token {
++                T::TEqualsGreaterThan => {
++                    if level.lte(Level::Assign) {
++                        let async_ref = p.store_name_in_ref(b"async");
++                        let arg_binding = p.b(B::Identifier { r#ref: async_ref }, async_loc);
++                        let args: &'a mut [G::Arg] = p.arena.alloc_slice_fill_with(1, |_| G::Arg {
++                            binding: arg_binding,
++                            ..Default::default()
++                        });
++                        let _ = p.push_scope_for_parse_pass(
++                            js_ast::scope::Kind::FunctionArgs,
++                            async_loc,
++                        )?;
++                        let mut data = FnOrArrowDataParse {
++                            needs_async_loc: async_loc,
++                            ..Default::default()
+                         };
+-                        match skipped {
++                        let body_flags = Self::arrow_body_flags(flags);
++                        let arrow_body = p.parse_arrow_body_for_lint(args, &mut data, body_flags)?;
++                        p.pop_scope();
++                        return Ok(p.new_expr(arrow_body, async_loc));
++                    }
++                }
++                T::TIdentifier => {
++                    if level.lte(Level::Assign) && p.build_next_token_is(T::TEqualsGreaterThan) {
++                        let ref_ = p.store_name_in_ref(p.lexer.identifier);
++                        let arg_loc = p.lexer.loc();
++                        let arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
++                        let args: &'a mut [G::Arg] = p.arena.alloc_slice_fill_with(1, |_| G::Arg {
++                            binding: arg_binding,
++                            ..Default::default()
++                        });
++                        p.lexer.next()?;
++
++                        let _ = p.push_scope_for_parse_pass(
++                            js_ast::scope::Kind::FunctionArgs,
++                            async_loc,
++                        )?;
++
++                        let mut data = FnOrArrowDataParse {
++                            allow_await: AwaitOrYield::AllowExpr,
++                            needs_async_loc: arg_loc,
++                            ..Default::default()
++                        };
++                        let body_flags = Self::arrow_body_flags(flags);
++                        let parsed = p.parse_arrow_body_for_lint(args, &mut data, body_flags);
++                        p.pop_scope();
++                        let mut arrow_body = parsed?;
++                        arrow_body.is_async = true;
++                        return Ok(p.new_expr(arrow_body, async_loc));
++                    }
++                }
++                T::TOpenParen => {
++                    p.lexer.next()?;
++                    let opts = ParenExprOpts {
++                        is_async: true,
++                        is_after_question_and_before_colon: flags
++                            == EFlags::AfterQuestionAndBeforeColon,
++                        ..Default::default()
++                    };
++                    return p.parse_paren_expr_for_lint(async_loc, level, opts);
++                }
++                T::TLessThan => {
++                    if !p.is_jsx_enabled() || p.is_ts_arrow_fn_jsx()? {
++                        let mut lint_type_lists = None;
++                        match p.lint_try_async_type_parameters(&mut lint_type_lists)? {
                              SkipTypeParameterResult::DidNotSkipAnything => {}
                              result => {
                                  p.lexer.next()?;
--                                // In a JSX file these type parameters prove an arrow function, as in the reference
--                                let is_before_colon = flags == EFlags::AfterQuestionAndBeforeColon
--                                    && !p.is_jsx_enabled();
--                                let opts = ParenExprOpts {
--                                    is_async: true,
--                                    force_arrow_fn: result
--                                        == SkipTypeParameterResult::DefinitelyTypeParameters,
--                                    is_after_question_and_before_colon: is_before_colon,
--                                    ..Default::default()
--                                };
+@@ -2377,37 +2466,79 @@
+                                     is_after_question_and_before_colon: is_before_colon,
+                                     ..Default::default()
+                                 };
 -                                if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
 -                                    let value = p.parse_paren_expr_for_lint_cold(
 -                                        async_range.loc,
@@ -149,22 +280,89 @@ diff -ru head/src/js_parser/parse/mod.rs g/src/js_parser/parse/mod.rs
 -                                    return Ok(value);
 -                                }
 -                                return p.parse_paren_expr(async_range.loc, level, opts);
-+                                return p.parse_paren_expr(
-+                                    async_range.loc,
-+                                    level,
-+                                    ParenExprOpts {
-+                                        is_async: true,
-+                                        force_arrow_fn: result
-+                                            == SkipTypeParameterResult::DefinitelyTypeParameters,
-+                                        ..Default::default()
-+                                    },
-+                                );
++                                let value =
++                                    p.parse_paren_expr_for_lint(async_loc, level, opts)?;
++                                p.lint_async_type_lists(async_loc, value, lint_type_lists);
++                                return Ok(value);
                              }
                          }
                      }
-diff -ru head/src/js_parser/parse/parse_fn.rs g/src/js_parser/parse/parse_fn.rs
+                 }
+-
+                 _ => {}
+             }
+         }
+ 
+-        // "async"
+-        // "async + 1"
+         let async_ref = p.store_name_in_ref(b"async");
+         Ok(p.new_expr(
+             E::Identifier {
+                 ref_: async_ref,
+                 ..Default::default()
+             },
+-            async_range.loc,
++            async_loc,
+         ))
+     }
++
++    /// The flags that the expression at `start` is read with. `flags` is what a caller of main passes: the body of an arrow function with one name is before the ":" where a "?" stands before the name on its line, or where the name starts such a body.
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn lint_flags_of_arrow_body(&mut self, start: bun_ast::Loc, flags: EFlags) -> EFlags {
++        if flags != EFlags::None {
++            return flags;
++        }
++        let contents = self.lexer.contents;
++        let known = self
++            .starts_for_parse_only
++            .as_deref()
++            .and_then(|starts| starts.body_before_colon);
++        let mut at = usize::try_from(start.start).unwrap_or(0);
++        loop {
++            at = blanks_before(contents, at);
++            if at < 2 || contents.get(at - 2..at) != Some(b"=>".as_slice()) {
++                return flags;
++            }
++            at = blanks_before(contents, at - 2);
++            let end = at;
++            while at > 0 && contents.get(at - 1).is_some_and(|&byte| is_name_byte(byte)) {
++                at -= 1;
++            }
++            if at == end {
++                return flags;
++            }
++            if known.is_some_and(|known| usize::try_from(known).ok() == Some(at)) {
++                return EFlags::AfterQuestionAndBeforeColon;
++            }
++            at = blanks_before(contents, at);
++            if at > 0
++                && contents.get(at - 1) == Some(&b'?')
++                && (at < 2 || contents.get(at - 2) != Some(&b'?'))
++            {
++                return EFlags::AfterQuestionAndBeforeColon;
++            }
++        }
++    }
++}
++
++/// Where the blanks that end at `at` start: spaces and tabs, no line break.
++fn blanks_before(contents: &[u8], mut at: usize) -> usize {
++    while at > 0 && matches!(contents.get(at - 1), Some(b' ' | b'\t')) {
++        at -= 1;
++    }
++    at
++}
++
++/// Whether `byte` can be part of a name: a letter, a digit, "_", "$", or a byte of a character outside ASCII.
++fn is_name_byte(byte: u8) -> bool {
++    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$' || byte >= 0x80
+ }
+ 
+ /// Where the binding starts that `item`, an entry of a list in parentheses, becomes as a parameter.
+diff -ru head/src/js_parser/parse/parse_fn.rs u/src/js_parser/parse/parse_fn.rs
 --- head/src/js_parser/parse/parse_fn.rs	2026-10-02 08:38:40.777673480 +0000
-+++ g/src/js_parser/parse/parse_fn.rs	2026-10-02 08:44:12.820137816 +0000
++++ u/src/js_parser/parse/parse_fn.rs	2026-10-02 09:02:09.638479418 +0000
 @@ -640,11 +640,94 @@
          args: &'a mut [G::Arg],
          data: &mut FnOrArrowDataParse,
@@ -263,9 +461,21 @@ diff -ru head/src/js_parser/parse/parse_fn.rs g/src/js_parser/parse/parse_fn.rs
          &mut self,
          args: &'a mut [G::Arg],
          data: &mut FnOrArrowDataParse,
-diff -ru head/src/js_parser/parse/parse_jsx.rs g/src/js_parser/parse/parse_jsx.rs
+@@ -704,6 +787,11 @@
+         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
+ 
+         p.fn_or_arrow_data_parse = data.clone();
++        let body_start = p.lexer.loc().start;
++        if let Some(starts) = &mut p.starts_for_parse_only {
++            starts.body_before_colon =
++                (flags == EFlags::AfterQuestionAndBeforeColon).then_some(body_start);
++        }
+         let expr = match p.parse_expr_flagged(Level::Comma, flags) {
+             Ok(e) => e,
+             Err(err) => {
+diff -ru head/src/js_parser/parse/parse_jsx.rs u/src/js_parser/parse/parse_jsx.rs
 --- head/src/js_parser/parse/parse_jsx.rs	2026-10-02 08:38:40.777719179 +0000
-+++ g/src/js_parser/parse/parse_jsx.rs	2026-10-02 08:44:12.820301950 +0000
++++ u/src/js_parser/parse/parse_jsx.rs	2026-10-02 09:02:09.639183239 +0000
 @@ -23,8 +23,8 @@
          let tag = JSXTag::parse(p)?;
  
@@ -277,9 +487,9 @@ diff -ru head/src/js_parser/parse/parse_jsx.rs g/src/js_parser/parse/parse_jsx.r
                  p.lint_jsx_type_arguments(loc)?;
              } else {
                  // Pass a flag to the type argument skipper because we need to call
-diff -ru head/src/js_parser/parse/parse_prefix.rs g/src/js_parser/parse/parse_prefix.rs
+diff -ru head/src/js_parser/parse/parse_prefix.rs u/src/js_parser/parse/parse_prefix.rs
 --- head/src/js_parser/parse/parse_prefix.rs	2026-10-02 08:38:40.777759973 +0000
-+++ g/src/js_parser/parse/parse_prefix.rs	2026-10-02 08:44:12.814301904 +0000
++++ u/src/js_parser/parse/parse_prefix.rs	2026-10-02 09:02:09.668397504 +0000
 @@ -47,7 +47,7 @@
          let loc = p.lexer.loc();
          p.lexer.next()?;
@@ -289,7 +499,15 @@ diff -ru head/src/js_parser/parse/parse_prefix.rs g/src/js_parser/parse/parse_pr
              return Self::pfx_t_open_paren_for_lint(p, loc, level, flags);
          }
  
-@@ -104,12 +104,7 @@
+@@ -84,6 +84,7 @@
+         level: Level,
+         flags: EFlags,
+     ) -> PResult<Expr> {
++        let flags = p.lint_flags_of_arrow_body(loc, flags);
+         if level.gt(Level::Assign) {
+             let old_allow_in = p.allow_in;
+             p.allow_in = true;
+@@ -104,12 +105,7 @@
              is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
              ..Default::default()
          };
@@ -303,7 +521,7 @@ diff -ru head/src/js_parser/parse/parse_prefix.rs g/src/js_parser/parse/parse_pr
          // An arrow function starts at the "(", and what parentheses hold starts after it.
          if value.loc.start != loc.start
              && let Some(starts) = &mut p.starts_for_parse_only
-@@ -322,9 +317,7 @@
+@@ -322,9 +318,7 @@
                  needs_async_loc: loc,
                  ..Default::default()
              };
@@ -314,7 +532,7 @@ diff -ru head/src/js_parser/parse/parse_prefix.rs g/src/js_parser/parse/parse_pr
              p.pop_scope();
              return Ok(p.new_expr(arrow_result?, loc));
          }
-@@ -622,8 +615,8 @@
+@@ -622,8 +616,8 @@
          }
  
          // Even anonymous classes can have TypeScript type parameters
@@ -325,7 +543,7 @@ diff -ru head/src/js_parser/parse/parse_prefix.rs g/src/js_parser/parse/parse_pr
                  let owner = crate::parse::attached::Owner::class(class_keyword.loc);
                  p.lint_type_parameters(Some(owner))?;
              } else {
-@@ -690,8 +683,8 @@
+@@ -690,8 +684,8 @@
          }
  
          // Even anonymous classes can have TypeScript type parameters
@@ -336,7 +554,7 @@ diff -ru head/src/js_parser/parse/parse_prefix.rs g/src/js_parser/parse/parse_pr
                  let owner = crate::parse::attached::Owner::class(class_keyword.loc);
                  p.lint_type_parameters(Some(owner))?;
              } else {
-@@ -753,7 +746,7 @@
+@@ -753,7 +747,7 @@
          if Self::IS_TYPESCRIPT_ENABLED {
              // Skip over TypeScript type arguments here if there are any
              if p.lexer.token == T::TLessThan {
@@ -345,7 +563,7 @@ diff -ru head/src/js_parser/parse/parse_prefix.rs g/src/js_parser/parse/parse_pr
                      let _ = p.lint_type_arguments_in_expression(target);
                  } else {
                      let _ = p.try_skip_type_script_type_arguments_with_backtracking();
-@@ -994,23 +987,20 @@
+@@ -994,23 +988,20 @@
          //     <A = B>(x) => {}
          if Self::IS_TYPESCRIPT_ENABLED && p.is_jsx_enabled() {
              if p.is_ts_arrow_fn_jsx()? {
@@ -381,7 +599,7 @@ diff -ru head/src/js_parser/parse/parse_prefix.rs g/src/js_parser/parse/parse_pr
              }
          }
  
-@@ -1046,8 +1036,6 @@
+@@ -1046,8 +1037,6 @@
                          ParenExprOpts {
                              force_arrow_fn: result
                                  == SkipTypeParameterResult::DefinitelyTypeParameters,
@@ -390,7 +608,7 @@ diff -ru head/src/js_parser/parse/parse_prefix.rs g/src/js_parser/parse/parse_pr
                              ..Default::default()
                          },
                      );
-@@ -1065,6 +1053,23 @@
+@@ -1065,6 +1054,23 @@
          Err(crate::Error::SyntaxError)
      }
  
@@ -414,9 +632,38 @@ diff -ru head/src/js_parser/parse/parse_prefix.rs g/src/js_parser/parse/parse_pr
      /// `<T>x`, `<T>(x)` and `<T>(x) => {}` of a lint parse, at the `<`: an assertion is recorded around its whole operand.
      #[cold]
      #[inline(never)]
-diff -ru head/src/js_parser/parse/parse_suffix.rs g/src/js_parser/parse/parse_suffix.rs
+@@ -1075,6 +1081,7 @@
+         mut errors: Option<&mut DeferredErrors>,
+         flags: EFlags,
+     ) -> PResult<Expr> {
++        let flags = p.lint_flags_of_arrow_body(loc, flags);
+         let had_pure_comment_before =
+             p.lexer.has_pure_comment_before && !p.options.ignore_dce_annotations;
+         let less_than = p.lexer.snapshot();
+@@ -1144,6 +1151,11 @@
+                 let type_node = p.build_type_script_type(Level::Lowest)?;
+                 let greater_than = p.lexer.loc();
+                 p.lexer.expect_greater_than::<false>()?;
++                let operand_start = p.lexer.loc().start;
++                if let Some(starts) = &mut p.starts_for_parse_only {
++                    starts.body_before_colon =
++                        (flags == EFlags::AfterQuestionAndBeforeColon).then_some(operand_start);
++                }
+                 let value = p.parse_prefix(level, errors.as_deref_mut(), flags)?;
+                 (type_node, greater_than, value)
+             };
+@@ -1254,7 +1266,7 @@
+             T::TNew => Self::pfx_t_new(p, flags),
+             T::TSuper => Self::pfx_t_super(p, level),
+             _ => {
+-                p.unexpected_as(crate::parse::syntax_errors::EXPRESSION_EXPECTED)?;
++                p.lexer.unexpected()?;
+                 Err(crate::Error::SyntaxError)
+             }
+         }
+diff -ru head/src/js_parser/parse/parse_suffix.rs u/src/js_parser/parse/parse_suffix.rs
 --- head/src/js_parser/parse/parse_suffix.rs	2026-10-02 08:38:40.778057700 +0000
-+++ g/src/js_parser/parse/parse_suffix.rs	2026-10-02 08:44:12.822301965 +0000
++++ u/src/js_parser/parse/parse_suffix.rs	2026-10-02 09:02:09.641331051 +0000
 @@ -26,7 +26,7 @@
              && !p.lexer.has_newline_before
              && (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
@@ -453,10 +700,23 @@ diff -ru head/src/js_parser/parse/parse_suffix.rs g/src/js_parser/parse/parse_su
              return p.lint_type_arguments_in_expression(*left);
          }
          p.try_skip_type_script_type_arguments_with_backtracking()
-diff -ru head/src/js_parser/parse/parse_typescript.rs g/src/js_parser/parse/parse_typescript.rs
+diff -ru head/src/js_parser/parse/parse_typescript.rs u/src/js_parser/parse/parse_typescript.rs
 --- head/src/js_parser/parse/parse_typescript.rs	2026-10-02 08:38:40.778147420 +0000
-+++ g/src/js_parser/parse/parse_typescript.rs	2026-10-02 08:44:12.914133297 +0000
-@@ -68,6 +68,20 @@
++++ u/src/js_parser/parse/parse_typescript.rs	2026-10-02 09:02:09.634222743 +0000
+@@ -49,7 +49,11 @@
+                 //   @Identifier.member
+                 //   @Identifier.member(args)
+                 //   @(Expression)
+-                decorators.push(p.parse_standard_decorator()?);
++                if Self::IS_TYPESCRIPT_ENABLED && !SCAN_ONLY && p.starts_for_parse_only.is_some() {
++                    decorators.push(p.parse_standard_decorator_for_lint()?);
++                } else {
++                    decorators.push(p.parse_standard_decorator()?);
++                }
+             } else {
+                 // Parse a new/call expression with "exprFlagTSDecorator" so we ignore
+                 // EIndex expressions, since they may be part of a computed property:
+@@ -68,6 +72,20 @@
          Ok(ExprNodeList::from_bump_vec(decorators))
      }
  
@@ -477,48 +737,180 @@ diff -ru head/src/js_parser/parse/parse_typescript.rs g/src/js_parser/parse/pars
      /// Parse a standard (TC39) decorator expression following the `@` token.
      ///
      /// DecoratorExpression:
-@@ -83,8 +97,9 @@
-             let open = p.lexer.loc();
+@@ -80,14 +98,8 @@
+ 
+         // @(Expression) — parenthesized, any expression allowed
+         if p.lexer.token == T::TOpenParen {
+-            let open = p.lexer.loc();
              p.lexer.next()?;
              let expr = p.parse_expr(Level::Lowest)?;
 -            if let Some(starts) = &mut p.starts_for_parse_only
 -                && starts.is_lint
-+            if Self::IS_TYPESCRIPT_ENABLED
-+                && !SCAN_ONLY
-+                && let Some(starts) = &mut p.starts_for_parse_only
-             {
-                 starts.wrappers.parenthesized(expr, open, p.lexer.loc());
-             }
-@@ -121,7 +136,7 @@
+-            {
+-                starts.wrappers.parenthesized(expr, open, p.lexer.loc());
+-            }
+             p.lexer.expect(T::TCloseParen)?;
+             return Ok(expr);
+         }
+@@ -121,9 +133,6 @@
                          p.lexer.unexpected()?;
                          return Err(crate::Error::SyntaxError);
                      }
 -                    if let Some(starts) = &mut p.starts_for_parse_only {
-+                    if !SCAN_ONLY && let Some(starts) = &mut p.starts_for_parse_only {
-                         starts.wrappers.non_null(expr, p.lexer.loc());
-                     }
+-                        starts.wrappers.non_null(expr, p.lexer.loc());
+-                    }
                      p.lexer.next()?;
-@@ -199,15 +214,14 @@
+                 }
  
+@@ -200,17 +209,142 @@
                  _ => {
                      // "@x<y>" / "@x.y<z>"
--                    if Self::IS_TYPESCRIPT_ENABLED
+                     if Self::IS_TYPESCRIPT_ENABLED
 -                        && matches!(p.lexer.token, T::TLessThan | T::TLessThanLessThan)
--                    {
++                        && p.skip_type_script_type_arguments::<false, false>()?
+                     {
 -                        let has_type_arguments = if p.starts_for_parse_only.is_some() {
 -                            let of = crate::parse::generics::TypeArgumentsOf::Expression;
 -                            p.lint_type_arguments_after(expr, of)?
 -                        } else {
 -                            p.skip_type_script_type_arguments::<false, false>()?
 -                        };
-+                    if Self::IS_TYPESCRIPT_ENABLED {
-+                        let has_type_arguments =
-+                            if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
-+                                let of = crate::parse::generics::TypeArgumentsOf::Expression;
-+                                p.lint_type_arguments_after(expr, of)?
-+                            } else {
-+                                p.skip_type_script_type_arguments::<false, false>()?
-+                            };
-                         if has_type_arguments {
-                             continue;
+-                        if has_type_arguments {
+-                            continue;
++                        continue;
++                    }
++                    break;
++                }
++            }
++        }
++
++        Ok(expr)
++    }
++
++    /// `parse_standard_decorator` of a lint parse of TypeScript, statement for statement: the parentheses, the `!` and the type arguments are recorded.
++    #[cold]
++    #[inline(never)]
++    fn parse_standard_decorator_for_lint(&mut self) -> Result<ExprNodeIndex, Error> {
++        let p = self;
++
++        // @(Expression) — parenthesized, any expression allowed
++        if p.lexer.token == T::TOpenParen {
++            let open = p.lexer.loc();
++            p.lexer.next()?;
++            let expr = p.parse_expr(Level::Lowest)?;
++            if let Some(starts) = &mut p.starts_for_parse_only {
++                starts.wrappers.parenthesized(expr, open, p.lexer.loc());
++            }
++            p.lexer.expect(T::TCloseParen)?;
++            return Ok(expr);
++        }
++
++        // Must start with an identifier
++        if p.lexer.token != T::TIdentifier {
++            p.lexer.expect(T::TIdentifier)?;
++            return Err(crate::Error::SyntaxError);
++        }
++
++        let loc = p.lexer.loc();
++        let ident = p.lexer.identifier;
++        let ref_ = p.store_name_in_ref(ident);
++        let mut expr = p.new_expr(
++            E::Identifier {
++                ref_,
++                ..Default::default()
++            },
++            loc,
++        );
++        p.lexer.next()?;
++
++        loop {
++            match p.lexer.token {
++                T::TExclamation => {
++                    // Skip over TypeScript non-null assertions
++                    if p.lexer.has_newline_before {
++                        break;
++                    }
++                    if let Some(starts) = &mut p.starts_for_parse_only {
++                        starts.wrappers.non_null(expr, p.lexer.loc());
++                    }
++                    p.lexer.next()?;
++                }
++
++                T::TDot | T::TQuestionDot => {
++                    // The grammar for "DecoratorMemberExpression" currently forbids "?."
++                    if p.lexer.token == T::TQuestionDot {
++                        p.log().add_range_error(
++                            Some(p.source),
++                            p.lexer.range(),
++                            b"Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator",
++                        );
++                    }
++                    p.lexer.next()?;
++
++                    if p.lexer.token == T::TPrivateIdentifier && p.allow_private_identifiers {
++                        let name = p.lexer.identifier;
++                        let name_loc = p.lexer.loc();
++                        p.lexer.next()?;
++                        let ref_ = p.store_name_in_ref(name);
++                        let index = p.new_expr(E::PrivateIdentifier { ref_ }, name_loc);
++                        expr = p.new_expr(
++                            E::Index {
++                                target: expr,
++                                index,
++                                optional_chain: None,
++                                is_import_property_use: false,
++                            },
++                            loc,
++                        );
++                    } else {
++                        if !p.lexer.is_identifier_or_keyword() {
++                            p.lexer.expect(T::TIdentifier)?;
++                            return Err(crate::Error::SyntaxError);
                          }
++                        let name = E::Str::new(p.lexer.identifier);
++                        let name_loc = p.lexer.loc();
++                        p.lexer.next()?;
++                        expr = p.new_expr(
++                            E::Dot {
++                                target: expr,
++                                name,
++                                name_loc,
++                                ..Default::default()
++                            },
++                            loc,
++                        );
++                    }
++                }
++
++                T::TOpenParen => {
++                    let args = p.parse_call_args()?;
++                    expr = p.new_expr(
++                        E::Call {
++                            target: expr,
++                            args: args.list,
++                            close_paren_loc: args.loc,
++                            ..Default::default()
++                        },
++                        loc,
++                    );
++
++                    // The grammar for "DecoratorCallExpression" is terminal
++                    if p.lexer.token == T::TDot {
++                        p.log().add_range_error(
++                            Some(p.source),
++                            p.lexer.range(),
++                            b"A decorator call expression cannot be followed by a property access; wrap the expression in parentheses to use it as a decorator",
++                        );
++                        continue;
++                    }
++                    break;
++                }
++
++                _ => {
++                    // "@x<y>" / "@x.y<z>"
++                    let of = crate::parse::generics::TypeArgumentsOf::Expression;
++                    if p.lint_type_arguments_after(expr, of)? {
++                        continue;
+                     }
+                     break;
+                 }

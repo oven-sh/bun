@@ -1,0 +1,107 @@
+DIFF [ts] "const v = <out>(x) => x;"
+      base: R The modifier "out" is not valid here
+      head: A "const v = (x) => x;\n"
+DIFF [ts] "const v = <out, T>(x) => x;"
+      base: R The modifier "out" is not valid here
+      head: A "const v = (x) => x;\n"
+DIFF [tsx] "const v = <out, T>(x) => x;"
+      base: R The modifier "out" is not valid here
+      head: A "const v = (x) => x;\n"
+DIFF [ts] "const v = <out = A>(x) => x;"
+      base: R The modifier "out" is not valid here
+      head: A "const v = (x) => x;\n"
+DIFF [tsx] "const v = <out = A>(x) => x;"
+      base: R The modifier "out" is not valid here
+      head: A "const v = (x) => x;\n"
+DIFF [ts] "const v = <out>(x);"
+      base: R The modifier "out" is not valid here
+      head: A "const v = x;\n"
+DIFF [ts] "const v = <out>x;"
+      base: R The modifier "out" is not valid here
+      head: A "const v = x;\n"
+DIFF [ts] "const v = <T extends (a = 1) => void>(x) => x;"
+      base: R Expected ")" but found "=" | Expected "?" but found "1" | Unexpected ) | Unexpected =>
+      head: R Expected "?" but found ">" | Expected ":" but found ";" | Unexpected end of file
+DIFF [tsx] "const v = <T extends (a = 1) => void>(x) => x;"
+      base: R Expected ")" but found "=" | Expected ">" but found "1" | Unexpected >
+      head: A "const v = (x) => x;\n"
+SAME [ts] "const v = <T = (a = 1) => void>(x) => x;"
+      base: R Expected ">" but found "="
+DIFF [tsx] "const v = <T = (a = 1) => void>(x) => x;"
+      base: R Expected ")" but found "=" | Expected ">" but found "1" | Unexpected >
+      head: A "const v = (x) => x;\n"
+SAME [ts] "const v = <T extends typeof import('a')>(x) => x;"
+      base: A "const v = (x) => x;\n"
+SAME [ts] "const v = <T extends A | B extends C ? D : E>(x) => x;"
+      base: A "const v = (x) => x;\n"
+DIFF [ts] "const v = async <out>(x) => x;"
+      base: R The modifier "out" is not valid here
+      head: A "const v = async (x) => x;\n"
+DIFF [ts] "const v = async <out, T>(x) => x;"
+      base: R The modifier "out" is not valid here
+      head: A "const v = async (x) => x;\n"
+SAME [ts] "const v = async <T extends (a = 1) => void>(x) => x;"
+      base: R Expected ";" but found "extends" | Unexpected >
+DIFF [ts] "const v = <(a = 1) => void>(x);"
+      base: R Expected ")" but found "=" | Expected ">" but found "1" | Expected ";" but found ")" | Unexpected =>
+      head: A "const v = x;\n"
+DIFF [ts] "const v = <(a = 1) => void>x;"
+      base: R Expected ")" but found "=" | Expected ">" but found "1" | Expected ";" but found ")" | Unexpected =>
+      head: A "const v = x;\n"
+SAME [ts] "const v = <const T>(x) => x;"
+      base: A "const v = (x) => x;\n"
+SAME [ts] "const v = <T,>(x) => x;"
+      base: A "const v = (x) => x;\n"
+SAME [tsx] "const v = <T,>(x) => x;"
+      base: A "const v = (x) => x;\n"
+SAME [ts] "const v = <in T>(x) => x;"
+      base: R The modifier "in" is not valid here
+SAME [ts] "const v = <T extends {a?: 1, b(): void; new (): T; readonly [k: string]: U}>(x) => x;"
+      base: A "const v = (x) => x;\n"
+SAME [ts] "const v = <T extends abstract new () => void>(x) => x;"
+      base: A "const v = (x) => x;\n"
+SAME [ts] "const v = <T extends asserts x is y>(x) => x;"
+      base: R Expected "?" but found "x" | Expected ":" but found "y" | Unexpected >
+SAME [ts] "const v = <T extends unique symbol>(x) => x;"
+      base: A "const v = (x) => x;\n"
+SAME [ts] "const v = <T extends [a: string, b?: number, ...c: T[]]>(x) => x;"
+      base: A "const v = (x) => x;\n"
+SAME [ts] "const v = <T extends `a${string}`>(x) => x;"
+      base: A "const v = (x) => x;\n"
+SAME [ts] "const v = <T extends infer U ? 1 : 2>(x) => x;"
+      base: A "const v = (x) => x;\n"
+SAME [ts] "f<(a = 1) => void>(x);"
+      base: R Expected ";" but found "=>" | Unexpected >
+SAME [ts] "new F<(a = 1) => void>(x);"
+      base: R Expected ";" but found "=>" | Unexpected >
+DIFF [ts] "f?.<(a = 1) => void>(x);"
+      base: R Expected ")" but found "=" | Expected ">" but found "1" | Expected ";" but found "=>" | Unexpected >
+      head: A "f?.(x);\n"
+DIFF [ts] "x as (a = 1) => void;"
+      base: R Expected ")" but found "=" | Expected ";" but found "1" | Unexpected )
+      head: A "x;\n"
+DIFF [ts] "const v = x as T <= y;"
+      base: R Unexpected =
+      head: A "const v = x <= y;\n"
+DIFF [tsx] "const e = <F<(a = 1) => void> />;"
+      base: R Expected ")" but found "=" | Expected ">" but found "1"
+      head: A "const e = jsxDEV_7x81h0kn(F, {}, undefined, false, undefined, this);\n"
+DIFF [ts] "const v = (a: (b = 1) => void) => a;"
+      base: R Expected ")" but found "=" | Expected ")" but found "1" | Unexpected ":"
+      head: A "const v = (a) => a;\n"
+SAME [ts] "const v = (a): (b = 1) => void => a;"
+      base: R Expected ";" but found ":" | Unexpected =>
+DIFF [ts] "const v = async (a: (b = 1) => void) => a;"
+      base: R Expected ")" but found "=" | Expected ")" but found "1" | Unexpected ":"
+      head: A "const v = async (a) => a;\n"
+SAME [ts] "f<A | >(x);"
+      base: A "f(x);\n"
+SAME [ts] "let f = (a): => a;"
+      base: A "let f = (a) => a;\n"
+SAME [ts] "let g = (a: ) => a;"
+      base: R Unexpected )
+SAME [ts] "class C<out T> {}; const k = class<in out T> {};"
+      base: A "class C {\n}\nconst k = class {\n};\n"
+DIFF [ts] "const k = class<T extends (a = 1) => void> {};"
+      base: R Expected ")" but found "=" | Expected ">" but found "1" | Expected identifier but found ")" | Expected ";" but found "void" | Expected identifier but found ">"
+      head: A "const k = class {\n};\n"

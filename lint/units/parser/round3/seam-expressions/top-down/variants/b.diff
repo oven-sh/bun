@@ -1,6 +1,6 @@
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/p.rs b/src/js_parser/p.rs
+--- head/src/js_parser/p.rs	2026-10-02 08:38:40.775079604 +0000
++++ b/src/js_parser/p.rs	2026-10-02 08:35:46.007887611 +0000
 @@ -233,6 +233,8 @@
      pub(crate) syntax_errors: crate::parse::syntax_errors::SyntaxErrors,
      /// `Parser::parse_for_lint` made it: `Parser::parse_only` keeps no parentheses.
@@ -10,9 +10,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
  }
  
  /// Where the lists of the side table end at one point of the parse: `StartsForParseOnly::rewind` cuts them back to there.
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/mod.rs b/src/js_parser/parse/mod.rs
+--- head/src/js_parser/parse/mod.rs	2026-10-02 08:38:40.777152362 +0000
++++ b/src/js_parser/parse/mod.rs	2026-10-02 08:35:46.005222480 +0000
 @@ -708,12 +708,9 @@
  
          // Are these arguments to an arrow function?
@@ -305,9 +305,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
          ))
      }
  }
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/parse_fn.rs b/src/js_parser/parse/parse_fn.rs
+--- head/src/js_parser/parse/parse_fn.rs	2026-10-02 08:38:40.777673480 +0000
++++ b/src/js_parser/parse/parse_fn.rs	2026-10-02 08:35:46.005503586 +0000
 @@ -640,16 +640,6 @@
          args: &'a mut [G::Arg],
          data: &mut FnOrArrowDataParse,
@@ -493,9 +493,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
                  stmts: bun_ast::StoreSlice::new_mut(stmts),
              },
              has_react_hooks_suppression,
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/parse_jsx.rs b/src/js_parser/parse/parse_jsx.rs
+--- head/src/js_parser/parse/parse_jsx.rs	2026-10-02 08:38:40.777719179 +0000
++++ b/src/js_parser/parse/parse_jsx.rs	2026-10-02 08:35:46.004129982 +0000
 @@ -23,8 +23,8 @@
          let tag = JSXTag::parse(p)?;
  
@@ -507,9 +507,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
                  p.lint_jsx_type_arguments(loc)?;
              } else {
                  // Pass a flag to the type argument skipper because we need to call
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/parse_prefix.rs b/src/js_parser/parse/parse_prefix.rs
+--- head/src/js_parser/parse/parse_prefix.rs	2026-10-02 08:38:40.777759973 +0000
++++ b/src/js_parser/parse/parse_prefix.rs	2026-10-02 08:35:46.001537357 +0000
 @@ -47,7 +47,7 @@
          let loc = p.lexer.loc();
          p.lexer.next()?;
@@ -644,9 +644,9 @@ diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/j
      /// `<T>x`, `<T>(x)` and `<T>(x) => {}` of a lint parse, at the `<`: an assertion is recorded around its whole operand.
      #[cold]
      #[inline(never)]
-diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
---- a/src/js_parser
-+++ b/src/js_parser
+diff -ru head/src/js_parser/parse/parse_typescript.rs b/src/js_parser/parse/parse_typescript.rs
+--- head/src/js_parser/parse/parse_typescript.rs	2026-10-02 08:38:40.778147420 +0000
++++ b/src/js_parser/parse/parse_typescript.rs	2026-10-02 08:35:46.004323106 +0000
 @@ -68,6 +68,20 @@
          Ok(ExprNodeList::from_bump_vec(decorators))
      }

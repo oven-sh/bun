@@ -1,0 +1,71 @@
+all functions: a 3309 b 3313; identical 3305; different 4; only a 0; only b 4; text bytes a 0 b 0 (+0)
+           bytesA  bytesB  insnA  insnB  jccA  jccB  function
+ONLY-B                  0            66           2  <p::P<false, false>>::code_syntax_error
+DIFF            0       0    290    290    21    21  <p::P<false, false>>::parse_prefix
+ONLY-B                  0            41           1  <p::P<false, false>>::unexpected_as
+ONLY-B                  0            66           2  <p::P<false, true>>::code_syntax_error
+DIFF            0       0    290    290    21    21  <p::P<false, true>>::parse_prefix
+ONLY-B                  0            41           1  <p::P<false, true>>::unexpected_as
+DIFF            0       0    292    292    21    21  <p::P<true, false>>::parse_prefix
+DIFF            0       0    292    292    21    21  <p::P<true, true>>::parse_prefix
+only in b (4):
+         0 bytes     66 insns    2 jcc  <p::P<false, false>>::code_syntax_error
+         0 bytes     41 insns    1 jcc  <p::P<false, false>>::unexpected_as
+         0 bytes     66 insns    2 jcc  <p::P<false, true>>::code_syntax_error
+         0 bytes     41 insns    1 jcc  <p::P<false, true>>::unexpected_as
+--- <p::P<false, false>>::parse_prefix
+    --- 
+    +++ 
+    @@ -279,7 +279,7 @@
+     retq
+     .L0:
+    -addq	$520, %rsi
+    -movq	%rsi, %rdi
+    -callq	<bun_js_parser::lexer::Lexer>::unexpected
+    +movq	%rsi, %rdi
+    +movl	$.Ldata, %esi
+    +callq	<bun_js_parser::p::P<false, false>>::unexpected_as
+     movw	$255, (%rbx)
+     jmp	.L3
+--- <p::P<false, true>>::parse_prefix
+    --- 
+    +++ 
+    @@ -279,7 +279,7 @@
+     retq
+     .L0:
+    -addq	$520, %rsi
+    -movq	%rsi, %rdi
+    -callq	<bun_js_parser::lexer::Lexer>::unexpected
+    +movq	%rsi, %rdi
+    +movl	$.Ldata, %esi
+    +callq	<bun_js_parser::p::P<false, true>>::unexpected_as
+     movw	$255, (%rbx)
+     jmp	.L3
+--- <p::P<true, false>>::parse_prefix
+    --- 
+    +++ 
+    @@ -281,7 +281,7 @@
+     retq
+     .L0:
+    -addq	$520, %rsi
+    -movq	%rsi, %rdi
+    -callq	<bun_js_parser::lexer::Lexer>::unexpected
+    +movq	%rsi, %rdi
+    +movl	$.Ldata, %esi
+    +callq	<bun_js_parser::p::P<true, false>>::unexpected_as
+     movw	$255, (%rbx)
+     jmp	.L3
+--- <p::P<true, true>>::parse_prefix
+    --- 
+    +++ 
+    @@ -281,7 +281,7 @@
+     retq
+     .L0:
+    -addq	$520, %rsi
+    -movq	%rsi, %rdi
+    -callq	<bun_js_parser::lexer::Lexer>::unexpected
+    +movq	%rsi, %rdi
+    +movl	$.Ldata, %esi
+    +callq	<bun_js_parser::p::P<true, true>>::unexpected_as
+     movw	$255, (%rbx)
+     jmp	.L3

@@ -3,7 +3,18 @@ import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import {
+  compose,
+  Duplex,
+  duplexPair,
+  finished,
+  PassThrough,
+  pipeline,
+  Readable,
+  Stream,
+  Transform,
+  Writable,
+} from "node:stream";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
 
@@ -1628,6 +1639,52 @@ describe("node v26 stream semantics", () => {
     expect(received).toBe(65536 * 2 + 40000);
   });
 
+  const waitFor = async condition => {
+    for (let i = 0; i < 200 && !condition(); i++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    return condition();
+  };
+
+  // The same divergence through compose(), which resumes its tail from _read():
+  // Node v26.3.0 strands the last 1000 bytes here and never ends (#34031).
+  it("compose still drains a tail that flagged itself destroyed before EOF (fd-slicer pattern)", async () => {
+    const highWaterMark = new PassThrough().readableHighWaterMark;
+    const chunks = [Buffer.alloc(highWaterMark, 1), Buffer.alloc(highWaterMark, 2), Buffer.alloc(1000, 3)];
+    const tail = new Duplex({
+      write(chunk, encoding, callback) {
+        callback();
+      },
+      read() {
+        const chunk = chunks.shift();
+        if (chunk) {
+          this.push(chunk);
+        } else {
+          this.destroyed = true;
+          this.push(null);
+        }
+      },
+    });
+    const onPause = jest.fn();
+    tail.on("pause", onPause);
+    const composed = compose(new PassThrough(), tail);
+    let ended = false;
+    composed.on("end", () => (ended = true));
+
+    // One drain per turn: the composed buffer fills between turns, so compose pauses the tail.
+    let received = 0;
+    const drained = await waitFor(() => {
+      let chunk;
+      while ((chunk = composed.read()) !== null) received += chunk.length;
+      return ended;
+    });
+    expect({ drained, received, paused: onPause.mock.calls.length > 0 }).toEqual({
+      drained: true,
+      received: highWaterMark * 2 + 1000,
+      paused: true,
+    });
+  });
+
   // Upstream: nodejs/node#60907 (test-stream-compose-operator.js).
   it("compose returns the composed Duplex directly", () => {
     expect(Object.hasOwn(Readable.prototype, "compose")).toBe(true);
@@ -1672,6 +1729,202 @@ describe("node v26 stream semantics", () => {
     const err = await promise;
     expect(err.name).toBe("AbortError");
     expect(err.code).toBe("ABORT_ERR");
+  });
+
+  // Upstream: nodejs/node#63593. compose consumes the tail in flowing mode, so
+  // the composed stream emits a chunk inside the tail's push() call.
+  it("compose emits tail output synchronously with its production", async () => {
+    const log = [];
+    const tail = new Transform({
+      transform(chunk, encoding, callback) {
+        log.push("transform:" + chunk);
+        this.push(chunk);
+        log.push("pushed:" + chunk);
+        callback();
+      },
+    });
+    const composed = compose(new PassThrough(), tail);
+    const resumed = new Promise(resolve => composed.once("resume", resolve));
+    composed.on("data", chunk => log.push("data:" + chunk));
+    const ended = new Promise(resolve => composed.on("end", resolve));
+    // Until a Readable has resumed, push() buffers the chunk instead of emitting 'data' in the same call.
+    await resumed;
+    composed.write("x");
+    composed.end("y");
+    await ended;
+    expect(log).toEqual(["transform:x", "data:x", "pushed:x", "transform:y", "data:y", "pushed:y"]);
+  });
+
+  it("compose delivers the chunks the tail pushed before it errored", async () => {
+    const log = [];
+    const tail = new Transform({
+      transform(chunk, encoding, callback) {
+        this.push(chunk);
+        callback(chunk.toString() === "boom" ? new Error("tail-boom") : null);
+      },
+    });
+    const composed = compose(new PassThrough(), tail);
+    const resumed = new Promise(resolve => composed.once("resume", resolve));
+    composed.on("data", chunk => log.push("data:" + chunk));
+    composed.on("error", err => log.push("error:" + err.message));
+    const closed = new Promise(resolve => composed.on("close", resolve));
+    await resumed;
+    composed.write("ok");
+    composed.write("boom");
+    await closed;
+    expect(log).toEqual(["data:ok", "data:boom", "error:tail-boom"]);
+  });
+
+  it("Readable.prototype.compose emits tail output synchronously with its production", async () => {
+    const log = [];
+    const source = new Readable({ read() {} });
+    const tail = new Transform({
+      transform(chunk, encoding, callback) {
+        log.push("transform:" + chunk);
+        this.push(chunk);
+        log.push("pushed:" + chunk);
+        callback();
+      },
+    });
+    const composed = source.compose(tail);
+    const resumed = new Promise(resolve => composed.once("resume", resolve));
+    composed.on("data", chunk => log.push("data:" + chunk));
+    const ended = new Promise(resolve => composed.on("end", resolve));
+    await resumed;
+    source.push("x");
+    source.push("y");
+    source.push(null);
+    await ended;
+    expect(log).toEqual(["transform:x", "data:x", "pushed:x", "transform:y", "data:y", "pushed:y"]);
+  });
+
+  // The listener runs inside the pipe's write to the tail, and pipe routes a throw there to 'error'.
+  it("a throw in the composed stream's 'data' listener becomes 'error' on the composed stream", async () => {
+    const composed = compose(new PassThrough(), new PassThrough());
+    const resumed = new Promise(resolve => composed.once("resume", resolve));
+    composed.on("data", () => {
+      throw new Error("consumer-boom");
+    });
+    const onError = jest.fn();
+    composed.on("error", onError);
+    await resumed;
+    composed.write("x");
+    expect(await waitFor(() => onError.mock.calls.length > 0)).toBe(true);
+    expect(onError.mock.calls.map(([err]) => err.message)).toEqual(["consumer-boom"]);
+  });
+
+  it("compose keeps the chunk boundaries of a tail with setEncoding", async () => {
+    const tail = new PassThrough();
+    tail.setEncoding("utf8");
+    const composed = compose(new PassThrough(), tail);
+    const chunks = [];
+    composed.on("data", chunk => chunks.push(chunk.toString()));
+    const ended = new Promise(resolve => composed.on("end", resolve));
+    composed.write("a");
+    composed.write("b");
+    composed.end("c");
+    await ended;
+    expect(chunks).toEqual(["a", "b", "c"]);
+  });
+
+  it("compose forwards 'data' from an old-style tail that has no read()", async () => {
+    const tail = new Stream();
+    tail.readable = true;
+    tail.writable = true;
+    tail.write = function (chunk) {
+      this.emit("data", Buffer.from("<" + chunk + ">"));
+      return true;
+    };
+    tail.end = function () {
+      this.emit("end");
+      this.emit("finish");
+      this.emit("close");
+    };
+    tail.pause = tail.resume = tail.destroy = () => {};
+    const composed = compose(new PassThrough(), tail);
+    const chunks = [];
+    composed.on("data", chunk => chunks.push(chunk.toString()));
+    composed.write("a");
+    composed.end("b");
+    expect(await waitFor(() => chunks.length === 2)).toBe(true);
+    expect(chunks).toEqual(["<a>", "<b>"]);
+  });
+
+  it("compose pauses the tail on backpressure and resumes it on read", async () => {
+    const tail = new PassThrough();
+    const composed = compose(new PassThrough(), tail);
+    const first = Buffer.alloc(composed.readableHighWaterMark, "a");
+    const second = Buffer.from("b");
+
+    // Nothing reads the composed stream, so one chunk fills its buffer and push() returns false.
+    composed.write(first);
+    expect(await waitFor(() => composed.readableLength === first.length)).toBe(true);
+    expect(tail.isPaused()).toBe(true);
+
+    // The paused tail keeps the next chunk.
+    composed.write(second);
+    expect(await waitFor(() => tail.readableLength === second.length)).toBe(true);
+    expect(composed.readableLength).toBe(first.length);
+
+    // read() drains the buffer and calls _read(), which resumes the tail.
+    expect(composed.read()).toEqual(first);
+    expect(await waitFor(() => composed.readableLength === second.length)).toBe(true);
+    expect(tail.isPaused()).toBe(false);
+    expect(composed.read()).toEqual(second);
+  });
+
+  // 'finish' waits for the tail to end. A tail that nothing reads ends only after compose drains it.
+  it.each([
+    ["a stream tail", () => new PassThrough()],
+    [
+      "a function tail",
+      () =>
+        async function* (source) {
+          yield* source;
+        },
+    ],
+  ])("pipeline into a compose() that nothing reads calls back (%s)", async (_, makeTail) => {
+    const composed = compose(new PassThrough(), makeTail());
+    const callback = jest.fn();
+    pipeline(Readable.from(["a", "b", "c"]), composed, callback);
+    expect(await waitFor(() => callback.mock.calls.length > 0)).toBe(true);
+    expect(callback.mock.calls).toEqual([[undefined]]);
+    expect(composed.writableFinished).toBe(true);
+    expect(composed.readableLength).toBe(3);
+  });
+
+  // Upstream: nodejs/node#63699. With a web stream tail, compose runs one
+  // reader loop per _read() call. When the loop that sees done runs while the
+  // composed buffer is over the high water mark, push(value) reports
+  // backpressure. The done check has to come first or push(null) never runs.
+  it("compose with a web stream tail ends when done arrives under backpressure", async () => {
+    const src = new Readable({ read() {} });
+    const composed = compose(src, new TransformStream());
+    let ended = false;
+    composed.on("end", () => (ended = true));
+    // One chunk fits under the high water mark, two do not. The default high
+    // water mark is 16 KiB on Windows and 64 KiB elsewhere.
+    const big = Buffer.alloc(Math.floor(composed.readableHighWaterMark * 0.75), "a");
+
+    // The first reader loop starts.
+    composed.read(0);
+    src.push(big);
+    expect(await waitFor(() => composed.readableLength === big.length)).toBe(true);
+    // readableLength - 1 is below the high water mark, so a second loop starts.
+    composed.read(1);
+    // The first loop receives this chunk. push() returns false: over the high water mark.
+    src.push(big);
+    expect(await waitFor(() => composed.readableLength === big.length * 2 - 1)).toBe(true);
+    // The second loop receives done while the buffer is still full. The fix
+    // pushes null here, before anything drains the buffer.
+    src.push(null);
+    expect(await waitFor(() => composed._readableState.ended)).toBe(true);
+
+    let total = 1;
+    let chunk;
+    while ((chunk = composed.read()) !== null) total += chunk.length;
+    expect(total).toBe(big.length * 2);
+    expect(await waitFor(() => ended)).toBe(true);
   });
 
   // Upstream: v26 test-stream-writable-decoded-encoding.js.

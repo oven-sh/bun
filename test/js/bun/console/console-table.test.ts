@@ -363,3 +363,29 @@ console.log("calls=" + calls);`,
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: box("1") + "calls=1\n", stderr: "", exitCode: 0 });
   });
 });
+
+// Node keys a null-proto object by each `properties` entry and reads the column
+// set back via ObjectKeys, so a Symbol entry is silently dropped. The native
+// path must not ToString the Symbol (which throws) and must match that output.
+describe("console.table with a Symbol in the properties filter", () => {
+  const data = [{ a: 1, b: 2 }];
+  const expected = `┌───┬───┐\n│   │ a │\n├───┼───┤\n│ 0 │ 1 │\n└───┴───┘\n`;
+
+  test("Bun.inspect.table drops the Symbol column", () => {
+    expect(Bun.inspect.table(data, [Symbol("col"), "a"])).toBe(expected);
+    // control: a non-Symbol primitive still ToStrings into a column header.
+    expect(Bun.inspect.table(data, [42, "a"])).toBe(
+      `┌───┬────┬───┐\n│   │ 42 │ a │\n├───┼────┼───┤\n│ 0 │    │ 1 │\n└───┴────┴───┘\n`,
+    );
+  });
+
+  test("console.table drops the Symbol column", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.table([{ a: 1, b: 2 }], [Symbol("col"), "a"])`],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+  });
+});

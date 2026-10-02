@@ -3495,11 +3495,11 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     }
   }
 
+  const sentState = NodeHTTPHeaderState.sent;
   let headerState = this[headerStateSymbol];
   // A writeHead() wrapper can send the head itself, with write() or flushHeaders().
-  if (callWriteHeadIfObservable(this, headerState, true) && this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
-    headerState = NodeHTTPHeaderState.sent;
-  }
+  if (callWriteHeadIfObservable(this, headerState, true) && this[headerStateSymbol] === sentState)
+    headerState = sentState;
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
@@ -3510,7 +3510,6 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     this.emit("prefinish");
     return this;
   }
-  const sentState = NodeHTTPHeaderState.sent;
   // Native end() returns -(length + 1) while part of the body is still draining; 'finish' waits for it.
   let draining = false;
   if (headerState !== sentState) {

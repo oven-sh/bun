@@ -577,8 +577,7 @@ pub(super) fn get_peer_certificate(
             {
                 let mut extras: Vec<*mut boringssl::X509> = Vec::new();
                 // Cap the walk so a cyclic store cannot loop forever.
-                while extras.len() < 16
-                    && ffi::X509_get_extension_flags(last_cert) & EXFLAG_SS == 0
+                while extras.len() < 16 && ffi::X509_get_extension_flags(last_cert) & EXFLAG_SS == 0
                 {
                     let mut issuer: *mut boringssl::X509 = core::ptr::null_mut();
                     if ffi::X509_STORE_CTX_get1_issuer(&raw mut issuer, store_ctx, last_cert) <= 0

@@ -14,10 +14,9 @@ use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_uws::{ConnectingSocket, NewSocketHandler};
-use bun_uws_sys::thunk;
 use bun_uws_sys::thunk::ExtSlot;
 use bun_uws_sys::vtable::Handler as VHandler;
-use bun_uws_sys::{CloseCode, us_bun_verify_error_t, us_socket_t};
+use bun_uws_sys::{us_bun_verify_error_t, us_socket_t};
 
 use crate::api;
 use crate::ipc as IPC;
@@ -146,27 +145,8 @@ where
         fold(T::on_end(this, wrap::<SSL>(s)));
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
-        // Close FIRST, then notify — same order `main`'s `configure()`
-        // trampoline used. The handler may re-enter `connectInner`
-        // synchronously (node:net `autoSelectFamily` falls back to the
-        // next address from inside the JS `connectError` callback); on
-        // Windows/libuv, starting the next attempt's `uv_poll_t` while
-        // this half-open one is still active and then closing it
-        // *afterwards* leaves the second poll never delivering
-        // writable/error → process hang (Win11-aarch64
-        // double-connect.test, test-net-server-close).
-        //
-        // Safe for TLS too: `us_internal_ssl_close` short-circuits
-        // SEMI_SOCKET straight to `close_raw`, and `close_raw` skips
-        // dispatch for SEMI_SOCKET, so no `on_handshake`/`on_close` lands
-        // in JS before we read `ext`/`this`.
-        let this = *ext;
-        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
-        // deref (`s` is a live socket passed by the trampoline).
-        us_socket_t::opaque_mut(s).close(CloseCode::failure);
-        if let Some(t) = this {
-            fold(T::on_connect_error(t, wrap::<SSL>(s), code));
-        }
+        let Some(this) = *ext else { return };
+        fold(T::on_connect_error(this, wrap::<SSL>(s), code));
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
         let Some(this) = *ConnectingSocket::opaque_mut(c).ext::<Option<ThisPtr<T>>>() else {
@@ -600,16 +580,8 @@ where
         fold(H::on_end(this, wrap::<SSL>(s)));
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
-        // Close before notify — see RawPtrHandler::on_connect_error.
-        let this = ext.get();
-        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
-        // deref (`s` is a live socket passed by the trampoline).
-        us_socket_t::opaque_mut(s).close(CloseCode::failure);
-        // SAFETY: snapshot of the ext slot taken before close; unique heap
-        // owner, single-threaded dispatch (same contract as `ExtSlot::owner_mut`).
-        if let Some(t) = unsafe { thunk::ext_owner(&this) } {
-            fold(H::on_connect_error(t, wrap::<SSL>(s), code));
-        }
+        let Some(this) = ext.owner_mut() else { return };
+        fold(H::on_connect_error(this, wrap::<SSL>(s), code));
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
         let Some(this) = ConnectingSocket::opaque_mut(c)
@@ -695,13 +667,7 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
         HttpH::<SSL>::on_end(owner.as_ptr(), wrap::<SSL>(s));
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
-        // Close before notify — see RawPtrHandler::on_connect_error. SEMI_SOCKET
-        // close skips dispatch, so the tagged owner survives the close.
-        let owner = *ext;
-        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
-        // deref (`s` is a live socket passed by the trampoline).
-        us_socket_t::opaque_mut(s).close(CloseCode::failure);
-        let Some(owner) = owner else { return };
+        let Some(owner) = *ext else { return };
         HttpH::<SSL>::on_connect_error(owner.as_ptr(), wrap::<SSL>(s), code);
     }
     fn on_connecting_error(cs: *mut ConnectingSocket, code: i32) {

@@ -312,7 +312,14 @@ impl RouteKind {
             M::HEAD => RouteKind::Head,
             M::CONNECT => RouteKind::Connect,
             M::TRACE => RouteKind::Trace,
-            _ => return None,
+            _ => {
+                debug_assert!(
+                    false,
+                    "{} has no route kind: the route would not be registered",
+                    m.as_str()
+                );
+                return None;
+            }
         })
     }
 }

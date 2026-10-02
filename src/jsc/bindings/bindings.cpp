@@ -2178,7 +2178,8 @@ struct UnorderedLeftovers {
             const ptrdiff_t behind = lastHit - step;
             ptrdiff_t hit = -1;
             for (ptrdiff_t attempt = 0; attempt < count + 2 && hit < 0; attempt++) {
-                ptrdiff_t candidate = attempt == 0 ? ahead : attempt == 1 ? behind : attempt - 2;
+                ptrdiff_t candidate = attempt == 0 ? ahead : attempt == 1 ? behind
+                                                                          : attempt - 2;
                 if (candidate < 0 || candidate >= count || (attempt >= 2 && (candidate == ahead || candidate == behind)))
                     continue;
                 bool equal = entriesEqual(key, value, unheld.at(candidate * width()), valueAt(unheld, candidate * width()));
@@ -2187,7 +2188,8 @@ struct UnorderedLeftovers {
                     hit = candidate;
             }
             if (hit >= 0) {
-                step = hit == ahead ? step : hit == behind ? -step : 1;
+                step = hit == ahead ? step : hit == behind ? -step
+                                                           : 1;
                 lastHit = hit;
             } else {
                 // Last, the entries `left` holds too: one can duplicate a leftover, or satisfy a matcher.

@@ -1349,137 +1349,140 @@ describe("expect()", () => {
   });
 
   // As in Jest, every entry of the received Set or Map needs some equal entry on the expected side, and entries can share one.
-  describe.each(["toEqual", "toStrictEqual"])("%s on Set and Map entries that the other side does not hold by identity", matcher => {
-    const passes = (received, expected) => expect(received)[matcher](expected);
-    const fails = (received, expected) => expect(received).not[matcher](expected);
+  describe.each(["toEqual", "toStrictEqual"])(
+    "%s on Set and Map entries that the other side does not hold by identity",
+    matcher => {
+      const passes = (received, expected) => expect(received)[matcher](expected);
+      const fails = (received, expected) => expect(received).not[matcher](expected);
 
-    test("a Map entry matches on its key and its value together", () => {
-      // https://github.com/oven-sh/bun/issues/34830
-      passes(
-        new Map([
-          [/a/, "x"],
-          [/a/, "y"],
-        ]),
-        new Map([
-          [/a/, "x"],
-          [/a/, "y"],
-        ]),
-      );
-      const received = new Map([
-        [{ k: 1 }, "x"],
-        [{ k: 1 }, "y"],
-      ]);
-      passes(
-        received,
-        new Map([
+      test("a Map entry matches on its key and its value together", () => {
+        // https://github.com/oven-sh/bun/issues/34830
+        passes(
+          new Map([
+            [/a/, "x"],
+            [/a/, "y"],
+          ]),
+          new Map([
+            [/a/, "x"],
+            [/a/, "y"],
+          ]),
+        );
+        const received = new Map([
+          [{ k: 1 }, "x"],
           [{ k: 1 }, "y"],
-          [{ k: 1 }, "x"],
-        ]),
-      );
-      fails(
-        received,
-        new Map([
-          [{ k: 1 }, "x"],
-          [{ k: 1 }, "z"],
-        ]),
-      );
-    });
+        ]);
+        passes(
+          received,
+          new Map([
+            [{ k: 1 }, "y"],
+            [{ k: 1 }, "x"],
+          ]),
+        );
+        fails(
+          received,
+          new Map([
+            [{ k: 1 }, "x"],
+            [{ k: 1 }, "z"],
+          ]),
+        );
+      });
 
-    test("two entries can match the same entry", () => {
-      passes(new Set([{ a: 1 }, { a: 1 }]), new Set([{ a: 1 }, { a: 2 }]));
-      fails(new Set([{ a: 1 }, { a: 2 }]), new Set([{ a: 1 }, { a: 1 }]));
-      passes(
-        new Map([
-          [{ k: 1 }, 1],
-          [{ k: 1 }, 1],
-          [{ k: 1 }, 2],
-        ]),
-        new Map([
-          [{ k: 1 }, 1],
-          [{ k: 1 }, 2],
-          [{ k: 1 }, 2],
-        ]),
-      );
-    });
+      test("two entries can match the same entry", () => {
+        passes(new Set([{ a: 1 }, { a: 1 }]), new Set([{ a: 1 }, { a: 2 }]));
+        fails(new Set([{ a: 1 }, { a: 2 }]), new Set([{ a: 1 }, { a: 1 }]));
+        passes(
+          new Map([
+            [{ k: 1 }, 1],
+            [{ k: 1 }, 1],
+            [{ k: 1 }, 2],
+          ]),
+          new Map([
+            [{ k: 1 }, 1],
+            [{ k: 1 }, 2],
+            [{ k: 1 }, 2],
+          ]),
+        );
+      });
 
-    test("asymmetric matchers as Set members", () => {
-      passes(new Set([{ a: 1 }, { a: 2 }]), new Set([expect.anything(), { a: 1 }]));
-      passes(new Set([{ a: 1 }, { a: 2 }]), new Set([{ a: 1 }, expect.anything()]));
-      passes(new Set([1, 2]), new Set([1, expect.any(Number)]));
-      fails(new Set([1, "x"]), new Set([1, expect.any(Number)]));
+      test("asymmetric matchers as Set members", () => {
+        passes(new Set([{ a: 1 }, { a: 2 }]), new Set([expect.anything(), { a: 1 }]));
+        passes(new Set([{ a: 1 }, { a: 2 }]), new Set([{ a: 1 }, expect.anything()]));
+        passes(new Set([1, 2]), new Set([1, expect.any(Number)]));
+        fails(new Set([1, "x"]), new Set([1, expect.any(Number)]));
 
-      const received = new Set([
-        { type: "a", id: 1 },
-        { type: "a", id: 2 },
-      ]);
-      passes(received, new Set([expect.objectContaining({ type: "a" }), expect.objectContaining({ id: 1 })]));
-      fails(received, new Set([expect.objectContaining({ id: 3 }), expect.objectContaining({ id: 1 })]));
-    });
+        const received = new Set([
+          { type: "a", id: 1 },
+          { type: "a", id: 2 },
+        ]);
+        passes(received, new Set([expect.objectContaining({ type: "a" }), expect.objectContaining({ id: 1 })]));
+        fails(received, new Set([expect.objectContaining({ id: 3 }), expect.objectContaining({ id: 1 })]));
+      });
 
-    test("a matcher on the received side can match a primitive that both sides hold", () => {
-      passes(new Set([{ a: 1 }, 1, expect.any(Number)]), new Set([{ a: 1 }, 1, "s"]));
-      fails(new Set([{ a: 1 }, 1, expect.any(String)]), new Set([{ a: 1 }, 1, 2]));
-    });
+      test("a matcher on the received side can match a primitive that both sides hold", () => {
+        passes(new Set([{ a: 1 }, 1, expect.any(Number)]), new Set([{ a: 1 }, 1, "s"]));
+        fails(new Set([{ a: 1 }, 1, expect.any(String)]), new Set([{ a: 1 }, 1, 2]));
+      });
 
-    test("asymmetric matchers as Map keys and values", () => {
-      const received = new Map([
-        [{ a: 1 }, "x"],
-        [{ a: 2 }, "y"],
-      ]);
-      passes(
-        received,
-        new Map([
-          [expect.anything(), "y"],
+      test("asymmetric matchers as Map keys and values", () => {
+        const received = new Map([
           [{ a: 1 }, "x"],
-        ]),
-      );
-      fails(
-        received,
-        new Map([
-          [expect.anything(), "z"],
-          [{ a: 1 }, "x"],
-        ]),
-      );
+          [{ a: 2 }, "y"],
+        ]);
+        passes(
+          received,
+          new Map([
+            [expect.anything(), "y"],
+            [{ a: 1 }, "x"],
+          ]),
+        );
+        fails(
+          received,
+          new Map([
+            [expect.anything(), "z"],
+            [{ a: 1 }, "x"],
+          ]),
+        );
 
-      const expected = new Map([
-        ["a", 2],
-        [expect.any(String), 1],
-      ]);
-      passes(
-        new Map([
-          ["a", 1],
-          ["b", 1],
-        ]),
-        expected,
-      );
-      fails(
-        new Map([
-          ["a", 1],
-          ["b", 2],
-        ]),
-        expected,
-      );
+        const expected = new Map([
+          ["a", 2],
+          [expect.any(String), 1],
+        ]);
+        passes(
+          new Map([
+            ["a", 1],
+            ["b", 1],
+          ]),
+          expected,
+        );
+        fails(
+          new Map([
+            ["a", 1],
+            ["b", 2],
+          ]),
+          expected,
+        );
 
-      const byObjectKey = new Map([
-        [{ k: 1 }, 5],
-        [{ k: 2 }, "s"],
-      ]);
-      passes(
-        byObjectKey,
-        new Map([
-          [{ k: 2 }, expect.any(String)],
-          [{ k: 1 }, expect.any(Number)],
-        ]),
-      );
-      fails(
-        byObjectKey,
-        new Map([
-          [{ k: 2 }, expect.any(Number)],
-          [{ k: 1 }, expect.any(Number)],
-        ]),
-      );
-    });
-  });
+        const byObjectKey = new Map([
+          [{ k: 1 }, 5],
+          [{ k: 2 }, "s"],
+        ]);
+        passes(
+          byObjectKey,
+          new Map([
+            [{ k: 2 }, expect.any(String)],
+            [{ k: 1 }, expect.any(Number)],
+          ]),
+        );
+        fails(
+          byObjectKey,
+          new Map([
+            [{ k: 2 }, expect.any(Number)],
+            [{ k: 1 }, expect.any(Number)],
+          ]),
+        );
+      });
+    },
+  );
 
   test("deepEquals - symbols", () => {
     const x = [5, 6];

@@ -177,7 +177,12 @@ describe("Set and Map entries without an identical counterpart", () => {
   // [name, a, b, equal]: the same answer from every entry point, in both argument orders.
   const cases: [string, unknown, unknown, boolean][] = [
     ["Set: same members, other order", set({ a: 1 }, { a: 2 }, { a: 3 }), set({ a: 3 }, { a: 1 }, { a: 2 }), true],
-    ["Set: one member moved", set({ i: 2 }, { i: 1 }, { i: 3 }, { i: 0 }), set({ i: 0 }, { i: 1 }, { i: 2 }, { i: 3 }), true],
+    [
+      "Set: one member moved",
+      set({ i: 2 }, { i: 1 }, { i: 3 }, { i: 0 }),
+      set({ i: 0 }, { i: 1 }, { i: 2 }, { i: 3 }),
+      true,
+    ],
     ["Set: equal duplicate counts", set({ a: 1 }, { a: 1 }, { a: 2 }), set({ a: 2 }, { a: 1 }, { a: 1 }), true],
     ["Set: one member differs", set({ a: 1 }, { a: 2 }), set({ a: 1 }, { a: 3 }), false],
     ["Set: a primitive only one side holds", set(1, { a: 1 }), set(2, { a: 1 }), false],
@@ -343,7 +348,9 @@ describe("Set and Map entries without an identical counterpart", () => {
     expect(() => check(map([throwing(), 1]), map([throwing(), 1]), true)).toThrow("boom");
     expect(() => check(map(["k", throwing()]), map(["k", throwing()]), true)).toThrow("boom");
     expect(() => check(map([{ k: 1 }, throwing()]), map([{ k: 1 }, throwing()]), true)).toThrow("boom");
-    expect(() => check(map([{ a: 1 }, 1], [{ k: 1 }, throwing()]), map([{ a: 1 }, 1], [{ k: 1 }, throwing()]), true)).toThrow("boom");
+    expect(() =>
+      check(map([{ a: 1 }, 1], [{ k: 1 }, throwing()]), map([{ a: 1 }, 1], [{ k: 1 }, throwing()]), true),
+    ).toThrow("boom");
   });
 
   // Once a second entry is left over, the right side is compared from a copy, as in node. Before that it is walked live.

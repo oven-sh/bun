@@ -249,6 +249,9 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
+const { appendHeadChunk, indexOfHeadEnd, firstLineOfHead } = require("internal/http");
+export const proxyResponseHead = { appendHeadChunk, indexOfHeadEnd, firstLineOfHead };
+
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
 // so the node edge cases are handled here.

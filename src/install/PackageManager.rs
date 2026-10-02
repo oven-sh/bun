@@ -1600,6 +1600,10 @@ pub fn init(
                 ) {
                     Ok(f) => break 'child f,
                     Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
+                        // A package.json above the global dir belongs to another project (#30658).
+                        if cli.global {
+                            break;
+                        }
                         if let Some(parent) = bun_core::dirname(this_cwd) {
                             this_cwd = strings::without_trailing_slash(parent);
                             continue;
@@ -1651,6 +1655,19 @@ pub fn init(
                 no_project = true;
                 break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
             }
+            // Bootstrap a fresh global dir's package.json (#30658). Never beside an existing lockfile: an empty manifest there would later be reconciled against it and wipe every global package.
+            if cli.global
+                && matches!(
+                    subcommand,
+                    Subcommand::Install | Subcommand::Add | Subcommand::Pm
+                )
+                && !bun_sys::exists_at(bun_sys::Fd::cwd(), bun_core::zstr!("bun.lock"))
+                && !bun_sys::exists_at(bun_sys::Fd::cwd(), bun_core::zstr!("bun.lockb"))
+            {
+                this_cwd = original_cwd;
+                created_package_json = true;
+                break 'child attempt_to_create_package_json_and_open()?;
+            }
             return Err(crate::Error::MissingPackageJSON);
         };
 
@@ -1670,8 +1687,8 @@ pub fn init(
             ZStr::from_buf(&original_package_json_path_buf[..], new_path_len);
         let child_cwd = &original_package_json_path.as_bytes()[..this_cwd.len()];
 
-        // Check if this is a workspace; if so, use root package
-        if subcommand.should_chdir_to_root() {
+        // Check if this is a workspace; if so, use root package (never for `-g`, #28247).
+        if subcommand.should_chdir_to_root() && !cli.global {
             if !created_package_json && !no_project {
                 while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);

@@ -2145,9 +2145,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Older versions named the link after the package. Removes the one a previous install
-    /// left for the entry's package, at any version. Only for a package name that nothing is
-    /// linked under now.
+    /// Removes the link an older version left under the package's name. The caller checks that nothing is linked under that name now.
     pub(crate) fn unlink_package_name_from_hidden_node_modules(&self, entry_id: StoreEntryId) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 

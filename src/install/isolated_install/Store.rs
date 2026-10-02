@@ -26,8 +26,7 @@ pub struct Store {
     /// Accessed from multiple threads
     pub(crate) entries: entry::List,
     pub(crate) nodes: node::List,
-    /// `node_modules/.bun/node_modules` names an entry holds through a dependency other than
-    /// the one that created it, sorted by entry id. Accessed from multiple threads.
+    /// `node_modules/.bun/node_modules` names an entry holds through a dependency that did not create it, sorted by entry id.
     pub(crate) hidden_hoist_keys: Vec<entry::DependenciesItem>,
 }
 
@@ -292,8 +291,7 @@ pub mod entry {
         // no atomic-enum wrapper exists.
         pub step: core::sync::atomic::AtomicU32,
 
-        // if true this entry gets symlinked to `node_modules/.bun/node_modules` under the
-        // name of the dependency that created it
+        // if true this entry gets symlinked to `node_modules/.bun/node_modules` under its creating dependency's name
         pub hoisted: bool,
 
         pub peer_hash: PeerHash,

@@ -235,10 +235,7 @@ fn claim_hidden_hoist(
     if !manager.options.hoist {
         return Ok(false);
     }
-    // The directory holds one link per package name. A dependency name that is
-    // not one takes a path the linker needs: `.bin` is on the `PATH` of every
-    // store package's scripts, and a bare scope takes the directory that holds
-    // `<scope>/<name>`.
+    // `.bin` is on the `PATH` of store packages' scripts, and a bare scope is the directory that holds `<scope>/<name>`.
     let is_package_name = match dep_name.first() {
         Some(&b'.') => false,
         Some(&b'@') => bun_core::strings::contains_char(dep_name, b'/'),
@@ -975,10 +972,7 @@ pub(crate) fn build_store(
                 if info.peers.eql(curr_peers, &eql_ctx) {
                     // dedupe! depend on the already created entry
 
-                    // The entry keeps the name it was created under. A dependency that
-                    // reaches it under another name can hold that name too. An entry
-                    // that gets no link must not take a name here: the next dependency
-                    // with that name needs it.
+                    // A second name for the entry. An entry that gets no link leaves the name to the next dependency.
                     if curr_dep_id != invalid_dependency_id
                         && info.dep_id != invalid_dependency_id
                         && links_into_hidden_node_modules(pkg_resolutions[pkg_id as usize].tag)
@@ -2152,10 +2146,7 @@ pub(crate) fn install_isolated_packages(
             );
         }
 
-        // Validate every package name and dependency alias as a
-        // `node_modules/<name>` component before any filesystem work. An entry
-        // is linked into `node_modules/.bun/node_modules` under names that the
-        // dependencies of later entries declare.
+        // Before any filesystem work: an entry is linked under names that the dependencies of later entries declare.
         {
             let dependencies = &lockfile_ro.buffers.dependencies;
             let unsafe_folder_name: Option<&[u8]> = 'unsafe_folder_name: {
@@ -2192,11 +2183,7 @@ pub(crate) fn install_isolated_packages(
                 Global::exit(1);
             }
 
-            // An older version named each link after the package. A package that is
-            // installed under other names only keeps that link from a previous install.
-            // Runs before the first task, and only for a name nothing is linked under
-            // now, so it cannot remove a link this install writes. Covers entries this
-            // version does not hoist: an older version may have.
+            // Older versions named the link after the package. Before the first task, so it cannot remove a link this install writes.
             if !is_new_bun_modules {
                 let mut linked_names: Option<HashMap<PackageNameHash, ()>> = None;
                 for entry_idx in 0..store.entries.len() {

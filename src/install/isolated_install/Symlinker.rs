@@ -120,8 +120,7 @@ impl Symlinker {
         }
     }
 
-    /// Removes `dest` if it is the link this would write, or that link to another store
-    /// entry of `pkg_name`.
+    /// Removes `dest` if it links to a store entry of `pkg_name`, at any version.
     pub(crate) fn unlink_if_links_to_package(&mut self, pkg_name: &[u8]) {
         let mut current_link_buf = bun_paths::path_buffer_pool::get();
         let Ok(current_link_len) = bun_sys::readlink(self.dest.slice_z(), &mut current_link_buf)
@@ -160,8 +159,7 @@ impl Symlinker {
     fn unlink(&mut self) {
         #[cfg(windows)]
         {
-            // on windows rmdir must be used for symlinks created to point
-            // at directories, even if the target no longer exists
+            // on windows rmdir must be used for symlinks created to point at directories, even if the target no longer exists
             match bun_sys::rmdir(self.dest.slice_z()) {
                 Ok(()) => {}
                 Err(err) => match err.get_errno() {
@@ -179,8 +177,7 @@ impl Symlinker {
     }
 }
 
-/// Whether `link` is `target` with any store entry of `pkg_name` where `target` names one:
-/// `<dirs>/<pkg_name>@<resolution>/node_modules/<pkg_name>`.
+/// Whether `link` is `target` with any store entry of `pkg_name`: `<dirs>/<pkg_name>@<resolution>/node_modules/<pkg_name>`.
 fn links_to_entry_of(link: &[u8], target: &[u8], pkg_name: &[u8]) -> bool {
     let link: Vec<&[u8]> = strings::tokenize_any(link, b"/\\").collect();
     let target: Vec<&[u8]> = strings::tokenize_any(target, b"/\\").collect();

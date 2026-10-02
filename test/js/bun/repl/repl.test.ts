@@ -2081,8 +2081,10 @@ describe.concurrent("--interactive", () => {
   );
 
   // node's `-i` is an alias for --interactive. Bun's own `-i` is
-  // --install=fallback, which has no meaning under node emulation, so the node
-  // meaning wins there; everywhere else `-i` stays --install=fallback.
+  // --install=fallback, which has no meaning under node emulation or on an
+  // invocation that reaches the REPL (bare `bun -i` boots it with the
+  // bunfig/default resolver options); `-i <script>` and `-i -e code` keep
+  // the auto-install meaning.
   test(
     "bun-as-node: `node -i` enters the REPL",
     async () => {
@@ -2102,6 +2104,76 @@ describe.concurrent("--interactive", () => {
     },
     interactiveTimeout,
   );
+
+  test.each([
+    ["bare bun -i", ["-i"]],
+    ["bun run -i --interactive", ["run", "-i", "--interactive"]],
+    ["bun -i -e ''", ["-i", "-e", ""]],
+  ])(
+    "%s reaches the REPL",
+    async (_label, extra) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...extra],
+        env,
+        stdin: Buffer.from("1+1\n"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain("Welcome to Bun");
+      expect(stdout).toContain("> 2\n");
+      expect({ stderrHasError: stderr.includes("error"), exitCode }).toEqual({ stderrHasError: false, exitCode: 0 });
+    },
+    interactiveTimeout,
+  );
+
+  test.each(["module", "commonjs", "module-typescript", "commonjs-typescript"])(
+    "--input-type=%s with a file entry is ignored like node",
+    async inputType => {
+      using dir = tempDir("input-type-file", { "entry.js": `console.log("ran");` });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), `--input-type=${inputType}`, "entry.js"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("ran");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+
+  test("--input-type with an invalid value exits 9 with node's message", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--input-type=bogus", "-e", "1"],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Verbatim node v26.3.0 wording, including the missing space.
+    expect(stderr).toContain('--input-type must be "module","commonjs", "module-typescript" or "commonjs-typescript"');
+    expect(exitCode).toBe(9);
+  });
+
+  test.each([
+    ["module", 'import assert from "assert"; assert.ok(1); console.log("ok");'],
+    ["commonjs", 'const assert = require("assert"); assert.ok(1); console.log("ok");'],
+    ["module-typescript", 'import assert from "assert"; const n: number = 1; assert.ok(n); console.log("ok");'],
+    ["commonjs-typescript", 'const assert = require("assert"); const n: number = 1; assert.ok(n); console.log("ok");'],
+  ])("--input-type=%s with --eval runs the matching grammar", async (inputType, src) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), `--input-type=${inputType}`, "-e", src],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
 
   // The "run" subcommand word is a dispatch artifact, not user input: it must
   // not survive into the REPL's process.argv the way a script name would.
@@ -2136,6 +2208,29 @@ describe.concurrent("--interactive", () => {
       });
       expect(stdout).toBe("external-repl-42\n");
       expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+
+  test.each([
+    ["process env", { env: { NODE_REPL_EXTERNAL_MODULE: "./ext.js" } }],
+    ["--env-file", { args: ["--env-file=ext.env"] }],
+  ])(
+    "NODE_REPL_EXTERNAL_MODULE via %s wins over the --input-type rejection",
+    async (_, { env: extraEnv, args = [] }: { env?: Record<string, string>; args?: string[] }) => {
+      using dir = tempDir("ext-repl-input-type", {
+        "ext.js": `console.log("external-repl-42")`,
+        "ext.env": "NODE_REPL_EXTERNAL_MODULE=./ext.js\n",
+      });
+      const { stdout, stderr, exitCode } = await runInteractive([...args, "--input-type=module"], "", {
+        cwd: String(dir),
+        env: extraEnv,
+      });
+      expect({ stdout, stderr }).toEqual({
+        stdout: expect.stringContaining("external-repl-42"),
+        stderr: expect.not.stringContaining("Cannot specify --input-type for REPL"),
+      });
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,
@@ -2222,6 +2317,41 @@ test.concurrent("require('node:repl') is hollow until start() or REPLServer is u
     "repl.repl=x",
   ]);
   expect(exitCode).toBe(0);
+});
+
+describe.concurrent("node:repl completion", () => {
+  const env = { ...bunEnv, NO_COLOR: "1" };
+
+  test.each(['require("node:', 'import("node:'])(
+    "%s <Tab> offers real node-scheme specifiers only",
+    async prefix => {
+      const script = `
+      const repl = require("node:repl");
+      const { PassThrough } = require("node:stream");
+      const inp = new PassThrough(), out = new PassThrough(); out.resume();
+      const r = repl.start({ input: inp, output: out, terminal: false, prompt: "" });
+      r.complete(${JSON.stringify(prefix)}, (err, result) => {
+        if (err) throw err;
+        console.log("COMPLETIONS=" + JSON.stringify(result[0]));
+        r.close();
+      });
+    `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const m = stdout.match(/COMPLETIONS=(\[.*\])/);
+      expect({ matched: m !== null, stderr }).toEqual({ matched: true, stderr: "" });
+      const completions = JSON.parse(m![1]);
+      expect(completions).toContain("node:test");
+      expect(completions).toContain("node:quic");
+      expect(completions).toContain("node:fs");
+      expect(completions).not.toContain("node:undici");
+      expect(completions).not.toContain("node:ws");
+      expect(completions).not.toContain("node:bun");
+      expect(completions).not.toContain("node:bun:ffi");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
 });
 
 describe.concurrent("node:repl process-global side effects", () => {

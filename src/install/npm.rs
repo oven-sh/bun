@@ -35,6 +35,8 @@ pub enum WhoamiError {
     NeedAuth,
     #[error("probably invalid auth")]
     ProbablyInvalidAuth,
+    #[error("{0}")]
+    UnsupportedProtocol(registry::UnsupportedProtocol),
 }
 bun_core::oom_from_alloc!(WhoamiError);
 
@@ -54,6 +56,10 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     if registry.token.is_empty() {
         return Err(WhoamiError::NeedAuth);
     }
+
+    registry
+        .check_url_protocol()
+        .map_err(WhoamiError::UnsupportedProtocol)?;
 
     let auth_type: &[u8] = match &manager.options.publish_config.auth_type {
         Some(auth_type) => auth_type.as_str().as_bytes(),
@@ -317,9 +323,38 @@ pub mod registry {
         pub user: Box<[u8]>,
     }
 
+    /// `bun_http` negotiates TLS only for `https:` and dials every other
+    /// scheme as plaintext HTTP, so a request to a registry URL with any other
+    /// scheme (a typo such as `htps://`) would carry the credentials in
+    /// cleartext.
+    #[derive(Debug)]
+    pub struct UnsupportedProtocol {
+        href: Box<[u8]>,
+    }
+
+    impl core::fmt::Display for UnsupportedProtocol {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(
+                f,
+                "Registry URL must be http:// or https://\nReceived: \"{}\"",
+                bun_fmt::redacted_npm_url(&self.href),
+            )
+        }
+    }
+
     impl Scope {
         pub fn hash(str: &[u8]) -> u64 {
             bun_semver::semver_string::Builder::string_hash(str)
+        }
+
+        /// Call before building a request that sends `token`/`auth` to `url`.
+        pub fn check_url_protocol(&self) -> Result<(), UnsupportedProtocol> {
+            if self.url.url().has_http_like_protocol() {
+                return Ok(());
+            }
+            Err(UnsupportedProtocol {
+                href: Box::from(self.url.href()),
+            })
         }
 
         /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.

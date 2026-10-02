@@ -3339,21 +3339,31 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             counter.events[site.event] = AliasEvent::MergeAlias(site.anchor);
         }
         if let ast::ExprData::EArray(sources) = &value.data {
-            if aliased.is_some() {
+            let sources = sources.items.slice();
+            if let Some(sequence) = aliased {
                 self.alias_expansion_budget = self
                     .alias_expansion_budget
-                    .checked_sub(sources.items.slice().len())
+                    .checked_sub(sources.len())
                     .ok_or(ParseError::ExcessiveAliasing)?;
-            }
-            for source in sources.items.slice().iter().filter(|source| is_map(source)) {
-                let Some(site) = counter.alias_site(source) else {
-                    continue;
-                };
-                // The items of an aliased sequence are resolved once more for the merge.
-                if aliased.is_some() {
-                    counter.events.push(AliasEvent::MergeAlias(site.anchor));
-                } else {
-                    counter.events[site.event] = AliasEvent::MergeAlias(site.anchor);
+                // Its items are converted once more for the merge, what is written between its aliases included.
+                let AnchorCount { mut start, end, .. } = counter.anchors[sequence.anchor];
+                let items = |start, end| AliasEvent::MergeItems(sequence.anchor, start, end);
+                for source in sources {
+                    let Some(site) = counter.alias_site(source) else {
+                        continue;
+                    };
+                    counter.events.push(items(start, site.event));
+                    start = site.event + 1;
+                    if is_map(source) {
+                        counter.events.push(AliasEvent::MergeAlias(site.anchor));
+                    }
+                }
+                counter.events.push(items(start, end));
+            } else {
+                for source in sources.iter().filter(|source| is_map(source)) {
+                    if let Some(site) = counter.alias_site(source) {
+                        counter.events[site.event] = AliasEvent::MergeAlias(site.anchor);
+                    }
                 }
             }
         }
@@ -3525,6 +3535,8 @@ impl AliasCounter {
 #[derive(Clone, Copy)]
 struct AnchorCount {
     node: Expr,
+    /// The collections around `node`.
+    depth: usize,
     count: f64,
     alias_count: f64,
     visited: bool,
@@ -3541,6 +3553,8 @@ enum AliasEvent {
     Alias(usize),
     /// The source of a `<<`, which converts its contents once more.
     MergeAlias(usize),
+    /// These `events` of a sequence that is the source of a `<<`, once more.
+    MergeItems(usize, usize, usize),
 }
 
 /// A collection node's identity, for pointer comparison.
@@ -3638,6 +3652,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let id = counter.anchors.len();
         counter.anchors.push(AnchorCount {
             node,
+            depth: self.depth,
             count: 1.0,
             alias_count: 0.0,
             visited: true,
@@ -3779,7 +3794,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         };
         match event {
             AliasEvent::Define(id) => {
-                if within != Some(id) {
+                // A sequence is converted item by item, so neither are its items.
+                let is_source = within.is_some_and(|within| {
+                    let (source, anchor) = (&counter.anchors[within], &counter.anchors[id]);
+                    id == within
+                        || (matches!(source.node.data, ast::ExprData::EArray(_))
+                            && anchor.depth == source.depth + 1)
+                });
+                if !is_source {
                     let anchor = &mut counter.anchors[id];
                     (anchor.count, anchor.alias_count, anchor.visited) = (1.0, 0.0, true);
                 }
@@ -3805,6 +3827,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let (start, end) = (anchor.start, anchor.end);
                     self.replay_alias_events(start, end, Some(id))?;
                 }
+            }
+            AliasEvent::MergeItems(sequence, start, end) => {
+                self.replay_alias_events(start, end, Some(sequence))?;
             }
         }
         Ok(())

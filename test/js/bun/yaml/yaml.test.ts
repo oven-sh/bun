@@ -771,6 +771,13 @@ root: &root
           ],
           ["an anchored first key anew in a merge source", "m: &m\n  &x k: v\na: *x\nb: *x\nc: {<<: *m}\nd: *x", 3],
           ["an anchored first key that is a collection", "m: &m\n  &x [k]: v\na: *x\nb: *x\nc: {<<: *m}\nd: *x", 3],
+          [
+            "what is written in a sequence that is a merge source once more",
+            "x: &x 1\ns: &s [{a: *x}]\nm: {<<: *s}\ny: *x\nz: *x",
+            5,
+          ],
+          ["an anchor written there anew", "s: &s [{a: &x 1}]\np: *x\nq: *x\nm: {<<: *s}\ny: *x", 3],
+          ["the anchor of an item of that sequence as before", "s: &s [&x {a: 1}]\np: *x\nm: {<<: *s}\ny: *x", 3],
           ["a mapping that contains the alias", "&a {k: *a}", 2],
           ["what follows a cyclic alias in its collection", "&a [*a, 1]", 2],
           ["each document on its own", "---\na: &x 1\nb: *x\n---\na: &x 1\nb: *x\nc: *x", 3],

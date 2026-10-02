@@ -2313,6 +2313,19 @@ mod spawn_process_body {
             /// POSIX: arm the process-wide SIGINT/SIGTERM forwarder (not from work-pool threads).
             pub forward_signals: bool,
 
+            /// How long the child may run. It leads its own process group, which gets
+            /// SIGKILL when the time is up. The wait ends when the child exits, not at
+            /// EOF of a captured pipe that something it started still holds.
+            ///
+            /// For a child that does not use the terminal: the group is a background
+            /// one, so a read from the terminal stops the child. The no-orphans wait
+            /// does not run for it.
+            #[cfg(unix)]
+            pub timeout: Option<core::time::Duration>,
+
+            /// Linux: the signal the child gets when the thread that spawned it exits.
+            pub linux_pdeathsig: Option<u8>,
+
             #[cfg(windows)]
             pub windows: WindowsOptions,
         }
@@ -2382,6 +2395,9 @@ mod spawn_process_body {
                     use_execve_on_macos: false,
                     argv0: None,
                     forward_signals: true,
+                    #[cfg(unix)]
+                    timeout: None,
+                    linux_pdeathsig: None,
                     #[cfg(windows)]
                     windows: Default::default(),
                 }
@@ -2401,6 +2417,7 @@ mod spawn_process_body {
                     stream: false,
                     argv0: self.argv0,
                     new_process_group,
+                    linux_pdeathsig: self.linux_pdeathsig,
                     #[cfg(windows)]
                     windows: self.windows.clone(),
                     ..Default::default()
@@ -3141,10 +3158,12 @@ mod spawn_process_body {
             }
             let _signals = forward_signals.then(SignalForwarding::register);
 
+            // A time limit is for the child and for what it started.
+            let own_group = no_orphans || options.timeout.is_some();
             // SAFETY: caller-built argv/envp are null-terminated C-string
             // arrays with argv[0] non-null; valid for this call.
             let process = match unsafe {
-                spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp)
+                spawn_process_posix(&options.to_spawn_options(own_group), argv, envp)
             }? {
                 Err(err) => return Ok(Err(err)),
                 Ok(proces) => proces,
@@ -3154,7 +3173,7 @@ mod spawn_process_body {
             // that hasn't `setsid()`-escaped.
             if forward_signals {
                 Bun__currentSyncPID.store(
-                    if no_orphans {
+                    if own_group {
                         -i64::from(process.pid)
                     } else {
                         i64::from(process.pid)
@@ -3252,6 +3271,7 @@ mod spawn_process_body {
             // below is required.
             let status: Status = 'blk: {
                 if no_orphans
+                    && options.timeout.is_none()
                     && (cfg!(any(target_os = "linux", target_os = "android"))
                         || cfg!(target_os = "macos"))
                 {
@@ -3298,8 +3318,57 @@ mod spawn_process_body {
                     // plain poll() loop so `.buffer` stdio still drains instead
                     // of being dropped (or deadlocking) in a blind `wait4()`.
                 }
-                while out_fds_to_wait_for[0] != Fd::INVALID || out_fds_to_wait_for[1] != Fd::INVALID
+                // With a time limit the loop ends when the child does. A pidfd wakes
+                // the poll for that. Without one only a look finds out, so the looks
+                // start 1 ms apart and back off to 100 ms.
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                let exit_fd = process.pidfd;
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                let exit_fd: Option<c_int> = None;
+                let deadline = options
+                    .timeout
+                    .map(|limit| std::time::Instant::now() + limit);
+                let mut next_look_ms: c_int = 1;
+                while deadline.is_some()
+                    || out_fds_to_wait_for[0] != Fd::INVALID
+                    || out_fds_to_wait_for[1] != Fd::INVALID
                 {
+                    let mut poll_timeout: c_int = -1;
+                    if let Some(deadline) = deadline {
+                        // The exit before the clock: a child that is done is not late.
+                        let mut exited = Status::from(
+                            process.pid,
+                            &posix_spawn::wait4(process.pid, libc::WNOHANG as u32, None),
+                        );
+                        let left = deadline.saturating_duration_since(std::time::Instant::now());
+                        if exited.is_none() && left.is_zero() {
+                            // The group, and the child by pid in case it left the group.
+                            let _ = kill(-process.pid, libc::SIGKILL);
+                            let _ = kill(process.pid, libc::SIGKILL);
+                            exited = Some(reap_child(process.pid));
+                        }
+                        if let Some(status) = exited {
+                            for i in 0..2 {
+                                if let Some(err) = drain_fd(
+                                    &mut out_fds_to_wait_for[i],
+                                    &mut out_fds[i],
+                                    &mut out[i],
+                                ) {
+                                    // Reaped, so there is nothing left to signal.
+                                    cleanup_spawn_posix(&mut out, out_fds, &process, true);
+                                    return Ok(Err(err));
+                                }
+                            }
+                            break 'blk status;
+                        }
+                        poll_timeout = c_int::try_from(left.as_millis())
+                            .unwrap_or(c_int::MAX)
+                            .max(1);
+                        if exit_fd.is_none() {
+                            poll_timeout = poll_timeout.min(next_look_ms);
+                            next_look_ms = (next_look_ms * 2).min(100);
+                        }
+                    }
                     for i in 0..2 {
                         if let Some(err) =
                             drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i])
@@ -3309,7 +3378,7 @@ mod spawn_process_body {
                         }
                     }
 
-                    let mut poll_fds_buf: [libc::pollfd; 2] =
+                    let mut poll_fds_buf: [libc::pollfd; 3] =
                     // SAFETY: zeroed pollfd is valid
                     unsafe { bun_core::ffi::zeroed_unchecked() };
                     let mut poll_len: usize = 0;
@@ -3324,12 +3393,22 @@ mod spawn_process_body {
                         };
                         poll_len += 1;
                     }
-                    if poll_len == 0 {
+                    if let (Some(_), Some(fd)) = (deadline, exit_fd) {
+                        poll_fds_buf[poll_len] = libc::pollfd {
+                            fd,
+                            events: libc::POLLIN,
+                            revents: 0,
+                        };
+                        poll_len += 1;
+                    }
+                    if poll_len == 0 && deadline.is_none() {
                         break;
                     }
 
                     // SAFETY: valid pollfd array
-                    let rc = unsafe { libc::poll(poll_fds_buf.as_mut_ptr(), poll_len as _, -1) };
+                    let rc = unsafe {
+                        libc::poll(poll_fds_buf.as_mut_ptr(), poll_len as _, poll_timeout)
+                    };
                     match bun_sys::get_errno(rc as isize) {
                         bun_sys::E::SUCCESS => {}
                         bun_sys::E::EAGAIN | bun_sys::E::EINTR => continue,

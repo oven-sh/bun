@@ -1,7 +1,9 @@
 //! The places in a file whose types are compared against TypeScript's, each with a position that another tool can find too.
 
 use crate::atom::{Atom, known};
-use crate::bind::{Bound, Decl, FnOwner, MemberOwner, Parent, PatParent, SymFlags};
+use crate::bind::{
+    Bound, Decl, FnOwner, MemberOwner, ModuleInstanceState, Parent, PatParent, SymFlags,
+};
 use crate::check::Checker;
 use crate::hir::*;
 use crate::program::FileId;
@@ -128,7 +130,11 @@ fn first_variable(
             Decl::Fn(f) => (hir[f].flags, None),
             Decl::Class(k) => (hir[k].flags, None),
             Decl::Enum(e) => (hir[e].flags, None),
-            Decl::Module(m) if bound.module_instantiated[m.idx()] => (hir[m].flags, None),
+            Decl::Module(m)
+                if bound.module_instance_state[m.idx()] != ModuleInstanceState::NonInstantiated =>
+            {
+                (hir[m].flags, None)
+            }
             // Types and aliases do not stand in the way.
             _ => continue,
         };
@@ -271,7 +277,8 @@ pub fn for_each_site(
                 emit(c, call.close_pos, SiteKind::CallResult, ty);
             }
             // The callee of `import.defer(..)` is a meta property, of the error type (`checkMetaProperty`). `import(..)` is no site.
-            ExprKind::ImportCall(specifier, _) => {
+            ExprKind::ImportCall { args, .. } => {
+                let specifier = hir.id_at(args, 0);
                 let Some(&(_, close_pos)) =
                     hir.deferred_import_calls.iter().find(|d| d.0 == specifier)
                 else {

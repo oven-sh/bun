@@ -353,6 +353,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 parameter.default = Some(self.skip_initializer_in_signature()?);
             }
             if keeps {
+                parameter.full_start = self.lexer.full_start_of(parameter.loc.start as usize);
                 parameter.end = self.lexer.full_start();
                 if is_complete && parameter.pattern.is_some() {
                     parameters.push(parameter);
@@ -491,6 +492,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 parameter.default = Some(self.skip_initializer_in_signature()?);
             }
             if keeps {
+                parameter.full_start = self.lexer.full_start_of(parameter.loc.start as usize);
                 parameter.end = self.lexer.full_start();
                 if is_complete && parameter.pattern.is_some() {
                     parameters.push(parameter);
@@ -545,6 +547,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             modifiers.push(bun_ast::ts_syntax::Modifier {
                 flag,
                 loc: self.lexer.loc(),
+                decorator: None,
             });
             self.lexer.next()?;
         }
@@ -965,6 +968,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(ResolutionMode, Option<bun_ast::Loc>), Error> {
         let open_brace = self.lexer.loc();
         self.lexer.expect(T::TOpenBrace)?;
+        let keeps = self.should_keep_types();
+        let keyword_loc = self.lexer.loc();
+        let mut properties = bun_alloc::ArenaVec::<bun_ast::G::Property>::new_in(self.arena);
         let mut assert_keyword_loc = None;
         if self.lexer.token == T::TWith {
             self.lexer.next()?;
@@ -1007,6 +1013,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // `parseImportAttribute`
                 let element_start = self.lexer.loc();
+                let key = if !keeps {
+                    None
+                } else if self.lexer.token == T::TStringLiteral {
+                    let text = self.lexer.to_e_string()?;
+                    Some(self.new_expr(text, element_start))
+                } else {
+                    let name = bun_ast::E::EString::init(self.lexer.identifier);
+                    Some(self.new_expr(name, element_start))
+                };
                 let is_resolution_mode = self.lexer.token == T::TStringLiteral
                     && self
                         .string_token_text()
@@ -1019,6 +1034,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     None
                 };
                 let value = self.parse_detached(|p| p.parse_expr(Level::Comma))?;
+                if key.is_some() {
+                    properties.push(bun_ast::G::Property {
+                        key,
+                        value: Some(value),
+                        ..Default::default()
+                    });
+                }
                 count += 1;
                 mode = match text {
                     Some(text)
@@ -1046,6 +1068,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.lexer.list_contexts = saved_contexts;
             self.lexer
                 .expect_close_brace_of_attributes(attributes_open_brace)?;
+            if keeps {
+                let object = bun_ast::E::Object {
+                    properties: bun_collections::VecExt::from_bump_vec(properties),
+                    ..Default::default()
+                };
+                let object = self.new_expr(object, attributes_open_brace);
+                self.type_syntax_mut()
+                    .import_attributes
+                    .push((keyword_loc.start, object));
+            }
         }
 
         if self.lexer.token == T::TComma {

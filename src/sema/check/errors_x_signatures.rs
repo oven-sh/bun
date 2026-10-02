@@ -658,160 +658,6 @@ fn check_grammar_generator(
     true
 }
 
-// ───────────────────────────── namespaces ─────────────────────────────
-
-/// `ModuleInstanceState`, numbered as it is there: where two are compared, it is by number.
-const UNKNOWN_STATE: u8 = 0;
-const NON_INSTANTIATED: u8 = 1;
-const INSTANTIATED: u8 = 2;
-const CONST_ENUM_ONLY: u8 = 3;
-
-/// `GetModuleInstanceState`
-fn module_instance_state(hir: &hir::File, bound: &Bound, m: ModuleId) -> u8 {
-    body_instance_state(hir, bound, m, &mut Vec::new())
-}
-
-/// `getModuleInstanceStateCached`, of the body of `m`. `visited`: the bodies that have been asked about. One that is asked about
-/// while it is being looked at is not instantiated on that account. (A statement can only lead back to itself through a body.)
-fn body_instance_state(
-    hir: &hir::File,
-    bound: &Bound,
-    m: ModuleId,
-    visited: &mut Vec<(ModuleId, u8)>,
-) -> u8 {
-    if !hir[m].has_body {
-        return INSTANTIATED;
-    }
-    if let Some(&(_, state)) = visited.iter().find(|v| v.0 == m) {
-        return if state == UNKNOWN_STATE {
-            NON_INSTANTIATED
-        } else {
-            state
-        };
-    }
-    let slot = visited.len();
-    visited.push((m, UNKNOWN_STATE));
-    let mut state = NON_INSTANTIATED;
-    for s in hir.ids(hir[m].body) {
-        match statement_instance_state(hir, bound, s, visited) {
-            INSTANTIATED => {
-                state = INSTANTIATED;
-                break;
-            }
-            CONST_ENUM_ONLY => state = CONST_ENUM_ONLY,
-            _ => {}
-        }
-    }
-    visited[slot].1 = state;
-    state
-}
-
-/// `getModuleInstanceStateWorker`, of a statement.
-fn statement_instance_state(
-    hir: &hir::File,
-    bound: &Bound,
-    s: StmtId,
-    visited: &mut Vec<(ModuleId, u8)>,
-) -> u8 {
-    match hir[s].kind {
-        StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Import(_) => NON_INSTANTIATED,
-        StmtKind::Enum(e) if hir[e].flags.contains(Flags::CONST) => CONST_ENUM_ONLY,
-        StmtKind::ImportEquals(i) if !hir[i].flags.contains(Flags::EXPORT) => NON_INSTANTIATED,
-        StmtKind::ExportNamed(e) if hir[e].spec.is_none() => {
-            let mut state = NON_INSTANTIATED;
-            for item in hir[e].items.iter() {
-                state = state.max(alias_target_instance_state(
-                    hir,
-                    bound,
-                    hir[item].local,
-                    s,
-                    visited,
-                ));
-                if state == INSTANTIATED {
-                    break;
-                }
-            }
-            state
-        }
-        StmtKind::Module(inner) => body_instance_state(hir, bound, inner, visited),
-        _ => INSTANTIATED,
-    }
-}
-
-/// `NodeHasName`
-fn statement_has_name(hir: &hir::File, s: StmtId, name: Atom) -> bool {
-    match hir[s].kind {
-        StmtKind::Fn(f) => hir[f].name == name,
-        StmtKind::Class(c) => hir[c].name == name,
-        StmtKind::Interface(i) => hir[i].name == name,
-        StmtKind::TypeAlias(a) => hir[a].name == name,
-        StmtKind::Enum(e) => hir[e].name == name,
-        StmtKind::Module(m) => hir[m].name == ModuleName::Ident(name),
-        StmtKind::ImportEquals(i) => hir[i].name == name,
-        StmtKind::Var(decls) => decls
-            .iter()
-            .any(|d| matches!(hir[hir[d].pat].kind, PatKind::Ident(n) if n == name)),
-        _ => false,
-    }
-}
-
-/// `getModuleInstanceStateForAliasTarget`: of what `export { name }`, the statement `from`, exports.
-fn alias_target_instance_state(
-    hir: &hir::File,
-    bound: &Bound,
-    name: Atom,
-    from: StmtId,
-    visited: &mut Vec<(ModuleId, u8)>,
-) -> u8 {
-    let mut parent = bound.stmt_parent[from.idx()];
-    loop {
-        let list = match parent {
-            Parent::Module(m) => hir[m].body,
-            Parent::File => hir.body,
-            Parent::Stmt(s) if s.is_some() => match hir[s].kind {
-                StmtKind::Block(list) => list,
-                _ => {
-                    parent = bound.stmt_parent[s.idx()];
-                    continue;
-                }
-            },
-            _ => return INSTANTIATED,
-        };
-        let mut found = None;
-        for s in hir.ids(list) {
-            if !statement_has_name(hir, s, name) {
-                continue;
-            }
-            let state = statement_instance_state(hir, bound, s, visited);
-            if found.is_none_or(|known| state > known) {
-                found = Some(state);
-            }
-            if found == Some(INSTANTIATED) {
-                return INSTANTIATED;
-            }
-            // What an alias that is exported again stands for is not looked into.
-            if matches!(hir[s].kind, StmtKind::ImportEquals(_)) {
-                found = Some(INSTANTIATED);
-            }
-        }
-        if let Some(found) = found {
-            return found;
-        }
-        parent = match parent {
-            Parent::Module(m) => match hir
-                .stmts
-                .iter()
-                .position(|s| matches!(s.kind, StmtKind::Module(x) if x == m))
-            {
-                Some(s) => bound.stmt_parent[s],
-                None => return INSTANTIATED,
-            },
-            Parent::Stmt(s) => bound.stmt_parent[s.idx()],
-            _ => return INSTANTIATED,
-        };
-    }
-}
-
 // ───────────────────────────── what a block declares ─────────────────────────────
 
 const FUNCTION_SCOPED_VARIABLE: u32 = 1 << 0;
@@ -1139,15 +985,16 @@ fn declared_by_statement(
             let ModuleName::Ident(name) = hir[m].name else {
                 return;
             };
-            let table = if module_instance_state(hir, bound, m) != NON_INSTANTIATED {
-                (
-                    VALUE_MODULE,
-                    VALUE & !(FUNCTION | CLASS | REGULAR_ENUM | VALUE_MODULE),
-                    SPACE_NAMESPACE | SPACE_VALUE,
-                )
-            } else {
-                (NAMESPACE_MODULE, 0, SPACE_NAMESPACE)
-            };
+            let table =
+                if bound.module_instance_state[m.idx()] != ModuleInstanceState::NonInstantiated {
+                    (
+                        VALUE_MODULE,
+                        VALUE & !(FUNCTION | CLASS | REGULAR_ENUM | VALUE_MODULE),
+                        SPACE_NAMESPACE | SPACE_VALUE,
+                    )
+                } else {
+                    (NAMESPACE_MODULE, 0, SPACE_NAMESPACE)
+                };
             all.push(declaration(
                 block,
                 name,
@@ -2992,7 +2839,8 @@ impl Checker<'_> {
                 Decl::Interface(_) | Decl::Alias(_) => SPACE_TYPE,
                 Decl::Module(m)
                     if matches!(hir[m].name, ModuleName::Ident(_))
-                        && module_instance_state(hir, self.bound(of), m) == NON_INSTANTIATED =>
+                        && self.bound(of).module_instance_state[m.idx()]
+                            == ModuleInstanceState::NonInstantiated =>
                 {
                     SPACE_NAMESPACE
                 }
@@ -3052,9 +2900,7 @@ impl Checker<'_> {
                         && !hir[m].flags.contains(Flags::AMBIENT)
                         && matches!(hir[m].name, ModuleName::Ident(_)) =>
                 {
-                    let state = module_instance_state(hir, bound, m);
-                    if !(state == INSTANTIATED || preserves_const_enums && state == CONST_ENUM_ONLY)
-                    {
+                    if !bound.is_instantiated_module(m, preserves_const_enums) {
                         continue;
                     }
                     hir[m].name_pos

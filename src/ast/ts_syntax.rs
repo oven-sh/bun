@@ -393,9 +393,12 @@ pub enum MemberKind {
 
 #[derive(Copy, Clone)]
 pub struct Modifier {
-    /// Exactly one flag.
+    /// Exactly one flag. None for a decorator.
     pub flag: Flags,
+    /// Of a decorator: where its `@` is.
     pub loc: Loc,
+    /// The expression of a decorator.
+    pub decorator: Option<Expr>,
 }
 
 /// A member of an object type or an interface.
@@ -468,6 +471,8 @@ pub struct Param {
     pub rest_loc: Loc,
     pub question_loc: Loc,
     pub loc: Loc,
+    /// `node.Pos()`
+    pub full_start: Loc,
     /// `node.End()`
     pub end: Loc,
 }
@@ -484,6 +489,7 @@ impl Param {
             rest_loc: Loc::EMPTY,
             question_loc: Loc::EMPTY,
             loc,
+            full_start: Loc::EMPTY,
             end: Loc::EMPTY,
         }
     }

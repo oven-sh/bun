@@ -438,10 +438,15 @@ pub enum ExprKind {
         type_args: IdList<TypeNodeId>,
     },
     Jsx(JsxId),
-    /// `import(specifier, ..)`: the first of `CallExpression.Arguments`, a missing expression if there is none, and the others.
-    ImportCall(ExprId, IdList<ExprId>),
+    /// `import(specifier, ..)`. `args` is never empty: the first is the specifier, a missing expression if there is none.
+    /// `checkImportCallExpression` never looks at `type_args`, which are an error (1326).
+    ImportCall {
+        args: IdList<ExprId>,
+        type_args: IdList<TypeNodeId>,
+    },
     ImportMeta,
-    NewTarget,
+    /// `new.target`, and the name as it is written: any word makes a meta property.
+    NewTarget(Atom),
 }
 
 /// Which kind of expression, without what is in it.
@@ -529,9 +534,9 @@ impl ExprKind {
             ExprKind::NonNull(..) => ExprTag::NonNull,
             ExprKind::Instantiation { .. } => ExprTag::Instantiation,
             ExprKind::Jsx(..) => ExprTag::Jsx,
-            ExprKind::ImportCall(..) => ExprTag::ImportCall,
+            ExprKind::ImportCall { .. } => ExprTag::ImportCall,
             ExprKind::ImportMeta => ExprTag::ImportMeta,
-            ExprKind::NewTarget => ExprTag::NewTarget,
+            ExprKind::NewTarget(_) => ExprTag::NewTarget,
         }
     }
 }
@@ -696,6 +701,7 @@ pub struct VarDecl {
     pub init: ExprId,
     pub kind: VarKind,
     pub flags: Flags,
+    pub loc: TextRange,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -877,8 +883,8 @@ pub struct Param {
     pub flags: Flags,
     /// Where it starts, modifiers and `...` included.
     pub pos: u32,
-    /// `node.End()`. 0 where the parser did not say.
-    pub end: u32,
+    /// `end` is 0 where the parser did not say.
+    pub loc: TextRange,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -996,6 +1002,7 @@ pub struct EnumMember {
     pub computed_name: ExprId,
     pub init: ExprId,
     pub pos: u32,
+    pub loc: TextRange,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1080,6 +1087,13 @@ pub struct ImportSpec {
     pub import: ImportId,
 }
 
+impl ImportSpec {
+    /// `parseImportSpecifier`: an identifier without text stands where a string is that no `as` follows.
+    pub fn is_name_missing(&self) -> bool {
+        self.imported == crate::atom::known::empty && self.imported_pos == self.pos
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub enum ImportEqualsTarget {
     Require(Atom),
@@ -1091,6 +1105,8 @@ pub struct ImportEquals {
     pub name: Atom,
     pub name_pos: u32,
     pub target: ImportEqualsTarget,
+    /// The `e` of `require(e)` that is no string literal, which is an error. `target` is `Require(NONE)` then.
+    pub expression: ExprId,
     pub flags: Flags,
     /// The statement it is.
     pub stmt: StmtId,
@@ -1401,12 +1417,6 @@ pub struct File {
     pub with_bodies: Few<(u32, u32)>,
     /// The start of each token that follows a token the parser skipped in a list (`abortParsingListOrMoveToNextToken`). Sorted.
     pub after_skipped: Few<u32>,
-    /// `node.End()` of an expression, by `ExprId`, where the parser said it: of those it finished after the first syntax error of the
-    /// file. 0, or past the end of the list: it did not, and the end is worked out from the parts of the expression (check/spans.rs),
-    /// which is exact where nothing was recovered from. Empty in a file that parses.
-    /// This is NOT tsgo's data model, where every node has an `end`, and that is on purpose: an `end` on every expression is paid by
-    /// every program, and only recovery needs it.
-    pub expr_ends: Vec<u32>,
     /// The array and object literals whose closing bracket the parser missed: where they open, and where they end, which is where the
     /// last token they took does (`finishNode`). Sorted.
     pub unclosed_literals: Few<(u32, u32)>,
@@ -1545,13 +1555,6 @@ arenas! {
 }
 
 impl File {
-    #[inline]
-    pub fn set_expr_end(&mut self, e: ExprId, end: u32) {
-        if self.expr_ends.len() <= e.idx() {
-            self.expr_ends.resize(e.idx() + 1, 0);
-        }
-        self.expr_ends[e.idx()] = end;
-    }
     #[inline]
     pub fn expr(&mut self, kind: ExprKind, pos: u32) -> ExprId {
         self.add_expr_node(Expr { kind, pos })
@@ -1900,7 +1903,7 @@ pub fn is_dotted_name(hir: &File, e: ExprId) -> bool {
         ExprKind::Ident(_)
         | ExprKind::This
         | ExprKind::Super
-        | ExprKind::NewTarget
+        | ExprKind::NewTarget(_)
         | ExprKind::ImportMeta => true,
         ExprKind::Dot { obj, .. } => is_dotted_name(hir, obj),
         _ => false,
@@ -1942,6 +1945,12 @@ pub fn names_bound_by(hir: &File, pat: PatId, into: &mut Vec<(Atom, PatId)>) {
             .iter()
             .for_each(|e| names_bound_by(hir, hir[e].pat, into)),
     }
+}
+
+/// `NodeFlagsNestedNamespace`: the statement `s` is the `B` of `namespace A.B`. It is put at the dot, or at its name.
+pub fn is_nested_namespace(hir: &File, s: StmtId) -> bool {
+    matches!(hir[s].kind, StmtKind::Module(m)
+        if hir[s].pos == hir[m].name_pos || hir.text.get(hir[s].pos as usize) == Some(&b'.'))
 }
 
 const _: () = assert!(std::mem::size_of::<Expr>() <= 24);

@@ -67,6 +67,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             log.errors = errors;
             let range = js_lexer::range_of_identifier(p.source, loc);
             p.lexer.ts_grammar_error(range, 1326);
+            p.mark_type_syntax(loc, crate::sema::Mark::TypeArguments, less_than);
         }
 
         if level.gt(Level::Call) {

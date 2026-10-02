@@ -833,7 +833,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                             default: ExprId::NONE,
                             flags: Flags::REPARSED,
                             pos: param.pos,
-                            end: param.end,
+                            loc: TextRange {
+                                pos: param.pos,
+                                end: param.end,
+                            },
                         };
                         this_param = self.b.file.add_param(this);
                     }
@@ -889,7 +892,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                 default: ExprId::NONE,
                 flags,
                 pos: param.pos,
-                end: param.end,
+                loc: TextRange {
+                    pos: param.pos,
+                    end: param.end,
+                },
             });
         }
         let pos = match like {
@@ -995,7 +1001,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                         default: ExprId::NONE,
                         flags: Flags::REPARSED,
                         pos: tag.name_pos,
-                        end: tag.name_pos + b"this".len() as u32,
+                        loc: TextRange {
+                            pos: tag.name_pos,
+                            end: tag.name_pos + b"this".len() as u32,
+                        },
                     };
                     let this = self.b.file.add_param(this);
                     self.b.file[func].this_param = this;

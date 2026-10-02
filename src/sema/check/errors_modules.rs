@@ -798,7 +798,7 @@ impl Checker<'_> {
             };
             match root {
                 // `isPartOfPossiblyValidTypeOrAbstractComputedPropertyName`
-                Parent::MemberKey
+                Parent::MemberKey(_) | Parent::MethodKey(_)
                     if !is_parenthesized(hir, top)
                         && hir
                             .members
@@ -851,7 +851,7 @@ impl Checker<'_> {
         let mut around = bound.expr_parent[e.idx()];
         loop {
             around = match around {
-                Parent::Expr(x) | Parent::Key(x) if x.is_some() => {
+                Parent::Expr(x) | Parent::PropKey(x, _) if x.is_some() => {
                     inner = x;
                     bound.expr_parent[x.idx()]
                 }
@@ -875,7 +875,7 @@ impl Checker<'_> {
                         FnOwner::Type(_) | FnOwner::None => return false,
                     }
                 }
-                Parent::MemberKey => match hir
+                Parent::MemberKey(_) | Parent::MethodKey(_) => match hir
                     .members
                     .iter()
                     .position(|m| m.key == PropKey::Computed(inner))
@@ -909,11 +909,14 @@ impl Checker<'_> {
                         .contains(Flags::AMBIENT);
                 }
                 Parent::Module(m) => return hir[m].flags.contains(Flags::AMBIENT),
-                Parent::Key(_) | Parent::PatPropDefault(_) | Parent::PatElemDefault(_) => {
+                Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::PatPropDefault(_)
+                | Parent::PatElemDefault(_) => {
                     // The property of a pattern it is the name or the default of, and the pattern it is written in.
                     let prop = match around {
                         Parent::PatPropDefault(p) => Some(p),
-                        Parent::Key(_) => hir
+                        Parent::PropKey(..) | Parent::PatKey(_) => hir
                             .pat_props
                             .iter()
                             .position(|p| p.key == PropKey::Computed(inner))
@@ -934,7 +937,8 @@ impl Checker<'_> {
                         PatParent::Var(d) => Parent::VarInit(d),
                         PatParent::Param(p) => {
                             let f = bound.param_fn[p.idx()];
-                            let is_default = !matches!(around, Parent::Key(_));
+                            let is_default =
+                                !matches!(around, Parent::PropKey(..) | Parent::PatKey(_));
                             let is_renamed = prop.is_some_and(|x| {
                                 let value = &hir[hir[x].value];
                                 matches!(value.kind, PatKind::Ident(_)) && value.pos != hir[x].pos

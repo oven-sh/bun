@@ -233,14 +233,27 @@ struct DeclarationEmit<'c, 'p> {
     module_scopes: Vec<ScopeId>,
 }
 
+impl Checker<'_> {
+    /// `shouldStripInternal`, of a node of `file` that is no parameter. `pos`: `node.Pos()`.
+    pub(super) fn should_strip_internal(&self, file: FileId, pos: u32) -> bool {
+        if !self.files().options.strips_internal_declarations {
+            return false;
+        }
+        // `isInternalDeclaration`, `hasInternalAnnotation`
+        let text = &self.hir(file).text[..];
+        super::spans::get_leading_comment_ranges(text, pos as usize)
+            .into_iter()
+            .any(|(start, end)| bun_core::strings::contains(&text[start..end], b"@internal"))
+    }
+}
+
 impl<'p> Checker<'p> {
     /// `getDeclarationDiagnosticsForFile`
     pub(super) fn check_declaration_emit(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let files = self.files();
         let module = files.module(file);
-        // `sourceFileMayBeEmitted`. `stripInternal` goes by comments, which are not kept.
+        // `sourceFileMayBeEmitted`
         if !matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx)
-            || files.options.strips_internal_declarations
             || module.path.contains("/node_modules/") && !files.options.files.contains(&module.path)
         {
             return;
@@ -2498,7 +2511,12 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `visit`, of a statement.
     fn visit_statement(&mut self, s: StmtId) {
-        match self.c.hir(self.file())[s].kind {
+        let statement = &self.c.hir(self.file())[s];
+        // `visitDeclarationStatements`
+        if self.c.should_strip_internal(self.file(), statement.loc.pos) {
+            return;
+        }
+        match statement.kind {
             StmtKind::ExportDefault(e) => self.transform_export_assignment(s, e, false),
             StmtKind::ExportAssign(e) => self.transform_export_assignment(s, e, true),
             StmtKind::Fn(_)
@@ -2542,6 +2560,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
             .late_marked_statements
             .retain(|&marked| marked != s);
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
+        if self.c.should_strip_internal(self.file(), hir[s].loc.pos) {
+            return false;
+        }
         let kind = hir[s].kind;
         let decl = match kind {
             StmtKind::ImportEquals(i) => return self.transform_import_equals(i, s),
@@ -3111,6 +3132,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
     fn visit_member(&mut self, m: MemberId) {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         let member = hir[m];
+        if self.c.should_strip_internal(self.file(), member.loc.pos) {
+            return;
+        }
         let f = member.func;
         if member.kind == MemberKind::StaticBlock
             || f.is_none() && member.kind != MemberKind::Property

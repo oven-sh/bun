@@ -373,14 +373,15 @@ impl<'p> Checker<'p> {
                 Parent::PatPropDefault(p) => Some(Node::PatProp(p)),
                 Parent::PatElemDefault(p) => Some(Node::PatElem(p)),
                 Parent::Prop(p) => Some(Node::Prop(p)),
-                Parent::Key(owner) => match hir.exprs.get(owner.idx())?.kind {
+                Parent::PatKey(_) => None,
+                Parent::PropKey(owner, _) => match hir.exprs.get(owner.idx())?.kind {
                     ExprKind::Object(props) => props
                         .iter()
                         .find(|&p| hir[p].key == PropKey::Computed(e))
                         .map(Node::PropName),
                     _ => None,
                 },
-                Parent::MemberKey => hir
+                Parent::MemberKey(_) | Parent::MethodKey(_) => hir
                     .members
                     .iter()
                     .position(|m| m.key == PropKey::Computed(e))
@@ -1153,7 +1154,7 @@ impl<'p> Checker<'p> {
                 Node::Expr(e) => matches!(
                     hir[e].kind,
                     ExprKind::Call(_)
-                        | ExprKind::ImportCall(..)
+                        | ExprKind::ImportCall { .. }
                         | ExprKind::Satisfies { .. }
                         | ExprKind::As { .. }
                         | ExprKind::Jsx(_)
@@ -3505,6 +3506,9 @@ impl<'p> Checker<'p> {
         let hir = self.hir(tx.file);
         for s in hir.ids(list) {
             // `visit`, `visitDeclarationStatements`
+            if self.should_strip_internal(tx.file, hir[s].loc.pos) {
+                continue;
+            }
             match hir[s].kind {
                 StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
                     self.iso_transform_export_assignment(tx, s, e)
@@ -3537,6 +3541,9 @@ impl<'p> Checker<'p> {
     fn iso_transform_top_level(&mut self, tx: &mut Emit, s: StmtId) {
         let file = tx.file;
         let (hir, bound) = (self.hir(file), self.bound(file));
+        if self.should_strip_internal(file, hir[s].loc.pos) {
+            return;
+        }
         let kind = hir[s].kind;
         // `isDeclarationAndNotVisible`
         let declared = match kind {
@@ -4087,7 +4094,9 @@ impl<'p> Checker<'p> {
         let file = tx.file;
         let (hir, bound) = (self.hir(file), self.bound(file));
         let member = &hir[m];
-        if member.kind == MemberKind::StaticBlock {
+        if member.kind == MemberKind::StaticBlock
+            || self.should_strip_internal(file, member.loc.pos)
+        {
             return;
         }
         let dynamic = self.iso_dynamic_name(file, member.key);

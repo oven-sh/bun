@@ -1456,8 +1456,16 @@ impl<'p> Checker<'p> {
             }
             return;
         }
-        // `getPropertiesOfType`, `getSignaturesOfType`, `getIndexInfosOfType`: of the apparent type.
+        // `getPropertiesOfType`, `getSignaturesOfType`, `getIndexInfosOfType`: of `getReducedApparentType`. Of a union, what all
+        // its members have.
+        let base = self.reduced(base);
         let base = self.apparent_type(base);
+        let base = self.reduced(base);
+        let base = if self.is_union(base) {
+            self.union_as_object(base)
+        } else {
+            base
+        };
         // `this` in an inherited member is the heir.
         let members = match this {
             Some((_, this_param)) => match self.tuple_members_with_this(base, this_param) {
@@ -1624,7 +1632,7 @@ impl<'p> Checker<'p> {
                     return false;
                 }
                 (
-                    self.end_of_token_before(*file, pos),
+                    self.hir(*file)[*parameter].loc.pos,
                     self.end_of_param(*file, *parameter),
                 )
             }
@@ -3677,7 +3685,8 @@ impl<'p> Checker<'p> {
                 at = match bound.expr_parent[at.idx()] {
                     Parent::Expr(parent) => parent,
                     Parent::Prop(p) => bound.prop_owner[p.idx()],
-                    Parent::Key(literal) => literal,
+                    Parent::PropKey(literal, _) => literal,
+                    Parent::PatKey(_) => ExprId::NONE,
                     Parent::ClassExtends(class) => class_expr(class),
                     Parent::MemberInit(member) => match bound.member_owner[member.idx()] {
                         MemberOwner::Class(class) => class_expr(class),
@@ -3951,7 +3960,9 @@ impl<'p> Checker<'p> {
                 super::symbols::circularity_error_type(member.ty)
             };
             let kept = self.p.member_types.insert((file, first), ty);
-            if !is_accessor {
+            if is_accessor {
+                self.report_circular_accessors(members);
+            } else {
                 let end = self.end_of_member_name(file, first);
                 let name = self.source_text(file, member.pos, end);
                 self.report_circularity_error((file, member.pos, end), Arg::Text(&name), ty, false);
@@ -4299,7 +4310,7 @@ impl<'p> Checker<'p> {
     #[inline]
     pub fn apparent_type(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
-            TypeData::Union(_) if ty != TypeId::BOOLEAN => ty,
+            TypeData::Union(_) if !self.is_boolean(ty) => ty,
             data if is_plain_object(data) => ty,
             _ => self.apparent_type_of_other(ty),
         }
@@ -4363,7 +4374,7 @@ impl<'p> Checker<'p> {
             }
             | TypeData::Enum { .. } => known::Number,
             TypeData::BoolLit { .. } => known::Boolean,
-            TypeData::Union(_) if ty == TypeId::BOOLEAN => known::Boolean,
+            TypeData::Union(_) if self.is_boolean(ty) => known::Boolean,
             TypeData::Intrinsic(Intrinsic::BigInt) | TypeData::BigIntLit { .. } => known::BigInt,
             TypeData::Intrinsic(Intrinsic::Symbol) | TypeData::UniqueSymbol { .. } => known::Symbol,
             _ if ty == TypeId::OBJECT => return TypeId::EMPTY_OBJECT,
@@ -4750,7 +4761,7 @@ impl<'p> Checker<'p> {
                 if !list.iter().any(|t| t.is_never())
                     && list.iter().any(|&t| t != list[0])
                     && list.iter().any(|&t| {
-                        t == TypeId::BOOLEAN
+                        self.is_boolean(t)
                             || self.is_pattern_literal(t)
                             || self.every_type(t, |c, m| c.is_unit(m))
                     })

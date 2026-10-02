@@ -83,7 +83,7 @@ fn keyword_it_comes_to(hir: &hir::File, node: TypeNodeId) -> Option<Keyword> {
 
 impl Checker<'_> {
     pub(super) fn check_circularities(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        self.check_circular_resolutions(file, out);
+        self.check_circular_resolutions(file);
         let (hir, bound) = (self.hir(file), self.bound(file));
         for c in 0..hir.classes.len() {
             if bound.class_symbol[c].is_none() {
@@ -234,11 +234,9 @@ impl Checker<'_> {
         Vec::new()
     }
 
-    /// 2502 2577 7022 7023 7024: `reportCircularityError`, `getReturnTypeOfSignature`, `getTypeOfAccessors`. The circles themselves are
-    /// found by `Checker::enter` when the types are asked for, which is what is done here.
-    fn check_circular_resolutions(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    /// Asks for the types that `reportCircularityError`, `getReturnTypeOfSignature` and `getTypeOfAccessors` report circles of.
+    fn check_circular_resolutions(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let no_implicit_any = self.p.files.options.no_implicit_any;
         for i in 0..hir.pats.len() {
             let pat = PatId(i as u32);
             if !matches!(hir[pat].kind, PatKind::Ident(_))
@@ -265,15 +263,6 @@ impl Checker<'_> {
             }
             if hir[member].kind == MemberKind::Property {
                 self.type_of_member_declaration(file, member);
-                // `getTypeOfAccessors`, of an auto-accessor: 2502 goes to the set accessor, which is nil.
-                if hir[member].flags.contains(Flags::ACCESSOR)
-                    && hir[member].ty.is_some()
-                    && self.p.circular_members.get(&(file, member)).is_some()
-                {
-                    let end = self.end_of_member_name(file, member);
-                    let name = self.source_text(file, hir[member].pos, end);
-                    self.report_global_error(2502, vec![name]);
-                }
                 continue;
             }
             // A getter and a setter are one property, known by whichever is written first.
@@ -319,107 +308,66 @@ impl Checker<'_> {
                 .collect();
             both.sort_unstable();
             self.type_of_member_declarations(&both);
-            if self.p.circular_members.get(&(file, first)).is_none() {
-                continue;
-            }
-            let setter_is_annotated = |s: MemberId| {
-                hir[hir[s].func]
-                    .params
-                    .iter()
-                    .next()
-                    .is_some_and(|p| hir[p].ty.is_some())
-            };
-            if let Some(g) = getter.filter(|&g| hir[hir[g].func].ret.is_some()) {
-                out.push(Diagnostic {
-                    start: hir[g].pos,
-                    code: 2502,
-                });
-                self.note_at_member_name(file, g, first, 2502);
-            } else if let Some(s) = setter.filter(|&s| setter_is_annotated(s)) {
-                out.push(Diagnostic {
-                    start: hir[s].pos,
-                    code: 2502,
-                });
-                self.note_at_member_name(file, s, first, 2502);
-            } else if let Some(g) = getter
-                && no_implicit_any
-            {
-                out.push(Diagnostic {
-                    start: hir[g].pos,
-                    code: 7023,
-                });
-                self.note_at_member_name(file, g, first, 7023);
-            }
         }
-        // The circle of a composite signature is reported at its first member, which may come before the function that closes it.
         for i in 0..hir.fns.len() {
             let func = FnId(i as u32);
-            if !matches!(hir[func].body, FnBody::None) && hir[func].ret.is_none() {
+            // An accessor of a class, an interface or a type literal that says what it is was asked above, with the property it makes.
+            let is_member = matches!(hir[func].kind, FnKind::Getter | FnKind::Setter)
+                && !(hir[func].kind == FnKind::Getter
+                    && matches!(bound.fns[i].owner, FnOwner::Expr(_)));
+            if hir[func].ret.is_some() && !is_member
+                || hir[func].ret.is_none() && !matches!(hir[func].body, FnBody::None)
+            {
                 self.return_type_of_fn(file, func);
-            }
-        }
-        for i in 0..hir.fns.len() {
-            let func = FnId(i as u32);
-            // The accessors of classes, interfaces and type literals were seen to above, with the property they make.
-            let is_literal_getter =
-                hir[func].kind == FnKind::Getter && matches!(bound.fns[i].owner, FnOwner::Expr(_));
-            if matches!(hir[func].body, FnBody::None) && hir[func].ret.is_none()
-                || matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) && !is_literal_getter
-            {
-                continue;
-            }
-            self.return_type_of_fn(file, func);
-            if self.p.circular_returns.get(&(file, func)).is_none() {
-                continue;
-            }
-            if is_literal_getter {
-                // `getTypeOfAccessors`: it is the property that comes back to itself, through whichever of the two says what it is.
-                let setter = self
-                    .sibling_accessor(file, func, FnKind::Setter)
-                    .filter(|&s| {
-                        hir[s]
-                            .params
-                            .iter()
-                            .next()
-                            .is_some_and(|p| hir[p].ty.is_some())
-                    });
-                let (accessor, code) = match setter {
-                    _ if hir[func].ret.is_some() => (func, 2502),
-                    Some(setter) => (setter, 2502),
-                    None if no_implicit_any => (func, 7023),
-                    None => continue,
-                };
-                if let Some(start) = self.name_of_function(file, accessor) {
-                    out.push(Diagnostic { start, code });
-                    let end = self.end_of_name_at(file, start);
-                    self.note(start, end, code, vec![self.source_text(file, start, end)]);
-                }
-                continue;
-            }
-            if hir[func].ret.is_some() {
-                out.push(Diagnostic {
-                    start: hir[hir[func].ret].pos,
-                    code: 2577,
-                });
-                let end = self.end_of_type_node(file, hir[func].ret);
-                self.note(hir[hir[func].ret].pos, end, 2577, Vec::new());
-            } else if no_implicit_any {
-                self.report_implicit_any_return(file, func, out);
             }
         }
         self.check_circular_exports(file);
         self.check_circular_assignment_declarations(file);
     }
 
-    /// What is noted of the error `code` on the name of `member`: `symbolToString` of its symbol, which `first` declares first.
-    fn note_at_member_name(&self, file: FileId, member: MemberId, first: MemberId, code: u32) {
-        let name = self.source_text(
+    /// The end of `getTypeOfAccessors`, where `popTypeResolution` finds the circle. `members`: the declarations of the property.
+    pub(super) fn report_circular_accessors(&mut self, members: &[(FileId, MemberId)]) {
+        let of_kind = |kind: MemberKind| {
+            members
+                .iter()
+                .copied()
+                .find(|&(file, m)| self.hir(file)[m].kind == kind)
+        };
+        let (getter, setter) = (of_kind(MemberKind::Getter), of_kind(MemberKind::Setter));
+        // `getAnnotatedAccessorTypeNode`
+        let annotated_getter = getter.filter(|&(file, g)| {
+            let hir = self.hir(file);
+            hir[hir[g].func].ret.is_some()
+        });
+        let annotated_setter = setter.filter(|&(file, s)| {
+            let hir = self.hir(file);
+            let first = hir[hir[s].func].params.iter().next();
+            first.is_some_and(|p| hir[p].ty.is_some())
+        });
+        let auto_accessor = of_kind(MemberKind::Property);
+        // `symbolToString`
+        let (file, first) = members[0];
+        let end = self.end_of_member_name(file, first);
+        let name = self.source_text(file, self.hir(file)[first].pos, end);
+        let ((file, accessor), code) = match (annotated_getter, annotated_setter) {
+            (Some(getter), _) => (getter, 2502),
+            (None, Some(setter)) => (setter, 2502),
+            // It goes to the set accessor, which is nil.
+            _ if auto_accessor.is_some_and(|(file, m)| self.hir(file)[m].ty.is_some()) => {
+                return self.report_global_error(2502, vec![name]);
+            }
+            _ => match getter {
+                Some(getter) if self.p.files.options.no_implicit_any => (getter, 7023),
+                _ => return,
+            },
+        };
+        let at = (
             file,
-            self.hir(file)[first].pos,
-            self.end_of_member_name(file, first),
+            self.hir(file)[accessor].pos,
+            self.end_of_member_name(file, accessor),
         );
-        let end = self.end_of_member_name(file, member);
-        self.note(self.hir(file)[member].pos, end, code, vec![name]);
+        let err = self.new_diagnostic(at, code, &[Arg::Text(&name)]);
+        self.commit(err);
     }
 
     /// `symbol.ValueDeclaration` of the CommonJS export `symbol` of `file`: the first assignment that sets it. `None` if `symbol` has
@@ -559,27 +507,54 @@ impl Checker<'_> {
         }
     }
 
-    /// `getReturnTypeOfSignature`: 7023 at the name of a function whose result depends on itself, 7024 at one that has none.
-    pub(super) fn report_implicit_any_return(
-        &self,
-        file: FileId,
-        func: FnId,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        match self.name_of_function(file, func) {
-            Some(start) => {
-                out.push(Diagnostic { start, code: 7023 });
-                let end = self.end_of_name_at(file, start);
-                self.note(start, end, 7023, vec![self.source_text(file, start, end)]);
+    /// The end of `getReturnTypeOfSignature`, where `popTypeResolution` finds the circle: 2577, 7023 at the name of the function, 7024
+    /// at one that has none. Of a getter of an object literal it is the end of `getTypeOfAccessors`.
+    pub(super) fn report_circular_return_type(&mut self, file: FileId, func: FnId) {
+        self.p.circular_returns.insert((file, func), ());
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let no_implicit_any = self.p.files.options.no_implicit_any;
+        let owner = bound.fns[func.idx()].owner;
+        let named = |c: &mut Self, of: FnId, code: u32| {
+            if let Some(start) = c.name_of_function(file, of) {
+                let end = c.end_of_name_at(file, start);
+                let name = c.source_text(file, start, end);
+                let err = c.new_diagnostic((file, start, end), code, &[Arg::Text(&name)]);
+                c.commit(err);
+                return true;
             }
-            None => {
-                let start = self.hir(file)[func].pos;
-                out.push(Diagnostic { start, code: 7024 });
-                if let FnOwner::Expr(e) = self.bound(file).fns[func.idx()].owner {
-                    let end = self.error_end_inside_parentheses(file, e);
-                    self.note(start, end, 7024, Vec::new());
-                }
+            false
+        };
+        if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
+            // The accessors of classes, interfaces and type literals are reported with the property they make.
+            if hir[func].kind == FnKind::Getter && matches!(owner, FnOwner::Expr(_)) {
+                let setter = self
+                    .sibling_accessor(file, func, FnKind::Setter)
+                    .filter(|&s| {
+                        let first = hir[s].params.iter().next();
+                        first.is_some_and(|p| hir[p].ty.is_some())
+                    });
+                match setter {
+                    _ if hir[func].ret.is_some() => named(self, func, 2502),
+                    Some(setter) => named(self, setter, 2502),
+                    None => no_implicit_any && named(self, func, 7023),
+                };
             }
+        } else if hir[func].ret.is_some() {
+            let ret = hir[func].ret;
+            let at = (file, hir[ret].pos, self.end_of_type_node(file, ret));
+            let err = self.new_diagnostic(at, 2577, &[]);
+            self.commit(err);
+        } else if no_implicit_any
+            && !matches!(hir[func].body, FnBody::None)
+            && !named(self, func, 7023)
+        {
+            let start = hir[func].pos;
+            let end = match owner {
+                FnOwner::Expr(e) => self.error_end_inside_parentheses(file, e),
+                _ => self.end_of_token_at(file, start),
+            };
+            let err = self.new_diagnostic((file, start, end), 7024, &[]);
+            self.commit(err);
         }
     }
 

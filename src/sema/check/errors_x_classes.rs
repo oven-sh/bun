@@ -1389,8 +1389,8 @@ impl Checker<'_> {
             | ExprKind::As { expr: inner, .. }
             | ExprKind::Satisfies { expr: inner, .. }
             | ExprKind::AsConst(inner)
-            | ExprKind::NonNull(inner)
-            | ExprKind::ImportCall(inner, _) => expr(inner),
+            | ExprKind::NonNull(inner) => expr(inner),
+            ExprKind::ImportCall { args, .. } => expr(hir.id_at(args, 0)),
             ExprKind::Jsx(j) => {
                 let jsx = &hir[j];
                 expr(jsx.tag)
@@ -1691,13 +1691,15 @@ impl Checker<'_> {
                     return hir[m].kind == MemberKind::Property;
                 }
                 // The name of a property of an object literal is worked out where the literal is.
-                Parent::Key(literal) if literal.is_some() => {
+                Parent::PropKey(literal, _) if literal.is_some() => {
                     parent = bound.expr_parent[literal.idx()]
                 }
                 Parent::Decorator(_, DecoratorOwner::Class(_))
                 | Parent::ClassExtends(_)
-                | Parent::Key(_)
-                | Parent::MemberKey
+                | Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_)
                 | Parent::EnumInit(_)
                 | Parent::Module(_)
                 | Parent::File
@@ -1798,7 +1800,10 @@ impl Checker<'_> {
                     | Parent::None => break None,
                     // The name of a member of an object literal is part of what is around the literal. That of a member of a class
                     // has a rule of its own.
-                    Parent::Key(_) | Parent::MemberKey => match hir
+                    Parent::PropKey(..)
+                    | Parent::PatKey(_)
+                    | Parent::MemberKey(_)
+                    | Parent::MethodKey(_) => match hir
                         .props
                         .iter()
                         .position(|p| p.key == PropKey::Computed(top))

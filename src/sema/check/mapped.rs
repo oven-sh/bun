@@ -565,7 +565,8 @@ impl<'p> Checker<'p> {
                 )?);
             }
             // `boolean` is no union of keys there.
-            return Some(self.union_with_alias(&types, alias.filter(|_| index != TypeId::BOOLEAN)));
+            let alias = alias.filter(|_| !self.is_boolean(index));
+            return Some(self.union_with_alias(&types, alias));
         }
         self.property_type_for_index(obj, index, include_undefined, access_node)
     }
@@ -701,7 +702,7 @@ impl<'p> Checker<'p> {
                         )
                     }) && !list.iter().any(|t| t.is_never())
                         && list.iter().any(|&t| {
-                            t == TypeId::BOOLEAN
+                            self.is_boolean(t)
                                 || self.every_type(t, |c, m| c.is_unit(m))
                                 || self.is_pattern_literal(t)
                         })

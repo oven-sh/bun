@@ -104,6 +104,58 @@ pub(super) fn skip_trivia(text: &[u8], mut at: usize) -> usize {
     }
 }
 
+/// `GetLeadingCommentRanges`
+pub(super) fn get_leading_comment_ranges(text: &[u8], pos: usize) -> Vec<(usize, usize)> {
+    iterate_comment_ranges(text, pos, false)
+}
+
+/// `iterateCommentRanges`: the comments that follow `pos`, from where to where. A `//` comment goes up to its line break. Those on
+/// the line of `pos` trail what is before it: they are left out unless `trailing`, which stops at the end of that line.
+fn iterate_comment_ranges(text: &[u8], mut pos: usize, trailing: bool) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut collecting = trailing;
+    if pos == 0 {
+        collecting = true;
+        // `isShebangTrivia`, `scanShebangTrivia`
+        if text.starts_with(b"#!") {
+            pos = line_end(text, 2);
+        }
+    }
+    while let Some(&ch) = text.get(pos) {
+        match ch {
+            b'\r' | b'\n' => {
+                pos += if ch == b'\r' && text.get(pos + 1) == Some(&b'\n') {
+                    2
+                } else {
+                    1
+                };
+                if trailing {
+                    break;
+                }
+                collecting = true;
+            }
+            b'\t' | 0x0B | 0x0C | b' ' => pos += 1,
+            b'/' if matches!(text.get(pos + 1), Some(b'/' | b'*')) => {
+                let start = pos;
+                pos = if text[pos + 1] == b'/' {
+                    line_end(text, pos + 2)
+                } else {
+                    bun_core::strings::index_of(&text[pos + 2..], b"*/")
+                        .map_or(text.len(), |end| pos + end + 4)
+                };
+                if collecting {
+                    ranges.push((start, pos));
+                }
+            }
+            _ => match white_space_len(text, pos) {
+                0 => break,
+                len => pos += len,
+            },
+        }
+    }
+    ranges
+}
+
 /// Where the `//` comment that ends `line` starts.
 fn line_comment_start(line: &[u8]) -> Option<usize> {
     let mut at = 0;
@@ -1057,11 +1109,6 @@ impl<'a> Spans<'a> {
         let Some(&Expr { kind, pos }) = self.hir.exprs.get(e.idx()) else {
             return 0;
         };
-        if let Some(&end) = self.hir.expr_ends.get(e.idx())
-            && end != 0
-        {
-            return end as usize;
-        }
         let pos = pos as usize;
         let end = match kind {
             ExprKind::Missing | ExprKind::Ident(known::empty) => {
@@ -1187,18 +1234,19 @@ impl<'a> Spans<'a> {
                 Some(element) => element.end as usize,
                 None => self.token(pos),
             },
-            ExprKind::ImportCall(specifier, more) => {
+            ExprKind::ImportCall { args, .. } => {
+                let specifier = self.hir.id_at(args, 0);
                 let mut deferred = self.hir.deferred_import_calls.iter();
                 if let Some(&(_, close)) = deferred.find(|call| call.0 == specifier)
                     && self.byte(close as usize) == b')'
                 {
                     return close as usize + 1;
                 }
-                let last = self.hir.ids(more).last().unwrap_or(specifier);
+                let last = self.hir.ids(args).last().unwrap_or(specifier);
                 self.close(self.expr(last).max(pos), b')')
             }
             // `import.meta`, `new.target`
-            ExprKind::ImportMeta | ExprKind::NewTarget => {
+            ExprKind::ImportMeta | ExprKind::NewTarget(_) => {
                 self.eat_name(self.eat(self.token(pos), b"."))
             }
         };
@@ -1644,7 +1692,9 @@ impl<'a> Spans<'a> {
         let Some(decl) = self.hir.var_decls.get(decl.idx()) else {
             return 0;
         };
-        if decl.init.is_some() {
+        if decl.loc.end != 0 {
+            decl.loc.end as usize
+        } else if decl.init.is_some() {
             self.expr(decl.init)
         } else if decl.ty.is_some() {
             self.ty_in(decl.ty, 0)
@@ -1685,8 +1735,8 @@ impl<'a> Spans<'a> {
         let Some(param) = self.hir.params.get(param.idx()) else {
             return 0;
         };
-        if param.end != 0 {
-            return param.end as usize;
+        if param.loc.end != 0 {
+            return param.loc.end as usize;
         }
         let pos = param.pos as usize;
         // `reparseJSDocSignature`: one that is made from a `@param` tag is as long as the tag.

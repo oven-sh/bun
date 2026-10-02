@@ -257,7 +257,7 @@ impl Checker<'_> {
                     return (!hir[m].flags.contains(Flags::AMBIENT)).then_some(put_off);
                 }
                 Parent::VarInit(d) if hir[d].flags.contains(Flags::AMBIENT) => return None,
-                Parent::Key(owner) if owner.is_some() => Parent::Expr(owner),
+                Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
                 Parent::FnBody(f) => self.eh_out_of_fn(file, f, false, &mut put_off)?,
                 Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
                     self.eh_out_of_fn(file, bound.param_fn[p.idx()], true, &mut put_off)?
@@ -281,7 +281,12 @@ impl Checker<'_> {
                     }
                     self.outward(file, Parent::ClassExtends(class))
                 }
-                Parent::None | Parent::Key(_) | Parent::MemberKey | Parent::EnumInit(_) => {
+                Parent::None
+                | Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_)
+                | Parent::EnumInit(_) => {
                     return None;
                 }
                 Parent::Expr(e) if e.is_none() => return None,

@@ -469,7 +469,10 @@ impl Checker<'_> {
                     | Parent::EnumInit(_) => break false,
                     Parent::Expr(x) if x.is_none() => break false,
                     Parent::Expr(key)
-                        if matches!(bound.expr_parent[key.idx()], Parent::MemberKey) =>
+                        if matches!(
+                            bound.expr_parent[key.idx()],
+                            Parent::MemberKey(_) | Parent::MethodKey(_)
+                        ) =>
                     {
                         match hir
                             .members
@@ -481,7 +484,7 @@ impl Checker<'_> {
                             None => break false,
                         }
                     }
-                    Parent::Key(owner) if owner.is_some() => Parent::Expr(owner),
+                    Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
                     other => self.outward(file, other),
                 };
             };
@@ -620,7 +623,8 @@ impl Checker<'_> {
         }
         let index = self.exprs_by_kind(file);
         for &e in index.of(ExprTag::ImportCall) {
-            if let ExprKind::ImportCall(argument, _) = hir[e].kind
+            if let ExprKind::ImportCall { args, .. } = hir[e].kind
+                && let argument = hir.id_at(args, 0)
                 && !self.bound(file).is_unchecked(e.idx())
                 && let ExprKind::String(spec) = hir[argument].kind
             {
@@ -685,7 +689,7 @@ impl Checker<'_> {
             .of(ExprTag::ImportCall)
             .iter()
             .filter_map(|&e| match hir[e].kind {
-                ExprKind::ImportCall(_, more) => hir.ids(more).next(),
+                ExprKind::ImportCall { args, .. } => hir.ids(args).nth(1),
                 _ => None,
             })
             .collect();
@@ -876,6 +880,9 @@ impl Checker<'_> {
                 }
             }
             for s in import.named.iter() {
+                if hir[s].is_name_missing() {
+                    continue;
+                }
                 self.check_imported_name(
                     file,
                     usage,
@@ -1046,7 +1053,7 @@ impl Checker<'_> {
         // `isOnlyImportableAsDefault`, `canHaveSyntheticDefault`: they go by how the import is emitted, whatever it says of how its
         // specifier is resolved.
         if files.is_only_importable_as_default(usage, module)
-            || files.synthetic_default(usage, module).is_some()
+            || self.can_have_synthetic_default(usage, module)
         {
             return Some(true);
         }
@@ -1945,7 +1952,7 @@ impl Checker<'_> {
                         ClassOwner::Stmt(s) => bound.stmt_parent[s.idx()],
                     }
                 }
-                Parent::Key(owner) if owner.is_some() => bound.expr_parent[owner.idx()],
+                Parent::PropKey(owner, _) if owner.is_some() => bound.expr_parent[owner.idx()],
                 Parent::FnBody(_) | Parent::ParamDefault(_) => {
                     let f = match parent {
                         Parent::FnBody(f) => f,
@@ -2832,7 +2839,7 @@ impl Checker<'_> {
         if code == 2304
             && self.files().atoms.bytes(name) == b"await"
             && let Some(e) = e
-            && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(self.hir(file)[p].kind, ExprKind::Call(_) | ExprKind::ImportCall(..)))
+            && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(self.hir(file)[p].kind, ExprKind::Call(_) | ExprKind::ImportCall { .. }))
             && !is_parenthesized(self.hir(file), e)
         {
             return 2311;
@@ -3229,8 +3236,10 @@ impl Checker<'_> {
                 }
                 Parent::MemberInit(m) => (bound.member_owner[m.idx()], Some(m)),
                 Parent::ClassExtends(c) | Parent::Decorator(c, _) => (MemberOwner::Class(c), None),
-                Parent::Key(_) | Parent::MemberKey => match self.what_is_named(file, parent, below)
-                {
+                Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
                     Named::Property(literal) | Named::Function(literal) => {
                         parent = Parent::Expr(literal);
                         continue;
@@ -5481,6 +5490,14 @@ impl Files {
     pub(crate) fn loc_of_declaration(&self, file: FileId, decl: Decl) -> Option<hir::TextRange> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let statement = match decl {
+            Decl::EnumMember(member) => return Some(hir[member].loc),
+            Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => {
+                return match bound.pat_parent[pat.idx()] {
+                    PatParent::Param(parameter) => Some(hir[parameter].loc),
+                    PatParent::Var(declaration) => Some(hir[declaration].loc),
+                    _ => None,
+                };
+            }
             Decl::Fn(function) => match bound.fns[function.idx()].owner {
                 FnOwner::Stmt(statement) => statement,
                 _ => return None,

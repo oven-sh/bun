@@ -41,6 +41,8 @@ pub(super) struct Binder<'f> {
     b: Bound,
     tables: Vec<FxHashMap<Atom, SymbolId>>,
     scope: ScopeId,
+    /// The lists of statements the binder is in, innermost last: of the file, of namespaces and of blocks.
+    statement_lists: Vec<IdList<StmtId>>,
     /// Identifiers to look up once everything is declared.
     idents: Vec<(ExprId, ScopeId)>,
     /// Identifiers that are assigned to.
@@ -146,7 +148,8 @@ impl<'f> Binder<'f> {
         b.enum_member_symbol = vec![SymbolId::NONE; f.enum_members.len()].into();
         b.enum_member_owner = vec![EnumId::NONE; f.enum_members.len()].into();
         b.module_symbol = vec![SymbolId::NONE; f.modules.len()].into();
-        b.module_instantiated = vec![false; f.modules.len()].into();
+        b.module_instance_state =
+            vec![ModuleInstanceState::NonInstantiated; f.modules.len()].into();
         b.var_stmt = vec![StmtId::NONE; f.var_decls.len()];
         b.case_stmt = vec![StmtId::NONE; f.cases.len()];
         b.import_scope = vec![ScopeId::NONE; f.imports.len()];
@@ -161,6 +164,7 @@ impl<'f> Binder<'f> {
             b,
             tables: Vec::new(),
             scope: ScopeId::NONE,
+            statement_lists: Vec::new(),
             idents: Vec::new(),
             assigned: Vec::new(),
             expando_assignments: Vec::new(),
@@ -594,7 +598,7 @@ impl<'f> Binder<'f> {
             ExprKind::Ident(_)
             | ExprKind::This
             | ExprKind::Super
-            | ExprKind::NewTarget
+            | ExprKind::NewTarget(_)
             | ExprKind::ImportMeta => true,
             ExprKind::Dot { obj, .. } => self.is_narrowable_reference(obj),
             ExprKind::NonNull(x) => self.is_narrowable_reference(x),
@@ -1236,8 +1240,8 @@ impl<'f> Binder<'f> {
         loop {
             parent = match parent {
                 Parent::Expr(outer) if outer.is_some() => self.b.expr_parent[outer.idx()],
-                Parent::Prop(_) | Parent::MemberKey => return true,
-                Parent::Key(literal) => return literal.is_some(),
+                Parent::Prop(_) | Parent::MemberKey(_) | Parent::MethodKey(_) => return true,
+                Parent::PropKey(..) => return true,
                 _ => return false,
             };
         }
@@ -1556,6 +1560,7 @@ impl<'f> Binder<'f> {
 
     /// Function declarations first: they are there from the top of the block.
     fn stmts(&mut self, list: IdList<StmtId>, parent: Parent, all_exported: bool) {
+        self.statement_lists.push(list);
         for s in self.f.ids(list) {
             if matches!(self.f[s].kind, StmtKind::Fn(_)) {
                 self.stmt(s, parent, all_exported);
@@ -1566,6 +1571,7 @@ impl<'f> Binder<'f> {
                 self.stmt(s, parent, all_exported);
             }
         }
+        self.statement_lists.pop();
     }
 
     /// `IsImplicitlyExportedJSDocDeclaration`: what a `@typedef` or a `@callback` declares at the top of a module. Whether the file
@@ -1599,6 +1605,12 @@ impl<'f> Binder<'f> {
         self.b.stmt_flow[id.idx()] = self.flow;
         let around_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
         let me = Parent::Stmt(id);
+        // `checkDecorators` never comes to those of what is no class.
+        for modifier in self.f[id].modifiers.iter() {
+            if let ModifierKind::Decorator(decorator) = self.f[modifier].kind {
+                self.unchecked_expr(decorator, me);
+            }
+        }
         let is_exported = |flags: Flags| all_exported || flags.contains(Flags::EXPORT);
         match self.f[id].kind {
             StmtKind::Empty => {}
@@ -1953,6 +1965,10 @@ impl<'f> Binder<'f> {
                 if let ImportEqualsTarget::Require(spec) = i.target {
                     self.statement_specifier(spec);
                 }
+                // `checkExternalImportOrExportDeclaration` objects to it (1141) and does not check it.
+                if i.expression.is_some() {
+                    self.unchecked_expr(i.expression, me);
+                }
                 let type_only = if i.flags.contains(Flags::TYPE_ONLY) {
                     SymFlags::TYPE_ONLY
                 } else {
@@ -2287,8 +2303,11 @@ impl<'f> Binder<'f> {
     fn module(&mut self, m: ModuleId, stmt: StmtId, all_exported: bool) {
         let decl = &self.f[m];
         let ambient = decl.flags.contains(Flags::AMBIENT) || self.f.kind == FileKind::Declaration;
-        let instantiated = self.is_module_instantiated(m);
-        self.b.module_instantiated[m.idx()] = instantiated;
+        // `GetModuleInstanceState`
+        let mut outer = self.statement_lists.clone();
+        let state = self.instance_state_of_module(m, &mut outer, &mut Vec::new());
+        self.b.module_instance_state[m.idx()] = state;
+        let instantiated = state != ModuleInstanceState::NonInstantiated;
         let is_at_top = matches!(self.b.scopes[self.scope.idx()].kind, ScopeKind::File);
         // `IsModuleAugmentationExternal`: it adds to a module that is declared elsewhere.
         let is_augmentation = if is_at_top {
@@ -2411,76 +2430,82 @@ impl<'f> Binder<'f> {
         let _ = stmt;
     }
 
-    /// `GetModuleInstanceState(m) != NonInstantiated`, of a namespace declared in the scope the binder is in.
-    fn is_module_instantiated(&self, m: ModuleId) -> bool {
-        // The statement lists around, innermost last.
-        let mut outer = Vec::new();
-        let mut scope = self.scope;
-        while scope.is_some() {
-            let s = &self.b.scopes[scope.idx()];
-            match s.kind {
-                ScopeKind::Module(around) => outer.push(self.f[around].body),
-                ScopeKind::File => outer.push(self.f.body),
-                _ => {}
-            }
-            scope = s.parent;
-        }
-        outer.reverse();
-        self.is_namespace_instantiated(m, &mut outer, &mut Vec::new())
-    }
-
-    /// `getModuleInstanceState`. `busy`: the namespaces being asked about, which count for nothing meanwhile.
-    fn is_namespace_instantiated(
+    /// `getModuleInstanceState`, and `getModuleInstanceStateCached` of the body. `outer`: the lists of statements `m` is in, innermost
+    /// last. `visited`: the bodies that have been asked about. One that is asked about while it is being looked at counts for nothing.
+    /// (A statement only leads back to itself through a body.)
+    fn instance_state_of_module(
         &self,
         m: ModuleId,
         outer: &mut Vec<IdList<StmtId>>,
-        busy: &mut Vec<ModuleId>,
-    ) -> bool {
+        visited: &mut Vec<(ModuleId, Option<ModuleInstanceState>)>,
+    ) -> ModuleInstanceState {
         let module = &self.f[m];
         if !module.has_body {
-            return true;
+            return ModuleInstanceState::Instantiated;
         }
-        if busy.contains(&m) {
-            return false;
+        if let Some(&(_, state)) = visited.iter().find(|v| v.0 == m) {
+            return state.unwrap_or(ModuleInstanceState::NonInstantiated);
         }
-        busy.push(m);
+        let slot = visited.len();
+        visited.push((m, None));
         outer.push(module.body);
-        let is = self
-            .f
-            .ids(module.body)
-            .any(|s| self.is_instantiated(s, outer, busy));
+        let mut state = ModuleInstanceState::NonInstantiated;
+        for s in self.f.ids(module.body) {
+            match self.instance_state_of_statement(s, outer, visited) {
+                ModuleInstanceState::NonInstantiated => {}
+                ModuleInstanceState::ConstEnumOnly => state = ModuleInstanceState::ConstEnumOnly,
+                ModuleInstanceState::Instantiated => {
+                    state = ModuleInstanceState::Instantiated;
+                    break;
+                }
+            }
+        }
         outer.pop();
-        busy.pop();
-        is
+        visited[slot].1 = Some(state);
+        state
     }
 
     /// `getModuleInstanceStateWorker`
-    fn is_instantiated(
+    fn instance_state_of_statement(
         &self,
         s: StmtId,
         outer: &mut Vec<IdList<StmtId>>,
-        busy: &mut Vec<ModuleId>,
-    ) -> bool {
+        visited: &mut Vec<(ModuleId, Option<ModuleInstanceState>)>,
+    ) -> ModuleInstanceState {
         match self.f[s].kind {
-            StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Import(_) => false,
-            StmtKind::ImportEquals(i) => self.f[i].flags.contains(Flags::EXPORT),
-            StmtKind::Module(m) => self.is_namespace_instantiated(m, outer, busy),
+            StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Import(_) => {
+                ModuleInstanceState::NonInstantiated
+            }
+            StmtKind::Enum(e) if self.f[e].flags.contains(Flags::CONST) => {
+                ModuleInstanceState::ConstEnumOnly
+            }
+            StmtKind::ImportEquals(i) if !self.f[i].flags.contains(Flags::EXPORT) => {
+                ModuleInstanceState::NonInstantiated
+            }
+            StmtKind::Module(m) => self.instance_state_of_module(m, outer, visited),
             // `type` on it or on a name plays no part.
-            StmtKind::ExportNamed(e) if self.f[e].spec.is_none() => self.f[e]
-                .items
-                .iter()
-                .any(|i| self.is_alias_target_instantiated(i, &outer[..], busy)),
-            _ => true,
+            StmtKind::ExportNamed(e) if self.f[e].spec.is_none() => {
+                let mut state = ModuleInstanceState::NonInstantiated;
+                for spec in self.f[e].items.iter() {
+                    state =
+                        state.max(self.instance_state_of_alias_target(spec, &outer[..], visited));
+                    if state == ModuleInstanceState::Instantiated {
+                        break;
+                    }
+                }
+                state
+            }
+            _ => ModuleInstanceState::Instantiated,
         }
     }
 
     /// `getModuleInstanceStateForAliasTarget`
-    fn is_alias_target_instantiated(
+    fn instance_state_of_alias_target(
         &self,
         spec: ExportSpecId,
         outer: &[IdList<StmtId>],
-        busy: &mut Vec<ModuleId>,
-    ) -> bool {
+        visited: &mut Vec<(ModuleId, Option<ModuleInstanceState>)>,
+    ) -> ModuleInstanceState {
         let ExportSpec {
             local: name,
             local_pos,
@@ -2488,28 +2513,38 @@ impl<'f> Binder<'f> {
         } = self.f[spec];
         // `export { "a" }`
         if matches!(self.f.text.get(local_pos as usize), Some(b'"' | b'\'')) {
-            return true;
+            return ModuleInstanceState::Instantiated;
         }
         for depth in (0..outer.len()).rev() {
-            let mut found = false;
+            let list = outer[depth];
+            // The `B` that is all there is in the `A` of `namespace A.B` is in no block.
+            if list.len() == 1 && is_nested_namespace(self.f, self.f.id_at(list, 0)) {
+                continue;
+            }
+            let mut found: Option<ModuleInstanceState> = None;
             let mut around = outer[..=depth].to_vec();
-            for s in self.f.ids(outer[depth]) {
+            for s in self.f.ids(list) {
                 if !self.stmt_has_name(s, name) {
                     continue;
                 }
-                if self.is_instantiated(s, &mut around, busy)
-                    || matches!(self.f[s].kind, StmtKind::ImportEquals(_))
-                {
-                    return true;
+                let state = self.instance_state_of_statement(s, &mut around, visited);
+                if found.is_none_or(|known| state > known) {
+                    found = Some(state);
                 }
-                found = true;
+                if found == Some(ModuleInstanceState::Instantiated) {
+                    return ModuleInstanceState::Instantiated;
+                }
+                // What an import alias stands for cannot be told from here.
+                if matches!(self.f[s].kind, StmtKind::ImportEquals(_)) {
+                    found = Some(ModuleInstanceState::Instantiated);
+                }
             }
-            if found {
-                return false;
+            if let Some(found) = found {
+                return found;
             }
         }
         // Not to be found: it could be a value.
-        true
+        ModuleInstanceState::Instantiated
     }
 
     /// `NodeHasName`
@@ -2626,7 +2661,7 @@ impl<'f> Binder<'f> {
                         self.scope_change_of = FnId::NONE;
                     }
                     if let PropKey::Computed(key) = prop.key {
-                        self.expr(key, Parent::Key(ExprId::NONE));
+                        self.expr(key, Parent::PatKey(p));
                     }
                     // `bindBindingElementFlow`: the default is worked out before what it is the default of.
                     if prop.default.is_some() {
@@ -3159,16 +3194,16 @@ impl<'f> Binder<'f> {
                     self.b.expr_scope.insert(key, computed_name);
                 }
                 if member.func.is_some() {
-                    self.function_key(key, is_in_class_expression);
+                    self.function_key(key, Parent::MemberKey(m), is_in_class_expression);
                 } else if constructor.is_some() {
                     self.push_scope(
                         ScopeKind::PropertyDeclaration(m, constructor),
                         SymbolId::NONE,
                     );
-                    self.expr(key, Parent::MemberKey);
+                    self.expr(key, Parent::MemberKey(m));
                     self.pop_scope();
                 } else {
-                    self.expr(key, Parent::MemberKey);
+                    self.expr(key, Parent::MemberKey(m));
                 }
                 if is_of_class_or_interface {
                     self.pop_scope();
@@ -3228,7 +3263,7 @@ impl<'f> Binder<'f> {
     /// `bindContainer`: the computed name of a method or an accessor is part of it. The flow of control starts afresh before the name
     /// and goes on into the function, which is bound next, and a `this` in the name is one in the function.
     /// `is_in_expression`: `IsObjectLiteralOrClassExpressionMethodOrAccessor`, what is known outside holds.
-    fn function_key(&mut self, key: ExprId, is_in_expression: bool) {
+    fn function_key(&mut self, key: ExprId, parent: Parent, is_in_expression: bool) {
         let around = std::mem::replace(&mut self.seen_this, false);
         let saved = (self.flow, self.exception_target);
         self.flow = self.new_flow(Flow::Start {
@@ -3240,7 +3275,7 @@ impl<'f> Binder<'f> {
             arrow: false,
         });
         self.exception_target = FlowId::NONE;
-        self.expr(key, Parent::MemberKey);
+        self.expr(key, parent);
         self.flow_after_name = self.flow;
         (self.flow, self.exception_target) = saved;
         self.this_in_name = std::mem::replace(&mut self.seen_this, around);
@@ -3634,7 +3669,7 @@ impl<'f> Binder<'f> {
             | ExprKind::BigInt(_)
             | ExprKind::Regex
             | ExprKind::ImportMeta
-            | ExprKind::NewTarget => {}
+            | ExprKind::NewTarget(_) => {}
             ExprKind::Ident(_) => {
                 self.b.expr_flow[id.idx()] = self.flow;
                 self.idents.push((id, self.scope));
@@ -3885,19 +3920,21 @@ impl<'f> Binder<'f> {
             ExprKind::Spread(e)
             | ExprKind::Await(e)
             | ExprKind::AsConst(e)
-            | ExprKind::NonNull(e)
-            | ExprKind::ImportCall(e, _) => {
-                let is_import = matches!(self.f[id].kind, ExprKind::ImportCall(..));
-                if is_import && let ExprKind::String(spec) = self.f[e].kind {
-                    self.dynamic_specifiers.push((self.f[id].pos, spec));
-                }
+            | ExprKind::NonNull(e) => {
                 if matches!(self.f[id].kind, ExprKind::Spread(_)) {
                     self.in_assignment_pattern = in_pattern;
                 }
                 self.expr(e, me);
-                if let ExprKind::ImportCall(_, more) = self.f[id].kind {
-                    self.exprs(more, me);
+            }
+            ExprKind::ImportCall { args, type_args } => {
+                if let ExprKind::String(spec) = self.f[self.f.id_at(args, 0)].kind {
+                    self.dynamic_specifiers.push((self.f[id].pos, spec));
                 }
+                // `checkImportCallExpression` never looks at them.
+                let around = std::mem::replace(&mut self.is_unchecked, true);
+                self.tys(type_args);
+                self.is_unchecked = around;
+                self.exprs(args, me);
             }
             ExprKind::Yield { value, .. } => {
                 self.yields.push(id.0);
@@ -4232,14 +4269,14 @@ impl<'f> Binder<'f> {
                     PropKind::Init | PropKind::Spread | PropKind::Shorthand
                 );
                 if names_a_function && prop.value.is_some() {
-                    self.function_key(key, true);
+                    self.function_key(key, Parent::MethodKey(p), true);
                 } else {
                     self.expr(
                         key,
                         if names_a_function {
-                            Parent::MemberKey
+                            Parent::MethodKey(p)
                         } else {
-                            Parent::Key(owner)
+                            Parent::PropKey(owner, p)
                         },
                     );
                 }

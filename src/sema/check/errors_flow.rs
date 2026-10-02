@@ -153,11 +153,9 @@ impl Checker<'_> {
             }
             StmtKind::Module(m) => {
                 self.is_flagged_unreachable(file, flow)
-                    && match self.module_instance_state(file, m) {
-                        0 => false,
-                        1 => preserves_const_enums,
-                        _ => true,
-                    }
+                    && self
+                        .bound(file)
+                        .is_instantiated_module(m, preserves_const_enums)
             }
             _ => flow == UNREACHABLE || !self.is_reachable(file, flow),
         }
@@ -228,34 +226,6 @@ impl Checker<'_> {
                 },
             }
         }
-    }
-
-    /// `getModuleInstanceState`: 0 nothing of it is there at run time, 1 `const enum`s only, 2 something is.
-    fn module_instance_state(&self, file: FileId, m: ModuleId) -> u8 {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // Whether it all comes to nothing the binder has found out, what `export { a }` names included.
-        if !bound.module_instantiated[m.idx()] {
-            return 0;
-        }
-        if !hir[m].has_body {
-            return 2;
-        }
-        let mut state = 0u8;
-        for s in hir.ids(hir[m].body) {
-            state = state.max(match hir[s].kind {
-                StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Import(_) => 0,
-                StmtKind::ImportEquals(i) if !hir[i].flags.contains(Flags::EXPORT) => 0,
-                StmtKind::Enum(e) if hir[e].flags.contains(Flags::CONST) => 1,
-                StmtKind::Module(inner) => self.module_instance_state(file, inner),
-                // `getModuleInstanceStateForAliasTarget` is not followed: a name that is exported counts as something.
-                StmtKind::ExportNamed(x) if hir[x].spec.is_none() && hir[x].items.is_empty() => 0,
-                _ => 2,
-            });
-            if state == 2 {
-                break;
-            }
-        }
-        state
     }
 
     /// `checkSourceElementUnreachable`: the first of each run of statements that control does not get to, and nothing inside them.
@@ -715,15 +685,15 @@ impl Checker<'_> {
                     bound.expr_parent[x.idx()]
                 }
                 // The name of a property belongs to what is around the object literal or the pattern.
-                Parent::Key(literal) if literal.is_some() => Parent::Expr(literal),
-                Parent::Key(_) => {
+                Parent::PropKey(literal, _) if literal.is_some() => Parent::Expr(literal),
+                Parent::PropKey(..) | Parent::PatKey(_) => {
                     let p = hir
                         .pat_props
                         .iter()
                         .position(|p| p.key == PropKey::Computed(top))?;
                     self.outward(file, Parent::PatPropDefault(PatPropId(p as u32)))
                 }
-                Parent::MemberKey => {
+                Parent::MemberKey(_) | Parent::MethodKey(_) => {
                     if let Some(p) = hir
                         .props
                         .iter()
@@ -882,7 +852,10 @@ impl Checker<'_> {
                     Parent::Module(_) => break 2331,
                     Parent::EnumInit(_) => break 2332,
                     // In the name of a member of a class there is none. Any other name is part of what is around what it is a name in.
-                    Parent::Key(_) | Parent::MemberKey => {
+                    Parent::PropKey(..)
+                    | Parent::PatKey(_)
+                    | Parent::MemberKey(_)
+                    | Parent::MethodKey(_) => {
                         if let Some(m) = hir
                             .members
                             .iter()
@@ -975,14 +948,18 @@ impl Checker<'_> {
             let container: Result<(Option<FnId>, Option<MemberId>), u32> = loop {
                 match parent {
                     // The name of a member is worked out outside of it: on from what the member is a member of.
-                    Parent::Key(_) | Parent::MemberKey => {
+                    Parent::PropKey(..)
+                    | Parent::PatKey(_)
+                    | Parent::MemberKey(_)
+                    | Parent::MethodKey(_) => {
                         in_computed_name = true;
                         if let Some(p) = hir
                             .props
                             .iter()
                             .position(|p| p.key == PropKey::Computed(top))
                         {
-                            through_function |= matches!(parent, Parent::MemberKey);
+                            through_function |=
+                                matches!(parent, Parent::MemberKey(_) | Parent::MethodKey(_));
                             parent = Parent::Expr(bound.prop_owner[p]);
                         } else if let Some(m) = hir
                             .members

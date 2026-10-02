@@ -404,6 +404,14 @@ pub enum AssignmentTarget {
     ForInOrOf,
 }
 
+/// `ModuleInstanceState`, in its order: where two are compared, it is by number.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum ModuleInstanceState {
+    NonInstantiated,
+    Instantiated,
+    ConstEnumOnly,
+}
+
 /// `AssignmentKind`
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum AssignmentKind {
@@ -424,10 +432,14 @@ pub enum Parent {
     PatElemDefault(PatElemId),
     /// The value of a property of an object literal or of a JSX attribute.
     Prop(PropId),
-    /// A computed name: of a property of the object literal, or in a pattern if there is none.
-    Key(ExprId),
-    /// The computed name of a method, an accessor or a member of a class: as far as the flow of control goes, it is inside.
-    MemberKey,
+    /// The computed name of a property of the object literal that is no method and no accessor.
+    PropKey(ExprId, PropId),
+    /// The computed name of a binding element.
+    PatKey(PatPropId),
+    /// The computed name of a member of a class, an interface or a type literal: as far as the flow of control goes, it is inside.
+    MemberKey(MemberId),
+    /// The computed name of a method or an accessor of an object literal: the same.
+    MethodKey(PropId),
     /// The initializer of a member. Also the operand of a `typeof` in the type or the initializer of a property of a class, if
     /// there is no function in between.
     MemberInit(MemberId),
@@ -797,8 +809,8 @@ pub struct Bound {
     pub enum_member_symbol: Few<SymbolId>,
     pub enum_member_owner: Few<EnumId>,
     pub module_symbol: Few<SymbolId>,
-    /// `getModuleInstanceState(..) != NonInstantiated`, by `ModuleId`.
-    pub module_instantiated: Few<bool>,
+    /// `GetModuleInstanceState`, by `ModuleId`.
+    pub module_instance_state: Few<ModuleInstanceState>,
     pub var_stmt: Vec<StmtId>,
     /// The identifiers that are assigned to, by the variable they name.
     pub assignments: Vec<(SymbolId, ExprId)>,
@@ -1138,6 +1150,15 @@ impl Bound {
                 .unchecked_types
                 .binary_search(&TypeNodeId(node as u32))
                 .is_ok()
+    }
+
+    /// `IsInstantiatedModule`
+    pub fn is_instantiated_module(&self, m: ModuleId, preserve_const_enums: bool) -> bool {
+        match self.module_instance_state[m.idx()] {
+            ModuleInstanceState::NonInstantiated => false,
+            ModuleInstanceState::Instantiated => true,
+            ModuleInstanceState::ConstEnumOnly => preserve_const_enums,
+        }
     }
 
     /// `IsInTypeQuery`: it is asked what `e` is, but `e` is not read.

@@ -149,7 +149,8 @@ impl Checker<'_> {
                     // A namespace with something in it goes with a class or an enum, not with a variable.
                     Decl::Module(m) => {
                         flags.contains(SymFlags::BLOCK_SCOPED_VARIABLE)
-                            && self.bound(of).module_instantiated[m.idx()]
+                            && self.bound(of).module_instance_state[m.idx()]
+                                != ModuleInstanceState::NonInstantiated
                     }
                     _ => false,
                 });
@@ -347,8 +348,10 @@ impl Checker<'_> {
                     self.outward(file, parent)
                 }
                 // A computed name is a child of the declaration it names.
-                Parent::Key(_) | Parent::MemberKey => match self.what_is_named(file, parent, below)
-                {
+                Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
                     Named::Property(literal) => Parent::Expr(literal),
                     Named::Function(literal) => {
                         in_function = true;
@@ -411,11 +414,13 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let name = PropKey::Computed(key);
         match parent {
-            Parent::Key(owner) if owner.is_some() => Named::Property(owner),
-            Parent::Key(_) => match hir.pat_props.iter().position(|p| p.key == name) {
-                Some(p) => Named::Element(PatPropId(p as u32)),
-                None => Named::Unknown,
-            },
+            Parent::PropKey(owner, _) if owner.is_some() => Named::Property(owner),
+            Parent::PropKey(..) | Parent::PatKey(_) => {
+                match hir.pat_props.iter().position(|p| p.key == name) {
+                    Some(p) => Named::Element(PatPropId(p as u32)),
+                    None => Named::Unknown,
+                }
+            }
             _ => {
                 if let Some(m) = hir.members.iter().position(|m| m.key == name) {
                     Named::Member(MemberId(m as u32))
@@ -461,7 +466,12 @@ impl Checker<'_> {
                     return Some(Container::Stmt(s));
                 }
                 Parent::Expr(x) if x.is_none() => return None,
-                Parent::None | Parent::Key(_) | Parent::MemberKey | Parent::EnumInit(_) => {
+                Parent::None
+                | Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_)
+                | Parent::EnumInit(_) => {
                     return None;
                 }
                 _ => self.outward(file, parent),
@@ -532,8 +542,10 @@ impl Checker<'_> {
                         _ => self.outward(file, parent),
                     }
                 }
-                Parent::Key(_) | Parent::MemberKey => match self.what_is_named(file, parent, below)
-                {
+                Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
                     Named::Property(literal) | Named::Function(literal) => Parent::Expr(literal),
                     Named::Element(p) => self.outward(file, Parent::PatPropDefault(p)),
                     Named::Member(m) => return class_of(m),
@@ -587,16 +599,17 @@ impl Checker<'_> {
                         below = x;
                         bound.expr_parent[x.idx()]
                     }
-                    Parent::Key(_) | Parent::MemberKey => {
-                        match self.what_is_named(file, parent, below) {
-                            Named::Element(p) => return hir[p].value != pat,
-                            Named::Property(literal) | Named::Function(literal) => {
-                                Parent::Expr(literal)
-                            }
-                            Named::Member(m) => self.parent_of(file, Parent::MemberInit(m)),
-                            Named::Unknown => return true,
+                    Parent::PropKey(..)
+                    | Parent::PatKey(_)
+                    | Parent::MemberKey(_)
+                    | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
+                        Named::Element(p) => return hir[p].value != pat,
+                        Named::Property(literal) | Named::Function(literal) => {
+                            Parent::Expr(literal)
                         }
-                    }
+                        Named::Member(m) => self.parent_of(file, Parent::MemberInit(m)),
+                        Named::Unknown => return true,
+                    },
                     Parent::File | Parent::Module(_) => break,
                     Parent::None | Parent::EnumInit(_) => return true,
                     Parent::Stmt(s) if s.is_none() => return true,
@@ -647,7 +660,10 @@ impl Checker<'_> {
                     }
                     bound.stmt_parent[s.idx()]
                 }
-                Parent::Key(_) | Parent::MemberKey => {
+                Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_) => {
                     let Parent::Expr(key) = below else {
                         return true;
                     };
@@ -693,8 +709,10 @@ impl Checker<'_> {
                     below = x;
                     bound.expr_parent[x.idx()]
                 }
-                Parent::Key(_) | Parent::MemberKey => match self.what_is_named(file, parent, below)
-                {
+                Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
                     Named::Property(literal) | Named::Function(literal) => Parent::Expr(literal),
                     Named::Element(p) => self.outward(file, Parent::PatPropDefault(p)),
                     // The name of a `declare` member is ambient, and an ambient use counts as declared (`isInAmbientOrTypeNode`).
@@ -794,8 +812,10 @@ impl Checker<'_> {
                         None => return true,
                     }
                 }
-                Parent::Key(_) | Parent::MemberKey => match self.what_is_named(file, parent, below)
-                {
+                Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
                     Named::Property(literal) => Parent::Expr(literal),
                     Named::Element(p) => self.outward(file, Parent::PatPropDefault(p)),
                     // The name of a property of a class is worked out with the class; that of a method or an accessor is in the
@@ -867,8 +887,10 @@ impl Checker<'_> {
                 Parent::ParamDefault(p) if hir[bound.param_fn[p.idx()]].kind == FnKind::Arrow => {
                     return false;
                 }
-                Parent::Key(_) | Parent::MemberKey => match self.what_is_named(file, parent, below)
-                {
+                Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
                     Named::Property(literal) | Named::Function(literal) => Parent::Expr(literal),
                     Named::Element(p) => self.outward(file, Parent::PatPropDefault(p)),
                     Named::Member(m) if hir[m].kind == MemberKind::Property => {
@@ -955,8 +977,10 @@ impl Checker<'_> {
                 Parent::ParamDefault(p) if hir[bound.param_fn[p.idx()]].kind == FnKind::Arrow => {
                     break false;
                 }
-                Parent::Key(_) | Parent::MemberKey => match self.what_is_named(file, parent, below)
-                {
+                Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
                     Named::Property(literal) | Named::Function(literal) => Parent::Expr(literal),
                     Named::Element(p) => self.outward(file, Parent::PatPropDefault(p)),
                     Named::Member(m) => match class_of(m) {

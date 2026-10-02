@@ -1287,15 +1287,17 @@ impl Checker<'_> {
                 Parent::FnBody(f) => return Some(f),
                 Parent::ParamDefault(p) => return Some(bound.param_fn[p.idx()]),
                 // The computed name of a property of an object literal is where the literal is.
-                Parent::Key(literal) if literal.is_some() => parent = Parent::Expr(literal),
+                Parent::PropKey(literal, _) if literal.is_some() => parent = Parent::Expr(literal),
                 // The decorators and the computed name of a method are part of the method.
                 Parent::None
                 | Parent::File
                 | Parent::Module(_)
                 | Parent::MemberInit(_)
                 | Parent::EnumInit(_)
-                | Parent::Key(_)
-                | Parent::MemberKey
+                | Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_)
                 | Parent::Decorator(_, DecoratorOwner::Member(_) | DecoratorOwner::Param(_)) => {
                     return None;
                 }

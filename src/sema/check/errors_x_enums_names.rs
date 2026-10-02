@@ -1103,9 +1103,14 @@ fn step_out(c: &Checker<'_>, file: FileId, parent: Parent) -> Parent {
                 .find(|&s| matches!(hir[s].kind, StmtKind::Enum(en) if en == owner));
             Parent::Stmt(statement.unwrap_or(StmtId::NONE))
         }
-        Parent::Key(owner) if owner.is_some() => Parent::Expr(owner),
+        Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
         // The name of a method or an accessor is part of the function; that of a property is worked out where the class is.
-        Parent::Expr(key) if matches!(bound.expr_parent[key.idx()], Parent::MemberKey) => {
+        Parent::Expr(key)
+            if matches!(
+                bound.expr_parent[key.idx()],
+                Parent::MemberKey(_) | Parent::MethodKey(_)
+            ) =>
+        {
             match hir
                 .members
                 .iter()
@@ -1114,7 +1119,7 @@ fn step_out(c: &Checker<'_>, file: FileId, parent: Parent) -> Parent {
                 Some(m) if hir.members[m].func.is_some() => Parent::FnBody(hir.members[m].func),
                 Some(m) => c.outward(file, Parent::MemberInit(MemberId(m as u32))),
                 // Of a method of an object literal.
-                None => Parent::MemberKey,
+                None => bound.expr_parent[key.idx()],
             }
         }
         _ => c.outward(file, parent),
@@ -1141,8 +1146,8 @@ fn is_in_ambient_or_type_node(c: &Checker<'_>, usage: Location) -> bool {
             }
             Parent::Module(m) => return hir[m].flags.contains(Flags::AMBIENT),
             Parent::File => return hir.kind == FileKind::Declaration,
-            Parent::None | Parent::MemberKey => return true,
-            Parent::Key(owner) if owner.is_none() => return true,
+            Parent::None | Parent::MemberKey(_) | Parent::MethodKey(_) => return true,
+            Parent::PatKey(_) => return true,
             _ => {}
         }
         parent = step_out(c, file, parent);
@@ -1170,8 +1175,12 @@ fn is_in_initializer_of(c: &Checker<'_>, usage: Location, d: VarDeclId) -> bool 
                     return false;
                 }
             }
-            Parent::File | Parent::Module(_) | Parent::None | Parent::MemberKey => return false,
-            Parent::Key(owner) if owner.is_none() => return false,
+            Parent::File
+            | Parent::Module(_)
+            | Parent::None
+            | Parent::MemberKey(_)
+            | Parent::MethodKey(_) => return false,
+            Parent::PatKey(_) => return false,
             _ => {}
         }
         parent = step_out(c, file, parent);
@@ -1217,8 +1226,8 @@ fn is_use_deferred(c: &Checker<'_>, usage: Location, declaration: Location) -> b
             }
             Parent::MemberInit(m) if !hir[m].flags.contains(Flags::STATIC) => return true,
             Parent::File | Parent::Module(_) => return false,
-            Parent::None | Parent::MemberKey => return true,
-            Parent::Key(owner) if owner.is_none() => return true,
+            Parent::None | Parent::MemberKey(_) | Parent::MethodKey(_) => return true,
+            Parent::PatKey(_) => return true,
             _ => {}
         }
         parent = step_out(c, file, parent);
@@ -1400,12 +1409,16 @@ fn what_is_declared(c: &Checker<'_>, file: FileId, decl: Decl) -> Option<(u16, u
             hir[en].name_pos,
             true,
         ),
-        Decl::Module(m) if is_instantiated(hir, m) => (
-            VALUE_MODULE,
-            VALUE & !(FUNCTION | CLASS | REGULAR_ENUM | VALUE_MODULE),
-            hir[m].name_pos,
-            false,
-        ),
+        Decl::Module(m)
+            if bound.module_instance_state[m.idx()] != ModuleInstanceState::NonInstantiated =>
+        {
+            (
+                VALUE_MODULE,
+                VALUE & !(FUNCTION | CLASS | REGULAR_ENUM | VALUE_MODULE),
+                hir[m].name_pos,
+                false,
+            )
+        }
         Decl::Module(m) => (NAMESPACE_MODULE, 0, hir[m].name_pos, false),
         // An error about `import a = b` is about all of it.
         Decl::ImportEquals(i) => {
@@ -1415,18 +1428,6 @@ fn what_is_declared(c: &Checker<'_>, file: FileId, decl: Decl) -> Option<(u16, u
             (ALIAS, ALIAS, hir[statement].pos, false)
         }
         _ => return None,
-    })
-}
-
-/// Whether there is more to the namespace than types.
-fn is_instantiated(hir: &hir::File, m: ModuleId) -> bool {
-    hir.ids(hir[m].body).any(|s| match hir[s].kind {
-        StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Empty | StmtKind::Import(_) => {
-            false
-        }
-        StmtKind::Module(inner) => is_instantiated(hir, inner),
-        StmtKind::ExportNamed(e) => !hir[e].type_only,
-        _ => true,
     })
 }
 

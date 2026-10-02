@@ -74,7 +74,7 @@ mod unions;
 mod visit_node;
 
 use crate::atom::{Atom, known};
-use crate::bind::{AssignmentKind, AssignmentTarget, Bound, SymFlags};
+use crate::bind::{AssignmentKind, AssignmentTarget, Bound, ModuleInstanceState, SymFlags};
 use crate::hir::{self, *};
 use crate::local::MaybeLocal;
 use crate::program::{FileId, Files, Sym};
@@ -1061,7 +1061,18 @@ impl<'p> Checker<'p> {
 
     #[inline(never)]
     fn intern_type_param(&self, file: FileId, tp: TypeParamId) -> TypeId {
-        let made = self.intern(TypeData::TypeParam(file, tp, MapperId::IDENTITY));
+        use crate::bind::MemberDeclaration::TypeParameter;
+        // `getDeclaredTypeOfTypeParameter(getSymbolOfDeclaration(tp))`: the declarations of a class or an interface declare their type
+        // parameters in `symbol.Members`, so those of one name are one symbol and one type.
+        let declarations = self.files().declarations_of_member(file, TypeParameter(tp));
+        let (of, first) = declarations
+            .iter()
+            .find_map(|&(of, declaration)| match declaration {
+                TypeParameter(first) => Some((of, first)),
+                _ => None,
+            })
+            .unwrap_or((file, tp));
+        let made = self.intern(TypeData::TypeParam(of, first, MapperId::IDENTITY));
         self.p.declared_type_params.insert((file, tp), made)
     }
 
@@ -2105,6 +2116,14 @@ impl<'p> Checker<'p> {
             self.data(ty),
             TypeData::Intrinsic(Intrinsic::BigInt) | TypeData::BigIntLit { .. }
         )
+    }
+
+    /// `TypeFlagsBoolean`: `getUnionTypeFromSortedList` gives it to the union of the two boolean literal types, whatever alias or
+    /// origin that has.
+    #[inline]
+    pub fn is_boolean(&self, ty: TypeId) -> bool {
+        ty == TypeId::BOOLEAN
+            || matches!(self.data(ty), TypeData::Union(members) if members[..] == [TypeId::FALSE, TypeId::TRUE])
     }
 
     pub fn is_boolean_like(&self, ty: TypeId) -> bool {

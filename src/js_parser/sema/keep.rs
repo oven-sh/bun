@@ -910,6 +910,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             modifiers.push(Modifier {
                 flag,
                 loc: loc(word.pos),
+                decorator: None,
             });
         }
         Some((flags, self.type_syntax_mut().ast.add_modifiers(&modifiers)))
@@ -1202,9 +1203,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn push_statement_modifier(&mut self, flag: Flags, loc: Loc) {
         if self.should_keep_types() {
-            self.type_syntax_mut()
-                .statement_modifiers
-                .push(Modifier { flag, loc });
+            self.type_syntax_mut().statement_modifiers.push(Modifier {
+                flag,
+                loc,
+                decorator: None,
+            });
+        }
+    }
+
+    /// The same for a decorator, whose `@` is at `loc`, of a statement that is no class.
+    pub(crate) fn push_statement_decorator(&mut self, decorator: Expr, loc: Loc) {
+        if self.should_keep_types() {
+            self.type_syntax_mut().statement_modifiers.push(Modifier {
+                flag: Flags::empty(),
+                loc,
+                decorator: Some(decorator),
+            });
         }
     }
 

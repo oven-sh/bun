@@ -2364,6 +2364,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value = Some(p.parse_expr(Level::Comma)?);
             }
 
+            p.mark_end(local.loc, Mark::VariableLikeEnd);
             decls.push(G::Decl {
                 binding: local,
                 value,

@@ -444,6 +444,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     .map(Found::Symbol)
             }
             VisitedKind::Parenthesized(..)
+            | VisitedKind::ModuleSpecifier(_)
             | VisitedKind::ImportDeferName(_)
             | VisitedKind::JsxNamespacedNamePart
             | VisitedKind::ImportAttributeName(_)
@@ -557,8 +558,14 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             ExprKind::ImportMeta if is_name => {
                 Some(Found::Undeclared("ImportMetaExpression.meta".to_owned()))
             }
+            // `getSymbolAtLocation`, `KindMetaProperty`: the name has a symbol only if it is the right one.
+            ExprKind::NewTarget(name)
+                if is_name && self.c.files().atoms.bytes(name) != b"target" =>
+            {
+                None
+            }
             // `checkExpression(node).symbol`. The `target` of `new.target` has the same symbol.
-            ExprKind::Super | ExprKind::ImportMeta | ExprKind::NewTarget => {
+            ExprKind::Super | ExprKind::ImportMeta | ExprKind::NewTarget(_) => {
                 let ty = self.c.type_of_expr(file, e);
                 self.symbol_of_type(ty)
             }
@@ -654,7 +661,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 self.get_property_of_type(ty, name)
             }
             // `resolveExternalModuleName`
-            ExprKind::ImportCall(written, _) if written == e => {
+            ExprKind::ImportCall { args, .. } if hir.id_at(args, 0) == e => {
                 specifier(files.mode_of_import_call(file))
             }
             // `IsVariableDeclarationInitializedToRequire`
@@ -670,7 +677,11 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             // the property in JavaScript.
             ExprKind::Call(_) if hir.is_js && !matches!(hir[e].kind, ExprKind::Number(_)) => {
                 let (object, key) = crate::bind::define_property_call(hir, parent)?;
-                if key != e {
+                // Nil where the binder took the call for no declaration: `Object.defineProperty(module, "exports", ..)`.
+                let is_declaration = bound.is_expando_declaration(parent)
+                    || crate::bind::assignment_declaration_kind(hir, parent)
+                        == crate::bind::JsDeclarationKind::ObjectDefinePropertyExports;
+                if key != e || !is_declaration {
                     return None;
                 }
                 let ty = self.c.type_of_expr(file, object);
@@ -782,6 +793,10 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     fn get_symbol_of_identifier(&self, e: ExprId, name: Atom) -> Option<Found> {
         let file = self.file;
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
+        // The `a` of `export * from a` is neither an expression node nor a name in a type.
+        if matches!(bound.expr_parent[e.idx()], Parent::File) {
+            return None;
+        }
         // `export default a`, `export = a`: every meaning counts.
         if let Parent::Stmt(statement) = bound.expr_parent[e.idx()]
             && statement.is_some()
@@ -1333,7 +1348,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 ),
             },
             Declaration::Member(member) => return hir[member].loc.pos,
-            Declaration::Parameter(parameter) => (hir[parameter].pos, Flags::empty()),
+            Declaration::Parameter(parameter) => return hir[parameter].loc.pos,
             Declaration::Property(property) => (hir[property].start, Flags::empty()),
             Declaration::Expression(e) => {
                 (self.c.start_inside_parentheses(file, e), Flags::empty())

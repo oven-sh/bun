@@ -173,9 +173,9 @@ impl Pass<'_, '_> {
                 Node::Expr(bound.prop_owner[p.idx()])
             }
             Parent::Prop(_) => Node::Lost,
-            Parent::Key(owner) if owner.is_some() => Node::Expr(owner),
+            Parent::PropKey(owner, _) if owner.is_some() => Node::Expr(owner),
             // In a pattern.
-            Parent::Key(_) => match hir
+            Parent::PropKey(..) | Parent::PatKey(_) => match hir
                 .pat_props
                 .iter()
                 .find(|p| p.key == PropKey::Computed(below))
@@ -183,7 +183,7 @@ impl Pass<'_, '_> {
                 Some(p) => self.around_pattern(p.value),
                 None => Node::Lost,
             },
-            Parent::MemberKey => self.named_by(below),
+            Parent::MemberKey(_) | Parent::MethodKey(_) => self.named_by(below),
             Parent::MemberInit(m) => Node::Initializer(m),
             Parent::FnBody(f) => Node::Body(f),
             Parent::EnumInit(m) => Node::Enum(bound.enum_member_owner[m.idx()]),
@@ -278,7 +278,7 @@ impl Pass<'_, '_> {
             | ExprKind::Fn(_)
             | ExprKind::Class(_)
             | ExprKind::ImportMeta
-            | ExprKind::NewTarget => {}
+            | ExprKind::NewTarget(_) => {}
             ExprKind::Template { exprs, .. } => out.extend(hir.ids(exprs)),
             ExprKind::TaggedTemplate(c) | ExprKind::Call(c) | ExprKind::New(c) => {
                 out.push(hir[c].callee);
@@ -296,10 +296,7 @@ impl Pass<'_, '_> {
             | ExprKind::Await(x)
             | ExprKind::AsConst(x)
             | ExprKind::NonNull(x) => out.push(x),
-            ExprKind::ImportCall(x, more) => {
-                out.push(x);
-                out.extend(hir.ids(more));
-            }
+            ExprKind::ImportCall { args, .. } => out.extend(hir.ids(args)),
             ExprKind::Yield { value, .. } => {
                 if value.is_some() {
                     out.push(value);

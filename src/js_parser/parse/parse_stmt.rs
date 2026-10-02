@@ -222,8 +222,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Call where decorators are followed by something other than a class. Ordinary builds report that a class is expected.
-    /// Tolerant mode reports 1206 at the first one (`reportObviousDecoratorErrors`) and keeps them as it keeps those of a missing
-    /// declaration.
+    /// Tolerant mode reports 1206 at the first one (`reportObviousDecoratorErrors`). They are modifiers of the declaration.
     #[cold]
     #[inline(never)]
     fn decorators_without_class(p: &mut Self, opts: &mut ParseStatementOptions<'a>) -> Result<()> {
@@ -234,17 +233,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(decorators) = opts.ts_decorators.take()
             && let Some(first) = decorators.values.first()
         {
-            let before = &p.source.contents()[..first.loc.start.max(0) as usize];
-            let at = before.iter().rposition(|&b| b == b'@').unwrap_or(0);
-            p.lexer.ts_grammar_error(
-                bun_ast::Range {
-                    loc: bun_ast::usize2loc(at),
-                    len: 1,
-                },
-                1206,
-            );
+            let at_sign = |p: &Self, decorator: &Expr| {
+                let before = &p.source.contents()[..decorator.loc.start.max(0) as usize];
+                bun_ast::usize2loc(before.iter().rposition(|&b| b == b'@').unwrap_or(0))
+            };
+            let loc = at_sign(p, first);
+            p.lexer
+                .ts_grammar_error(bun_ast::Range { loc, len: 1 }, 1206);
             let end = p.lexer.full_start();
-            p.note_stray_decorators(decorators.values, end);
+            for decorator in decorators.values {
+                p.mark_type_syntax(decorator.loc, crate::sema::Mark::StrayDecorator, end);
+                let loc = at_sign(p, decorator);
+                p.push_statement_decorator(*decorator, loc);
+            }
         }
         Ok(())
     }
@@ -708,6 +709,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         Self::grammar_error(p, at, 1197);
                     }
                 }
+                p.mark_end(value.loc, crate::sema::Mark::VariableLikeEnd);
 
                 p.lexer.expect(T::TCloseParen)?;
 

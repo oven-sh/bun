@@ -168,7 +168,7 @@ impl<'p> Checker<'p> {
             TypeData::Substitution { .. } => tf::SUBSTITUTION,
             TypeData::IndexedAccess { .. } => tf::INDEXED_ACCESS,
             TypeData::Cond { .. } => tf::CONDITIONAL,
-            TypeData::Union(_) if ty == TypeId::BOOLEAN => tf::UNION | tf::BOOLEAN,
+            TypeData::Union(_) if self.is_boolean(ty) => tf::UNION | tf::BOOLEAN,
             TypeData::Union(_) if self.union_enum_symbol(ty).is_some() => {
                 tf::UNION | tf::ENUM_LITERAL
             }

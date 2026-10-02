@@ -1039,7 +1039,7 @@ impl<'p> Printer<'_, 'p> {
                 self.approximate_length += length;
                 return Node::simple(text);
             }
-            TypeData::Union(_) if ty == TypeId::BOOLEAN => {
+            TypeData::Union(_) if self.c.is_boolean(ty) && self.c.stored_alias(ty).is_none() => {
                 self.approximate_length += 7;
                 return Node::simple("boolean");
             }
@@ -1469,7 +1469,11 @@ impl<'p> Printer<'_, 'p> {
     /// `GetTextOfNode`, of the name at `start`, if that says more than its atom: the unicode escapes of an identifier, the quotes of a
     /// `ModuleExportName`.
     fn text_of_name_at(&self, file: FileId, start: u32) -> Option<String> {
-        let end = self.c.end_of_token_at(file, start);
+        self.text_of_name(file, start, self.c.end_of_token_at(file, start))
+    }
+
+    /// The same, of the name from `start` to `end`.
+    fn text_of_name(&self, file: FileId, start: u32, end: u32) -> Option<String> {
         let written = self.c.hir(file).text.get(start as usize..end as usize)?;
         (written.contains(&b'\\') || matches!(written.first(), Some(b'"' | b'\'')))
             .then(|| self.c.source_text(file, start, end))
@@ -3434,9 +3438,17 @@ impl<'p> Printer<'_, 'p> {
                 let pos = hir[hir[*parameter].pat].pos;
                 return self.declaration_name_to_string(*file, PropKey::Name(prop.name), pos);
             }
-            PropSource::Literal(file, written) => {
-                let written = &self.c.hir(*file)[*written];
-                return self.declaration_name_to_string(*file, written.key, written.pos);
+            PropSource::Literal(file, property) => {
+                let written = &self.c.hir(*file)[*property];
+                let end = self.c.end_of_prop_name(*file, *property);
+                // `GetTextOfNode(name)`: a computed name ends where the parser left it, be the `]` missing.
+                if matches!(written.key, PropKey::Computed(_)) {
+                    return self.c.source_text(*file, written.pos, end);
+                }
+                // The name of a JSX attribute is more than a token: `data-\u0061`.
+                return self
+                    .text_of_name(*file, written.pos, end)
+                    .unwrap_or_else(|| self.property_key_text(*file, written.key, written.pos));
             }
             PropSource::Symbol(symbol) => return self.symbol_to_text(*symbol),
             PropSource::Assigned(file, list) => {

@@ -84,14 +84,6 @@ struct Around {
     is_ambient: bool,
 }
 
-/// The lists of statements around a statement, from the inside out.
-struct Lists<'a> {
-    list: IdList<StmtId>,
-    /// Not the `B` that is all there is in the `A` of `namespace A.B`.
-    is_block: bool,
-    outer: Option<&'a Lists<'a>>,
-}
-
 impl Cx<'_> {
     /// The module specifier of the statement at `pos`, which says `spec`.
     fn specifier(&self, pos: u32, spec: Atom) -> Option<SpecifierUse> {
@@ -160,17 +152,7 @@ impl Checker<'_> {
             is_top_level: false,
             is_ambient: hir.kind == FileKind::Declaration,
         };
-        self.xm_statements(
-            &cx,
-            &Lists {
-                list: hir.body,
-                is_block: true,
-                outer: None,
-            },
-            top,
-            false,
-            out,
-        );
+        self.xm_statements(&cx, hir.body, top, false, out);
         self.xm_statements_in_blocks(&cx, out);
         self.xm_static_blocks(&cx, out);
         self.xm_collisions_of_declarations(&cx, out);
@@ -318,22 +300,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `ModuleInstanceStateConstEnumOnly`, of a namespace that is instantiated: nothing in it is more of a value than a `const enum`.
-    fn xm_is_const_enum_only(&self, file: FileId, m: ModuleId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        hir[m].has_body
-            && hir.ids(hir[m].body).all(|s| match hir[s].kind {
-                StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Import(_) => true,
-                StmtKind::Enum(e) => hir[e].flags.contains(Flags::CONST),
-                StmtKind::ImportEquals(i) => !hir[i].flags.contains(Flags::EXPORT),
-                StmtKind::Module(inner) => {
-                    !bound.module_instantiated[inner.idx()]
-                        || self.xm_is_const_enum_only(file, inner)
-                }
-                _ => false,
-            })
-    }
-
     /// `checkCollisionsForDeclarationName`, of what the statements at the top of the file declare, imports aside. And
     /// `checkGrammarForEsModuleMarkerInBindingName`: 1216.
     fn xm_collisions_of_declarations(&self, cx: &Cx<'_>, out: &mut Vec<Diagnostic>) {
@@ -426,8 +392,7 @@ impl Checker<'_> {
                 StmtKind::Module(m) => {
                     if let ModuleName::Ident(name) = hir[m].name
                         && !hir[m].flags.contains(Flags::AMBIENT)
-                        && bound.module_instantiated[m.idx()]
-                        && !self.xm_is_const_enum_only(cx.file, m)
+                        && bound.module_instance_state[m.idx()] == ModuleInstanceState::Instantiated
                     {
                         let pos = hir[m].name_pos;
                         self.xm_collision_with_generated_code(cx, name, pos, false, out);
@@ -442,16 +407,16 @@ impl Checker<'_> {
     fn xm_statements(
         &self,
         cx: &Cx<'_>,
-        lists: &Lists<'_>,
+        list: IdList<StmtId>,
         around: Around,
         says_module: bool,
         out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(cx.file);
-        for s in hir.ids(lists.list) {
+        for s in hir.ids(list) {
             let Stmt { pos, start, .. } = hir[s];
             match hir[s].kind {
-                StmtKind::Module(m) => self.xm_module(cx, lists, s, m, around, says_module, out),
+                StmtKind::Module(m) => self.xm_module(cx, list, s, m, around, says_module, out),
                 StmtKind::Import(i) => self.xm_import(cx, s, i, around, out),
                 StmtKind::ImportEquals(i) => self.xm_import_equals(cx, s, i, around, out),
                 StmtKind::ExportNamed(x) => self.xm_export_named(cx, s, x, around, out),
@@ -495,7 +460,7 @@ impl Checker<'_> {
     fn xm_module(
         &self,
         cx: &Cx<'_>,
-        lists: &Lists<'_>,
+        list: IdList<StmtId>,
         s: StmtId,
         m: ModuleId,
         around: Around,
@@ -526,12 +491,7 @@ impl Checker<'_> {
             is_top_level: is_at_top,
             is_ambient,
         };
-        let body = Lists {
-            list: module.body,
-            is_block: !self.xm_is_dotted(cx, m),
-            outer: Some(lists),
-        };
-        self.xm_statements(cx, &body, inner, says_module, out);
+        self.xm_statements(cx, module.body, inner, says_module, out);
 
         if is_ambient_module {
             // The flag is also on what is written in an exported one: only the word counts.
@@ -585,7 +545,8 @@ impl Checker<'_> {
         // Both are about options that keep `const enum`s, so that a namespace of nothing else counts as well.
         if !is_ambient
             && self.p.files.options.isolated_modules
-            && self.xm_is_instantiated(cx, lists, m, &mut Vec::new())
+            && self.bound(cx.file).module_instance_state[m.idx()]
+                != ModuleInstanceState::NonInstantiated
         {
             if !cx.is_module && !cx.may_be_module {
                 out.push(Diagnostic {
@@ -616,7 +577,7 @@ impl Checker<'_> {
             // What was not added to anything is not gone through: it would be one error after the other.
             let check_body = match module.name {
                 ModuleName::String(name) => {
-                    self.xm_merge_augmentation(cx, lists, m, name, around, out)
+                    self.xm_merge_augmentation(cx, list, m, name, around, out)
                 }
                 _ => true,
             };
@@ -662,20 +623,12 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `m` is the `A` of `namespace A.B`.
-    fn xm_is_dotted(&self, cx: &Cx<'_>, m: ModuleId) -> bool {
-        let hir = self.hir(cx.file);
-        let body = hir[m].body;
-        body.len() == 1
-            && matches!(hir[hir.id_at(body, 0)].kind, StmtKind::Module(inner) if follows_a_dot(cx.text, hir[inner].name_pos))
-    }
-
     /// `mergeModuleAugmentation`: whether what `m` declares was added to the module called `name`. What is wrong with that is said
     /// of the first declaration in the file.
     fn xm_merge_augmentation(
         &self,
         cx: &Cx<'_>,
-        lists: &Lists<'_>,
+        list: IdList<StmtId>,
         m: ModuleId,
         name: Atom,
         around: Around,
@@ -696,7 +649,7 @@ impl Checker<'_> {
         // All that goes by one quoted name in a file is one symbol here. `declareModuleSymbol` has one for each place they are in.
         let decls = &bound.symbols[symbol.idx()].decls;
         let is_here = |part: ModuleId| {
-            hir.ids(lists.list)
+            hir.ids(list)
                 .any(|s| matches!(hir[s].kind, StmtKind::Module(x) if x == part))
         };
         let first = decls.iter().find_map(|&d| match d {
@@ -784,7 +737,7 @@ impl Checker<'_> {
             files.decls(main).iter().any(|&(of, d)| matches!(d, Decl::Enum(e) if files.hir(of)[e].flags.contains(Flags::CONST)))
         };
         let has_values = || {
-            decls.iter().any(|&d| matches!(d, Decl::Module(part) if is_here(part) && self.xm_is_instantiated(cx, lists, part, &mut Vec::new())))
+            decls.iter().any(|&d| matches!(d, Decl::Module(part) if is_here(part) && bound.module_instance_state[part.idx()] != ModuleInstanceState::NonInstantiated))
         };
         if (is_variable || flags.contains(SymFlags::ENUM) && is_const_enum()) && has_values() {
             if flags.contains(SymFlags::NAMESPACE_MODULE) {
@@ -827,149 +780,6 @@ impl Checker<'_> {
             .module(target)
             .is_module()
             .then(|| files.file_symbol(target))
-    }
-
-    // ───────────────────────────── what a namespace comes to at run time ─────────────────────────────
-
-    /// `GetModuleInstanceState(m) != ModuleInstanceStateNonInstantiated`. `lists`: what `m` is written in.
-    /// `visited`: what has been asked, by statement or by body, and the answer once there is one.
-    fn xm_is_instantiated(
-        &self,
-        cx: &Cx<'_>,
-        lists: &Lists<'_>,
-        m: ModuleId,
-        visited: &mut Vec<(u32, Option<bool>)>,
-    ) -> bool {
-        let hir = self.hir(cx.file);
-        let module = hir[m];
-        if !module.has_body {
-            return true;
-        }
-        // `getModuleInstanceStateCached`: what is being asked about counts for nothing meanwhile.
-        let key = m.0 << 1 | 1;
-        if let Some(&(_, state)) = visited.iter().find(|v| v.0 == key) {
-            return state.unwrap_or(false);
-        }
-        let slot = visited.len();
-        visited.push((key, None));
-        let body = Lists {
-            list: module.body,
-            is_block: !self.xm_is_dotted(cx, m),
-            outer: Some(lists),
-        };
-        let mut state = false;
-        for s in hir.ids(module.body) {
-            if self.xm_statement_is_instantiated(cx, &body, s, visited) {
-                state = true;
-                break;
-            }
-        }
-        visited[slot].1 = Some(state);
-        state
-    }
-
-    /// `getModuleInstanceStateWorker`
-    fn xm_statement_is_instantiated(
-        &self,
-        cx: &Cx<'_>,
-        lists: &Lists<'_>,
-        s: StmtId,
-        visited: &mut Vec<(u32, Option<bool>)>,
-    ) -> bool {
-        let hir = self.hir(cx.file);
-        let key = s.0 << 1;
-        if let Some(&(_, state)) = visited.iter().find(|v| v.0 == key) {
-            return state.unwrap_or(false);
-        }
-        let slot = visited.len();
-        visited.push((key, None));
-        let state = match hir[s].kind {
-            StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Import(_) => false,
-            StmtKind::ImportEquals(i) => hir[i].flags.contains(Flags::EXPORT),
-            StmtKind::ExportNamed(x) if hir[x].spec.is_none() => {
-                let mut state = false;
-                for spec in hir[x].items.iter() {
-                    if self.xm_alias_target_is_instantiated(
-                        cx,
-                        lists,
-                        hir[spec].local,
-                        hir[spec].local_pos,
-                        visited,
-                    ) {
-                        state = true;
-                        break;
-                    }
-                }
-                state
-            }
-            StmtKind::Module(inner) => self.xm_is_instantiated(cx, lists, inner, visited),
-            _ => true,
-        };
-        visited[slot].1 = Some(state);
-        state
-    }
-
-    /// `getModuleInstanceStateForAliasTarget`: of the `name` in `export { name }`.
-    fn xm_alias_target_is_instantiated(
-        &self,
-        cx: &Cx<'_>,
-        lists: &Lists<'_>,
-        name: Atom,
-        name_pos: u32,
-        visited: &mut Vec<(u32, Option<bool>)>,
-    ) -> bool {
-        let hir = self.hir(cx.file);
-        // `export { "x" }`
-        if matches!(cx.text.get(name_pos as usize), Some(b'"' | b'\'')) {
-            return true;
-        }
-        let mut at = Some(lists);
-        while let Some(level) = at {
-            at = level.outer;
-            if !level.is_block {
-                continue;
-            }
-            let mut is_declared = false;
-            for s in hir.ids(level.list) {
-                if !self.xm_has_name(cx.file, s, name) {
-                    continue;
-                }
-                // What an import alias stands for cannot be told from here.
-                if self.xm_statement_is_instantiated(cx, level, s, visited)
-                    || matches!(hir[s].kind, StmtKind::ImportEquals(_))
-                {
-                    return true;
-                }
-                is_declared = true;
-            }
-            if is_declared {
-                return false;
-            }
-        }
-        true
-    }
-
-    /// `NodeHasName`
-    fn xm_has_name(&self, file: FileId, s: StmtId, name: Atom) -> bool {
-        let hir = self.hir(file);
-        match hir[s].kind {
-            StmtKind::Fn(f) => hir[f].name == name,
-            StmtKind::Class(c) => hir[c].name == name,
-            StmtKind::Interface(i) => hir[i].name == name,
-            StmtKind::TypeAlias(a) => hir[a].name == name,
-            StmtKind::Enum(e) => hir[e].name == name,
-            StmtKind::ImportEquals(i) => hir[i].name == name,
-            StmtKind::ExportAsNamespace(n) => n == name,
-            StmtKind::Module(m) => match hir[m].name {
-                ModuleName::Ident(n) => n == name,
-                ModuleName::Global => name == known::global,
-                ModuleName::String(_) => false,
-            },
-            StmtKind::Var(decls) => decls
-                .iter()
-                .any(|d| matches!(hir[hir[d].pat].kind, PatKind::Ident(n) if n == name)),
-            _ => false,
-        }
     }
 
     // ───────────────────────────── imports and exports ─────────────────────────────
@@ -1062,7 +872,7 @@ impl Checker<'_> {
             }
             !is_relative
                 && hir.ids(module.body).any(|inner| names_it(inner) || matches!(hir[inner].kind, StmtKind::Module(x) if hir[x].name == ModuleName::String(spec)))
-        }) || hir.exprs.iter().any(|e| matches!(e.kind, ExprKind::ImportCall(a, _) if matches!(hir[a].kind, ExprKind::String(named) if named == spec)))
+        }) || hir.exprs.iter().any(|e| matches!(e.kind, ExprKind::ImportCall { args, .. } if matches!(hir[hir.id_at(args, 0)].kind, ExprKind::String(named) if named == spec)))
             || hir.types.iter().any(|t| matches!(t.kind, TypeNodeKind::Import { spec: named, .. } if named == spec))
     }
 
@@ -2607,10 +2417,6 @@ fn statement_list_start(hir: &hir::File, statements: IdList<StmtId>) -> Option<u
             None => return Some(start as u32),
         }
     }
-}
-
-fn follows_a_dot(text: &[u8], pos: u32) -> bool {
-    text[..skip_trivia_back(text, pos as usize)].ends_with(b".")
 }
 
 /// Whether the namespace whose name is at `name_pos` is declared with `module`. What holds for the `A` of `module A.B` holds for `B`.

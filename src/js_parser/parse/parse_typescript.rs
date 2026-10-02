@@ -611,7 +611,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
             let path = if p.lexer.token != T::TStringLiteral && p.lexer.tolerant {
                 // `parseModuleSpecifier`: any expression. 1141 is reported when the statement is read again.
-                p.parse_expr(Level::Lowest)?
+                let at = p.lexer.loc();
+                let specifier = p.parse_expr(Level::Lowest)?;
+                p.keep_expressions(at, &[specifier]);
+                specifier
             } else {
                 let path_estr = p.lexer.to_e_string()?;
                 let path_loc = p.lexer.loc();
@@ -836,6 +839,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let value_name = value.name;
             let value_loc = value.loc;
+            p.mark_end(value_loc, crate::sema::Mark::MemberEnd);
             values.push(value);
 
             exported_members.put(

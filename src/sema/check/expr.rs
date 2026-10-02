@@ -313,7 +313,7 @@ impl<'p> Checker<'p> {
                 && self.hir(f)[func].ret.is_none()
                 && !self.stack[..depth].contains(&self.stack[i])
             {
-                self.p.circular_returns.insert((f, func), ());
+                self.report_circular_return_type(f, func);
             }
         }
         Some(TypeId::ERROR)
@@ -1821,9 +1821,11 @@ impl<'p> Checker<'p> {
                 ty => ty,
             },
             ExprKind::Jsx(_) => self.jsx_element_type(file),
-            ExprKind::ImportCall(spec, _) => self.type_of_import_call(file, spec),
+            ExprKind::ImportCall { args, .. } => {
+                self.type_of_import_call(file, self.hir(file).id_at(args, 0))
+            }
             ExprKind::ImportMeta => self.global_ref(known::ImportMeta, &[]),
-            ExprKind::NewTarget => self.type_of_new_target(file, e),
+            ExprKind::NewTarget(_) => self.type_of_new_target(file, e),
         }
     }
 
@@ -1914,7 +1916,7 @@ impl<'p> Checker<'p> {
             if is_default_only {
                 // `getTypeWithSyntheticDefaultOnly`
                 ty = wrapper;
-            } else if files.synthetic_default(usage, module).is_some() {
+            } else if self.can_have_synthetic_default(usage, module) {
                 // `getTypeWithSyntheticDefaultImportType`: a module that may turn out to be its own default has one, over its own.
                 let with_default = if self.is_valid_spread_type(ty) {
                     self.spread(ty, wrapper)
@@ -2124,7 +2126,7 @@ impl<'p> Checker<'p> {
                 Parent::VarInit(d) if bound.pat_symbol[hir[d].pat.idx()] == sym.id => return true,
                 Parent::None | Parent::File => return false,
                 Parent::Expr(x) if x.is_none() => return false,
-                Parent::Key(literal) if literal.is_some() => Parent::Expr(literal),
+                Parent::PropKey(literal, _) if literal.is_some() => Parent::Expr(literal),
                 other => self.outward(file, other),
             };
         }
@@ -2197,7 +2199,7 @@ impl<'p> Checker<'p> {
                 // The block of a function that is no arrow function. The default of a parameter is not in it.
                 Parent::FnBody(f) if hir[f].kind != FnKind::Arrow => return false,
                 Parent::None | Parent::File | Parent::Module(_) => return false,
-                Parent::Key(literal) if literal.is_some() => Parent::Expr(literal),
+                Parent::PropKey(literal, _) if literal.is_some() => Parent::Expr(literal),
                 other => self.outward(file, other),
             };
         }
@@ -2279,8 +2281,10 @@ impl<'p> Checker<'p> {
                         _ => Err(parent),
                     };
                 }
-                Parent::Key(_) | Parent::MemberKey => match self.what_is_named(file, parent, below)
-                {
+                Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
                     // A name in an object literal or in a pattern is worked out where the literal or the pattern is.
                     Named::Property(literal) | Named::Function(literal) => Parent::Expr(literal),
                     Named::Element(p) => self.outward(file, Parent::PatPropDefault(p)),
@@ -2317,12 +2321,14 @@ impl<'p> Checker<'p> {
         loop {
             parent = match parent {
                 Parent::ParamDefault(_) => return true,
-                Parent::Key(literal) if literal.is_some() => Parent::Expr(literal),
+                Parent::PropKey(literal, _) if literal.is_some() => Parent::Expr(literal),
                 Parent::FnBody(_)
                 | Parent::MemberInit(_)
                 | Parent::EnumInit(_)
-                | Parent::Key(_)
-                | Parent::MemberKey
+                | Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_)
                 | Parent::Module(_)
                 | Parent::File
                 | Parent::None => return false,
@@ -2887,8 +2893,10 @@ impl<'p> Checker<'p> {
                     below = x;
                     bound.expr_parent[x.idx()]
                 }
-                Parent::Key(_) | Parent::MemberKey => match self.what_is_named(file, parent, below)
-                {
+                Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
                     Named::Property(literal) => Parent::Expr(literal),
                     Named::Function(literal) => {
                         through_function = true;
@@ -3201,7 +3209,7 @@ impl<'p> Checker<'p> {
             && let Parent::Expr(call) = bound.expr_parent[spread.idx()]
             && matches!(
                 hir[call].kind,
-                ExprKind::Call(_) | ExprKind::New(_) | ExprKind::ImportCall(..)
+                ExprKind::Call(_) | ExprKind::New(_) | ExprKind::ImportCall { .. }
             )
         {
             return true;
@@ -3244,10 +3252,8 @@ impl<'p> Checker<'p> {
         if let Some(element) = self.number_index_type(target) {
             return element;
         }
-        match self.iterated_type(target, false) {
-            TypeId::UNRESOLVED => TypeId::UNKNOWN,
-            element => element,
-        }
+        self.iterated_type_if_any(target, false)
+            .unwrap_or(TypeId::UNKNOWN)
     }
 
     /// `isJSLiteralType`

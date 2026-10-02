@@ -201,9 +201,10 @@ impl Checker<'_> {
         let index = self.exprs_by_kind(file);
         for &id in index.of(ExprTag::ImportCall) {
             let (i, e) = (id.idx(), &hir[id]);
-            let ExprKind::ImportCall(specifier, more) = e.kind else {
+            let ExprKind::ImportCall { args, .. } = e.kind else {
                 continue;
             };
+            let specifier = hir.id_at(args, 0);
             if bound.is_unchecked(i) {
                 continue;
             }
@@ -235,14 +236,14 @@ impl Checker<'_> {
             if after_keyword == Some(b'<') {
                 continue;
             }
-            let options = hir.ids(more).next();
+            let options = hir.ids(args).nth(1);
             if !has_import_attributes && let Some(options) = options {
                 let start = self.start_of(file, options);
                 out.push(Diagnostic { start, code: 1324 });
                 self.note(start, self.error_end_of(file, options), 1324, Vec::new());
                 continue;
             }
-            if more.len() > 1 || matches!(hir[specifier].kind, ExprKind::Missing) {
+            if args.len() > 2 || matches!(hir[specifier].kind, ExprKind::Missing) {
                 out.push(Diagnostic {
                     start: e.pos,
                     code: 1450,
@@ -333,8 +334,10 @@ impl Checker<'_> {
                     Parent::MemberInit(_) => break true,
                     Parent::Expr(x) if x.is_some() => below = x,
                     Parent::Prop(_)
-                    | Parent::Key(_)
-                    | Parent::MemberKey
+                    | Parent::PropKey(..)
+                    | Parent::PatKey(_)
+                    | Parent::MemberKey(_)
+                    | Parent::MethodKey(_)
                     | Parent::ClassExtends(_)
                     | Parent::Decorator(..) => {}
                     _ => break false,
@@ -354,9 +357,9 @@ impl Checker<'_> {
     fn outward_from_names(&self, file: FileId, at: Parent, below: ExprId) -> Parent {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match at {
-            Parent::Key(object) if object.is_some() => Parent::Expr(object),
+            Parent::PropKey(object, _) if object.is_some() => Parent::Expr(object),
             // The name of a member is where the class is, that of a method of an object literal where the literal is.
-            Parent::MemberKey => {
+            Parent::MemberKey(_) | Parent::MethodKey(_) => {
                 let key = PropKey::Computed(below);
                 if let Some(m) = hir.members.iter().position(|m| m.key == key) {
                     match bound.member_owner[m] {
@@ -952,7 +955,7 @@ impl Checker<'_> {
                 Parent::Expr(x) => below = x,
                 Parent::VarInit(d) if hir[d].flags.contains(Flags::AMBIENT) => return true,
                 Parent::MemberInit(m) if hir[m].flags.contains(Flags::AMBIENT) => return true,
-                Parent::MemberKey => {
+                Parent::MemberKey(_) | Parent::MethodKey(_) => {
                     if let Some(m) = hir
                         .members
                         .iter()

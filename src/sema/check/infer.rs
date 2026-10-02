@@ -443,7 +443,7 @@ impl<'p> Checker<'p> {
             }
             (_, TypeData::Keyof(t))
                 if source == TypeId::STRING
-                    || source == TypeId::BOOLEAN
+                    || self.is_boolean(source)
                     || !source.is_never() && self.every_type(source, |c, m| c.is_unit(m)) =>
             {
                 let empty = self.empty_object_type_from_string_literal(source);

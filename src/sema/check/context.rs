@@ -240,7 +240,7 @@ impl<'p> Checker<'p> {
                 Parent::PatPropDefault(p) => hir[p].value,
                 Parent::PatElemDefault(p) => hir[p].pat,
                 // A computed name in a pattern.
-                Parent::Key(owner) if owner.is_none() => match hir
+                Parent::PatKey(_) => match hir
                     .pat_props
                     .iter()
                     .find(|p| p.key == PropKey::Computed(below))
@@ -249,7 +249,7 @@ impl<'p> Checker<'p> {
                     None => return false,
                 },
                 // One in an object literal.
-                Parent::Key(owner) => {
+                Parent::PropKey(owner, _) => {
                     at = Parent::Expr(owner);
                     continue;
                 }
@@ -1594,11 +1594,11 @@ impl<'p> Checker<'p> {
                 self.awaited_or_promise_like(context)
             }
             // `getContextualTypeForArgumentAtIndex`: of an `import()`, a string, an `ImportCallOptions`, and `any`.
-            ExprKind::ImportCall(specifier, more) => {
-                if e == specifier {
+            ExprKind::ImportCall { args, .. } => {
+                if e == hir.id_at(args, 0) {
                     return Some(TypeId::STRING);
                 }
-                if hir.ids(more).next() != Some(e) {
+                if hir.ids(args).nth(1) != Some(e) {
                     return Some(TypeId::ANY);
                 }
                 let name = self.files().atoms.lookup(b"ImportCallOptions")?;

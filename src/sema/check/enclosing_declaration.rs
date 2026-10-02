@@ -128,7 +128,7 @@ impl Checker<'_> {
                 return or_file_scope(scope);
             }
             match bound.expr_parent[at.idx()] {
-                Parent::Expr(outer) | Parent::Key(outer) if outer.is_some() => at = outer,
+                Parent::Expr(outer) | Parent::PropKey(outer, _) if outer.is_some() => at = outer,
                 Parent::Prop(p) if bound.prop_owner[p.idx()].is_some() => {
                     at = bound.prop_owner[p.idx()];
                 }
@@ -143,7 +143,10 @@ impl Checker<'_> {
                     return self.enclosing_scope_of_pat(file, hir[p].value);
                 }
                 Parent::PatElemDefault(p) => return self.enclosing_scope_of_pat(file, hir[p].pat),
-                Parent::Key(_) | Parent::MemberKey => {
+                Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_) => {
                     return self.enclosing_scope_of_computed_name(file, at);
                 }
                 Parent::MemberInit(m) => return self.enclosing_scope_of_member(file, m),

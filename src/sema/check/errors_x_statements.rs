@@ -961,8 +961,10 @@ impl Checker<'_> {
                 Parent::None
                 | Parent::Module(_)
                 | Parent::EnumInit(_)
-                | Parent::MemberKey
-                | Parent::Key(_) => return None,
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_)
+                | Parent::PropKey(..)
+                | Parent::PatKey(_) => return None,
                 Parent::Expr(x) if x.is_none() => return None,
                 Parent::Stmt(s) if s.is_none() => return None,
                 Parent::Stmt(s) => {
@@ -1062,13 +1064,13 @@ impl Checker<'_> {
                 }
                 Parent::Expr(e) if e.is_none() => return AwaitPlace::Unknown,
                 Parent::Expr(e) => expression = e,
-                Parent::Key(object) if object.is_none() => return AwaitPlace::Unknown,
-                Parent::Key(object) => {
+                Parent::PatKey(_) => return AwaitPlace::Unknown,
+                Parent::PropKey(object, _) => {
                     at = Parent::Expr(object);
                     continue;
                 }
                 // A computed name is where the class or the object literal is.
-                Parent::MemberKey => {
+                Parent::MemberKey(_) | Parent::MethodKey(_) => {
                     let key = PropKey::Computed(expression);
                     if let Some(m) = hir.members.iter().position(|m| m.key == key) {
                         let MemberOwner::Class(c) = bound.member_owner[m] else {
@@ -1103,14 +1105,16 @@ impl Checker<'_> {
             at = match at {
                 Parent::FnBody(f) => break f,
                 Parent::ParamDefault(p) => break bound.param_fn[p.idx()],
-                Parent::Key(object) if object.is_some() => Parent::Expr(object),
+                Parent::PropKey(object, _) if object.is_some() => Parent::Expr(object),
                 // The name and the decorators of a method are written in the method, and which one that is is not kept track of.
                 Parent::None
                 | Parent::File
                 | Parent::Module(_)
                 | Parent::EnumInit(_)
-                | Parent::Key(_)
-                | Parent::MemberKey
+                | Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_)
                 | Parent::Decorator(_, DecoratorOwner::Member(_) | DecoratorOwner::Param(_)) => {
                     return Vec::new();
                 }
@@ -1226,9 +1230,10 @@ impl Checker<'_> {
                     expression = x;
                     bound.expr_parent[x.idx()]
                 }
-                Parent::Key(object) => Parent::Expr(object),
+                Parent::PropKey(object, _) => Parent::Expr(object),
+                Parent::PatKey(_) => Parent::Expr(ExprId::NONE),
                 // A method or an accessor is function-like, a property is not.
-                Parent::MemberKey => match hir
+                Parent::MemberKey(_) | Parent::MethodKey(_) => match hir
                     .members
                     .iter()
                     .position(|m| m.key == PropKey::Computed(expression))
@@ -1466,10 +1471,11 @@ impl Checker<'_> {
                     Some(s) => Parent::Stmt(s),
                     None => return None,
                 },
-                Parent::None | Parent::MemberKey => return None,
+                Parent::None | Parent::MemberKey(_) | Parent::MethodKey(_) => return None,
                 Parent::Stmt(p) if p.is_none() => return None,
                 Parent::Expr(e) if e.is_none() => return None,
-                Parent::Key(object) => Parent::Expr(object),
+                Parent::PropKey(object, _) => Parent::Expr(object),
+                Parent::PatKey(_) => Parent::Expr(ExprId::NONE),
                 other => self.outward(file, other),
             };
         };
@@ -1538,9 +1544,9 @@ impl Checker<'_> {
                     below = x;
                     bound.expr_parent[x.idx()]
                 }
-                Parent::Key(object) if object.is_some() => Parent::Expr(object),
+                Parent::PropKey(object, _) if object.is_some() => Parent::Expr(object),
                 // A computed name in a binding pattern.
-                Parent::Key(_) => match hir
+                Parent::PropKey(..) | Parent::PatKey(_) => match hir
                     .pat_props
                     .iter()
                     .position(|p| p.key == PropKey::Computed(below))
@@ -1549,7 +1555,7 @@ impl Checker<'_> {
                     None => return None,
                 },
                 // The computed name and the decorators of a method or an accessor are inside it.
-                Parent::MemberKey => {
+                Parent::MemberKey(_) | Parent::MethodKey(_) => {
                     let key = PropKey::Computed(below);
                     if let Some(m) = hir.members.iter().position(|m| m.key == key) {
                         match hir.members[m].func.some() {

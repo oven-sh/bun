@@ -677,15 +677,40 @@ impl<'p> Checker<'p> {
         {
             return None;
         }
+        let with_default = self.can_have_synthetic_default(file, module);
         Some(self.intern(TypeData::Anon {
             origin: Origin::Namespace {
                 module: value,
-                // `canHaveSyntheticDefault`
-                with_default: files.synthetic_default(file, module).is_some(),
+                with_default,
                 originating_import: sym,
             },
             mapper: MapperId::IDENTITY,
         }))
+    }
+
+    /// `canHaveSyntheticDefault`. `resolveExportByName` of a module that is `export =` asks the type of the value for a property.
+    pub(super) fn can_have_synthetic_default(
+        &mut self,
+        usage: impl crate::program::Usage,
+        module: Sym,
+    ) -> bool {
+        let files = self.files();
+        if files.export(module, known::export_equals).is_none() {
+            return files.synthetic_default(usage, module).is_some();
+        }
+        let value = files.module_value(module);
+        let resolve_export_by_name = &mut |name| {
+            let ty = self.type_of_symbol(value);
+            let apparent = self.apparent_type(ty);
+            let apparent = self.reduced(apparent);
+            let (prop, _) = self.prop_ref(apparent, name)?;
+            Some(
+                matches!(prop.source, PropSource::Symbol(symbol) if files.has_syntactic_default(symbol)),
+            )
+        };
+        files
+            .synthetic_default_with(usage, module, resolve_export_by_name)
+            .is_some()
     }
 
     /// `declareModuleMember`: under one name, what a module exports and what it keeps to itself are two symbols, and
@@ -728,7 +753,10 @@ impl<'p> Checker<'p> {
                 Decl::Enum(x) => (true, hir[x].flags),
                 Decl::Interface(x) => (false, hir[x].flags),
                 Decl::Alias(x) => (false, hir[x].flags),
-                Decl::Module(x) => (bound.module_instantiated[x.idx()], hir[x].flags),
+                Decl::Module(x) => (
+                    bound.module_instance_state[x.idx()] != ModuleInstanceState::NonInstantiated,
+                    hir[x].flags,
+                ),
                 _ => return false,
             };
             // In something ambient everything may be exported without saying so.
@@ -2506,8 +2534,8 @@ impl<'p> Checker<'p> {
         let ty = self.force(ty);
         let holds = self.leave();
         if self.left_a_circle {
-            self.p.circular_returns.insert((file, func), ());
             self.p.fn_return_types.set(file, func.idx(), TypeId::ANY);
+            self.report_circular_return_type(file, func);
             return TypeId::ANY;
         }
         // `getReturnTypeOfSignature`: what was settled meanwhile is the answer.
@@ -2753,7 +2781,7 @@ impl<'p> Checker<'p> {
                 Parent::FnBody(f) if hir[f].kind != FnKind::StaticBlock => return false,
                 Parent::None | Parent::File | Parent::Module(_) => return false,
                 Parent::Expr(x) if x.is_none() => return false,
-                Parent::Key(literal) if literal.is_some() => Parent::Expr(literal),
+                Parent::PropKey(literal, _) if literal.is_some() => Parent::Expr(literal),
                 _ => self.outward(file, at),
             };
         }
@@ -2819,7 +2847,7 @@ impl<'p> Checker<'p> {
             // `createUnionSignature` clones the first member, so the circle of the composite signature is reported where that one is
             // declared.
             if let Some((first_file, first, _)) = self.sig_decl(of[0]) {
-                self.p.circular_returns.insert((first_file, first), ());
+                self.report_circular_return_type(first_file, first);
             }
             return Some(self.union_reduced(&returns));
         }

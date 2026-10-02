@@ -87,8 +87,8 @@ pub(crate) enum Modified {
     Constructor,
     ClassIndexSignature,
     IndexSignature,
-    /// A property or a method of an interface or a type literal.
-    TypeMember,
+    PropertySignature,
+    MethodSignature,
     Parameter,
 }
 
@@ -106,7 +106,10 @@ pub(crate) fn modifier_error(
     let (mut last_static, mut last_override, mut last_async) = (0, 0, 0);
     let in_class = !matches!(
         on,
-        Modified::IndexSignature | Modified::TypeMember | Modified::Parameter
+        Modified::IndexSignature
+            | Modified::PropertySignature
+            | Modified::MethodSignature
+            | Modified::Parameter
     );
     for &(modifier, at) in modifiers {
         let error = |code: u32| Some((at, code));
@@ -114,7 +117,7 @@ pub(crate) fn modifier_error(
         let is_written = !modifier.contains(Flags::REPARSED);
         let modifier = modifier.difference(Flags::REPARSED);
         if modifier != Flags::READONLY {
-            if on == Modified::TypeMember {
+            if matches!(on, Modified::PropertySignature | Modified::MethodSignature) {
                 return error(1070);
             }
             if on == Modified::IndexSignature
@@ -197,7 +200,10 @@ pub(crate) fn modifier_error(
                 return error(1030);
             } else if matches!(
                 on,
-                Modified::Method | Modified::Accessor | Modified::Constructor
+                Modified::Method
+                    | Modified::Accessor
+                    | Modified::Constructor
+                    | Modified::MethodSignature
             ) {
                 return error(1024);
             } else if seen.contains(Flags::ACCESSOR) {
@@ -1977,7 +1983,10 @@ impl<'a> Builder<'a> {
                 default: ExprId::NONE,
                 flags: Flags::empty(),
                 pos: start,
-                end: self.full_start(),
+                loc: TextRange {
+                    pos: self.full_start_of(start),
+                    end: self.full_start(),
+                },
             });
             return Ok(());
         }
@@ -2037,7 +2046,10 @@ impl<'a> Builder<'a> {
             default,
             flags,
             pos,
-            end: self.full_start(),
+            loc: TextRange {
+                pos: self.full_start_of(start),
+                end: self.full_start(),
+            },
         });
         Ok(())
     }
@@ -3056,8 +3068,17 @@ impl<'a> Builder<'a> {
                     T::TIdentifier | T::TPrivateIdentifier | T::TOpenBrace | T::TOpenBracket
                 )
             {
-                break;
+                // `isListTerminator`, `abortParsingListOrMoveToNextToken`
+                if decls.is_empty()
+                    || self.is_end_of_variable_declarations()
+                    || !self.is_skipped_in_recovery()
+                {
+                    break;
+                }
+                self.next()?;
+                continue;
             }
+            let start = self.pos();
             let pat = self.parse_binding()?;
             let mut decl_flags = flags;
             if self.eat(T::TExclamation)? {
@@ -3086,18 +3107,16 @@ impl<'a> Builder<'a> {
                 init,
                 kind,
                 flags: decl_flags,
+                loc: TextRange {
+                    pos: self.full_start_of(start),
+                    end: self.full_start(),
+                },
             });
             if self.eat(T::TComma)? {
                 continue;
             }
-            // `isListTerminator`. Otherwise the comma is missing and the list goes on.
-            let is_at_end = self.lexer.has_newline_before
-                || matches!(
-                    self.tok(),
-                    T::TSemicolon | T::TCloseBrace | T::TEndOfFile | T::TIn | T::TEqualsGreaterThan
-                )
-                || self.is_kw(b"of");
-            if !self.tolerant || is_at_end {
+            // Otherwise the comma is missing and the list goes on.
+            if !self.tolerant || self.is_end_of_variable_declarations() {
                 break;
             }
         }
@@ -3108,6 +3127,16 @@ impl<'a> Builder<'a> {
                 .push((decls.at(index), initializer));
         }
         Ok(self.file.stmt(StmtKind::Var(decls), pos))
+    }
+
+    /// `isListTerminator(PCVariableDeclarations)`
+    fn is_end_of_variable_declarations(&self) -> bool {
+        self.lexer.has_newline_before
+            || matches!(
+                self.tok(),
+                T::TSemicolon | T::TCloseBrace | T::TEndOfFile | T::TIn | T::TEqualsGreaterThan
+            )
+            || self.is_kw(b"of")
     }
 
     /// The initializer the parser read in an ambient context for the variable whose binding starts at `binding`. The last of several
@@ -3573,6 +3602,10 @@ impl<'a> Builder<'a> {
                 computed_name,
                 init,
                 pos,
+                loc: TextRange {
+                    pos: self.full_start_of(pos),
+                    end: self.full_start(),
+                },
             });
             // Where the comma is missing (1357) nothing is consumed and the list goes on.
             if !self.eat(T::TComma)? && !self.tolerant {
@@ -3806,20 +3839,23 @@ impl<'a> Builder<'a> {
             while self.is_at_specifier()? {
                 let start = self.pos();
                 let (first, second, pos, type_only, imported_pos) = self.parse_clause_item()?;
-                // `parseImportSpecifier`: a string with no `as` after it names nothing, and nothing is looked up.
+                // `ImportSpec::is_name_missing`
                 let is_only_a_string = pos == imported_pos
                     && matches!(self.lexer.contents.get(pos as usize), Some(b'"' | b'\''));
-                if !is_only_a_string {
-                    specs.push(ImportSpec {
-                        start,
-                        imported: first,
-                        local: second,
-                        pos,
-                        type_only,
-                        imported_pos,
-                        import: ImportId(self.file.imports.len() as u32),
-                    });
-                }
+                let imported = if is_only_a_string {
+                    known::empty
+                } else {
+                    first
+                };
+                specs.push(ImportSpec {
+                    start,
+                    imported,
+                    local: second,
+                    pos,
+                    type_only,
+                    imported_pos,
+                    import: ImportId(self.file.imports.len() as u32),
+                });
                 if !self.eat(T::TComma)? && !self.tolerant {
                     break;
                 }
@@ -3979,6 +4015,7 @@ impl<'a> Builder<'a> {
             name,
             name_pos,
             target,
+            expression: ExprId::NONE,
             flags,
             stmt: StmtId::NONE,
         });
@@ -4015,9 +4052,14 @@ impl<'a> Builder<'a> {
             name,
             name_pos,
             target,
+            expression: ExprId::NONE,
             flags,
             stmt: StmtId::NONE,
         });
+        if !is_missing {
+            self.pending
+                .push(super::clone_types::PendingPart::RequireExpression(id, at));
+        }
         Ok(self.file.stmt(StmtKind::ImportEquals(id), pos))
     }
 

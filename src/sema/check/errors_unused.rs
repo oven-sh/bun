@@ -1405,9 +1405,9 @@ impl Unused<'_> {
                         }
                         Parent::Decorator(_, DecoratorOwner::Member(m)) => of_member(m),
                         Parent::Decorator(_, DecoratorOwner::Param(p)) => Parent::ParamDefault(p),
-                        Parent::Key(owner) if owner.is_some() => Parent::Expr(owner),
+                        Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
                         // In a pattern.
-                        Parent::Key(_) => match hir
+                        Parent::PropKey(..) | Parent::PatKey(_) => match hir
                             .pat_props
                             .iter()
                             .find(|p| p.key == PropKey::Computed(below))
@@ -1415,7 +1415,7 @@ impl Unused<'_> {
                             Some(p) => of_pattern(p.value),
                             None => return false,
                         },
-                        Parent::MemberKey => {
+                        Parent::MemberKey(_) | Parent::MethodKey(_) => {
                             if let Some(m) = hir
                                 .members
                                 .iter()

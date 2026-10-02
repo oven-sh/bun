@@ -141,7 +141,7 @@ impl<'c, 'p> Describer<'c, 'p> {
                 Intrinsic::Symbol => "symbol",
                 Intrinsic::Object => "object",
             },
-            _ if ty == TypeId::BOOLEAN || c.is_boolean_like(ty) => "boolean",
+            _ if c.is_boolean(ty) || c.is_boolean_like(ty) => "boolean",
             _ if c.is_string_like(ty) => "string",
             _ if c.is_number_like(ty) => "number",
             _ if c.is_bigint_like(ty) => "bigint",
@@ -175,7 +175,7 @@ impl<'c, 'p> Describer<'c, 'p> {
 
     fn collect(&mut self, ty: TypeId, d: u32, out: &mut Vec<String>) {
         let ty = self.c.force(ty);
-        if ty != TypeId::BOOLEAN
+        if !self.c.is_boolean(ty)
             && let TypeData::Union(parts) = self.c.data(ty)
         {
             for &p in parts.iter() {

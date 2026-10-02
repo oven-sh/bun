@@ -4,6 +4,7 @@
 
 use crate::json::Json;
 use crate::resolve::{Host, Options, join, normalize, parent_dir};
+use crate::verify::{Place, Problem};
 
 /// What is wrong with a configuration file: the code of TypeScript's message, and what goes into it.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -658,21 +659,26 @@ fn invalid_dot_dot_after_recursive_wildcard(s: &str) -> bool {
 /// `validateSpecs`
 fn validate_specs(
     specs: Vec<String>,
-    disallow_trailing_recursion: bool,
-    errors: &mut Vec<ConfigError>,
+    key: &'static str,
+    problems: &mut Vec<Problem>,
 ) -> Vec<String> {
     specs
         .into_iter()
         .filter(|spec| {
-            if disallow_trailing_recursion && invalid_trailing_recursion(spec) {
-                errors.push(ConfigError::new(5010, &[spec]));
-                false
+            // `disallowTrailingRecursion`
+            let code = if key == "include" && invalid_trailing_recursion(spec) {
+                5010
             } else if invalid_dot_dot_after_recursive_wildcard(spec) {
-                errors.push(ConfigError::new(5065, &[spec]));
-                false
+                5065
             } else {
-                true
-            }
+                return true;
+            };
+            problems.push(Problem::new(
+                code,
+                &[spec],
+                Place::TopElement(key, spec.clone()),
+            ));
+            false
         })
         .collect()
 }
@@ -768,8 +774,10 @@ fn project_from_raw(
             .map(|problem| ConfigError::of_problem(host, config_path, problem)),
     );
     let has_no_references = raw.references.as_ref().is_none_or(Vec::is_empty);
+    // What is wrong beside `compilerOptions`.
+    let mut problems = Vec::new();
     if raw.files.as_ref().is_some_and(Vec::is_empty) && has_no_references && !raw.has_extends {
-        errors.push(ConfigError::new(18002, &[config_path]));
+        problems.push(Problem::new(18002, &[config_path], Place::Top("files")));
     }
     // What is written out is not read back in.
     if raw.exclude.is_none() {
@@ -796,8 +804,11 @@ fn project_from_raw(
     };
     let include_as_written = raw.include.clone().unwrap_or_default();
     let exclude_as_written = raw.exclude.clone().unwrap_or_default();
-    let validated_include =
-        validate_specs(raw.include.take().unwrap_or_default(), true, &mut errors);
+    let validated_include = validate_specs(
+        raw.include.take().unwrap_or_default(),
+        "include",
+        &mut problems,
+    );
     let include = substitute_all(validated_include.clone());
     options.include_specs = validated_include
         .into_iter()
@@ -805,9 +816,13 @@ fn project_from_raw(
         .collect();
     let exclude = substitute_all(validate_specs(
         raw.exclude.take().unwrap_or_default(),
-        false,
-        &mut errors,
+        "exclude",
+        &mut problems,
     ));
+    errors.extend(problems.iter().map(|problem| ConfigError {
+        is_about_options: false,
+        ..ConfigError::of_problem(host, config_path, problem)
+    }));
     let literal = substitute_all(raw.files.take().unwrap_or_default());
     options.file_specs = literal.iter().map(|name| join(base, name)).collect();
     let files = file_names_from_specs(host, base, &options, &literal, &include, &exclude);

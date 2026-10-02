@@ -84,7 +84,6 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         source_len,
         text: _,
         unclosed_literals: _,
-        expr_ends: _,
         body,
         references,
         suppressed,
@@ -486,10 +485,7 @@ impl Dump<'_> {
 
     fn expr(&mut self, depth: usize, label: &str, id: ExprId) {
         let Expr { kind, pos } = node!(self, depth, label, exprs, id);
-        let mut head = format!("Expr {} pos={pos}", expr_kind_name(kind));
-        if let Some(end) = self.file.expr_ends.get(id.idx()).filter(|&&end| end != 0) {
-            head += &format!(" end={end}");
-        }
+        let head = format!("Expr {} pos={pos}", expr_kind_name(kind));
         let d = depth + 1;
         match kind {
             ExprKind::Missing
@@ -500,7 +496,7 @@ impl Dump<'_> {
             | ExprKind::False
             | ExprKind::Regex
             | ExprKind::ImportMeta
-            | ExprKind::NewTarget => self.line(depth, label, &head),
+            | ExprKind::NewTarget(_) => self.line(depth, label, &head),
             ExprKind::Ident(name) | ExprKind::String(name) | ExprKind::BigInt(name) => {
                 put!(self, depth, label, "{head} {}", self.q(name))
             }
@@ -576,10 +572,10 @@ impl Dump<'_> {
                 self.line(depth, label, &head);
                 self.expr(d, "expr", expr);
             }
-            ExprKind::ImportCall(specifier, more) => {
+            ExprKind::ImportCall { args, type_args } => {
                 self.line(depth, label, &head);
-                self.expr(d, "specifier", specifier);
-                self.list(d, "more", more, Self::expr);
+                self.list(d, "type_args", type_args, Self::ty);
+                self.list(d, "args", args, Self::expr);
             }
             ExprKind::Instantiation { expr, type_args } => {
                 self.line(depth, label, &head);
@@ -748,8 +744,16 @@ impl Dump<'_> {
             init,
             kind,
             flags,
+            loc,
         } = node!(self, depth, label, var_decls, id);
-        put!(self, depth, label, "VarDecl kind={kind:?} flags={flags:?}");
+        put!(
+            self,
+            depth,
+            label,
+            "VarDecl kind={kind:?} flags={flags:?} loc={}..{}",
+            loc.pos,
+            loc.end
+        );
         let d = depth + 1;
         self.pat(d, "pat", pat);
         self.ty(d, "ty", ty);
@@ -976,13 +980,15 @@ impl Dump<'_> {
             default,
             flags,
             pos,
-            end,
+            loc,
         } = node!(self, depth, label, params, id);
         put!(
             self,
             depth,
             label,
-            "Param flags={flags:?} pos={pos} end={end}"
+            "Param flags={flags:?} pos={pos} loc={}..{}",
+            loc.pos,
+            loc.end
         );
         let d = depth + 1;
         self.pat(d, "pat", pat);
@@ -1144,13 +1150,16 @@ impl Dump<'_> {
             computed_name,
             init,
             pos,
+            loc,
         } = node!(self, depth, label, enum_members, id);
         put!(
             self,
             depth,
             label,
-            "EnumMember name={} pos={pos}",
-            self.q(name)
+            "EnumMember name={} pos={pos} loc={}..{}",
+            self.q(name),
+            loc.pos,
+            loc.end
         );
         self.expr(depth + 1, "computed_name", computed_name);
         self.expr(depth + 1, "init", init);
@@ -1229,6 +1238,7 @@ impl Dump<'_> {
             name,
             name_pos,
             target,
+            expression,
             flags,
             stmt: _,
         } = node!(self, depth, label, import_equals, id);
@@ -1243,6 +1253,9 @@ impl Dump<'_> {
             "ImportEquals name={} name_pos={name_pos} target={target} flags={flags:?}",
             self.q(name)
         );
+        if expression.is_some() {
+            self.expr(depth + 1, "expression", expression);
+        }
     }
 
     fn export(&mut self, depth: usize, label: &str, id: ExportId) {
@@ -1469,9 +1482,9 @@ fn expr_kind_name(kind: ExprKind) -> &'static str {
         ExprKind::AsConst(_) => "AsConst",
         ExprKind::NonNull(_) => "NonNull",
         ExprKind::Jsx(_) => "Jsx",
-        ExprKind::ImportCall(..) => "ImportCall",
+        ExprKind::ImportCall { .. } => "ImportCall",
         ExprKind::ImportMeta => "ImportMeta",
-        ExprKind::NewTarget => "NewTarget",
+        ExprKind::NewTarget(_) => "NewTarget",
     }
 }
 

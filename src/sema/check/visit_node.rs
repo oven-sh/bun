@@ -26,6 +26,8 @@ pub enum VisitedKind {
     Parenthesized(ExprId, u32),
     /// The `b` of `a.b`, the `target` of `new.target`, the `meta` of `import.meta`.
     AccessName(ExprId),
+    /// An identifier where the string of `import a = require("m")` must be, which is in no expression context.
+    ModuleSpecifier(ExprId),
     /// The `defer` of `import.defer("m")`.
     ImportDeferName(ExprId),
     /// The `const` of `x as const` and of `<const>x`.
@@ -118,6 +120,7 @@ impl Checker<'_> {
             VisitedKind::Expression(e)
             | VisitedKind::Parenthesized(e, _)
             | VisitedKind::AccessName(e)
+            | VisitedKind::ModuleSpecifier(e)
             | VisitedKind::ImportDeferName(e)
             | VisitedKind::ConstOfAsConst(e)
             | VisitedKind::JsxIntrinsicTagName(e, _) => self.enclosing_scope_of_expr(file, e),
@@ -307,16 +310,16 @@ impl Visitor<'_, '_> {
                 ExprKind::Dot { name_pos, .. } if !is_private_name_at(hir, name_pos) => {
                     self.token(name_pos, VisitedKind::AccessName(e));
                 }
-                ExprKind::ImportMeta | ExprKind::NewTarget => {
+                ExprKind::ImportMeta | ExprKind::NewTarget(_) => {
                     if let Some(name) = self.meta_property_name(expr.pos) {
                         self.token(name, VisitedKind::AccessName(e));
                     }
                 }
-                ExprKind::ImportCall(specifier, _)
+                ExprKind::ImportCall { args, .. }
                     if hir
                         .deferred_import_calls
                         .iter()
-                        .any(|call| call.0 == specifier) =>
+                        .any(|call| call.0 == hir.id_at(args, 0)) =>
                 {
                     if let Some(name) = self.meta_property_name(expr.pos) {
                         self.token(name, VisitedKind::ImportDeferName(e));
@@ -347,11 +350,13 @@ impl Visitor<'_, '_> {
                 }
                 _ => {}
             }
-            self.node(
-                self.c.start_inside_parentheses(file, e),
-                self.c.end_inside_parentheses(file, e),
-                VisitedKind::Expression(e),
-            );
+            let mut start = self.c.start_inside_parentheses(file, e);
+            // `GetSourceTextOfNodeFromSourceFile`: what starts with an identifier the parser missed starts at the next token.
+            if hir.has_parse_diagnostics {
+                start = self.skip_trivia(start);
+            }
+            let end = self.c.end_inside_parentheses(file, e);
+            self.node(start, end, VisitedKind::Expression(e));
         }
         for &(e, outermost) in &hir.parens {
             if is_not_visited[e.idx()] {
@@ -457,6 +462,16 @@ impl Visitor<'_, '_> {
             }
             _ => None,
         }));
+        // Nor is what stands for a module specifier: an identifier is visited as that, a literal not at all.
+        let required = hir.import_equals.iter().map(|import| import.expression);
+        not_visited.extend(required.filter(|&e| {
+            e.is_some()
+                && !is_parenthesized(hir, e)
+                && (is_literal(e) || matches!(hir[e].kind, ExprKind::Ident(_)))
+        }));
+        // Nor right under an `ImportDeclaration` or an `ExportDeclaration`, where the module specifier goes.
+        let specifiers = hir.specifier_expressions.iter().copied();
+        not_visited.extend(specifiers.filter(|&e| !is_parenthesized(hir, e) && is_literal(e)));
         // `ImportAttributes` is no expression node, and the value of an `ImportAttribute` is in no expression context.
         for &(_, attributes) in hir.import_attributes.iter() {
             not_visited.push(attributes);
@@ -698,6 +713,13 @@ impl Visitor<'_, '_> {
         }
         for (index, import) in hir.import_equals.iter().enumerate() {
             let id = ImportEqualsId(index as u32);
+            let required = import.expression;
+            if required.is_some()
+                && !is_parenthesized(hir, required)
+                && matches!(hir[required].kind, ExprKind::Ident(_))
+            {
+                self.token(hir[required].pos, VisitedKind::ModuleSpecifier(required));
+            }
             if let ImportEqualsTarget::Entity(entity) = import.target
                 && let Some(start) = self.c.start_of_import_equals_reference(file, id)
             {

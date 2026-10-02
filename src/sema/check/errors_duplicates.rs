@@ -212,11 +212,16 @@ impl Checker<'_> {
             Decl::EnumMember(m) => (ENUM_MEMBER, VALUE | TYPE, hir[m].pos),
             Decl::Module(m) if !matches!(hir[m].name, ModuleName::Ident(_)) => return None,
             // `declareModuleSymbol`
-            Decl::Module(m) if self.is_instantiated_module(file, m) => (
-                VALUE_MODULE,
-                VALUE & !(FUNCTION | CLASS | REGULAR_ENUM | VALUE_MODULE),
-                hir[m].name_pos,
-            ),
+            Decl::Module(m)
+                if self.bound(file).module_instance_state[m.idx()]
+                    != ModuleInstanceState::NonInstantiated =>
+            {
+                (
+                    VALUE_MODULE,
+                    VALUE & !(FUNCTION | CLASS | REGULAR_ENUM | VALUE_MODULE),
+                    hir[m].name_pos,
+                )
+            }
             Decl::Module(m) => (NAMESPACE_MODULE, 0, hir[m].name_pos),
             Decl::TypeParam(p) => (TYPE_PARAMETER, TYPE & !TYPE_PARAMETER, hir[p].pos),
             Decl::ImportDefault(i) => (ALIAS, ALIAS, hir[i].default_pos),
@@ -233,27 +238,6 @@ impl Checker<'_> {
             ),
             _ => return None,
         })
-    }
-
-    /// `getModuleInstanceState(m) != NonInstantiated`, as the binder found it.
-    fn is_instantiated_module(&self, file: FileId, m: ModuleId) -> bool {
-        self.bound(file).module_instantiated[m.idx()]
-    }
-
-    /// `ModuleInstanceStateConstEnumOnly`, of a namespace that is instantiated: nothing in it is more of a value than a `const enum`.
-    pub(super) fn is_const_enum_only_module(&self, file: FileId, m: ModuleId) -> bool {
-        let hir = self.hir(file);
-        hir[m].has_body
-            && hir.ids(hir[m].body).all(|s| match hir[s].kind {
-                StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Import(_) => true,
-                StmtKind::Enum(e) => hir[e].flags.contains(Flags::CONST),
-                StmtKind::ImportEquals(i) => !hir[i].flags.contains(Flags::EXPORT),
-                StmtKind::Module(inner) => {
-                    !self.is_instantiated_module(file, inner)
-                        || self.is_const_enum_only_module(file, inner)
-                }
-                _ => false,
-            })
     }
 
     /// The modifiers `decl` is written with, or is under.
@@ -867,12 +851,8 @@ impl Checker<'_> {
                 if !is_own
                     || of != file
                     || is_ambient(of, module.flags)
-                    || !self.is_instantiated_module(of, m)
+                    || !self.bound(of).is_instantiated_module(m, keeps_const_enums)
                 {
-                    continue;
-                }
-                // `isInstantiatedModule`
-                if !keeps_const_enums && self.is_const_enum_only_module(of, m) {
                     continue;
                 }
                 if of != home {

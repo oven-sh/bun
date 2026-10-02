@@ -1108,7 +1108,7 @@ impl Checker<'_> {
             if import.named.is_empty() || !self.xa_is_json_file(file, import.spec) {
                 continue;
             }
-            for s in import.named.iter() {
+            for s in import.named.iter().filter(|&s| !hir[s].is_name_missing()) {
                 self.xa_imported_from_json(hir[s].imported, hir[s].imported_pos, out);
             }
         }
@@ -1297,8 +1297,8 @@ impl Checker<'_> {
         }
         let index = self.exprs_by_kind(file);
         for &e in index.of(ExprTag::ImportCall) {
-            if let ExprKind::ImportCall(argument, _) = hir[e].kind
-                && argument.is_some()
+            if let ExprKind::ImportCall { args, .. } = hir[e].kind
+                && let argument = hir.id_at(args, 0)
                 && !bound.is_unchecked(e.idx())
                 && let ExprKind::String(spec) = hir[argument].kind
             {
@@ -1523,10 +1523,10 @@ impl Checker<'_> {
                         self.xa_const_enum_access(file, e, out);
                     }
                 }
-                ExprKind::ImportCall(..)
+                ExprKind::ImportCall { .. }
                 | ExprKind::ImportMeta
                 | ExprKind::Missing
-                | ExprKind::NewTarget => self.xa_import_call_or_meta_property(file, e, out),
+                | ExprKind::NewTarget(_) => self.xa_import_call_or_meta_property(file, e, out),
                 _ => {}
             }
         }
@@ -1545,10 +1545,9 @@ impl Checker<'_> {
         }
         match hir[e].kind {
             // `checkImportCallExpression`
-            ExprKind::ImportCall(argument, _) => {
-                if argument.is_none()
-                    || matches!(hir[argument].kind, ExprKind::Missing | ExprKind::Spread(_))
-                {
+            ExprKind::ImportCall { args, .. } => {
+                let argument = hir.id_at(args, 0);
+                if matches!(hir[argument].kind, ExprKind::Missing | ExprKind::Spread(_)) {
                     return;
                 }
                 let ty = self.type_of_expr(file, argument);
@@ -1585,7 +1584,7 @@ impl Checker<'_> {
                 }
             }
             // `checkNewTargetMetaProperty`
-            ExprKind::NewTarget => {
+            ExprKind::NewTarget(_) => {
                 if self.xa_has_new_target_container(file, e) == Some(false) {
                     let start = hir[e].pos;
                     out.push(Diagnostic { start, code: 17013 });
@@ -1629,15 +1628,15 @@ impl Checker<'_> {
                     bound.expr_parent[x.idx()]
                 }
                 // A computed name is worked out where the object, the pattern or the class is.
-                Parent::Key(owner) if owner.is_some() => Parent::Expr(owner),
-                Parent::Key(_) => {
+                Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
+                Parent::PropKey(..) | Parent::PatKey(_) => {
                     let p = hir
                         .pat_props
                         .iter()
                         .position(|p| p.key == PropKey::Computed(below))?;
                     self.outward(file, Parent::PatPropDefault(PatPropId(p as u32)))
                 }
-                Parent::MemberKey => {
+                Parent::MemberKey(_) | Parent::MethodKey(_) => {
                     if let Some(m) = hir
                         .members
                         .iter()
@@ -1700,7 +1699,7 @@ impl Checker<'_> {
         };
         match around {
             // The name of a member that is not there when the program runs.
-            Parent::MemberKey => {
+            Parent::MemberKey(_) | Parent::MethodKey(_) => {
                 if let Some(m) = hir
                     .members
                     .iter()
@@ -1779,8 +1778,8 @@ impl Checker<'_> {
                     below = x;
                     bound.expr_parent[x.idx()]
                 }
-                Parent::Key(owner) if owner.is_some() => Parent::Expr(owner),
-                Parent::Key(_) => match hir
+                Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
+                Parent::PropKey(..) | Parent::PatKey(_) => match hir
                     .pat_props
                     .iter()
                     .position(|p| p.key == PropKey::Computed(below))
@@ -1788,7 +1787,7 @@ impl Checker<'_> {
                     Some(p) => self.outward(file, Parent::PatPropDefault(PatPropId(p as u32))),
                     None => return true,
                 },
-                Parent::MemberKey => {
+                Parent::MemberKey(_) | Parent::MethodKey(_) => {
                     if let Some(m) = hir
                         .members
                         .iter()

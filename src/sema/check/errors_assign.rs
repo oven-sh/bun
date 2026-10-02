@@ -3356,7 +3356,7 @@ impl Checker<'_> {
         };
         let (source, target) = (simplify(self, source, false), simplify(self, target, true));
         let has_primitive_flag =
-            self.is_primitive(source) || source == TypeId::BOOLEAN || self.is_whole_enum(source);
+            self.is_primitive(source) || self.is_boolean(source) || self.is_whole_enum(source);
         // `TypeFlagsDefinitelyNonNullable`
         if has_primitive_flag && !self.is_nullish(source)
             || self.is_object_type(source)
@@ -3401,7 +3401,7 @@ impl Checker<'_> {
     /// `typeCouldHaveTopLevelSingletonTypes`
     fn could_have_top_level_singleton_types(&mut self, ty: TypeId, depth: u32) -> bool {
         let ty = self.force(ty);
-        if ty == TypeId::BOOLEAN || depth > 32 {
+        if self.is_boolean(ty) || depth > 32 {
             return false;
         }
         if let TypeData::Union(parts) | TypeData::Intersection(parts) = self.data(ty) {
@@ -3884,7 +3884,7 @@ impl Checker<'_> {
         // `TypeFlagsPrimitive`, which `boolean` and an enum have though they are unions.
         let is_whole_enum = self.is_whole_enum(source);
         let has_primitive_flag =
-            self.is_primitive(source) || source == TypeId::BOOLEAN || is_whole_enum;
+            self.is_primitive(source) || self.is_boolean(source) || is_whole_enum;
         // `TypeFlagsDefinitelyNonNullable`
         let is_definitely_non_nullable = has_primitive_flag && !self.is_nullish(source)
             || self.is_object_type(source)

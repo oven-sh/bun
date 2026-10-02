@@ -424,11 +424,14 @@ fn is_in_ambient_context(c: &Checker<'_>, file: FileId, e: ExprId) -> bool {
     loop {
         let flags = match parent {
             Parent::None | Parent::File => return false,
-            Parent::Key(owner) if owner.is_some() => {
+            Parent::PropKey(owner, _) if owner.is_some() => {
                 parent = Parent::Expr(owner);
                 continue;
             }
-            Parent::Key(_) | Parent::MemberKey => return true,
+            Parent::PropKey(..)
+            | Parent::PatKey(_)
+            | Parent::MemberKey(_)
+            | Parent::MethodKey(_) => return true,
             Parent::VarInit(d) => hir[d].flags,
             Parent::EnumInit(m) => hir[bound.enum_member_owner[m.idx()]].flags,
             Parent::MemberInit(m) => match bound.member_owner[m.idx()] {
@@ -570,7 +573,7 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
                 let (l, r) = (c.non_null_type(l), c.non_null_type(r));
                 // Of two booleans another operator is suggested, and that is all.
                 let is_boolean =
-                    |c: &Checker<'_>, t: TypeId| t == TypeId::BOOLEAN || c.is_boolean_like(t);
+                    |c: &Checker<'_>, t: TypeId| c.is_boolean(t) || c.is_boolean_like(t);
                 if matches!(op, BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor)
                     && is_boolean(c, l)
                     && is_boolean(c, r)
@@ -1535,7 +1538,7 @@ fn check_yield_result(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Ve
         return;
     }
     // `getContextualTypeForArgumentAtIndex`: what `import()` is given is expected to be a string.
-    if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::ImportCall(..)))
+    if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::ImportCall { .. }))
     {
         return;
     }

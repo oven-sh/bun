@@ -1030,8 +1030,8 @@ fn reference_locations(
     let call_mode = options.import_call_mode(module.default_mode);
     for (i, e) in hir.exprs.iter().enumerate() {
         let found = match e.kind {
-            ExprKind::ImportCall(argument, _) => match hir[argument].kind {
-                ExprKind::String(spec) => Some((argument, spec, call_mode)),
+            ExprKind::ImportCall { args, .. } => match hir[hir.id_at(args, 0)].kind {
+                ExprKind::String(spec) => Some((hir.id_at(args, 0), spec, call_mode)),
                 _ => None,
             },
             ExprKind::Call(_) if hir.is_js => bind::require_call_argument(hir, ExprId(i as u32))
@@ -2237,8 +2237,8 @@ impl Files {
                     continue;
                 }
                 match e.kind {
-                    ExprKind::ImportCall(argument, _) => {
-                        if let ExprKind::String(spec) = hir[argument].kind {
+                    ExprKind::ImportCall { args, .. } => {
+                        if let ExprKind::String(spec) = hir[hir.id_at(args, 0)].kind {
                             called.push(spec);
                         }
                     }
@@ -3457,7 +3457,12 @@ impl Files {
             Decl::ImportSpec(s) => {
                 let import = &hir[hir[s].import];
                 let mode = self.mode_of_import(file, import.mode);
-                Some((import.spec, mode, hir[s].imported))
+                let name = if hir[s].is_name_missing() {
+                    Atom::NONE
+                } else {
+                    hir[s].imported
+                };
+                Some((import.spec, mode, name))
             }
             Decl::ExportSpec(s) => {
                 let export = &hir[hir[s].export];
@@ -3704,6 +3709,36 @@ impl Files {
     /// `canHaveSyntheticDefault`: the module, or what it says it is with `export =`, if it can have a default that is made up.
     /// `usage` is how the specifier is emitted where it is asked for (`getEmitSyntaxForModuleSpecifierExpression`).
     pub fn synthetic_default(&self, usage: impl Usage, module: Sym) -> Option<Sym> {
+        let exporter = self.module_value(module);
+        self.synthetic_default_with(usage, module, &mut |name| {
+            let found = self.export(exporter, name);
+            Some(self.has_syntactic_default(found.or_else(|| self.export(module, name))?))
+        })
+    }
+
+    /// `core.Some(symbol.Declarations, isSyntacticDefault)`
+    pub fn has_syntactic_default(&self, symbol: Sym) -> bool {
+        self.decls_of(symbol).iter().any(|&(file, decl)| {
+            let hir = self.hir(file);
+            match decl {
+                Decl::ExportExpr(stmt) => matches!(hir[stmt].kind, StmtKind::ExportDefault(_)),
+                Decl::ExportSpec(_) | Decl::ExportStarAs(_) => true,
+                Decl::Fn(f) => hir[f].flags.contains(Flags::DEFAULT),
+                Decl::Class(c) => hir[c].flags.contains(Flags::DEFAULT),
+                Decl::Interface(i) => hir[i].flags.contains(Flags::DEFAULT),
+                _ => false,
+            }
+        })
+    }
+
+    /// `resolve_export_by_name`: `resolveExportByName(module, name)`. `None` if there is none, or else `has_syntactic_default`. Of a
+    /// module that is `export =` it is a property of the type of the value, which the tables do not tell.
+    pub fn synthetic_default_with(
+        &self,
+        usage: impl Usage,
+        module: Sym,
+        resolve_export_by_name: &mut dyn FnMut(Atom) -> Option<bool>,
+    ) -> Option<Sym> {
         let usage = usage.mode(self);
         let is_file = self
             .symbol(module)
@@ -3723,14 +3758,11 @@ impl Files {
         }
         let can = if !is_file || self.hir(module.file).kind == FileKind::Declaration {
             // One that is only declared may turn out to have one, unless it says what its default is or that it is an ECMAScript module.
-            // `resolveExportByName`: with `export =` both are properties of the value. `isSyntacticDefault`: a member of an enum is none.
-            let exporter = self.module_value(module);
-            self.export(exporter, known::default)
-                .is_none_or(|default| self.flags(default).contains(SymFlags::ENUM_MEMBER))
+            resolve_export_by_name(known::default) != Some(true)
                 && self
                     .atoms
                     .lookup(b"__esModule")
-                    .is_none_or(|name| self.export(exporter, name).is_none())
+                    .is_none_or(|name| resolve_export_by_name(name).is_none())
         } else if self.hir(module.file).is_js {
             // JavaScript has one if it has none of the syntax of ECMAScript modules and does not say that it is one.
             let of = self.hir(module.file);
@@ -3738,7 +3770,7 @@ impl Files {
                 && self
                     .atoms
                     .lookup(b"__esModule")
-                    .is_none_or(|name| self.export(module, name).is_none())
+                    .is_none_or(|name| resolve_export_by_name(name).is_none())
         } else {
             // `hasExportAssignmentSymbol`: what is written in TypeScript says what its default is, unless it says `export =`.
             self.export(module, known::export_equals).is_some()
@@ -4425,6 +4457,10 @@ impl Files {
                     }
                     // `getExternalModuleMember`, `getExportOfModule`
                     self.resolve_es_module_symbol(module, type_only);
+                    // `nameText != "" || name.Kind == KindStringLiteral`
+                    if name.is_none() {
+                        return None;
+                    }
                     if self.is_shorthand_ambient_module_symbol(module) {
                         return Some(module);
                     }

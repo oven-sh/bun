@@ -393,7 +393,7 @@ impl Checker<'_> {
             let infos = self.index_signatures_of(apparent);
             // What is missing for one member of a union of keys is `any`, which is not said again of the members after it.
             let mut was_missing = false;
-            let mut parts: SmallVec<[TypeId; 8]> = if keys == TypeId::BOOLEAN {
+            let mut parts: SmallVec<[TypeId; 8]> = if self.is_boolean(keys) {
                 smallvec![keys]
             } else {
                 SmallVec::from_slice(self.parts(keys))
@@ -909,8 +909,10 @@ impl Checker<'_> {
                     below = x;
                     bound.expr_parent[x.idx()]
                 }
-                Parent::Key(_) | Parent::MemberKey => match self.what_is_named(file, parent, below)
-                {
+                Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
                     Named::Property(literal) | Named::Function(literal) => Parent::Expr(literal),
                     Named::Element(element) => Parent::PatPropDefault(element),
                     Named::Member(member) => Parent::MemberInit(member),
@@ -1123,7 +1125,10 @@ impl Checker<'_> {
                 Decl::Class(_) => SymFlags::CLASS,
                 Decl::Enum(_) => SymFlags::ENUM,
                 Decl::EnumMember(_) => SymFlags::ENUM_MEMBER,
-                Decl::Module(m) if self.bound(file).module_instantiated[m.idx()] => {
+                Decl::Module(m)
+                    if self.bound(file).module_instance_state[m.idx()]
+                        != ModuleInstanceState::NonInstantiated =>
+                {
                     SymFlags::VALUE_MODULE
                 }
                 _ => continue,
@@ -1289,7 +1294,7 @@ impl Checker<'_> {
                     code,
                 });
                 // `boolean` is not taken apart (`getIndexedAccessTypeOrUndefined`).
-                let key = if keys == TypeId::BOOLEAN { keys } else { key };
+                let key = if self.is_boolean(keys) { keys } else { key };
                 let end = self.end_of_type_node(file, index);
                 self.explain_another(hir[index].pos, end, code, |c| {
                     c.names_in_no_lookup(code, apparent, key)
@@ -1522,7 +1527,7 @@ impl Checker<'_> {
                     _ => self.end_of_name_at(file, at),
                 };
                 // `boolean` is not taken apart (`getIndexedAccessTypeOrUndefined`).
-                let key = if keys == TypeId::BOOLEAN { keys } else { key };
+                let key = if self.is_boolean(keys) { keys } else { key };
                 self.explain_to(at, end, code, |c| {
                     if is_bigint {
                         vec!["bigint".to_owned()]
@@ -1633,7 +1638,7 @@ impl Checker<'_> {
             _ => false,
         };
         let mut chain = None;
-        if !is_private && containing != TypeId::BOOLEAN && !is_enum && self.is_union(containing) {
+        if !is_private && !self.is_boolean(containing) && !is_enum && self.is_union(containing) {
             for &subtype in self.parts(containing) {
                 let apparent = self.apparent_type(subtype);
                 if self.type_of_property(apparent, name).is_none() {
@@ -1810,7 +1815,7 @@ impl Checker<'_> {
             if !types.iter().any(|t| t.is_never())
                 && types.iter().any(|&t| t != types[0])
                 && types.iter().any(|&t| {
-                    t == TypeId::BOOLEAN
+                    self.is_boolean(t)
                         || self.is_pattern_literal(t)
                         || self.every_type(t, |c, m| c.is_unit(m))
                 })
@@ -2043,7 +2048,7 @@ impl Checker<'_> {
                     around_class(class)
                 }
                 // So is the computed name of a member.
-                Parent::MemberKey if top.is_some() => match hir
+                Parent::MemberKey(_) | Parent::MethodKey(_) if top.is_some() => match hir
                     .members
                     .iter()
                     .position(|m| m.key == PropKey::Computed(top))
@@ -2071,9 +2076,9 @@ impl Checker<'_> {
                         None => return classes,
                     },
                 },
-                Parent::Key(owner) if owner.is_some() => Parent::Expr(owner),
+                Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
                 // In a pattern.
-                Parent::Key(_) if top.is_some() => match hir
+                Parent::PropKey(..) | Parent::PatKey(_) if top.is_some() => match hir
                     .pat_props
                     .iter()
                     .position(|p| p.key == PropKey::Computed(top))

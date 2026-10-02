@@ -855,7 +855,7 @@ impl<'p> Checker<'p> {
             if !list.iter().any(|t| t.is_never())
                 && list.iter().any(|&t| t != list[0])
                 && list.iter().any(|&t| {
-                    t == TypeId::BOOLEAN
+                    self.is_boolean(t)
                         || self.is_pattern_literal(t)
                         || self.every_type(t, |c, m| c.is_unit(m))
                 })
@@ -878,7 +878,7 @@ impl<'p> Checker<'p> {
 
     /// `typeCouldHaveTopLevelSingletonTypes`
     fn may_have_top_level_singleton_types(&mut self, t: TypeId, depth: u32) -> bool {
-        if t == TypeId::BOOLEAN {
+        if self.is_boolean(t) {
             return false;
         }
         if let TypeData::Union(parts) | TypeData::Intersection(parts) = self.data(t) {
@@ -1313,7 +1313,7 @@ impl<'p> Checker<'p> {
     ) -> Ternary {
         if self.is_union(source) {
             // `TypeFlagsPrimitive`: `boolean` and an enum have it, some of the members of an enum have not.
-            if source == TypeId::BOOLEAN || self.union_enum_symbol(source).is_some() {
+            if self.is_boolean(source) || self.union_enum_symbol(source).is_some() {
                 return self.union_or_intersection_related_to(&mut x.r, source, target, state);
             }
             return if x.r.relation == Relation::Comparable {

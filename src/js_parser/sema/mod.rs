@@ -53,10 +53,10 @@ pub(crate) enum Mark {
     /// From the name of a member of a class (the `{` of a static block) or of an object literal (the `e` of `...e`), to its first
     /// token: a decorator, a modifier, `get`, `set`, `*`, `[`, `...`.
     MemberStart,
-    /// From the same place, to where the last token of the member ends.
+    /// From the same place, or from the name of a member of an enum, to where the last token of the member ends.
     MemberEnd,
-    /// From the name or the pattern of a parameter of a function that has a body, to where the last token of the parameter ends
-    /// (`VariableLikeDeclaration`).
+    /// From the name or the pattern of a variable, or of a parameter of a function that has a body, to where the last token of the
+    /// declaration ends (`VariableLikeDeclaration`).
     VariableLikeEnd,
     /// From where a statement or a class expression is said to be, to its first token: a decorator or a modifier. From the dot before
     /// the `B` of `namespace A.B`, to `B`.
@@ -529,8 +529,6 @@ pub(crate) struct TypeSyntax {
     pub(crate) marks: Vec<(i32, Mark, i32)>,
     /// In the order they apply, parentheses among them: `(e) as T` is not `(e as T)`. `to` is where the type starts.
     pub(crate) casts: Vec<(ExprKey, CastKind, i32)>,
-    /// `hir::File::expr_ends`
-    pub(crate) expr_ends: Vec<(ExprKey, i32)>,
     /// `with { .. }` after a module specifier: where `with` is, and the attributes as an object literal.
     pub(crate) import_attributes: Vec<(i32, Expr)>,
     /// The module specifiers that are no string literals (`parseModuleSpecifier`).
@@ -584,7 +582,6 @@ impl TypeSyntax {
         TypeSyntax {
             marks: Vec::new(),
             casts: Vec::new(),
-            expr_ends: Vec::new(),
             import_attributes: Vec::new(),
             specifier_expressions: Vec::new(),
             kept_expressions: Default::default(),
@@ -739,20 +736,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
             syntax
                 .kept_expressions
                 .insert(of.start, expressions.to_vec());
-        }
-    }
-
-    /// `finishNode`, of an expression that is made after something has been reported: it ends where the token before the current one
-    /// does. Not one that is made before its token is taken, which is a literal: where a token ends needs no telling. One that is
-    /// missing takes no room (`createMissingNode`).
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn note_expr_end(&mut self, expr: &Expr) {
-        let end = self.lexer.full_start().start;
-        if (end > expr.loc.start || matches!(expr.data, ExprData::EMissing(_)))
-            && let Some(syntax) = &mut self.type_syntax
-        {
-            syntax.expr_ends.push((ExprKey::of(expr), end));
         }
     }
 

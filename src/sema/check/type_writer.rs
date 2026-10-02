@@ -144,8 +144,7 @@ impl Checker<'_> {
             VisitedKind::DeclarationName(Decl::Interface(_) | Decl::TypeParam(_), _) => true,
             VisitedKind::DeclarationName(Decl::Module(m), _) => {
                 matches!(hir[m].name, ModuleName::Ident(_))
-                    && !(bound.module_instantiated[m.idx()]
-                        && !self.is_const_enum_only_module(file, m))
+                    && bound.module_instance_state[m.idx()] != ModuleInstanceState::Instantiated
             }
             // `IsPartOfTypeNode`: `const` is a type reference, and a `TypePredicate` a type node.
             VisitedKind::ConstOfAsConst(_) | VisitedKind::TypePredicateParameter(_) => true,
@@ -324,6 +323,7 @@ impl Checker<'_> {
             | VisitedKind::Label(_)
             | VisitedKind::TypeReferenceName(..)
             | VisitedKind::ImportTypeQualifierName(..)
+            | VisitedKind::ModuleSpecifier(_)
             | VisitedKind::ImportDeferName(_)
             | VisitedKind::ImportAttributeName(_)
             | VisitedKind::JsxNamespacedNamePart
@@ -523,8 +523,9 @@ impl Checker<'_> {
             Decl::ExportSpec(spec) => hir[hir[spec].export].type_only,
             _ => false,
         };
-        // `IsTypeDeclarationName`: a name that is a string literal is not one.
-        let is_identifier = !matches!(hir.text.get(start as usize), Some(b'"' | b'\''));
+        // `IsTypeDeclarationName`: a name that is a string literal is not one. `parseImportSpecifier` makes an identifier of it.
+        let is_identifier = matches!(decl, Decl::ImportSpec(_))
+            || !matches!(hir.text.get(start as usize), Some(b'"' | b'\''));
         if is_type_declaration && is_identifier {
             self.declared_type(sym)
         } else {

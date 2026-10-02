@@ -102,6 +102,10 @@ pub enum Place {
     PathsValue(String),
     /// `createDiagnosticForOptionPathKeyValue`: at one of those.
     PathsElement(String, usize),
+    /// `ForEachTsConfigPropArray`: at what is said for a name beside `compilerOptions`.
+    Top(&'static str),
+    /// `GetTsConfigPropArrayElementValue`: at the string in that list. Nowhere if it is not in this file.
+    TopElement(&'static str, String),
 }
 
 /// Something wrong with the options.
@@ -137,11 +141,24 @@ impl Problem {
             return None;
         }
         let root = json_places::parse(text)?;
-        let options = root.member("compilerOptions", "")?;
         let of = |value: &Value| (value.from, value.to);
+        if let Place::Top(name) | Place::TopElement(name, _) = &self.at {
+            let list = &root.member(name, "")?.value;
+            let (Place::TopElement(_, said), json_places::Written::Array(elements)) =
+                (&self.at, &list.what)
+            else {
+                return Some(of(list));
+            };
+            let is_it = |e: &&Value| {
+                text.get(e.from as usize + 1..(e.to as usize).saturating_sub(1))
+                    == Some(said.as_bytes())
+            };
+            return elements.iter().find(is_it).map(of);
+        }
+        let options = root.member("compilerOptions", "")?;
         let paths = || options.value.member("paths", "");
         let found = match &self.at {
-            Place::Nowhere | Place::CompilerOptions => None,
+            Place::Nowhere | Place::CompilerOptions | Place::Top(_) | Place::TopElement(..) => None,
             Place::Key(name, other) => options
                 .value
                 .member(name, other)

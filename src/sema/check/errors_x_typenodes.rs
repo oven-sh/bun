@@ -2535,7 +2535,7 @@ impl Checker<'_> {
             return false;
         };
         let is_tuple = self.is_tuple(apparent);
-        let parts = if keys == TypeId::BOOLEAN {
+        let parts = if self.is_boolean(keys) {
             std::slice::from_ref(&keys)
         } else {
             self.parts(keys)

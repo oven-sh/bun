@@ -1802,15 +1802,20 @@ impl<'p> Checker<'p> {
                         SymFlags::ENUM,
                         (value | ty).difference(SymFlags::ENUM | SymFlags::VALUE_MODULE),
                     ),
-                    Decl::Module(m) if bound.module_instantiated[m.idx()] => (
-                        SymFlags::VALUE_MODULE,
-                        value.difference(
-                            SymFlags::FUNCTION
-                                | SymFlags::CLASS
-                                | SymFlags::ENUM
-                                | SymFlags::VALUE_MODULE,
-                        ),
-                    ),
+                    Decl::Module(m)
+                        if bound.module_instance_state[m.idx()]
+                            != ModuleInstanceState::NonInstantiated =>
+                    {
+                        (
+                            SymFlags::VALUE_MODULE,
+                            value.difference(
+                                SymFlags::FUNCTION
+                                    | SymFlags::CLASS
+                                    | SymFlags::ENUM
+                                    | SymFlags::VALUE_MODULE,
+                            ),
+                        )
+                    }
                     Decl::TypeParam(_) => (
                         SymFlags::TYPE_PARAMETER,
                         ty.difference(SymFlags::TYPE_PARAMETER),
@@ -2717,14 +2722,19 @@ impl<'p> Checker<'p> {
                     && flags.contains(SymFlags::TYPE_ALIAS)
                     // `getIntendedTypeFromJSDocTypeReference` instantiates `Record` for `Object<K, V>` under no alias.
                     && !self.is_jsdoc_object_with_arguments(file, node)
-                    && let Some(host) = self.alias_with_body(file, scope, node)
                 {
-                    ty = self.with_hosting_alias(ty, (sym, flags), file, host);
+                    if let Some(host) = self.alias_with_body(file, scope, node) {
+                        ty = self.with_hosting_alias(ty, (sym, flags), file, host);
+                    }
                     if let Some((alias, type_arguments)) =
                         self.alias_for_type_node(file, scope, node)
                         && (self.is_local_type_alias(sym) || !self.is_local_type_alias(alias))
                     {
                         ty = self.instantiated_under_alias(sym, &args, ty, alias, &type_arguments);
+                    } else if found != sym && args.len() < most {
+                        // The name is that of an import, an export or a re-export: the alias it stands for, with the type arguments
+                        // that are written. With all of them written that is the alias `ty` has.
+                        ty = self.instantiated_under_alias(sym, &args, ty, sym, &args);
                     }
                 }
                 if is_deferred && self.has_type_variables(ty) {

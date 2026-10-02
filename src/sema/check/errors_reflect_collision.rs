@@ -267,12 +267,14 @@ impl Checker<'_> {
                         _ => return None,
                     }
                 }
-                Parent::Key(owner) if owner.is_some() => Parent::Expr(owner),
+                Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
                 Parent::None
                 | Parent::File
                 | Parent::Module(_)
-                | Parent::Key(_)
-                | Parent::MemberKey
+                | Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_)
                 | Parent::EnumInit(_)
                 | Parent::Decorator(..) => return None,
                 Parent::Expr(e) if e.is_none() => return None,
@@ -355,12 +357,14 @@ impl Checker<'_> {
                     }
                     up
                 }
-                Parent::Key(owner) if owner.is_some() => Parent::Expr(owner),
+                Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
                 Parent::None
                 | Parent::Stmt(_)
                 | Parent::ParamDefault(_)
-                | Parent::Key(_)
-                | Parent::MemberKey
+                | Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_)
                 | Parent::EnumInit(_) => return scopes,
                 Parent::Expr(e) if e.is_none() => return scopes,
                 other => self.outward(file, other),

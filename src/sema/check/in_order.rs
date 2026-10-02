@@ -532,9 +532,8 @@ impl Checker<'_> {
             | ExprKind::AsConst(x)
             | ExprKind::NonNull(x) => self.check_expression(file, x),
             // `checkImportCallExpression`
-            ExprKind::ImportCall(specifier, others) => {
-                self.check_expression(file, specifier);
-                for x in hir.ids(others) {
+            ExprKind::ImportCall { args, .. } => {
+                for x in hir.ids(args) {
                     self.check_expression(file, x);
                 }
             }

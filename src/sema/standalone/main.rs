@@ -193,8 +193,8 @@ fn print_loaded_sizes(program: &bun_sema::check::Program) {
         add(&mut rows, "bound.module_symbol", &m.bound.module_symbol);
         add(
             &mut rows,
-            "bound.module_instantiated",
-            &m.bound.module_instantiated,
+            "bound.module_instance_state",
+            &m.bound.module_instance_state,
         );
         add(&mut rows, "bound.var_stmt", &m.bound.var_stmt);
         add(&mut rows, "bound.assignments", &m.bound.assignments);

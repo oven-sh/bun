@@ -22,10 +22,6 @@ impl<'p> Checker<'p> {
 
     /// `getUnionTypeFromSortedList`: the members of `union`, with `origin` and no alias.
     pub(super) fn with_origin(&self, union: TypeId, origin: UnionOrigin) -> TypeId {
-        // It is known by its number.
-        if union == TypeId::BOOLEAN {
-            return union;
-        }
         self.p.types.intern_with(
             self.data(union).clone(),
             Provenance {
@@ -43,10 +39,6 @@ impl<'p> Checker<'p> {
 
     /// `ty` with `alias` and `type_arguments` for `Type.alias`.
     pub(super) fn with_alias(&self, ty: TypeId, alias: Sym, type_arguments: &[TypeId]) -> TypeId {
-        // It is known by its number.
-        if ty == TypeId::BOOLEAN {
-            return ty;
-        }
         let origin = match self.p.types.provenance(ty) {
             Some(provenance) => provenance.origin.clone(),
             None => UnionOrigin::None,

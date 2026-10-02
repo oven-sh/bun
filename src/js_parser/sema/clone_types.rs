@@ -7,10 +7,11 @@ use bun_ast::Expr;
 use bun_ast::ts_syntax as ts;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{
-    Alias, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, Func, IdList, Interface, Keyword,
-    Mapped, MappedModifier, Member, MemberId, MemberKind, Param, ParamId, PatElem, PatElemId,
-    PatId, PatKind, PatProp, PatPropId, PropKey, ResolutionMode, Span, SpecifierKind, SpecifierUse,
-    StmtId, StmtKind, TextRange, TupleElem, TypeNodeId, TypeNodeKind, TypeParam, TypeParamId,
+    Alias, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, Func, IdList, ImportEqualsId,
+    Interface, Keyword, Mapped, MappedModifier, Member, MemberId, MemberKind, Param, ParamId,
+    PatElem, PatElemId, PatId, PatKind, PatProp, PatPropId, PropKey, ResolutionMode, Span,
+    SpecifierKind, SpecifierUse, StmtId, StmtKind, TextRange, TupleElem, TypeNodeId, TypeNodeKind,
+    TypeParam, TypeParamId,
 };
 
 use super::type_syntax::{Builder, Modified, modifier_error};
@@ -33,6 +34,8 @@ pub(crate) enum PendingPart {
     PatternElementDefault(PatElemId, Expr),
     /// `interface I extends expression`
     HeritageExpression(TypeNodeId),
+    /// `import x = require(expression)`, and where the expression starts.
+    RequireExpression(ImportEqualsId, u32),
 }
 
 macro_rules! assert_same_flags {
@@ -510,6 +513,7 @@ impl Builder<'_> {
                     flags: param_flags,
                     modifiers,
                     loc,
+                    full_start,
                     end,
                     ..
                 } = self.ts[param];
@@ -551,7 +555,10 @@ impl Builder<'_> {
                     default: ExprId::NONE,
                     flags: param_flags,
                     pos: pos(loc),
-                    end: pos(end),
+                    loc: TextRange {
+                        pos: pos(full_start),
+                        end: pos(end),
+                    },
                 }
             })
             .collect();
@@ -708,7 +715,7 @@ impl Builder<'_> {
     ) -> (Flags, Option<u32>) {
         let (mut all, mut export_pos) = (Flags::empty(), None);
         for modifier in modifiers.iter() {
-            let ts::Modifier { flag, loc } = self.ts[modifier];
+            let ts::Modifier { flag, loc, .. } = self.ts[modifier];
             if flag == ts::Flags::EXPORT {
                 export_pos.get_or_insert(pos(loc));
             }
@@ -857,7 +864,8 @@ impl Builder<'_> {
             let on = match kind {
                 ts::MemberKind::IndexSignature => Modified::IndexSignature,
                 ts::MemberKind::Getter | ts::MemberKind::Setter => Modified::Accessor,
-                _ => Modified::TypeMember,
+                ts::MemberKind::Property => Modified::PropertySignature,
+                _ => Modified::MethodSignature,
             };
             // `checkGrammarModifiers`
             if let Some(error) = modifier_error(

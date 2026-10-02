@@ -253,8 +253,10 @@ impl Checker<'_> {
                     }
                 }
                 // A name is worked out where the object literal, the pattern or the class is.
-                Parent::Key(_) | Parent::MemberKey => match self.what_is_named(file, parent, below)
-                {
+                Parent::PropKey(..)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_)
+                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
                     Named::Property(literal) | Named::Function(literal) => Parent::Expr(literal),
                     // It is no part of the element it names: it goes with what has the pattern around it for a name.
                     Named::Element(p) => {

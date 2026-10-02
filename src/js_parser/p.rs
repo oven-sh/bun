@@ -875,9 +875,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The import-record side-effect is order-independent of `Expr.init`'s
         // Store allocation.
         let expr = Expr::init(t, loc);
-        if TYPESCRIPT && self.lexer.tolerant && self.log().errors != 0 {
-            self.note_expr_end(&expr);
-        }
         if SCAN_ONLY {
             if let js_ast::ExprData::ECall(call) = expr.data {
                 if let js_ast::ExprData::EIdentifier(ident) = call.target.data {

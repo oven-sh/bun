@@ -1184,7 +1184,9 @@ fn run_one(
                 continue;
             }
             let line = starts.partition_point(|&s| s as usize <= start) - 1;
-            let source = String::from_utf8_lossy(&text[start..end]).replace(['\r', '\n'], "");
+            let source = String::from_utf8_lossy(&text[start..end])
+                .replace("\r\n", "")
+                .replace('\n', "");
             let kind = format!("{:?}", found.kind);
             let kind = kind.split('(').next().unwrap_or_default();
             lines.push_str(&format!(
@@ -1202,7 +1204,9 @@ fn run_one(
                 continue;
             }
             let line = starts.partition_point(|&s| s as usize <= start) - 1;
-            let source = String::from_utf8_lossy(&text[start..end]).replace(['\r', '\n'], "");
+            let source = String::from_utf8_lossy(&text[start..end])
+                .replace("\r\n", "")
+                .replace('\n', "");
             lines.push_str(&format!(
                 "{unit}\t{line}\t{start}\t{source}\t{}\tsymbol\n",
                 found.symbol_text

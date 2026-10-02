@@ -70,13 +70,23 @@ pub(super) struct FlowMemo {
     discriminant_types: FxHashMap<(TypeId, Atom, bool, bool), Option<(TypeId, bool)>>,
     /// `members_with_discriminant`, by the type, the name and what the property is narrowed to.
     discriminated_types: FxHashMap<(TypeId, Atom, TypeId), TypeId>,
+    /// `flowLoopCache`, by the loop label and `getFlowReferenceKey`: the declared and the initial type, then the reference.
+    flow_loop_cache: FxHashMap<FlowLoopKey, SmallVec<[(Reference, TypeId); 1]>>,
 }
+
+/// `FlowLoopKey`, less the reference.
+type FlowLoopKey = (FileId, FlowId, TypeId, TypeId);
 
 impl FlowMemo {
     #[inline]
     fn is_idle_call(&self, file: FileId, flow: FlowId) -> bool {
         self.idle_calls_of == Some(file)
             && self.idle_calls[flow.idx() / 64] & 1 << (flow.idx() % 64) != 0
+    }
+
+    fn cached_flow_loop_type(&self, key: &FlowLoopKey, reference: &Reference) -> Option<TypeId> {
+        let cached = self.flow_loop_cache.get(key)?;
+        cached.iter().find(|c| c.0 == *reference).map(|c| c.1)
     }
 }
 
@@ -793,7 +803,7 @@ impl<'p> Checker<'p> {
                 ExprKind::This => break Root::This,
                 ExprKind::Super => break Root::Super,
                 ExprKind::ImportMeta => break Root::ImportMeta,
-                ExprKind::NewTarget => break Root::NewTarget,
+                ExprKind::NewTarget(_) => break Root::NewTarget,
                 ExprKind::Dot { obj, name, .. } => {
                     path.push(name);
                     at = obj;
@@ -978,7 +988,9 @@ impl<'p> Checker<'p> {
                 ExprKind::ImportMeta => {
                     return remaining == 0 && reference.root == Root::ImportMeta;
                 }
-                ExprKind::NewTarget => return remaining == 0 && reference.root == Root::NewTarget,
+                ExprKind::NewTarget(_) => {
+                    return remaining == 0 && reference.root == Root::NewTarget;
+                }
                 ExprKind::Dot { obj, name, .. } => {
                     if remaining == 0 || reference.path[remaining - 1] != name {
                         return false;
@@ -1149,7 +1161,7 @@ impl<'p> Checker<'p> {
                 .flags
                 .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED);
             let t = self.type_of_prop(prop, mapper);
-            literal |= t == TypeId::BOOLEAN
+            literal |= self.is_boolean(t)
                 || !t.is_never() && self.every_type(t, |c, p| c.is_unit(p))
                 || self.is_pattern_literal(t);
             types.push(t);
@@ -2584,8 +2596,9 @@ impl<'p> Checker<'p> {
                 }
             }
             // `isCoercibleUnderDoubleEquals`
-            let coerces =
-                loose && matches!(value_ty, TypeId::NUMBER | TypeId::STRING | TypeId::BOOLEAN);
+            let coerces = loose
+                && (matches!(value_ty, TypeId::NUMBER | TypeId::STRING)
+                    || self.is_boolean(value_ty));
             let kept = self.filter(ty, |c, m| {
                 c.are_comparable(m, value_ty)
                     || coerces
@@ -2604,7 +2617,7 @@ impl<'p> Checker<'p> {
 
     /// `TypeFlagsPrimitive`, which `boolean` and the type of an enum have though they are unions. `string | number` has it not.
     fn has_primitive_flags(&mut self, ty: TypeId) -> bool {
-        if self.is_primitive(ty) || ty == TypeId::BOOLEAN {
+        if self.is_primitive(ty) || self.is_boolean(ty) {
             return true;
         }
         let TypeData::Union(parts) = self.data(ty) else {
@@ -4064,7 +4077,7 @@ impl<'p> Checker<'p> {
                 }
                 Parent::Module(_) | Parent::File | Parent::None => return block,
                 Parent::Expr(x) if x.is_none() => Parent::None,
-                Parent::Key(object) if object.is_some() => Parent::Expr(object),
+                Parent::PropKey(object, _) if object.is_some() => Parent::Expr(object),
                 _ => self.outward(file, block),
             };
         }
@@ -5095,19 +5108,31 @@ impl<'p> Checker<'p> {
                     break t.ty;
                 }
                 Flow::Loop { start, len } => {
+                    let edges = bound.edges(start, len);
+                    match *edges {
+                        // A loop nothing leads to: `while (true) {}` came before.
+                        [] => break self.convert_auto_to_any(walk.declared),
+                        [only] => {
+                            flow = only;
+                            continue;
+                        }
+                        _ => {}
+                    }
                     // `getTypeAtFlowLoopLabel`: what has no key is what it is declared as where a loop comes round.
-                    if len > 1 && !walk.reference.has_key {
+                    if !walk.reference.has_key {
                         break walk.declared;
+                    }
+                    let initial = self.initial_of(walk);
+                    let key = (file, flow, walk.declared, initial);
+                    if let Some(cached) =
+                        self.flow_memo.cached_flow_loop_type(&key, &walk.reference)
+                    {
+                        break cached;
                     }
                     if let Some(&(_, so_far)) = walk.loops.iter().find(|l| l.0 == flow) {
                         incomplete = true;
                         break FlowType::new(so_far, true).ty;
                     }
-                    let initial = if self.flow_loops.is_empty() {
-                        walk.initial
-                    } else {
-                        self.initial_of(walk)
-                    };
                     // `flowLoopStack` belongs to the checker: a walk with the same key, started while another walk follows a back edge
                     // of this loop, gets the union of the antecedent types found so far, marked incomplete.
                     if let Some(i) = self.flow_loops.iter().rposition(|l| {
@@ -5128,55 +5153,72 @@ impl<'p> Checker<'p> {
                         incomplete = known.incomplete;
                         break known.ty;
                     }
-                    let edges = bound.edges(start, len);
-                    // A loop nothing leads to: `while (true) {}` came before.
-                    if edges.is_empty() {
-                        break self.convert_auto_to_any(walk.declared);
-                    }
-                    // `getTypeAtFlowLoopLabel`: what is the declared type can only be added subtypes to. Unlike where branches meet, what
-                    // it was to begin with is not looked at.
                     let entry = self.flow_type(walk, edges[0]);
                     // The result is incomplete only if the first antecedent is.
                     incomplete = entry.incomplete;
                     let entry = entry.ty;
-                    if entry == walk.declared {
-                        break entry;
-                    }
-                    // One pass: each back edge sees the types of the antecedents before it.
                     let mut types: SmallVec<[TypeId; 4]> = smallvec![entry];
-                    walk.loops.push((flow, entry));
-                    walk.round_labels.push(Labels::default());
-                    let initial = self.initial_of(walk);
-                    self.flow_loops.push((
-                        flow,
-                        walk.reference.clone(),
-                        walk.declared,
-                        initial,
-                        entry,
-                        self.stack.len(),
-                    ));
-                    for &edge in &edges[1..] {
-                        let t = self.flow_type(walk, edge).ty;
-                        if t == walk.declared {
-                            types.push(t);
-                            break;
+                    // What is the declared type can only be added subtypes to. Unlike where branches meet, what it was to begin with
+                    // is not looked at.
+                    if entry != walk.declared {
+                        // One pass: each back edge sees the types of the antecedents before it.
+                        walk.loops.push((flow, entry));
+                        walk.round_labels.push(Labels::default());
+                        self.flow_loops.push((
+                            flow,
+                            walk.reference.clone(),
+                            walk.declared,
+                            initial,
+                            entry,
+                            self.stack.len(),
+                        ));
+                        let mut restarted = None;
+                        for &edge in &edges[1..] {
+                            let t = self.flow_type(walk, edge).ty;
+                            // "Control flow analysis was restarted and completed by checkExpressionCached."
+                            restarted = self.flow_memo.cached_flow_loop_type(&key, &walk.reference);
+                            if restarted.is_some() {
+                                break;
+                            }
+                            if t == walk.declared {
+                                types.push(t);
+                                break;
+                            }
+                            if !types.contains(&t) {
+                                types.push(t);
+                                let so_far = self.union_or_evolving_with(&types, false);
+                                if let Some(own) = walk.loops.last_mut() {
+                                    own.1 = so_far;
+                                }
+                                if let Some(shared) = self.flow_loops.last_mut() {
+                                    shared.4 = so_far;
+                                }
+                            }
                         }
-                        if !types.contains(&t) {
-                            types.push(t);
-                            let so_far = self.union_or_evolving_with(&types, false);
-                            if let Some(own) = walk.loops.last_mut() {
-                                own.1 = so_far;
-                            }
-                            if let Some(shared) = self.flow_loops.last_mut() {
-                                shared.4 = so_far;
-                            }
+                        self.flow_loops.pop();
+                        walk.round_labels.pop();
+                        walk.loops.pop();
+                        if let Some(cached) = restarted {
+                            incomplete = false;
+                            break cached;
                         }
                     }
-                    self.flow_loops.pop();
-                    walk.round_labels.pop();
-                    walk.loops.pop();
                     let result = FlowType::new(self.union_or_evolving(&types, walk), incomplete);
                     walk.remember(flow, result);
+                    // What rests on a trial, a guess or a walk that gave up is nobody else's answer.
+                    if !incomplete
+                        && !self.uncertain
+                        && self.provisional == 0
+                        && !walk.too_deep
+                        && walk.steps < MAX_STEPS
+                        && self.is_known(result.ty)
+                    {
+                        self.flow_memo
+                            .flow_loop_cache
+                            .entry(key)
+                            .or_default()
+                            .push((walk.reference.clone(), result.ty));
+                    }
                     break result.ty;
                 }
             }
@@ -6515,7 +6557,7 @@ impl<'p> Checker<'p> {
             return None;
         }
         let returned = self.type_of_expr(file, body);
-        if returned != TypeId::BOOLEAN {
+        if !self.is_boolean(returned) {
             return None;
         }
         for (i, p) in f.params.iter().enumerate() {
@@ -6534,7 +6576,7 @@ impl<'p> Checker<'p> {
             }
             let declared = self.type_of_param(file, p);
             // `x is true` is of no use to anybody.
-            if !self.is_known(declared) || declared == TypeId::BOOLEAN {
+            if !self.is_known(declared) || self.is_boolean(declared) {
                 continue;
             }
             // `checkIfExpressionRefinesParameter`

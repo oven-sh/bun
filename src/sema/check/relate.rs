@@ -442,7 +442,7 @@ impl<'p> Checker<'p> {
     #[inline]
     fn has_primitive_flag_as(&self, ty: TypeId, data: &TypeData) -> bool {
         match data {
-            TypeData::Union(_) => ty == TypeId::BOOLEAN || self.union_enum_symbol(ty).is_some(),
+            TypeData::Union(_) => self.is_boolean(ty) || self.union_enum_symbol(ty).is_some(),
             _ => is_primitive_kind(data),
         }
     }
@@ -539,7 +539,7 @@ impl<'p> Checker<'p> {
         matches!(
             self.data(ty),
             TypeData::Intrinsic(_) | TypeData::UnresolvedName { .. }
-        ) || ty == TypeId::BOOLEAN
+        ) || self.is_boolean(ty)
     }
 
     /// What has to be the same for two types to be identical, before anything is looked into. The kinds of `undefined` have the
@@ -563,7 +563,7 @@ impl<'p> Checker<'p> {
             TypeData::UniqueSymbol { .. } => 38,
             TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => 39,
             // `TypeFlagsBoolean | TypeFlagsUnion`
-            TypeData::Union(_) if ty == TypeId::BOOLEAN => 48,
+            TypeData::Union(_) if self.is_boolean(ty) => 48,
             TypeData::Union(_) => 40,
             TypeData::Intersection(_) => 41,
             TypeData::Cond { .. } => 42,
@@ -1090,7 +1090,7 @@ impl<'p> Checker<'p> {
                 sd,
                 TypeData::Intrinsic(Intrinsic::BigInt) | TypeData::BigIntLit { .. }
             ),
-            TypeId::BOOLEAN => matches!(sd, TypeData::BoolLit { .. }),
+            _ if self.is_boolean(t) => matches!(sd, TypeData::BoolLit { .. }),
             TypeId::SYMBOL => matches!(
                 sd,
                 TypeData::Intrinsic(Intrinsic::Symbol) | TypeData::UniqueSymbol { .. }

@@ -572,6 +572,14 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// A shutdown before the first handshake step sends its FIN after that step.
+    /// Client-only; call it before the handshake is driven.
+    pub fn set_first_flight_before_fin(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).set_first_flight_before_fin();
+        }
+    }
+
     /// The session an SSLWrapper-backed socket got last from the new-session callback, borrowed.
     pub fn wrapper_latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
         match self.socket {

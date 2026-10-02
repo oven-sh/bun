@@ -356,6 +356,10 @@ struct us_socket_t {
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
   unsigned char ssl_pending_close_code : 2;
+  /* us_socket_set_first_flight_before_fin: the first handshake step is still due, and a shutdown waits for it. */
+  unsigned char ssl_first_flight_before_fin : 1;
+  /* us_internal_ssl_shutdown held its FIN back for that step. */
+  unsigned char ssl_shutdown_after_first_flight : 1;
   /* Consecutive send() failures with an errno that is neither
    * would-block/transient nor a known peer-gone error (see
    * us_socket_write_check_error). Reset by any send that makes progress.

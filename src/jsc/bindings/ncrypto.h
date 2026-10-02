@@ -788,6 +788,15 @@ public:
         const PrivateKeyEncodingConfig& config,
         const Buffer<const unsigned char>& buffer);
 
+    // ML-DSA / ML-KEM PKCS#8 private keys encode a CHOICE of {seed [0],
+    // expandedKey, both SEQUENCE{seed, expandedKey}} (RFC 9881 / 9935).
+    // BoringSSL's EVP decoder only accepts the seed arm. When the inner
+    // privateKey is the "both" form, extract the seed and build the key from
+    // it so OpenSSL-3.5-default keys load. Returns nullptr for any other
+    // structure, including the seed-less expandedKey arm.
+    static EVPKeyPointer TryParsePqcBothFormPkcs8(
+        const Buffer<const unsigned char>& der);
+
     EVPKeyPointer() = default;
     explicit EVPKeyPointer(EVP_PKEY* pkey);
     EVPKeyPointer(EVPKeyPointer&& other) noexcept;

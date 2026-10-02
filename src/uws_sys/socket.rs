@@ -693,8 +693,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    /// Ask for a writable event although the last write was not short: the caller has more to
-    /// send and returns to the loop first so that other sockets get their turn.
+    /// Ask for a writable event after a complete write, to yield to the loop with more to send.
     pub fn request_writable_event(&self) {
         if let InternalSocket::Connected(s) = self.socket {
             sock(s).send_file_needs_more();

@@ -2200,8 +2200,7 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    /// A reused keep-alive socket was closed by the peer before any response body: start the
-    /// request again on a fresh connection, once. Returns false when the request cannot be replayed.
+    /// Starts the request again, once, after the peer closed a reused socket before a response body.
     fn retry_on_closed_socket(&mut self) -> bool {
         if !self.allow_retry
             || !self.method.is_idempotent()
@@ -3466,8 +3465,7 @@ impl<'a> HTTPClient<'a> {
                         self.flush_stream::<IS_SSL>(socket);
                     }
                     HTTPRequestBody::Sendfile(mut sendfile) => {
-                        // `sendfile(2)` needs the plaintext socket fd; a TLS socket gets the file
-                        // through its own write, like a `Bytes` body.
+                        // `sendfile(2)` cannot write to a TLS socket; use the socket's own write.
                         #[cfg(unix)]
                         let status = if IS_SSL {
                             sendfile.write_copy(|chunk| write_to_socket::<IS_SSL>(socket, chunk))
@@ -3489,8 +3487,7 @@ impl<'a> HTTPClient<'a> {
                                 return;
                             }
                             crate::send_file::Status::Again => {
-                                // Neither `sendfile(2)` nor a `write_copy` pass that ended on a
-                                // full write leaves the socket polling for writable.
+                                // No writable event is pending after `sendfile(2)` or a full pass.
                                 socket.request_writable_event();
                             }
                         }
@@ -3532,11 +3529,9 @@ impl<'a> HTTPClient<'a> {
                             self.set_timeout(&socket);
 
                             let mut tunnel_closed = false;
-                            // Set when the tunnel itself brings the next `on_writable`.
                             let mut tunnel_blocked = false;
                             let status = sendfile.write_copy(|chunk| {
-                                // The tunnel queues the ciphertext its outer socket did not
-                                // take, without bound. Send more only once that has drained.
+                                // The tunnel queues unsent ciphertext without bound; wait for it.
                                 if proxy.has_pending_writes() {
                                     tunnel_blocked = true;
                                     return Ok(0);
@@ -3568,8 +3563,7 @@ impl<'a> HTTPClient<'a> {
                                     return;
                                 }
                                 crate::send_file::Status::Again => {
-                                    // A pass that wrote everything it read has no writable
-                                    // event coming for the outer socket.
+                                    // A blocked tunnel brings the next `on_writable` itself.
                                     if !tunnel_blocked {
                                         socket.request_writable_event();
                                     }
@@ -3727,9 +3721,7 @@ impl<'a> HTTPClient<'a> {
         self.fail(err);
     }
 
-    /// `close_and_fail` for a failed file body write. `sendfile(2)` can report a reused
-    /// keep-alive socket that the peer closed (EPIPE/ECONNRESET) before `on_close` runs, so
-    /// that error gets the same one retry as `on_close`.
+    /// `close_and_fail`, but EPIPE/ECONNRESET from `sendfile(2)` gets the `on_close` retry.
     #[cfg(not(windows))]
     fn close_and_retry_or_fail<const IS_SSL: bool>(
         &mut self,

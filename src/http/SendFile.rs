@@ -34,10 +34,7 @@ impl SendFile {
         }
     }
 
-    /// `pread` + `send` for a socket that `sendfile(2)` cannot write to (TLS, CONNECT tunnel).
-    /// Leaves `offset`/`remain` at the first byte `send` did not take. Returns `Again` after a
-    /// short `send`, and also after one pass up to the buffer size, so that a peer that reads
-    /// as fast as we write cannot keep the HTTP thread in this loop for the whole file.
+    /// `pread` + `send` where `sendfile(2)` cannot write; stops at a short `send` or after a pass.
     #[cfg(unix)]
     pub(crate) fn write_copy(
         &mut self,

@@ -489,13 +489,7 @@ impl<'a> Checker<'a> {
         let members = a.new_table();
         let mut index_infos: Vec<IndexInfoId> = Vec::new();
         // Resolve upfront such that recursive references see an empty object type.
-        self.set_structured_type_members(
-            t,
-            SymbolTableId::NIL,
-            List::NIL,
-            List::NIL,
-            List::NIL,
-        );
+        self.set_structured_type_members(t, SymbolTableId::NIL, List::NIL, List::NIL, List::NIL);
         // In { [P in K]: T }, we refer to P as the type parameter type, K as the constraint type, and T as the template type.
         let type_parameter = self.get_type_parameter_from_mapped_type(t);
         let constraint_type = self.get_constraint_type_from_mapped_type(t);
@@ -537,14 +531,16 @@ impl<'a> Checker<'a> {
                         }
                         let is_optional = template_modifiers
                             .intersects(MappedTypeModifiers::INCLUDE_OPTIONAL)
-                            || !template_modifiers.intersects(MappedTypeModifiers::EXCLUDE_OPTIONAL)
+                            || !template_modifiers
+                                .intersects(MappedTypeModifiers::EXCLUDE_OPTIONAL)
                                 && !modifiers_prop.is_nil()
                                 && a.sym(modifiers_prop)
                                     .flags
                                     .intersects(SymbolFlags::OPTIONAL);
                         let is_readonly = template_modifiers
                             .intersects(MappedTypeModifiers::INCLUDE_READONLY)
-                            || !template_modifiers.intersects(MappedTypeModifiers::EXCLUDE_READONLY)
+                            || !template_modifiers
+                                .intersects(MappedTypeModifiers::EXCLUDE_READONLY)
                                 && !modifiers_prop.is_nil()
                                 && c.is_readonly_symbol(modifiers_prop);
                         let strip_optional = c.strict_null_checks
@@ -750,8 +746,7 @@ impl<'a> Checker<'a> {
             {
                 return t;
             }
-            let lower_bounds =
-                self.same_map(self.type_types(t), |c, u| c.get_lower_bound_of_key_type(u));
+            let lower_bounds = self.same_map(types, |c, u| c.get_lower_bound_of_key_type(u));
             return self.get_intersection_type(lower_bounds);
         }
         t

@@ -46,31 +46,15 @@ pub use workspace_map as WorkspaceMap;
 
 bun_output::declare_scope!(Lockfile, hidden);
 
-trait ExprStr {
-    fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]>;
-}
-impl ExprStr for Expr {
-    #[inline]
-    fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]> {
-        if let ExprData::EString(s) = &self.data {
-            return Some(s.string(bump).expect("OOM"));
-        }
-        None
-    }
-}
-
 enum JsonObjectStringRows<'a> {
-    Classic(
-        core::slice::Iter<'a, bun_ast::G::Property>,
-        &'a bun_alloc::Arena,
-    ),
+    Classic(core::slice::Iter<'a, bun_ast::G::Property>),
     Json(core::slice::Iter<'a, E::PropertyJSON>),
 }
 
 impl<'a> JsonObjectStringRows<'a> {
-    fn new(expr: &'a Expr, bump: &'a bun_alloc::Arena) -> Option<Self> {
+    fn new(expr: &'a Expr) -> Option<Self> {
         match &expr.data {
-            ExprData::EObject(obj) => Some(Self::Classic(obj.properties.slice().iter(), bump)),
+            ExprData::EObject(obj) => Some(Self::Classic(obj.properties.slice().iter())),
             ExprData::EObjectJSON(obj) => Some(Self::Json(obj.get().properties().iter())),
             _ => None,
         }
@@ -78,7 +62,7 @@ impl<'a> JsonObjectStringRows<'a> {
 
     fn len(&self) -> usize {
         match self {
-            Self::Classic(iter, _) => iter.len(),
+            Self::Classic(iter) => iter.len(),
             Self::Json(iter) => iter.len(),
         }
     }
@@ -89,13 +73,12 @@ impl<'a> Iterator for JsonObjectStringRows<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Classic(iter, bump) => {
+            Self::Classic(iter) => {
                 let prop = iter.next()?;
-                let key = prop.key?;
-                let key_bytes = key.as_utf8(*bump)?;
+                let key = prop.key.as_ref()?;
                 Some((
-                    key_bytes,
-                    prop.value.as_ref().and_then(|v| v.as_utf8(*bump)),
+                    key.as_utf8_string_literal()?,
+                    prop.value.as_ref().and_then(|v| v.as_utf8_string_literal()),
                     key.loc,
                 ))
             }
@@ -2170,9 +2153,6 @@ impl Package<u64> {
     ) -> crate::Result<()> {
         #[allow(non_snake_case)]
         let FEATURES = features;
-        // Function-local arena for `asString` transcoding (transcoded strings
-        // are only borrowed until `string_builder.append` copies them).
-        let bump = bun_alloc::Arena::new();
         // split-borrow `string_bytes`/`string_pool` so the dozens of
         // disjoint `lockfile.{buffers.*, overrides, catalogs, workspace_*, …}`
         // accesses below pass borrowck. Reads of `lockfile.buffers.string_bytes`
@@ -2191,7 +2171,7 @@ impl Package<u64> {
         // -- Count the sizes
         'name: {
             if let Some(name_q) = json.as_property(b"name") {
-                if let Some(name) = name_q.expr.as_utf8(&bump) {
+                if let Some(name) = name_q.expr.as_utf8_string_literal() {
                     if !name.is_empty() {
                         string_builder.count(name);
                         break 'name;
@@ -2220,7 +2200,7 @@ impl Package<u64> {
 
         if FEATURES.patched_dependencies {
             if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-                if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
+                if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr) {
                     for (_, value, _) in rows {
                         if let Some(value) = value {
                             string_builder.count(value);
@@ -2232,14 +2212,14 @@ impl Package<u64> {
 
         if !FEATURES.is_main {
             if let Some(version_q) = json.as_property(b"version") {
-                if let Some(version_str) = version_q.expr.as_utf8(&bump) {
+                if let Some(version_str) = version_q.expr.as_utf8_string_literal() {
                     string_builder.count(version_str);
                 }
             }
         }
         'bin: {
             if let Some(bin) = json.as_property(b"bin") {
-                if let Some(rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
+                if let Some(rows) = JsonObjectStringRows::new(&bin.expr) {
                     for (k, v, _) in rows {
                         string_builder.count(k);
                         let Some(v) = v else {
@@ -2250,7 +2230,7 @@ impl Package<u64> {
                     break 'bin;
                 }
                 if bin.expr.is_string() {
-                    if let Some(str_) = bin.expr.as_utf8(&bump) {
+                    if let Some(str_) = bin.expr.as_utf8_string_literal() {
                         // The build pass reads `directories.bin` when `bin` is empty.
                         if !str_.is_empty() {
                             string_builder.count(str_);
@@ -2262,7 +2242,7 @@ impl Package<u64> {
 
             if let Some(dirs) = json.as_property(b"directories") {
                 if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                    if let Some(str_) = bin_prop.expr.as_utf8(&bump) {
+                    if let Some(str_) = bin_prop.expr.as_utf8_string_literal() {
                         string_builder.count(str_);
                         break 'bin;
                     }
@@ -2305,7 +2285,7 @@ impl Package<u64> {
         // names that nothing in the build loop consumed.
         let mut optional_peer_dependencies: ArrayHashMap<
             PackageNameHash,
-            &[u8],
+            Box<[u8]>,
             bun_collections::identity_context::U64,
         > = ArrayHashMap::default();
 
@@ -2326,9 +2306,10 @@ impl Package<u64> {
                             return;
                         }
 
-                        let key: &[u8] = bump.alloc_slice_copy(key);
-                        optional_peer_dependencies
-                            .put_assume_capacity(semver::string::Builder::string_hash(key), key);
+                        optional_peer_dependencies.put_assume_capacity(
+                            semver::string::Builder::string_hash(key),
+                            Box::from(key),
+                        );
                         string_builder.count(key);
                         string_builder.count(b"*");
                         total_dependencies_count += 1;
@@ -2373,7 +2354,7 @@ impl Package<u64> {
                         break 'brk;
                     }
 
-                    if let Some(rows) = JsonObjectStringRows::new(&dependencies_q.expr, &bump) {
+                    if let Some(rows) = JsonObjectStringRows::new(&dependencies_q.expr) {
                         if group.behavior.is_workspace() {
                             // yarn workspaces expects a "workspaces" property shaped like this:
                             //
@@ -2435,7 +2416,7 @@ impl Package<u64> {
                                 let mut owned: Vec<Vec<u8>> = Vec::new();
                                 if let Some(mut items) = q.expr.as_array() {
                                     while let Some(item) = items.next() {
-                                        let Some(s) = item.as_string(&bump) else {
+                                        let Some(s) = item.as_utf8_string_literal() else {
                                             let _ = log.add_error_fmt(
                                                 source,
                                                 item.loc,
@@ -2527,7 +2508,7 @@ impl Package<u64> {
                 trusted.ensure_unused_capacity(count)?;
                 if let Some(mut items) = q.expr.as_array() {
                     while let Some(item) = items.next() {
-                        let Some(name) = item.as_string(&bump) else {
+                        let Some(name) = item.as_utf8_string_literal() else {
                             return Err(invalid_trusted_dependencies(log, source, q.loc));
                         };
                         trusted.put_assume_capacity(
@@ -2606,7 +2587,7 @@ impl Package<u64> {
             }
 
             if let Some(name_q) = json.as_property(b"name") {
-                if let Some(name) = name_q.expr.as_utf8(&bump) {
+                if let Some(name) = name_q.expr.as_utf8_string_literal() {
                     if !name.is_empty() {
                         let external_string = string_builder.append::<ExternalString>(name);
 
@@ -2628,7 +2609,7 @@ impl Package<u64> {
 
         if FEATURES.patched_dependencies {
             if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-                if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
+                if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr) {
                     lockfile
                         .patched_dependencies
                         .ensure_total_capacity(rows.len())
@@ -2656,7 +2637,7 @@ impl Package<u64> {
 
         'bin: {
             if let Some(bin) = json.as_property(b"bin") {
-                if let Some(mut rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
+                if let Some(mut rows) = JsonObjectStringRows::new(&bin.expr) {
                     match rows.len() {
                         0 => {}
                         1 => {
@@ -2732,7 +2713,7 @@ impl Package<u64> {
                 // the files in an existing bin directory, use
                 // directories.bin.
                 if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                    if let Some(str_) = bin_prop.expr.as_utf8(&bump) {
+                    if let Some(str_) = bin_prop.expr.as_utf8_string_literal() {
                         if !str_.is_empty() {
                             self.bin = Bin {
                                 tag: bin::Tag::Dir,
@@ -2774,7 +2755,7 @@ impl Package<u64> {
                     _ => {
                         if let Some(mut items) = bundled_deps_expr.as_array() {
                             while let Some(item) = items.next() {
-                                let Some(s) = item.as_string(&bump) else {
+                                let Some(s) = item.as_utf8_string_literal() else {
                                     continue;
                                 };
                                 bundled_deps.insert(s)?;
@@ -2977,7 +2958,7 @@ impl Package<u64> {
                 }
             } else {
                 if let Some(dependencies_q) = json.as_property(group.prop) {
-                    let rows = JsonObjectStringRows::new(&dependencies_q.expr, &bump)
+                    let rows = JsonObjectStringRows::new(&dependencies_q.expr)
                         .expect("validated above: a dependency group is an object");
                     for (key, version, key_loc) in rows {
                         let external_name = string_builder.append::<ExternalString>(key);
@@ -3032,7 +3013,7 @@ impl Package<u64> {
         // `peerDependencies`.
         let meta_only = optional_peer_dependencies.iterator();
         for entry in meta_only {
-            let external_name = string_builder.append::<ExternalString>(*entry.value_ptr);
+            let external_name = string_builder.append::<ExternalString>(entry.value_ptr);
             if let Some(dep_) = Self::parse_dependency(
                 &mut lockfile.workspace_paths,
                 &mut lockfile.workspace_versions,

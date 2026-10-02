@@ -172,30 +172,23 @@ fn process_workspace_name(
         )
         .unwrap()?;
 
-    // Scratch arena for `as_string_cloned`;
-    // results are immediately boxed so the bump can drop at scope exit.
-    let scratch = Arena::new();
-
     let name_expr = workspace_json
         .root
         .get(b"name")
         .ok_or(crate::Error::MissingPackageName)?;
     let name = name_expr
-        .as_string_cloned(&scratch)?
+        .as_utf8_string_literal()
         .ok_or(crate::Error::MissingPackageName)?;
 
-    let hoisting_limits: Option<Box<[u8]>> = match workspace_json
+    let hoisting_limits: Option<Box<[u8]>> = workspace_json
         .root
         .get(b"installConfig")
         .and_then(|c| c.get(b"hoistingLimits"))
-    {
-        Some(h) => Some(match h.as_string_cloned(&scratch)? {
+        .map(|h| match h.as_utf8_string_literal() {
             Some(v) => Box::<[u8]>::from(v),
             // present but not a string
             None => Box::<[u8]>::from(&b"<non-string>"[..]),
-        }),
-        None => None,
-    };
+        });
     let entry = Entry {
         name: Box::<[u8]>::from(name),
         name_loc: name_expr.loc,
@@ -207,7 +200,7 @@ fn process_workspace_name(
         },
         version: 'brk: {
             if let Some(version_expr) = workspace_json.root.get(b"version") {
-                if let Some(version) = version_expr.as_string_cloned(&scratch)? {
+                if let Some(version) = version_expr.as_utf8_string_literal() {
                     break 'brk Some(Box::<[u8]>::from(version));
                 }
             }

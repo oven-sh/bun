@@ -55,7 +55,7 @@ Every host reboots nightly (the `com.buildkite.cleanup` launchd job).
 A `bare` host keeps one kernel between jobs, and macOS does not free every TCP
 socket the test suite closes: `sysctl net.inet.tcp.pcbcount` grows by about
 1,000 per job while netstat shows nothing. Every test job on a `bare` host
-prints that count, the uptime and the TCP retransmit timeouts when it starts.
+prints that count and the uptime when it starts.
 
 macOS 26 caps TCP memory at 1/32 of RAM, so an 8 GB host loses its network
 late in a busy day. On macOS 26 or later, a job that starts over

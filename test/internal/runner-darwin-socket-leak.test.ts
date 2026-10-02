@@ -23,14 +23,6 @@ const bareMetalAgent = {
 };
 const rebootTurnedOn = { ...bareMetalAgent, BUN_RUNNER_REBOOT_DARWIN_AGENT: "1" };
 
-/** From `netstat -s -p tcp` on darwin-arm64-hardtack. */
-const netstat = `tcp:
-\t4234664 connection requests
-\t2653037 connection accepts
-\t605109 retransmit timeouts
-\t\t287 connections dropped by rexmit timeout
-`;
-
 interface Scenario {
   os?: string;
   release?: string;
@@ -64,9 +56,6 @@ async function run(scenario: Scenario) {
         const count = counts[Math.min(reads++, counts.length - 1)];
         return count === undefined ? undefined : `${count}\n`;
       }
-      if (command[0] === "netstat") {
-        return netstat;
-      }
       calls.push(command.join(" "));
       return rebootStarts ? "" : undefined;
     },
@@ -94,9 +83,7 @@ async function run(scenario: Scenario) {
 
 /** What darwin-arm64-hardtack (8 GB) held when every job on it failed. */
 const leaked = 64_728;
-const counters = (count: number, hours = "21.9") =>
-  `Up ${hours} h. TCP sockets held by the kernel: ${count}. ` +
-  "TCP since boot: 4234664 connection requests, 605109 retransmit timeouts.";
+const counters = (count: number, hours = "21.9") => `Up ${hours} h. TCP sockets held by the kernel: ${count}.`;
 const overLimit =
   "`darwin-arm64-hardtack` holds 64728 leaked kernel TCP sockets (limit 20075). " +
   "macOS drops TCP data on it when the tests take the count past 65075.";

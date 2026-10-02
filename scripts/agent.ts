@@ -830,13 +830,9 @@ export async function checkDarwinAgentSockets(host: DarwinAgentHost): Promise<vo
   }
   let count = firstCount;
 
-  const tcpStats = host.command(["netstat", "-s", "-p", "tcp"]) ?? "";
-  const tcpStat = (name: string): string => new RegExp(`(\\d+) ${name}`).exec(tcpStats)?.[1] ?? "?";
-  console.log(
-    `Up ${(host.uptime / 3600).toFixed(1)} h. TCP sockets held by the kernel: ${count}. ` +
-      `TCP since boot: ${tcpStat("connection request")} connection requests, ` +
-      `${tcpStat("retransmit timeout")} retransmit timeouts.`,
-  );
+  // No retransmit counters next to it: the kernel gives `net.inet.tcp.stats`, which is what
+  // `netstat -s` reads, to root only (`net.inet.tcp.disable_access_to_stats`), and zeros to a job.
+  console.log(`Up ${(host.uptime / 3600).toFixed(1)} h. TCP sockets held by the kernel: ${count}.`);
 
   if (!(parseInt(host.release) >= 25) || env.BUILDKITE_AGENT_META_DATA_RELEASE_TIER === "beta") {
     return;

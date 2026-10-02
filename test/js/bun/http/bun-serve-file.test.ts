@@ -1453,6 +1453,47 @@ test.skipIf(!isLinux)("Response(Bun.file(FIFO)) whose writer leaves without data
   }
 });
 
+// A writer that leaves after the server sent its bytes ends the reader with a
+// read of zero bytes. The chunked body must still get its last chunk. Linux
+// only, for the same reason.
+test.skipIf(!isLinux)("Response(Bun.file(FIFO)) whose writer leaves after its data ends the chunked body", async () => {
+  using dir = tempDir("serve-fifo-eof", {});
+  const fifoPath = join(String(dir), "body.fifo");
+  mkfifo(fifoPath);
+
+  // Held read+write, so the bytes stay in the pipe until the server reads them.
+  let writerFd: number | undefined = openSync(fifoPath, "r+");
+  try {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(Bun.file(fifoPath));
+      },
+    });
+    writeSync(writerFd, "PIPEBYTES!");
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    const reader = res.body!.getReader();
+    let received = "";
+    while (received.length < "PIPEBYTES!".length) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      received += Buffer.from(value).toString();
+    }
+    // The server sent the bytes and now waits on the pipe. The writer leaves.
+    closeSync(writerFd);
+    writerFd = undefined;
+    const end = await reader.read();
+    expect({ status: res.status, received, done: end.done }).toEqual({
+      status: 200,
+      received: "PIPEBYTES!",
+      done: true,
+    });
+  } finally {
+    if (writerFd !== undefined) closeSync(writerFd);
+  }
+});
+
 // A file route serves the window of the Bun.file() slice it was built from,
 // given either the slice or its unread stream (which is turned back into the
 // slice). FileRoute used to clamp the window to the file size without taking

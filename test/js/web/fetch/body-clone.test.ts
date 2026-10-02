@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDirWithFiles } from "harness";
+import { mkfifo } from "mkfifo";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -1138,7 +1139,9 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
   // them. A body over such a store is read as one stream and teed instead,
   // whether it was given as a stream or as the Blob itself, and both bodies
   // see the whole input.
-  async function cloneInChild(bodyExpr: string, args: string[] = []) {
+  // Only a child whose body is its stdin gets a stdin pipe. Any other child can
+  // exit before a write to that pipe lands, and the write then rejects with EPIPE.
+  async function cloneInChild(bodyExpr: string, { args = [] as string[], feedStdin = true } = {}) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1150,37 +1153,42 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
         ...args,
       ],
       env: bunEnv,
-      stdin: "pipe",
+      stdin: feedStdin ? "pipe" : "ignore",
       stdout: "pipe",
       stderr: "pipe",
     });
-    proc.stdin.write("hello ");
-    await proc.stdin.flush();
-    proc.stdin.write("world");
-    await proc.stdin.end();
+    const { stdin } = proc;
+    if (stdin) {
+      stdin.write("hello ");
+      await stdin.flush();
+      stdin.write("world");
+      await stdin.end();
+    }
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout: stdout.trim(), stderr, exitCode };
   }
-  const bothBodiesReadStdin = { stdout: `["hello world","hello world"]`, stderr: "", exitCode: 0 };
+  const bothBodiesSeeWholeInput = { stdout: `["hello world","hello world"]`, stderr: "", exitCode: 0 };
 
   test("a body over Bun.stdin.stream() is still teed", async () => {
-    expect(await cloneInChild("Bun.stdin.stream()")).toEqual(bothBodiesReadStdin);
+    expect(await cloneInChild("Bun.stdin.stream()")).toEqual(bothBodiesSeeWholeInput);
   });
 
   test("a body over Bun.stdin itself is teed, not duped", async () => {
-    expect(await cloneInChild("Bun.stdin")).toEqual(bothBodiesReadStdin);
+    expect(await cloneInChild("Bun.stdin")).toEqual(bothBodiesSeeWholeInput);
   });
 
   // The same store kind reached by path: stat says it is not a regular file.
   test.skipIf(isWindows)("a body over a FIFO opened by path is still teed", async () => {
     const fifo = join(tempDirWithFiles("body-clone-fifo", {}), "body.fifo");
-    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+    mkfifo(fifo);
     await using writer = Bun.spawn({
       cmd: ["sh", "-c", `printf 'hello world' > "$1"`, "sh", fifo],
       stdout: "ignore",
       stderr: "inherit",
     });
-    expect(await cloneInChild("Bun.file(process.argv.at(-1)).stream()", [fifo])).toEqual(bothBodiesReadStdin);
+    expect(await cloneInChild("Bun.file(process.argv.at(-1)).stream()", { args: [fifo], feedStdin: false })).toEqual(
+      bothBodiesSeeWholeInput,
+    );
     expect(await writer.exited).toBe(0);
   });
 });

@@ -558,14 +558,14 @@ test("cancel() still reaches the server when the session closes during the dial"
   expect((await settled).code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
 });
 
-// A dial to an IP literal is a socket before it is open, and uSockets reports
-// nothing when the timeout of the cancel connection closes it. The connection
-// has to release the event loop itself, or the process never exits.
+// The timeout of the cancel connection closes a dial that never completes, and
+// the process has to exit then.
+// Not on Windows and musl: the fixture loads glibc or libSystem for its raw listener.
 test.skipIf(isWindows || isMusl)(
   "the process exits when the dial of the cancel connection never completes",
   async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "postgres-pending-dial-fixture.ts"), "cancel"],
+      cmd: [bunExe(), join(import.meta.dir, "postgres-pending-dial-fixture.ts")],
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",

@@ -1,13 +1,10 @@
-// A dial to an IP literal is a socket from its first moment, and uSockets reports
-// nothing when the application closes such a socket before it opens. Each mode
-// leaves the process with one dial that never completes, and the process has to
-// exit on its own once that dial times out.
-//
-//   connect  the dial of the session itself
-//   cancel   the dial of the connection that cancel() opens for a running query
+// cancel() opens a second connection for a running query. This process is left
+// with the dial of that connection, which never completes, and it has to exit
+// on its own once the dial times out.
 //
 // The listener is a raw libc socket. Its backlog holds one connection, which no
-// listener of Bun can ask for, and nothing accepts from it unless this file does.
+// listener of Bun can ask for. `blackholePortSource` in harness.ts is the same
+// listener, but it never accepts, and this one has to serve the session first.
 // With the backlog full the kernel drops every SYN.
 import { SQL } from "bun";
 import { dlopen, ptr } from "bun:ffi";
@@ -71,43 +68,35 @@ const code = (query: Promise<unknown>) =>
     err => err.code,
   );
 
-if (process.argv[2] === "connect") {
-  const filler = await fillBacklog();
-  // Nothing has to succeed within the timeout, so it can be short.
-  const sql = new SQL({ url, max: 1, connectionTimeout: 0.2 });
-  console.log(await code(sql`select 1`));
-  filler.destroy();
-} else {
-  const sql = new SQL({ url, max: 1, connectionTimeout: 1 });
-  const query = sql`select pg_sleep(10)`.simple();
-  const settled = code(query);
+const sql = new SQL({ url, max: 1, connectionTimeout: 1 });
+const query = sql`select pg_sleep(10)`.simple();
+const settled = code(query);
 
-  await readable(listener);
-  const session = libc.accept(listener, null, null);
-  if (session < 0) throw new Error("accept failed");
-  const handshake = Buffer.concat([pgAuthenticationOk(), pgBackendKeyData(4242, 13371337), pgReadyForQuery()]);
-  if (libc.write(session, ptr(handshake), handshake.length) !== handshake.length) throw new Error("write failed");
+await readable(listener);
+const session = libc.accept(listener, null, null);
+if (session < 0) throw new Error("accept failed");
+const handshake = Buffer.concat([pgAuthenticationOk(), pgBackendKeyData(4242, 13371337), pgReadyForQuery()]);
+if (libc.write(session, ptr(handshake), handshake.length) !== handshake.length) throw new Error("write failed");
 
-  // The startup message, then the query: Byte1('Q') Int32(length) String. With
-  // the whole query read, the query is the one the backend runs.
-  const received = Buffer.alloc(4096);
-  let length = 0;
-  const queryReceived = () => {
-    if (length < 4) return false;
-    const query = received.readUInt32BE(0);
-    return length >= query + 5 && length >= query + 1 + received.readUInt32BE(query + 1);
-  };
-  while (!queryReceived()) {
-    await readable(session);
-    const read = libc.read(session, ptr(received, length), received.length - length);
-    if (read <= 0) throw new Error("the client closed the session");
-    length += read;
-  }
-
-  const filler = await fillBacklog();
-  query.cancel();
-  // The backend goes away. The cancel connection is still in its dial.
-  libc.close(session);
-  console.log(await settled);
-  filler.destroy();
+// The startup message, then the query: Byte1('Q') Int32(length) String. With
+// the whole query read, the query is the one the backend runs.
+const received = Buffer.alloc(4096);
+let length = 0;
+const queryReceived = () => {
+  if (length < 4) return false;
+  const query = received.readUInt32BE(0);
+  return length >= query + 5 && length >= query + 1 + received.readUInt32BE(query + 1);
+};
+while (!queryReceived()) {
+  await readable(session);
+  const read = libc.read(session, ptr(received, length), received.length - length);
+  if (read <= 0) throw new Error("the client closed the session");
+  length += read;
 }
+
+const filler = await fillBacklog();
+query.cancel();
+// The backend goes away. The cancel connection is still in its dial.
+libc.close(session);
+console.log(await settled);
+filler.destroy();

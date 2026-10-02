@@ -1474,8 +1474,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &PostgresSQLConnection, _socket: SocketType<SSL>, _: i32) {
-        // The dispatch trampoline already closed the connecting socket; it is
-        // freed at end-of-tick, so detach before any user-visible callback.
+        // As in `on_close`.
         this.socket
             .set(Socket::SocketTcp(uws::SocketTCP::detached()));
         Self::guarded(this, |t| t.on_connect_error());
@@ -1515,22 +1514,12 @@ impl PostgresSQLConnection {
     }
 
     fn close(&self) {
-        // A close while the connect/handshake is still in flight gets no
-        // socket event: uws skips the on_close dispatch for sockets whose
-        // connect never completed, and `disconnect()` only tears down
-        // connected sockets. Fail the connection directly so the JS onclose
-        // callback fires, pending queries are rejected, and the in-flight
-        // socket is torn down instead of completing the handshake after
-        // close.
+        // `disconnect()` only tears down connected sockets.
         if matches!(
             self.status.get(),
             Status::Connecting | Status::SentStartupMessage
         ) {
             self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
-            // closing an in-flight connect dispatches no socket event, so the
-            // poll ref taken at creation is released here rather than in a
-            // socket callback
-            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
         } else {
             self.disconnect();
         }
@@ -1621,26 +1610,28 @@ impl PostgresSQLConnection {
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
+    /// `js_reason`: why the connection failed; `None` for a disconnect that was asked for.
     fn ref_and_close(&self, js_reason: Option<JSValue>) {
         // refAndClose is always called when we wanna to disconnect or when we are closed
 
         let socket = self.socket.get();
         if !socket.is_closed() {
-            let opened = socket.is_established();
             // event loop need to be alive to close the socket
             self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
             // will unref on socket close
-            socket.close(if self.is_cancel_request() {
-                // Not `Normal`: on TLS that waits for the peer's close_notify.
-                uws::CloseKind::Failure
+            if js_reason.is_none() {
+                socket.close(uws::CloseKind::Normal);
             } else {
-                uws::CloseKind::Normal
-            });
-            if !opened {
-                // uSockets closes a socket that never opened with no event, so this is its `on_close`.
-                self.socket
-                    .set(Socket::SocketTcp(uws::SocketTCP::detached()));
-                self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+                // A failed connection does not wait for its peer, which `Normal` does over TLS
+                // (for a close_notify): a peer gone silent is one way connections fail. It still
+                // sends its own: an idle or expired connection has a healthy peer, which logs a
+                // close without one as an error.
+                socket.shutdown();
+                socket.close(uws::CloseKind::FastShutdown);
+                // Parked behind ciphertext the kernel would not take.
+                if !socket.is_closed() {
+                    socket.close(uws::CloseKind::Failure);
+                }
             }
         }
 

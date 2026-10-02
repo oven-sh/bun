@@ -73,9 +73,6 @@ public:
 
     void setMaxListeners(unsigned count);
 
-    Vector<Identifier> eventTypes();
-    const SimpleEventListenerVector& eventListeners(const Identifier& eventType);
-
     bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
     bool isFiringEventListeners() const;
 

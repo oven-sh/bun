@@ -3,7 +3,7 @@ title: CSRF Protection
 description: Generate and verify CSRF tokens with Bun's built-in API
 ---
 
-`Bun.CSRF` generates and verifies [CSRF (Cross-Site Request Forgery)](https://owasp.org/www-community/attacks/csrf) tokens. Bun signs tokens with HMAC. Each token includes an expiration timestamp.
+`Bun.CSRF` generates and verifies [CSRF (Cross-Site Request Forgery)](https://owasp.org/www-community/attacks/csrf) tokens. Bun signs tokens with HMAC. Each token includes an issue timestamp and an expiry duration.
 
 ```ts title="csrf.ts" icon="/icons/typescript.svg"
 // Generate a token bound to the requester's session
@@ -25,7 +25,7 @@ console.log(isValid); // true
 
 ## `Bun.CSRF.generate()`
 
-Generate a CSRF token. The token contains a cryptographic nonce, a timestamp, and an HMAC signature, encoded as a string.
+Generate a CSRF token. The token contains a cryptographic nonce, an issue timestamp, the `expiresIn` duration, and an HMAC signature, encoded as a string.
 
 ```ts title="generate.ts" icon="/icons/typescript.svg"
 const token = Bun.CSRF.generate("my-secret-key");

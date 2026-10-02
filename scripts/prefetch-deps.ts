@@ -1,7 +1,7 @@
 /**
  * Warm a read-only prefetch cache for the build's network downloads.
  *
- * Run at CI-image bake time from bootstrap.{sh,ps1}. Produces a directory
+ * Run at CI-image bake time by the `prefetch` tool of scripts/build/ci-images/spec.ts. Produces a directory
  * that, when pointed at via `BUN_BUILD_PREFETCH_DIR`, lets a fresh build
  * complete with no network round-trips for matching dep versions.
  *
@@ -94,8 +94,12 @@ for (const partial of variants) {
   let cfg: Config;
   try {
     cfg = resolveConfig(partial, toolchain);
-  } catch {
-    continue; // e.g. asan+lto rejected — skip the combo.
+  } catch (err) {
+    // A variant this host cannot configure (a missing cross SDK, an option
+    // combination resolveConfig rejects) is skipped — loudly, so a bake that
+    // silently lost a target's sources is visible in the log.
+    console.warn(`prefetch: skipping ${JSON.stringify(partial)}: ${(err as Error).message}`);
+    continue;
   }
 
   for (const dep of allDeps) {
@@ -112,7 +116,7 @@ for (const partial of variants) {
           stamp: ".identity",
           value: src.identity,
           kind: "tar.gz",
-          rm: src.rmAfterExtract,
+          ...(src.rmAfterExtract !== undefined && { rm: src.rmAfterExtract }),
         },
       });
     }

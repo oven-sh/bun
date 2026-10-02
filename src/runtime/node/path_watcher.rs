@@ -32,7 +32,6 @@ use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::HashMap;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-#[cfg(not(windows))]
 use bun_core::ZBox;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::strings;
@@ -40,17 +39,14 @@ use bun_core::strings;
 use bun_core::{Output, zstr};
 use bun_core::{ZStr, handle_oom};
 use bun_paths as path;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_paths::PathBuffer;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_paths::platform;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-use bun_paths::resolve_path::{join_string_buf, join_z_buf};
+use bun_paths::resolve_path::join_z_buf_spill;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_sys::FdExt;
 use bun_sys::{self as sys, E, Fd, Tag};
 use bun_threading::Mutex;
-#[cfg(not(windows))]
 use bun_wyhash::hash;
 
 use bun_jsc::VirtualMachineRef as VirtualMachine;
@@ -189,13 +185,11 @@ impl PathWatcherManager {
 // PathWatcher
 // ────────────────────────────────────────────────────────────────────────────────
 
-pub struct PathWatcher {
+pub(crate) struct PathWatcher {
     manager: Option<&'static PathWatcherManager>,
 
     /// Canonical absolute path (realpath of the user-supplied path). Owned.
-    #[cfg(not(windows))]
     path: ZBox,
-    #[cfg(not(windows))]
     recursive: bool,
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     is_file: bool,
@@ -208,7 +202,6 @@ pub struct PathWatcher {
     handlers: ArrayHashMap<*mut c_void, ChangeEvent>,
 
     /// Per-platform per-watch state (inotify wds, kqueue fds, or the FSEventsWatcher).
-    #[cfg(not(windows))]
     platform: PlatformWatch,
 }
 
@@ -224,15 +217,11 @@ pub struct PathWatcher {
 /// ever need shared access to a `PathWatcher`.
 #[derive(Default)]
 pub(crate) struct ChangeEvent {
-    #[cfg(not(windows))]
     hash: Cell<u64>,
-    #[cfg(not(windows))]
     event_type: Cell<WatchEventKind>,
-    #[cfg(not(windows))]
     timestamp: Cell<i64>,
 }
 
-#[cfg(not(windows))]
 impl ChangeEvent {
     fn should_emit(&self, hash: u64, timestamp: i64, event_type: WatchEventKind) -> bool {
         let time_diff = timestamp - self.timestamp.get();
@@ -263,7 +252,6 @@ impl PathWatcher {
     /// `rel_path` is borrowed — `onPathUpdatePosix` dupes it before enqueuing.
     /// `&self`: per-handler state is `Cell`-based, so the emit paths never
     /// need an exclusive `PathWatcher` borrow.
-    #[cfg(not(windows))]
     fn emit(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
         let timestamp = bun_core::time::milli_timestamp();
         let h = hash(rel_path);
@@ -304,7 +292,6 @@ impl PathWatcher {
         }
     }
 
-    #[cfg(not(windows))]
     fn emit_error(&self, err: &sys::Error, close: bool) {
         for &ctx in self.handlers.keys() {
             (FSWatcher::ON_PATH_UPDATE)(
@@ -320,7 +307,6 @@ impl PathWatcher {
 
     /// Signals end-of-batch so `FSWatcher` can flush its queued events to the JS thread.
     /// Caller holds `manager.mutex`.
-    #[cfg(not(windows))]
     fn flush(&self) {
         for &ctx in self.handlers.keys() {
             FSWatcher::on_update_end(Some(ctx));
@@ -349,7 +335,6 @@ impl PathWatcher {
     // `unlock()` and `remove_watch()` (see the SAFETY notes below), so no
     // whole-struct reference may span that window — every access below is
     // scoped to a single statement.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn detach(this: *mut PathWatcher, ctx: *mut c_void) {
         // SAFETY: `this` is a live PathWatcher created via `PathWatcher::new`. Read
         // `manager` via the raw pointer so no reference is asserted before
@@ -492,14 +477,11 @@ pub(crate) fn watch(
     // New watcher: own the key and path.
     let watcher = PathWatcher::new(PathWatcher {
         manager: Some(manager),
-        #[cfg(not(windows))]
         path: ZBox::from_bytes(resolved.as_bytes()),
-        #[cfg(not(windows))]
         recursive,
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         is_file,
         handlers: ArrayHashMap::default(),
-        #[cfg(not(windows))]
         platform: PlatformWatch::default(),
     });
     // SAFETY: watcher just allocated; we hold the only reference.
@@ -606,7 +588,9 @@ fn walk_subtree<const DIRS_ONLY: bool>(
     let _close = sys::CloseOnDrop::new(dfd);
     let mut it = sys::dir_iterator::iterate(dfd);
     let mut abs_buf = path::path_buffer_pool::get();
+    let mut abs_spill: Vec<u8> = Vec::new();
     let mut rel_buf = path::path_buffer_pool::get();
+    let mut rel_spill: Vec<u8> = Vec::new();
     loop {
         let entry = match it.next() {
             Err(_) => return,
@@ -619,12 +603,20 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         }
         // The iterator caches the UTF-8 transcode and exposes it as `slice_u8()`.
         let name = entry.name.slice_u8();
-        let child_abs =
-            join_z_buf::<platform::Posix>(abs_buf.as_mut_slice(), &[abs_dir.as_bytes(), name]);
+        let child_abs = join_z_buf_spill::<platform::Posix>(
+            abs_buf.as_mut_slice(),
+            &mut abs_spill,
+            &[abs_dir.as_bytes(), name],
+        );
         let child_rel: &[u8] = if rel_dir.is_empty() {
             name
         } else {
-            join_string_buf::<platform::Posix>(rel_buf.as_mut_slice(), &[rel_dir, name])
+            join_z_buf_spill::<platform::Posix>(
+                rel_buf.as_mut_slice(),
+                &mut rel_spill,
+                &[rel_dir, name],
+            )
+            .as_bytes()
         };
         cb(child_abs, child_rel, child_is_file);
         if !child_is_file {
@@ -891,7 +883,8 @@ impl Linux {
                 b.assume_init()
             }
         };
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let mut rel_spill: Vec<u8> = Vec::new();
 
         while running.load(Ordering::Acquire) {
             // SAFETY: buf is valid for buf.0.len() bytes; fd is a plain c_int.
@@ -1083,10 +1076,12 @@ impl Linux {
                     } else if name.is_empty() {
                         owner_subpath
                     } else {
-                        join_string_buf::<platform::Posix>(
+                        join_z_buf_spill::<platform::Posix>(
                             path_buf.as_mut_slice(),
+                            &mut rel_spill,
                             &[owner_subpath, name],
                         )
+                        .as_bytes()
                     };
 
                     // SAFETY: owner_watcher live under manager.mutex; `emit` takes `&self`.
@@ -1111,8 +1106,10 @@ impl Linux {
                         && !name.is_empty()
                     {
                         let mut abs_buf = path::path_buffer_pool::get();
-                        let child_abs = join_z_buf::<platform::Posix>(
+                        let mut abs_spill: Vec<u8> = Vec::new();
+                        let child_abs = join_z_buf_spill::<platform::Posix>(
                             abs_buf.as_mut_slice(),
+                            &mut abs_spill,
                             &[watcher_path, owner_subpath, name],
                         );
                         // Borrowck: `rel` may borrow `path_buf`,
@@ -1200,7 +1197,7 @@ use bun_watcher::inotify_watcher::Event as InotifyEvent;
 /// libuv), so `fs.watch()` no longer spins up a second kqueue thread.
 #[cfg(target_os = "macos")]
 #[derive(Default)]
-pub struct Darwin {
+pub(crate) struct Darwin {
     // No manager-level state — FSEvents has its own process-global loop.
 }
 

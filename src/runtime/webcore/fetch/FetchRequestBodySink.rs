@@ -15,7 +15,7 @@ bun_core::declare_scope!(FetchRequestBodySinkLog, visible);
 /// directly into the locked stream buffer so no intermediate UTF-8 buffer is
 /// allocated.
 #[derive(Clone, Copy)]
-pub enum RequestBodyChunk<'a> {
+pub(crate) enum RequestBodyChunk<'a> {
     Bytes(&'a [u8]),
     Latin1(&'a [u8]),
     Utf16(&'a [u16]),
@@ -23,7 +23,7 @@ pub enum RequestBodyChunk<'a> {
 
 impl<'a> RequestBodyChunk<'a> {
     #[inline]
-    pub fn utf8_len(&self) -> usize {
+    pub(crate) fn utf8_len(&self) -> usize {
         match *self {
             Self::Bytes(b) => b.len(),
             Self::Latin1(b) => bun_simdutf_sys::simdutf::length::utf8::from::latin1(b),
@@ -34,7 +34,7 @@ impl<'a> RequestBodyChunk<'a> {
     }
 
     #[inline]
-    pub fn append_utf8_into(&self, out: &mut Vec<u8>) {
+    pub(crate) fn append_utf8_into(&self, out: &mut Vec<u8>) {
         match *self {
             Self::Bytes(b) => out.extend_from_slice(b),
             Self::Latin1(b) => {
@@ -170,18 +170,16 @@ impl FetchRequestBodySink {
 
     pub fn flush_from_js(
         &mut self,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
         use crate::webcore::streams::PendingState;
         if self.pending.state == PendingState::Pending {
-            return bun_sys::Result::Ok(
-                JSPromise::opaque_ref(self.pending.promise(global_this)).to_js(),
-            );
+            return bun_sys::Result::Ok(JSPromise::opaque_ref(self.pending.promise(cx)).to_js());
         }
         if self.done || self.ended {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-                global_this,
+                cx.global(),
                 JSValue::js_number(0.0),
             ));
         }
@@ -189,12 +187,10 @@ impl FetchRequestBodySink {
             // Bytes were scheduled to the HTTP thread since the last drain ack,
             // so an `on_drain` is guaranteed to arrive and resolve this.
             self.pending.result = Writable::Owned(self.pending_bytes);
-            return bun_sys::Result::Ok(
-                JSPromise::opaque_ref(self.pending.promise(global_this)).to_js(),
-            );
+            return bun_sys::Result::Ok(JSPromise::opaque_ref(self.pending.promise(cx)).to_js());
         }
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-            global_this,
+            cx.global(),
             JSValue::js_number(0.0),
         ))
     }
@@ -238,7 +234,7 @@ impl FetchRequestBodySink {
         self.source.close(sys_err);
     }
 
-    pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
+    pub fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         let _ = self.end(None);
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
@@ -288,13 +284,10 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
         // SAFETY: same contract, forwarded.
         unsafe { Self::finalize(this) }
     }
-    fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, global)
+    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(self, cx)
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
-    }
-    fn done(&self) -> bool {
-        self.done
     }
 }

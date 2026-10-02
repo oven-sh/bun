@@ -11,7 +11,6 @@ use crate::bun_fs::FileSystem;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
-use bun_paths::{self, PathBuffer};
 use bun_sys::{self, Fd, File};
 
 use super::add_catalog;
@@ -228,13 +227,10 @@ fn update_package_json_and_install_with_manager_with_updates(
                 if log_level != LogLevel::Silent
                     && !crate::migration::reported_unsupported_lockfile_version(&cause)
                 {
-                    let what: &str = match cause.step {
-                        crate::lockfile::LoadStep::OpenFile => "open",
-                        crate::lockfile::LoadStep::ReadFile => "read",
-                        crate::lockfile::LoadStep::ParseFile => "parse",
-                        crate::lockfile::LoadStep::Migrating => "migrate",
-                    };
-                    Output::err_generic("failed to {s} lockfile: {s}", (what, cause.value.name()));
+                    Output::err_generic(
+                        "failed to {s} lockfile: {s}",
+                        (cause.step.verb(), cause.value.name()),
+                    );
                     if manager.log_mut().has_errors() {
                         let _ = manager
                             .log_mut()
@@ -429,7 +425,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         }
         _ => {
             if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
-                let mut pathbuf = PathBuffer::uninit();
+                let mut pathbuf = bun_paths::path_buffer_pool::get();
                 if let Some(stuff) =
                     patch_package::do_patch_commit(manager, &mut pathbuf, log_level)?
                 {
@@ -521,7 +517,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     let top_level_dir_without_trailing_slash =
         strings::without_trailing_slash(FileSystem::instance().top_level_dir());
 
-    let mut root_package_json_path_buf = PathBuffer::uninit();
+    let mut root_package_json_path_buf = bun_paths::path_buffer_pool::get();
     let root_package_json_path: &ZStr = 'root_package_json_path: {
         root_package_json_path_buf[..top_level_dir_without_trailing_slash.len()]
             .copy_from_slice(top_level_dir_without_trailing_slash);
@@ -727,7 +723,7 @@ pub(super) fn remove_leftover_node_modules(
     updates: &[UpdateRequest],
 ) {
     let cwd = bun_sys::Dir::cwd();
-    let mut node_modules_buf = PathBuffer::uninit();
+    let mut node_modules_buf = bun_paths::path_buffer_pool::get();
     node_modules_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
     node_modules_buf[b"node_modules".len()] = bun_paths::SEP;
     let name_hashes = manager.lockfile.packages.items_name_hash();
@@ -872,7 +868,7 @@ pub fn update_package_json_and_install_and_cli(
         if manager.options.global {
             if !manager.options.bin_path.is_empty() {
                 if let TrackInstalledBin::Basename(basename) = &manager.track_installed_bin {
-                    let mut path_buf = PathBuffer::uninit();
+                    let mut path_buf = bun_paths::path_buffer_pool::get();
                     let needs_to_print = if let Some(path_env) = bun_core::env_var::PATH.get() {
                         // This is not perfect
                         //
@@ -978,15 +974,6 @@ impl fmt::Display for ShellPathFormatter<'_> {
 struct MoreInstructions<'a> {
     shell: ShellCompletions::Shell,
     folder: &'a [u8],
-}
-
-impl Default for MoreInstructions<'_> {
-    fn default() -> Self {
-        Self {
-            shell: ShellCompletions::Shell::Unknown,
-            folder: b"",
-        }
-    }
 }
 
 impl fmt::Display for MoreInstructions<'_> {

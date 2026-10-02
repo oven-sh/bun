@@ -20,7 +20,7 @@ This cheat sheet doubles as a table of contents; click a class in the left colum
 
 ## `ArrayBuffer` and views
 
-JavaScript had no language-native way to store and manipulate binary data until ECMAScript v5 (2009) introduced a range of mechanisms for it. The most fundamental building block is `ArrayBuffer`, a data structure that represents a sequence of bytes in memory.
+JavaScript had no language-native way to store and manipulate binary data until ECMAScript 2015 (ES6) introduced a range of mechanisms for it. The most fundamental building block is `ArrayBuffer`, a data structure that represents a sequence of bytes in memory.
 
 ```ts
 // this buffer can store 8 bytes
@@ -127,7 +127,7 @@ The typed array classes, and how each interprets the bytes in an `ArrayBuffer`:
 | [`Int8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Int8Array)                 | Every one (1) byte is interpreted as a signed 8-bit integer. Range -128 to 127.                                                                                            |
 | [`Int16Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Int16Array)               | Every two (2) bytes are interpreted as a signed 16-bit integer. Range -32768 to 32767.                                                                                     |
 | [`Int32Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Int32Array)               | Every four (4) bytes are interpreted as a signed 32-bit integer. Range -2147483648 to 2147483647.                                                                          |
-| [`Float16Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float16Array)           | Every two (2) bytes are interpreted as a 16-bit floating point number. Range -6.104e5 to 6.55e4.                                                                           |
+| [`Float16Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float16Array)           | Every two (2) bytes are interpreted as a 16-bit floating point number. Range -6.55e4 to 6.55e4.                                                                            |
 | [`Float32Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float32Array)           | Every four (4) bytes are interpreted as a 32-bit floating point number. Range -3.4e38 to 3.4e38.                                                                           |
 | [`Float64Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float64Array)           | Every eight (8) bytes are interpreted as a 64-bit floating point number. Range -1.7e308 to 1.7e308.                                                                        |
 | [`BigInt64Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt64Array)         | Every eight (8) bytes are interpreted as a signed `BigInt`. Range -9223372036854775808 to 9223372036854775807 (though `BigInt` is capable of representing larger numbers). |
@@ -203,7 +203,7 @@ arr1[0]; // => 0;
 arr1[7]; // => 7;
 
 // from another typed array
-const arr2 = new Uint8Array(arr);
+const arr2 = new Uint8Array(arr1);
 ```
 
 Typed arrays provide the same methods as regular arrays, with a few exceptions. For example, `push` and `pop` are not available, because they would require resizing the underlying `ArrayBuffer`.
@@ -212,7 +212,7 @@ Typed arrays provide the same methods as regular arrays, with a few exceptions. 
 const arr = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]);
 
 // supports common array methods
-arr.filter(n => n > 128); // Uint8Array(1) [255]
+arr.filter(n => n > 5); // Uint8Array(2) [6, 7]
 arr.map(n => n * 2); // Uint8Array(8) [0, 2, 4, 6, 8, 10, 12, 14]
 arr.reduce((acc, n) => acc + n, 0); // 28
 arr.forEach(n => console.log(n)); // 0 1 2 3 4 5 6 7
@@ -338,7 +338,7 @@ See the [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/API/Blo
 
 Streams let you work with binary data without loading it all into memory at once. They're commonly used for reading and writing files, sending and receiving network requests, and processing large amounts of data.
 
-Bun implements the Web APIs [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) and [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream).
+Bun implements the Web APIs [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) and [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream).
 
 <Note>
   Bun also implements the `node:stream` module, including
@@ -498,8 +498,7 @@ Array.from(arr);
 #### To `Blob`
 
 ```ts
-// only if arr is a view of its entire backing TypedArray
-new Blob([arr.buffer], { type: "text/plain" });
+new Blob([arr], { type: "text/plain" });
 ```
 
 #### To `ReadableStream`
@@ -566,13 +565,13 @@ new TextDecoder().decode(view);
 #### To `number[]`
 
 ```ts
-Array.from(view);
+Array.from(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
 ```
 
 #### To `Blob`
 
 ```ts
-new Blob([view.buffer], { type: "text/plain" });
+new Blob([view], { type: "text/plain" });
 ```
 
 #### To `ReadableStream`
@@ -580,7 +579,7 @@ new Blob([view.buffer], { type: "text/plain" });
 ```ts
 new ReadableStream({
   start(controller) {
-    controller.enqueue(view.buffer);
+    controller.enqueue(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
     controller.close();
   },
 });
@@ -590,10 +589,12 @@ new ReadableStream({
 To stream the `ArrayBuffer` in chunks, split the `DataView` into chunks and enqueue each one individually.
 
 ```ts
+const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+
 new ReadableStream({
   start(controller) {
-    for (let i = 0; i < view.byteLength; i += chunkSize) {
-      controller.enqueue(view.buffer.slice(i, i + chunkSize));
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      controller.enqueue(bytes.slice(i, i + chunkSize));
     }
     controller.close();
   },
@@ -734,7 +735,7 @@ blob.stream();
 ```ts
 stream; // ReadableStream
 
-const buffer = new Response(stream).arrayBuffer();
+const buffer = await new Response(stream).arrayBuffer();
 ```
 
 But this approach is verbose and adds unnecessary overhead. Bun implements optimized convenience functions for converting a `ReadableStream` to various binary formats.
@@ -767,7 +768,7 @@ const buf = await new Response(stream).arrayBuffer();
 new Int8Array(buf);
 
 // with Bun function
-new Int8Array(Bun.readableStreamToArrayBuffer(stream));
+new Int8Array(await Bun.readableStreamToArrayBuffer(stream));
 ```
 
 #### To `DataView`
@@ -778,7 +779,7 @@ const buf = await new Response(stream).arrayBuffer();
 new DataView(buf);
 
 // with Bun function
-new DataView(Bun.readableStreamToArrayBuffer(stream));
+new DataView(await Bun.readableStreamToArrayBuffer(stream));
 ```
 
 #### To `Buffer`
@@ -789,7 +790,7 @@ const buf = await new Response(stream).arrayBuffer();
 Buffer.from(buf);
 
 // with Bun function
-Buffer.from(Bun.readableStreamToArrayBuffer(stream));
+Buffer.from(await Bun.readableStreamToArrayBuffer(stream));
 ```
 
 #### To `string`
@@ -812,7 +813,7 @@ const arr = await new Response(stream).bytes();
 Array.from(arr);
 
 // with Bun function
-Array.from(new Uint8Array(Bun.readableStreamToArrayBuffer(stream)));
+Array.from(new Uint8Array(await Bun.readableStreamToArrayBuffer(stream)));
 ```
 
 Bun provides a utility for resolving a `ReadableStream` to an array of its chunks. Each chunk may be a string, typed array, or `ArrayBuffer`.

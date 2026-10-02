@@ -5,7 +5,7 @@ description: Universal plugin API for extending Bun's runtime and bundler
 
 Bun's universal plugin API extends both the runtime and the bundler.
 
-Plugins intercept imports and perform custom loading logic, such as reading files or transpiling code. They can add support for additional file types, like `.scss` or `.yaml`. In the bundler, plugins can implement framework-level features like CSS extraction, macros, and client-server code co-location.
+Plugins intercept imports and perform custom loading logic, such as reading files or transpiling code. They can add support for additional file types, like `.scss`. In the bundler, plugins can implement framework-level features like CSS extraction, macros, and client-server code co-location.
 
 ## Lifecycle hooks
 
@@ -23,7 +23,7 @@ A rough overview of the types (see Bun's `bun.d.ts` for the full type definition
 
 ```ts title="bun.d.ts" icon="/icons/typescript.svg"
 type PluginBuilder = {
-  onStart(callback: () => void): void;
+  onStart(callback: () => void | Promise<void>): void;
   onResolve: (
     args: { filter: RegExp; namespace?: string },
     callback: (args: { path: string; importer: string }) => {
@@ -103,22 +103,24 @@ Other common namespaces are:
 ### onStart
 
 ```ts
-onStart(callback: () => void): Promise<void> | void;
+onStart(callback: () => void | Promise<void>): void;
 ```
 
 Registers a callback that runs when the bundler starts a new bundle.
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
-import { plugin } from "bun";
-
-plugin({
-  name: "onStart example",
-
-  setup(build) {
-    build.onStart(() => {
-      console.log("Bundle started!");
-    });
-  },
+await Bun.build({
+  entrypoints: ["./app.ts"],
+  plugins: [
+    {
+      name: "onStart example",
+      setup(build) {
+        build.onStart(() => {
+          console.log("Bundle started!");
+        });
+      },
+    },
+  ],
 });
 ```
 
@@ -229,19 +231,20 @@ The callback can return a new `contents` string for the module as well as a new 
 For example:
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
-import { plugin } from "bun";
+import type { BunPlugin } from "bun";
 
 const envPlugin: BunPlugin = {
   name: "env plugin",
   setup(build) {
-    build.onLoad({ filter: /env/, namespace: "file" }, args => {
+    build.onResolve({ filter: /^env$/ }, () => ({ path: "env", namespace: "env" }));
+    build.onLoad({ filter: /.*/, namespace: "env" }, args => {
       return {
         contents: `export default ${JSON.stringify(process.env)}`,
         loader: "js",
       };
     });
   },
-});
+};
 
 Bun.build({
   entrypoints: ["./app.ts"],
@@ -305,6 +308,56 @@ plugin({
 
 <Warning>You can call the `.defer()` function only once per `onLoad` callback.</Warning>
 
+### onEnd
+
+```ts
+onEnd(callback: (result: BuildOutput) => void | Promise<void>): void;
+```
+
+Registers a callback that runs after the bundle is complete. The callback receives the [`BuildOutput`](/bundler#outputs) object containing the build results, including output files and any build messages.
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+const result = await Bun.build({
+  entrypoints: ["./app.ts"],
+  outdir: "./dist",
+  plugins: [
+    {
+      name: "onEnd example",
+      setup(build) {
+        build.onEnd(result => {
+          console.log(`Build completed with ${result.outputs.length} files`);
+          for (const log of result.logs) {
+            console.log(log);
+          }
+        });
+      },
+    },
+  ],
+});
+```
+
+The callback can return a `Promise`. The promise returned by `Bun.build()` does not resolve until all `onEnd()` callbacks have completed.
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+const result = await Bun.build({
+  entrypoints: ["./app.ts"],
+  outdir: "./dist",
+  plugins: [
+    {
+      name: "Upload to S3",
+      setup(build) {
+        build.onEnd(async result => {
+          if (!result.success) return;
+          for (const output of result.outputs) {
+            await uploadToS3(output);
+          }
+        });
+      },
+    },
+  ],
+});
+```
+
 ## Native plugins
 
 Bun's bundler is written in native code and uses multiple threads to load and parse modules in parallel. JavaScript plugins run on a single thread, because JavaScript itself is single-threaded.
@@ -335,7 +388,7 @@ Inside `lib.rs`, use the `bun_native_plugin::bun` proc macro to define the funct
 Here's an example implementing the `onBeforeParse` hook:
 
 ```rust title="lib.rs" icon="/icons/rust.svg"
-use bun_native_plugin::{define_bun_plugin, OnBeforeParse, bun, Result, anyhow, BunLoader};
+use bun_native_plugin::{define_bun_plugin, OnBeforeParse, bun, Result, anyhow};
 use napi_derive::napi;
 
 /// Define the plugin and its name
@@ -358,7 +411,7 @@ pub fn replace_foo_with_bar(handle: &mut OnBeforeParse) -> Result<()> {
 
   let output_source_code = input_source_code.replace("foo", "bar");
 
-  handle.set_output_source_code(output_source_code, BunLoader::BUN_LOADER_JSX);
+  handle.set_output_source_code(output_source_code, loader);
 
   Ok(())
 }
@@ -407,53 +460,3 @@ The `onBeforeParse()` callback runs immediately before Bun's bundler parses a fi
 It receives the file's contents and can optionally return new source code.
 
 <Info>Bun can call this callback from any thread, so the NAPI module implementation must be thread-safe.</Info>
-
-### onEnd
-
-```ts
-onEnd(callback: (result: BuildOutput) => void | Promise<void>): void;
-```
-
-Registers a callback that runs after the bundle is complete. The callback receives the [`BuildOutput`](/docs/bundler#outputs) object containing the build results, including output files and any build messages.
-
-```ts title="index.ts" icon="/icons/typescript.svg"
-const result = await Bun.build({
-  entrypoints: ["./app.ts"],
-  outdir: "./dist",
-  plugins: [
-    {
-      name: "onEnd example",
-      setup(build) {
-        build.onEnd(result => {
-          console.log(`Build completed with ${result.outputs.length} files`);
-          for (const log of result.logs) {
-            console.log(log);
-          }
-        });
-      },
-    },
-  ],
-});
-```
-
-The callback can return a `Promise`. The promise returned by `Bun.build()` does not resolve until all `onEnd()` callbacks have completed.
-
-```ts title="index.ts" icon="/icons/typescript.svg"
-const result = await Bun.build({
-  entrypoints: ["./app.ts"],
-  outdir: "./dist",
-  plugins: [
-    {
-      name: "Upload to S3",
-      setup(build) {
-        build.onEnd(async result => {
-          if (!result.success) return;
-          for (const output of result.outputs) {
-            await uploadToS3(output);
-          }
-        });
-      },
-    },
-  ],
-});
-```

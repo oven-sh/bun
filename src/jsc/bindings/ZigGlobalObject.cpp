@@ -637,8 +637,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
             }
 
-            // DedicatedWorkerGlobalScope.close(): on the Web Worker global only. node:worker_threads
-            // keeps the main-thread global shape (Node has no close()), as does the main thread.
+            // DedicatedWorkerGlobalScope.close(): not on node:worker_threads workers, as in Node.
             if (options.kind == WebCore::WorkerOptions::Kind::Web)
                 globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "close"_s), 0, WebCore::jsFunctionWorkerGlobalScopeClose, ImplementationVisibility::Public, NoIntrinsic, 0);
 
@@ -3096,6 +3095,12 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JS
 // The task that called WorkerGlobalScope.close() has ended: stop the worker, as process.exit() does.
 extern "C" void WebWorker__close(void* bunVM);
 
+// The worker loop, between tasks: a close() from a handler it ran outside a checkpoint.
+extern "C" bool Zig__GlobalObject__takeWorkerCloseRequest(Zig::GlobalObject* globalObject)
+{
+    return std::exchange(WebCore::clientData(globalObject->vm())->workerCloseRequested, false);
+}
+
 uint8_t GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
@@ -3169,15 +3174,11 @@ uint8_t GlobalObject::drainMicrotasks()
             return *result;
     }
 
-    // WorkerGlobalScope.close() was called by the task this checkpoint ends: the worker stops now, as
-    // process.exit() stops it, and whatever was queued behind the task (the rest of a message batch, a
-    // timer, a completion) is discarded at the gates the stop closes. A checkpoint beneath script (a
-    // nested wait inside a host function) is not the end of the task: the script runs on.
+    // close() stops the worker at the checkpoint that ends the calling task (no script on the stack).
     auto* clientData = WebCore::clientData(vm);
     if (clientData->workerCloseRequested && !vm.entryScope) [[unlikely]] {
         clientData->workerCloseRequested = false;
         WebWorker__close(bunVM());
-        // An 'exit' listener that threw is reported as uncaught; the stop stands.
         (void)endedByException();
         return 1;
     }

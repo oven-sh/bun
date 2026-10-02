@@ -115,11 +115,9 @@ pub struct WebWorker {
     /// Cloned env for the worker VM; boxed on the global heap because the arena
     /// does not run `Drop`. Reclaimed in `shutdown()`.
     worker_env_loader: Cell<*mut bun_dotenv::Loader>,
-    /// `process.exit(code)` or `close()` ran: the worker chose its exit code,
-    /// and later error paths must not overwrite it.
+    /// `process.exit(code)` or `close()` ran: later error paths keep its code.
     exit_called: AtomicBool,
-    /// The entry's rejection was reported (by `spin()` or by `close()`); it is
-    /// reported once. Worker thread only.
+    /// The entry's rejection was reported, by `spin()` or by `close()`.
     entry_rejection_seen: Cell<bool>,
     /// The parent asked this thread to stop (`worker.terminate()` or an exiting
     /// parent) while its VM was live — as opposed to the thread stopping itself,
@@ -167,6 +165,8 @@ unsafe extern "C" {
     );
     safe fn WebWorker__parentContextWillDestroy(proxy: *mut c_void);
     safe fn WebWorker__entrySettled(global: &JSGlobalObject);
+    /// Takes a `close()` request a handler made outside a task's checkpoint.
+    safe fn Zig__GlobalObject__takeWorkerCloseRequest(global: &JSGlobalObject) -> bool;
     /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
     /// registers parentPort). May leave an exception pending.
     safe fn Bun__Worker__loadNodeWorkerThreadsModule(global: &JSGlobalObject);
@@ -210,33 +210,12 @@ extern "C" fn WebWorker__getMessagingProxy(vm: &VirtualMachine) -> *mut c_void {
         .unwrap_or(core::ptr::null_mut())
 }
 
-/// `WorkerGlobalScope.close()`: the task that called it has ended (its
-/// checkpoint ran). Stop the worker as `process.exit()` does: the worker's
-/// 'exit' listeners, then the stop, with the exit code as it stands. Worker
-/// thread.
-///
-/// What that task left uncaught (an entry that threw, a promise it rejected
-/// and nobody handled) is the worker's error and is reported first, as it
-/// would be had the task ended on its own: once the stop closes the gate,
-/// nothing reaches the parent any more. That report runs the 'exit'
-/// listeners (code 1) and requests the stop itself.
+/// The task that called `WorkerGlobalScope.close()` has ended. Worker thread.
 #[unsafe(no_mangle)]
 extern "C" fn WebWorker__close(vm: &VirtualMachine) {
-    let Some(worker) = vm.worker_ref() else {
-        return;
-    };
-    if let Some(promise) = vm.pending_internal_promise() {
-        // SAFETY: the VM's entry promise, held strongly by the VM.
-        if let EntryOutcome::Stop = unsafe { worker.observe_entry(vm, promise) } {
-            return;
-        }
+    if let Some(worker) = vm.worker_ref() {
+        worker.close(vm);
     }
-    let _ = vm.global().handle_rejected_promises();
-    if worker.has_requested_terminate() {
-        return;
-    }
-    virtual_machine::ExitHandler::dispatch_on_exit(vm);
-    worker.exit();
 }
 
 impl Drop for WebWorker {
@@ -904,8 +883,8 @@ impl WebWorker {
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
-                // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                // process.exit(), close() or a reported entry error chose the code already.
+                if !self.exit_called.load(Ordering::Relaxed) && !self.entry_rejection_seen.get() {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
@@ -929,6 +908,11 @@ impl WebWorker {
         if let EntryOutcome::Stop = observe_entry(vm) {
             // exit_code is already 1 from uncaught_exception; re-setting it here
             // would clobber a process.on('exit') change to process.exitCode.
+            return self.shutdown();
+        }
+        // close() from a handler the load ran outside a checkpoint (an 'unhandledRejection' listener).
+        if self.stop_requested(vm) {
+            self.flush_logs(vm);
             return self.shutdown();
         }
         // A still-pending entry promise is an unsettled top-level await: as in
@@ -961,9 +945,9 @@ impl WebWorker {
         vm.as_mut().tick();
         let mut stopped_by_entry = matches!(observe_entry(vm), EntryOutcome::Stop);
 
-        while !stopped_by_entry && vm.is_event_loop_alive() {
+        while !stopped_by_entry && !self.stop_requested(vm) && vm.is_event_loop_alive() {
             vm.as_mut().tick();
-            if self.has_requested_terminate() {
+            if self.stop_requested(vm) {
                 break;
             }
             if let EntryOutcome::Stop = observe_entry(vm) {
@@ -971,7 +955,7 @@ impl WebWorker {
                 break;
             }
             vm.as_mut().auto_tick_active();
-            if self.has_requested_terminate() {
+            if self.stop_requested(vm) {
                 break;
             }
             if let EntryOutcome::Stop = observe_entry(vm) {
@@ -1113,8 +1097,35 @@ impl WebWorker {
             && !self.exit_called.load(Ordering::Relaxed)
     }
 
+    /// `close()`, once the task that called it has ended: what that task left
+    /// uncaught is reported first (that report stops the worker itself), else
+    /// the 'exit' listeners run and the worker stops as on `process.exit()`.
+    fn close(&self, vm: &VirtualMachine) {
+        if let Some(promise) = vm.pending_internal_promise() {
+            // SAFETY: the VM's entry promise, held strongly by the VM.
+            if let EntryOutcome::Stop = unsafe { self.observe_entry(vm, promise) } {
+                return;
+            }
+        }
+        let _ = vm.global().handle_rejected_promises();
+        if self.has_requested_terminate() {
+            return;
+        }
+        virtual_machine::ExitHandler::dispatch_on_exit(vm);
+        self.exit();
+    }
+
+    /// Between two turns of the worker loop: a stop was requested, or a
+    /// handler the loop ran outside a checkpoint (an 'unhandledRejection'
+    /// listener) called `close()`.
+    fn stop_requested(&self, vm: &VirtualMachine) -> bool {
+        if Zig__GlobalObject__takeWorkerCloseRequest(vm.global()) {
+            self.close(vm);
+        }
+        self.has_requested_terminate()
+    }
+
     /// Report the entry's rejection as the worker's uncaught error, once.
-    /// Worker thread.
     ///
     /// # Safety
     /// `promise` is the live entry promise.

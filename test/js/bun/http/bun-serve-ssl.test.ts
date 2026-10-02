@@ -281,3 +281,58 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     });
   });
 });
+
+describe("Bun.serve requestCert with a large client chain", () => {
+  const tlsFixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+  const agent1Key = readFileSync(join(tlsFixtures, "agent1-key.pem"), "utf8");
+  const agent1Cert = readFileSync(join(tlsFixtures, "agent1-cert.pem"), "utf8");
+  const ca1 = readFileSync(join(tlsFixtures, "ca1-cert.pem"), "utf8");
+
+  test("responds to a TLSv1.3 client whose certificate chain is larger than 32 KiB", async () => {
+    // After a TLSv1.3 handshake the server queues two NewSessionTickets, each
+    // embedding the client's whole chain, and sends them with its first write.
+    // Past ~32 KiB of chain that flight did not fit BoringSSL's 64 KiB write
+    // buffer: the handshake completed, but the response never left the server.
+    // 52 copies of ca1 (920 bytes of DER each) pad the chain to ~48 KiB; agent1
+    // still verifies against ca1.
+    const paddedChain = agent1Cert + Buffer.alloc(ca1.length * 52, ca1).toString();
+    using server = Bun.serve({
+      port: 0,
+      tls: { key: agent1Key, cert: agent1Cert, ca: ca1, requestCert: true },
+      fetch: () => new Response("served"),
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<{ status: string; tickets: number }>();
+    const socket = tls.connect({
+      host: "127.0.0.1",
+      port: server.port,
+      key: agent1Key,
+      cert: paddedChain,
+      rejectUnauthorized: false,
+      minVersion: "TLSv1.3",
+      maxVersion: "TLSv1.3",
+    });
+    let received = "";
+    let tickets = 0;
+    socket.on("session", () => tickets++);
+    socket.on("secureConnect", () => {
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    });
+    socket.on("data", chunk => (received += chunk.toString()));
+    socket.on("error", reject);
+    socket.on("close", () => {
+      const status = received.split("\r\n")[0];
+      if (status) resolve({ status, tickets });
+      else reject(new Error("connection closed without a response"));
+    });
+    let result: { status: string; tickets: number };
+    try {
+      result = await promise;
+    } finally {
+      socket.destroy();
+    }
+    // The tickets precede the response on the wire, so both arrived with it.
+    expect(result).toEqual({ status: "HTTP/1.1 200 OK", tickets: 2 });
+    expect(received.endsWith("served")).toBe(true);
+  });
+});

@@ -4071,6 +4071,91 @@ Reo=
   });
 });
 
+describe("Bun.listen requestCert with a large client chain", () => {
+  const tlsFixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+  const agent1Key = readFileSync(join(tlsFixtures, "agent1-key.pem"), "utf8");
+  const agent1Cert = readFileSync(join(tlsFixtures, "agent1-cert.pem"), "utf8");
+  const ca1 = readFileSync(join(tlsFixtures, "ca1-cert.pem"), "utf8");
+
+  it("replies to a TLSv1.3 client whose certificate chain is larger than 32 KiB", async () => {
+    // After a TLSv1.3 handshake the server queues two NewSessionTickets, each
+    // embedding the client's whole chain, and sends them with its first write.
+    // Past ~32 KiB of chain that flight did not fit BoringSSL's 64 KiB write
+    // buffer: the handshake completed, but the reply never left the server.
+    // 52 copies of ca1 (920 bytes of DER each) pad the chain to ~48 KiB; agent1
+    // still verifies against ca1.
+    const paddedChain = agent1Cert + Buffer.alloc(ca1.length * 52, ca1).toString();
+    const accepted = Promise.withResolvers<{ authorized: boolean; writeResult: number }>();
+    const failed = Promise.withResolvers<never>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { key: agent1Key, cert: agent1Cert, ca: ca1, requestCert: true },
+      socket: {
+        open() {},
+        handshake(socket: Socket) {
+          accepted.resolve({ authorized: socket.authorized, writeResult: socket.write("hello\n") });
+        },
+        data(socket, chunk) {
+          // Bun.listen does not buffer: a short write here would lose the reply.
+          const reply = `pong:${chunk}`;
+          const written = socket.write(reply);
+          if (written !== reply.length) failed.reject(new Error(`short write: ${written} of ${reply.length}`));
+        },
+        close() {},
+        error(_socket, err) {
+          failed.reject(err);
+        },
+      },
+    });
+
+    const client = tlsConnect({
+      host: "127.0.0.1",
+      port: server.port,
+      key: agent1Key,
+      cert: paddedChain,
+      rejectUnauthorized: false,
+      minVersion: "TLSv1.3",
+      maxVersion: "TLSv1.3",
+    });
+    let received = "";
+    let tickets = 0;
+    const replied = Promise.withResolvers<string>();
+    client.on("session", () => tickets++);
+    client.on("error", failed.reject);
+    client.on("close", () => failed.reject(new Error("client closed before the reply")));
+    let pinged = false;
+    client.on("data", chunk => {
+      received += chunk.toString();
+      // "hello\n" follows the tickets on the wire, so once it arrives the
+      // server's flight is fully out and the pong write cannot be short.
+      if (!pinged && received.startsWith("hello\n")) {
+        pinged = true;
+        client.write("ping");
+      }
+      if (received.endsWith("pong:ping")) replied.resolve(received);
+    });
+
+    let reply: string;
+    try {
+      // The server's first write() carries the ticket flight: 0 means SSL_write failed.
+      expect(await Promise.race([accepted.promise, failed.promise])).toEqual({
+        authorized: true,
+        writeResult: "hello\n".length,
+      });
+      reply = await Promise.race([replied.promise, failed.promise]);
+      client.removeAllListeners("close");
+      client.end();
+      await once(client, "close");
+    } finally {
+      client.destroy();
+    }
+    expect(reply).toBe("hello\npong:ping");
+    // The tickets precede the reply on the wire, so both arrived with it.
+    expect(tickets).toBe(2);
+  });
+});
+
 // Linux-only: uses /proc/self/fd to find and close the connected socket's fd
 // so getsockname()/getpeername() fail with EBADF.
 it.skipIf(!isLinux)(

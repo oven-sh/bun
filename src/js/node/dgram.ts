@@ -40,6 +40,16 @@ const enum uSockets {
   LISTEN_DISALLOW_REUSE_PORT_FAILURE = 32,
 }
 
+// Bits of the private `nodeDgramFlags` option of Bun.udpSocket (udp_socket.rs).
+const enum NodeDgramFlags {
+  // No IP_RECVERR (Linux), as in Node. The kernel then keeps the ICMP error of
+  // a connected socket as its pending error, and the next recvmsg reports it.
+  // An unconnected socket gets none.
+  NO_RECVERR = 1,
+  // A cluster-shared descriptor is read one datagram at a time so workers share the load.
+  SHARED_FD = 2,
+}
+
 const { kStateSymbol, guessHandleType } = require("internal/dgram");
 const kOwnerSymbol = Symbol("owner symbol");
 const async_id_symbol = Symbol("async_id_symbol");
@@ -775,8 +785,12 @@ function startBunSocket(self, state, createOptions, sharedHandle?) {
         },
       },
     };
-    // Private name: a cluster-shared descriptor is read one datagram at a time so workers share the load.
-    if (sharedHandle) $putByIdDirectPrivate(udpOptions, "sharedFd", true);
+    // Private name: user code cannot set it.
+    $putByIdDirectPrivate(
+      udpOptions,
+      "nodeDgramFlags",
+      NodeDgramFlags.NO_RECVERR | (sharedHandle ? NodeDgramFlags.SHARED_FD : 0),
+    );
     Bun.udpSocket(udpOptions).$then(
       socket => {
         if (!state.handle) {

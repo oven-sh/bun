@@ -133,6 +133,7 @@ using namespace JSC;
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
+    macro(nodeDgramFlags) \
     macro(normalize) \
     macro(onClose) \
     macro(onDrain) \
@@ -169,7 +170,6 @@ using namespace JSC;
     macro(sameSite) \
     macro(secure) \
     macro(self) \
-    macro(sharedFd) \
     macro(signal) \
     macro(size) \
     macro(specifier) \

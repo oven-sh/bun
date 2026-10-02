@@ -309,6 +309,12 @@ impl us_socket_t {
         c::us_socket_set_inline_reject(self);
     }
 
+    /// A shutdown before the first handshake step sends its FIN after that
+    /// step. No-op on a server socket or after the handshake.
+    pub fn set_first_flight_before_fin(&mut self) {
+        c::us_socket_set_first_flight_before_fin(self);
+    }
+
     /// Feed bytes that were already read off the wire (e.g. a ClientHello the
     /// plain-TCP layer consumed before the upgrade) through the same decrypt
     /// path as bytes arriving from the kernel.
@@ -591,6 +597,7 @@ mod c {
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_set_first_flight_before_fin(s: &mut us_socket_t);
     }
 }
 

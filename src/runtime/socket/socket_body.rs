@@ -1561,6 +1561,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                     {
                         this.socket.get().set_inline_reject();
                     }
+                    // node sends the ClientHello before a 'connect' listener can call end().
+                    if !this.acts_as_tls_server()
+                        && this.flags.get().contains(Flags::DEFERS_SERVER_IDENTITY)
+                    {
+                        this.socket.get().set_first_flight_before_fin();
+                    }
                     if let Some(protos) = this.protos.get() {
                         if this.acts_as_tls_server() {
                             // Registered above (selector + ex_data); nothing

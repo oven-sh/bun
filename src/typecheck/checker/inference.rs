@@ -2117,5 +2117,704 @@ impl<'a> Checker<'a> {
         }
         self.new_anonymous_type(SymbolId::NIL, members, List::NIL, List::NIL, index_infos)
     }
-//@@NEXT@@
+
+    // A nil comparer is `c.compareTypesAssignable`.
+    pub fn new_inference_context(
+        &mut self,
+        type_parameters: List<'a, TypeId>,
+        signature: SignatureId,
+        flags: InferenceFlags,
+        mut compare_types: TypeComparer,
+    ) -> InferenceContextId {
+        if compare_types == TypeComparer::Nil {
+            compare_types = TypeComparer::Assignable;
+        }
+        // core.Map(typeParameters, newInferenceInfo): nil for nil.
+        let inferences = if type_parameters.is_nil() {
+            LiveList::NIL
+        } else {
+            let mut infos: Vec<InferenceInfoId> =
+                Vec::with_capacity(type_parameters.as_slice().len());
+            for &type_parameter in type_parameters.as_slice() {
+                infos.push(new_inference_info(self, type_parameter));
+            }
+            self.live_list(&infos)
+        };
+        self.new_inference_context_worker(inferences, signature, flags, compare_types)
+    }
+
+    pub fn clone_inference_context(
+        &mut self,
+        n: InferenceContextId,
+        extra_flags: InferenceFlags,
+    ) -> InferenceContextId {
+        if n.is_nil() {
+            return InferenceContextId::NIL;
+        }
+        // core.Map(n.inferences, cloneInferenceInfo): nil for nil.
+        let inferences = self.inference_contexts[n].inferences;
+        let cloned = if inferences.is_nil() {
+            LiveList::NIL
+        } else {
+            let mut infos: Vec<InferenceInfoId> = Vec::new();
+            for info in inferences.iter() {
+                infos.push(clone_inference_info(self, info));
+            }
+            self.live_list(&infos)
+        };
+        let signature = self.inference_contexts[n].signature;
+        let flags = self.inference_contexts[n].flags | extra_flags;
+        let compare_types = self.inference_contexts[n].compare_types;
+        self.new_inference_context_worker(cloned, signature, flags, compare_types)
+    }
+
+    pub fn clone_inferred_part_of_context(&mut self, n: InferenceContextId) -> InferenceContextId {
+        let mut inferences: Vec<InferenceInfoId> = Vec::new();
+        for info in self.inference_contexts[n].inferences.iter() {
+            if has_inference_candidates(self, info) {
+                inferences.push(info);
+            }
+        }
+        if inferences.is_empty() {
+            return InferenceContextId::NIL;
+        }
+        let mut infos: Vec<InferenceInfoId> = Vec::with_capacity(inferences.len());
+        for &info in &inferences {
+            infos.push(clone_inference_info(self, info));
+        }
+        let cloned = self.live_list(&infos);
+        let signature = self.inference_contexts[n].signature;
+        let flags = self.inference_contexts[n].flags;
+        let compare_types = self.inference_contexts[n].compare_types;
+        self.new_inference_context_worker(cloned, signature, flags, compare_types)
+    }
+
+    pub fn new_inference_context_worker(
+        &mut self,
+        inferences: LiveList<'a, InferenceInfoId>,
+        signature: SignatureId,
+        flags: InferenceFlags,
+        compare_types: TypeComparer,
+    ) -> InferenceContextId {
+        let n = self.inference_contexts.alloc(InferenceContext {
+            inferences,
+            signature,
+            flags,
+            compare_types,
+            ..InferenceContext::default()
+        });
+        let mapper = self.new_inference_type_mapper(n, true);
+        self.inference_contexts[n].mapper = mapper;
+        let non_fixing_mapper = self.new_inference_type_mapper(n, false);
+        self.inference_contexts[n].non_fixing_mapper = non_fixing_mapper;
+        n
+    }
+
+    pub fn add_intra_expression_inference_site(
+        &mut self,
+        n: InferenceContextId,
+        node: NodeId,
+        t: TypeId,
+    ) {
+        self.inference_contexts[n]
+            .intra_expression_inference_sites
+            .push(IntraExpressionInferenceSite { node, t });
+    }
+
+    // We collect intra-expression inference sites within object and array literals to handle cases where inferred types flow between context sensitive element expressions. For example, in `declare function foo<T>(arg: [(n: number) => T, (x: T) => void]): void; foo([_a => 0, n => n.toFixed()]);` both arrow functions in the tuple argument are context sensitive, thus both are omitted from the pass that collects inferences from the non-context sensitive parts of the arguments. In the subsequent pass where nothing is omitted, we need to commit to an inference for T in order to contextually type the parameter in the second arrow function, but we want to first infer from the return type of the first arrow function. This happens automatically when the arrow functions are discrete arguments (because we infer from each argument before processing the next), but when the arrow functions are elements of an object or array literal, we need to perform intra-expression inferences early.
+    pub fn infer_from_intra_expression_sites(&mut self, n: InferenceContextId) {
+        let a = self.ast;
+        // The loop of upstream ranges over the sites that the context has when it starts, whatever a nested call does with the list.
+        let sites = self.inference_contexts[n]
+            .intra_expression_inference_sites
+            .clone();
+        for site in sites {
+            let contextual_type = if is_method_declaration(a, site.node) {
+                self.get_contextual_type_for_object_literal_method(
+                    site.node,
+                    ContextFlags::NO_CONSTRAINTS,
+                )
+            } else {
+                self.get_contextual_type(site.node, ContextFlags::NO_CONSTRAINTS)
+            };
+            if !contextual_type.is_nil() {
+                let inferences = self.inference_contexts[n].inferences;
+                self.infer_types(
+                    inferences,
+                    site.t,
+                    contextual_type,
+                    InferencePriority::NONE,
+                    false,
+                );
+            }
+        }
+        self.inference_contexts[n].intra_expression_inference_sites = Vec::new();
+    }
+
+    pub fn get_inferred_type(&mut self, n: InferenceContextId, index: isize) -> TypeId {
+        let inferences = self.inference_contexts[n].inferences;
+        let inference = inferences.at(index);
+        if inference.is_nil() {
+            return self.fail("index out of range");
+        }
+        if self.inference_infos[inference].inferred_type.is_nil() {
+            let type_parameter = self.inference_infos[inference].type_parameter;
+            if type_parameter == self.error_type {
+                return type_parameter;
+            }
+            let mut inferred_type = TypeId::NIL;
+            let mut fallback_type = TypeId::NIL;
+            let signature = self.inference_contexts[n].signature;
+            if !signature.is_nil() {
+                let mut inferred_covariant_type = TypeId::NIL;
+                if !self.inference_infos[inference].candidates.is_empty() {
+                    inferred_covariant_type = self.get_covariant_inference(inference, signature);
+                }
+                let mut inferred_contravariant_type = TypeId::NIL;
+                if !self.inference_infos[inference].contra_candidates.is_empty() {
+                    inferred_contravariant_type = self.get_contravariant_inference(inference);
+                }
+                if !inferred_covariant_type.is_nil() || !inferred_contravariant_type.is_nil() {
+                    // If we have both co- and contra-variant inferences, we prefer the co-variant inference if it is not 'never', all co-variant inferences are assignable to it (i.e. it isn't one of a conflicting set of candidates), it is assignable to some contra-variant inference, and no other type parameter is constrained to this type parameter and has inferences that would conflict. Otherwise, we prefer the contra-variant inference. Similarly ignore co-variant `any` inference when both are available as almost everything is assignable to it and it would spoil the overall inference.
+                    let mut prefer_covariant_type = !inferred_covariant_type.is_nil();
+                    if prefer_covariant_type && !inferred_contravariant_type.is_nil() {
+                        let contra_candidates =
+                            self.inference_infos[inference].contra_candidates.clone();
+                        prefer_covariant_type = !self.types[inferred_covariant_type]
+                            .flags
+                            .intersects(TypeFlags::NEVER | TypeFlags::ANY)
+                            && contra_candidates
+                                .iter()
+                                .any(|&t| self.is_type_assignable_to(inferred_covariant_type, t))
+                            && inferences.iter().all(|other| {
+                                if other != inference {
+                                    let other_type_parameter =
+                                        self.inference_infos[other].type_parameter;
+                                    let other_constraint =
+                                        self.get_constraint_of_type_parameter(other_type_parameter);
+                                    if other_constraint
+                                        != self.inference_infos[inference].type_parameter
+                                    {
+                                        return true;
+                                    }
+                                }
+                                let candidates = self.inference_infos[other].candidates.clone();
+                                candidates
+                                    .iter()
+                                    .all(|&t| self.is_type_assignable_to(t, inferred_covariant_type))
+                            });
+                    }
+                    if prefer_covariant_type {
+                        inferred_type = inferred_covariant_type;
+                        fallback_type = inferred_contravariant_type;
+                    } else {
+                        inferred_type = inferred_contravariant_type;
+                        fallback_type = inferred_covariant_type;
+                    }
+                } else if self.inference_contexts[n]
+                    .flags
+                    .intersects(InferenceFlags::NO_DEFAULT)
+                {
+                    // We use silentNeverType as the wildcard that signals no inferences.
+                    inferred_type = self.silent_never_type;
+                } else {
+                    // Infer either the default or the empty object type when no inferences were made. It is important to remember that in this case, inference still succeeds, meaning there is no error for not having inference candidates. An inference error only occurs when there are *conflicting* candidates, i.e. candidates with no common supertype.
+                    let default_type = self.get_default_from_type_parameter(type_parameter);
+                    if !default_type.is_nil() {
+                        // Instantiate the default type. Any forward reference to a type parameter should be instantiated to the empty object type.
+                        let backreference_mapper = self.new_backreference_mapper(n, index);
+                        let non_fixing_mapper = self.inference_contexts[n].non_fixing_mapper;
+                        let mapper =
+                            merge_type_mappers(self, backreference_mapper, non_fixing_mapper);
+                        inferred_type = self.instantiate_type(default_type, mapper);
+                    }
+                }
+            } else {
+                inferred_type = self.get_type_from_inference(inference);
+            }
+            self.inference_infos[inference].inferred_type = inferred_type;
+            if self.inference_infos[inference].inferred_type.is_nil() {
+                self.inference_infos[inference].inferred_type = if_else(
+                    self.inference_contexts[n]
+                        .flags
+                        .intersects(InferenceFlags::ANY_DEFAULT),
+                    self.any_type,
+                    self.unknown_type,
+                );
+            }
+            let constraint = self.get_constraint_of_type_parameter(type_parameter);
+            if !constraint.is_nil() {
+                let non_fixing_mapper = self.inference_contexts[n].non_fixing_mapper;
+                let instantiated_constraint = self.instantiate_type(constraint, non_fixing_mapper);
+                let compare_types = self.inference_contexts[n].compare_types;
+                if !inferred_type.is_nil() {
+                    let constraint_with_this = self.get_type_with_this_argument(
+                        instantiated_constraint,
+                        inferred_type,
+                        false,
+                    );
+                    if self.call_type_comparer(
+                        compare_types,
+                        inferred_type,
+                        constraint_with_this,
+                        false,
+                    ) == Ternary::FALSE
+                    {
+                        let mut filtered_by_constraint = TypeId::NIL;
+                        if self.inference_infos[inference].priority
+                            == InferencePriority::RETURN_TYPE
+                        {
+                            // If we have a pure return type inference, we may succeed by removing constituents of the inferred type that aren't assignable to the constraint type (pure return type inferences are speculation anyway).
+                            filtered_by_constraint = self.map_type(inferred_type, &mut |c, t| {
+                                if c.call_type_comparer(
+                                    compare_types,
+                                    t,
+                                    constraint_with_this,
+                                    false,
+                                ) != Ternary::FALSE
+                                {
+                                    t
+                                } else {
+                                    c.never_type
+                                }
+                            });
+                        }
+                        inferred_type = if !filtered_by_constraint.is_nil()
+                            && !self.types[filtered_by_constraint]
+                                .flags
+                                .intersects(TypeFlags::NEVER)
+                        {
+                            filtered_by_constraint
+                        } else {
+                            TypeId::NIL
+                        };
+                    }
+                }
+                if inferred_type.is_nil() {
+                    // If the fallback type satisfies the constraint, we pick it. Otherwise, we pick the constraint.
+                    let mut fallback_satisfies_constraint = false;
+                    if !fallback_type.is_nil() {
+                        let constraint_with_this = self.get_type_with_this_argument(
+                            instantiated_constraint,
+                            fallback_type,
+                            false,
+                        );
+                        fallback_satisfies_constraint = self.call_type_comparer(
+                            compare_types,
+                            fallback_type,
+                            constraint_with_this,
+                            false,
+                        ) != Ternary::FALSE;
+                    }
+                    inferred_type = if_else(
+                        fallback_satisfies_constraint,
+                        fallback_type,
+                        instantiated_constraint,
+                    );
+                }
+                self.inference_infos[inference].inferred_type = inferred_type;
+            }
+            self.clear_active_mapper_caches();
+        }
+        self.inference_infos[inference].inferred_type
+    }
+
+    // `make([]*Type, len(n.inferences))`: the list is not nil.
+    pub fn get_inferred_types(&mut self, n: InferenceContextId) -> List<'a, TypeId> {
+        let len = self.inference_contexts[n].inferences.len();
+        let mut result: Vec<TypeId> = Vec::with_capacity(usize::try_from(len).unwrap_or(0));
+        for i in 0..len {
+            let inferred_type = self.get_inferred_type(n, i);
+            result.push(inferred_type);
+        }
+        self.list_of(&result)
+    }
+
+    pub fn get_mapper_from_context(&self, n: InferenceContextId) -> TypeMapperId {
+        if n.is_nil() {
+            return TypeMapperId::NIL;
+        }
+        self.inference_contexts[n].mapper
+    }
+
+    // Return a type mapper that combines the context's return mapper with a mapper that erases any additional type parameters to their inferences at the time of creation.
+    pub fn create_outer_return_mapper(&mut self, context: InferenceContextId) -> TypeMapperId {
+        if self.inference_contexts[context]
+            .outer_return_mapper
+            .is_nil()
+        {
+            let clone = self.clone_inference_context(context, InferenceFlags::NONE);
+            let mut mapper = self.inference_contexts[clone].mapper;
+            let return_mapper = self.inference_contexts[context].return_mapper;
+            if !return_mapper.is_nil() {
+                mapper = new_merged_type_mapper(self, return_mapper, mapper);
+            }
+            self.inference_contexts[context].outer_return_mapper = mapper;
+        }
+        self.inference_contexts[context].outer_return_mapper
+    }
+
+    pub fn get_covariant_inference(
+        &mut self,
+        inference: InferenceInfoId,
+        signature: SignatureId,
+    ) -> TypeId {
+        // Extract all object and array literal types and replace them with a single widened and normalized type.
+        let inference_candidates = self.inference_infos[inference].candidates.clone();
+        let candidates = self.union_object_and_array_literal_candidates(&inference_candidates);
+        // We widen inferred literal types if all inferences were made to top-level occurrences of the type parameter, and the type parameter has no constraint or its constraint includes no primitive or literal types, and the type parameter was fixed during inference or does not occur at top-level in the return type.
+        let type_parameter = self.inference_infos[inference].type_parameter;
+        let primitive_constraint = self.has_primitive_constraint(type_parameter)
+            || self.is_const_type_variable(type_parameter, 0);
+        let widen_literal_types = !primitive_constraint
+            && self.inference_infos[inference].top_level
+            && (self.inference_infos[inference].is_fixed
+                || !self.is_type_parameter_at_top_level_in_return_type(signature, type_parameter));
+        let base_candidates = if primitive_constraint {
+            same_map(&candidates, |t| self.get_regular_type_of_literal_type(t))
+        } else if widen_literal_types {
+            same_map(&candidates, |t| self.get_widened_literal_type(t))
+        } else {
+            Cow::Borrowed(&*candidates)
+        };
+        // If all inferences were made from a position that implies a combined result, infer a union type. Otherwise, infer a common supertype.
+        let unwidened_type = if self.inference_infos[inference]
+            .priority
+            .intersects(InferencePriority::PRIORITY_IMPLIES_COMBINATION)
+        {
+            self.get_union_type_ex(
+                List::from_slice(&base_candidates),
+                UnionReduction::SUBTYPE,
+                TypeAliasId::NIL,
+                TypeId::NIL,
+            )
+        } else {
+            self.get_common_supertype(List::from_slice(&base_candidates))
+        };
+        self.get_widened_type(unwidened_type)
+    }
+
+    pub fn get_contravariant_inference(&mut self, inference: InferenceInfoId) -> TypeId {
+        let contra_candidates = self.inference_infos[inference].contra_candidates.clone();
+        if self.inference_infos[inference]
+            .priority
+            .intersects(InferencePriority::PRIORITY_IMPLIES_COMBINATION)
+        {
+            return self.get_intersection_type(List::from_slice(&contra_candidates));
+        }
+        self.get_common_subtype(List::from_slice(&contra_candidates))
+    }
+
+    // `candidates` comes back as it is when it holds no two candidates or no object or array literal type.
+    pub fn union_object_and_array_literal_candidates<'s>(
+        &mut self,
+        candidates: &'s [TypeId],
+    ) -> Cow<'s, [TypeId]> {
+        if candidates.len() > 1 {
+            let object_literals = filter(candidates, |t| is_object_or_array_literal_type(self, t));
+            if !object_literals.is_empty() {
+                let literals_type = self.get_union_type_ex(
+                    List::from_slice(&object_literals),
+                    UnionReduction::SUBTYPE,
+                    TypeAliasId::NIL,
+                    TypeId::NIL,
+                );
+                let non_literal_types =
+                    filter(candidates, |t| !is_object_or_array_literal_type(self, t));
+                return Cow::Owned(concatenate(&non_literal_types, &[literals_type]).into_owned());
+            }
+        }
+        Cow::Borrowed(candidates)
+    }
+
+    pub fn has_primitive_constraint(&mut self, t: TypeId) -> bool {
+        let mut constraint = self.get_constraint_of_type_parameter(t);
+        if !constraint.is_nil() {
+            if self.types[constraint]
+                .flags
+                .intersects(TypeFlags::CONDITIONAL)
+            {
+                constraint = self.get_default_constraint_of_conditional_type(constraint);
+            }
+            return self.maybe_type_of_kind(
+                constraint,
+                TypeFlags::PRIMITIVE
+                    | TypeFlags::INDEX
+                    | TypeFlags::TEMPLATE_LITERAL
+                    | TypeFlags::STRING_MAPPING,
+            );
+        }
+        false
+    }
+
+    // The recursion follows the structure of the type, so the entry tests the stack.
+    pub fn is_type_parameter_at_top_level(&mut self, t: TypeId, tp: TypeId, depth: isize) -> bool {
+        if !self.stack_check.is_safe_to_recurse() {
+            return self.stack_limit();
+        }
+        if t == tp {
+            return true;
+        }
+        if self.types[t]
+            .flags
+            .intersects(TypeFlags::UNION_OR_INTERSECTION)
+        {
+            let types = self.type_types(t);
+            for &u in types.as_slice() {
+                if self.is_type_parameter_at_top_level(u, tp, depth) {
+                    return true;
+                }
+            }
+        }
+        if depth < 3 && self.types[t].flags.intersects(TypeFlags::CONDITIONAL) {
+            let true_type = self.get_true_type_from_conditional_type(t);
+            if self.is_type_parameter_at_top_level(true_type, tp, depth + 1) {
+                return true;
+            }
+            let false_type = self.get_false_type_from_conditional_type(t);
+            if self.is_type_parameter_at_top_level(false_type, tp, depth + 1) {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn is_type_parameter_at_top_level_in_return_type(
+        &mut self,
+        signature: SignatureId,
+        type_parameter: TypeId,
+    ) -> bool {
+        let type_predicate = self.get_type_predicate_of_signature(signature);
+        if !type_predicate.is_nil() {
+            let predicate_type = self.type_predicates[type_predicate].t;
+            return !predicate_type.is_nil()
+                && self.is_type_parameter_at_top_level(predicate_type, type_parameter, 0);
+        }
+        let return_type = self.get_return_type_of_signature(signature);
+        self.is_type_parameter_at_top_level(return_type, type_parameter, 0)
+    }
+
+    pub fn get_type_from_inference(&mut self, inference: InferenceInfoId) -> TypeId {
+        if !self.inference_infos[inference].candidates.is_empty() {
+            let candidates = self.inference_infos[inference].candidates.clone();
+            return self.get_union_type_ex(
+                List::from_slice(&candidates),
+                UnionReduction::SUBTYPE,
+                TypeAliasId::NIL,
+                TypeId::NIL,
+            );
+        }
+        if !self.inference_infos[inference].contra_candidates.is_empty() {
+            let contra_candidates = self.inference_infos[inference].contra_candidates.clone();
+            return self.get_intersection_type(List::from_slice(&contra_candidates));
+        }
+        TypeId::NIL
+    }
+}
+
+pub fn get_inference_info_for_type(
+    c: &Checker<'_>,
+    n: InferenceStateId,
+    t: TypeId,
+) -> InferenceInfoId {
+    if c.types[t].flags.intersects(TypeFlags::TYPE_VARIABLE) {
+        for inference in c.inference_states[n].inferences.iter() {
+            if t == c.inference_infos[inference].type_parameter {
+                return inference;
+            }
+        }
+    }
+    InferenceInfoId::NIL
+}
+
+impl<'a> Checker<'a> {
+    pub fn get_common_supertype(&mut self, types: List<'_, TypeId>) -> TypeId {
+        if types.len() == 1 {
+            return types.at(0usize);
+        }
+        // Remove nullable types from each of the candidates.
+        let mut primary_types = Cow::Borrowed(types.as_slice());
+        if self.strict_null_checks {
+            primary_types = same_map(types.as_slice(), |t| {
+                self.filter_type(t, &mut |c, u| {
+                    !c.types[u].flags.intersects(TypeFlags::NULLABLE)
+                })
+            });
+        }
+        // When the candidate types are all literal types with the same base type, return a union of those literal types. Otherwise, return the leftmost type for which no type to the right is a supertype.
+        let supertype = if self.literal_types_with_same_base_type(List::from_slice(&primary_types))
+        {
+            self.get_union_type(List::from_slice(&primary_types))
+        } else {
+            self.get_single_common_supertype(List::from_slice(&primary_types))
+        };
+        // Add any nullable types that occurred in the candidates back to the result.
+        if same(&primary_types, types.as_slice()) {
+            return supertype;
+        }
+        let nullable_flags = self.get_combined_type_flags(types) & TypeFlags::NULLABLE;
+        self.get_nullable_type(supertype, nullable_flags)
+    }
+
+    pub fn get_single_common_supertype(&mut self, types: List<'_, TypeId>) -> TypeId {
+        // First, find the leftmost type for which no type to the right is a strict supertype, and if that type is a strict supertype of all other candidates, return it. Otherwise, return the leftmost type for which no type to the right is a (regular) supertype.
+        let candidate = self.find_leftmost_type(types, Self::is_type_strict_subtype_of);
+        if types
+            .as_slice()
+            .iter()
+            .all(|&t| t == candidate || self.is_type_strict_subtype_of(t, candidate))
+        {
+            return candidate;
+        }
+        self.find_leftmost_type(types, Self::is_type_subtype_of)
+    }
+
+    pub fn find_leftmost_type(
+        &mut self,
+        types: List<'_, TypeId>,
+        f: fn(&mut Checker<'a>, TypeId, TypeId) -> bool,
+    ) -> TypeId {
+        let mut candidate = TypeId::NIL;
+        for &t in types.as_slice() {
+            if candidate.is_nil() || f(self, candidate, t) {
+                candidate = t;
+            }
+        }
+        candidate
+    }
+
+    // Return the leftmost type for which no type to the right is a subtype.
+    pub fn get_common_subtype(&mut self, types: List<'_, TypeId>) -> TypeId {
+        let mut subtype = TypeId::NIL;
+        for &t in types.as_slice() {
+            if subtype.is_nil() || self.is_type_subtype_of(t, subtype) {
+                subtype = t;
+            }
+        }
+        subtype
+    }
+
+    // The recursion follows the structure of the types, so the entry tests the stack.
+    pub fn get_combined_type_flags(&self, types: List<'_, TypeId>) -> TypeFlags {
+        if !self.stack_check.is_safe_to_recurse() {
+            return self.stack_limit();
+        }
+        let mut flags = TypeFlags::NONE;
+        for &t in types.as_slice() {
+            if self.types[t].flags.intersects(TypeFlags::UNION) {
+                flags |= self.get_combined_type_flags(self.type_types(t));
+            } else {
+                flags |= self.types[t].flags;
+            }
+        }
+        flags
+    }
+
+    pub fn literal_types_with_same_base_type(&mut self, types: List<'_, TypeId>) -> bool {
+        let mut common_base_type = TypeId::NIL;
+        for &t in types.as_slice() {
+            if !self.types[t].flags.intersects(TypeFlags::NEVER) {
+                let base_type = self.get_base_type_of_literal_type(t);
+                if common_base_type.is_nil() {
+                    common_base_type = base_type;
+                }
+                if base_type == t || base_type != common_base_type {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    pub fn is_from_inference_blocked_source(&self, t: TypeId) -> bool {
+        let a = self.ast;
+        let symbol = self.types[t].symbol;
+        !symbol.is_nil()
+            && some(a.sym(symbol).declarations.as_slice(), |d| {
+                self.is_skip_direct_inference_node(d)
+            })
+    }
+
+    pub fn is_skip_direct_inference_node(&self, node: NodeId) -> bool {
+        self.skip_direct_inference_nodes.has(&node)
+    }
+}
+
+pub fn new_inference_info(c: &mut Checker<'_>, type_parameter: TypeId) -> InferenceInfoId {
+    c.inference_infos.alloc(InferenceInfo {
+        type_parameter,
+        priority: InferencePriority::MAX_VALUE,
+        top_level: true,
+        implied_arity: -1,
+        ..InferenceInfo::default()
+    })
+}
+
+pub fn clone_inference_info(c: &mut Checker<'_>, info: InferenceInfoId) -> InferenceInfoId {
+    let clone = c.inference_infos[info].clone();
+    c.inference_infos.alloc(clone)
+}
+
+pub fn clear_cached_inferences(c: &mut Checker<'_>, inferences: LiveList<'_, InferenceInfoId>) {
+    for inference in inferences.iter() {
+        if !c.inference_infos[inference].is_fixed {
+            c.inference_infos[inference].inferred_type = TypeId::NIL;
+        }
+    }
+}
+
+pub fn has_inference_candidates(c: &Checker<'_>, info: InferenceInfoId) -> bool {
+    !c.inference_infos[info].candidates.is_empty()
+        || !c.inference_infos[info].contra_candidates.is_empty()
+}
+
+pub fn has_inference_candidates_or_default(c: &Checker<'_>, info: InferenceInfoId) -> bool {
+    has_inference_candidates(c, info)
+        || has_type_parameter_default(c, c.inference_infos[info].type_parameter)
+}
+
+pub fn has_type_parameter_default(c: &Checker<'_>, tp: TypeId) -> bool {
+    let a = c.ast;
+    let symbol = c.types[tp].symbol;
+    if !symbol.is_nil() {
+        for &d in a.sym(symbol).declarations.as_slice() {
+            if is_type_parameter_declaration(a, d)
+                && !a.as_type_parameter_declaration(d).default_type.is_nil()
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+pub fn has_overlapping_inferences(
+    c: &Checker<'_>,
+    a: LiveList<'_, InferenceInfoId>,
+    b: LiveList<'_, InferenceInfoId>,
+) -> bool {
+    for i in 0..a.len() {
+        if has_inference_candidates(c, a.at(i)) && has_inference_candidates(c, b.at(i)) {
+            return true;
+        }
+    }
+    false
+}
+
+impl<'a> Checker<'a> {
+    // `target[i] = source[i]` is seen by every holder of the target list.
+    pub fn merge_inferences(
+        &mut self,
+        target: LiveList<'a, InferenceInfoId>,
+        source: LiveList<'a, InferenceInfoId>,
+    ) {
+        for i in 0..target.len() {
+            if !has_inference_candidates(self, target.at(i))
+                && has_inference_candidates(self, source.at(i))
+            {
+                let ok = target.set(i, source.at(i));
+                self.slice_set(ok);
+            }
+        }
+    }
 }

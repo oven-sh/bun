@@ -40,6 +40,7 @@ use bun_router::{self as Router, Match as RouterMatch, RouteConfig};
 use bun_url::{CombinedScanner, QueryStringMap, URL, route_param};
 
 use crate::api::bun_object;
+use crate::node::types::Valid;
 use crate::webcore::{Request, Response};
 
 // Note: `FrameworkFileSystemRouter` is declared in this file's
@@ -145,6 +146,7 @@ impl FileSystemRouter {
                     .throw_invalid_arguments(format_args!("Expected dir to be a string")));
             }
             let root_dir_path_ = dir.to_utf8(global_this)?;
+            Valid::no_null_bytes(root_dir_path_.slice(), "dir", "a string", global_this)?;
             if !(root_dir_path_.slice().is_empty() || root_dir_path_.slice() == b".") {
                 // An absolute path is normalized too: a route is named by what follows this
                 // path in the resolver's spelling of its directory, which is normalized.

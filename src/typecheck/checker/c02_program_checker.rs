@@ -5,6 +5,7 @@ use crate::ast::{
     NodeFlags, NodeId, PatternAmbientModule, SourceFileMetaData, SymbolFlags, SymbolId,
     SymbolTableId,
 };
+use crate::checker::emitresolver::EmitResolverState;
 use crate::checker::nodebuilder::NodeBuilderState;
 use crate::checker::symbolaccessibility::SymbolTableID;
 use crate::checker::{
@@ -712,7 +713,8 @@ checker_fields! {
         get_global_class_accessor_decorator_target_type: Memo<TypeId>,
         get_global_class_accessor_decorator_result_type: Memo<TypeId>,
         get_global_class_field_decorator_context_type: Memo<TypeId>,
-        // syncIterationTypesResolver and asyncIterationTypesResolver are the two values of IterationTypesResolverKind. isPrimitiveOrObjectOrEmptyType, containsMissingType, couldContainTypeVariables, isStringIndexSignatureOnlyType and markNodeAssignments are the methods that NewChecker binds them to, compareTypesAssignable is TypeComparer::Assignable, and the emit resolver belongs to declaration emit.
+        // syncIterationTypesResolver and asyncIterationTypesResolver are the two values of IterationTypesResolverKind. isPrimitiveOrObjectOrEmptyType, containsMissingType, couldContainTypeVariables, isStringIndexSignatureOnlyType and markNodeAssignments are the methods that NewChecker binds them to, and compareTypesAssignable is TypeComparer::Assignable. The emit resolver is a value without fields: `emit_resolver` is what it keeps, and emitResolverOnce has no field.
+        emit_resolver: EmitResolverState,
         jsx_namespace: Text<'a>,
         jsx_factory_entity: NodeId,
         skip_direct_inference_nodes: Set<NodeId>,

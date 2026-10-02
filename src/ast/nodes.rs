@@ -72,11 +72,7 @@ impl<T> StoreRef<T> {
     /// constants). Mutation through the resulting `StoreRef` is UB.
     #[inline]
     pub const fn from_static(r: &'static T) -> Self {
-        // SAFETY: `r` is a non-null, aligned, dereferenceable `'static`
-        // reference. Provenance is shared/read-only: the pointee is *never*
-        // written through — `DerefMut` on a `StoreRef` produced here is UB and
-        // callers must not do so (audited: only `Deref`/`get()` reads occur).
-        StoreRef(unsafe { NonNull::new_unchecked(core::ptr::from_ref(r).cast_mut()) })
+        StoreRef(NonNull::from_ref(r))
     }
     /// Borrow the pointee (explicit form of `Deref`).
     #[inline]
@@ -185,8 +181,7 @@ impl StoreStr {
     #[inline]
     pub const fn new(s: &[u8]) -> Self {
         debug_assert!(s.len() <= u32::MAX as usize);
-        // SAFETY: `&[u8]` always has a non-null data pointer.
-        let ptr = unsafe { NonNull::new_unchecked(s.as_ptr().cast_mut()) };
+        let ptr = NonNull::from_ref(s).cast::<u8>();
         StoreStr {
             ptr,
             len: s.len() as u32,
@@ -362,8 +357,7 @@ impl<T> StoreSlice<T> {
     #[inline]
     pub const fn new(s: &[T]) -> Self {
         debug_assert!(s.len() <= u32::MAX as usize);
-        // SAFETY: `&[T]` always has a non-null data pointer.
-        let ptr = unsafe { NonNull::new_unchecked(s.as_ptr().cast_mut()) };
+        let ptr = NonNull::from_ref(s).cast::<T>();
         StoreSlice {
             ptr,
             len: s.len() as u32,
@@ -376,8 +370,7 @@ impl<T> StoreSlice<T> {
     #[inline]
     pub fn new_mut(s: &mut [T]) -> Self {
         debug_assert!(s.len() <= u32::MAX as usize);
-        // SAFETY: `&mut [T]` always has a non-null data pointer.
-        let ptr = unsafe { NonNull::new_unchecked(s.as_mut_ptr()) };
+        let ptr = NonNull::from_mut(s).cast::<T>();
         StoreSlice {
             ptr,
             len: s.len() as u32,

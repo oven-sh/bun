@@ -841,9 +841,12 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut count: u32 = 0;
     let mut skip_round;
     let mut is_or = false;
+    // Only spaces lie between the cursor and the last comparator, and that comparator is valid.
+    let mut after_comparator = false;
 
     while i < input.len() {
         skip_round = false;
+        let mut no_operator = false;
 
         match input[i] {
             b'>' => {
@@ -874,6 +877,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             }
             b'=' | b'v' => {
                 token.tag = TokenTag::Version;
+                no_operator = true;
                 i += 1;
                 while i < input.len() && input[i] == b' ' {
                     i += 1;
@@ -900,6 +904,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             }
             b'0'..=b'9' | b'X' | b'x' | b'*' => {
                 token.tag = TokenTag::Version;
+                no_operator = true;
             }
             b'|' => {
                 i += 1;
@@ -930,6 +935,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             _ => {
                 i += 1;
                 token.tag = TokenTag::None;
+                after_comparator = false;
 
                 // skip tagged versions
                 // we are assuming this is the beginning of a tagged version like "boop"
@@ -992,6 +998,12 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 i = rollback;
             }
             i += (!hyphenate) as usize;
+
+            let valid = parse_result.valid && !hyphenate;
+            // Malformed text ("=>16.0.0", "1.2.3.4") starts an alternative so that it cannot narrow the range.
+            if no_operator && !(after_comparator && valid) {
+                is_or = true;
+            }
 
             if hyphenate {
                 let second_parsed = Version::parse(sliced.sub(&input[i..]));
@@ -1109,6 +1121,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             is_or = false;
             count += 1;
             token.wildcard = Wildcard::None;
+            after_comparator = valid && input.get(rollback) == Some(&b' ');
         }
     }
 

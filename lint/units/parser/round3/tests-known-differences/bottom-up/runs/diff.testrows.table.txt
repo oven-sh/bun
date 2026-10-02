@@ -1,0 +1,39 @@
+base 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 (301 sources)
+next 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667 (301 sources)
+4515 records compared, 3556 differ, in 301 sources
+??       40 records       4 sources  A>A          ruling: cast after a declaration named as
+??       30 records       2 sources  R>A          ruling: cast after a declaration named as
+??       30 records       2 sources  R>A          ruling: attributes of an export on the next line
+??       15 records       1 sources  R>A          ruling: attributes of a type-only import on the next line
+!!       15 records       1 sources  R>A          RESTORE: tsc does not parse TS1005
+         52 records      13 sources  A>A          metadata: a type predicate is Boolean, an assertion predicate is undefined
+         36 records       9 sources  A>A          metadata: | and & operands are the check type of a conditional type
+         28 records       7 sources  A>A          metadata: keyof, readonly and unique end before extends
+         32 records       8 sources  A>A          metadata: the type after the colon of a conditional type takes | and &
+         24 records       6 sources  A>A          metadata: the branches of a conditional type merge as the operands of | do
+         24 records       6 sources  A>A          metadata: a keyword before a dot is the first name of a type reference
+          8 records       2 sources  A>A          metadata: unique takes the whole type after it
+         20 records       5 sources  A>A          metadata: an import type and unique symbol are Object
+         28 records       7 sources  A>A          metadata: an operand of | and & counts as what it serializes to
+??       60 records       6 sources  A>A          ruling: A>A a declaration named as or satisfies, where the base read a cast
+        525 records      35 sources  R>A          as or satisfies names a type alias, an interface or a namespace
+         60 records       4 sources  R>A          abstract stands before declare
+        210 records      14 sources  R>A          a string in brackets names an enum member
+        105 records       7 sources  R>A          import starts an expression in a namespace
+         45 records       3 sources  R>A          the attributes of an import start on the next line
+         60 records       4 sources  R>A          a comma ends an index signature of a class
+         54 records       6 sources  R>A          accessor is a modifier without standard decorators
+         60 records       4 sources  R>A          a comma follows the rest parameter of a signature of a declared class
+        360 records      27 sources  R>A          out or in names a type or a type parameter
+         45 records       3 sources  R>A          an interface extends, or a class implements, an expression
+         60 records       4 sources  R>A          a reserved word is the label of a rest element of a tuple
+        135 records       9 sources  R>A          an import type takes type arguments and an expression in an attribute; .< stands before type arguments
+         75 records       5 sources  R>A          the type of an assertion predicate starts on the next line
+        105 records       7 sources  R>A          a parameter of a signature has an initializer
+         90 records       6 sources  R>A          a binding pattern of a signature is read as a binding pattern
+         60 records       4 sources  R>A          a modifier stands before a parameter that is no parameter property
+         75 records       5 sources  R>A          a comparison follows the type after as and satisfies
+        160 records      13 sources  R>A          a colon follows an operand that ends with a parenthesis
+        470 records      37 sources  R>A          a colon follows parentheses between ? and : of a conditional
+        360 records      25 sources  R>A          a reserved word is the name of a type reference
+15 records with the mark !!, 175 with the mark ??

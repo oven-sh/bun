@@ -1,0 +1,261 @@
+base rejects and tsc takes as a whole: 7604 records (2557 where round 1 rejects too)
+
+## 653 sources  ROUND 1 REJECTS TOO   [tsc reports: TS2369 x26, TS2500 x23, TS2499 x23, TS2371 x39, TS2842 x6, TS1225 x1]
+   "super.a!;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected "super" @1:1  head: Unexpected "super"
+   "(this: A) => a;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Invalid binding pattern @1:2  head: Invalid binding pattern
+   "(public a: A) => a;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "a" @1:9  TS2369  head: Expected ")" but found "a"
+   "(readonly a: A) => a;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "a" @1:11  TS2369  head: Expected ")" but found "a"
+   "let x = class implements {};"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected "{" but found ";" @1:28  head: Expected "{" but found ";"
+   "enum E { [a] = 1 }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found "[" @1:10  head: Expected identifier but found "["
+
+## 207 sources  an interface extends, or a class implements, an expression   [tsc reports: TS2499 x83, TS2500 x82]
+   "interface I extends a() {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco,t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected "{" but found "(" @1:22  TS2499
+   "interface I extends a.b() {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco,t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected "{" but found "(" @1:24  TS2499
+   "class C implements a() {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected "{" but found "(" @1:21  TS2500
+   "class C implements A\n<B> {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected "{" but found "<" @2:1
+   "interface I extends A\n<B> {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected "{" but found "<" @2:1
+   "class C implements infer {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found "{" @1:26
+
+## 201 sources  a reserved word is the label of a rest element of a tuple
+   "type X = [...const: A[]];"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco,t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected "const" @1:14
+   "type X = [...in: A[]];"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco,t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected in @1:14
+   "type X = [...class: A[]];"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco,t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected class @1:14
+   "type X = [...if: A[]];"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected if @1:14
+   "let x: [...in: A[]];"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected in @1:12
+   "class C { @d x: [...in: A[]]; }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected in @1:21
+
+## 185 sources  a reserved word is the name of a type reference
+   "let x: if;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected if @1:8
+   "let x: class;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected class @1:8
+   "let x: function;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco,t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected function @1:8
+   "let x: in;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected in @1:8
+   "let x: extends;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected extends @1:8
+   "let x: super;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco,t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected super @1:8
+
+## 176 sources  a parameter of a signature has an initializer   [tsc reports: TS2371 x176]
+   "type X = { a(b = 1): A };"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "=" @1:16  TS2371
+   "let x: { a(b = 1): A };"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "=" @1:14  TS2371
+   "interface I { (a = 1): A }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "=" @1:18  TS2371
+   "let g: (a = 1) => void;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "=" @1:11  TS2371
+   "let x: ({ a = 1 }) => void;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected = @1:13  TS2371
+   "let x: A<(a = 1) => void>;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "=" @1:13  TS2371
+
+## 110 sources  a modifier stands before a parameter that is no parameter property   [tsc reports: TS2369 x110]
+   "type X = { a(public b: B): A };"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "b" @1:21  TS2369
+   "let x: (public a: A) => void;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco,t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "a" @1:16  TS2369
+   "function f(public a: A) {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco,t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "a" @1:19  TS2369
+   "class C { m(public a: A) {} }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco,t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "a" @1:20  TS2369
+   "function f(private a) {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "a" @1:20  TS2369
+   "function f(readonly a: A) {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "a" @1:21  TS2369
+
+## 63 sources  out or in names a type or a type parameter
+   "function f<out>() {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: The modifier "out" is not valid here @1:12
+   "const f = function <out>() {};"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: The modifier "out" is not valid here @1:21
+   "function f<out = A>() {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: The modifier "out" is not valid here @1:12
+   "const f = function <out = A>() {};"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: The modifier "out" is not valid here @1:21
+   "function f<const out>() {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: The modifier "out" is not valid here @1:18
+   "const f = function <const out>() {};"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: The modifier "out" is not valid here @1:27
+
+## 58 sources  a binding pattern of a signature is read as a binding pattern   [tsc reports: TS2842 x26]
+   "let x: ([a, , b]) => void;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected , @1:13
+   "type X = ([a, , b]) => void;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected , @1:15
+   "let x: new ([a, , b]) => A;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected , @1:17
+   "type X = { ([a, , b]): void };"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected , @1:17
+   "type X = { new ([a, , b]): A };"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected , @1:21
+   "type X = A<([a, , b]) => void>;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected , @1:17
+
+## 52 sources  asserts is T is the assertion about a parameter named is   [tsc reports: TS1225 x52]
+   "class C { @d m(): asserts is A { return x; } }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "A" @1:30  TS1225
+   "function f(): asserts is A { return x; }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "A" @1:26  TS1225
+   "let f = (a): asserts is A => a;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found ":" @1:12  TS1225
+   "let v = a ? (b): asserts is A => c : d;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "is" @1:26  TS1225
+   "type X = (a: A) => asserts  is B;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "B" @1:32  TS1225
+   "let x: (a: A) => asserts  is B;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "B" @1:30  TS1225
+
+## 43 sources  an import type takes type arguments and an expression in an attribute; .< stands before type arguments
+   "let x: typeof import(\"x\")<C>;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "<" @1:26
+   "type X = typeof import(\"x\")<C>;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "<" @1:28
+   "let x: import(\"x\")<T>;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "<" @1:19
+   "type X = import(\"x\")<T>;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "<" @1:21
+   "let x: import(\"x\", { with: { a: \"b\" } })<T>;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "<" @1:41
+   "let x: import(\"x\", { with: { a: \"b\" + \"c\" } });"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected + @1:37
+
+## 37 sources  as or satisfies names a type alias, an interface or a namespace   [tsc reports: TS1540 x2]
+   "type as = 1"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected = @1:9
+   "declare type as = 1"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected = @1:17
+   "type satisfies = 1"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected = @1:16
+   "interface as {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco,t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found end of file @1:15
+   "export interface as {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found end of file @1:22
+   "interface satisfies {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco,t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found end of file @1:22
+
+## 37 sources  a colon follows parentheses between ? and : of a conditional
+   "x = a ? <T>(b) : c => d;"   t.ts.plain,t.ts.exp,t.ts.deco   main: Expected ":" but found ";" @1:24
+   "x = a ? y => (b) : c => d;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ":" but found ";" @1:26
+   "x = a ? (y) => (b) : c => d;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ":" but found ";" @1:28
+   "x = a ? <T>(y: T) => (b) : c => d;"   t.ts.plain,t.ts.exp,t.ts.deco   main: Expected ":" but found ";" @1:34
+   "x = a ? y => ({ y }) : z => ({ z });"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ":" but found ";" @1:36
+   "x = a ? <T>(b, c) : d => e;"   t.ts.plain,t.ts.exp,t.ts.deco   main: Expected ":" but found ";" @1:27
+
+## 29 sources  valid TypeScript that no entry above names [tsc also: nothing]
+   "type X = [function];"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ":" but found "]" @1:19
+   "let x: [function];"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ":" but found "]" @1:17
+   "class C { @d x: [function]; }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ":" but found "]" @1:26
+   "class C { @d m(a: [function]) {} }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ":" but found "]" @1:28
+   "@d class C { constructor(a: [function]) {} }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ":" but found "]" @1:38
+   "class C { @d m(): [function] { return x; } }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ":" but found "]" @1:28
+
+## 15 sources  accessor is a modifier without standard decorators
+   "class C { accessor x: T; }"   t.ts.exp,t.ts.deco   main: Expected ";" but found "x" @1:20
+   "class C { static accessor x = 1; }"   t.ts.exp,t.ts.deco   main: Expected ";" but found "x" @1:27
+   "class C { accessor #x: T; }"   t.ts.exp,t.ts.deco   main: Expected ";" but found "#x" @1:20
+   "class C { static accessor #x = 1; }"   t.ts.exp,t.ts.deco   main: Expected ";" but found "#x" @1:27
+   "abstract class C extends B { abstract accessor x: T; }"   t.ts.exp,t.ts.deco   main: Expected ";" but found "x" @1:48
+   "declare class C { accessor x: T; }"   t.ts.exp,t.ts.deco   main: Expected ";" but found "x" @1:28
+
+## 15 sources  a string in brackets names an enum member
+   "enum E { [\"x\"] }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found "[" @1:10
+   "enum E { [\"x\"] = 1 }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found "[" @1:10
+   "enum E { ['x'] = 1, B = E.x }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found "[" @1:10
+   "enum E { [`x`] = 1 }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found "[" @1:10
+   "enum E { [\"x\"], [\"y\"] }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found "[" @1:10
+   "enum E { [ \"x\" ] = 1, }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found "[" @1:10
+
+## 13 sources  a colon follows an operand that ends with a parenthesis
+   "x = a ? 1 + async(b) : c;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected : @1:22
+   "x = a ? -<T>(b) : c;"   t.ts.plain,t.ts.exp,t.ts.deco   main: Unexpected : @1:17
+   "x = a ? -async(b) : c;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected : @1:19
+   "x = a ? y || async(b) : c;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected : @1:23
+   "x = a ? typeof async() : c => d;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected : @1:24
+   "x = a ? 1 + async<T>(b) : c;"   t.ts.plain,t.ts.exp,t.ts.deco   main: Unexpected : @1:25
+
+## 9 sources  the type of an assertion predicate starts on the next line   [tsc reports: TS1225 x3]
+   "type X = (a) => asserts a\nis B;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "B" @2:4
+   "const f = (a): (a) => asserts a\nis B => 0;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found ":" @1:14
+   "const f = (a): asserts a\nis B => 0;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found ":" @1:14
+   "const f = (a): asserts this\nis B => 0;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found ":" @1:14
+   "function f(): asserts this\nis B { throw 0 }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "B" @2:4
+   "class C { @d m(): asserts a\nis A { return x; } }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "A" @2:4  TS1225
+
+## 7 sources  import starts an expression in a namespace
+   "namespace N { import(\"x\"); }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found "(" @1:21
+   "namespace N { import.meta; }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found "." @1:21
+   "namespace N { import(\"x\").then(f); }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found "(" @1:21
+   "namespace N { import\n(\"x\"); }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found "(" @2:1
+   "namespace N { import.meta.url; }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found "." @1:21
+   "namespace N.M { import(\"x\"); }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected identifier but found "(" @1:23
+
+## 5 sources  a comparison follows the type after as and satisfies
+   "const v = x as T <= y;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected = @1:19
+   "x as T <= y;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected = @1:9
+   "const v = x satisfies T <= y;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected = @1:26
+   "f(x as T <= y);"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected = @1:11
+   "const v = [x as T <= y];"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected = @1:20
+
+## 4 sources  a comma follows the rest parameter of a signature of a declared class
+   "declare class C { m(...a,): void; }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "," @1:25
+   "declare class C { constructor(...a,); }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "," @1:35
+   "declare class C { m(...a: A[],): void; }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "," @1:30
+   "declare class C { constructor(...a: A[],); }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ")" but found "," @1:40
+
+## 4 sources  a comma ends an index signature of a class
+   "class C { [k: string]: T, }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "," @1:25
+   "abstract class C extends B { [k: string]: T, }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "," @1:44
+   "const c = class { [k: string]: T, };"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "," @1:33
+   "declare class C { [k: string]: T, }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "," @1:33
+
+## 4 sources  abstract stands before declare
+   "abstract declare class C {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco,t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "declare" @1:10
+   "export abstract declare class C {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "declare" @1:17
+   "abstract declare class C { m(): void }"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected ";" but found "declare" @1:10
+   "@d abstract declare class C {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected "class" but found "declare" @1:13
+
+## 3 sources  the attributes of an import start on the next line
+   "import A from \"x\"\nwith { type: \"json\" };"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected "(" but found "{" @2:6
+   "import \"x\"\nwith { type: \"json\" };"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected "(" but found "{" @2:6
+   "import A from \"x\"\nwith { type: \"json\" }; A;"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Expected "(" but found "{" @2:6
+
+## 2 sources  ruling: tsc reports a rule of syntax outside its grammar checks TS1102   [tsc reports: TS1102 x2, TS2500 x1, TS2499 x1]
+   "class C implements [delete A] {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected delete @1:21  TS1102,TS2500
+   "interface I extends [delete A] {}"   t.ts.plain,t.tsx.plain,t.ts.exp,t.ts.deco   main: Unexpected delete @1:22  TS1102,TS2499
+
+==== metadata of main that differs from tsc (t.ts.deco, strictNullChecks off)
+
+## 205 sources  ROUND 1 HAS THE SAME VALUE
+   "class C { @d a: N.T } namespace N { export type T = 1 }"   design:type: main typeof N === "undefined" || typeof N.T === "undefined" ? Object : N.T | tsc Number | head SAME AS MAIN
+   "class C { @d a: I } interface I {}"   design:type: main typeof I === "undefined" ? Object : I | tsc Object | head SAME AS MAIN
+   "class C { @d a: T } type T = string;"   design:type: main typeof T === "undefined" ? Object : T | tsc String | head SAME AS MAIN
+   "class C { @d a: T } type T = D; class D {}"   design:type: main typeof T === "undefined" ? Object : T | tsc Object | head SAME AS MAIN
+   "class C { @d a: T<D> } type T<U> = U; class D {}"   design:type: main typeof T === "undefined" ? Object : T | tsc Object | head SAME AS MAIN
+   "class C { @d a: E } enum E { A }"   design:type: main typeof E === "undefined" ? Object : E | tsc Number | head SAME AS MAIN
+
+## 130 sources  metadata: the branches of a conditional type merge as the operands of | do
+   "class C { @d p: X extends Y ? number : never; }"   design:type: main undefined | tsc Number
+   "class C { @d p: X extends Y ? K : K; }"   design:type: main typeof K === "undefined" ? Object : K | tsc Object
+   "class C { @d p: (X extends Y ? string : unknown); }"   design:type: main String | tsc Object
+   "class C { @d p: X extends infer U extends V ? string : never; }"   design:type: main undefined | tsc String
+   "class C { @d p: X extends Y ? never : A.B; }"   design:type: main undefined | tsc Object
+   "class C { @d p: X extends Y ? A<B> : null; }"   design:type: main typeof A === "undefined" ? Object : A | tsc Object
+
+## 64 sources  metadata: a type predicate is Boolean, an assertion predicate is undefined
+   "class C { @d p: this is B; }"   design:type: main Object | tsc Boolean
+   "class C { @d m(): a is B { throw 0 } }"   design:returntype: main typeof a === "undefined" ? Object : a | tsc Boolean
+   "class C { @d m(): a is B | C { throw 0 } }"   design:returntype: main typeof a === "undefined" ? Object : a | tsc Boolean
+   "class C { @d m(): string is B { throw 0 } }"   design:returntype: main String | tsc Boolean
+   "class C { @d m(): asserts a { throw 0 } }"   design:returntype: main Object | tsc void 0
+   "class C { @d m(): asserts a is B { throw 0 } }"   design:returntype: main Object | tsc void 0
+
+## 19 sources  metadata: an import type and unique symbol are Object
+   "class C { @d p: A | unique symbol; }"   design:type: main typeof A === "undefined" ? Object : A | tsc Object  chk TS1335
+   "class C { @d p: import(\"x\") | A; }"   design:type: main typeof A === "undefined" ? Object : A | tsc Object
+   "class C { @d p: import(\"x\")[\"y\"]; }"   design:type: main Array | tsc Object
+   "class C { @d p: unique symbol & A; }"   design:type: main typeof A === "undefined" ? Object : A | tsc Object  chk TS1335
+   "class C { @d p: A | import(\"x\"); }"   design:type: main typeof A === "undefined" ? Object : A | tsc Object
+   "class C { @d a: unique symbol | null }"   design:type: main undefined | tsc Object  chk TS1335
+
+## 17 sources  metadata: keyof, readonly and unique end before extends
+   "class C { @d p: keyof A extends B ? string : never; }"   design:type: main Object | tsc String
+   "class C { @d p: readonly A[] extends B ? string : number; }"   design:type: main Array | tsc Object
+   "class C { @d p: unique symbol extends B ? string : never; }"   design:type: main undefined | tsc String  chk TS1335
+   "class C { @d m(a: keyof A extends B ? () => void : () => void) {} }"   design:paramtypes: main [ Object ] | tsc [Function]
+   "class C { @d m(): readonly A[] extends B ? unknown : string { throw 0 } }"   design:returntype: main Array | tsc Object
+   "class C { @d p: keyof A extends B ? () => void : () => void; }"   design:type: main Object | tsc Function
+
+## 10 sources  metadata: | and & operands are the check type of a conditional type
+   "class C { @d p: number | A extends B ? string : never; }"   design:type: main Number | tsc String
+   "class C { @d p: K & A extends B ? string : never; }"   design:type: main undefined | tsc String
+   "class C { @d p: K | A extends B ? string[] : number[]; }"   design:type: main Object | tsc Array
+   "class C { @d p: string | A extends B ? () => void : () => void; }"   design:type: main Object | tsc Function
+   "class C { @d p: K | A extends B ? null : K; }"   design:type: main typeof K === "undefined" ? Object : K | tsc Object
+   "class C { @d m(a: number | A extends B ? string : string) {} }"   design:paramtypes: main [ Object ] | tsc [String]
+
+## 10 sources  metadata: unique takes the whole type after it
+   "class C { @d p: unique symbol[]; }"   design:type: main Array | tsc Object  chk TS1005
+   "class C { @d p: unique [A]; }"   design:type: main Array | tsc Object  chk TS1005
+   "class C { @d x: unique symbol[]; }"   design:type: main Array | tsc Object  chk TS1005
+   "class C { @d m(a: unique symbol[]) {} }"   design:paramtypes: main [ Array ] | tsc [Object]  chk TS1005
+   "@d class C { constructor(a: unique symbol[]) {} }"   design:paramtypes: main [ Array ] | tsc [Object]  chk TS1005
+   "class C { @d m(): unique symbol[] { return x; } }"   design:returntype: main Array | tsc Object  chk TS1005
+
+## 8 sources  metadata: the type after the colon of a conditional type takes | and &
+   "class C { @d p: A extends B ? string : never | number; }"   design:type: main Number | tsc Object
+   "class C { @d p: A extends B ? unknown : string & string; }"   design:type: main String | tsc Object
+   "class C { @d p: X extends Y ? A : (A | null); }"   design:type: main typeof A === "undefined" ? Object : A | tsc Object
+   "class C { @d p: A extends B ? never : string | number; }"   design:type: main undefined | tsc Object
+   "class C { @d p: A extends B ? string : unknown | null; }"   design:type: main String | tsc Object
+   "class C { @d p: A extends B ? string : never & K; }"   design:type: main undefined | tsc Object
+
+## 7 sources  metadata: an operand of | and & counts as what it serializes to
+   "class C { @d p: string | (never | never); }"   design:type: main String | tsc Object
+   "class C { @d p: (null | undefined) | string; }"   design:type: main String | tsc Object
+   "class C { @d p: A.B | C.D; }"   design:type: main typeof C === "undefined" || typeof C.D === "undefined" ? Object : C.D | tsc Object
+   "class C { @d m(a: A.B & A.C) {} }"   design:paramtypes: main [ typeof A === "undefined" || typeof A.C === "undefined" ? Object : A.C ] | tsc [Object]
+   "class C { @d p: string | never & string; }"   design:type: main String | tsc Object
+   "class C { @d p: string & (unknown & unknown); }"   design:type: main String | tsc Object
+
+## 6 sources  metadata: a keyword before a dot is the first name of a type reference
+   "class C { @d p: any.b; }"   design:type: main Object | tsc typeof (_a = typeof any !== "undefined" && any.b) === "function" ? _a : Object
+   "class C { @d p: string.b; }"   design:type: main String | tsc typeof (_a = typeof string !== "undefined" && string.b) === "function" ? _a : Object
+   "class C { @d p: bigint.b<T>; }"   design:type: main typeof BigInt === "undefined" ? Object : BigInt | tsc typeof (_a = typeof bigint !== "undefined" && bigint.b) === "function" ? _a : Object
+   "class C { @d p: undefined.b; }"   design:type: main undefined | tsc Object
+   "class C { @d m(a: never.b) {} }"   design:paramtypes: main [ undefined ] | tsc [typeof (_a = typeof never !== "undefined" && never.b) === "function" ? _a : Object]
+   "class C { @d p: never.b; }"   design:type: main undefined | tsc typeof (_a = typeof never !== "undefined" && never.b) === "function" ? _a : Object

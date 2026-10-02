@@ -1,0 +1,40 @@
+base 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 (7089 sources)
+next 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667 (7089 sources)
+106335 records compared, 21973 differ, in 1642 sources
+!!       15 records       1 sources  R>A          RESTORE: tsc does not parse TS1131
+!!      190 records      13 sources  R>A          RESTORE: grammar error of the checker TS1015
+!!      380 records      26 sources  R>A          RESTORE: grammar error of the checker TS1017
+!!      190 records      13 sources  R>A          RESTORE: grammar error of the checker TS1019
+!!      190 records      13 sources  R>A          RESTORE: grammar error of the checker TS1025
+!!      630 records      43 sources  R>A          RESTORE: grammar error of the checker TS1096
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1097
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1108
+!!       30 records       2 sources  R>A          RESTORE: grammar error of the checker TS1110
+!!      950 records      65 sources  R>A          RESTORE: grammar error of the checker TS1170
+!!       90 records       6 sources  R>A          RESTORE: grammar error of the checker TS1172
+!!      190 records      13 sources  R>A          RESTORE: grammar error of the checker TS1247
+!!      190 records      13 sources  R>A          RESTORE: grammar error of the checker TS1539
+!!      235 records      16 sources  R>A          RESTORE: grammar error of the checker TS18016
+!!      175 records      12 sources  R>A          RESTORE: grammar error of the checker TS2304
+!!      470 records      32 sources  R>A          RESTORE: grammar error of the checker TS5086
+!!      940 records      64 sources  R>A          RESTORE: grammar error of the checker TS8020
+        188 records      47 sources  A>A          metadata: a type predicate is Boolean, an assertion predicate is undefined
+         32 records       8 sources  A>A          metadata: keyof, readonly and unique end before extends
+        496 records     124 sources  A>A          metadata: the branches of a conditional type merge as the operands of | do
+         32 records       8 sources  A>A          metadata: unique takes the whole type after it
+         48 records      12 sources  A>A          metadata: an import type and unique symbol are Object
+??       12 records       3 sources  A>A          ruling: metadata of a source that tsc does not parse
+        855 records      59 sources  R>R          both reject: another error list
+??       30 records       2 sources  R>A          ruling: tsc reports a rule of syntax outside its grammar checks TS1102
+        510 records      36 sources  R>A          out or in names a type or a type parameter
+       3060 records     204 sources  R>A          an interface extends, or a class implements, an expression
+       2930 records     200 sources  R>A          a reserved word is the label of a rest element of a tuple
+        505 records      34 sources  R>A          an import type takes type arguments and an expression in an attribute; .< stands before type arguments
+         60 records       4 sources  R>A          the type of an assertion predicate starts on the next line
+        770 records      52 sources  R>A          asserts is T is the assertion about a parameter named is
+       2470 records     169 sources  R>A          a parameter of a signature has an initializer
+        760 records      52 sources  R>A          a binding pattern of a signature is read as a binding pattern
+       1520 records     104 sources  R>A          a modifier stands before a parameter that is no parameter property
+       2375 records     162 sources  R>A          a reserved word is the name of a type reference
+        425 records      29 sources  R>A          valid TypeScript that no entry above names [tsc also: nothing]
+4895 records with the mark !!, 42 with the mark ??

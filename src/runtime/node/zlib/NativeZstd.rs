@@ -644,29 +644,12 @@ mod _impl {
 
         pub(crate) fn close(&mut self) {
             // Idempotent: a handle that was never (successfully) initialized,
-            // or that was already closed, has no CCtx/DCtx to reset or free.
-            if self.state.is_none() {
-                self.mode = NodeMode::NONE;
-                return;
+            // or that was already closed, has no CCtx/DCtx to free.
+            // No reset before the free: it frees the dictionary under a running worker job
+            // (https://github.com/oven-sh/bun/issues/44201).
+            if self.state.is_some() {
+                self.deinit_state();
             }
-            let _ = match self.mode {
-                // SAFETY: state is a valid CCtx/DCtx for this mode.
-                NodeMode::ZSTD_COMPRESS => unsafe {
-                    c::ZSTD_CCtx_reset(
-                        self.state_ptr().cast(),
-                        c::ZSTD_reset_session_and_parameters,
-                    )
-                },
-                // SAFETY: state is a valid DCtx set by init() for this mode.
-                NodeMode::ZSTD_DECOMPRESS => unsafe {
-                    c::ZSTD_DCtx_reset(
-                        self.state_ptr().cast(),
-                        c::ZSTD_reset_session_and_parameters,
-                    )
-                },
-                _ => unreachable!(),
-            };
-            self.deinit_state();
             self.mode = NodeMode::NONE;
         }
 

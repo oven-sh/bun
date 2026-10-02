@@ -1,10 +1,15 @@
 //! Whether a value of one type can be used where another is expected.
 //!
 //! Follows `internal/checker/relater.go` of TypeScript 7.0.2 function by function. The names in `backticks` at the head of
-//! a function are the ones there. Left out: what only serves error messages, and `isEmptyArrayLiteralType` (the type of `[]`
-//! is not told from a `never[]` that is written).
+//! a function are the ones there. `REPORT` is `reportErrors`. What only serves error messages is in `explain_relation.rs`. Left out:
+//! `isEmptyArrayLiteralType` (the type of `[]` is not told from a `never[]` that is written).
 //! A type does not remember the alias it was written with: `alias_of` tells from where its syntax stands.
 
+use super::explain::Related;
+use super::explain_relation::{
+    Chain, ErrorState, chain_depth, is_same_chain, visibility_to_string,
+};
+use super::related::Place;
 use super::*;
 use crate::util::{FxHashSet, FxHasher};
 use smallvec::SmallVec;
@@ -118,6 +123,8 @@ const IGNORE_RETURN_TYPES: u8 = 4;
 pub(super) const STRICT_ARITY: u8 = 8;
 pub(super) const STRICT_TOP_SIGNATURE: u8 = 16;
 pub(super) const CALLBACK: u8 = BIVARIANT_CALLBACK | STRICT_CALLBACK;
+/// `incompatibleErrorReporter` is `reportIncompatibleConstructSignatureReturn`. Set with `reportErrors` only.
+const CONSTRUCT_SIGNATURE: u8 = 32;
 
 /// `getRelationKey`: the source, the target, and flags. The flags hold the relation in the low four bits and the intersection
 /// state above it.
@@ -151,6 +158,15 @@ impl GenericKeyBuilder {
     }
 }
 
+/// The variables that `structuredTypeRelatedToWorker` shares with its closure `relateVariances`. The last two are looked at with
+/// `reportErrors` only.
+#[derive(Default)]
+struct WorkerState {
+    variance_check_failed: bool,
+    original_error_chain: Chain,
+    save_error_state: ErrorState,
+}
+
 /// What one question, with all the questions it leads to, keeps track of.
 pub(super) struct Relater {
     pub(super) relation: Relation,
@@ -180,9 +196,20 @@ pub(super) struct Relater {
     /// `Checker::cycles` when the question was asked. Once it has moved, nothing found out holds for others.
     cycles: u64,
     steps: u32,
-    /// tsgo compares the two with reports outright (`checkTypeAssignableTo`), where here a run without reports has gone before. There,
-    /// what is under way is not yet remembered as a failure.
-    pub(super) is_only_run: bool,
+    /// What fails is remembered in `failed` and not in the table: in a run with reports (P2), and in the run without reports that goes
+    /// before one where tsgo makes none (`check_type_related_to_ex`), which is to leave the table as tsgo's run finds it.
+    pub(super) keeps_failures: bool,
+    failed: FxHashSet<Key>,
+    /// `errorNode`. An end of `0`: with the token there. It and what follows are looked at with `reportErrors` only.
+    pub(super) error_node: Place,
+    /// `headMessage` of the first comparison, which takes it.
+    pub(super) head_message: Option<u32>,
+    /// `errorChain`
+    pub(super) error_chain: Chain,
+    /// `relatedInfo`
+    pub(super) related_info: Vec<Related>,
+    /// The two types asked about, if one of them is written as an alias that is not the name it is compared under.
+    pub(super) named_otherwise: Option<(TypeId, TypeId)>,
 }
 
 impl Relater {
@@ -205,7 +232,13 @@ impl Relater {
             relation_count: 2_000_000,
             cycles,
             steps: 0,
-            is_only_run: false,
+            keeps_failures: false,
+            failed: FxHashSet::default(),
+            error_node: (FileId(0), 0, 0),
+            head_message: None,
+            error_chain: None,
+            related_info: Vec::new(),
+            named_otherwise: None,
         }
     }
 }
@@ -444,12 +477,6 @@ impl<'p> Checker<'p> {
         is_instantiable_kind(self.data(ty))
     }
 
-    /// `TypeFlagsStructuredOrInstantiable`
-    #[inline]
-    pub(super) fn is_structured_or_instantiable(&self, ty: TypeId) -> bool {
-        is_structured_or_instantiable_kind(self.data(ty))
-    }
-
     /// `TypeFlagsPrimitive`, which `boolean` and an enum have though they are unions.
     #[inline]
     pub(super) fn has_primitive_flag(&self, ty: TypeId) -> bool {
@@ -537,11 +564,6 @@ impl<'p> Checker<'p> {
             .flags(*alias)
             .contains(SymFlags::ENUM)
             .then_some(*alias)
-    }
-
-    /// `TypeFlagsDefinitelyNonNullable`
-    pub(super) fn is_definitely_non_nullable(&self, ty: TypeId) -> bool {
-        self.is_definitely_non_nullable_as(ty, self.data(ty))
     }
 
     /// `data`: what `ty` is.
@@ -877,6 +899,7 @@ impl<'p> Checker<'p> {
     /// `isTypeRelatedTo`
     pub(super) fn related(&mut self, source: TypeId, target: TypeId, relation: Relation) -> bool {
         let is_marker_comparison = std::mem::take(&mut self.is_marker_comparison);
+        let is_trial = std::mem::take(&mut self.is_trial_comparison);
         if source == target {
             return true;
         }
@@ -954,7 +977,7 @@ impl<'p> Checker<'p> {
             missed = Some(key);
         }
         if is_structured_or_instantiable_kind(sd) || is_structured_or_instantiable_kind(td) {
-            return self.check_type_related_to(source, target, relation, missed);
+            return self.check_type_related_to(source, target, relation, missed, is_trial);
         }
         false
     }
@@ -972,12 +995,14 @@ impl<'p> Checker<'p> {
 
     /// `checkTypeRelatedToEx`, without the errors. `relation_too_complex` tells the caller to report 2859.
     /// `related` has found no simple rule for the two. `missed`: the key under which it has found nothing kept, if it looked.
+    /// `is_trial`: see `Relater::keeps_failures`.
     fn check_type_related_to(
         &mut self,
         source: TypeId,
         target: TypeId,
         relation: Relation,
         missed: Option<(Key, bool)>,
+        is_trial: bool,
     ) -> bool {
         let mut r = self
             .free_relaters
@@ -992,7 +1017,8 @@ impl<'p> Checker<'p> {
         // Under the identity relation `related` goes by other rules.
         r.is_from_related = relation != Relation::Identity;
         r.top_key = missed;
-        let result = self.is_related_to_ex(&mut r, source, target, REC_BOTH, STATE_NONE);
+        r.keeps_failures = is_trial;
+        let result = self.is_related_to_ex::<false>(&mut r, source, target, REC_BOTH, STATE_NONE);
         if r.steps > 20_000 && self.trace_slow_relations {
             let mut describer = crate::describe::Describer::new(self);
             let (a, b) = (describer.describe(source), describer.describe(target));
@@ -1015,6 +1041,10 @@ impl<'p> Checker<'p> {
         r.expanding = 0;
         r.overflow = false;
         r.hit_cached_overflow = false;
+        if is_trial {
+            r.keeps_failures = false;
+            r.failed.clear();
+        }
         self.free_relaters.push(r);
         if is_too_complex {
             // Recorded as failed so that the comparison is not attempted again.
@@ -1892,15 +1922,6 @@ impl<'p> Checker<'p> {
         self.base_constraint_of(t).unwrap_or(t)
     }
 
-    /// `getEffectiveConstraintOfIntersection`
-    pub(super) fn effective_constraint_of_intersection(
-        &mut self,
-        types: &[TypeId],
-        target_is_union: bool,
-    ) -> Option<TypeId> {
-        self.effective_constraint_of_intersection_ex(types, target_is_union, false)
-    }
-
     /// `restrictive`: see `restrictive_constraint_of`.
     fn effective_constraint_of_intersection_ex(
         &mut self,
@@ -2578,11 +2599,11 @@ impl<'p> Checker<'p> {
         target: TypeId,
         recursion: u8,
     ) -> Ternary {
-        self.is_related_to_ex(r, source, target, recursion, STATE_NONE)
+        self.is_related_to_ex::<false>(r, source, target, recursion, STATE_NONE)
     }
 
-    /// `isRelatedToEx`
-    pub(super) fn is_related_to_ex(
+    /// `isRelatedToEx`. `REPORT` is `reportErrors`, here and in all that takes it.
+    pub(super) fn is_related_to_ex<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         original_source: TypeId,
@@ -2593,6 +2614,7 @@ impl<'p> Checker<'p> {
         if original_source == original_target {
             return Ternary::TRUE;
         }
+        let head = if REPORT { r.head_message.take() } else { None };
         let ((original_source, original_sd), (original_target, original_td)) = (
             self.forced_as(original_source),
             self.forced_as(original_target),
@@ -2614,27 +2636,56 @@ impl<'p> Checker<'p> {
             && is_object_kind(original_sd)
             && self.has_primitive_flag_as(original_target, original_td)
         {
-            return Ternary::of(
-                relation == Relation::Comparable
-                    && !original_target.is_never()
-                    && self.is_simple_type_related_to(
-                        original_target,
-                        original_td,
-                        original_source,
-                        original_sd,
-                        relation,
-                    )
-                    || self.is_simple_type_related_to(
-                        original_source,
-                        original_sd,
-                        original_target,
-                        original_td,
-                        relation,
-                    ),
-            );
+            let is_related = relation == Relation::Comparable
+                && !original_target.is_never()
+                && self.is_simple_type_related_to(
+                    original_target,
+                    original_td,
+                    original_source,
+                    original_sd,
+                    relation,
+                )
+                || self.is_simple_type_related_to(
+                    original_source,
+                    original_sd,
+                    original_target,
+                    original_td,
+                    relation,
+                );
+            if REPORT && !is_related {
+                self.report_error_results(
+                    r,
+                    original_source,
+                    original_target,
+                    original_source,
+                    original_target,
+                    head,
+                );
+            }
+            return Ternary::of(is_related);
         }
-        let (source, sd) = self.normalized_as(original_source, original_sd, false);
-        let (mut target, mut td) = self.normalized_as(original_target, original_td, true);
+        // It goes no further.
+        if REPORT && self.is_stack_low() {
+            self.report_error_results(
+                r,
+                original_source,
+                original_target,
+                original_source,
+                original_target,
+                head,
+            );
+            return Ternary::FALSE;
+        }
+        let ((source, sd), (mut target, mut td)) = if REPORT {
+            let source = self.normalized_for_report(original_source, false);
+            let target = self.normalized_for_report(original_target, true);
+            ((source, self.data(source)), (target, self.data(target)))
+        } else {
+            (
+                self.normalized_as(original_source, original_sd, false),
+                self.normalized_as(original_target, original_td, true),
+            )
+        };
         // `getRegularTypeOfObjectLiteral` goes into the properties that are object literals themselves and no further.
         let state = if state & STATE_REGULAR != 0 && !is_object_literal_kind(sd) {
             state & !STATE_REGULAR
@@ -2651,8 +2702,9 @@ impl<'p> Checker<'p> {
             if self.is_singleton(source) {
                 return Ternary::TRUE;
             }
-            return self
-                .recursive_type_related_to(r, source, sd, target, td, STATE_NONE, recursion);
+            return self.recursive_type_related_to::<false>(
+                r, source, sd, target, td, STATE_NONE, recursion,
+            );
         }
         // A type parameter against exactly what it extends: very common.
         if relation != Relation::Restrictive
@@ -2672,7 +2724,11 @@ impl<'p> Checker<'p> {
                 .copied()
                 .filter(|t| !t.is_null() && !t.is_undefined());
             if let (Some(candidate), None) = (others.next(), others.next()) {
-                target = self.normalized(candidate, true);
+                target = if REPORT {
+                    self.normalized_for_report(candidate, true)
+                } else {
+                    self.normalized(candidate, true)
+                };
                 if source == target {
                     return Ternary::TRUE;
                 }
@@ -2687,12 +2743,24 @@ impl<'p> Checker<'p> {
         {
             return Ternary::TRUE;
         }
+        // `isSimpleTypeRelatedTo`, with an `errorReporter`
+        if REPORT {
+            self.report_enum_relation(r, source, target);
+        }
         let source_is_structured_or_instantiable = is_structured_or_instantiable_kind(sd);
         if source_is_structured_or_instantiable || is_structured_or_instantiable_kind(td) {
             if state & (STATE_TARGET | STATE_REGULAR) == 0
                 && is_fresh_object_literal_kind(sd)
-                && self.has_excess_properties(r, source, target)
+                && self.has_excess_properties::<REPORT>(r, source, target)
             {
+                if REPORT {
+                    let shown = if self.has_alias(original_target) {
+                        original_target
+                    } else {
+                        target
+                    };
+                    self.report_relation_error(r, head, source, shown, false);
+                }
                 return Ternary::FALSE;
             }
             let is_performing_common_property_checks = state & STATE_TARGET == 0
@@ -2712,6 +2780,32 @@ impl<'p> Checker<'p> {
                     })
                 };
             if is_performing_common_property_checks && !self.has_common_properties(source, target) {
+                if REPORT {
+                    let shown_source = if self.has_alias(original_source) {
+                        original_source
+                    } else {
+                        source
+                    };
+                    let shown_target = if self.has_alias(original_target) {
+                        original_target
+                    } else {
+                        target
+                    };
+                    let source_string = self.type_to_string(shown_source);
+                    let target_string = self.type_to_string(shown_target);
+                    let mut is_meant_to_be_called = false;
+                    for construct in [false, true] {
+                        if !is_meant_to_be_called
+                            && let Some(&first) = self.signatures(source, construct).first()
+                        {
+                            let returned = self.sig_return(first);
+                            is_meant_to_be_called =
+                                self.is_related_to(r, returned, target, REC_SOURCE).holds();
+                        }
+                    }
+                    let code = if is_meant_to_be_called { 2560 } else { 2559 };
+                    r.report_error(code, vec![source_string, target_string]);
+                }
                 return Ternary::FALSE;
             }
             // `typeRelatedToSomeType`: a union has room for each of its members. An object literal is looked for as what it is
@@ -2736,13 +2830,18 @@ impl<'p> Checker<'p> {
                 _ => false,
             };
             let result = if skip_caching {
-                self.union_or_intersection_related_to_as(r, source, sd, target, td, state)
+                self.union_or_intersection_related_to_as::<REPORT>(r, source, sd, target, td, state)
             } else {
-                self.recursive_type_related_to(r, source, sd, target, td, state, recursion)
+                self.recursive_type_related_to::<REPORT>(
+                    r, source, sd, target, td, state, recursion,
+                )
             };
             if result.holds() {
                 return result;
             }
+        }
+        if REPORT {
+            self.report_error_results(r, original_source, original_target, source, target, head);
         }
         Ternary::FALSE
     }
@@ -2778,7 +2877,7 @@ impl<'p> Checker<'p> {
         }
         let mut r = Relater::new(Relation::Assignable, self.cycles);
         Some(
-            self.compare_signatures_related(
+            self.compare_signatures_related::<false>(
                 &mut r,
                 source,
                 target,
@@ -2801,7 +2900,12 @@ impl<'p> Checker<'p> {
     }
 
     /// `hasExcessProperties`
-    fn has_excess_properties(&mut self, r: &mut Relater, source: TypeId, target: TypeId) -> bool {
+    pub(super) fn has_excess_properties<const REPORT: bool>(
+        &mut self,
+        r: &mut Relater,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
         if !self.is_excess_property_check_target(target) {
             return false;
         }
@@ -2873,6 +2977,47 @@ impl<'p> Checker<'p> {
                 continue;
             }
             if !self.is_known_property(reduced_target, prop.name) {
+                if REPORT {
+                    let error_target =
+                        self.filter(reduced_target, |c, m| c.is_excess_property_check_target(m));
+                    let name = self.prop_to_string(prop);
+                    let in_type = self.type_to_string(error_target);
+                    if is_jsx {
+                        if let PropSource::Literal(file, p) = prop.source
+                            && r.error_node.0 == file
+                        {
+                            let end = self.end_of_jsx_attr_name(file, p);
+                            r.error_node = (file, self.hir(file)[p].pos, end);
+                        }
+                        self.report_unknown_jsx_attribute(r, name, error_target, in_type);
+                        return true;
+                    }
+                    // Only a name written as an identifier in the file at hand is taken for a slip of the pen.
+                    let is_identifier = match prop.source {
+                        PropSource::Literal(file, p) if r.error_node.0 == file => {
+                            let (hir, written) = (self.hir(file), &self.hir(file)[p]);
+                            r.error_node = (file, written.pos, self.end_of_prop_name(file, p));
+                            matches!(written.key, PropKey::Name(_))
+                                && !matches!(
+                                    hir.text.get(written.pos as usize),
+                                    Some(b'"' | b'\'' | b'.' | b'[' | b'0'..=b'9')
+                                )
+                        }
+                        _ => false,
+                    };
+                    let mut suggestion = None;
+                    if is_identifier {
+                        let properties = self.properties_for_suggestion(error_target);
+                        let written = self.atom_text(prop.name);
+                        suggestion = self
+                            .suggested_property(&written, &properties)
+                            .map(|i| self.atom_text(properties[i].name));
+                    }
+                    match suggestion {
+                        Some(suggestion) => r.report_error(2561, vec![name, in_type, suggestion]),
+                        None => r.report_error(2353, vec![name, in_type]),
+                    }
+                }
                 return true;
             }
             if is_union {
@@ -2883,7 +3028,14 @@ impl<'p> Checker<'p> {
                     .map(|&t| self.type_of_property_in_type(t, prop.name))
                     .collect();
                 let wanted = self.union(&wanted);
-                if !self.is_related_to(r, given, wanted, REC_BOTH).holds() {
+                if !self
+                    .is_related_to_ex::<REPORT>(r, given, wanted, REC_BOTH, STATE_NONE)
+                    .holds()
+                {
+                    if REPORT {
+                        let name = self.prop_to_string(prop);
+                        r.report_error(2326, vec![name]);
+                    }
                     return true;
                 }
             }
@@ -3108,20 +3260,9 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── unions and intersections ─────────────────────────────
 
-    /// `unionOrIntersectionRelatedTo`. The order matters: unions before intersections, "each" before "some".
-    pub(super) fn union_or_intersection_related_to(
-        &mut self,
-        r: &mut Relater,
-        source: TypeId,
-        target: TypeId,
-        state: u8,
-    ) -> Ternary {
-        let (sd, td) = (self.data(source), self.data(target));
-        self.union_or_intersection_related_to_as(r, source, sd, target, td, state)
-    }
-
-    /// `sd`, `td`: what `source` and `target` are.
-    fn union_or_intersection_related_to_as(
+    /// `unionOrIntersectionRelatedTo`. The order matters: unions before intersections, "each" before "some". `sd`, `td`: what `source`
+    /// and `target` are.
+    fn union_or_intersection_related_to_as<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -3148,10 +3289,18 @@ impl<'p> Checker<'p> {
             {
                 return Ternary::TRUE;
             }
+            // `TypeFlagsPrimitive`: `boolean` and an enum have it, some of the members of an enum have not.
+            if REPORT && !self.is_boolean(source) && self.union_enum_symbol(source).is_none() {
+                return if r.relation == Relation::Comparable {
+                    self.some_type_related_to_type::<true>(r, source, target, state)
+                } else {
+                    self.each_type_related_to_type::<true>(r, source, target, state)
+                };
+            }
             return if r.relation == Relation::Comparable {
-                self.some_type_related_to_type(r, source, target, state)
+                self.some_type_related_to_type::<false>(r, source, target, state)
             } else {
-                self.each_type_related_to_type(r, source, target, state)
+                self.each_type_related_to_type::<false>(r, source, target, state)
             };
         }
         if target_is_union {
@@ -3163,10 +3312,13 @@ impl<'p> Checker<'p> {
             } else {
                 state
             };
-            return self.type_related_to_some_type(r, source, target, state);
+            if REPORT && !self.has_primitive_flag(source) && !self.has_primitive_flag(target) {
+                return self.type_related_to_some_type::<true>(r, source, target, state);
+            }
+            return self.type_related_to_some_type::<false>(r, source, target, state);
         }
         if matches!(td, TypeData::Intersection(_)) {
-            return self.type_related_to_each_type(r, source, target, STATE_TARGET);
+            return self.type_related_to_each_type::<REPORT>(r, source, target, STATE_TARGET);
         }
         // The source is an intersection. `T & 1` with `T extends 1 | 2` is not to seem comparable to `2`.
         let mut source = source;
@@ -3196,7 +3348,8 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        self.some_type_related_to_type(r, source, target, STATE_SOURCE)
+        // Whether some member of it is related says nothing worth telling.
+        self.some_type_related_to_type::<false>(r, source, target, STATE_SOURCE)
     }
 
     fn parts_of_intersection(&self, t: TypeId) -> &'p [TypeId] {
@@ -3223,8 +3376,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `someTypeRelatedToType`
-    fn some_type_related_to_type(
+    /// `someTypeRelatedToType`: what is wrong with the last member is said.
+    fn some_type_related_to_type<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -3235,8 +3388,12 @@ impl<'p> Checker<'p> {
         if is_union && self.contains_type(types, target) {
             return Ternary::TRUE;
         }
-        for &t in types {
-            let related = self.is_related_to_ex(r, t, target, REC_SOURCE, state);
+        for (i, &t) in types.iter().enumerate() {
+            let related = if REPORT && i + 1 == types.len() {
+                self.is_related_to_ex::<true>(r, t, target, REC_SOURCE, state)
+            } else {
+                self.is_related_to_ex::<false>(r, t, target, REC_SOURCE, state)
+            };
             if related.holds() {
                 return related;
             }
@@ -3244,8 +3401,8 @@ impl<'p> Checker<'p> {
         Ternary::FALSE
     }
 
-    /// `eachTypeRelatedToType`
-    fn each_type_related_to_type(
+    /// `eachTypeRelatedToType`: what is wrong with the first member that is not related is said.
+    fn each_type_related_to_type<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -3284,13 +3441,13 @@ impl<'p> Checker<'p> {
                 } else {
                     at + skipped.len()
                 };
-                let related = self.is_related_to_ex(r, t, targets[at], REC_BOTH, state);
+                let related = self.is_related_to_ex::<false>(r, t, targets[at], REC_BOTH, state);
                 if related.holds() {
                     result &= related;
                     continue;
                 }
             }
-            let related = self.is_related_to_ex(r, t, target, REC_SOURCE, state);
+            let related = self.is_related_to_ex::<REPORT>(r, t, target, REC_SOURCE, state);
             if !related.holds() {
                 return Ternary::FALSE;
             }
@@ -3300,7 +3457,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `typeRelatedToSomeType`
-    pub(super) fn type_related_to_some_type(
+    fn type_related_to_some_type<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -3347,16 +3504,20 @@ impl<'p> Checker<'p> {
             }
         }
         for &t in types {
-            let related = self.is_related_to_ex(r, source, t, REC_TARGET, state);
+            let related = self.is_related_to_ex::<false>(r, source, t, REC_TARGET, state);
             if related.holds() {
                 return related;
             }
+        }
+        // Only against the member it is most likely meant for.
+        if REPORT && let Some(best) = self.best_matching_type(source, target) {
+            self.is_related_to_ex::<true>(r, source, best, REC_TARGET, state);
         }
         Ternary::FALSE
     }
 
     /// `typeRelatedToEachType`
-    fn type_related_to_each_type(
+    fn type_related_to_each_type<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -3365,7 +3526,7 @@ impl<'p> Checker<'p> {
     ) -> Ternary {
         let mut result = Ternary::TRUE;
         for &t in self.constituents(target) {
-            let related = self.is_related_to_ex(r, source, t, REC_TARGET, state);
+            let related = self.is_related_to_ex::<REPORT>(r, source, t, REC_TARGET, state);
             if !related.holds() {
                 return Ternary::FALSE;
             }
@@ -3383,7 +3544,7 @@ impl<'p> Checker<'p> {
     ) -> Ternary {
         let mut result = Ternary::TRUE;
         for &t in self.constituents(source) {
-            let related = self.type_related_to_some_type(r, t, target, STATE_NONE);
+            let related = self.type_related_to_some_type::<false>(r, t, target, STATE_NONE);
             if !related.holds() {
                 return Ternary::FALSE;
             }
@@ -3571,7 +3732,7 @@ impl<'p> Checker<'p> {
     /// `recursiveTypeRelatedTo`: the answer if it is known; yes, for now, if it is being worked out, or if both types go on
     /// unfolding for ever; otherwise a look at what is in them. `sd`, `td`: what `source` and `target` are.
     #[allow(clippy::too_many_arguments)]
-    fn recursive_type_related_to(
+    fn recursive_type_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -3597,15 +3758,23 @@ impl<'p> Checker<'p> {
         if missed.is_none()
             && !self.retracing
             && let Some(entry) = self.p.relations.get(&key)
-            && !(r.is_only_run && entry & FAILED != 0 && r.maybe_keys_set.contains(&key))
+            // A failure that is remembered is gone through again for what there is to say about it.
+            && !(REPORT && entry & FAILED != 0 && entry & COMPLEXITY_OVERFLOW == 0)
         {
             self.reliability |= entry & (REPORTS_UNMEASURABLE | REPORTS_UNRELIABLE);
+            if REPORT && entry & COMPLEXITY_OVERFLOW != 0 {
+                let (source, target) = (self.type_to_string(source), self.type_to_string(target));
+                r.report_error(2859, vec![source, target]);
+            }
             if entry & COMPLEXITY_OVERFLOW != 0 {
                 // The comparison was cut short when it was made.
                 self.relation_gave_up = true;
                 r.hit_cached_overflow = true;
             }
             return Ternary::of(entry & SUCCEEDED != 0);
+        }
+        if !REPORT && r.keeps_failures && r.failed.contains(&key) {
+            return Ternary::FALSE;
         }
         if r.relation_count <= 0 {
             r.overflow = true;
@@ -3683,7 +3852,7 @@ impl<'p> Checker<'p> {
         let result = if r.expanding == REC_BOTH {
             Ternary::MAYBE
         } else {
-            self.structured_type_related_to(r, source, sd, target, td, state)
+            self.structured_type_related_to::<REPORT>(r, source, sd, target, td, state)
         };
         let is_tainted = self.end_taint_scope(taint_scope);
         let propagating = self.reliability;
@@ -3715,7 +3884,8 @@ impl<'p> Checker<'p> {
         }
         // tsgo reports an instantiation limit at the node that is current when the comparison is first made. A comparison that hit one
         // that could not be reported is made again, so that `check_excessive_depth` comes to the limit.
-        let is_cacheable = !is_tainted && self.unreported_event <= events_before;
+        // With reports the answer can be another (`relate_variances`): it is nobody else's.
+        let is_cacheable = !REPORT && !is_tainted && self.unreported_event <= events_before;
         if result.holds() {
             if result == Ternary::TRUE || r.source_stack.is_empty() && r.target_stack.is_empty() {
                 // What held on assumptions holds now that there are none left. What is not known stays so.
@@ -3729,7 +3899,12 @@ impl<'p> Checker<'p> {
             }
         } else {
             // What is false on assumptions is false without. A failure that follows from a comparison that was cut short is not kept.
-            if is_cacheable && !r.overflow && !r.hit_cached_overflow {
+            let is_cut_short = r.overflow || r.hit_cached_overflow;
+            if r.keeps_failures {
+                if !is_cut_short {
+                    r.failed.insert(key);
+                }
+            } else if is_cacheable && !is_cut_short {
                 self.p.relations.insert(key, FAILED | propagating);
             }
             r.relation_count -= 1;
@@ -4028,7 +4203,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `structuredTypeRelatedTo`. `sd`, `td`: what `source` and `target` are.
-    fn structured_type_related_to(
+    fn structured_type_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -4037,7 +4212,9 @@ impl<'p> Checker<'p> {
         td: &'p TypeData,
         state: u8,
     ) -> Ternary {
-        let mut result = self.structured_type_related_to_worker(r, source, sd, target, td, state);
+        let saved = REPORT.then(|| r.get_error_state());
+        let mut result =
+            self.structured_type_related_to_worker::<REPORT>(r, source, sd, target, td, state);
         if r.relation == Relation::Identity {
             return result;
         }
@@ -4057,7 +4234,7 @@ impl<'p> Checker<'p> {
                 self.effective_constraint_of_intersection_ex(types, target_is_union, restrictive)
                 && self.every_type(constraint, |_, c| c != source)
             {
-                result = self.is_related_to_ex(r, constraint, target, REC_SOURCE, state);
+                result = self.is_related_to_ex::<false>(r, constraint, target, REC_SOURCE, state);
             }
         }
         if result.holds()
@@ -4068,7 +4245,7 @@ impl<'p> Checker<'p> {
         {
             // Part by part, nothing sees what is too much, or too little, further in. What is in a literal that is no longer fresh
             // is not fresh either (`getRegularTypeOfObjectLiteral`).
-            result &= self.properties_of_apparent_type_related_to(
+            result &= self.properties_of_apparent_type_related_to::<REPORT>(
                 r,
                 source,
                 target,
@@ -4079,7 +4256,8 @@ impl<'p> Checker<'p> {
                 && state & STATE_REGULAR == 0
                 && self.is_fresh_object_literal_type(source)
             {
-                result &= self.index_signatures_related_to(r, source, target, false, STATE_NONE);
+                result &= self
+                    .index_signatures_related_to::<REPORT>(r, source, target, false, STATE_NONE);
             }
         } else if result.holds()
             && is_object_kind(td)
@@ -4089,7 +4267,13 @@ impl<'p> Checker<'p> {
             && self.is_source_intersection_needing_extra_check(source, target)
         {
             // `T & { a: boolean }` fits `{ a?: string }` by its first part.
-            result &= self.properties_of_apparent_type_related_to(r, source, target, true, state);
+            result &= self
+                .properties_of_apparent_type_related_to::<REPORT>(r, source, target, true, state);
+        }
+        if let Some(saved) = &saved
+            && result.holds()
+        {
+            r.restore_error_state(saved);
         }
         result
     }
@@ -4097,7 +4281,7 @@ impl<'p> Checker<'p> {
     /// `propertiesRelatedTo`, as `structuredTypeRelatedTo` calls it. `getPropertyOfType` reads the apparent type, which is a union for
     /// an intersection with a type parameter that has a union constraint. A union has the properties that all of its members have
     /// (`CheckFlagsReadPartial`), each with the union of their types.
-    pub(super) fn properties_of_apparent_type_related_to(
+    pub(super) fn properties_of_apparent_type_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -4107,7 +4291,14 @@ impl<'p> Checker<'p> {
     ) -> Ternary {
         // The type parameters of a restrictive instantiation extend nothing.
         if !self.is_intersection(source) || r.relation == Relation::Restrictive {
-            return self.properties_related_to(r, source, target, &[], optionals_only, state);
+            return self.properties_related_to::<REPORT>(
+                r,
+                source,
+                target,
+                &[],
+                optionals_only,
+                state,
+            );
         }
         let apparent = self.apparent_type(source);
         // `createUnionOrIntersectionProperty` reads the apparent type of each member.
@@ -4120,7 +4311,14 @@ impl<'p> Checker<'p> {
         members.retain(|member| !self.is_error_type(*member) && !member.is_never());
         if members.len() < 2 {
             let source = members.first().copied().unwrap_or(source);
-            return self.properties_related_to(r, source, target, &[], optionals_only, state);
+            return self.properties_related_to::<REPORT>(
+                r,
+                source,
+                target,
+                &[],
+                optionals_only,
+                state,
+            );
         }
         let mut partial: SmallVec<[Atom; 4]> = SmallVec::new();
         if let Some(wanted) = self.members(target) {
@@ -4136,8 +4334,14 @@ impl<'p> Checker<'p> {
         }
         let mut result = Ternary::TRUE;
         for &member in &members {
-            result &=
-                self.properties_related_to(r, member, target, &partial, optionals_only, state);
+            result &= self.properties_related_to::<REPORT>(
+                r,
+                member,
+                target,
+                &partial,
+                optionals_only,
+                state,
+            );
             if !result.holds() {
                 break;
             }
@@ -4164,16 +4368,17 @@ impl<'p> Checker<'p> {
     }
 
     /// The `relateVariances` closure of `structuredTypeRelatedToWorker`. `Some`: that settles it.
-    fn relate_variances(
+    fn relate_variances<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         sources: &[TypeId],
         targets: &[TypeId],
         variances: &[u8],
         state: u8,
-        variance_check_failed: &mut bool,
+        shared: &mut WorkerState,
     ) -> Option<Ternary> {
-        let result = self.type_arguments_related_to(r, sources, targets, variances, state);
+        let result =
+            self.type_arguments_related_to::<REPORT>(r, sources, targets, variances, state);
         if result.holds() {
             return Some(result);
         }
@@ -4182,13 +4387,23 @@ impl<'p> Checker<'p> {
             .iter()
             .any(|v| v & ALLOWS_STRUCTURAL_FALLBACK != 0)
         {
+            // What the type arguments had to say may not help: the type parameter was taken to be the same on both sides.
+            if REPORT {
+                shared.original_error_chain = None;
+                r.restore_error_state(&shared.save_error_state);
+            }
             return None;
         }
         // A `void` argument for something that is only ever given back lets anything through.
         let allow_structural_fallback = self.has_covariant_void_argument(targets, variances);
-        *variance_check_failed = !allow_structural_fallback;
+        shared.variance_check_failed = !allow_structural_fallback;
         if !variances.is_empty() && !allow_structural_fallback {
-            return Some(Ternary::FALSE);
+            // With an invariant type parameter what is in the two types shows why it is one.
+            if !(REPORT && variances.iter().any(|v| v & VARIANCE_MASK == INVARIANT)) {
+                return Some(Ternary::FALSE);
+            }
+            shared.original_error_chain = r.error_chain.clone();
+            r.restore_error_state(&shared.save_error_state);
         }
         None
     }
@@ -4216,14 +4431,13 @@ impl<'p> Checker<'p> {
         r.relation_count = 2_000_000;
         r.cycles = self.cycles;
         r.steps = 0;
-        let mut variance_check_failed = false;
-        let result = self.relate_variances(
+        let result = self.relate_variances::<false>(
             &mut r,
             sources,
             targets,
             &variances,
             STATE_NONE,
-            &mut variance_check_failed,
+            &mut WorkerState::default(),
         );
         let overflow = r.overflow;
         r.maybe_keys.clear();
@@ -4242,7 +4456,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `structuredTypeRelatedToWorker`. `sd`, `td`: what `source` and `target` are.
-    fn structured_type_related_to_worker(
+    pub(super) fn structured_type_related_to_worker<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -4252,7 +4466,10 @@ impl<'p> Checker<'p> {
         state: u8,
     ) -> Ternary {
         let relation = r.relation;
-        let mut variance_check_failed = false;
+        let mut shared = WorkerState::default();
+        if REPORT {
+            shared.save_error_state = r.get_error_state();
+        }
         if relation == Relation::Identity {
             match (sd, td) {
                 (TypeData::Union(_), _) | (TypeData::Intersection(_), _) => {
@@ -4354,7 +4571,8 @@ impl<'p> Checker<'p> {
                 return Ternary::FALSE;
             }
         } else if is_union_or_intersection_kind(sd) || is_union_or_intersection_kind(td) {
-            let result = self.union_or_intersection_related_to_as(r, source, sd, target, td, state);
+            let result = self
+                .union_or_intersection_related_to_as::<REPORT>(r, source, sd, target, td, state);
             if result.holds() {
                 return result;
             }
@@ -4397,13 +4615,13 @@ impl<'p> Checker<'p> {
             if variances.is_empty() {
                 return Ternary::UNKNOWN;
             }
-            if let Some(result) = self.relate_variances(
+            if let Some(result) = self.relate_variances::<REPORT>(
                 r,
                 &source_args,
                 &target_args,
                 &variances,
                 state,
-                &mut variance_check_failed,
+                &mut shared,
             ) {
                 return result;
             }
@@ -4449,7 +4667,8 @@ impl<'p> Checker<'p> {
                 if matches!(sd, TypeData::Ref { .. })
                     && let Some(base) = self.single_base_for_non_augmenting_subtype(source)
                 {
-                    return self.is_related_to(r, base, target, REC_SOURCE);
+                    return self
+                        .is_related_to_ex::<REPORT>(r, base, target, REC_SOURCE, STATE_NONE);
                 }
                 // `{ [P in Q]: X }` fits `T` if `keyof T` fits `Q` and `X` fits `T[Q]`.
                 if is_mapped_kind(sd) && self.mapped_name_type(source).is_none() {
@@ -4460,7 +4679,8 @@ impl<'p> Checker<'p> {
                         let template = self.mapped_template(source);
                         let param = self.mapped_type_param(source);
                         let wanted = self.indexed_access(target, param);
-                        let result = self.is_related_to(r, template, wanted, REC_BOTH);
+                        let result = self
+                            .is_related_to_ex::<REPORT>(r, template, wanted, REC_BOTH, STATE_NONE);
                         if result.holds() {
                             return result;
                         }
@@ -4484,12 +4704,17 @@ impl<'p> Checker<'p> {
                 } = *self.data(source)
                 {
                     // `S[K]` fits `T[J]` if `S` fits `T` and `K` fits `J`.
-                    let mut result = self.is_related_to(r, so, object, REC_BOTH);
+                    let mut result =
+                        self.is_related_to_ex::<REPORT>(r, so, object, REC_BOTH, STATE_NONE);
                     if result.holds() {
-                        result &= self.is_related_to(r, si, index, REC_BOTH);
+                        result &=
+                            self.is_related_to_ex::<REPORT>(r, si, index, REC_BOTH, STATE_NONE);
                     }
                     if result.holds() {
                         return result;
+                    }
+                    if REPORT {
+                        shared.original_error_chain = r.error_chain.clone();
                     }
                 }
                 // `S` fits `T[K]` if it fits what can be written to it whatever `T` and `K` are. That goes by what they extend.
@@ -4513,12 +4738,27 @@ impl<'p> Checker<'p> {
                             base_object != object,
                         )
                     {
-                        let result =
-                            self.is_related_to_ex(r, source, constraint, REC_TARGET, state);
+                        if REPORT && shared.original_error_chain.is_some() {
+                            r.restore_error_state(&shared.save_error_state);
+                        }
+                        let result = self
+                            .is_related_to_ex::<REPORT>(r, source, constraint, REC_TARGET, state);
                         if result.holds() {
                             return result;
                         }
+                        // Of the two chains the shorter.
+                        if REPORT
+                            && shared.original_error_chain.is_some()
+                            && r.error_chain.is_some()
+                            && chain_depth(&shared.original_error_chain)
+                                <= chain_depth(&r.error_chain)
+                        {
+                            r.error_chain = shared.original_error_chain.clone();
+                        }
                     }
+                }
+                if REPORT {
+                    shared.original_error_chain = None;
                 }
             }
             TypeData::Keyof(of) => {
@@ -4535,7 +4775,8 @@ impl<'p> Checker<'p> {
                 {
                     // Only with variadic elements.
                     let known = self.known_keys_of_tuple_type(flags, *readonly);
-                    let result = self.is_related_to(r, source, known, REC_TARGET);
+                    let result =
+                        self.is_related_to_ex::<REPORT>(r, source, known, REC_TARGET, STATE_NONE);
                     if result.holds() {
                         return result;
                     }
@@ -4549,7 +4790,9 @@ impl<'p> Checker<'p> {
                         // For certain, or `T extends { [K in keyof T]: string }` would let anything through.
                         // `IndexFlagsNoReducibleCheck`: a union is its own constraint, and its `keyof` must not be deferred again.
                         let keys = self.keyof_ex(constraint, true);
-                        if self.is_related_to(r, source, keys, REC_TARGET) == Ternary::TRUE {
+                        if self.is_related_to_ex::<REPORT>(r, source, keys, REC_TARGET, STATE_NONE)
+                            == Ternary::TRUE
+                        {
                             return Ternary::TRUE;
                         }
                     } else if self.is_generic_mapped_type(of) {
@@ -4561,7 +4804,9 @@ impl<'p> Checker<'p> {
                             },
                             None => self.mapped_keys(of),
                         };
-                        if self.is_related_to(r, source, keys, REC_TARGET) == Ternary::TRUE {
+                        if self.is_related_to_ex::<REPORT>(r, source, keys, REC_TARGET, STATE_NONE)
+                            == Ternary::TRUE
+                        {
                             return Ternary::TRUE;
                         }
                     }
@@ -4587,12 +4832,13 @@ impl<'p> Checker<'p> {
                         Ternary::TRUE
                     } else {
                         let yes = self.cond_true(target);
-                        self.is_related_to_ex(r, source, yes, REC_TARGET, state)
+                        self.is_related_to_ex::<false>(r, source, yes, REC_TARGET, state)
                     };
                     if result.holds() {
                         if !skip_false {
                             let no = self.cond_false(target);
-                            result &= self.is_related_to_ex(r, source, no, REC_TARGET, state);
+                            result &=
+                                self.is_related_to_ex::<false>(r, source, no, REC_TARGET, state);
                         }
                         if result.holds() {
                             return result;
@@ -4671,7 +4917,9 @@ impl<'p> Checker<'p> {
                                     *self.data(non_null)
                                 && index == param
                             {
-                                let result = self.is_related_to(r, source, obj, REC_TARGET);
+                                let result = self.is_related_to_ex::<REPORT>(
+                                    r, source, obj, REC_TARGET, STATE_NONE,
+                                );
                                 if result.holds() {
                                     return result;
                                 }
@@ -4685,11 +4933,17 @@ impl<'p> Checker<'p> {
                                     }
                                 };
                                 let access = self.indexed_access(source, indexing);
-                                let result = self.is_related_to(r, access, template, REC_BOTH);
+                                let result = self.is_related_to_ex::<REPORT>(
+                                    r, access, template, REC_BOTH, STATE_NONE,
+                                );
                                 if result.holds() {
                                     return result;
                                 }
                             }
+                        }
+                        if REPORT {
+                            shared.original_error_chain = r.error_chain.clone();
+                            r.restore_error_state(&shared.save_error_state);
                         }
                     }
                 }
@@ -4713,14 +4967,25 @@ impl<'p> Checker<'p> {
                         self.restrictive_constraint_of(source)
                     };
                     let constraint = constraint.unwrap_or(TypeId::UNKNOWN);
-                    let result = self.is_related_to_ex(r, constraint, target, REC_SOURCE, state);
+                    let result =
+                        self.is_related_to_ex::<false>(r, constraint, target, REC_SOURCE, state);
                     if result.holds() {
                         return result;
                     }
                     // `getTypeWithThisArgument`: in what it has through what it extends, `this` is the type variable itself.
                     let with_this = self.reference_with_this(constraint, source);
-                    if with_this != constraint {
-                        let result = self.is_related_to_ex(r, with_this, target, REC_SOURCE, state);
+                    if REPORT
+                        && constraint != TypeId::UNKNOWN
+                        && !(self.is_type_param(target) && self.is_type_param(source))
+                    {
+                        let result =
+                            self.is_related_to_ex::<true>(r, with_this, target, REC_SOURCE, state);
+                        if result.holds() {
+                            return result;
+                        }
+                    } else if with_this != constraint {
+                        let result =
+                            self.is_related_to_ex::<false>(r, with_this, target, REC_SOURCE, state);
                         if result.holds() {
                             return result;
                         }
@@ -4732,7 +4997,8 @@ impl<'p> Checker<'p> {
                     {
                         // `{ [P in K]: E }[X]`: `E` with `X` for `P` was tried; now with what `X` extends.
                         let access = self.indexed_access(obj, index_constraint);
-                        let result = self.is_related_to(r, access, target, REC_SOURCE);
+                        let result = self
+                            .is_related_to_ex::<REPORT>(r, access, target, REC_SOURCE, STATE_NONE);
                         if result.holds() {
                             return result;
                         }
@@ -4741,7 +5007,11 @@ impl<'p> Checker<'p> {
             }
             TypeData::Keyof(of) => {
                 let any_key = self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
-                let result = self.is_related_to(r, any_key, target, REC_SOURCE);
+                let result = if REPORT && !self.is_generic_mapped_type(of) {
+                    self.is_related_to_ex::<true>(r, any_key, target, REC_SOURCE, STATE_NONE)
+                } else {
+                    self.is_related_to(r, any_key, target, REC_SOURCE)
+                };
                 if result.holds() {
                     return result;
                 }
@@ -4751,7 +5021,8 @@ impl<'p> Checker<'p> {
                         Some(name) => self.apparent_mapped_type_keys(name, of).unwrap_or(name),
                         None => self.mapped_keys(of),
                     };
-                    let result = self.is_related_to(r, keys, target, REC_SOURCE);
+                    let result =
+                        self.is_related_to_ex::<REPORT>(r, keys, target, REC_SOURCE, STATE_NONE);
                     if result.holds() {
                         return result;
                     }
@@ -4792,10 +5063,12 @@ impl<'p> Checker<'p> {
                         {
                             let (sy, ty) = (self.cond_true(source), self.cond_true(target));
                             let sy = self.instantiate(sy, mapper);
-                            let mut result = self.is_related_to(r, sy, ty, REC_BOTH);
+                            let mut result =
+                                self.is_related_to_ex::<REPORT>(r, sy, ty, REC_BOTH, STATE_NONE);
                             if result.holds() {
                                 let (sn, tn) = (self.cond_false(source), self.cond_false(target));
-                                result &= self.is_related_to(r, sn, tn, REC_BOTH);
+                                result &= self
+                                    .is_related_to_ex::<REPORT>(r, sn, tn, REC_BOTH, STATE_NONE);
                             }
                             if result.holds() {
                                 return result;
@@ -4805,7 +5078,13 @@ impl<'p> Checker<'p> {
                 }
                 // It is one of its branches.
                 let default_constraint = self.default_constraint_of_conditional(source);
-                let result = self.is_related_to(r, default_constraint, target, REC_SOURCE);
+                let result = self.is_related_to_ex::<REPORT>(
+                    r,
+                    default_constraint,
+                    target,
+                    REC_SOURCE,
+                    STATE_NONE,
+                );
                 if result.holds() {
                     return result;
                 }
@@ -4819,7 +5098,16 @@ impl<'p> Checker<'p> {
                         self.constraint_of_distributive_conditional(source)
                     };
                     if let Some(distributive) = distributive {
-                        let result = self.is_related_to(r, distributive, target, REC_SOURCE);
+                        if REPORT {
+                            r.restore_error_state(&shared.save_error_state);
+                        }
+                        let result = self.is_related_to_ex::<REPORT>(
+                            r,
+                            distributive,
+                            target,
+                            REC_SOURCE,
+                            STATE_NONE,
+                        );
                         if result.holds() {
                             return result;
                         }
@@ -4831,7 +5119,8 @@ impl<'p> Checker<'p> {
                     && let Some(constraint) = self.base_constraint_of(source)
                     && constraint != source
                 {
-                    let result = self.is_related_to(r, constraint, target, REC_SOURCE);
+                    let result = self
+                        .is_related_to_ex::<REPORT>(r, constraint, target, REC_SOURCE, STATE_NONE);
                     if result.holds() {
                         return result;
                     }
@@ -4842,26 +5131,27 @@ impl<'p> Checker<'p> {
                     if kind != tk {
                         return Ternary::FALSE;
                     }
-                    let result = self.is_related_to(r, ty, tt, REC_BOTH);
+                    let result = self.is_related_to_ex::<REPORT>(r, ty, tt, REC_BOTH, STATE_NONE);
                     if result.holds() {
                         return result;
                     }
                 } else if let Some(constraint) = self.base_constraint_of(source) {
-                    let result = self.is_related_to(r, constraint, target, REC_SOURCE);
+                    let result = self
+                        .is_related_to_ex::<REPORT>(r, constraint, target, REC_SOURCE, STATE_NONE);
                     if result.holds() {
                         return result;
                     }
                 }
             }
             _ => {
-                return self.objects_related_to(
+                return self.objects_related_to::<REPORT>(
                     r,
                     source,
                     sd,
                     target,
                     td,
                     state,
-                    &mut variance_check_failed,
+                    &mut shared,
                 );
             }
         }
@@ -4870,7 +5160,7 @@ impl<'p> Checker<'p> {
 
     /// The `default` case of the second `switch` of `structuredTypeRelatedToWorker`. `sd`, `td`: what `source` and `target` are.
     #[allow(clippy::too_many_arguments)]
-    fn objects_related_to(
+    fn objects_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -4878,7 +5168,7 @@ impl<'p> Checker<'p> {
         target: TypeId,
         td: &'p TypeData,
         state: u8,
-        variance_check_failed: &mut bool,
+        shared: &mut WorkerState,
     ) -> Ternary {
         let relation = r.relation;
         let target_is_mapped = is_mapped_kind(td);
@@ -4892,7 +5182,7 @@ impl<'p> Checker<'p> {
         }
         if target_is_mapped && self.is_generic(target) {
             if self.is_generic_mapped_type(source) {
-                let result = self.mapped_type_related_to(r, source, target);
+                let result = self.mapped_type_related_to::<REPORT>(r, source, target);
                 if result.holds() {
                     return result;
                 }
@@ -4908,6 +5198,10 @@ impl<'p> Checker<'p> {
             // An object type other than a mapped one is its own apparent type.
             if !is_object_kind(sd) || is_mapped_kind(sd) {
                 source = self.apparent_type_for_relation(source);
+                // It is named.
+                if REPORT {
+                    source = self.apparent_type_of_intersection(source);
+                }
                 sd = self.data(source);
             }
         } else if self.is_generic_mapped_type(source) {
@@ -4924,7 +5218,7 @@ impl<'p> Checker<'p> {
                 if variances.is_empty() {
                     return Ternary::UNKNOWN;
                 }
-                if let Some(result) = self.relate_variances(r, sa, ta, &variances, state, variance_check_failed) {
+                if let Some(result) = self.relate_variances::<REPORT>(r, sa, ta, &variances, state, shared) {
                     return result;
                 }
             }
@@ -4934,14 +5228,14 @@ impl<'p> Checker<'p> {
             {
                 if relation != Relation::Identity {
                     let (s, t) = (self.number_index_type_or_any(source), self.number_index_type_or_any(target));
-                    return self.is_related_to(r, s, t, REC_BOTH);
+                    return self.is_related_to_ex::<REPORT>(r, s, t, REC_BOTH, STATE_NONE);
                 }
                 return Ternary::FALSE;
             }
             (TypeData::Tuple { .. }, TypeData::Tuple { .. }) if is_generic_tuple_kind(sd) && !is_generic_tuple_kind(td) => {
                 let constraint = self.base_constraint_or_type(source);
                 if constraint != source {
-                    return self.is_related_to(r, constraint, target, REC_SOURCE);
+                    return self.is_related_to_ex::<REPORT>(r, constraint, target, REC_SOURCE, STATE_NONE);
                 }
             }
             _ if relation.is_subtype() && self.is_fresh_object_literal_type(target) && self.is_empty_object_type(target) && !self.is_empty_object_type(source) => {
@@ -4953,34 +5247,44 @@ impl<'p> Checker<'p> {
         let source_is_object_or_intersection =
             is_object_kind(sd) || matches!(sd, TypeData::Intersection(_));
         if source_is_object_or_intersection && is_object_kind(td) {
-            let mut both = None;
-            let mut result =
-                self.properties_related_to_noting(r, source, target, &[], false, state, &mut both);
+            // `reportStructuralErrors`: only if nothing has been said yet.
+            let primitive_or_keyword = (source_is_primitive, source_is_object_keyword);
+            let result = if REPORT
+                && is_same_chain(&r.error_chain, &shared.save_error_state.chain)
+                && !source_is_primitive
+            {
+                self.object_members_related_to::<true>(
+                    r,
+                    source,
+                    sd,
+                    target,
+                    td,
+                    state,
+                    primitive_or_keyword,
+                )
+            } else {
+                self.object_members_related_to::<false>(
+                    r,
+                    source,
+                    sd,
+                    target,
+                    td,
+                    state,
+                    primitive_or_keyword,
+                )
+            };
             if result.holds() {
-                result &=
-                    self.signatures_related_to_among(r, source, sd, target, td, false, state, both);
-                if result.holds() {
-                    result &= self
-                        .signatures_related_to_among(r, source, sd, target, td, true, state, both);
-                    if result.holds() {
-                        let source = if source_is_object_keyword {
-                            TypeId::OBJECT
-                        } else {
-                            source
-                        };
-                        result &= self.index_signatures_related_to_among(
-                            r,
-                            source,
-                            target,
-                            source_is_primitive,
-                            state,
-                            both,
-                        );
+                if !shared.variance_check_failed {
+                    return result;
+                }
+                // There is nothing to say of what is in them: what the type arguments had to say stands.
+                if REPORT {
+                    if shared.original_error_chain.is_some() {
+                        r.error_chain = shared.original_error_chain.clone();
+                    } else if r.error_chain.is_none() {
+                        r.error_chain = shared.save_error_state.chain.clone();
                     }
                 }
-            }
-            if result.holds() && !*variance_check_failed {
-                return result;
             }
         }
         // An object fits a union told apart by some properties if every way it can be is some member's.
@@ -5005,6 +5309,64 @@ impl<'p> Checker<'p> {
             }
         }
         Ternary::FALSE
+    }
+
+    /// The four comparisons of `structuredTypeRelatedToWorker` under `reportStructuralErrors`, which is `REPORT` here.
+    /// `primitive_or_keyword`: `sourceIsPrimitive`, and whether `source` stands for `object`.
+    #[allow(clippy::too_many_arguments)]
+    #[inline]
+    fn object_members_related_to<const REPORT: bool>(
+        &mut self,
+        r: &mut Relater,
+        source: TypeId,
+        sd: &'p TypeData,
+        target: TypeId,
+        td: &'p TypeData,
+        state: u8,
+        primitive_or_keyword: (bool, bool),
+    ) -> Ternary {
+        let (source_is_primitive, source_is_object_keyword) = primitive_or_keyword;
+        let mut both = None;
+        let mut result = self.properties_related_to_noting::<REPORT>(
+            r,
+            source,
+            target,
+            &[],
+            false,
+            state,
+            &mut both,
+        );
+        if result.holds() {
+            result &= self.signatures_related_to_among::<REPORT>(
+                r, source, sd, target, td, false, state, both,
+            );
+            if result.holds() {
+                result &= self.signatures_related_to_among::<REPORT>(
+                    r, source, sd, target, td, true, state, both,
+                );
+                if result.holds() {
+                    // tsgo compares, and names, `{}`.
+                    if REPORT && source_is_object_keyword {
+                        return result
+                            & self.report_index_signature_missing_in_object(r, source, target);
+                    }
+                    let source = if source_is_object_keyword {
+                        TypeId::OBJECT
+                    } else {
+                        source
+                    };
+                    result &= self.index_signatures_related_to_among::<REPORT>(
+                        r,
+                        source,
+                        target,
+                        source_is_primitive,
+                        state,
+                        both,
+                    );
+                }
+            }
+        }
+        result
     }
 
     /// `getApparentType`, where nothing to go by is `unknown` and not `{}`.
@@ -5222,7 +5584,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `typeArgumentsRelatedTo`
-    fn type_arguments_related_to(
+    pub(super) fn type_arguments_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         sources: &[TypeId],
@@ -5255,20 +5617,20 @@ impl<'p> Checker<'p> {
                     self.report_unreliable(s);
                 }
                 match variance {
-                    COVARIANT => self.is_related_to_ex(r, s, t, REC_BOTH, state),
-                    CONTRAVARIANT => self.is_related_to_ex(r, t, s, REC_BOTH, state),
+                    COVARIANT => self.is_related_to_ex::<REPORT>(r, s, t, REC_BOTH, state),
+                    CONTRAVARIANT => self.is_related_to_ex::<REPORT>(r, t, s, REC_BOTH, state),
                     BIVARIANT => {
                         let related = self.is_related_to(r, t, s, REC_BOTH);
                         if related.holds() {
                             related
                         } else {
-                            self.is_related_to_ex(r, s, t, REC_BOTH, state)
+                            self.is_related_to_ex::<REPORT>(r, s, t, REC_BOTH, state)
                         }
                     }
                     _ => {
-                        let mut related = self.is_related_to_ex(r, s, t, REC_BOTH, state);
+                        let mut related = self.is_related_to_ex::<REPORT>(r, s, t, REC_BOTH, state);
                         if related.holds() {
-                            related &= self.is_related_to_ex(r, t, s, REC_BOTH, state);
+                            related &= self.is_related_to_ex::<REPORT>(r, t, s, REC_BOTH, state);
                         }
                         related
                     }
@@ -5283,7 +5645,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `mappedTypeRelatedTo`: `[P in S]: X` fits `[Q in T]: Y` if `T` fits `S` and `X`, with `Q` for `P`, fits `Y`.
-    fn mapped_type_related_to(
+    pub(super) fn mapped_type_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -5313,7 +5675,8 @@ impl<'p> Checker<'p> {
         } else {
             self.report_unreliable(source_keys);
         }
-        let result = self.is_related_to(r, target_keys, source_keys, REC_BOTH);
+        let result =
+            self.is_related_to_ex::<REPORT>(r, target_keys, source_keys, REC_BOTH, STATE_NONE);
         if !result.holds() {
             return Ternary::FALSE;
         }
@@ -5329,7 +5692,7 @@ impl<'p> Checker<'p> {
         }
         let (st, tt) = (self.mapped_template(source), self.mapped_template(target));
         let st = self.instantiate(st, mapper);
-        result & self.is_related_to(r, st, tt, REC_BOTH)
+        result & self.is_related_to_ex::<REPORT>(r, st, tt, REC_BOTH, STATE_NONE)
     }
 
     /// `typeRelatedToDiscriminatedType`. `state`: `STATE_REGULAR` if `source` is an object literal that is no longer fresh.
@@ -5380,8 +5743,9 @@ impl<'p> Checker<'p> {
                         continue 'members;
                     };
                     if !self
-                        .property_related_to(
+                        .property_related_to::<false>(
                             r,
+                            (source, t),
                             prop,
                             chosen,
                             target_prop,
@@ -5407,13 +5771,14 @@ impl<'p> Checker<'p> {
             if !matching[m] {
                 continue;
             }
-            result &= self.properties_related_to(r, source, t, &excluded, false, state);
+            result &= self.properties_related_to::<false>(r, source, t, &excluded, false, state);
             if result.holds() {
-                result &= self.signatures_related_to(r, source, t, false, STATE_NONE);
+                result &= self.signatures_related_to::<false>(r, source, t, false, STATE_NONE);
                 if result.holds() {
-                    result &= self.signatures_related_to(r, source, t, true, STATE_NONE);
+                    result &= self.signatures_related_to::<false>(r, source, t, true, STATE_NONE);
                     if result.holds() && !(self.is_tuple(source) && self.is_tuple(t)) {
-                        result &= self.index_signatures_related_to(r, source, t, false, state);
+                        result &=
+                            self.index_signatures_related_to::<false>(r, source, t, false, state);
                     }
                 }
             }
@@ -5427,7 +5792,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── properties ─────────────────────────────
 
     /// `propertiesRelatedTo`
-    pub(super) fn properties_related_to(
+    pub(super) fn properties_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -5436,7 +5801,7 @@ impl<'p> Checker<'p> {
         optionals_only: bool,
         state: u8,
     ) -> Ternary {
-        self.properties_related_to_noting(
+        self.properties_related_to_noting::<REPORT>(
             r,
             source,
             target,
@@ -5449,7 +5814,7 @@ impl<'p> Checker<'p> {
 
     /// `both`: left with what `members` says of `source` and of `target`, if it was asked and will say the same from now on.
     #[allow(clippy::too_many_arguments)]
-    fn properties_related_to_noting(
+    fn properties_related_to_noting<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -5504,12 +5869,27 @@ impl<'p> Checker<'p> {
                 };
                 let target_min_length = target_flags.iter().filter(is_required).count();
                 if !source_rest && source_arity < target_min_length {
+                    if REPORT {
+                        let args = vec![source_arity.to_string(), target_min_length.to_string()];
+                        r.report_error(2618, args);
+                    }
                     return Ternary::FALSE;
                 }
                 if !target_has_rest_element && target_arity < source_min_length {
+                    if REPORT {
+                        let args = vec![source_min_length.to_string(), target_arity.to_string()];
+                        r.report_error(2619, args);
+                    }
                     return Ternary::FALSE;
                 }
                 if !target_has_rest_element && (source_rest || target_arity < source_arity) {
+                    if REPORT {
+                        if source_min_length < target_min_length {
+                            r.report_error(2620, vec![target_min_length.to_string()]);
+                        } else {
+                            r.report_error(2621, vec![target_arity.to_string()]);
+                        }
+                    }
                     return Ternary::FALSE;
                 }
                 let is_rest = |f: &ElemFlags| f.contains(ElemFlags::REST);
@@ -5541,16 +5921,27 @@ impl<'p> Checker<'p> {
                     if target_flag.contains(ElemFlags::VARIADIC)
                         && !source_flag.contains(ElemFlags::VARIADIC)
                     {
+                        if REPORT {
+                            r.report_error(2624, vec![target_position.to_string()]);
+                        }
                         return Ternary::FALSE;
                     }
                     if source_flag.contains(ElemFlags::VARIADIC)
                         && !target_flag.intersects(variable)
                     {
+                        if REPORT {
+                            let args =
+                                vec![source_position.to_string(), target_position.to_string()];
+                            r.report_error(2625, args);
+                        }
                         return Ternary::FALSE;
                     }
                     if target_flag.contains(ElemFlags::REQUIRED)
                         && !source_flag.contains(ElemFlags::REQUIRED)
                     {
+                        if REPORT {
+                            r.report_error(2623, vec![target_position.to_string()]);
+                        }
                         return Ternary::FALSE;
                     }
                     // Only as long as positions are what they seem.
@@ -5580,9 +5971,32 @@ impl<'p> Checker<'p> {
                             target_flag.contains(ElemFlags::OPTIONAL),
                         )
                     };
-                    let related =
-                        self.is_related_to_ex(r, source_type, target_check_type, REC_BOTH, state);
+                    let related = self.is_related_to_ex::<REPORT>(
+                        r,
+                        source_type,
+                        target_check_type,
+                        REC_BOTH,
+                        state,
+                    );
                     if !related.holds() {
+                        if REPORT && (target_arity > 1 || source_arity > 1) {
+                            if target_has_rest_element
+                                && source_position >= target_start_count
+                                && source_position_from_end >= target_end_count
+                                && target_start_count != source_arity - target_end_count - 1
+                            {
+                                let args = vec![
+                                    target_start_count.to_string(),
+                                    (source_arity - target_end_count - 1).to_string(),
+                                    target_position.to_string(),
+                                ];
+                                r.report_error(2627, args);
+                            } else {
+                                let args =
+                                    vec![source_position.to_string(), target_position.to_string()];
+                                r.report_error(2626, args);
+                            }
+                        }
                         return Ternary::FALSE;
                     }
                     result &= related;
@@ -5616,12 +6030,38 @@ impl<'p> Checker<'p> {
                 continue;
             }
             if self.inherited_property(&mut inherited, tp.name).is_none() {
+                // `shouldReportUnmatchedPropertyError`: a function that lacks what an object has is not that kind of thing.
+                let (s, t) = (sm.shape(), tm.shape());
+                if REPORT
+                    && (s.call.is_empty() && s.construct.is_empty()
+                        || !s.props.is_empty() && self.is_object_type(source)
+                        || !t.call.is_empty() && !s.call.is_empty()
+                        || !t.construct.is_empty() && !s.construct.is_empty())
+                {
+                    // `getUnmatchedProperties`
+                    let mut unmatched: Vec<&Prop> = Vec::new();
+                    for tp in &t.props {
+                        if !self.is_static_private_name(tp)
+                            && (require_optional_properties
+                                || !tp.flags.contains(PropFlags::OPTIONAL))
+                            && self.property_of_type(&sm, tp.name).is_none()
+                        {
+                            unmatched.push(tp);
+                        }
+                    }
+                    self.report_unmatched_property(r, source, target, &sm, &unmatched);
+                }
                 return Ternary::FALSE;
             }
         }
         if is_object_literal_kind(td) {
             for sp in &sm.shape().props {
                 if !excluded.contains(&sp.name) && tm.resolved.prop(sp.name).is_none() {
+                    if REPORT {
+                        let (name, in_type) =
+                            (self.prop_to_string(sp), self.type_to_string(target));
+                        r.report_error(2339, vec![name, in_type]);
+                    }
                     return Ternary::FALSE;
                 }
             }
@@ -5634,7 +6074,24 @@ impl<'p> Checker<'p> {
                 ..
             }
         );
-        for tp in &tm.shape().props {
+        // `getNamedMembers`: what nothing declares, the elements and the length of a tuple, comes last, by name. It decides which one
+        // is reported.
+        let mut in_order: Vec<&Prop> = Vec::new();
+        if REPORT && matches!(td, TypeData::Tuple { .. }) {
+            in_order.extend(&tm.shape().props);
+            let atoms = &self.files().atoms;
+            let place = |tp: &Prop| match tp.source {
+                PropSource::Type(_) => (true, atoms.bytes(tp.name)),
+                _ => (false, &[][..]),
+            };
+            in_order.sort_by(|a, b| place(a).cmp(&place(b)));
+        }
+        for (i, tp) in tm.shape().props.iter().enumerate() {
+            let tp = if REPORT {
+                in_order.get(i).copied().unwrap_or(tp)
+            } else {
+                tp
+            };
             if excluded.contains(&tp.name)
                 || optionals_only && !tp.flags.contains(PropFlags::OPTIONAL)
                 || target_is_class && tp.name == known::prototype
@@ -5649,8 +6106,9 @@ impl<'p> Checker<'p> {
                 continue;
             }
             let given = self.type_of_prop_as_read(sp, source_mapper);
-            let related = self.property_related_to(
+            let related = self.property_related_to::<REPORT>(
                 r,
+                (source, target),
                 sp,
                 given,
                 tp,
@@ -5674,11 +6132,13 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// `propertyRelatedTo`. `given`: the type of the source property, or the one of its alternatives that is looked at.
+    /// `propertyRelatedTo`. `of`: `source` and `target`, the two types the properties are of. `given`: the type of the source property, or
+    /// the one of its alternatives that is looked at.
     #[allow(clippy::too_many_arguments)]
-    fn property_related_to(
+    fn property_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
+        of: (TypeId, TypeId),
         source_prop: &Prop,
         given: TypeId,
         target_prop: &Prop,
@@ -5686,16 +6146,57 @@ impl<'p> Checker<'p> {
         state: u8,
         skip_optional: bool,
     ) -> Ternary {
+        let (source, target) = of;
         let (sf, tf) = (source_prop.flags, target_prop.flags);
         if sf.contains(PropFlags::PRIVATE) || tf.contains(PropFlags::PRIVATE) {
             if Self::value_declaration(source_prop) != Self::value_declaration(target_prop) {
+                if REPORT {
+                    let name = self.prop_to_string(target_prop);
+                    if sf.contains(PropFlags::PRIVATE) && tf.contains(PropFlags::PRIVATE) {
+                        r.report_error(2442, vec![name]);
+                    } else {
+                        let (private_in, other) = if sf.contains(PropFlags::PRIVATE) {
+                            (source, target)
+                        } else {
+                            (target, source)
+                        };
+                        let (private_in, other) =
+                            (self.type_to_string(private_in), self.type_to_string(other));
+                        r.report_error(2325, vec![name, private_in, other]);
+                    }
+                }
                 return Ternary::FALSE;
             }
         } else if tf.contains(PropFlags::PROTECTED) {
             if !self.is_valid_override_of(source_prop, target_prop) {
+                if REPORT {
+                    // `getDeclaringClass`
+                    let source_type = match self.declaring_class(source_prop) {
+                        Some(class) => self.declared_type(class),
+                        None => source,
+                    };
+                    let target_type = match self.declaring_class(target_prop) {
+                        Some(class) => self.declared_type(class),
+                        None => target,
+                    };
+                    let args = vec![
+                        self.prop_to_string(target_prop),
+                        self.type_to_string(source_type),
+                        self.type_to_string(target_type),
+                    ];
+                    r.report_error(2443, args);
+                }
                 return Ternary::FALSE;
             }
         } else if sf.contains(PropFlags::PROTECTED) {
+            if REPORT {
+                let args = vec![
+                    self.prop_to_string(target_prop),
+                    self.type_to_string(source),
+                    self.type_to_string(target),
+                ];
+                r.report_error(2444, args);
+            }
             return Ternary::FALSE;
         }
         // So that which of `{ readonly a }` and `{ a }` stays in a union does not depend on the order they are written in.
@@ -5713,9 +6214,13 @@ impl<'p> Checker<'p> {
         {
             Ternary::TRUE
         } else {
-            self.is_related_to_ex(r, given, wanted, REC_BOTH, state)
+            self.is_related_to_ex::<REPORT>(r, given, wanted, REC_BOTH, state)
         };
         if !related.holds() {
+            if REPORT {
+                let name = self.prop_to_string(target_prop);
+                r.report_error(2326, vec![name]);
+            }
             return Ternary::FALSE;
         }
         // `SymbolFlagsClassMember`: what a module, a namespace or an enum exports is no member.
@@ -5724,6 +6229,14 @@ impl<'p> Checker<'p> {
             && !tf.contains(PropFlags::OPTIONAL)
             && !matches!(target_prop.source, PropSource::Symbol(_))
         {
+            if REPORT {
+                let args = vec![
+                    self.prop_to_string(target_prop),
+                    self.type_to_string(source),
+                    self.type_to_string(target),
+                ];
+                r.report_error(2327, args);
+            }
             return Ternary::FALSE;
         }
         related
@@ -5896,7 +6409,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `signaturesRelatedTo`
-    pub(super) fn signatures_related_to(
+    pub(super) fn signatures_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -5905,12 +6418,14 @@ impl<'p> Checker<'p> {
         state: u8,
     ) -> Ternary {
         let (sd, td) = (self.data(source), self.data(target));
-        self.signatures_related_to_among(r, source, sd, target, td, construct, state, None)
+        self.signatures_related_to_among::<REPORT>(
+            r, source, sd, target, td, construct, state, None,
+        )
     }
 
     /// `sd`, `td`: what `source` and `target` are. `both`: what `members` says of them, if that is known.
     #[allow(clippy::too_many_arguments)]
-    fn signatures_related_to_among(
+    fn signatures_related_to_among<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -5989,6 +6504,9 @@ impl<'p> Checker<'p> {
             if self.is_abstract_signature(source_sigs[0])
                 && !self.is_abstract_signature(target_sigs[0])
             {
+                if REPORT {
+                    r.report_error(2517, Vec::new());
+                }
                 return Ternary::FALSE;
             }
             // `constructorVisibilitiesAreCompatible`
@@ -6000,6 +6518,10 @@ impl<'p> Checker<'p> {
                     || t == Flags::PROTECTED && s != Flags::PRIVATE
                     || t != Flags::PROTECTED && s.is_empty();
                 if !compatible {
+                    if REPORT {
+                        let args = vec![visibility_to_string(s), visibility_to_string(t)];
+                        r.report_error(2672, args);
+                    }
                     return Ternary::FALSE;
                 }
             }
@@ -6035,7 +6557,7 @@ impl<'p> Checker<'p> {
         if same_origin && source_sigs.len() == target_sigs.len() {
             // Instantiations of one type: signature by signature. Their type parameters are the same.
             for (&s, &t) in source_sigs.iter().zip(&target_sigs) {
-                let related = self.signature_related_to(r, s, t, true, state);
+                let related = self.signature_related_to::<REPORT>(r, s, t, true, construct, state);
                 if !related.holds() {
                     return Ternary::FALSE;
                 }
@@ -6043,21 +6565,38 @@ impl<'p> Checker<'p> {
             }
         } else if source_sigs.len() == 1 && target_sigs.len() == 1 {
             // A generic source is instantiated in the context of the target. With more signatures that would cost too much.
-            result = self.signature_related_to(
+            result = self.signature_related_to::<REPORT>(
                 r,
                 source_sigs[0],
                 target_sigs[0],
                 r.relation == Relation::Comparable,
+                construct,
                 state,
             );
         } else {
             'targets: for &t in &target_sigs {
+                let saved = REPORT.then(|| r.get_error_state());
+                // Only what is wrong with the first is said.
+                let mut should_elaborate = REPORT;
                 for &s in &source_sigs {
-                    let related = self.signature_related_to(r, s, t, true, state);
+                    let related = if REPORT && should_elaborate {
+                        self.signature_related_to::<true>(r, s, t, true, construct, state)
+                    } else {
+                        self.signature_related_to::<false>(r, s, t, true, construct, state)
+                    };
                     if related.holds() {
                         result &= related;
+                        if let Some(saved) = &saved {
+                            r.restore_error_state(saved);
+                        }
                         continue 'targets;
                     }
+                    should_elaborate = false;
+                }
+                if REPORT && should_elaborate {
+                    let (source, signature) =
+                        (self.type_to_string(source), self.signature_to_string(t));
+                    r.report_error(2658, vec![source, signature]);
                 }
                 return Ternary::FALSE;
             }
@@ -6065,13 +6604,14 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// `signatureRelatedTo`
-    pub(super) fn signature_related_to(
+    /// `signatureRelatedTo`. `construct`: which `incompatibleReporter` it is given.
+    fn signature_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: SigId,
         target: SigId,
         erase: bool,
+        construct: bool,
         state: u8,
     ) -> Ternary {
         let check_mode = match r.relation {
@@ -6079,13 +6619,25 @@ impl<'p> Checker<'p> {
             Relation::StrictSubtype => STRICT_TOP_SIGNATURE | STRICT_ARITY,
             _ => 0,
         };
+        let check_mode = if REPORT && construct {
+            check_mode | CONSTRUCT_SIGNATURE
+        } else {
+            check_mode
+        };
         let (given, wanted) = (source, target);
         let (source, target) = if erase {
             (self.erased_sig(source), self.erased_sig(target))
         } else {
             (source, target)
         };
-        self.compare_signatures_related(r, source, target, (given, wanted), check_mode, state)
+        self.compare_signatures_related::<REPORT>(
+            r,
+            source,
+            target,
+            (given, wanted),
+            check_mode,
+            state,
+        )
     }
 
     /// With every type parameter of its own replaced by `any`. `getErasedSignature`
@@ -6180,12 +6732,7 @@ impl<'p> Checker<'p> {
         self.has_any_flag(ret) || ret == TypeId::UNKNOWN
     }
 
-    /// `isInstantiatedGenericParameter`
-    pub(super) fn is_instantiated_generic_parameter(&mut self, sig: SigId, index: usize) -> bool {
-        self.is_instantiated_generic_parameter_of(&mut None, sig, index)
-    }
-
-    /// `target`: `Signature.target` of `sig`, once it has been asked for.
+    /// `isInstantiatedGenericParameter`. `target`: `Signature.target` of `sig`, once it has been asked for.
     fn is_instantiated_generic_parameter_of(
         &mut self,
         target: &mut Option<Option<SigId>>,
@@ -6314,7 +6861,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `compareSignaturesRelated`. `as_given`: the two before their type parameters were erased.
-    pub(super) fn compare_signatures_related(
+    pub(super) fn compare_signatures_related<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: SigId,
@@ -6324,17 +6871,20 @@ impl<'p> Checker<'p> {
         state: u8,
     ) -> Ternary {
         if r.relation != Relation::Permissive {
-            return self.compare_signatures_inside(r, source, target, as_given, check_mode, state);
+            return self.compare_signatures_inside::<REPORT>(
+                r, source, target, as_given, check_mode, state,
+            );
         }
         let around = self.own_of_compared_sigs.len();
         let own = self.sig_type_params(target);
         self.own_of_compared_sigs.extend_from_slice(&own);
-        let result = self.compare_signatures_inside(r, source, target, as_given, check_mode, state);
+        let result = self
+            .compare_signatures_inside::<REPORT>(r, source, target, as_given, check_mode, state);
         self.own_of_compared_sigs.truncate(around);
         result
     }
 
-    fn compare_signatures_inside(
+    fn compare_signatures_inside<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: SigId,
@@ -6370,6 +6920,10 @@ impl<'p> Checker<'p> {
                     self.min_argument_count(&sp) > target_count
                 };
             if source_has_more_parameters {
+                if REPORT && check_mode & STRICT_ARITY == 0 {
+                    let least = self.min_argument_count(&sp);
+                    r.report_error(2849, vec![least.to_string(), target_count.to_string()]);
+                }
                 return Ternary::FALSE;
             }
             sp.iter().any(|p| self.has_type_variables(p.ty))
@@ -6412,12 +6966,16 @@ impl<'p> Checker<'p> {
             let mut related = if strict_variance {
                 Ternary::FALSE
             } else {
-                self.is_related_to_ex(r, source_this, target_this, REC_BOTH, state)
+                self.is_related_to_ex::<false>(r, source_this, target_this, REC_BOTH, state)
             };
             if !related.holds() {
-                related = self.is_related_to_ex(r, target_this, source_this, REC_BOTH, state);
+                related =
+                    self.is_related_to_ex::<REPORT>(r, target_this, source_this, REC_BOTH, state);
             }
             if !related.holds() {
+                if REPORT {
+                    r.report_error(2685, Vec::new());
+                }
                 return Ternary::FALSE;
             }
             result &= related;
@@ -6486,7 +7044,7 @@ impl<'p> Checker<'p> {
                         } else {
                             BIVARIANT_CALLBACK
                         };
-                    self.compare_signatures_related(
+                    self.compare_signatures_related::<REPORT>(
                         r,
                         target_sig,
                         source_sig,
@@ -6497,13 +7055,18 @@ impl<'p> Checker<'p> {
                 }
                 None => {
                     let mut related = if check_mode & CALLBACK == 0 && !strict_variance {
-                        self.is_related_to_ex(r, source_type, target_type, REC_BOTH, state)
+                        self.is_related_to_ex::<false>(r, source_type, target_type, REC_BOTH, state)
                     } else {
                         Ternary::FALSE
                     };
                     if !related.holds() {
-                        related =
-                            self.is_related_to_ex(r, target_type, source_type, REC_BOTH, state);
+                        related = self.is_related_to_ex::<REPORT>(
+                            r,
+                            target_type,
+                            source_type,
+                            REC_BOTH,
+                            state,
+                        );
                     }
                     related
                 }
@@ -6514,7 +7077,7 @@ impl<'p> Checker<'p> {
                 && i >= self.min_argument_count(&sp)
                 && i < self.min_argument_count(&tp)
                 && self
-                    .is_related_to_ex(r, source_type, target_type, REC_BOTH, state)
+                    .is_related_to_ex::<false>(r, source_type, target_type, REC_BOTH, state)
                     .holds()
             {
                 related = Ternary::FALSE;
@@ -6527,6 +7090,13 @@ impl<'p> Checker<'p> {
                         "",
                         callbacks.is_some()
                     );
+                }
+                if REPORT {
+                    let names = vec![
+                        self.labeled_parameter_name_at_position(source, &sp, i),
+                        self.labeled_parameter_name_at_position(target, &tp, i),
+                    ];
+                    r.report_error(2328, names);
                 }
                 return Ternary::FALSE;
             }
@@ -6552,41 +7122,97 @@ impl<'p> Checker<'p> {
         if let Some(wanted) = self.sig_predicate(target) {
             match self.sig_predicate(source) {
                 Some(given) => {
-                    // `compareTypePredicateRelatedTo`
-                    if (given.asserts, given.param.is_none())
-                        != (wanted.asserts, wanted.param.is_none())
-                        || given.param != wanted.param
-                    {
-                        return Ternary::FALSE;
-                    }
-                    result &= match (given.ty, wanted.ty) {
-                        (a, b) if a == b => Ternary::TRUE,
-                        (Some(a), Some(b)) => self.is_related_to_ex(r, a, b, REC_BOTH, state),
-                        _ => Ternary::FALSE,
-                    };
+                    result &= self.compare_type_predicate_related_to::<REPORT>(
+                        r,
+                        (&given, &sp[..]),
+                        (&wanted, &tp[..]),
+                        state,
+                    );
                 }
                 // Only a type guard does where one is asked for.
-                None if !wanted.asserts => return Ternary::FALSE,
+                None if !wanted.asserts => {
+                    if REPORT {
+                        let signature = self.signature_to_string(source);
+                        r.report_error(1224, vec![signature]);
+                    }
+                    return Ternary::FALSE;
+                }
                 None => {}
             }
         } else {
             // What callbacks return is compared both ways too, or `interface Foo<T> { add(cb: () => T): void }` would not be
             // covariant in `T`.
             let mut related = if check_mode & BIVARIANT_CALLBACK != 0 {
-                self.is_related_to_ex(r, target_return, source_return, REC_BOTH, state)
+                self.is_related_to_ex::<false>(r, target_return, source_return, REC_BOTH, state)
             } else {
                 Ternary::FALSE
             };
             if !related.holds() {
-                related = self.is_related_to_ex(r, source_return, target_return, REC_BOTH, state);
+                related = self.is_related_to_ex::<REPORT>(
+                    r,
+                    source_return,
+                    target_return,
+                    REC_BOTH,
+                    state,
+                );
             }
             if !related.holds() && self.trace_relations {
                 let depth = r.source_stack.len();
                 eprintln!("{:depth$}what is returned", "");
             }
             result &= related;
+            // `incompatibleErrorReporter`
+            if REPORT && !result.holds() {
+                let construct = check_mode & CONSTRUCT_SIGNATURE != 0;
+                let marker = match (sp.is_empty() && tp.is_empty(), construct) {
+                    (true, true) => 2205,
+                    (true, false) => 2204,
+                    (false, true) => 2203,
+                    (false, false) => 2202,
+                };
+                r.report_error(marker, Vec::new());
+            }
         }
         result
+    }
+
+    /// `compareTypePredicateRelatedTo`. Each predicate comes with the parameters of its signature.
+    fn compare_type_predicate_related_to<const REPORT: bool>(
+        &mut self,
+        r: &mut Relater,
+        source: (&super::decl::Predicate, &[SigParam]),
+        target: (&super::decl::Predicate, &[SigParam]),
+        state: u8,
+    ) -> Ternary {
+        let (given, wanted) = (source.0, target.0);
+        let mut related = Ternary::FALSE;
+        if (given.asserts, given.param.is_none()) != (wanted.asserts, wanted.param.is_none()) {
+            if REPORT {
+                r.report_error(2518, Vec::new());
+            }
+        } else if given.param != wanted.param {
+            if REPORT {
+                let names = vec![
+                    self.parameter_name_at_position(source.1, given.param.unwrap_or(0)),
+                    self.parameter_name_at_position(target.1, wanted.param.unwrap_or(0)),
+                ];
+                r.report_error(1227, names);
+            }
+        } else {
+            related = match (given.ty, wanted.ty) {
+                (a, b) if a == b => Ternary::TRUE,
+                (Some(a), Some(b)) => self.is_related_to_ex::<REPORT>(r, a, b, REC_BOTH, state),
+                _ => Ternary::FALSE,
+            };
+        }
+        if REPORT && !related.holds() {
+            let predicates = vec![
+                self.type_predicate_text(given, source.1),
+                self.type_predicate_text(wanted, target.1),
+            ];
+            r.report_error(1226, predicates);
+        }
+        related
     }
 
     /// What stands for the type parameters around `sig` where it was found.
@@ -6715,7 +7341,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── index signatures ─────────────────────────────
 
     /// `indexSignaturesRelatedTo`
-    pub(super) fn index_signatures_related_to(
+    pub(super) fn index_signatures_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -6723,11 +7349,18 @@ impl<'p> Checker<'p> {
         source_is_primitive: bool,
         state: u8,
     ) -> Ternary {
-        self.index_signatures_related_to_among(r, source, target, source_is_primitive, state, None)
+        self.index_signatures_related_to_among::<REPORT>(
+            r,
+            source,
+            target,
+            source_is_primitive,
+            state,
+            None,
+        )
     }
 
     /// `both`: what `members` says of `source` and of `target`, if that is known.
-    fn index_signatures_related_to_among(
+    fn index_signatures_related_to_among<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -6781,9 +7414,9 @@ impl<'p> Checker<'p> {
                 Ternary::TRUE
             } else if target_has_string_index && self.is_generic_mapped_type(source) {
                 let template = self.mapped_template(source);
-                self.is_related_to(r, template, wanted, REC_BOTH)
+                self.is_related_to_ex::<REPORT>(r, template, wanted, REC_BOTH, STATE_NONE)
             } else {
-                self.type_related_to_index_info(r, source, info.key, wanted, state)
+                self.type_related_to_index_info::<REPORT>(r, source, info.key, wanted, state)
             };
             if !related.holds() {
                 return Ternary::FALSE;
@@ -6794,7 +7427,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `typeRelatedToIndexInfo`
-    fn type_related_to_index_info(
+    fn type_related_to_index_info<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -6806,8 +7439,14 @@ impl<'p> Checker<'p> {
             return Ternary::FALSE;
         };
         if let Some(given) = self.applicable_index_info(&sm, key, None) {
-            // `getRegularTypeOfObjectLiteral` leaves the index signatures as they are.
-            return self.is_related_to_ex(r, given, wanted, REC_BOTH, state & !STATE_REGULAR);
+            // `getApplicableIndexInfo`: the signature for the same keys, or else the one for strings.
+            let source_key = if !REPORT || sm.shape().index.iter().any(|i| i.key == key) {
+                key
+            } else {
+                TypeId::STRING
+            };
+            let (source, target) = ((source_key, given), (key, wanted));
+            return self.index_info_related_to::<REPORT>(r, source, target, state);
         }
         // A part of an intersection is never taken to have an index signature for what it has. For a strict subtype only an
         // object literal as written is, so that `{ [x: string]: X }` is one of `{}` and not the other way round as well.
@@ -6816,10 +7455,37 @@ impl<'p> Checker<'p> {
         {
             let looks = self.apparent_type_of_intersection(source);
             if self.is_object_type_with_inferable_index(looks) {
-                return self.members_related_to_index_info(r, &sm, key, wanted, state);
+                return self.members_related_to_index_info::<REPORT>(r, &sm, key, wanted, state);
             }
         }
+        if REPORT {
+            let (key, source) = (self.type_to_string(key), self.type_to_string(source));
+            r.report_error(2329, vec![key, source]);
+        }
         Ternary::FALSE
+    }
+
+    /// `indexInfoRelatedTo`. Each index signature is its key type and its value type.
+    fn index_info_related_to<const REPORT: bool>(
+        &mut self,
+        r: &mut Relater,
+        source: (TypeId, TypeId),
+        target: (TypeId, TypeId),
+        state: u8,
+    ) -> Ternary {
+        // `getRegularTypeOfObjectLiteral` leaves the index signatures as they are.
+        let state = state & !STATE_REGULAR;
+        let related = self.is_related_to_ex::<REPORT>(r, source.1, target.1, REC_BOTH, state);
+        if REPORT && !related.holds() {
+            let source_key = self.type_to_string(source.0);
+            if source.0 == target.0 {
+                r.report_error(2634, vec![source_key]);
+            } else {
+                let target_key = self.type_to_string(target.0);
+                r.report_error(2330, vec![source_key, target_key]);
+            }
+        }
+        related
     }
 
     /// `getApparentTypeOfIntersectionType`: the intersection of what the members of `ty` look like. `apparent_type` leaves an
@@ -6948,7 +7614,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `membersRelatedToIndexInfo`
-    fn members_related_to_index_info(
+    fn members_related_to_index_info<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         sm: &Members,
@@ -6977,8 +7643,12 @@ impl<'p> Checker<'p> {
             } else {
                 self.without_undefined(declared)
             };
-            let related = self.is_related_to_ex(r, given, wanted, REC_BOTH, state);
+            let related = self.is_related_to_ex::<REPORT>(r, given, wanted, REC_BOTH, state);
             if !related.holds() {
+                if REPORT {
+                    let name = self.prop_to_string(prop);
+                    r.report_error(2530, vec![name]);
+                }
                 return Ternary::FALSE;
             }
             result &= related;
@@ -6991,8 +7661,8 @@ impl<'p> Checker<'p> {
                 || self.is_assignable(info.key, key);
             if applies {
                 let given = self.instantiate(info.value, sm.mapper);
-                let related =
-                    self.is_related_to_ex(r, given, wanted, REC_BOTH, state & !STATE_REGULAR);
+                let (source, target) = ((info.key, given), (key, wanted));
+                let related = self.index_info_related_to::<REPORT>(r, source, target, state);
                 if !related.holds() {
                     return Ternary::FALSE;
                 }

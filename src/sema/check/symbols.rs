@@ -541,10 +541,20 @@ impl<'p> Checker<'p> {
         if !self.files().flags(alias).contains(SymFlags::ALIAS) {
             return Some(alias);
         }
+        if let Some(combined) = self.combined_symbol_of_alias(alias) {
+            return Some(combined);
+        }
         match self.originating_import_of_alias(alias) {
             Some(originating_import) => self.files().module_clone(originating_import),
             None => self.files().resolve_alias(alias),
         }
+    }
+
+    /// `getExternalModuleMember`: `combineValueAndTypeSymbols(symbolFromVariable, symbolFromModule)`, where it makes a symbol.
+    pub(super) fn combined_symbol_of_alias(&mut self, alias: Sym) -> Option<Sym> {
+        let combined = self.files().combined_symbol(alias)?;
+        self.imported_property_of_export_equals(alias)
+            .map(|_| combined)
     }
 
     /// Whether the alias `sym` ends at a property.

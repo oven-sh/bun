@@ -2716,7 +2716,10 @@ impl<'p> Checker<'p> {
                     }
                 }
                 // `resolveEntityName`: an alias is followed as far as the first symbol that is a type.
-                let target = self.files().resolve_alias_as(found, SymFlags::TYPE);
+                let target = match self.combined_symbol_of_alias(found) {
+                    Some(combined) => Some(combined),
+                    None => self.files().resolve_alias_as(found, SymFlags::TYPE),
+                };
                 let Some(sym) = target else {
                     let args = self.types_from_nodes(file, args);
                     return self.unresolved_name_type(&names, &args);
@@ -2771,19 +2774,6 @@ impl<'p> Checker<'p> {
                     let made_before = self.p.types.len();
                     ty = self.with_alias(ty, alias, &type_arguments);
                     self.p.types.mark_manifest(ty, made_before);
-                }
-                // `combineValueAndTypeSymbols`: an interface imported by name from an `export =` module whose value has a property of
-                // that name is a new symbol with a new declared type. `this` in its own members is still the `this` type of the
-                // original interface (`getThisType`), which the new type never binds.
-                if target.is_some()
-                    && found != sym
-                    && flags.contains(SymFlags::INTERFACE)
-                    && !self.files().flags(sym).intersects(SymFlags::VALUE)
-                    && self.interface_members_mention_this(sym)
-                    && self.imported_property_of_export_equals(found).is_some()
-                {
-                    let this = self.intern(TypeData::ThisParam(sym));
-                    return self.type_with_this_argument(ty, this);
                 }
                 ty
             }
@@ -2855,25 +2845,6 @@ impl<'p> Checker<'p> {
             scope = s.parent;
         }
         false
-    }
-
-    /// Whether a member declared by the interface `sym` itself mentions `this` (`NodeFlagsContainsThis`, as `isThislessInterface`
-    /// reads it).
-    fn interface_members_mention_this(&self, sym: Sym) -> bool {
-        let mut mentioned = Mentioned::default();
-        for (file, decl) in declarations_of(self.files(), sym) {
-            let Decl::Interface(interface) = decl else {
-                continue;
-            };
-            let hir = self.hir(file);
-            for m in hir[interface].members.iter() {
-                self.collect_mentions(file, hir[m].ty, &mut mentioned);
-                if hir[m].func.is_some() {
-                    self.collect_fn_mentions(file, hir[m].func, &mut mentioned);
-                }
-            }
-        }
-        mentioned.this || mentioned.everything
     }
 
     /// `getThisType`: `this` as a type, written at `node` in `scope`. Where there is no such thing it is in error, and what is in

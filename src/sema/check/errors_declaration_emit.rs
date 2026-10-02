@@ -1512,17 +1512,16 @@ impl<'p> EmitResolver<'_, 'p> {
     /// `resolveAlias`: what the alias is declared to stand for, and on from there while that is an alias and nothing else
     /// (`resolveSymbol`, `isNonLocalAlias`).
     fn resolve_alias(&mut self, alias: Sym) -> Option<Sym> {
+        if let Some(combined) = self.c.combined_symbol_of_alias(alias) {
+            return Some(combined);
+        }
         match self.c.originating_import_of_alias(alias) {
             Some(originating_import) => Some(self.c.module_clone(originating_import)),
-            None => {
-                let Some(target) = self.c.target_of_alias(alias) else {
-                    return Some(self.c.files().unknown_symbol);
-                };
-                // `combineValueAndTypeSymbols` makes a symbol that nothing else is and that exports nothing.
-                let is_combined = !self.c.flags_of(target).intersects(SymFlags::VALUE)
-                    && self.c.imported_property_of_export_equals(alias).is_some();
-                (!is_combined).then_some(target)
-            }
+            None => Some(
+                self.c
+                    .target_of_alias(alias)
+                    .unwrap_or(self.c.files().unknown_symbol),
+            ),
         }
     }
 

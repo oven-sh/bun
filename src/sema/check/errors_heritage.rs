@@ -5,6 +5,7 @@
 //! `checkInterfaceDeclaration`, `checkInheritedPropertiesAreIdentical` and `checkIndexConstraints` of TypeScript 7.0.2's checker.go.
 
 use super::errors::Diagnostic;
+use super::relate::Relation;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner};
 use smallvec::SmallVec;
@@ -408,33 +409,6 @@ impl Checker<'_> {
         self.explain_renamed(start, code, &plain, &with_this);
     }
 
-    /// The same for 2430 and the base type `base` of the interface `sym`. One that stays the type it is goes by the alias it is
-    /// written as after `extends`.
-    fn explain_base_of_interface(&mut self, sym: Sym, start: u32, base: TypeId) {
-        if self.without_alias_of_reference(base) != base {
-            self.explain_base_with_this(start, 2430, base);
-            return;
-        }
-        if !self.explains || !self.is_intersection(base) {
-            return;
-        }
-        if self.takes_this_argument(base) {
-            self.explain_base_with_this(start, 2430, base);
-            return;
-        }
-        for (file, decl) in self.files().decls(sym) {
-            let Decl::Interface(i) = decl else { continue };
-            let hir = self.hir(file);
-            for node in hir.ids(hir[i].extends) {
-                if let Some(alias) = self.alias_name_as_written(file, node, base) {
-                    let written_out = self.type_to_string(base);
-                    self.explain_renamed(start, 2430, &written_out, &alias);
-                    return;
-                }
-            }
-        }
-    }
-
     /// Whether the property `name` of the first of `pair` fits that of the second. It does where one of them has none, and where it
     /// cannot be told.
     fn is_member_assignable(&mut self, pair: (TypeId, TypeId), name: Atom) -> bool {
@@ -791,28 +765,25 @@ impl Checker<'_> {
             let this = self.intern(TypeData::ThisParam(sym));
             for &base in bases.iter() {
                 // `resolveBaseTypesOfInterface`: what cannot be extended is no base type.
-                if self.is_known(base)
-                    && self.is_valid_base_type(base)
-                    && self.heir_against_base(ty, base, this).is_some()
-                {
-                    // `getTypeWithThisArgument` gives back what is no reference.
-                    let mut with_this = [ty, base];
-                    for t in &mut with_this {
-                        if self.takes_this_argument(*t) {
-                            *t = self.type_with_this_argument(*t, this);
-                        }
-                    }
-                    let [type_with_this, base_with_this] = with_this;
-                    self.report_not_assignable_in_one_run(
-                        type_with_this,
-                        base_with_this,
-                        name_pos,
-                        2430,
-                        out,
-                    );
-                    self.explain_as_another(name_pos);
-                    self.explain_base_of_interface(sym, name_pos, base);
+                if !self.is_known(base) || !self.is_valid_base_type(base) {
+                    continue;
                 }
+                // `getTypeWithThisArgument` gives back what is no reference. To tell costs (`isThislessInterface`), and whether the two are
+                // related does not hang on it: it is asked once they are not.
+                let mut with_this = [ty, base].map(|t| self.type_with_this_argument(t, this));
+                let [source, target] = with_this;
+                if self.is_type_related_to_if_told(source, target, Relation::Assignable, true)
+                    == Some(true)
+                {
+                    continue;
+                }
+                for (t, plain) in with_this.iter_mut().zip([ty, base]) {
+                    if !self.takes_this_argument(plain) {
+                        *t = plain;
+                    }
+                }
+                let [type_with_this, base_with_this] = with_this;
+                self.check_type_assignable_to(type_with_this, base_with_this, Some(at), Some(2430));
             }
         } else if !self.check_inherited_properties_are_identical(sym, ty, &bases, None) {
             return;

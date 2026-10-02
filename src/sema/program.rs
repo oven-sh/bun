@@ -37,10 +37,34 @@ pub struct Sym {
     pub id: SymbolId,
 }
 
+/// A symbol made for an alias of a file, which no file declares (`SymbolFlagsTransient`): what `cloneTypeAsModuleType` makes for
+/// `import * as ns`, or `combineValueAndTypeSymbols` for a name imported from `export = value`. It is in `bound.symbols` of the file of
+/// the alias, after what the binder made.
+#[derive(Copy, Clone)]
+struct TransientSymbol {
+    /// `exportTypeLinks.originatingImport`
+    alias: SymbolId,
+    symbol: SymbolId,
+    /// `exportTypeLinks.target`, or the type symbol.
+    target: Sym,
+    is_combined: bool,
+}
+
+fn add_transient_symbols(module: &mut Module, made: Vec<(TransientSymbol, Symbol)>) {
+    module.bound.symbols.reserve_exact(made.len());
+    for (mut links, symbol) in made {
+        links.symbol = SymbolId(module.bound.symbols.len() as u32);
+        module.bound.symbols.push(symbol);
+        module.transient_symbols.push(links);
+    }
+}
+
 pub struct Module {
     pub path: String,
     pub hir: hir::File,
     pub bound: Bound,
+    /// There as long as `bound` is. Whether an alias stands for what was made for it, only types tell.
+    transient_symbols: Vec<TransientSymbol>,
     /// One of TypeScript's own `lib.*.d.ts`.
     pub is_lib: bool,
     /// Which file each specifier the file mentions means, in each of the ways it is looked for there (`getModeForUsageLocation`).
@@ -138,6 +162,7 @@ impl Drop for AtHand<'_> {
         let module = unsafe { &mut *module.0.get() };
         module.hir = stub_of(&mut module.hir, false);
         module.bound = Bound::default();
+        module.transient_symbols.clear();
         crate::local::end();
         crate::types::TypeStore::end_local();
     }
@@ -361,11 +386,7 @@ pub struct Files {
     /// The aliases `mergeSymbol` resolved to add to what they stand for, with the links they got then. `aliasTarget` is a part of
     /// something since (`cloneSymbol`), and `resolveAlias` does not ask `getMergedSymbol`.
     resolved_at_merge: Vec<(Sym, AliasSymbolLinks)>,
-    /// `cloneTypeAsModuleType`: the symbol made for an `import * as ns`, by the alias that declares (`originatingImport`). Whether the
-    /// alias stands for it or for what it is a copy of, only types tell.
-    module_clones: FxHashMap<Sym, Sym>,
-    /// `exportTypeLinks.target`, `originatingImport`: what each of them is a copy of, and what for.
-    module_clone_targets: FxHashMap<Sym, (Sym, Sym)>,
+
     /// Some file says `export type * from`.
     has_type_only_stars: bool,
 
@@ -1941,8 +1962,7 @@ impl Files {
             refused_merges: Vec::new(),
             circular_at_merge: Vec::new(),
             resolved_at_merge: Vec::new(),
-            module_clones: FxHashMap::default(),
-            module_clone_targets: FxHashMap::default(),
+
             has_type_only_stars,
             alias_symbol_links: ByNodeKept::new(&symbols),
             is_merged: false,
@@ -2153,6 +2173,9 @@ impl Files {
         module.hir = hir;
         module.bound = bound;
         crate::local::begin(file.0, std::ptr::null());
+        let made = self.transient_symbols_of(file);
+        // SAFETY: as above.
+        add_transient_symbols(unsafe { &mut *cell.0.get() }, made);
         AtHand { module: Some(cell) }
     }
 
@@ -2438,6 +2461,7 @@ impl Files {
             is_transient: false,
             adds_nothing: false,
             is_dropped: false,
+            transient_symbols: Vec::new(),
         };
         let mut module = module;
         module.adds_nothing = !is_lib
@@ -2729,7 +2753,7 @@ impl Files {
         }
         self.merged_exports
             .insert(self.global_this_symbol, self.globals.clone());
-        self.make_module_clones();
+        self.make_transient_symbols();
         // What an alias was found to stand for while symbols were being put together may be a part of something by now.
         let symbols = Bases::new(self.modules.iter().map(|m| m.bound.symbols.len()));
         self.alias_symbol_links = ByNodeKept::new(&symbols);
@@ -2910,40 +2934,52 @@ impl Files {
         self.merged_symbols.insert(source, target);
     }
 
-    /// The symbol `cloneTypeAsModuleType` makes of `symbol` for `originating_import`: `newSymbol(symbol.Flags, symbol.Name)`, with a
-    /// copy of all that `symbol` has. Unlike `clone_symbol` it leaves `symbol` as it is, and no merge is recorded.
-    fn clone_type_as_module_type(&mut self, symbol: Sym, originating_import: Sym) -> Sym {
-        let parts = self.merged_parts.get(&symbol).cloned();
-        let every_part = self.every_part.get(&symbol).cloned();
-        let exports = self.merged_exports.get(&symbol).cloned();
-        let symbols = &mut self.modules[symbol.file.idx()].bound.symbols;
-        let cloned = &symbols[symbol.id.idx()];
-        let clone = Symbol {
-            name: cloned.name,
-            flags: cloned.flags | SymFlags::TRANSIENT,
-            decls: bind::Decls::Many(cloned.decls.as_slice().into()),
-            parent: cloned.parent,
-            exports: cloned.exports,
+    /// `newSymbol(target.Flags, target.Name)`, for `alias`. What it has besides is read from `target` for as long as nothing is added
+    /// to it: see `parts` and `holder_of_exports`.
+    fn transient_symbol_for(
+        &self,
+        alias: SymbolId,
+        target: Sym,
+        is_combined: bool,
+    ) -> (TransientSymbol, Symbol) {
+        let links = TransientSymbol {
+            alias,
+            symbol: SymbolId::NONE,
+            target,
+            is_combined,
+        };
+        let mut flags = self.flags(target) | SymFlags::MERGED | SymFlags::TRANSIENT;
+        if is_combined {
+            flags |= SymFlags::PROPERTY;
+        }
+        let symbol = Symbol {
+            name: self.symbol(target).name,
+            flags,
+            decls: bind::Decls::Many(Box::default()),
+            parent: SymbolId::NONE,
+            exports: bind::TableId::NONE,
             export_symbol: SymbolId::NONE,
         };
-        let result = Sym {
-            file: symbol.file,
-            id: SymbolId(symbols.len() as u32),
+        (links, symbol)
+    }
+
+    /// The symbol `cloneTypeAsModuleType` makes of `symbol` for `originating_import` while symbols are put together, to be added to:
+    /// it gets a copy of what `symbol` has now. Unlike `clone_symbol` it leaves `symbol` as it is, and no merge is recorded.
+    fn clone_type_as_module_type(&mut self, symbol: Sym, originating_import: Sym) -> Sym {
+        let made = vec![self.transient_symbol_for(originating_import.id, symbol, false)];
+        let module = &mut self.modules[originating_import.file.idx()];
+        add_transient_symbols(module, made);
+        let clone = Sym {
+            file: originating_import.file,
+            id: SymbolId(module.bound.symbols.len() as u32 - 1),
         };
-        symbols.push(clone);
-        if let Some(parts) = parts {
-            self.merged_parts.insert(result, parts);
-        }
-        if let Some(every_part) = every_part {
-            self.every_part.insert(result, every_part);
-        }
-        if let Some(exports) = exports {
-            self.merged_exports.insert(result, exports);
-        }
-        self.module_clones.insert(originating_import, result);
-        self.module_clone_targets
-            .insert(result, (symbol, originating_import));
-        result
+        let parts = self.parts(symbol).into_vec();
+        self.merged_parts.insert(clone, parts);
+        let every_part = self.every_part(symbol).into_vec();
+        self.every_part.insert(clone, every_part);
+        let exports = self.exports_in_table(symbol).into_iter().collect();
+        self.merged_exports.insert(clone, exports);
+        clone
     }
 
     /// `resolveExternalModuleSymbol(mainModule)` of `mergeModuleAugmentation`. Where the `export =` of `module` leads through an
@@ -2973,17 +3009,10 @@ impl Files {
                     return value;
                 }
                 let originating_import = self.canonical(at);
-                if let Some(&clone) = self.module_clones.get(&originating_import) {
-                    return clone;
-                }
-                let clone = self.clone_type_as_module_type(value, originating_import);
-                // `merge_symbol` adds to a transient symbol as it is.
-                self.symbol_mut(clone).flags |= SymFlags::MERGED;
-                self.merged_parts
-                    .entry(clone)
-                    .or_insert_with(|| vec![value]);
-                self.every_part.entry(clone).or_insert_with(|| vec![value]);
-                return clone;
+                return match self.module_clone(originating_import) {
+                    Some(clone) => clone,
+                    None => self.clone_type_as_module_type(value, originating_import),
+                };
             }
             match self.alias_target(at) {
                 Some(next) if next != at => at = next,
@@ -2993,42 +3022,79 @@ impl Files {
         value
     }
 
-    /// One for each `import * as ns`. No symbol can be made once symbols are put together.
-    fn make_module_clones(&mut self) {
-        let mut wanted: Vec<(Sym, Sym)> = Vec::new();
-        for &file in &self.order {
-            let (hir, bound) = (self.hir(file), self.bound(file));
-            if !hir.imports.iter().any(|import| import.namespace.is_some()) {
+    /// `symbolFromModule` of `getExternalModuleMember` for `alias`, where `combineValueAndTypeSymbols` makes a symbol of it if
+    /// `symbolFromVariable` is a property: it is no value.
+    fn type_symbol_to_combine(&self, alias: Sym) -> Option<Sym> {
+        if !self.is_named_import_from_export_equals(alias) {
+            return None;
+        }
+        let (file, decl) = self.declaration_of_alias_symbol(alias)?;
+        let (spec, mode, name) = self.external_module_member_of(file, decl)?;
+        // `{ default as d }` is the default import by another spelling, but not in a binding pattern.
+        if name == known::default && !matches!(decl, Decl::Require(_)) {
+            return None;
+        }
+        let module = self.module_of_specifier_as(file, spec, mode)?;
+        let type_symbol = self.canonical(self.module_export(module, name)?);
+        let is_type = !self.flags(type_symbol).intersects(SymFlags::VALUE);
+        is_type.then_some(type_symbol)
+    }
+
+    /// What to make for the aliases of `file`, which is at hand: one for each `import * as ns`, and one for each name
+    /// `type_symbol_to_combine` has something for.
+    fn transient_symbols_of(&self, file: FileId) -> Vec<(TransientSymbol, Symbol)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut made = Vec::new();
+        let modes = [
+            ResolutionMode::Import,
+            ResolutionMode::Require,
+            ResolutionMode::None,
+        ];
+        if !hir.imports.iter().any(|import| import.namespace.is_some())
+            && !bound.specifiers.iter().any(|&specifier| {
+                modes.into_iter().any(|mode| {
+                    self.module_of_specifier_as(file, specifier, mode)
+                        .is_some_and(|m| self.export(m, known::export_equals).is_some())
+                })
+            })
+        {
+            return made;
+        }
+        for (id, symbol) in bound.symbols.iter().enumerate() {
+            let id = SymbolId(id as u32);
+            let alias = Sym { file, id };
+            // One is there if it was added to while symbols were put together.
+            if !symbol.flags.contains(SymFlags::ALIAS)
+                || self.canonical(alias) != alias
+                || (self.module(file).transient_symbols.iter()).any(|made| made.alias == id)
+            {
                 continue;
             }
-            for (id, symbol) in bound.symbols.iter().enumerate() {
-                let import = symbol.decls.iter().find_map(|&decl| match decl {
-                    Decl::ImportNamespace(import) => Some(&hir[import]),
-                    _ => None,
-                });
-                let Some(import) = import else { continue };
-                let mode = self.mode_of_import(file, import.mode);
-                let Some(module) = self.module_of_specifier_as(file, import.spec, mode) else {
-                    continue;
-                };
-                let target = self.module_value(module);
-                if !self.is_non_local_alias(target) {
-                    let id = SymbolId(id as u32);
-                    wanted.push((target, self.canonical(Sym { file, id })));
+            let import = symbol.decls.iter().find_map(|&decl| match decl {
+                Decl::ImportNamespace(import) => Some(&hir[import]),
+                _ => None,
+            });
+            let target = match import {
+                Some(import) => {
+                    let mode = self.mode_of_import(file, import.mode);
+                    let module = self.module_of_specifier_as(file, import.spec, mode);
+                    module.map(|module| self.module_value(module))
                 }
+                None => self.type_symbol_to_combine(alias),
+            };
+            if let Some(target) = target.filter(|&target| !self.is_non_local_alias(target)) {
+                made.push(self.transient_symbol_for(id, target, import.is_none()));
             }
         }
-        let mut room: FxHashMap<FileId, usize> = FxHashMap::default();
-        for (target, _) in &wanted {
-            *room.entry(target.file).or_default() += 1;
-        }
-        for (file, room) in room {
-            self.modules[file.idx()].bound.symbols.reserve_exact(room);
-        }
-        for (target, originating_import) in wanted {
-            if !self.module_clones.contains_key(&originating_import) {
-                self.clone_type_as_module_type(target, originating_import);
-            }
+        made
+    }
+
+    /// For the files that are there for good: nothing can be added to what all threads see once symbols are put together. A file
+    /// that `is_transient` gets its own in `bring_in`.
+    fn make_transient_symbols(&mut self) {
+        for file in self.order.clone() {
+            let made = self.transient_symbols_of(file);
+            add_transient_symbols(&mut self.modules[file.idx()], made);
         }
     }
 
@@ -3066,6 +3132,7 @@ impl Files {
 
     /// `symbol.Exports`, sorted by name.
     fn exports_in_table(&self, sym: Sym) -> Vec<(Atom, Sym)> {
+        let sym = self.holder_of_exports(sym);
         let mut all: Vec<(Atom, Sym)> = match self.merged_exports.get(&sym) {
             Some(table) => table.iter().map(|(&n, &s)| (n, s)).collect(),
             None => {
@@ -3302,28 +3369,22 @@ impl Files {
     }
 
     fn collect_decls(&self, sym: Sym) -> Box<[(FileId, Decl)]> {
-        if self.symbol(sym).flags.contains(SymFlags::MERGED)
-            && let Some(parts) = self.merged_parts.get(&sym)
-        {
-            return parts
-                .iter()
-                .flat_map(|&p| self.symbol(p).decls.iter().map(move |&d| (p.file, d)))
-                .collect();
-        }
-        self.symbol(sym)
-            .decls
+        self.parts(sym)
             .iter()
-            .map(|&d| (sym.file, d))
+            .flat_map(|&p| self.symbol(p).decls.iter().map(move |&d| (p.file, d)))
             .collect()
     }
 
     /// `symbol.Exports[name]`, as the table has it.
     pub fn export_in_table(&self, sym: Sym, name: Atom) -> Option<Sym> {
         let symbol = self.symbol(sym);
-        if symbol.flags.contains(SymFlags::MERGED)
-            && let Some(table) = self.merged_exports.get(&sym)
-        {
-            return table.get(&name).copied();
+        if symbol.flags.contains(SymFlags::MERGED) {
+            if let Some(table) = self.merged_exports.get(&sym) {
+                return table.get(&name).copied();
+            }
+            if let Some(target) = self.target_of_module_clone(sym) {
+                return self.export_in_table(target, name);
+            }
         }
         Some(Sym {
             file: sym.file,
@@ -3348,6 +3409,7 @@ impl Files {
 
     /// `exports`, one after the other.
     pub fn each_export(&self, sym: Sym) -> impl ExactSizeIterator<Item = (Atom, Sym)> + '_ {
+        let sym = self.holder_of_exports(sym);
         let symbol = self.symbol(sym);
         let merged = if symbol.flags.contains(SymFlags::MERGED) {
             self.merged_exports_of(sym)
@@ -3378,20 +3440,27 @@ impl Files {
     }
 
     pub fn parts(&self, sym: Sym) -> List<'_, Sym> {
-        if self.symbol(sym).flags.contains(SymFlags::MERGED)
-            && let Some(parts) = self.merged_parts.get(&sym)
-        {
-            return List::Kept(parts);
+        if self.symbol(sym).flags.contains(SymFlags::MERGED) {
+            if let Some(parts) = self.merged_parts.get(&sym) {
+                return List::Kept(parts);
+            }
+            // `slices.Clone(symbol.Declarations)`
+            if let Some(made) = self.transient_symbol(sym) {
+                return self.parts(made.target);
+            }
         }
         List::One(sym)
     }
 
     /// `parts`, and what was refused as a part, in the order they came.
     pub fn every_part(&self, sym: Sym) -> List<'_, Sym> {
-        if self.symbol(sym).flags.contains(SymFlags::MERGED)
-            && let Some(parts) = self.every_part.get(&sym)
-        {
-            return List::Kept(parts);
+        if self.symbol(sym).flags.contains(SymFlags::MERGED) {
+            if let Some(parts) = self.every_part.get(&sym) {
+                return List::Kept(parts);
+            }
+            if let Some(made) = self.transient_symbol(sym) {
+                return self.every_part(made.target);
+            }
         }
         List::One(sym)
     }
@@ -4341,25 +4410,58 @@ impl Files {
         None
     }
 
+    /// What is known of `symbol`, if it was made for an alias.
+    fn transient_symbol(&self, symbol: Sym) -> Option<TransientSymbol> {
+        if !self.flags(symbol).contains(SymFlags::TRANSIENT) {
+            return None;
+        }
+        let mut made = self.module(symbol.file).transient_symbols.iter();
+        made.find(|made| made.symbol == symbol.id).copied()
+    }
+
+    fn transient_symbol_of_alias(&self, alias: Sym, is_combined: bool) -> Option<Sym> {
+        let mut made = self.module(alias.file).transient_symbols.iter();
+        let made = made.find(|made| made.alias == alias.id && made.is_combined == is_combined)?;
+        Some(Sym {
+            file: alias.file,
+            id: made.symbol,
+        })
+    }
+
     /// What `resolveESModuleSymbol` gives for the alias of an `import * as ns`, where that is not the module as it stands.
     pub fn module_clone(&self, originating_import: Sym) -> Option<Sym> {
-        self.module_clones.get(&originating_import).copied()
+        self.transient_symbol_of_alias(originating_import, false)
+    }
+
+    /// What `combineValueAndTypeSymbols` gives for `alias`, if the `export =` value has a property of the name.
+    pub fn combined_symbol(&self, alias: Sym) -> Option<Sym> {
+        self.transient_symbol_of_alias(alias, true)
     }
 
     /// `exportTypeLinks.target`, of a symbol `cloneTypeAsModuleType` made.
     pub fn target_of_module_clone(&self, symbol: Sym) -> Option<Sym> {
-        if !self.flags(symbol).contains(SymFlags::TRANSIENT) {
-            return None;
-        }
-        Some(self.module_clone_targets.get(&symbol)?.0)
+        let made = self.transient_symbol(symbol)?;
+        (!made.is_combined).then_some(made.target)
     }
 
     /// `exportTypeLinks.originatingImport`
     pub fn originating_import_of_module_clone(&self, symbol: Sym) -> Option<Sym> {
-        if !self.flags(symbol).contains(SymFlags::TRANSIENT) {
-            return None;
+        let made = self.transient_symbol(symbol)?;
+        (!made.is_combined).then_some(Sym {
+            file: symbol.file,
+            id: made.alias,
+        })
+    }
+
+    /// Whose table `Exports` of `sym` is. `maps.Clone(symbol.Exports)`: a copy that nothing was added to has what it copies has.
+    fn holder_of_exports(&self, sym: Sym) -> Sym {
+        if self.flags(sym).contains(SymFlags::TRANSIENT)
+            && !self.merged_exports.contains_key(&sym)
+            && let Some(target) = self.target_of_module_clone(sym)
+        {
+            return target;
         }
-        Some(self.module_clone_targets.get(&symbol)?.1)
+        sym
     }
 
     /// `IsNonLocalAlias`: an alias and nothing else.

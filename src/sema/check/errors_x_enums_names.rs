@@ -583,7 +583,9 @@ impl Checker<'_> {
         let is_umd_global = |name: Atom| {
             means_umd_global(name, ScopeId(0), SymFlags::VALUE)
                 && !bound.symbols.iter().any(|s| {
-                    s.name == name && s.flags.intersects(SymFlags::VALUE | SymFlags::ALIAS)
+                    s.name == name
+                        && s.flags.intersects(SymFlags::VALUE | SymFlags::ALIAS)
+                        && !s.flags.contains(SymFlags::TRANSIENT)
                 })
         };
         let of_elements = is_umd_global(factory);
@@ -935,7 +937,9 @@ impl EnumValues<'_, '_> {
                         self.unsure |= !matches!(location, Location::Expr(..))
                             && (files.global(name, meaning).is_some()
                                 || bound.symbols.iter().any(|s| {
-                                    s.name == name && s.flags.intersects(meaning | SymFlags::ALIAS)
+                                    s.name == name
+                                        && s.flags.intersects(meaning | SymFlags::ALIAS)
+                                        && !s.flags.contains(SymFlags::TRANSIENT)
                                 }));
                         return None;
                     }

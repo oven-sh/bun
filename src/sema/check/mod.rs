@@ -554,6 +554,7 @@ impl Program {
             reliability: 0,
             in_variance_computation: false,
             is_marker_comparison: false,
+            is_trial_comparison: false,
             variances_in_progress: Vec::new(),
             simplified: FxHashMap::default(),
             cond_distributive_memo: FxHashMap::default(),
@@ -852,6 +853,8 @@ pub struct Checker<'p> {
     in_variance_computation: bool,
     /// The next call of `related` compares two marker types for `variances_of`. Consumed on entry.
     is_marker_comparison: bool,
+    /// The next `related` is the trial of `check_type_related_to_ex`: see `Relater::keeps_failures`.
+    pub(super) is_trial_comparison: bool,
     variances_in_progress: Vec<Sym>,
     simplified: FxHashMap<(TypeId, bool), TypeId>,
     /// `resolvedConstraintOfDistributive`. `None` is `noConstraintType`.

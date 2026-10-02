@@ -56,12 +56,6 @@ impl MaybeBytes for Vec<u8> {
         Some(self.as_slice())
     }
 }
-impl MaybeBytes for String {
-    #[inline]
-    fn as_maybe_bytes(&self) -> Option<&[u8]> {
-        Some(self.as_bytes())
-    }
-}
 impl<T: MaybeBytes + ?Sized> MaybeBytes for &T {
     #[inline]
     fn as_maybe_bytes(&self) -> Option<&[u8]> {

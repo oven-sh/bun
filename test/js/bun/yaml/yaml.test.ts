@@ -1,6 +1,7 @@
 import { YAML, file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.YAML", () => {
@@ -773,6 +774,35 @@ root: &root
           ["what follows a cyclic alias in its collection", "&a [*a, 1]", 2],
           ["each document on its own", "---\na: &x 1\nb: *x\n---\na: &x 1\nb: *x\nc: *x", 3],
           ["an anchor name that is defined again", "a: &x 1\nb: *x\nc: &x 2\nd: *x", 2],
+          ["a missing value as a scalar", "e: &e []\na: &a {? *e}\nb: *a", 2],
+          ["a missing value in a block mapping as a scalar", "e: &e []\na: &a\n  ? *e\nb: *a", 2],
+          ["the `<<` of a merge as a scalar", "a: &a {<<: {}}\nb: *a", 2],
+          ["the `<<` of a merge of an alias as a scalar", "e: &e {}\na: &a {<<: *e}\nb: *a\nc: *a", 3],
+          ["an alias that is a first key with its mapping", "a: &x 1\nm: &m\n  *x : v\nb: *m\nc: *m", 6],
+          // A merge converts its source once more, which starts each anchor in it again.
+          ["the anchor of a first key with its mapping", "m: &m\n  &x k: v\na: *x\nb: *x\nc: {<<: *m}\nd: *x", 3],
+          [
+            "the anchor of a flow sequence that is a first key",
+            "m: &m\n  &k [x]: 1\na: *k\nb: *k\nc: {<<: *m}\nd: *k",
+            3,
+          ],
+          ["a merge inside a merge source", "x: &x 1\na: &a {k: *x}\nb: &b {<<: *a}\nc: {<<: *b}\nd: {<<: *b}", 12],
+          [
+            "a mapping written in a sequence that is merged through an alias",
+            "x: &x 1\ns: &seq [{a: *x}]\nm: {<<: *seq}\ny: *x\nz: *x",
+            5,
+          ],
+          [
+            "what a mapping writes, not what its merge resolves",
+            "x: &x 1\na: &a {k: *x}\ns: &s [*a]\nM: &M {<<: *s}\np: *a\nq: *a\nr: *a\nt: *M",
+            16,
+          ],
+          // A merge does not convert a source written in place as a node of its own: its first alias does.
+          ["the anchor of a merge source written in place", "x: &x 1\nbase: {<<: &d {k: *x}}\ndev: *d\nlast: *x", 6],
+          ["such a source once more as a merge source", "x: &x 1\nbase: {<<: &d {k: *x}}\ndev: {<<: *d}\nlast: *x", 6],
+          ["the anchor of a mapping in a sequence of merge sources", "x: &x 1\nm: {<<: [&d {k: *x}]}\nn: *d\np: *x", 6],
+          ["the anchor of a sequence of merge sources", "a: &a {k: 1}\nm: {<<: &s [*a]}\nn: {<<: *s}\np: *a", 6],
+          ["an anchor inside a merge source written in place", "m: {<<: {k: &x 1}}\na: *x\nb: *x", 3],
         ])("counts %s", (_, input, count) => {
           expect(outcome(input, { maxAliasCount: count })).toEqual(outcome(input));
           expect(outcome(input, { maxAliasCount: count })).toHaveProperty("value");
@@ -786,6 +816,7 @@ root: &root
           "&a [*a]",
           "&a [[*a], *a]",
           "a: &e []\nb: &f [*e, *e]\nc: *f",
+          "e: &e []\na: &a {*e : *e}\nb: *a",
         ])("any limit above 0 accepts %j, where no scalar is aliased", input => {
           expect(outcome(input, { maxAliasCount: 0.001 })).toEqual(outcome(input));
           expect(outcome(input, { maxAliasCount: 0 })).toEqual(aliasesDisabled);
@@ -818,20 +849,6 @@ root: &root
             expect(outcome(input, { maxAliasCount })).toEqual(tooManyAliases);
           }
         });
-
-        // Unlike that package, a collection key is written out in full, so the parser's own budget stays.
-        test(
-          "a key that expands without end is refused whatever the limit",
-          () => {
-            const lines = ["- &a0 [x, x]"];
-            for (let i = 1; i < 40; i++) lines.push(`- &a${i} [*a${i - 1}, *a${i - 1}]`);
-            lines.push("- ? *a39\n  : v");
-            expect(outcome(lines.join("\n"), { maxAliasCount: -1 })).toEqual({
-              error: "SyntaxError: YAML Parse error: Excessive aliasing",
-            });
-          },
-          isDebug || isASAN ? 60_000 : 5_000,
-        );
 
         // What is an anchor, an alias or a merge key is the parser's call.
         test.each([
@@ -953,15 +970,20 @@ root: &root
       });
 
       describe("invalid options", () => {
-        test.each([
-          [1, "type number (1)"],
-          ["maxDepth", "type string ('maxDepth')"],
-          [true, "type boolean (true)"],
-          [function reviver() {}, "function reviver"],
-        ])("rejects %p as options", (options, received) => {
-          expect(outcome("[]", options)).toEqual({
-            error: `TypeError: The "options" argument must be of type object. Received ${received}`,
+        test("rejects a function as options", () => {
+          expect(outcome("[]", function reviver() {})).toEqual({
+            error: `TypeError: The "options" argument must be of type object. Received function reviver`,
           });
+        });
+
+        // As it was before there were options.
+        test.each([0, 1, "maxDepth", true, 1n, Symbol("maxDepth")])("ignores %p as options", options => {
+          expect(outcome("a: &x [[1]]\nb: *x", options)).toEqual({ value: { a: [[1]], b: [[1]] } });
+        });
+
+        test("is a callback for Array.prototype.map, which passes an index", () => {
+          const parse = YAML.parse as (input: string) => unknown;
+          expect(["a: 1", "- &x 2\n- *x", "[[3]]"].map(parse)).toEqual([{ a: 1 }, [2, 2], [[3]]]);
         });
 
         describe("maxDepth", () => {
@@ -1037,6 +1059,132 @@ root: &root
 
         test("reads inherited options", () => {
           expect(outcome("[]", Object.create({ maxDepth: 0 }))).toEqual(tooDeep(0));
+        });
+      });
+
+      // Ported from tests/doc/parse.ts and tests/doc/anchors.ts of the `yaml` package, v2.9.1 (ISC license):
+      // https://github.com/eemeli/yaml/tree/v2.9.1/tests. fixtures/pr104 is its tests/artifacts/pr104.
+      describe("the tests of the `yaml` package", () => {
+        const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", "pr104", name), "utf8");
+        const repeat = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
+
+        // There: every error of the document has the code RESOURCE_EXHAUSTION.
+        // Here: the stack decides whether a document this deep parses, and then all of it does.
+        function nestingOf(input: string) {
+          let value: unknown;
+          try {
+            value = YAML.parse(input);
+          } catch (e: any) {
+            return `${e.name}: ${e.message}`;
+          }
+          let depth = 0;
+          for (; Array.isArray(value); value = value[0]) depth++;
+          return { depth, innermost: value };
+        }
+        const stackExhausted = "RangeError: Maximum call stack size exceeded.";
+
+        describe("Resource exhaustion attacks", () => {
+          describe("Excessive recursion", () => {
+            test("Nested flow collections", () => {
+              const depth = 5000;
+              const nesting = nestingOf(repeat("[", depth) + "1" + repeat("]", depth));
+              expect([{ depth, innermost: 1 }, stackExhausted]).toContainEqual(nesting);
+            });
+
+            test("excessive tag indicators", () => {
+              // There: one error for each tag but the last.
+              expect(outcome(repeat("! ", 5000) + "a")).toEqual({
+                error: "SyntaxError: YAML Parse error: Multiple tags",
+              });
+            });
+
+            test("excessive block sequence indicators", () => {
+              const depth = 5000;
+              const nesting = nestingOf(repeat("- ", depth) + "b");
+              expect([{ depth, innermost: "b" }, stackExhausted]).toContainEqual(nesting);
+            });
+
+            test("excessive empty lines in flow collection", () => {
+              expect(YAML.parse("[[]" + repeat("\n", 150_000) + "]")).toEqual([[]]);
+            });
+          });
+
+          describe("Excessive entity expansion attacks", () => {
+            // There: "Limit count by default", which is 100.
+            describe("Limit count at that package's default", () => {
+              test.each([
+                ["js-yaml case 1", "case1.yml"],
+                ["js-yaml case 2", "case2.yml"],
+                ["billion laughs", "billion-laughs.yml"],
+                ["quadratic expansion", "quadratic.yml"],
+              ])("%s", (_, name) => {
+                expect(outcome(fixture(name), { maxAliasCount: 100 })).toEqual(tooManyAliases);
+              });
+            });
+
+            // There, js-yaml case 1 and 2 parse as well: their collection key is written as `*id057`.
+            // Bun writes it out in full and refuses both: see "bounds alias expansion".
+            describe("Work sensibly even with disabled limits", () => {
+              test("billion laughs", () => {
+                const obj = YAML.parse(fixture("billion-laughs.yml"), { maxAliasCount: -1 }) as object;
+                expect(Object.keys(obj)).toHaveLength(9);
+              });
+
+              test("quadratic expansion", () => {
+                const obj = YAML.parse(fixture("quadratic.yml"), { maxAliasCount: -1 }) as object;
+                expect(Object.keys(obj)).toHaveLength(11);
+              });
+            });
+
+            describe("maxAliasCount limits", () => {
+              const rows = [
+                "a: &a [lol, lol, lol, lol, lol, lol, lol, lol, lol]",
+                "b: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a]",
+                "c: &c [*b, *b, *b, *b]",
+                "d: &d [*c, *c]",
+                "e: [*d]",
+              ];
+
+              test.each([0, 1])("depth 0: maxAliasCount %d passes", maxAliasCount => {
+                expect(outcome(rows[0], { maxAliasCount })).toHaveProperty("value");
+              });
+
+              test("depth 1: maxAliasCount 0 and 1 fail on first alias", () => {
+                const src = `${rows[0]}\nb: *a`;
+                expect(outcome(src, { maxAliasCount: 0 })).toEqual(aliasesDisabled);
+                expect(outcome(src, { maxAliasCount: 1 })).toEqual(tooManyAliases);
+              });
+
+              test.each([
+                [1, 10],
+                [2, 50],
+                [3, 150],
+                [4, 300],
+              ])("depth %d: maxAliasCount %d passes and one less fails", (depth, limit) => {
+                const src = rows.slice(0, depth + 1).join("\n");
+                expect(outcome(src, { maxAliasCount: limit - 1 })).toEqual(tooManyAliases);
+                expect(outcome(src, { maxAliasCount: limit })).toHaveProperty("value");
+              });
+            });
+          });
+        });
+
+        describe("anchors", () => {
+          test("resolution with maxAliasCount:0", () => {
+            expect(outcome("- &a 1\n- *a\n", { maxAliasCount: 0 })).toEqual(aliasesDisabled);
+          });
+
+          test("circular reference", () => {
+            const src = "&A { <<: *A, B: b }\n";
+            expect(outcome(src, { maxAliasCount: 100 })).toEqual(tooManyAliases);
+            expect(outcome(src, { maxAliasCount: 0 })).toEqual(aliasesDisabled);
+          });
+
+          test("merge pair of an alias", () => {
+            const src = "[ &a1 { a: A }, { b: B, <<: *a1 } ]\n";
+            expect(YAML.parse(src)).toEqual([{ a: "A" }, { b: "B", a: "A" }]);
+            expect(outcome(src, { maxAliasCount: 0 })).toEqual(aliasesDisabled);
+          });
         });
       });
     });
@@ -5767,6 +5915,32 @@ test("bounds alias expansion for parsed and imported YAML documents", async () =
   expect(stdout).toContain("rejected:");
   expect(stdout).not.toContain("payload:");
   expect(exitCode).toBe(0);
+}, 60_000);
+
+// Each refusal walks the whole budget, 16 * 1024 * 1024 nodes: seconds in a debug build.
+test("the alias expansion budget holds whatever maxAliasCount is", () => {
+  const outcome = (input: string, options: { maxAliasCount: number }) => {
+    try {
+      YAML.parse(input, options);
+      return "parsed";
+    } catch (e: any) {
+      return `${e.name}: ${e.message}`;
+    }
+  };
+  const refused = "SyntaxError: YAML Parse error: Excessive aliasing";
+  const thirty = (item: string) => `[${new Array(30).fill(item).join(", ")}]`;
+  // 30 ** 5 nodes behind thirty aliases of `d`, as in the test above.
+  const levels = (leaf: string) =>
+    `a: &a ${thirty(leaf)}\nb: &b ${thirty("*a")}\nc: &c ${thirty("*b")}\nd: &d ${thirty("*c")}\n`;
+
+  // A limit on the count does not replace the budget. The count sees no alias of a node that
+  // holds no scalar, so it accepts this document at any limit.
+  expect(outcome(`${levels("[]")}e: ${thirty("*d")}\n`, { maxAliasCount: 1 })).toBe(refused);
+
+  // A negative limit turns the count and the budget off. A collection key is still charged to
+  // the budget, because Bun writes such a key out in full.
+  expect(outcome(`${levels("0")}e: ${thirty("*d")}\n`, { maxAliasCount: -1 })).toBe("parsed");
+  expect(outcome(`${levels("0")}? ${thirty("*d")}\n: v\n`, { maxAliasCount: -1 })).toBe(refused);
 }, 60_000);
 
 describe("plain scalar whitespace handling", () => {

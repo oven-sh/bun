@@ -1067,15 +1067,16 @@ const DEFAULT_MAX_ALIAS_COUNT: Option<f64> = None;
 
 /// The `maxAliasCount` and `maxDepth` options of `parse`.
 fn parse_limits_from_options(global: &JSGlobalObject, options: JSValue) -> JsResult<ParseLimits> {
-    if options.is_undefined_or_null() {
+    // A function here is reserved for a reviver.
+    if options.is_callable() {
+        return Err(global.throw_invalid_argument_type_value("options", "object", options));
+    }
+    // `texts.map(Bun.YAML.parse)` passes an index here, which was ignored before there were options.
+    if !options.is_object() {
         return Ok(ParseLimits {
             max_alias_count: DEFAULT_MAX_ALIAS_COUNT,
             max_depth: None,
         });
-    }
-    // A function here is reserved for a reviver.
-    if !options.is_object() || options.is_callable() {
-        return Err(global.throw_invalid_argument_type_value("options", "object", options));
     }
     // The `yaml` package ignores these, which would leave a mistyped limit unnoticed.
     const MAX_ALIAS_COUNT: &[u8] = b"maxAliasCount";

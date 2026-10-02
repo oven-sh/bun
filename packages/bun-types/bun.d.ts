@@ -1492,20 +1492,23 @@ declare module "bun" {
   namespace YAML {
     interface ParseOptions {
       /**
-       * Limits how much the aliases (`*name`) of a document may multiply its data. It behaves as the
-       * option of the same name of the `yaml` package on npm for every number and, unlike it, a value that
-       * is not a number throws instead of being ignored:
+       * Limits how much the aliases (`*name`) of a document may multiply its data. It counts the way the
+       * option of the same name of the `yaml` package on npm counts and, unlike it, a value that is not a
+       * number throws instead of being ignored:
        *
        * - `0` rejects every alias.
-       * - A negative number or `Infinity` turns the check off.
+       * - A negative number or `Infinity` turns the check off, and the built-in limit with it.
        * - For any other number, an anchor counts `1` and each of its aliases `1` more. That count is
-       *   multiplied by the largest such product among the aliases written inside the anchored node (`1` if
-       *   it holds only scalars), and the result may not exceed the limit. One alias of a scalar needs `2`.
+       *   multiplied by the largest such product among the aliases written inside the anchored node, where a
+       *   scalar written inside it counts `1`. The result may not exceed the limit. One alias of a scalar
+       *   needs `2`.
        * - Anything else but `undefined` throws a `TypeError`, and `NaN` a `RangeError`.
        *
        * Each document of a stream is counted on its own. Exceeding the limit throws a `ReferenceError`.
-       * Without this option a built-in limit, high enough for hand-written documents, stops exponential
-       * expansion with a `SyntaxError`.
+       *
+       * A built-in limit, high enough for hand-written documents, stops exponential expansion with a
+       * `SyntaxError`. It applies without this option and with a positive number, which does not count an
+       * alias of a node that holds no scalar.
        *
        * @example
        * ```ts

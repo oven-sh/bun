@@ -2430,9 +2430,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if let AliasCheck::Count(counter) = &mut self.alias_check {
             counter.anchors.clear();
             counter.events.clear();
-            counter.alias_at.clear();
+            counter.leaves = 0;
+            counter.open.clear();
+            counter.merges.clear();
             counter.deferred = false;
-            counter.holds = 0;
         }
         self.tag_handles.clear();
 
@@ -2471,7 +2472,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 anchor.visited = false;
             }
             let end = counter.events.len();
-            self.replay_alias_events(0, end, None)?;
+            self.convert_events(0, end, false)?;
         }
 
         // If document_start it needs to create a new document.
@@ -2652,7 +2653,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     };
                     let mut props = MappingProps::init();
                     self.append_entry(&mut props, key, value)?;
-                    self.leave_collection(outer_deepest);
+                    self.leave_collection(outer_deepest, true);
                     self.charge_collection_keys(props.list.slice())?;
                     Expr::init(
                         E::Object {
@@ -2667,6 +2668,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         ..Default::default()
                     })?
                 };
+                self.count_leaf(&item);
                 seq.push(item);
 
                 if matches!(self.token.data, TokenData::SequenceEnd) {
@@ -2739,11 +2741,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 match self.token.data {
                     TokenData::CollectEntry => {
                         let value = Expr::init(E::Null {}, self.token.start.loc());
-                        props.append(G::Property {
-                            key: Some(key),
-                            value: Some(value),
-                            ..Default::default()
-                        })?;
+                        self.push_entry(&mut props, key, value)?;
 
                         self.context.set(Context::FlowKey)?;
                         let r = self.scan(ScanOptions::default());
@@ -2753,11 +2751,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     TokenData::MappingEnd => {
                         let value = Expr::init(E::Null {}, self.token.start.loc());
-                        props.append(G::Property {
-                            key: Some(key),
-                            value: Some(value),
-                            ..Default::default()
-                        })?;
+                        self.push_entry(&mut props, key, value)?;
                         continue;
                     }
                     TokenData::MappingValue => {}
@@ -2773,11 +2767,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     TokenData::MappingEnd | TokenData::CollectEntry
                 ) {
                     let value = Expr::init(E::Null {}, self.token.start.loc());
-                    props.append(G::Property {
-                        key: Some(key),
-                        value: Some(value),
-                        ..Default::default()
-                    })?;
+                    self.push_entry(&mut props, key, value)?;
                 } else {
                     // [147] the value is ns-flow-node; threading the value's
                     // own indent as current_mapping_indent makes the Scalar
@@ -2879,6 +2869,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     BlockIndentedKind::SeqEntry,
                 )?;
 
+                self.count_leaf(&item);
                 seq.push(item);
             }
 
@@ -2920,11 +2911,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     /// `anchor` is the [200] block collection's own anchor; an anchor on
-    /// `first_key` has already been bound by the caller.
+    /// `first_key` has already been bound by the caller. `first_key_start`
+    /// is from before `first_key` and that anchor.
     fn parse_block_mapping(
         &mut self,
         anchor: Option<PendingAnchor>,
         first_key: Expr,
+        first_key_start: NodeStart,
         mapping_start: Pos,
         mapping_indent: Indent,
         mapping_line: Line,
@@ -2936,10 +2929,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 p.reach_depth(p.closed_deepest + 1)?;
             }
             if let AliasCheck::Count(counter) = &mut p.alias_check
-                && (collection_id(&first_key).is_some() || counter.alias_site(&first_key).is_some())
-                && let Some(start) = counter.starts.last_mut()
+                && let Some(start) = counter.open.last_mut()
             {
-                *start = counter.closed_start;
+                *start = first_key_start;
             }
             p.parse_block_mapping_entries(
                 first_key,
@@ -3079,11 +3071,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         TokenData::Eof => {
                             if explicit_key {
                                 let value = Expr::init(E::Null {}, self.pos.loc());
-                                props.append(G::Property {
-                                    key: Some(key),
-                                    value: Some(value),
-                                    ..Default::default()
-                                })?;
+                                self.push_entry(&mut props, key, value)?;
                                 continue;
                             }
                             return Err(Self::unexpected_token());
@@ -3095,11 +3083,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                     // [189] e-node — `:` belongs to an outer
                                     // construct; this entry has no value.
                                     let value = Expr::init(E::Null {}, self.pos.loc());
-                                    props.append(G::Property {
-                                        key: Some(key),
-                                        value: Some(value),
-                                        ..Default::default()
-                                    })?;
+                                    self.push_entry(&mut props, key, value)?;
                                     continue;
                                 }
                                 return Err(if self.tab_after_indent {
@@ -3120,11 +3104,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 // [189] explicit-value is optional; the current
                                 // token is the next entry's key.
                                 let value = Expr::init(E::Null {}, self.pos.loc());
-                                props.append(G::Property {
-                                    key: Some(key),
-                                    value: Some(value),
-                                    ..Default::default()
-                                })?;
+                                self.push_entry(&mut props, key, value)?;
                                 continue;
                             }
                             return Err(Self::unexpected_token());
@@ -3295,13 +3275,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     ) -> Result<(), ParseError> {
         if is_merge_key(&key) {
             self.reject_open_merge_source(&value)?;
-            self.count_merge(&value)?;
+            self.count_merge()?;
             match &value.data {
                 ast::ExprData::EObject(value_obj) => {
+                    self.count_leaf(&key);
                     props.merge(value_obj.properties.slice(), &mut self.merge_props_budget)?;
                     return Ok(());
                 }
                 ast::ExprData::EArray(value_arr) => {
+                    self.count_leaf(&key);
                     for item in value_arr.items.slice() {
                         if let ast::ExprData::EObject(item_obj) = &item.data {
                             self.reject_open_merge_source(item)?;
@@ -3315,44 +3297,39 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
-        Ok(props.append(G::Property {
+        Ok(self.push_entry(props, key, value)?)
+    }
+
+    /// Appends `key: value` as written.
+    fn push_entry(
+        &mut self,
+        props: &mut MappingProps,
+        key: Expr,
+        value: Expr,
+    ) -> Result<(), AllocError> {
+        self.count_leaf(&key);
+        self.count_leaf(&value);
+        props.append(G::Property {
             key: Some(key),
             value: Some(value),
             ..Default::default()
-        })?)
+        })
     }
 
-    /// Marks the aliases `value` merges from, then applies what `hold_merge_value` kept back.
-    fn count_merge(&mut self, value: &Expr) -> Result<(), ParseError> {
+    /// The value of a `<<` is complete: converts it, and what was kept back with it.
+    fn count_merge(&mut self) -> Result<(), ParseError> {
         let AliasCheck::Count(counter) = &mut self.alias_check else {
             return Ok(());
         };
-        let is_map = |node: &Expr| matches!(node.data, ast::ExprData::EObject(_));
-        let aliased = counter.alias_site(value);
-        if let Some(site) = aliased
-            && is_map(value)
-        {
-            counter.events[site.event] = AliasEvent::MergeAlias(site.anchor);
-        }
-        if let ast::ExprData::EArray(sources) = &value.data {
-            for source in sources.items.slice().iter().filter(|source| is_map(source)) {
-                let Some(site) = counter.alias_site(source) else {
-                    continue;
-                };
-                // The items of an aliased sequence are resolved once more for the merge.
-                if aliased.is_some() {
-                    counter.events.push(AliasEvent::MergeAlias(site.anchor));
-                } else {
-                    counter.events[site.event] = AliasEvent::MergeAlias(site.anchor);
-                }
-            }
-        }
-        counter.holds = counter.holds.saturating_sub(1);
-        if counter.holds > 0 || counter.deferred {
+        let Some(merge) = counter.merges.pop() else {
+            return Ok(());
+        };
+        let end = counter.events.len();
+        counter.events[merge] = AliasEvent::Merge { end };
+        if counter.deferred || !counter.merges.is_empty() {
             return Ok(());
         }
-        let (start, end) = (counter.held_from, counter.events.len());
-        self.replay_alias_events(start, end, None)
+        self.convert_events(merge, end, false)
     }
 
     fn reject_open_merge_source(&mut self, node: &Expr) -> Result<(), ParseError> {
@@ -3421,6 +3398,7 @@ pub(crate) enum AliasCheck {
     Budget,
     Unlimited,
     RejectAll,
+    /// The count of the `yaml` package, and the budget.
     Count(Box<AliasCounter>),
 }
 
@@ -3434,12 +3412,11 @@ impl AliasCheck {
                     limit,
                     anchors: Vec::new(),
                     events: Vec::new(),
-                    alias_at: bun_collections::HashMap::default(),
-                    starts: Vec::new(),
-                    closed_start: 0,
+                    leaves: 0,
+                    open: Vec::new(),
+                    merges: Vec::new(),
                     deferred: false,
-                    holds: 0,
-                    held_from: 0,
+                    work: AliasCounter::MAX_WORK,
                 }))
             }
             // Negative or NaN turns the check off there; Infinity is never exceeded.
@@ -3448,85 +3425,112 @@ impl AliasCheck {
     }
 }
 
-/// One document's anchors and aliases, counted as `Alias.resolve` of the `yaml` package does.
+/// What one document writes that `Alias.resolve` of the `yaml` package counts, in the order
+/// that package converts it in. Nothing is read back from the parsed `Expr`s.
 pub(crate) struct AliasCounter {
     limit: f64,
     anchors: Vec<AnchorCount>,
-    /// In document order, which is the order that package converts nodes in.
     events: Vec<AliasEvent>,
-    /// Where each alias stands: its `Expr` is a copy of the anchored node's but for `loc`.
-    alias_at: bun_collections::HashMap<i32, AliasSite>,
-    /// `events.len()` when each open collection was entered.
-    starts: Vec<usize>,
-    /// That of the collection or alias that was completed last.
-    closed_start: usize,
-    /// A cyclic alias needs the rest of its collection: `events` are applied at the document's end.
+    /// Scalars that became an item, a key or a value and are not aliases. An aliased scalar is
+    /// taken off when it is parsed and added when it is appended, so this wraps.
+    leaves: usize,
+    /// Where each collection being parsed starts.
+    open: Vec<NodeStart>,
+    /// The `Merge` of each `<<` whose value is being parsed. Meanwhile `events` are kept back.
+    merges: Vec<usize>,
+    /// A cyclic alias needs the rest of its collection: `events` are converted at the document's end.
     deferred: bool,
-    /// `<<` values being parsed, and the first of the `events` kept back until they are complete.
-    holds: usize,
-    held_from: usize,
-}
-
-#[derive(Clone, Copy)]
-struct AliasSite {
-    anchor: usize,
-    event: usize,
+    /// Events one parse may still convert. A merge converts its source again, merges included.
+    work: usize,
 }
 
 impl AliasCounter {
-    fn alias_site(&self, node: &Expr) -> Option<AliasSite> {
-        // A block mapping has the `loc` of its first key, which may be an alias.
-        self.alias_at
-            .get(&node.loc.start)
-            .copied()
-            .filter(|site| collection_id(&self.anchors[site.anchor].node) == collection_id(node))
+    const MAX_WORK: usize = 16 * 1024 * 1024;
+
+    fn spend(&mut self, events: usize) -> Result<(), ParseError> {
+        self.work = self
+            .work
+            .checked_sub(events)
+            .ok_or(ParseError::ExcessiveAliasing)?;
+        Ok(())
     }
 
-    /// Whether a scalar that is not an alias is written in `root`.
-    fn has_own_leaf(&self, root: Expr) -> bool {
-        let mut stack = vec![root];
-        while let Some(node) = stack.pop() {
-            match &node.data {
-                ast::ExprData::EArray(arr) => stack.extend(
-                    arr.items
-                        .slice()
-                        .iter()
-                        .filter(|item| self.alias_site(item).is_none()),
-                ),
-                ast::ExprData::EObject(obj) => {
-                    for prop in obj.properties.slice() {
-                        stack.extend(
-                            [prop.key, prop.value]
-                                .iter()
-                                .flatten()
-                                .filter(|item| self.alias_site(item).is_none()),
-                        );
-                    }
+    /// That package's `getAliasCount`: the largest count among what is written in the node,
+    /// where a scalar counts 1 and an alias what its anchor counts so far.
+    fn alias_count_of(&mut self, id: usize) -> Result<f64, ParseError> {
+        let AnchorCount {
+            kind,
+            start,
+            end,
+            has_leaf,
+            ..
+        } = self.anchors[id];
+        if kind == AnchorKind::Scalar {
+            return Ok(1.0);
+        }
+        self.spend(end - start)?;
+        let mut largest: f64 = if has_leaf { 1.0 } else { 0.0 };
+        for event in &self.events[start..end] {
+            if let AliasEvent::Alias(target) = *event {
+                let target = &self.anchors[target];
+                if target.visited {
+                    largest = largest.max(target.count * target.alias_count);
                 }
-                _ => return true,
             }
         }
-        false
+        Ok(largest)
     }
+}
+
+/// `AliasCounter::events.len()` and `AliasCounter::leaves` before a node.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct NodeStart {
+    event: usize,
+    leaves: usize,
+}
+
+/// The `events` written in a node, and whether a scalar that is not an alias is written in it.
+#[derive(Clone, Copy, Default)]
+struct Written {
+    start: usize,
+    end: usize,
+    has_leaf: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AnchorKind {
+    Scalar,
+    Sequence,
+    Mapping,
 }
 
 #[derive(Clone, Copy)]
 struct AnchorCount {
-    node: Expr,
-    count: f64,
-    alias_count: f64,
-    visited: bool,
-    /// The `events` inside the node.
+    kind: AnchorKind,
+    /// See `Written`.
     start: usize,
     end: usize,
+    has_leaf: bool,
+    /// Whether that package has converted the node, which is when it starts to count it.
+    visited: bool,
+    count: f64,
+    alias_count: f64,
 }
 
 #[derive(Clone, Copy)]
 enum AliasEvent {
     Define(usize),
     Alias(usize),
-    /// The source of a `<<`, which converts its contents once more.
-    MergeAlias(usize),
+    /// A collection is complete. What is written in it starts at `start`.
+    Close {
+        start: usize,
+        mapping: bool,
+        has_leaf: bool,
+    },
+    /// A `<<`. Its value is the events up to `end`.
+    Merge {
+        end: usize,
+    },
 }
 
 /// A collection node's identity, for pointer comparison.
@@ -3541,6 +3545,7 @@ fn collection_id(node: &Expr) -> Option<usize> {
 /// Collection node payloads. The node is allocated when its opening token is
 /// seen and filled in once its entries are parsed (`parse_collection`).
 trait CollectionData: Sized {
+    const MAPPING: bool;
     /// Allocates an empty node, returning it with the slot to move the parsed
     /// entries into.
     fn alloc_empty(loc: Loc) -> (Expr, ast::StoreRef<Self>);
@@ -3550,6 +3555,7 @@ trait CollectionData: Sized {
 }
 
 impl CollectionData for E::Array {
+    const MAPPING: bool = false;
     fn alloc_empty(loc: Loc) -> (Expr, ast::StoreRef<Self>) {
         let slot = ast::expr::Store::append(E::Array::default());
         (
@@ -3563,6 +3569,7 @@ impl CollectionData for E::Array {
 }
 
 impl CollectionData for E::Object {
+    const MAPPING: bool = true;
     fn alloc_empty(loc: Loc) -> (Expr, ast::StoreRef<Self>) {
         let slot = ast::expr::Store::append(E::Object::default());
         (
@@ -3582,8 +3589,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     // By value so binding consumes the `#[must_use]` anchor token.
     #[allow(clippy::needless_pass_by_value)]
     fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr) -> Result<(), AllocError> {
-        let id = self.define_anchor(node);
-        self.bind_defined_anchor(anchor, node, id)
+        let written = self.written(&node);
+        let id = self.define_anchor(&node);
+        self.bind_defined_anchor(anchor, node, id, written)
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -3592,18 +3600,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         anchor: PendingAnchor,
         node: Expr,
         id: usize,
+        written: Written,
     ) -> Result<(), AllocError> {
-        let is_collection = collection_id(&node).is_some();
         if let AliasCheck::Count(counter) = &mut self.alias_check {
-            let end = counter.events.len();
-            counter.anchors[id].end = end;
-            counter.anchors[id].start = if is_collection {
-                counter.closed_start
-            } else {
-                end
-            };
+            let count = &mut counter.anchors[id];
+            (count.start, count.end, count.has_leaf) =
+                (written.start, written.end, written.has_leaf);
         }
-        let height = if is_collection {
+        let height = if collection_id(&node).is_some() {
             self.closed_deepest.saturating_sub(self.depth)
         } else {
             0
@@ -3614,21 +3618,78 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         )
     }
 
-    fn define_anchor(&mut self, node: Expr) -> usize {
+    fn define_anchor(&mut self, node: &Expr) -> usize {
         let AliasCheck::Count(counter) = &mut self.alias_check else {
             return 0;
         };
         let id = counter.anchors.len();
         counter.anchors.push(AnchorCount {
-            node,
-            count: 1.0,
-            alias_count: 0.0,
-            visited: true,
+            kind: match node.data {
+                ast::ExprData::EArray(_) => AnchorKind::Sequence,
+                ast::ExprData::EObject(_) => AnchorKind::Mapping,
+                _ => AnchorKind::Scalar,
+            },
             start: 0,
             end: 0,
+            has_leaf: false,
+            // Converted where it is written, unless `events` are kept back.
+            visited: !counter.deferred && counter.merges.is_empty(),
+            count: 1.0,
+            alias_count: 0.0,
         });
         counter.events.push(AliasEvent::Define(id));
         id
+    }
+
+    /// What `node`, the node completed last, wrote.
+    fn written(&self, node: &Expr) -> Written {
+        let AliasCheck::Count(counter) = &self.alias_check else {
+            return Written::default();
+        };
+        let end = counter.events.len();
+        if collection_id(node).is_none() {
+            return Written {
+                start: end,
+                end,
+                has_leaf: false,
+            };
+        }
+        match counter.events.last() {
+            Some(&AliasEvent::Close {
+                start, has_leaf, ..
+            }) => Written {
+                start,
+                end: end - 1,
+                has_leaf,
+            },
+            // An alias, which Bun lets have an anchor of its own: that anchor holds the alias.
+            _ => Written {
+                start: end.saturating_sub(1),
+                end,
+                has_leaf: false,
+            },
+        }
+    }
+
+    /// Before a node is parsed. A block mapping starts where its first key does, and that key is
+    /// parsed before the mapping is entered.
+    fn node_start(&self) -> NodeStart {
+        match &self.alias_check {
+            AliasCheck::Count(counter) => NodeStart {
+                event: counter.events.len(),
+                leaves: counter.leaves,
+            },
+            _ => NodeStart::default(),
+        }
+    }
+
+    /// `node` became an item, a key or a value.
+    fn count_leaf(&mut self, node: &Expr) {
+        if let AliasCheck::Count(counter) = &mut self.alias_check
+            && collection_id(node).is_none()
+        {
+            counter.leaves = counter.leaves.wrapping_add(1);
+        }
     }
 
     /// Parses a collection node: it is allocated (empty) before `body` parses
@@ -3648,7 +3709,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let body = |p: &mut Self| -> Result<T, ParseError> {
             let outer_deepest = p.enter_collection()?;
             let result = body(p);
-            p.leave_collection(outer_deepest);
+            p.leave_collection(outer_deepest, T::MAPPING);
             let data = result?;
             p.charge_collection_keys(data.properties())?;
             Ok(data)
@@ -3661,7 +3722,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             return Ok(node);
         };
 
-        let id = self.define_anchor(node);
+        let id = self.define_anchor(&node);
         self.open_collections.push(OpenCollection {
             anchor: anchor.name,
             node,
@@ -3672,7 +3733,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         debug_assert!(closed.is_some_and(|c| collection_id(&c.node) == collection_id(&node)));
 
         *slot = result?;
-        self.bind_defined_anchor(anchor, node, id)?;
+        let written = self.written(&node);
+        self.bind_defined_anchor(anchor, node, id, written)?;
         Ok(node)
     }
 
@@ -3696,37 +3758,48 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.reach_depth(self.depth + 1)?;
         self.depth += 1;
         if let AliasCheck::Count(counter) = &mut self.alias_check {
-            counter.starts.push(counter.events.len());
+            counter.open.push(NodeStart {
+                event: counter.events.len(),
+                leaves: counter.leaves,
+            });
         }
         Ok(core::mem::replace(&mut self.deepest, self.depth))
     }
 
-    fn leave_collection(&mut self, outer_deepest: usize) {
+    fn leave_collection(&mut self, outer_deepest: usize, mapping: bool) {
         self.depth -= 1;
         self.close_deepest(outer_deepest);
-        if let AliasCheck::Count(counter) = &mut self.alias_check {
-            counter.closed_start = counter.starts.pop().unwrap_or(0);
+        if let AliasCheck::Count(counter) = &mut self.alias_check
+            && let Some(start) = counter.open.pop()
+        {
+            counter.events.push(AliasEvent::Close {
+                start: start.event,
+                mapping,
+                has_leaf: counter.leaves != start.leaves,
+            });
         }
     }
 
-    /// Checks the alias at `start` against both limits. `open`: it is cyclic.
-    fn count_alias(&mut self, anchor: Anchor, open: bool, start: Pos) -> Result<(), ParseError> {
+    /// Checks an alias against the limits. `open`: it is cyclic.
+    fn count_alias(&mut self, anchor: Anchor, open: bool) -> Result<(), ParseError> {
+        let is_collection = collection_id(&anchor.node).is_some();
         match &mut self.alias_check {
-            AliasCheck::Budget => self.charge_alias_expansion(anchor.node)?,
             AliasCheck::Unlimited => {}
             AliasCheck::RejectAll => return Err(ParseError::AliasesDisabled),
+            AliasCheck::Budget => self.charge_alias_expansion(anchor.node)?,
             AliasCheck::Count(counter) => {
-                counter.closed_start = counter.events.len();
-                let site = AliasSite {
-                    anchor: anchor.id,
-                    event: counter.events.len(),
-                };
-                counter.alias_at.put(start.loc().start, site)?;
                 counter.deferred |= open;
-                self.alias_event(AliasEvent::Alias(anchor.id))?;
+                if !is_collection {
+                    counter.leaves = counter.leaves.wrapping_sub(1);
+                }
+                counter.events.push(AliasEvent::Alias(anchor.id));
+                if !counter.deferred && counter.merges.is_empty() {
+                    self.resolve_counted(anchor.id)?;
+                }
+                self.charge_alias_expansion(anchor.node)?;
             }
         }
-        if collection_id(&anchor.node).is_none() {
+        if !is_collection {
             return Ok(());
         }
         // A cycle nests without end.
@@ -3738,112 +3811,162 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(())
     }
 
-    fn alias_event(&mut self, event: AliasEvent) -> Result<(), ParseError> {
-        let AliasCheck::Count(counter) = &mut self.alias_check else {
-            return Ok(());
-        };
-        counter.events.push(event);
-        if counter.deferred || counter.holds > 0 {
-            return Ok(());
-        }
-        self.apply_alias_event(event, None)
-    }
-
-    /// `within`: the anchor whose contents are being converted again, which is not itself.
-    fn apply_alias_event(
-        &mut self,
-        event: AliasEvent,
-        within: Option<usize>,
-    ) -> Result<(), ParseError> {
-        self.charge_alias_node()?;
-        let AliasCheck::Count(counter) = &mut self.alias_check else {
-            return Ok(());
-        };
-        match event {
-            AliasEvent::Define(id) => {
-                if within != Some(id) {
-                    let anchor = &mut counter.anchors[id];
-                    (anchor.count, anchor.alias_count, anchor.visited) = (1.0, 0.0, true);
-                }
-            }
-            AliasEvent::Alias(id) | AliasEvent::MergeAlias(id) => {
-                counter.anchors[id].visited = true;
-                counter.anchors[id].count += 1.0;
-                if counter.anchors[id].alias_count == 0.0 {
-                    let alias_count = self.alias_count_of(id)?;
-                    let AliasCheck::Count(counter) = &mut self.alias_check else {
-                        return Ok(());
-                    };
-                    counter.anchors[id].alias_count = alias_count;
-                }
-                let AliasCheck::Count(counter) = &self.alias_check else {
-                    return Ok(());
-                };
-                let anchor = &counter.anchors[id];
-                if anchor.count * anchor.alias_count > counter.limit {
-                    return Err(ParseError::ExcessiveAliasCount);
-                }
-                if matches!(event, AliasEvent::MergeAlias(_)) {
-                    let (start, end) = (anchor.start, anchor.end);
-                    self.replay_alias_events(start, end, Some(id))?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn replay_alias_events(
-        &mut self,
-        start: usize,
-        end: usize,
-        within: Option<usize>,
-    ) -> Result<(), ParseError> {
+    /// Converts `events[start..end]` as that package converts the nodes they stand for. `again`:
+    /// they are the contents of a `<<` source, whose own anchor keeps its count.
+    fn convert_events(&mut self, start: usize, end: usize, again: bool) -> Result<(), ParseError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ParseError::StackOverflow);
         }
-        for i in start..end {
-            let AliasCheck::Count(counter) = &self.alias_check else {
+        let mut at = start;
+        while at < end {
+            let AliasCheck::Count(counter) = &mut self.alias_check else {
                 break;
             };
-            self.apply_alias_event(counter.events[i], within)?;
+            counter.spend(1)?;
+            let event = counter.events[at];
+            at += 1;
+            match event {
+                AliasEvent::Define(id) => {
+                    let anchor = &mut counter.anchors[id];
+                    if !(again && anchor.start == start && anchor.end == end) {
+                        (anchor.count, anchor.alias_count, anchor.visited) = (1.0, 0.0, true);
+                    }
+                }
+                AliasEvent::Alias(id) => self.resolve_counted(id)?,
+                AliasEvent::Merge { end: value_end } => {
+                    self.convert_merge(at, value_end)?;
+                    at = at.max(value_end);
+                }
+                AliasEvent::Close { .. } => {}
+            }
         }
         Ok(())
     }
 
-    /// That package's `getAliasCount`: the largest count among the leaves written in the node.
-    fn alias_count_of(&mut self, id: usize) -> Result<f64, ParseError> {
-        let AliasCheck::Count(counter) = &self.alias_check else {
-            return Ok(0.0);
+    /// That package's `Alias.resolve`.
+    fn resolve_counted(&mut self, id: usize) -> Result<(), ParseError> {
+        let AliasCheck::Count(counter) = &mut self.alias_check else {
+            return Ok(());
         };
-        let AnchorCount {
-            node, start, end, ..
-        } = counter.anchors[id];
-        if collection_id(&node).is_none() {
-            return Ok(1.0);
+        counter.spend(1)?;
+        let anchor = &mut counter.anchors[id];
+        if !anchor.visited {
+            // The anchor of a `<<` source written in place: a merge does not convert the source
+            // itself, so its first alias does.
+            (anchor.count, anchor.alias_count, anchor.visited) = (1.0, 0.0, true);
+            let (start, end) = (anchor.start, anchor.end);
+            self.convert_events(start, end, false)?;
         }
-        let mut largest: f64 = if counter.has_own_leaf(node) { 1.0 } else { 0.0 };
-        for event in &counter.events[start..end] {
-            if let AliasEvent::Alias(target) | AliasEvent::MergeAlias(target) = *event
-                && counter.anchors[target].visited
-            {
-                let target = &counter.anchors[target];
-                largest = largest.max(target.count * target.alias_count);
-            }
-            // The `<<` is a scalar.
-            if matches!(event, AliasEvent::MergeAlias(_)) {
-                largest = largest.max(1.0);
-            }
+        let AliasCheck::Count(counter) = &mut self.alias_check else {
+            return Ok(());
+        };
+        counter.anchors[id].count += 1.0;
+        if counter.anchors[id].alias_count == 0.0 {
+            counter.anchors[id].alias_count = counter.alias_count_of(id)?;
         }
-        self.alias_expansion_budget = self
-            .alias_expansion_budget
-            .checked_sub(end - start)
-            .ok_or(ParseError::ExcessiveAliasing)?;
-        Ok(largest)
+        let anchor = &counter.anchors[id];
+        if anchor.count * anchor.alias_count > counter.limit {
+            return Err(ParseError::ExcessiveAliasCount);
+        }
+        Ok(())
     }
 
-    /// A consumer writes a collection key out in full, whatever `max_alias_count` lets through.
+    /// That package's `addMergeToJSMap` for the `<<` value that `events[start..end]` are.
+    fn convert_merge(&mut self, start: usize, end: usize) -> Result<(), ParseError> {
+        let AliasCheck::Count(counter) = &self.alias_check else {
+            return Ok(());
+        };
+        // The value is the last node of the range. Its own anchor is not defined by a merge.
+        let value = (start..end)
+            .rev()
+            .map(|at| (at, counter.events[at]))
+            .find(|(_, event)| !matches!(event, AliasEvent::Define(_)));
+        match value {
+            Some((_, AliasEvent::Alias(id))) => {
+                self.resolve_counted(id)?;
+                let AliasCheck::Count(counter) = &self.alias_check else {
+                    return Ok(());
+                };
+                let anchor = counter.anchors[id];
+                match anchor.kind {
+                    AnchorKind::Mapping => self.convert_events(anchor.start, anchor.end, true),
+                    AnchorKind::Sequence => self.convert_merge_items(anchor.start, anchor.end),
+                    AnchorKind::Scalar => Ok(()),
+                }
+            }
+            Some((
+                at,
+                AliasEvent::Close {
+                    start: contents,
+                    mapping,
+                    ..
+                },
+            )) => {
+                if mapping {
+                    self.convert_events(contents, at, true)
+                } else {
+                    self.convert_merge_items(contents, at)
+                }
+            }
+            // A scalar, so `<<` is an ordinary key.
+            _ => self.convert_events(start, end, false),
+        }
+    }
+
+    /// That package's `mergeValue` for each item written in `events[start..end]`: an alias is
+    /// resolved, and its mapping, like one written in place, is converted once more. Anything
+    /// else is not a source.
+    fn convert_merge_items(&mut self, start: usize, end: usize) -> Result<(), ParseError> {
+        let AliasCheck::Count(counter) = &mut self.alias_check else {
+            return Ok(());
+        };
+        // A collection is its `Close`, after its contents, so the items are found last first.
+        let mut items = Vec::new();
+        let mut at = end;
+        while at > start {
+            at -= 1;
+            match counter.events[at] {
+                AliasEvent::Alias(_) => items.push(at),
+                AliasEvent::Close {
+                    start: contents, ..
+                } => {
+                    items.push(at);
+                    at = contents.max(start);
+                }
+                AliasEvent::Define(_) | AliasEvent::Merge { .. } => {}
+            }
+        }
+        counter.spend(items.len())?;
+        for at in items.into_iter().rev() {
+            let AliasCheck::Count(counter) = &self.alias_check else {
+                break;
+            };
+            match counter.events[at] {
+                AliasEvent::Alias(id) => {
+                    self.resolve_counted(id)?;
+                    let AliasCheck::Count(counter) = &self.alias_check else {
+                        break;
+                    };
+                    let anchor = counter.anchors[id];
+                    if anchor.kind == AnchorKind::Mapping {
+                        self.convert_events(anchor.start, anchor.end, true)?;
+                    }
+                }
+                AliasEvent::Close {
+                    start: contents,
+                    mapping: true,
+                    ..
+                } => self.convert_events(contents, at, true)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// With the count off nothing charges an alias, and a consumer writes a collection key out
+    /// in full.
     fn charge_collection_keys(&mut self, properties: &[G::Property]) -> Result<(), ParseError> {
-        if matches!(self.alias_check, AliasCheck::Budget) {
+        if !matches!(self.alias_check, AliasCheck::Unlimited) {
             return Ok(());
         }
         for key in properties.iter().filter_map(|property| property.key) {
@@ -3859,10 +3982,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if let AliasCheck::Count(counter) = &mut self.alias_check
             && is_merge_key(key)
         {
-            if counter.holds == 0 {
-                counter.held_from = counter.events.len();
-            }
-            counter.holds += 1;
+            counter.merges.push(counter.events.len());
+            counter.events.push(AliasEvent::Merge { end: 0 });
         }
     }
 
@@ -4364,6 +4485,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             return Err(ParseError::StackOverflow);
         }
 
+        let node_start = self.node_start();
+
         // c-ns-properties
         let mut node_props: NodeProperties<Enc> = NodeProperties::default();
 
@@ -4422,7 +4545,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let (anchor, cyclic) = self.resolve_alias(alias)?;
                     let mut copy = anchor.node;
 
-                    self.count_alias(anchor, cyclic, alias_start)?;
+                    self.count_alias(anchor, cyclic)?;
 
                     // update position from the anchor node to the alias node.
                     copy.loc = alias_start.loc();
@@ -4469,6 +4592,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         let map = self.parse_block_mapping(
                             node_props.take_block_mapping_anchor(alias_line)?,
                             copy,
+                            node_start,
                             alias_start,
                             alias_indent,
                             alias_line,
@@ -4527,6 +4651,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         let map = self.parse_block_mapping(
                             node_props.take_block_mapping_anchor(sequence_line)?,
                             seq,
+                            node_start,
                             sequence_start,
                             sequence_indent,
                             sequence_line,
@@ -4608,6 +4733,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         let parent_map = self.parse_block_mapping(
                             node_props.take_block_mapping_anchor(mapping_line)?,
                             map,
+                            node_start,
                             mapping_start,
                             mapping_indent,
                             mapping_line,
@@ -4702,6 +4828,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let mapping = self.parse_block_mapping(
                         anchors.mapping_anchor,
                         first_key,
+                        node_start,
                         self.token.start,
                         self.token.indent,
                         colon_line,
@@ -4810,6 +4937,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         let mapping = self.parse_block_mapping(
                             anchors.mapping_anchor,
                             implicit_key,
+                            node_start,
                             scalar_start,
                             scalar_indent,
                             scalar_line,

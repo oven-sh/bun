@@ -284,6 +284,7 @@ fn run_quietly(
         says_it_as_typescript_does: false,
         loaded: None,
         checked: None,
+        after_file: None,
     })
 }
 

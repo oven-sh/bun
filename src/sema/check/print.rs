@@ -55,6 +55,11 @@ impl Checker<'_> {
         )
     }
 
+    /// `TypeToTypeNode` with the flags of `typeWriterWalker.writeTypeOrSymbol`.
+    pub fn type_to_string_for_baseline(&mut self, ty: TypeId) -> String {
+        type_to_string_with(self, ty, NO_TRUNCATION | ALLOW_UNIQUE_ES_SYMBOL_TYPE)
+    }
+
     /// `getTypeNameForErrorDisplay`
     pub fn type_to_string_fully_qualified(&mut self, ty: TypeId) -> String {
         type_to_string_with(self, ty, USE_FULLY_QUALIFIED_TYPE)

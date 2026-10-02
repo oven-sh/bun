@@ -604,6 +604,7 @@ fn main() {
                     checked: args.iter().any(|a| a == "--memory").then_some(
                         &print_checked_sizes as &(dyn Fn(&bun_sema::check::Program) + Sync),
                     ),
+                    after_file: None,
                 });
             let cwd = bun_sema_driver::host::from_native(&cwd);
             let style = Style {
@@ -998,12 +999,13 @@ fn main() {
                     .find_map(|a| a.strip_prefix(&format!("--{name}=")).map(str::to_owned))
             };
             let (lib_dir, test_lib) = (flag("lib").unwrap(), flag("testlib").unwrap());
-            let (only, out) = (flag("only"), flag("out"));
+            let (only, out, types_out) = (flag("only"), flag("out"), flag("types-out"));
             let setup = Setup {
                 lib_dir: &lib_dir,
                 test_lib: &test_lib,
                 only: only.as_deref(),
                 out: out.as_deref(),
+                types_out: types_out.as_deref(),
                 threads: flag("threads").and_then(|t| t.parse().ok()).unwrap_or(8),
             };
             let mut all = Vec::new();

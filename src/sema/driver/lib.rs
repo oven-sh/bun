@@ -157,6 +157,9 @@ pub struct Request<'a> {
     pub loaded: Option<&'a (dyn Fn(&Program) + Sync)>,
     /// Called with it again when all of it is checked.
     pub checked: Option<&'a (dyn Fn(&Program) + Sync)>,
+    /// Called for each file right after it is checked, on the thread that checked it, while the types that are local to the file
+    /// are still alive. The way to read the type of every expression without `keeps_everything`.
+    pub after_file: Option<&'a (dyn Fn(&mut bun_sema::check::Checker<'_>, FileId) + Sync)>,
 }
 
 /// Something that is wrong, ready to be shown.
@@ -814,6 +817,12 @@ fn check_what_is_named(
         checker.set_stack_limit(bun_core::StackCheck::init().remaining());
         checker.set_time_limit(request.file_time_limit);
         let errors = checker.check_file_explained(file);
+        if let Some(after_file) = request.after_file
+            && !only_syntax
+            && !checker.timed_out()
+        {
+            after_file(&mut checker, file);
+        }
         deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
         if checker.timed_out() {
             gave_up.lock().unwrap().push(module.path.clone());

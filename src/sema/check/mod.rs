@@ -64,6 +64,7 @@ mod related_expected;
 mod shape;
 mod spans;
 mod symbols;
+pub mod type_writer;
 mod unions;
 
 use crate::atom::{Atom, known};

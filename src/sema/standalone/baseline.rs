@@ -965,6 +965,8 @@ pub struct Setup<'a> {
     pub only: Option<&'a str>,
     /// Where to write what comes out, if anywhere.
     pub out: Option<&'a str>,
+    /// Where to write the type at every expression and name of every test, if anywhere: to compare with `.types` baselines.
+    pub types_out: Option<&'a str>,
     pub threads: usize,
 }
 
@@ -1013,6 +1015,7 @@ fn run_one(
     code: &[u8],
     settings: &BTreeMap<String, String>,
     has_baselines: bool,
+    types: Option<&Mutex<String>>,
 ) -> Option<(Report, Vec<(String, Vec<u8>)>)> {
     let Parsed { mut units, links } = units_of(code, path);
     let cwd = absolute(
@@ -1168,6 +1171,40 @@ fn run_one(
         .get("capturesuggestions")
         .is_some_and(|v| v.eq_ignore_ascii_case("true"));
 
+    // One line per location: unit, line, offset, source text without line breaks, type.
+    let write_types = |checker: &mut bun_sema::check::Checker<'_>,
+                       file: bun_sema::program::FileId| {
+        let Some(types) = types else { return };
+        let path = checker.p.files.modules[file.idx()].path.clone();
+        if is_default_library(&path) {
+            return;
+        }
+        let text = checker.hir(file).text.clone();
+        let starts = line_starts(&text);
+        let unit = without_prefixes(&path, setup.lib_dir);
+        // The source goes along, so that each entry of a baseline can be given its line.
+        let mut lines = format!(
+            "#source\t{unit}\t{}\n",
+            String::from_utf8_lossy(&text)
+                .replace('\\', "\\\\")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+                .replace('\t', "\\t")
+        );
+        for found in checker.types_at_locations(file) {
+            let (start, end) = (found.start as usize, (found.end as usize).min(text.len()));
+            if start >= end {
+                continue;
+            }
+            let line = starts.partition_point(|&s| s <= start) - 1;
+            let source = String::from_utf8_lossy(&text[start..end]).replace(['\r', '\n'], "");
+            lines.push_str(&format!(
+                "{unit}\t{line}\t{start}\t{source}\t{}\n",
+                found.type_text
+            ));
+        }
+        types.lock().unwrap().push_str(&lines);
+    };
     let request = Request {
         compiler_options: &[],
         cwd: &cwd,
@@ -1185,6 +1222,10 @@ fn run_one(
         says_it_as_typescript_does: true,
         loaded: None,
         checked: None,
+        after_file: types.is_some().then_some(
+            &write_types
+                as &(dyn Fn(&mut bun_sema::check::Checker<'_>, bun_sema::program::FileId) + Sync),
+        ),
     };
     let report = bun_sema_driver::check_project(
         &host,
@@ -1275,9 +1316,20 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                             format!("{stem}({configuration})")
                         };
                         let name = format!("{}/{configured}", suite.name);
+                        let types = setup.types_out.map(|_| Mutex::new(String::new()));
                         let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            run_one(setup, path, &code, &settings, has_baselines)
+                            run_one(setup, path, &code, &settings, has_baselines, types.as_ref())
                         }));
+                        if let (Some(out), Some(types), Ok(Some(_))) =
+                            (setup.types_out, types, &ran)
+                        {
+                            let dir = format!("{out}/{}", suite.name);
+                            let _ = std::fs::create_dir_all(&dir);
+                            let _ = std::fs::write(
+                                format!("{dir}/{configured}.tsv"),
+                                types.into_inner().unwrap(),
+                            );
+                        }
                         let outcome = match ran {
                             Err(_) => Outcome {
                                 name,

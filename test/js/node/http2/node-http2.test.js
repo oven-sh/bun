@@ -1968,6 +1968,53 @@ it("http2 session.goaway() sends custom data", async done => {
   });
 });
 
+// GOAWAY's error code is an unsigned 32-bit field, and node reads the argument with Uint32Value
+// (ToUint32): a code up to 2^32-1 reaches the peer as passed, and any other number wraps. Client
+// and server sessions share the native goaway(), and opaqueData selects between its two send
+// paths, so the cases vary both.
+it.each([
+  ["server", 0xffffffff, 0xffffffff, Buffer.from([0xde, 0xad, 0xbe, 0xef])],
+  ["server", 0x80000000, 0x80000000, undefined],
+  ["client", 0xffffffff, 0xffffffff, undefined],
+  ["client", 0x80000000, 0x80000000, Buffer.from([0xde, 0xad, 0xbe, 0xef])],
+  // Outside 0..2^32-1, from a client session, which passes any number to the native goaway().
+  ["client", -1, 0xffffffff, Buffer.from([0xde, 0xad, 0xbe, 0xef])],
+  ["client", 2 ** 32, 0, undefined],
+  ["client", 2 ** 32 + 1, 1, Buffer.from([0xde, 0xad, 0xbe, 0xef])],
+  ["client", Infinity, 0, undefined],
+])("http2 %s session.goaway(%d) sends the error code %d", async (sender, code, wireCode, opaqueData) => {
+  const { promise: goawayReceived, resolve: onGoaway, reject } = Promise.withResolvers();
+  // For a GOAWAY with no opaque data node passes undefined and bun an empty Buffer: compare the bytes.
+  const onGoawayEvent = (receivedCode, lastStreamID, receivedData) =>
+    onGoaway({ code: receivedCode, lastStreamID, opaqueData: Buffer.from(receivedData ?? []) });
+  // The receiving side emits 'goaway' before it tears the session down with ERR_HTTP2_SESSION_ERROR,
+  // so the error and close events below only settle the promise when the frame never arrived.
+  const server = http2.createServer();
+  server.on("sessionError", reject);
+  server.on("session", session => {
+    session.on("close", () => reject(new Error("server session closed before 'goaway'")));
+    if (sender === "server") session.goaway(code, 0, opaqueData);
+    else session.on("goaway", onGoawayEvent);
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  client.on("error", reject);
+  client.on("close", () => reject(new Error("client session closed before 'goaway'")));
+  if (sender === "client") client.once("connect", () => client.goaway(code, 0, opaqueData));
+  else client.on("goaway", onGoawayEvent);
+  try {
+    expect(await goawayReceived).toEqual({
+      code: wireCode,
+      lastStreamID: 0,
+      opaqueData: opaqueData ?? Buffer.alloc(0),
+    });
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 it("http2 session.goaway() opaqueData survives re-entrant buffer detach over a JS Duplex", async () => {
   // The cork-flush path re-enters JS (onWrite → Duplex _write) when the transport is a JS
   // stream. If that JS detaches the opaqueData ArrayBuffer mid-write, the GOAWAY payload must

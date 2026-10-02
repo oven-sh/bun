@@ -4707,7 +4707,8 @@ impl H2FrameParser {
         if !error_code_arg.is_number() {
             return Err(global_object.throw(format_args!("Expected errorCode to be a number")));
         }
-        let error_code = error_code_arg.to_int32();
+        // ToUint32, like node's Uint32Value: https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L2992-L2995
+        let error_code = ErrorCode(error_code_arg.coerce_to_i32(global_object)? as u32);
 
         let mut last_stream_id = this.last_peer_stream_id.get();
         if callframe.arguments_count() >= 2 {
@@ -4732,20 +4733,14 @@ impl H2FrameParser {
                     if let Some(array_buffer) = opaque_data_arg.as_array_buffer(global_object) {
                         // Own the bytes: write() re-enters JS on JS-backed sockets and can detach this.
                         let copied = array_buffer.byte_slice().to_vec();
-                        this.send_go_away(
-                            0,
-                            ErrorCode(error_code as u32),
-                            &copied,
-                            last_stream_id,
-                            false,
-                        );
+                        this.send_go_away(0, error_code, &copied, last_stream_id, false);
                         return Ok(JSValue::UNDEFINED);
                     }
                 }
             }
         }
 
-        this.send_go_away(0, ErrorCode(error_code as u32), b"", last_stream_id, false);
+        this.send_go_away(0, error_code, b"", last_stream_id, false);
         Ok(JSValue::UNDEFINED)
     }
 

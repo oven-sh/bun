@@ -328,6 +328,31 @@ devTest("deleting imported file shows error then recovers", {
     });
   },
 });
+// Unlike `minimalFramework`, this framework has no `serverComponents`, so the
+// bundler has no SSR graph settings to read when it rebuilds the page.
+devTest("repairing a missing import in a framework without server components", {
+  framework: { fileSystemRouterTypes: minimalFramework.fileSystemRouterTypes },
+  files: {
+    "routes/index.ts": `
+      import "./does-not-exist";
+      export default function () {
+        return new Response("index");
+      }
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write(
+      "routes/index.ts",
+      `
+        export default function () {
+          return new Response("index");
+        }
+      `,
+    );
+    await dev.fetch("/").equals("index");
+  },
+});
 // Regression test: DirectoryWatchStore.Dep.source_file_path borrows the key
 // string from IncrementalGraph.bundled_files. When a client-component boundary
 // is demoted (its "use client" directive is removed) the server graph calls

@@ -1,0 +1,14 @@
+seen   fn.rest-comma                         25 of  46 sources differ,   625 records  R>A=550 R>R=75  | i.ts=25 i.tsx=25 s.ts=50 s.tsx=25 t.ts=400 t.tsx=100
+seen   fn.param-modifier                     33 of  67 sources differ,   825 records  R>A=750 R>R=75  | i.ts=33 i.tsx=33 s.ts=66 s.tsx=33 t.ts=528 t.tsx=132
+seen   class.index-signature                 27 of  88 sources differ,   663 records  R>A=486 R>R=177  | i.js=1 i.jsx=1 i.ts=27 i.tsx=27 s.ts=53 s.tsx=26 t.ts=422 t.tsx=106
+seen   enum.bracket-name                     18 of  29 sources differ,   450 records  R>A=400 R>R=50  | i.ts=18 i.tsx=18 s.ts=36 s.tsx=18 t.ts=288 t.tsx=72
+seen   class.accessor                        48 of  61 sources differ,   582 records  R>A=342 R>R=240  | i.js=27 i.jsx=27 i.ts=48 i.tsx=48 s.ts=48 t.ts=288 t.tsx=96
+seen   expr.colon-after-parens               26 of  83 sources differ,   524 records  R>A=499 R>R=25  | i.ts=26 i.tsx=5 s.ts=52 s.tsx=5 t.ts=416 t.tsx=20
+seen   meta.dotted-names                     11 of  20 sources differ,    55 records  A>A=55  | t.ts=44 t.tsx=11
+seen   expr.arrow-body-before-colon          27 of  60 sources differ,   639 records  R>A=639  | i.ts=27 i.tsx=21 s.ts=54 s.tsx=21 t.ts=432 t.tsx=84
+seen   class.implements-entry                42 of  66 sources differ,  1044 records  R>A=1019 R>R=25  | i.ts=42 i.tsx=41 s.ts=84 s.tsx=41 t.ts=672 t.tsx=164
+seen   stmt.named-like-cast                  33 of  60 sources differ,   782 records  A>A=83 R>A=674 R>R=25  | i.ts=28 i.tsx=28 s.ts=56 s.tsx=28 t.ts=514 t.tsx=128
+seen   stmt.abstract-declare-class            9 of  16 sources differ,   225 records  R>A=225  | i.ts=9 i.tsx=9 s.ts=18 s.tsx=9 t.ts=144 t.tsx=36
+seen   stmt.import-in-namespace               6 of  22 sources differ,   150 records  R>A=150  | i.ts=6 i.tsx=6 s.ts=12 s.tsx=6 t.ts=96 t.tsx=24
+seen   path.with-on-next-line                19 of  31 sources differ,   601 records  R>A=567 R>R=34  | i.js=14 i.jsx=14 i.ts=19 i.tsx=19 s.js=14 s.jsx=14 s.ts=38 s.tsx=19 t.js=56 t.jsx=14 t.ts=304 t.tsx=76
+seen   guard.type-parameters-and-arguments    1 of  95 sources differ,     8 records  R>R=8  | i.ts=1 s.ts=1 t.ts=6

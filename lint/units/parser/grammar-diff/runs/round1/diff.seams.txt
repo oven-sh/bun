@@ -1,0 +1,51 @@
+base 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 (1080 sources)
+next 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667 (1080 sources)
+36720 records compared, 12238 differ, in 565 sources
+!!      308  A>A          unexplained  
+              t.ts.plain       "interface as {}\nfoo();"
+                base ["o","interface;\nfoo();\n"]
+                next ["o","foo();\n"]
+              t.ts.exp         "interface as {}\nfoo();"
+                base ["o","interface;\nfoo();\n"]
+                next ["o","foo();\n"]
+              t.ts.deco        "interface as {}\nfoo();"
+                base ["o","interface;\nfoo();\n"]
+                next ["o","foo();\n"]
+              t.tsx.plain      "interface as {}\nfoo();"
+                base ["o","interface;\nfoo();\n"]
+                next ["o","foo();\n"]
+              t.tsx.exp        "interface as {}\nfoo();"
+                base ["o","interface;\nfoo();\n"]
+                next ["o","foo();\n"]
+!!    10242  R>A          unexplained  
+              t.ts.plain       "function f(public a) {}"
+                base ["e",[["Expected \")\" but found \"a\"",1,19,1,18,"error",[]],["Expected \";\" but found \")\"",1,20,1,19,"error",[]]]]
+                next ["o","function f(a) {}\n"]
+              t.ts.exp         "function f(public a) {}"
+                base ["e",[["Expected \")\" but found \"a\"",1,19,1,18,"error",[]],["Expected \";\" but found \")\"",1,20,1,19,"error",[]]]]
+                next ["o","function f(a) {}\n"]
+              t.ts.deco        "function f(public a) {}"
+                base ["e",[["Expected \")\" but found \"a\"",1,19,1,18,"error",[]],["Expected \";\" but found \")\"",1,20,1,19,"error",[]]]]
+                next ["o","function f(a) {}\n"]
+              t.tsx.plain      "function f(public a) {}"
+                base ["e",[["Expected \")\" but found \"a\"",1,19,1,18,"error",[]],["Expected \";\" but found \")\"",1,20,1,19,"error",[]]]]
+                next ["o","function f(a) {}\n"]
+              t.tsx.exp        "function f(public a) {}"
+                base ["e",[["Expected \")\" but found \"a\"",1,19,1,18,"error",[]],["Expected \";\" but found \")\"",1,20,1,19,"error",[]]]]
+                next ["o","function f(a) {}\n"]
+!!     1688  R>R          unexplained  
+              t.ts.plain       "class C { get v(public a) { return 1; } }"
+                base ["e",[["Expected \")\" but found \"a\"",1,24,1,23,"error",[]],["Expected \";\" but found \")\"",1,25,1,24,"error",[]],["Expected identifier but found \"{\"",1,27,1,26,"error",[]],["Expected \";\" but 
+                next ["e",[["Getter v must have zero arguments",1,24,1,23,"error",[]]]]
+              t.ts.exp         "class C { get v(public a) { return 1; } }"
+                base ["e",[["Expected \")\" but found \"a\"",1,24,1,23,"error",[]],["Expected \";\" but found \")\"",1,25,1,24,"error",[]],["Expected identifier but found \"{\"",1,27,1,26,"error",[]],["Expected \";\" but 
+                next ["e",[["Getter v must have zero arguments",1,24,1,23,"error",[]]]]
+              t.ts.deco        "class C { get v(public a) { return 1; } }"
+                base ["e",[["Expected \")\" but found \"a\"",1,24,1,23,"error",[]],["Expected \";\" but found \")\"",1,25,1,24,"error",[]],["Expected identifier but found \"{\"",1,27,1,26,"error",[]],["Expected \";\" but 
+                next ["e",[["Getter v must have zero arguments",1,24,1,23,"error",[]]]]
+              t.tsx.plain      "class C { get v(public a) { return 1; } }"
+                base ["e",[["Expected \")\" but found \"a\"",1,24,1,23,"error",[]],["Expected \";\" but found \")\"",1,25,1,24,"error",[]],["Expected identifier but found \"{\"",1,27,1,26,"error",[]],["Expected \";\" but 
+                next ["e",[["Getter v must have zero arguments",1,24,1,23,"error",[]]]]
+              t.tsx.exp        "class C { get v(public a) { return 1; } }"
+                base ["e",[["Expected \")\" but found \"a\"",1,24,1,23,"error",[]],["Expected \";\" but found \")\"",1,25,1,24,"error",[]],["Expected identifier but found \"{\"",1,27,1,26,"error",[]],["Expected \";\" but 
+                next ["e",[["Getter v must have zero arguments",1,24,1,23,"error",[]]]]

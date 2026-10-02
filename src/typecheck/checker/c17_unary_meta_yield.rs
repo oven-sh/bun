@@ -148,10 +148,10 @@ impl<'a> Checker<'a> {
             if flags.intersects(TypeFlags::OBJECT) {
                 let resolved = c.resolve_structured_type_members(t);
                 let resolved_call_signatures = c.as_structured_type(resolved).call_signatures();
-                let resolved_construct_signatures =
-                    c.as_structured_type(resolved).construct_signatures();
                 let call_signatures =
                     get_instantiated_signatures(c, state.type_arguments, resolved_call_signatures);
+                let resolved_construct_signatures =
+                    c.as_structured_type(resolved).construct_signatures();
                 let construct_signatures = get_instantiated_signatures(
                     c,
                     state.type_arguments,

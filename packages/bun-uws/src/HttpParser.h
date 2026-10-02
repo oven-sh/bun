@@ -528,26 +528,15 @@ struct HttpResponseData;
             return url;
         }
 
-        /* Hack: this should be getMethod */
-        std::string_view getCaseSensitiveMethod()
-        {
-            return headers->key;
-        }
-
         /* The id of the method, or HTTP_METHOD_NONE for a token that is none of HTTP_METHOD_NAMES */
         uint8_t getMethodId()
         {
             return methodIdFromWire(headers->key);
         }
 
+        /* The method as the client sent it */
         std::string_view getMethod()
         {
-            /* Compatibility hack: lower case method (todo: remove when major version bumps) */
-            for (unsigned int i = 0; i < headers->key.length(); i++)
-            {
-                ((char *)headers->key.data())[i] |= 32;
-            }
-
             return headers->key;
         }
 

@@ -57,8 +57,7 @@ struct Http3Request {
         return getDecodedQueryValue(key, query);
     }
 
-    /* HttpRequest::getMethod() lowercases in place; we own no writable
-     * buffer, so write into a per-request scratch instead. */
+    /* Lower case, like the method names of the HTTP/2 and HTTP/3 routes. The copy goes in a per-request scratch. */
     std::string_view getMethod() {
         size_t n = method.size() < sizeof(methodLower) ? method.size() : sizeof(methodLower);
         for (size_t i = 0; i < n; i++) {

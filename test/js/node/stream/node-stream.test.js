@@ -1639,6 +1639,52 @@ describe("node v26 stream semantics", () => {
     expect(received).toBe(65536 * 2 + 40000);
   });
 
+  const waitFor = async condition => {
+    for (let i = 0; i < 200 && !condition(); i++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    return condition();
+  };
+
+  // The same divergence through compose(), which resumes its tail from _read():
+  // Node v26.3.0 strands the last 1000 bytes here and never ends (#34031).
+  it("compose still drains a tail that flagged itself destroyed before EOF (fd-slicer pattern)", async () => {
+    const highWaterMark = new PassThrough().readableHighWaterMark;
+    const chunks = [Buffer.alloc(highWaterMark, 1), Buffer.alloc(highWaterMark, 2), Buffer.alloc(1000, 3)];
+    const tail = new Duplex({
+      write(chunk, encoding, callback) {
+        callback();
+      },
+      read() {
+        const chunk = chunks.shift();
+        if (chunk) {
+          this.push(chunk);
+        } else {
+          this.destroyed = true;
+          this.push(null);
+        }
+      },
+    });
+    const onPause = jest.fn();
+    tail.on("pause", onPause);
+    const composed = compose(new PassThrough(), tail);
+    let ended = false;
+    composed.on("end", () => (ended = true));
+
+    // One drain per turn: the composed buffer fills between turns, so compose pauses the tail.
+    let received = 0;
+    const drained = await waitFor(() => {
+      let chunk;
+      while ((chunk = composed.read()) !== null) received += chunk.length;
+      return ended;
+    });
+    expect({ drained, received, paused: onPause.mock.calls.length > 0 }).toEqual({
+      drained: true,
+      received: highWaterMark * 2 + 1000,
+      paused: true,
+    });
+  });
+
   // Upstream: nodejs/node#60907 (test-stream-compose-operator.js).
   it("compose returns the composed Duplex directly", () => {
     expect(Object.hasOwn(Readable.prototype, "compose")).toBe(true);
@@ -1729,12 +1775,80 @@ describe("node v26 stream semantics", () => {
     expect(log).toEqual(["data:ok", "data:boom", "error:tail-boom"]);
   });
 
-  const waitFor = async condition => {
-    for (let i = 0; i < 200 && !condition(); i++) {
-      await new Promise(resolve => setImmediate(resolve));
-    }
-    return condition();
-  };
+  it("Readable.prototype.compose emits tail output synchronously with its production", async () => {
+    const log = [];
+    const source = new Readable({ read() {} });
+    const tail = new Transform({
+      transform(chunk, encoding, callback) {
+        log.push("transform:" + chunk);
+        this.push(chunk);
+        log.push("pushed:" + chunk);
+        callback();
+      },
+    });
+    const composed = source.compose(tail);
+    const resumed = new Promise(resolve => composed.once("resume", resolve));
+    composed.on("data", chunk => log.push("data:" + chunk));
+    const ended = new Promise(resolve => composed.on("end", resolve));
+    await resumed;
+    source.push("x");
+    source.push("y");
+    source.push(null);
+    await ended;
+    expect(log).toEqual(["transform:x", "data:x", "pushed:x", "transform:y", "data:y", "pushed:y"]);
+  });
+
+  // The listener runs inside the pipe's write to the tail, and pipe routes a throw there to 'error'.
+  it("a throw in the composed stream's 'data' listener becomes 'error' on the composed stream", async () => {
+    const composed = compose(new PassThrough(), new PassThrough());
+    const resumed = new Promise(resolve => composed.once("resume", resolve));
+    composed.on("data", () => {
+      throw new Error("consumer-boom");
+    });
+    const onError = jest.fn();
+    composed.on("error", onError);
+    await resumed;
+    composed.write("x");
+    expect(await waitFor(() => onError.mock.calls.length > 0)).toBe(true);
+    expect(onError.mock.calls.map(([err]) => err.message)).toEqual(["consumer-boom"]);
+  });
+
+  it("compose keeps the chunk boundaries of a tail with setEncoding", async () => {
+    const tail = new PassThrough();
+    tail.setEncoding("utf8");
+    const composed = compose(new PassThrough(), tail);
+    const chunks = [];
+    composed.on("data", chunk => chunks.push(chunk.toString()));
+    const ended = new Promise(resolve => composed.on("end", resolve));
+    composed.write("a");
+    composed.write("b");
+    composed.end("c");
+    await ended;
+    expect(chunks).toEqual(["a", "b", "c"]);
+  });
+
+  it("compose forwards 'data' from an old-style tail that has no read()", async () => {
+    const tail = new Stream();
+    tail.readable = true;
+    tail.writable = true;
+    tail.write = function (chunk) {
+      this.emit("data", Buffer.from("<" + chunk + ">"));
+      return true;
+    };
+    tail.end = function () {
+      this.emit("end");
+      this.emit("finish");
+      this.emit("close");
+    };
+    tail.pause = tail.resume = tail.destroy = () => {};
+    const composed = compose(new PassThrough(), tail);
+    const chunks = [];
+    composed.on("data", chunk => chunks.push(chunk.toString()));
+    composed.write("a");
+    composed.end("b");
+    expect(await waitFor(() => chunks.length === 2)).toBe(true);
+    expect(chunks).toEqual(["<a>", "<b>"]);
+  });
 
   it("compose pauses the tail on backpressure and resumes it on read", async () => {
     const tail = new PassThrough();
@@ -1760,8 +1874,17 @@ describe("node v26 stream semantics", () => {
   });
 
   // 'finish' waits for the tail to end. A tail that nothing reads ends only after compose drains it.
-  it("pipeline into a compose() that nothing reads calls back", async () => {
-    const composed = compose(new PassThrough(), new PassThrough());
+  it.each([
+    ["a stream tail", () => new PassThrough()],
+    [
+      "a function tail",
+      () =>
+        async function* (source) {
+          yield* source;
+        },
+    ],
+  ])("pipeline into a compose() that nothing reads calls back (%s)", async (_, makeTail) => {
+    const composed = compose(new PassThrough(), makeTail());
     const callback = jest.fn();
     pipeline(Readable.from(["a", "b", "c"]), composed, callback);
     expect(await waitFor(() => callback.mock.calls.length > 0)).toBe(true);

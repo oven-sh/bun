@@ -918,11 +918,13 @@ describe("every head of _storeHeader for an HTTP/1.0 request with Connection: ke
   /**
    * https://github.com/oven-sh/bun/pull/33871 changes the last rule of bunCloses: with a Connection: keep-alive
    * header of the listener, the connection then stays open, as in Node.js. The table takes each of the two
-   * results for those rows.
+   * results for those rows, and all of those rows must give the same one.
    */
   const framingChanges = (row: Row) =>
     row.status !== 200 && row.encoding === "chunked" && row.connection === "keep-alive";
   const closesOrStays = "end, or the next response";
+  /** The result of the first row of framingChanges. */
+  let framingResult: string | undefined;
   /** In Bun: the Connection header and what follows the response. How Bun frames a body is not a subject of this table. */
   function expected(row: Row): { connection: string; body?: string; then: string } {
     const node = storeHeader(row);
@@ -957,8 +959,11 @@ describe("every head of _storeHeader for an HTTP/1.0 request with Connection: ke
       const what = rest.length === 1 ? rest[0] : rest.length === 2 && rest[1] === "end" ? "the next response" : rest;
       // No runtime keeps the connection open behind a body that nothing delimits.
       if (what !== "end") assert.notStrictEqual(body, "until the end", JSON.stringify(row));
-      const either = want.then === closesOrStays && (what === "end" || what === "the next response");
-      const then = either ? closesOrStays : what;
+      let then = what;
+      if (want.then === closesOrStays && (what === "end" || what === "the next response")) {
+        framingResult ??= what;
+        if (what === framingResult) then = closesOrStays;
+      }
       return { connection: /\r\nConnection: ([^\r]*)/i.exec(head)?.[1] ?? "", ...(want.body && { body }), then };
     } catch (error) {
       return { error: String(error) };

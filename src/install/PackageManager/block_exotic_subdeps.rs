@@ -1,18 +1,8 @@
-//! Enforces `install.blockExoticSubdeps`: fails the install when any
-//! *transitive* dependency is specified with a non-registry source (git,
-//! github, tarball URL, folder, symlink, or a `workspace:` ref from a
-//! non-workspace parent). Direct deps of the root and of workspace packages
-//! are exempt. Modeled on pnpm:
+//! Enforces `install.blockExoticSubdeps`: fails the install when a
+//! *transitive* dependency names a non-registry source (git, github, tarball,
+//! folder, symlink, or `workspace:` from a non-workspace parent). Direct deps
+//! of the root and of workspace packages are exempt. Modeled on pnpm:
 //! https://pnpm.io/11.x/supply-chain-security#prevent-exotic-transitive-dependencies
-//!
-//! Classification layers (see `classify`): dereferenced `catalog:` references
-//! are root-authored and skipped first; then the child's `Resolution::Tag`
-//! decides; only a `.workspace` resolution falls back to re-inferring the
-//! parent's literal, because `linkWorkspacePackages` can rewrite a plain
-//! semver to a workspace. Root `overrides`/`resolutions` take priority over
-//! the transitive literal when the resolver applied them. A range or dist-tag
-//! that binds to a non-registry package is allowed only when the root or a
-//! workspace itself names a non-registry source for that package.
 
 use bstr::BStr;
 use bun_collections::ArrayHashMap;
@@ -112,10 +102,8 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
                 continue;
             };
 
-            // A range or a dist-tag names no source. It can bind to a package
-            // for which the project itself names one (a plugin's peer range on
-            // a library the root pins to a tarball). The lockfile row alone
-            // does not count: it can bind a range to a source nobody declared.
+            // A range names no source. It is allowed to bind to a package whose
+            // source the root or a workspace declares (a peer range on a tarball).
             if matches!(version.tag, dependency::Tag::Npm | dependency::Tag::DistTag)
                 && project_names_source_of(manager, dep_pkg_id)
             {
@@ -173,9 +161,8 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
     count
 }
 
-/// Does the root or a workspace depend on package `id` through a dependency
-/// that names a non-registry source in its own package.json (or in the catalog
-/// entry it references)?
+/// Does the root or a workspace declare a non-registry source for package
+/// `id` in its own package.json (or the catalog entry it references)?
 fn project_names_source_of(manager: &PackageManager, id: PackageID) -> bool {
     let lockfile = &manager.lockfile;
     let pkgs = lockfile.packages.slice();
@@ -214,19 +201,16 @@ fn project_names_source_of(manager: &PackageManager, id: PackageID) -> bool {
     false
 }
 
-/// Returns the exotic-source label if the (resolution, version) pair is
-/// exotic per this policy, or `None` if it's allowed. `version_tag` is the
-/// tag the resolver parsed for `literal_raw`.
+/// The exotic-source label for this edge, or `None` when it is allowed.
+/// `version_tag` is the tag the resolver parsed for `literal_raw`.
 #[inline]
 fn classify(
     res_tag: ResolutionTag,
     version_tag: dependency::Tag,
     literal_raw: &[u8],
 ) -> Option<&'static str> {
-    // A `catalog:` reference the resolver dereferences is root-authored, and
-    // the resolution carries the catalog target's tag. A package outside the
-    // project cannot reference a catalog: its `catalog:` peer is an optional
-    // `*` range by the time it gets here (`CatalogMap::strip_reference`).
+    // A dereferenced `catalog:` is root-authored. A `catalog:` peer from
+    // outside the project arrives as a `*` range (`CatalogMap::strip_reference`).
     if version_tag == dependency::Tag::Catalog {
         return None;
     }
@@ -241,7 +225,7 @@ fn classify(
         ResolutionTag::Uninitialized | ResolutionTag::Root | ResolutionTag::Npm => None,
 
         // `linkWorkspacePackages` never produces these tags. A plain range
-        // can still bind to one: the caller checks `names_no_source`.
+        // can still bind to one: the caller checks `project_names_source_of`.
         ResolutionTag::Git => Some("git"),
         ResolutionTag::Github => Some("github"),
         ResolutionTag::LocalTarball => Some("local_tarball"),

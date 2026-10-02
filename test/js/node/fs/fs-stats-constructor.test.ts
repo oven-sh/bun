@@ -168,6 +168,20 @@ describe("Stats date accessors define the property the way Object.defineProperty
     expect(Object.getOwnPropertyDescriptor(inherited, "mtime")).toEqual(dataProperty(new Date(5)));
   });
 
+  test("a receiver whose shape was seen before gets the same result", () => {
+    const { get, set } = Object.getOwnPropertyDescriptor(Stats.prototype, "mtime")!;
+    for (let i = 0; i < 3; i++) {
+      const read = { mtimeMs: 5 };
+      expect(get!.call(read)).toEqual(new Date(5));
+      expect(Object.getOwnPropertyDescriptor(read, "mtime")).toEqual(dataProperty(new Date(5)));
+      const assigned = { mtimeMs: 5 };
+      set!.call(assigned, 42);
+      expect(Object.getOwnPropertyDescriptor(assigned, "mtime")).toEqual(dataProperty(42));
+      expect(() => get!.call(Object.preventExtensions({ mtimeMs: 5 }))).toThrow(TypeError);
+      expect(() => set!.call(Object.preventExtensions({ mtimeMs: 5 }), 42)).toThrow(TypeError);
+    }
+  });
+
   test("the prototype as the receiver keeps its accessor", () => {
     expect(Stats.prototype.mtime.getTime()).toBeNaN();
     expect(Object.getOwnPropertyDescriptor(Stats.prototype, "mtime")!.get).toBeFunction();

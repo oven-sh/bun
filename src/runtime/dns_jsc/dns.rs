@@ -4162,7 +4162,7 @@ impl Resolver {
             pending_nameinfo_cache_cares
         );
         // The 32-slot caches overflow to `LookupCacheHit::Disabled`; c-ares' own
-        // queue length covers those too. Its channel lock is recursive, so this
+        // queue length covers those too. It only reads a list length, so this
         // is safe from inside a completion callback.
         if let Some(channel) = self.channel.get() {
             // SAFETY: `channel` is the live c-ares channel owned by `self`.
@@ -4744,6 +4744,8 @@ impl Resolver {
     }
 
     pub(crate) fn get_channel(&self) -> ChannelResult<'_> {
+        // c-ares is built without its own locking: the channel stays on one thread.
+        self.ref_count.assert_single_threaded();
         if self.channel.get().is_none() {
             let opts = self.options.get();
             if let Some(err) = c_ares::Channel::init(self, opts) {
@@ -4872,6 +4874,8 @@ impl Resolver {
         readable: bool,
         writable: bool,
     ) {
+        // c-ares calls this from inside the call that opened or closed `fd`.
+        self.ref_count.assert_single_threaded();
         #[cfg(windows)]
         {
             use libuv as uv;

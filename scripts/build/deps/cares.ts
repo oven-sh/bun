@@ -145,6 +145,10 @@ function buildH(cfg: Config): string {
 
 const def1 = (names: string[]) => names.map(n => `#define ${n} 1`).join("\n");
 
+// No CARES_THREADS: a channel is used only on the thread of its event loop
+// (debug builds assert it). With thread support c-ares takes a mutex in every
+// call, and `ares_reinit()` applies the new config, socket-state callbacks
+// included, on a thread of its own. c_ares.rs checks `ares_threadsafety()`.
 // prettier-ignore
 const ALWAYS = def1([
   "HAVE_ASSERT_H", "HAVE_ERRNO_H", "HAVE_FCNTL_H", "HAVE_INTTYPES_H",
@@ -159,7 +163,6 @@ const ALWAYS = def1([
   "HAVE_STRUCT_ADDRINFO", "HAVE_STRUCT_IN6_ADDR", "HAVE_STRUCT_SOCKADDR_IN6",
   "HAVE_STRUCT_SOCKADDR_STORAGE", "HAVE_STRUCT_TIMEVAL",
   "HAVE_STRUCT_SOCKADDR_IN6_SIN6_SCOPE_ID",
-  "CARES_THREADS",
 ]);
 
 // prettier-ignore

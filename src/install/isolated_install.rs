@@ -2025,6 +2025,7 @@ pub(crate) fn install_isolated_packages(
         let entry_node_ids = entries.items_node_id();
         let entry_steps = entries.items_step();
         let entry_dependencies = entries.items_dependencies();
+        let entry_hoisted = entries.items_hoisted();
 
         // Reborrow through a
         // `BackRef` so `string_buf` / `pkgs` don't tie up `&mut lockfile` for
@@ -2191,9 +2192,13 @@ pub(crate) fn install_isolated_packages(
                 Global::exit(1);
             }
 
-            // Runs before the first task so it cannot remove a link this install writes.
-            // Covers entries this version does not hoist: an older version may have.
+            // An older version named each link after the package. A package that is
+            // installed under other names only keeps that link from a previous install.
+            // Runs before the first task, and only for a name nothing is linked under
+            // now, so it cannot remove a link this install writes. Covers entries this
+            // version does not hoist: an older version may have.
             if !is_new_bun_modules {
+                let mut linked_names: Option<HashMap<PackageNameHash, ()>> = None;
                 for entry_idx in 0..store.entries.len() {
                     let node_id = entry_node_ids[entry_idx];
                     let dep_id = node_dep_ids[node_id.get() as usize];
@@ -2201,14 +2206,40 @@ pub(crate) fn install_isolated_packages(
                         continue;
                     }
                     let pkg_id = node_pkg_ids[node_id.get() as usize];
-                    if dependencies[dep_id as usize].name_hash == pkg_name_hashes[pkg_id as usize] {
+                    let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
+                    if dependencies[dep_id as usize].name_hash == pkg_name_hash
+                        || !links_into_hidden_node_modules(pkg_resolutions[pkg_id as usize].tag)
+                    {
                         continue;
                     }
-                    if links_into_hidden_node_modules(pkg_resolutions[pkg_id as usize].tag) {
-                        installer.unlink_package_name_from_hidden_node_modules(
-                            store::entry::Id::from(u32::try_from(entry_idx).expect("int cast")),
-                        );
+
+                    let linked_names = match &mut linked_names {
+                        Some(linked_names) => linked_names,
+                        None => {
+                            let mut names: HashMap<PackageNameHash, ()> = HashMap::default();
+                            for (idx, &hoisted) in entry_hoisted.iter().enumerate() {
+                                let node_id = entry_node_ids[idx].get() as usize;
+                                let tag = pkg_resolutions[node_pkg_ids[node_id] as usize].tag;
+                                if hoisted && links_into_hidden_node_modules(tag) {
+                                    names.put(
+                                        dependencies[node_dep_ids[node_id] as usize].name_hash,
+                                        (),
+                                    )?;
+                                }
+                            }
+                            for key in &store.hidden_hoist_keys {
+                                names.put(dependencies[key.dep_id as usize].name_hash, ())?;
+                            }
+                            linked_names.insert(names)
+                        }
+                    };
+                    if linked_names.contains_key(&pkg_name_hash) {
+                        continue;
                     }
+
+                    installer.unlink_package_name_from_hidden_node_modules(store::entry::Id::from(
+                        u32::try_from(entry_idx).expect("int cast"),
+                    ));
                 }
             }
         }

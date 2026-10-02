@@ -120,14 +120,27 @@ impl Symlinker {
         }
     }
 
-    /// Removes `dest` if it is the link this would write.
-    pub(crate) fn unlink_if_current(&mut self) {
+    /// Removes `dest` if it is the link this would write, or that link to another store
+    /// entry of `pkg_name`.
+    pub(crate) fn unlink_if_links_to_package(&mut self, pkg_name: &[u8]) {
         let mut current_link_buf = bun_paths::path_buffer_pool::get();
         let Ok(current_link_len) = bun_sys::readlink(self.dest.slice_z(), &mut current_link_buf)
         else {
             return;
         };
-        if self.is_current(&current_link_buf[..current_link_len]) {
+        // libuv adds a trailing slash to junctions.
+        let current_link = strings::without_trailing_slash(&current_link_buf[..current_link_len]);
+
+        let links_to_package =
+            links_to_entry_of(current_link, self.target.slice_z().as_bytes(), pkg_name);
+        #[cfg(windows)]
+        let links_to_package = links_to_package
+            || links_to_entry_of(
+                current_link,
+                self.fallback_junction_target.slice(),
+                pkg_name,
+            );
+        if links_to_package {
             self.unlink();
         }
     }
@@ -164,6 +177,36 @@ impl Symlinker {
             let _ = bun_sys::unlink(self.dest.slice_z());
         }
     }
+}
+
+/// Whether `link` is `target` with any store entry of `pkg_name` where `target` names one:
+/// `<dirs>/<pkg_name>@<resolution>/node_modules/<pkg_name>`.
+fn links_to_entry_of(link: &[u8], target: &[u8], pkg_name: &[u8]) -> bool {
+    let link: Vec<&[u8]> = strings::tokenize_any(link, b"/\\").collect();
+    let target: Vec<&[u8]> = strings::tokenize_any(target, b"/\\").collect();
+    let name_len = strings::tokenize_any(pkg_name, b"/\\").count();
+    if link.len() != target.len() || target.len() < name_len + 2 {
+        return false;
+    }
+
+    let entry_index = target.len() - name_len - 2;
+    let entry = target[entry_index];
+    // A scoped name starts with `@`, so the `@` that ends the name is never the first byte.
+    let Some(at) = strings::index_of_char_usize(&entry[1..], b'@') else {
+        return false;
+    };
+    let name_and_at = &entry[..at + 2];
+
+    link.iter()
+        .zip(&target)
+        .enumerate()
+        .all(|(i, (link, target))| {
+            if i == entry_index {
+                link.starts_with(name_and_at)
+            } else {
+                link == target
+            }
+        })
 }
 
 #[derive(Clone, Copy)]

@@ -4170,6 +4170,35 @@ describe("hoist", () => {
     expect(await fallbackLinks(packageDir)).toEqual(links);
   });
 
+  test("removes the package-name link an older version left for another version of the package", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    const manifest = (version: string) =>
+      JSON.stringify({
+        name: "hoist-upgraded-tree-bump",
+        dependencies: { "an-alias": `npm:no-deps@${version}` },
+      });
+
+    await write(packageJson, manifest("1.0.0"));
+    await runBunInstall(bunEnv, packageDir);
+
+    // older versions named the link after the package
+    await symlink(
+      inStore("no-deps@1.0.0", "no-deps"),
+      join(packageDir, "node_modules", ".bun", "node_modules", "no-deps"),
+      "dir",
+    );
+
+    // the alias moves to another version in the install that finds the old link
+    await write(packageJson, manifest("2.0.0"));
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await fallbackLinks(packageDir)).toEqual({
+      "an-alias": inStore("no-deps@2.0.0", "no-deps"),
+    });
+  });
+
   test("npmrc hoist=false", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },

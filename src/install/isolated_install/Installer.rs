@@ -2146,23 +2146,17 @@ impl<'a> Installer<'a> {
     }
 
     /// Older versions named the link after the package. Removes the one a previous install
-    /// left for an entry that now holds other names only.
+    /// left for the entry's package, at any version. Only for a package name that nothing is
+    /// linked under now.
     pub(crate) fn unlink_package_name_from_hidden_node_modules(&self, entry_id: StoreEntryId) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
-        let dependencies = &self.lockfile().buffers.dependencies;
 
         let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
         let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
         let pkg_name = self.lockfile().packages.items_name()[pkg_id as usize].slice(string_buf);
 
-        for key in self.store.hidden_hoist_keys_of(entry_id) {
-            if dependencies[key.dep_id as usize].name.slice(string_buf) == pkg_name {
-                return;
-            }
-        }
-
         self.hidden_node_modules_link(entry_id, pkg_name)
-            .unlink_if_current();
+            .unlink_if_links_to_package(pkg_name);
     }
 
     /// `node_modules/.bun/node_modules/<name>` as a link to the entry's package directory.

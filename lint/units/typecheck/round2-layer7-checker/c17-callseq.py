@@ -10,8 +10,9 @@ import re
 
 GO = '/workspace/ref/typescript-go/internal/checker/checker.go'
 RS = '/workspace/wt/typecheck/src/typecheck/checker/c17_unary_meta_yield.rs'
-# Helpers of the port that stand for a Go operation and not for a call of upstream: the stack test, a slice that is kept (list_of), a map write (map_set), t.Types() (type_types) and valueSymbolLinks.Get (value_symbol_links_get).
-HELPERS = ['stack_limit', 'list_of', 'map_set', 'type_types', 'value_symbol_links_get']
+# Helpers of the port that stand for a Go operation and not for a call of upstream: the stack test, a map write (map_set), debug.Assert (assert), a panic (fail, fail_detail), core.Filter and core.SameMap with a callback that takes the checker (filter, same_map), and the casts of a type (as_structured_type, as_intersection_type, as_instantiation_expression_type_mut).
+HELPERS = ['stack_limit', 'map_set', 'assert', 'fail', 'fail_detail', 'filter', 'same_map', 'as_structured_type',
+           'as_intersection_type', 'as_instantiation_expression_type_mut']
 
 
 def snake(name):

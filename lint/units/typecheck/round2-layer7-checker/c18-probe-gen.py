@@ -2,11 +2,12 @@
 # Writes c18-probe.rs into a work directory: checker/c18_identifiers_property_access_this.rs, checker/types.rs and
 # checker/c01_data.rs of the tree by #[path], the leaf files they stand on by #[path], and stand-ins for every other
 # name. The signature of a stand-in is read from the file of the tree that defines the function, at the time of the
-# run; its body never returns. The three callees that no file of the tree defines yet (the ranges of c16, c45 and c48)
-# are written by hand in the block MISSING, with upstream's parameter order: when the file of their range has them,
-# the signature of the tree replaces the hand-written one. Map and LiveList of crate::core are the contract's, until
-# the tree has them. After the file come its consumers: the calls that other files of checker/ make into its
-# functions, with the arguments and the use of the result that the tree writes.
+# run; its body never returns. Three callees had no definition in the tree when the file was written (the ranges of
+# c16, c45 and c48): the block MISSING has them by hand, with upstream's parameter order, and the signature of the
+# tree replaces the hand-written one once the file of their range has it. Map and LiveList of crate::core are the
+# contract's until core/golang.rs has them. core/golang.rs imports the map of the crate bun_collections: c18-probe.sh
+# compiles c18-probe-bun-collections.rs in its place. After the file come its consumers: the calls that other files
+# of checker/ make into its functions, with the arguments and the use of the result that the tree writes.
 # The layout of this script is the one of c04-probe-gen.py.
 # Run: sh c18-probe.sh
 import os

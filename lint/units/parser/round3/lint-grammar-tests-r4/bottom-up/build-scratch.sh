@@ -13,7 +13,7 @@ for name in thiserror bitflags bun_collections strum smallvec bun_react_compiler
 done
 SEARCH=""
 for dir in "$BUILD"/*/*/out; do SEARCH="$SEARCH -L dependency=$dir"; done
-cd "$ROOT"
+cd /tmp/r4bu
 # shellcheck disable=SC2086
 rustc --crate-name bun_js_parser --edition=2024 "$SCRATCH/src/js_parser/lib.rs" --test --emit=link \
   -C debuginfo=0 -C codegen-units=16 --cap-lints warn -o "$SCRATCH/out/bun_js_parser.new" \

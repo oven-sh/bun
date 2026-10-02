@@ -1,0 +1,111 @@
+
+running 75 tests
+test native_test_shims::tests::a_double_is_the_longest_decimal_prefix ... ok
+test native_test_shims::tests::utf16_becomes_utf8_up_to_a_surrogate_without_a_pair ... ok
+test native_test_shims::tests::a_heap_frees_its_blocks_when_it_is_destroyed ... ok
+test native_test_shims::tests::base64_is_padded_unless_it_is_for_a_url ... ok
+test native_test_shims::tests::an_occurrence_is_the_first_or_the_last ... ok
+test native_test_shims::tests::a_scan_stops_where_its_kernel_stops ... ok
+test native_test_shims::tests::the_bound_of_a_stack_stays ... ok
+test parse::annotation_tests::what_an_attempt_read_and_took_back_leaves_no_record ... ok
+test parse::annotation_tests::a_decorated_member_keeps_its_metadata_beside_its_node ... ok
+test parse::annotation_tests::records_are_those_of_the_known_sources ... ok
+test parse::annotation_tests::the_lint_twin_of_parse_paren_expr_reads_what_it_reads ... FAILED
+test parse::attached::tests::a_this_parameter_is_read_and_recorded_for_its_function ... ok
+test parse::attached::tests::records_at_one_offset_are_told_apart_by_their_owner ... ok
+test parse::attached::tests::rewind_drops_the_records_since_the_mark ... ok
+test parse::attached::tests::clauses_keywords_and_names_are_found_in_the_order_of_the_source ... ok
+test parse::attached::tests::the_extends_clause_is_read_and_recorded_for_its_class ... ok
+test parse::attached::tests::a_type_predicate_is_read_and_recorded_for_its_function ... ok
+test parse::attached::tests::the_parts_of_an_annotation_make_one_record ... ok
+test parse::attached::tests::a_type_annotation_is_read_and_recorded_for_its_binding ... ok
+test parse::attached::tests::the_type_arguments_of_a_jsx_element_are_read_and_recorded ... ok
+test parse::erased::tests::list_is_the_scope_in_order ... ok
+test parse::attached::tests::type_parameters_are_read_and_recorded_for_their_owner ... ok
+test parse::erased::tests::declare_records_what_leaves_a_statement ... ok
+test parse::erased::tests::declare_takes_the_record_and_its_statements ... ok
+test parse::erased::tests::export_is_found_only_as_a_keyword ... ok
+test parse::erased::tests::first_token_is_a_decorator_or_export ... ok
+test parse::erased::tests::statement_takes_its_place_in_the_list_that_drops_it ... ok
+test parse::erased::tests::token_end_passes_white_space_and_comments ... ok
+test parse::erased::tests::string_literal_ends_after_its_quote ... ok
+test parse::erased::tests::member_without_a_record_is_an_index_signature ... ok
+test parse::erased::tests::rewind_drops_the_records_since_the_mark ... ok
+test parse::generics::tests::records_are_those_of_the_known_sources ... ok
+test parse::erased_tests::records_are_those_of_the_known_sources ... ok
+test parse::generics::tests::rewind_drops_what_was_read_from_the_position_on ... ok
+test parse::generics::tests::type_arguments_stay_in_the_order_of_the_source ... ok
+test parse::grammar_rows_tests::a_lint_parse_reads_a_source_without_a_route_as_a_parse_without_lint_does ... ok
+test parse::generics::tests::type_parameters_are_found_by_the_name_of_their_declaration ... ok
+test parse::grammar_rows_tests::the_type_parameters_of_a_row_end_at_their_closer ... ok
+test parse::grammar_rows_tests::a_return_type_of_a_row_is_the_nodes_that_tsc_builds ... ok
+test parse::parse_entry::tests::a_declaration_file_is_ambient ... ok
+test parse::parse_entry::tests::parses_javascript_typescript_and_jsx ... ok
+test parse::parse_entry::tests::takes_no_shortcut_for_a_bundled_file ... ok
+test parse::grammar_rows_tests::a_type_of_a_row_is_the_nodes_that_tsc_builds ... ok
+test parse::parse_skip_typescript::tests::a_parser_snapshot_takes_back_the_records_made_since ... ok
+test parse::parse_skip_typescript::tests::a_type_that_an_attempt_misses_is_reported_once ... ok
+test parse::parse_skip_typescript::tests::a_constraint_that_is_not_kept_leaves_no_node_and_no_message ... ok
+test parse::parse_skip_typescript::tests::an_attempt_at_type_parameters_that_fails_takes_its_records_back ... ok
+test parse::parse_skip_typescript::tests::an_attempt_that_fails_keeps_no_record_of_the_type_it_built ... ok
+test parse::parse_entry::tests::an_unvisited_identifier_is_its_spelling ... ok
+test parse::parse_entry::tests::declaration_file_names_are_those_of_tsc ... ok
+test parse::grammar_rows_tests::a_lint_parse_reads_a_row_as_tsc_does ... FAILED
+test parse::parse_skip_typescript::tests::an_attempt_that_fails_takes_its_records_back ... ok
+test parse::parse_skip_typescript::tests::an_attempt_that_keeps_what_it_read_takes_its_records_and_messages_back_where_it_fails ... ok
+test parse::erased::tests::module_keyword_of_a_dotted_part ... ok
+test parse::parse_stmt::tests::a_lint_parse_reads_no_cast_where_the_reference_reads_a_declaration ... ok
+test parse::parse_stmt::tests::a_lint_parse_reads_the_declaration_that_as_or_satisfies_names ... ok
+test parse::syntax_errors::tests::a_lint_parse_rejects_what_an_attempt_lets_pass ... ok
+test parse::syntax_errors::tests::a_lint_parse_takes_what_the_reference_parses ... ok
+test parse::syntax_errors::tests::a_message_takes_its_argument ... ok
+test parse::syntax_errors::tests::the_text_of_the_lexer_says_what_it_expected ... ok
+test parse::wrappers::tests::a_type_assertion_needs_a_type ... ok
+test parse::wrappers::tests::records_are_those_of_the_known_sources ... FAILED
+test parse::syntax_errors::tests::a_record_stays_with_the_message_that_the_log_keeps ... ok
+test parse::wrappers::tests::rewind_drops_what_was_read_from_the_position_on ... ok
+test parse::wrappers::tests::records_hold_the_offsets_of_their_own_tokens ... ok
+test parse::syntax_errors::tests::a_record_goes_with_the_message_that_the_log_drops ... ok
+test parse::wrappers::tests::identity_tells_the_nodes_at_one_offset_apart ... ok
+test parse::syntax_errors::tests::an_unterminated_string_ends_with_its_line ... ok
+test parse::syntax_errors::tests::a_type_that_is_built_is_read_as_the_reference_reads_it ... ok
+test parse::syntax_errors::tests::a_syntax_error_of_a_lint_parse_has_the_code_of_the_reference ... ok
+test type_sink_tests::a_closer_inside_a_longer_token_ends_its_list_and_no_more ... ok
+test type_sink_tests::a_return_type_is_a_type_or_a_predicate ... ok
+test type_sink_tests::a_token_that_starts_no_type_is_an_error ... ok
+test type_sink_tests::a_type_is_the_nodes_that_tsc_builds ... ok
+test type_sink_tests::type_parameters_end_at_their_closer ... ok
+
+failures:
+
+---- parse::annotation_tests::the_lint_twin_of_parse_paren_expr_reads_what_it_reads stdout ----
+
+thread 'parse::annotation_tests::the_lint_twin_of_parse_paren_expr_reads_what_it_reads' (116647) panicked at /tmp/r4bu/z/src/js_parser/parse/annotation_tests.rs:270:5:
+parse_paren_expr_for_lint is not parse_paren_expr with the known differences, at its line 59: Some("|| (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)") is wanted, Some("|| (Self::IS_TYPESCRIPT_ENABLED") is there
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- parse::grammar_rows_tests::a_lint_parse_reads_a_row_as_tsc_does stdout ----
+
+thread 'parse::grammar_rows_tests::a_lint_parse_reads_a_row_as_tsc_does' (116677) panicked at /tmp/r4bu/z/src/js_parser/parse/grammar_rows_tests.rs:309:5:
+export-attributes-next-line Ts export { a } from "x"
+with { type: "json" };: Ok("kept[s_export_from] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]")
+export-attributes-next-line Ts export * from "x"
+with { type: "json" };: Ok("kept[s_export_star] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]")
+export-attributes-next-line Js export * from "x"
+with { type: "json" };: Ok("kept[s_export_star] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]")
+
+---- parse::wrappers::tests::records_are_those_of_the_known_sources stdout ----
+
+thread 'parse::wrappers::tests::records_are_those_of_the_known_sources' (116709) panicked at /tmp/r4bu/z/src/js_parser/parse/wrappers.rs:384:9:
+javascript: Some(
+    [],
+)
+
+
+failures:
+    parse::annotation_tests::the_lint_twin_of_parse_paren_expr_reads_what_it_reads
+    parse::grammar_rows_tests::a_lint_parse_reads_a_row_as_tsc_does
+    parse::wrappers::tests::records_are_those_of_the_known_sources
+
+test result: FAILED. 72 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+

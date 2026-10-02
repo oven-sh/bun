@@ -3397,3 +3397,138 @@ its signature from `c18_identifiers_property_access_this.rs` since then ("0 call
   `NodeBuilderImpl` that those entries call are in the tree but for `serializeTypeForExpression`,
   `symbolToTypeParameterDeclarations` and `tryJSTypeNodeToTypeNode`. Until then the eight entries of
   `RequestNodeBuilder` are stand-ins.
+
+## Checker: identifiers, property access and this (`checker/c18_identifiers_property_access_this.rs`)
+
+Commit `1c525192d2` (written by the job that commits the worktree). 49 of the 53 functions of `checker.go`
+11132-12376 (layer E-ACCESS), in upstream order: `checkIdentifier` to `classDeclarationExtendsNull`. The other four,
+`forEachProperty`, `getDeclaringClass`, `isValidOverrideOf` and `isPropertyInClassDerivedFrom` (11997-12038, layer
+R-REL), are in `relater.rs`, as before. No function is a stand-in. PORT_STATUS.md has the row.
+
+NOT compiled by cargo when it was written: the crate did not compile (modules of `checker/mod.rs` without a file, and
+names that `crate::core` and `crate::ast` did not have). "Verified" below says what was checked instead.
+
+### How a caller writes the calls
+
+- `check_identifier(node, check_mode)`, `check_this_expression(node)`,
+  `check_property_access_expression(node, check_mode, write_only)`, `check_property_access_chain(node, check_mode)`,
+  `check_property_access_expression_or_qualified_name(node, left, left_type, right, check_mode, write_only)` and
+  `get_flow_type_of_access_expression(node, prop, prop_type, error_node, check_mode)` answer a `TypeId`. A nil `prop`
+  is `SymbolId::NIL`.
+- `TypeId::NIL` is upstream's nil result of `get_type_of_property_in_base_class(property)`,
+  `get_enclosing_class_from_this_parameter(node)`, `get_contextual_this_parameter_type(func)`,
+  `try_get_this_type_at(node)` and `try_get_this_type_at_ex(node, include_global_this, container)`; a nil container
+  is `NodeId::NIL`. `TryGetThisTypeAtEx` is `try_get_this_type_at_ex_exported(node, include_global_this, container)`:
+  `tryGetThisTypeAtEx` has the same snake case name.
+- `SymbolId::NIL` is the nil result of `lookup_symbol_for_private_identifier_declaration(prop_name: &[u8], location)`,
+  `get_private_identifier_property_of_type(left_type, lexically_scoped_identifier)` and
+  `get_suggested_symbol_for_nonexistent_property(name, containing_type)`. `NodeId::NIL` is the nil result of
+  `get_control_flow_container(node)` and `get_entity_name_for_extending_interface(node)`.
+- `check_property_accessibility(node, is_super, writing, t, prop) -> bool`,
+  `check_property_accessibility_ex(node, is_super, writing, t, prop, report_error) -> bool` (a caller passes the flag
+  that upstream defaults to true), `check_property_accessibility_at_location(location, is_super, writing,
+  containing_type, prop, error_node) -> bool` (`NodeId::NIL` reports nothing),
+  `is_property_accessible(node, is_super, is_write, containing_type, property) -> bool`,
+  `is_valid_property_access_for_completions(node, t, property) -> bool`.
+- `report_nonexistent_property(prop_node, containing_type, is_unchecked_js)`,
+  `check_private_identifier_property_access(left_type, right, lexically_scoped_identifier) -> bool`,
+  `check_property_not_used_before_declaration(prop, node, right)`,
+  `check_and_report_error_for_extending_interface(error_location) -> bool`,
+  `is_uncalled_function_reference(node, symbol) -> bool`.
+- `get_suggested_lib_for_non_existent_property(missing_property: &[u8], containing_type) -> &'static [u8]`: the empty
+  text for no suggestion, as `get_suggested_lib_for_non_existent_name` of `c04`.
+- `check_this_before_super(node, container, diagnostic_message: MessageId)`,
+  `check_this_in_static_class_field_initializer_in_decorated_class(this_expression, container)`,
+  `class_declaration_extends_null(class_decl) -> bool`.
+- `get_this_container(node, include_arrow_functions, include_class_computed_property_name) -> NodeId` is the method
+  of 12279; `ast::get_this_container(a, ..)` is the function of package `ast`. `is_in_ambient_or_type_node(node)` is
+  the method of 11328; the free function of `utilities.go` 1058 is `checker::is_in_ambient_or_type_node(a, node)`.
+- `for_each_enclosing_class(node, callback: impl FnMut(NodeId) -> bool) -> bool`: the callback gets a class node.
+- These only read and take `&self`: `is_same_scoped_binding_element`, `is_in_ambient_or_type_node`,
+  `get_control_flow_container`, `is_method_access_for_call`, `lookup_symbol_for_private_identifier_declaration`,
+  `get_entity_name_for_extending_interface`, `is_optional_property_declaration`,
+  `is_node_used_during_class_initialization`, `is_node_within_class`, `for_each_enclosing_class`,
+  `get_this_container`, `is_in_parameter_initializer_before_containing_function`. Every other method takes
+  `&mut self`.
+- Free functions, `pub` at column 0: `has_common_dom_type_name(c: &Checker, t) -> bool` and
+  `get_this_parameter_from_node_context(a, node) -> NodeId`. `checker/mod.rs` has no glob for the file, so their path
+  is `checker::c18_identifiers_property_access_this::`; only this file names them, as upstream.
+
+### Differences from upstream
+
+- Stack tests, each the first statement of its function, at the two entries of
+  `checker-expressions-calls-flow/top-down/data/tested_entries.tsv` that are in this file:
+  `check_property_access_expression_or_qualified_name` (the error type) and
+  `get_entity_name_for_extending_interface` (the nil node). The third entry of the range, `forEachProperty`, is in
+  `relater.rs`.
+- Panics, as `fallbacks.tsv` has them: `getThisContainer` without a parent (12284) is a fault and the last node of the
+  parent chain; `getDeclaredTypeOfSymbol(symbol).AsInterfaceType().thisType` of a type that is no interface type
+  (12262) is a fault and the error type, which then goes to `get_flow_type_of_reference` as written.
+- A nil that upstream dereferences reads as the zero record: `prop.Parent.Flags` of 11827 for a property without a
+  parent is no flag, and `typeClass.Symbol()` of 11614 for a declaration outside a class is the nil symbol.
+- The deferred diagnostic of 11437 is a boxed `FnOnce(&mut Checker)` that owns the name node, the two types and the
+  flag: `isThisTypeParameter(leftType)` is asked when the callback runs, as upstream's closure does.
+- `checkIdentifier`: the two `switch` over conditions (11169, 11251) are `if` with `else if`, in upstream's order of
+  cases. Each of the two errors of 11275-11276 builds its own two texts, the symbol first, as upstream's argument
+  order does. `declaration` is the one variable that is assigned again.
+- `checkPropertyAccessExpressionOrQualifiedName`: `propType` is the value of the `if prop == nil`, whose first arm
+  leaves through `return` where upstream does. `[]*ast.Node{indexInfo.declaration}` and `[]*Type{propType,
+  c.missingType}` are lists over a temporary array. `== core.TSTrue` is `is_true()`.
+  `c.globalThisSymbol.Exports[name]` is `table_get` of the exports of the symbol. A nested call of the checker in an
+  argument (`isSelfTypeAccess`, `isConstEnumObjectType`) is a `let` before the call, in upstream's order of
+  evaluation.
+- `reportNonexistentProperty`: `typeName+"."+propName` is `concat`, `diagnostic.Code()` is read through the diagnostic
+  store, and `AddRelatedInfo` is `diagnostic_store.add_related_info`. `NewDiagnosticChainForNode` and
+  `NewDiagnosticForNode` are the methods of `utilities.rs`, `createDiagnosticForNode` the one of `c22`.
+- `getSuggestedSymbolForNonexistentProperty`: `core.Filter` with a callback that calls the checker is
+  `Checker::filter`, and `slices.Values(props)` is the slice.
+- `containerSeemsToBeEmptyDomElement`: `compilerOptions.Lib` is `Option<Vec<Vec<u8>>>`, and `None` is the nil slice.
+- `getSuggestedLibForNonExistentProperty`: `featureMap[name]` with its ok is `FeatureMap::get`.
+- `isNodeUsedDuringClassInitialization`: the `else if` after a `return` is a second `if`.
+- `getContextualThisParameterType`: the parameter `fn` is `func`.
+- Comments: the blocks with `@param` are one line each; the TODO of 12269 and the issue number of 11719 are not
+  carried over.
+
+### Verified
+
+Cargo has not compiled the file, and nothing ran a function of it. What was checked:
+
+- `sh round2-layer7-checker/c18-probe.sh` on the tree of `80af3c3df9`: exit 0, "probe ok". It runs `rustc` alone,
+  `clippy-driver` alone with the clippy table of the workspace, `clippy::all` and the repository's `clippy.toml`, and
+  `rustfmt --check --edition 2024`: no error, no warning, no finding. `c18-probe-gen.py` writes the probe: this file,
+  `checker/types.rs` and `checker/c01_data.rs` by `#[path]`; `diagnostics/`, `internal.rs`,
+  `core/{arena,golang,linkstore,text,tristate}.rs`, `collections/{set,ordered_map,ordered_set}.rs` and
+  `ast/{flags,ids,checkflags,symbolflags,modifierflags,nodeflags,kind_generated,diagnostic}.rs` by `#[path]`; and a
+  stand-in for every other name. The probe denies warnings, unused imports, variables, `mut` and assignments and
+  `unreachable_pub`. The script reads the signature of a stand-in from the file of the tree that defines the function
+  at the time of the run, and the body of a stand-in never returns: 24 methods of `Ast` and 66 free functions of
+  `ast/`, 2 of `scanner/`, 1 of `binder/`, 105 methods of the checker from 34 files and 21 free functions of
+  `checker/`; `some`, `every` and `if_else` of `core/core.rs` are the text of the tree. Copied from their files: the
+  `Symbol` record, five node records, `FindAncestorResult`, `AssignmentKind`, `FeatureMapEntry` with `FeatureMap`,
+  `ModuleKind` with `ResolutionMode`, `DeferredDiagnosticCallback`, the four fields of `CompilerOptions` and the
+  three of `SourceFile` that the file reads, and the types of the 24 fields of the checker that it names. Written by
+  hand: `StackCheck`, `CacheHashKey`, `ScriptTarget`, `ListItem`, `Fallback`, `Ast`, the `Checker` record, and a crate
+  `bun_collections` with the map that `core/golang.rs` imports (`c18-probe-bun-collections.rs`). `Ast` and `Checker`
+  are invariant in their lifetime there, as in the tree. A copy of the file with two swapped arguments gave E0308, and
+  a copy with a `let` that is returned gave the clippy finding.
+- The consumers are part of the probe: one module calls the functions of the file with the arguments and the use of
+  the result that `c04`, `c06`, `c09`, `c11`, `c14`, `c15`, `c20`, `c28`, `c31`, `c44`, `c46`, `c52`, `flow.rs` and
+  `grammarchecks.rs` write. `python3 round2-layer7-checker/c18-callsites.py`: 42 call sites in 18 files give as many
+  arguments as the definitions take (`c17`, `c19`, `c48` and `emitresolver.rs` came while the file was written).
+- `python3 round2-layer7-checker/ranges.py c18_identifiers_property_access_this`: 49 of the 53 functions of the range
+  have a `fn` of their name in the file, 4 only elsewhere in `checker/` (`relater.rs`), none nowhere.
+- Scripts over the file: the 49 functions have upstream's names in upstream's order; each of the 120 imported names
+  is used; no two comment lines are adjacent; no `unwrap`, `expect`, `panic`, `todo`, `unimplemented`, `unreachable`
+  or `unsafe`; the 49 diagnostic messages of the range exist by name in `diagnostics/diagnostics_generated.rs`.
+- Read against upstream statement by statement, and each callee at its definition in the tree.
+- Not checked: the real `Ast`, `SourceFile`, `CompilerOptions` and `Checker` (the probe has stand-ins for them), rustc
+  and clippy on the real crate, and any result against upstream's baselines. The stand-in signatures are those of
+  the tree at the time of the run.
+
+### What this file expects and the tree does not have
+
+- Nothing at `80af3c3df9`: every name that the file uses has a definition in the tree. Three callees had none when
+  the file was written and came beside it, with the signatures that the file calls:
+  `mark_property_as_referenced(prop, node_for_check_write_only, is_self_type_access)` (27829, `c45`),
+  `is_context_sensitive_function_or_object_literal_method(func) -> bool` (29619, `c48`) and
+  `get_contextual_signature(node) -> SignatureId` (10354, `c16`).

@@ -5,8 +5,10 @@
 //! the body of an arrow function that is to blame. And what is said: that something is missing, that something is too much,
 //! or just that it does not fit.
 
-use super::errors::{Diagnostic, is_close};
-use super::relate::{Excess, Relation};
+use super::errors::Diagnostic;
+use super::explain_relation::RelationDiagnostic;
+use super::relate::Relation;
+use super::related::Place;
 use super::*;
 use crate::bind::{FnOwner, Parent};
 
@@ -62,18 +64,6 @@ fn is_covariant_below(
         node = parent;
     }
     covariant
-}
-
-/// What `checkTypeRelatedToEx` was given where it reports an error.
-#[derive(Copy, Clone)]
-struct RelationError {
-    source: TypeId,
-    target: TypeId,
-    relation: Relation,
-    /// The code of `headMessage`. For none, what `reportRelationError` says then: 2322, or 2678 under the comparable relation.
-    head: u32,
-    /// Whether `source`, and whether `target`, is written as an alias that is not the name it is compared under.
-    named_otherwise: (bool, bool),
 }
 
 /// Where the type that something is held against is written out.
@@ -267,7 +257,7 @@ impl Checker<'_> {
         self.check_literals_against_patterns(file, out);
         self.check_redeclared_variables(file, out);
         self.check_type_argument_constraints(file, out);
-        self.check_mapped_type_keys(file, out);
+        self.check_mapped_type_keys(file);
         // `checkExportAssignment`: what is exported is held against the type of its `@type` tag.
         for &(owner, node) in &hir.jsdoc_types {
             let JsDocTypeOwner::Export(s) = owner else {
@@ -454,7 +444,16 @@ impl Checker<'_> {
                         // What a constructor returns takes the place of the instance.
                         Some(instance) => {
                             let ty = self.type_of_expr(file, e);
-                            if !self.check_assignable(file, ty, instance, hir[s].pos, e, 2322, out)
+                            let at = Some(self.place_of_token(file, hir[s].pos));
+                            if !self.is_uncertain(file, e)
+                                && !self.check_type_assignable_to_and_optionally_elaborate(
+                                    ty,
+                                    instance,
+                                    at,
+                                    Some((file, e)),
+                                    None,
+                                    None,
+                                )
                             {
                                 out.push(Diagnostic {
                                     start: hir[s].pos,
@@ -658,33 +657,11 @@ impl Checker<'_> {
                     self.end_inside_parentheses(file, ExprId(i as u32)),
                 )
             };
-            let error = RelationError {
-                source: given,
-                target,
-                relation: Relation::Comparable,
-                head: 2352,
-                named_otherwise: (false, false),
-            };
-            let excess = self.excess_within(given, target, Relation::Comparable, at, end, 2352, 0);
-            let said = match excess {
-                Some(excess) => {
-                    self.explain_head_over_excess(excess, at, end, error);
-                    excess
-                }
-                None => {
-                    // `tryElaborateArrayLikeErrors`: on top of that nothing is said.
-                    let (given, target) = (self.force(given), self.force(target));
-                    let target = if self.is_object_type(given) {
-                        self.without_nullable_alternatives(target)
-                    } else {
-                        target
-                    };
-                    let loses_readonly = self.is_readonly_array_or_tuple(given)
-                        && self.is_mutable_array_or_tuple(target);
-                    let code = if loses_readonly { 4104 } else { 2352 };
-                    self.explain_relation_error(at, end, code, error.target, error);
-                    Diagnostic { start: at, code }
-                }
+            let comparable = Relation::Comparable;
+            let Some(said) =
+                self.report_unrelated(given, target, comparable, (at, end), 2352, false, out)
+            else {
+                continue;
             };
             if self.explains {
                 let written = [
@@ -700,7 +677,6 @@ impl Checker<'_> {
                     }
                 }
             }
-            out.push(said);
         }
     }
 
@@ -1368,7 +1344,7 @@ impl Checker<'_> {
     }
 
     /// `checkMappedType`: what is mapped over, or what it is renamed to, has to be a key. 2322.
-    fn check_mapped_type_keys(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_mapped_type_keys(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let keys = self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
         for t in 0..hir.types.len() {
@@ -1393,16 +1369,8 @@ impl Checker<'_> {
             }
             let fits = self.compare_if_certain(|c| c.is_assignable(ty, keys));
             if fits == Some(false) {
-                let (start, end) = (hir[at].pos, self.end_of_type_node(file, at));
-                out.push(Diagnostic { start, code: 2322 });
-                let error = RelationError {
-                    source: ty,
-                    target: keys,
-                    relation: Relation::Assignable,
-                    head: 2322,
-                    named_otherwise: (false, false),
-                };
-                self.explain_relation_error(start, end, 2322, keys, error);
+                let place = (file, hir[at].pos, self.end_of_type_node(file, at));
+                self.check_type_assignable_to(ty, keys, Some(place), None);
             }
         }
     }
@@ -2501,7 +2469,53 @@ impl Checker<'_> {
 
     // ───────────────────────────── further in ─────────────────────────────
 
-    /// `elaborateError`: takes the complaint that `e`, of type `source`, does not fit `target` to the part of `e` that is to blame.
+    /// `checkTypeAssignableToAndOptionallyElaborate`. `expr`: as it is written, with the parentheses around it.
+    pub(super) fn check_type_assignable_to_and_optionally_elaborate(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        error_node: Option<Place>,
+        expr: Option<(FileId, ExprId)>,
+        head_message: Option<u32>,
+        mut diagnostic_output: Option<&mut Vec<Reported>>,
+    ) -> bool {
+        match self.is_type_related_to_if_told(source, target, Relation::Assignable) {
+            Some(true) => return true,
+            Some(false) if error_node.is_none() => return false,
+            Some(false) => {
+                let output = diagnostic_output.as_deref_mut();
+                if let Some((file, e)) = expr
+                    && self.elaborate_error(file, e, false, source, target, head_message, output)
+                {
+                    return false;
+                }
+            }
+            // The overflow is reported instead of the relation error. The pair is not compared again to elaborate.
+            None => {}
+        }
+        self.check_type_assignable_to_ex(
+            source,
+            target,
+            error_node,
+            head_message,
+            diagnostic_output,
+        )
+    }
+
+    /// What went to a `diagnosticOutput`, for who still has an `out`.
+    fn put_out(&mut self, reported: Vec<Reported>, out: &mut Vec<Diagnostic>) {
+        for diagnostic in reported {
+            out.push(Diagnostic {
+                start: diagnostic.start,
+                code: diagnostic.code,
+            });
+            if self.explains {
+                self.notes.borrow_mut().push(diagnostic.into());
+            }
+        }
+    }
+
+    /// `elaborateError`, for who still has an `out`.
     pub(super) fn elaborate(
         &mut self,
         file: FileId,
@@ -2514,7 +2528,6 @@ impl Checker<'_> {
         self.elaborate_from(file, e, false, source, target, head, out)
     }
 
-    /// `is_effective`: `e` is what `getEffectiveCheckNode` leaves, so the parentheses around it are no part of it.
     #[allow(clippy::too_many_arguments)]
     fn elaborate_from(
         &mut self,
@@ -2526,6 +2539,33 @@ impl Checker<'_> {
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
+        let (head, mut diags) = (Some(head), Vec::new());
+        let is_elaborated = self.elaborate_error(
+            file,
+            e,
+            is_effective,
+            source,
+            target,
+            head,
+            Some(&mut diags),
+        );
+        self.put_out(diags, out);
+        is_elaborated
+    }
+
+    /// `elaborateError`: takes the complaint that `e`, of type `source`, does not fit `target` to the part of `e` that is to blame.
+    /// `is_effective`: `e` is what `getEffectiveCheckNode` leaves, so the parentheses around it are no part of it.
+    #[allow(clippy::too_many_arguments)]
+    fn elaborate_error(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        is_effective: bool,
+        source: TypeId,
+        target: TypeId,
+        head_message: Option<u32>,
+        diagnostic_output: Option<&mut Vec<Reported>>,
+    ) -> bool {
         let hir = self.hir(file);
         // `isOrHasGenericConditional`
         let is_conditional = |c: &Self, t: TypeId| matches!(c.data(t), TypeData::Cond { .. });
@@ -2536,6 +2576,7 @@ impl Checker<'_> {
         }
         // `elaborateDidYouMeanToCallOrConstruct`: calling it would have done.
         for construct in [true, false] {
+            let mut would_do = false;
             for sig in self.signatures(source, construct) {
                 let returned = self.sig_return(sig);
                 if !self.is_any(returned)
@@ -2543,27 +2584,31 @@ impl Checker<'_> {
                     && self.is_known(returned)
                     && self.is_assignable(returned, target)
                 {
-                    let (at, end) = if is_effective {
-                        (
-                            self.start_inside_parentheses(file, e),
-                            self.error_end_inside_parentheses(file, e),
-                        )
-                    } else {
-                        (self.start_of(file, e), self.error_end_of(file, e))
-                    };
-                    let said = out.len();
-                    self.report_not_assignable_with_end(source, target, at, end, head, out);
-                    if let Some(&d) = out.get(said) {
-                        self.relate(d.start, d.code, |_| {
-                            vec![super::explain::Related {
-                                at: Some((file, at, end)),
-                                code: if construct { 6213 } else { 6212 },
-                                args: Vec::new(),
-                            }]
-                        });
-                    }
-                    return true;
+                    would_do = true;
+                    break;
                 }
+            }
+            if !would_do {
+                continue;
+            }
+            let at = if is_effective {
+                (
+                    file,
+                    self.start_inside_parentheses(file, e),
+                    self.error_end_inside_parentheses(file, e),
+                )
+            } else {
+                (file, self.start_of(file, e), self.error_end_of(file, e))
+            };
+            let mut diags = Vec::new();
+            let output = Some(&mut diags);
+            if !self.check_type_assignable_to_ex(source, target, Some(at), head_message, output)
+                && let Some(mut diagnostic) = diags.pop()
+            {
+                let code = if construct { 6213 } else { 6212 };
+                diagnostic.add_related_info(self.new_diagnostic(at, code, &[]));
+                self.report_diagnostic(diagnostic, diagnostic_output);
+                return true;
             }
         }
         match hir[e].kind {
@@ -2577,20 +2622,49 @@ impl Checker<'_> {
                 let is_prefix = before
                     .strip_suffix(b">")
                     .is_some_and(|b| b.trim_ascii_end().ends_with(b"const"));
-                !is_prefix && self.elaborate(file, inner, source, target, head, out)
+                !is_prefix
+                    && self.elaborate_error(
+                        file,
+                        inner,
+                        false,
+                        source,
+                        target,
+                        head_message,
+                        diagnostic_output,
+                    )
             }
             ExprKind::Assign {
                 op: None, value, ..
-            } => self.elaborate(file, value, source, target, head, out),
+            } => self.elaborate_error(
+                file,
+                value,
+                false,
+                source,
+                target,
+                head_message,
+                diagnostic_output,
+            ),
             ExprKind::Binary {
                 op: BinOp::Comma,
                 right,
                 ..
-            } => self.elaborate(file, right, source, target, head, out),
-            ExprKind::Object(props) => self.elaborate_object(file, props, source, target, out),
-            ExprKind::Array(items) => self.elaborate_array(file, items, source, target, out),
+            } => self.elaborate_error(
+                file,
+                right,
+                false,
+                source,
+                target,
+                head_message,
+                diagnostic_output,
+            ),
+            ExprKind::Object(props) => {
+                self.elaborate_object_literal(file, props, source, target, diagnostic_output)
+            }
+            ExprKind::Array(items) => {
+                self.elaborate_array_literal(file, items, source, target, diagnostic_output)
+            }
             ExprKind::Fn(func) if hir[func].kind == FnKind::Arrow => {
-                self.elaborate_arrow(file, func, source, target, out)
+                self.elaborate_arrow_function(file, func, source, target, diagnostic_output)
             }
             _ => false,
         }
@@ -2601,13 +2675,13 @@ impl Checker<'_> {
     }
 
     /// `elaborateObjectLiteral`
-    fn elaborate_object(
+    fn elaborate_object_literal(
         &mut self,
         file: FileId,
         props: Span<PropId>,
         source: TypeId,
         target: TypeId,
-        out: &mut Vec<Diagnostic>,
+        mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
         if self.is_primitive_or_never(target) {
             return false;
@@ -2622,33 +2696,29 @@ impl Checker<'_> {
             let Some(name) = self.member_name(file, prop.key) else {
                 continue;
             };
-            let (next, head) = match prop.kind {
+            let (next, message) = match prop.kind {
                 PropKind::Init => (
                     prop.value,
-                    if matches!(prop.key, PropKey::Computed(_)) {
-                        2418
-                    } else {
-                        2322
-                    },
+                    matches!(prop.key, PropKey::Computed(_)).then_some(2418),
                 ),
-                _ => (ExprId::NONE, 2322),
+                _ => (ExprId::NONE, None),
             };
-            let end = self.end_of_prop_name(file, p);
-            reported |= self.elaborate_element_with_end(
-                file, source, target, prop.pos, end, next, name, head, out,
-            );
+            let at = (file, prop.pos, self.end_of_prop_name(file, p));
+            let output = diagnostic_output.as_deref_mut();
+            reported |=
+                self.elaborate_element(source, target, at, next, false, name, message, output);
         }
         reported
     }
 
     /// `elaborateArrayLiteral`
-    fn elaborate_array(
+    fn elaborate_array_literal(
         &mut self,
         file: FileId,
         items: IdList<ExprId>,
         source: TypeId,
         target: TypeId,
-        out: &mut Vec<Diagnostic>,
+        mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
         if self.is_primitive_or_never(target) {
             return false;
@@ -2682,11 +2752,14 @@ impl Checker<'_> {
             while let ExprKind::Satisfies { expr, .. } = hir[check_node].kind {
                 check_node = expr;
             }
-            let at = self.start_inside_parentheses(file, check_node);
-            let end = self.error_end_inside_parentheses(file, check_node);
-            reported |= self.elaborate_element_from(
-                file, source, target, at, end, check_node, true, name, 2322, out,
+            let at = (
+                file,
+                self.start_inside_parentheses(file, check_node),
+                self.error_end_inside_parentheses(file, check_node),
             );
+            let output = diagnostic_output.as_deref_mut();
+            reported |=
+                self.elaborate_element(source, target, at, check_node, true, name, None, output);
         }
         reported
     }
@@ -2770,7 +2843,7 @@ impl Checker<'_> {
         self.indexed_access_if_any(ty, key, false)
     }
 
-    /// `elaborateElement`: the property or the element is written from `at` to `end`, `next` is its value if it has one to go into.
+    /// `elaborateElement`, for who still has an `out`.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn elaborate_element_with_end(
         &mut self,
@@ -2784,24 +2857,36 @@ impl Checker<'_> {
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
-        self.elaborate_element_from(file, source, target, at, end, next, false, name, head, out)
+        let (at, head, mut diags) = ((file, at, end), Some(head), Vec::new());
+        let is_elaborated = self.elaborate_element(
+            source,
+            target,
+            at,
+            next,
+            false,
+            name,
+            head,
+            Some(&mut diags),
+        );
+        self.put_out(diags, out);
+        is_elaborated
     }
 
+    /// `elaborateElement`: the property or the element is written at `prop`, `next` is its value if it has one to go into.
     /// `is_effective`: `next` is what `getEffectiveCheckNode` leaves, so the parentheses around it are no part of it.
     #[allow(clippy::too_many_arguments)]
-    fn elaborate_element_from(
+    fn elaborate_element(
         &mut self,
-        file: FileId,
         source: TypeId,
         target: TypeId,
-        at: u32,
-        end: u32,
+        prop: Place,
         next: ExprId,
         is_effective: bool,
         name: Atom,
-        head: u32,
-        out: &mut Vec<Diagnostic>,
+        error_message: Option<u32>,
+        mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
+        let file = prop.0;
         // What a property of something generic is has to wait: nothing to go into.
         if self.is_generic_object_type(target) {
             return false;
@@ -2829,7 +2914,9 @@ impl Checker<'_> {
         if !self.is_known(wanted) || !self.is_known(given) || self.is_assignable(given, wanted) {
             return false;
         }
-        if next.is_some() && self.elaborate_from(file, next, is_effective, given, wanted, 2322, out)
+        let output = diagnostic_output.as_deref_mut();
+        if next.is_some()
+            && self.elaborate_error(file, next, is_effective, given, wanted, None, output)
         {
             return true;
         }
@@ -2868,30 +2955,28 @@ impl Checker<'_> {
         let target_is_optional = self
             .prop_of(apparent, name)
             .is_some_and(|(p, _)| p.flags.contains(PropFlags::OPTIONAL));
+        let mut diags = Vec::new();
         if target_is_optional && self.is_exact_optional_property_mismatch(given, target, name) {
-            out.push(Diagnostic {
-                start: at,
-                code: 2412,
-            });
-            self.explain_to(at, end, 2412, |c| {
-                vec![c.type_to_string(given), c.type_to_string(wanted)]
-            });
-            let said = Diagnostic {
-                start: at,
-                code: 2412,
-            };
-            self.relate_expected_property(Some(said), target, name);
-            return true;
-        }
-        // What may be left out is not held to be `undefined`.
-        let wanted = if target_is_optional && self.p.files.options.exact_optional_property_types {
-            self.without_undefined(wanted)
+            diags.push(self.new_diagnostic(prop, 2412, &[Arg::Type(given), Arg::Type(wanted)]));
         } else {
-            wanted
+            // What may be left out is not held to be `undefined`.
+            let wanted = if target_is_optional && self.p.files.options.exact_optional_property_types
+            {
+                self.without_undefined(wanted)
+            } else {
+                wanted
+            };
+            let output = Some(&mut diags);
+            self.check_type_assignable_to_ex(given, wanted, Some(prop), error_message, output);
+        }
+        let Some(mut diagnostic) = diags.pop() else {
+            return false;
         };
-        let said = out.len();
-        self.report_not_assignable_with_end(given, wanted, at, end, head, out);
-        self.relate_expected_property(out.get(said).copied(), target, name);
+        let related = self.expected_property(target, name);
+        diagnostic
+            .related_information
+            .extend(related.and_then(super::explain::Related::into_reported));
+        self.report_diagnostic(diagnostic, diagnostic_output);
         true
     }
 
@@ -3008,13 +3093,14 @@ impl Checker<'_> {
         best
     }
 
-    fn elaborate_arrow(
+    /// `elaborateArrowFunction`
+    fn elaborate_arrow_function(
         &mut self,
         file: FileId,
         func: FnId,
         source: TypeId,
         target: TypeId,
-        out: &mut Vec<Diagnostic>,
+        mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
         let hir = self.hir(file);
         let FnBody::Expr(body) = hir[func].body else {
@@ -3039,16 +3125,26 @@ impl Checker<'_> {
         if !self.is_known(given) || !self.is_known(all) || self.is_assignable(given, all) {
             return false;
         }
-        if !self.elaborate(file, body, given, all, 2322, out) {
-            let (at, end) = (self.start_of(file, body), self.error_end_of(file, body));
-            let said = out.len();
-            self.report_not_assignable_with_end(given, all, at, end, 2322, out);
-            if let Some(&said) = out.get(said) {
-                self.relate(said.start, said.code, |c| {
-                    c.where_expected_return_type_comes_from(file, func, given, target, all)
-                });
-            }
+        let output = diagnostic_output.as_deref_mut();
+        if self.elaborate_error(file, body, false, given, all, None, output) {
+            return true;
         }
+        let at = (
+            file,
+            self.start_of(file, body),
+            self.error_end_of(file, body),
+        );
+        let mut diags = Vec::new();
+        self.check_type_assignable_to_ex(given, all, Some(at), None, Some(&mut diags));
+        let Some(mut diagnostic) = diags.pop() else {
+            return false;
+        };
+        let related = self.where_expected_return_type_comes_from(file, func, given, target, all);
+        let related = related.into_iter();
+        diagnostic
+            .related_information
+            .extend(related.filter_map(super::explain::Related::into_reported));
+        self.report_diagnostic(diagnostic, diagnostic_output);
         true
     }
 
@@ -3133,29 +3229,6 @@ impl Checker<'_> {
         named_otherwise: (bool, bool),
         out: &mut Vec<Diagnostic>,
     ) {
-        // `isRelatedToEx`: all that is said is said of `getNormalizedType` of the two. A substitution type has no alias to go by.
-        let source = match *self.data(source) {
-            TypeData::Substitution { base, constraint } => {
-                self.substitution_intersection(base, constraint)
-            }
-            _ => source,
-        };
-        let target = match *self.data(target) {
-            TypeData::Substitution { base, .. } => base,
-            _ => target,
-        };
-        let error = RelationError {
-            source,
-            target,
-            // 2678 is what `reportRelationError` says without a head message under the comparable relation.
-            relation: if head == 2678 {
-                Relation::Comparable
-            } else {
-                Relation::Assignable
-            },
-            head,
-            named_otherwise,
-        };
         self.trace_pair(head, at, source, target);
         if std::env::var_os("BUN_SEMA_EXPLAIN").is_some() {
             let why = self.explain_not_assignable(source, target);
@@ -3170,203 +3243,73 @@ impl Checker<'_> {
                 eprintln!("RETRACED at {at}: {again}");
             }
         }
-        // Too much.
-        if matches!(self.data(source), TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes)
-        {
-            // Of attributes it is worded otherwise, and `head` goes on top. The complaint moves to an attribute and to nothing else.
-            if let Some(excess) = self.excess_property(source, target, Relation::Assignable) {
-                let (start, end) = match excess {
-                    Excess::Unknown(
-                        Prop {
-                            source: PropSource::Literal(file, p),
-                            ..
-                        },
-                        _,
-                    ) => (self.hir(file)[p].pos, self.end_of_jsx_attr_name(file, p)),
-                    _ => (at, end),
-                };
-                out.push(Diagnostic { start, code: head });
-                self.explain_relation_error(start, end, head, target, error);
-                return;
-            }
-        } else if let Some(excess) =
-            self.excess_within(source, target, Relation::Assignable, at, end, head, 0)
-        {
-            out.push(excess);
-            self.explain_head_over_excess(excess, at, end, error);
-            return;
-        }
-        let (code, said_of) = self.head_of_relation_error(
-            source,
-            target,
-            head,
-            named_otherwise.0 || named_otherwise.1,
-        );
-        out.push(Diagnostic { start: at, code });
-        self.explain_relation_error(at, end, code, said_of, error);
-    }
-
-    /// What `excess_within` found is noted where it is found, unless `error.head` ended up on top of it.
-    /// `at`, `end`: the node the complaint was on to begin with.
-    fn explain_head_over_excess(
-        &mut self,
-        excess: Diagnostic,
-        at: u32,
-        end: u32,
-        error: RelationError,
-    ) {
-        if excess.code != error.head {
-            return;
-        }
-        let end = if excess.start == at {
-            end
+        // 2678 is what `reportRelationError` says without a head message under the comparable relation.
+        let relation = if head == 2678 {
+            Relation::Comparable
         } else {
-            self.checking
-                .map_or(0, |file| self.end_of_name_at(file, excess.start))
+            Relation::Assignable
         };
-        self.explain_relation_error(excess.start, end, excess.code, error.target, error);
-    }
-
-    /// Notes the message of the relation error reported from `start` to `end`. `code`: what stands first in it. `said_of`: the target
-    /// that is about, `error.target` or a part of it.
-    fn explain_relation_error(
-        &mut self,
-        start: u32,
-        end: u32,
-        code: u32,
-        said_of: TypeId,
-        error: RelationError,
-    ) {
-        let RelationError {
+        let is_named_otherwise = named_otherwise.0
+            || named_otherwise.1
+            || self.is_aliased_jsx_class_attributes(source, target);
+        self.report_unrelated(
             source,
             target,
             relation,
+            (at, end),
             head,
-            named_otherwise,
-        } = error;
-        let named_otherwise = (named_otherwise.0, named_otherwise.1 && said_of == target);
-        self.explain_to(start, end, code, |c| {
-            // What is compared for the sake of the message says nothing about the comparison that is being reported.
-            let (gave_up, too_complex) = (c.relation_gave_up, c.relation_too_complex);
-            let arguments = c.relation_error_arguments(code, source, said_of, named_otherwise);
-            c.relation_gave_up = gave_up;
-            c.relation_too_complex = too_complex;
-            arguments
-        });
-        if !self.explains {
-            return;
-        }
-        let (mut lines, related) =
-            self.relation_lines_with_related(source, target, relation, Some(head), 0);
-        // Nothing is said under these.
-        if !matches!(code, 2741 | 2739 | 2740 | 4104 | 2559 | 2560) {
-            let starts_with_head = lines.first().is_some_and(|first| {
-                first.code == code
-                    || first.code == head
-                    || matches!(first.code, 2719 | 2375 | 2379 | 2820)
-            });
-            if starts_with_head {
-                lines.remove(0);
-            } else {
-                for line in &mut lines {
-                    line.level += 1;
-                }
-            }
-            self.explain_chain(start, code, |_| lines);
-        }
-        self.relate(start, code, |_| related);
+            is_named_otherwise,
+            out,
+        );
     }
 
-    /// The arguments of the message `code` that stands first in the error for `source` not being related to `target`.
-    fn relation_error_arguments(
+    /// `checkTypeRelatedToEx(source, target, relation, errorNode, headMessage)`, of two types that the caller has found not to be
+    /// related: reports what it reports, and gives that back. `place`: from where to where `errorNode` goes.
+    #[allow(clippy::too_many_arguments)]
+    fn report_unrelated(
         &mut self,
-        code: u32,
         source: TypeId,
         target: TypeId,
-        named_otherwise: (bool, bool),
-    ) -> Vec<String> {
-        let compared = self.compared_in_place_of(source, target);
-        // `reportErrorResults`: what has an alias, or is compared as its only base, is named as it is given.
-        let is_named_as_given = |c: &mut Self, ty: TypeId, is_named_otherwise: bool| {
-            is_named_otherwise
-                || c.alias_for_display(ty).is_some()
-                || c.has_single_base_for_non_augmenting_subtype(ty)
-        };
-        let source = if is_named_as_given(self, source, named_otherwise.0) {
-            source
-        } else {
-            compared.0
-        };
-        let target = if is_named_as_given(self, target, named_otherwise.1) {
-            target
-        } else {
-            compared.1
-        };
-        match code {
-            // `isRelatedToEx`, `tryElaborateArrayLikeErrors`
-            2559 | 2560 | 4104 => vec![self.type_to_string(source), self.type_to_string(target)],
-            // `reportUnmatchedProperty`
-            2741 | 2739 | 2740 => {
-                let (source_name, target_name) = self.type_names_for_error_display(source, target);
-                let missing = self.unmatched_properties(compared.0, compared.1);
-                let listed = if code == 2740 { 4 } else { missing.len() };
-                let names: Vec<String> = missing
-                    .iter()
-                    .take(listed)
-                    .map(|prop| self.prop_to_string(prop))
-                    .collect();
-                let names = names.join(", ");
-                match code {
-                    2741 => vec![names, source_name, target_name],
-                    2739 => vec![source_name, target_name, names],
-                    _ => vec![
-                        source_name,
-                        target_name,
-                        names,
-                        missing.len().saturating_sub(4).to_string(),
-                    ],
-                }
+        relation: Relation,
+        place: (u32, u32),
+        head: u32,
+        is_named_otherwise: bool,
+        out: &mut Vec<Diagnostic>,
+    ) -> Option<Diagnostic> {
+        let place = (self.checking?, place.0, place.1);
+        let (is_related, diagnostic) = self.relation_diagnostic(
+            source,
+            target,
+            relation,
+            place,
+            Some(head),
+            is_named_otherwise,
+        );
+        let diagnostic = match diagnostic {
+            // It is not the relation that the caller goes by (`is_refused_by_hosting_alias`): there are no reasons to give.
+            None if is_related && self.related(source, target, relation) => {
+                self.relation_error_without_reasons(source, target, relation, place, head)
             }
-            // `reportRelationError`
-            _ => {
-                let (source_name, target_name) = self.relation_error_names(source, target);
-                let mut arguments = vec![source_name, target_name];
-                if code == 2820
-                    && let Some(suggested) =
-                        self.closest_string_literal_type(compared.0, compared.1)
-                {
-                    arguments.push(self.type_to_string(suggested));
-                }
-                arguments
-            }
+            diagnostic => diagnostic?,
+        };
+        let RelationDiagnostic {
+            at: (_, start, end),
+            mut lines,
+            related,
+        } = diagnostic;
+        if lines.is_empty() {
+            return None;
         }
-    }
-
-    /// What `isRelatedToEx` compares in place of `source` and `target`: `getNormalizedType` of each, and `X` for a target
-    /// `X | null | undefined` if `source` is never `null` or `undefined`.
-    fn compared_in_place_of(&mut self, source: TypeId, target: TypeId) -> (TypeId, TypeId) {
-        let (source, target) = (self.force(source), self.force(target));
-        let (source, target) = (self.regular(source), self.regular(target));
-        // `getNormalizedType` simplifies until nothing changes.
-        let simplify = |c: &mut Self, mut t: TypeId, writing: bool| loop {
-            let simpler = c.simplified(t, writing);
-            if simpler == t {
-                break t;
-            }
-            t = simpler;
+        let first = lines.remove(0);
+        let said = Diagnostic {
+            start,
+            code: first.code,
         };
-        let (source, target) = (simplify(self, source, false), simplify(self, target, true));
-        let has_primitive_flag =
-            self.is_primitive(source) || self.is_boolean(source) || self.is_whole_enum(source);
-        // `TypeFlagsDefinitelyNonNullable`
-        if has_primitive_flag && !self.is_nullish(source)
-            || self.is_object_type(source)
-            || source == TypeId::OBJECT
-        {
-            (source, self.without_nullable_alternatives(target))
-        } else {
-            (source, target)
-        }
+        out.push(said);
+        self.note(start, end, said.code, first.args);
+        self.explain_chain(start, said.code, |_| lines);
+        self.relate(start, said.code, |_| related);
+        Some(said)
     }
 
     /// Whether `ty` is the union of all the members of an enum.
@@ -3380,629 +3323,6 @@ impl Checker<'_> {
             },
             _ => false,
         }
-    }
-
-    /// How `reportRelationError` names the two: `generalizedSourceType` and `targetType`.
-    fn relation_error_names(&mut self, source: TypeId, target: TypeId) -> (String, String) {
-        let (source_name, target_name) = self.type_names_for_error_display(source, target);
-        // `isLiteralType`
-        if !target.is_never()
-            && self.every_type(source, |c, member| c.is_unit(member))
-            && !self.could_have_top_level_singleton_types(target, 0)
-        {
-            let generalized = self.base_of_literal(source);
-            return (
-                self.type_to_string_fully_qualified(generalized),
-                target_name,
-            );
-        }
-        (source_name, target_name)
-    }
-
-    /// `typeCouldHaveTopLevelSingletonTypes`
-    fn could_have_top_level_singleton_types(&mut self, ty: TypeId, depth: u32) -> bool {
-        let ty = self.force(ty);
-        if self.is_boolean(ty) || depth > 32 {
-            return false;
-        }
-        if let TypeData::Union(parts) | TypeData::Intersection(parts) = self.data(ty) {
-            return parts
-                .iter()
-                .any(|&part| self.could_have_top_level_singleton_types(part, depth + 1));
-        }
-        let is_pattern = matches!(
-            self.data(ty),
-            TypeData::Template { .. } | TypeData::StringMapping { .. }
-        );
-        // `TypeFlagsInstantiable`
-        if (is_pattern || self.is_deferred(ty))
-            && let Some(constraint) = self.constraint_of(ty)
-            && constraint != ty
-        {
-            return self.could_have_top_level_singleton_types(constraint, depth + 1);
-        }
-        is_pattern || self.is_unit(ty)
-    }
-
-    /// `getUnmatchedProperties`: the properties `target` requires that `source` does not have.
-    fn unmatched_properties(&mut self, source: TypeId, target: TypeId) -> Vec<Prop> {
-        let (Some(sm), Some(tm)) = (self.members(source), self.members(target)) else {
-            return Vec::new();
-        };
-        let mut missing = Vec::new();
-        for tp in &tm.shape().props {
-            if !self.is_static_private_name(tp)
-                && !tp.flags.contains(PropFlags::OPTIONAL)
-                && self.property_of_type(&sm, tp.name).is_none()
-            {
-                missing.push(tp.clone());
-            }
-        }
-        missing
-    }
-
-    /// `getSuggestedTypeForNonexistentStringLiteralType`
-    fn closest_string_literal_type(&self, source: TypeId, target: TypeId) -> Option<TypeId> {
-        let TypeData::StringLit { value, .. } = *self.data(source) else {
-            return None;
-        };
-        let text = self.files().atoms.bytes(value);
-        // In the order `CompareTypes` keeps them in: of those that are as close, the first.
-        self.parts(target)
-            .iter()
-            .copied()
-            .filter_map(|part| match *self.data(part) {
-                TypeData::StringLit { value: other, .. } => {
-                    let other = self.files().atoms.bytes(other);
-                    is_close(text, other).then(|| (part, edit_distance(text, other)))
-                }
-                _ => None,
-            })
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|closest| closest.0)
-    }
-
-    /// Where `isRelatedToEx`, reporting, comes upon a property that is too much in an object literal (`hasExcessProperties`), if that
-    /// is what `source` not being related to `target` comes down to. From there on the complaint is at the name of the property
-    /// (`r.errorNode`). It is 2353 or 2561 as long as only `reportRelationError` and `Types_of_property_0_are_incompatible` would go
-    /// on top, which then are not said. Once anything else is, `head` ends up on top.
-    /// `at`, `end`: the node the complaint is on to begin with.
-    #[allow(clippy::too_many_arguments)]
-    fn excess_within(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        relation: Relation,
-        at: u32,
-        end: u32,
-        head: u32,
-        depth: u32,
-    ) -> Option<Diagnostic> {
-        if depth > 32 || !self.is_known(source) || !self.is_known(target) {
-            return None;
-        }
-        let (source, mut target) = (self.force(source), self.force(target));
-        if self.is_object_type(source) {
-            target = self.without_nullable_alternatives(target);
-        }
-        if self.is_object_literal_type(source) {
-            match self.excess_property(source, target, relation) {
-                Some(Excess::Unknown(prop, in_type)) => {
-                    return Some(self.excess_property_error(&prop, in_type, at, end));
-                }
-                // No more is looked at than what the property holds.
-                Some(Excess::Mismatch(given, wanted)) => {
-                    let further_in =
-                        self.excess_within(given, wanted, relation, at, end, head, depth + 1);
-                    return Some(further_in.unwrap_or(Diagnostic {
-                        start: at,
-                        code: head,
-                    }));
-                }
-                None => {}
-            }
-        }
-        // `someTypeRelatedToType` reports on the last of the alternatives, `eachTypeRelatedToType` on the first that is not related.
-        if self.is_union(source) {
-            let parts = self.parts(source);
-            let part = if relation == Relation::Comparable {
-                parts.last().copied()?
-            } else {
-                parts
-                    .iter()
-                    .copied()
-                    .find(|&part| !self.related(part, target, relation))?
-            };
-            return self.excess_within(part, target, relation, at, end, head, depth + 1);
-        }
-        if !self.is_object_type(source) {
-            return None;
-        }
-        // `typeRelatedToSomeType`: against the alternative it is most likely meant for, as a regular type.
-        if self.is_union(target) {
-            let best = self.best_matching_type(source, target)?;
-            let regular = self.regular_type_of_object_literal(source);
-            return self.excess_within(regular, best, relation, at, end, head, depth + 1);
-        }
-        match self.data(target) {
-            // `typeRelatedToEachType`, where nothing is too much (`IntersectionStateTarget`): what is wrong there is said first.
-            // `structuredTypeRelatedTo` then goes through the properties of the whole.
-            TypeData::Intersection(parts) => {
-                let plain = self.regular_object(source);
-                if self.is_generic_object_type(target)
-                    || !parts
-                        .iter()
-                        .all(|&part| self.related(plain, part, relation))
-                {
-                    return None;
-                }
-            }
-            _ if !self.is_object_type(target) => return None,
-            _ => {}
-        }
-        // Two arrays of a kind go by their type arguments (`typeArgumentsRelatedTo`), other lists by what is found under a number.
-        // What can only be read lacks what it takes to be written to, which is what is said of it.
-        if let Some(wanted) = self.array_element(target) {
-            let given = match self.data(source) {
-                TypeData::Tuple { elems, flags, .. } => self.tuple_element_union(elems, flags),
-                _ => self.array_element(source)?,
-            };
-            if self.is_readonly_array_or_tuple(source) && self.is_mutable_array_or_tuple(target) {
-                return None;
-            }
-            return self.excess_within(given, wanted, relation, at, end, head, depth + 1);
-        }
-        // `propertiesRelatedTo`, of a list and a tuple: up to the first element that is not related.
-        if let TypeData::Tuple {
-            elems: target_elems,
-            flags: target_flags,
-            readonly: target_readonly,
-        } = self.data(target)
-        {
-            let one_element;
-            let (source_elems, source_flags): (&[TypeId], &[ElemFlags]) = match self.data(source) {
-                TypeData::Tuple { elems, flags, .. } => (elems, flags),
-                _ => {
-                    one_element = [self.array_element(source)?];
-                    (&one_element, &[ElemFlags::REST])
-                }
-            };
-            if !*target_readonly && self.is_readonly_array_or_tuple(source) {
-                return None;
-            }
-            let variable = ElemFlags::REST | ElemFlags::VARIADIC;
-            let target_has_rest_element = target_flags.iter().any(|f| f.intersects(variable));
-            let is_required =
-                |f: &&ElemFlags| f.intersects(ElemFlags::REQUIRED | ElemFlags::VARIADIC);
-            let (source_arity, target_arity) = (source_elems.len(), target_elems.len());
-            let source_rest = source_flags.iter().any(|f| f.contains(ElemFlags::REST));
-            let source_min_length = if self.is_tuple(source) {
-                source_flags.iter().filter(is_required).count()
-            } else {
-                0
-            };
-            let target_min_length = target_flags.iter().filter(is_required).count();
-            // Of lengths that do not go together something else is said.
-            if !source_rest && source_arity < target_min_length
-                || !target_has_rest_element
-                    && (target_arity < source_min_length
-                        || source_rest
-                        || target_arity < source_arity)
-            {
-                return None;
-            }
-            let is_rest = |f: &ElemFlags| f.contains(ElemFlags::REST);
-            let target_start_count = target_flags
-                .iter()
-                .position(is_rest)
-                .unwrap_or(target_arity);
-            let target_end_count = target_flags
-                .iter()
-                .rev()
-                .position(is_rest)
-                .unwrap_or(target_arity);
-            for source_position in 0..source_arity {
-                let source_flag = source_flags[source_position];
-                let source_position_from_end = source_arity - 1 - source_position;
-                let target_position = if target_has_rest_element
-                    && source_position >= target_start_count
-                {
-                    (target_arity - 1).checked_sub(source_position_from_end.min(target_end_count))
-                } else {
-                    Some(source_position)
-                };
-                let target_position =
-                    target_position.filter(|&position| position < target_arity)?;
-                let target_flag = target_flags[target_position];
-                // So it is of kinds of elements that do not go together.
-                if target_flag.contains(ElemFlags::VARIADIC)
-                    && !source_flag.contains(ElemFlags::VARIADIC)
-                    || source_flag.contains(ElemFlags::VARIADIC)
-                        && !target_flag.intersects(variable)
-                    || target_flag.contains(ElemFlags::REQUIRED)
-                        && !source_flag.contains(ElemFlags::REQUIRED)
-                {
-                    return None;
-                }
-                let given = self.remove_missing_type(
-                    source_elems[source_position],
-                    (source_flag & target_flag).contains(ElemFlags::OPTIONAL),
-                );
-                let wanted = if source_flag.contains(ElemFlags::VARIADIC)
-                    && target_flag.contains(ElemFlags::REST)
-                {
-                    self.array_of(target_elems[target_position])
-                } else {
-                    self.remove_missing_type(
-                        target_elems[target_position],
-                        target_flag.contains(ElemFlags::OPTIONAL),
-                    )
-                };
-                if self.related(given, wanted, relation) {
-                    continue;
-                }
-                let found =
-                    self.excess_within(given, wanted, relation, at, end, head, depth + 1)?;
-                // Where either has more than one element, which one it is is said on top.
-                let names_position = target_arity > 1 || source_arity > 1;
-                return Some(if names_position {
-                    Diagnostic {
-                        start: found.start,
-                        code: head,
-                    }
-                } else {
-                    found
-                });
-            }
-            return None;
-        }
-        // `propertiesRelatedTo`: of what is missing (`getUnmatchedProperty`), and of what the type of an object literal has no room
-        // for, something else is said. Otherwise up to the first property of `target` that is not related.
-        let (sm, tm) = (self.members(source)?, self.members(target)?);
-        for tp in &tm.shape().props {
-            if !tp.flags.contains(PropFlags::OPTIONAL)
-                && self.property_of_type(&sm, tp.name).is_none()
-            {
-                return None;
-            }
-        }
-        if self.is_object_literal_type(target)
-            && sm
-                .shape()
-                .props
-                .iter()
-                .any(|sp| tm.resolved.prop(sp.name).is_none())
-        {
-            return None;
-        }
-        for tp in &tm.shape().props {
-            let Some((sp, mapper)) = self.property_of_type(&sm, tp.name) else {
-                continue;
-            };
-            let (given, wanted) = (
-                self.type_of_prop_as_read(&sp, mapper),
-                self.type_of_prop_as_read(tp, tm.mapper),
-            );
-            if !self.related(given, wanted, relation) {
-                return self.excess_within(given, wanted, relation, at, end, head, depth + 1);
-            }
-            // `propertyRelatedTo`: it may be left out where it may not.
-            if relation != Relation::Comparable
-                && sp.flags.contains(PropFlags::OPTIONAL)
-                && !tp.flags.contains(PropFlags::OPTIONAL)
-                && !matches!(tp.source, PropSource::Symbol(_))
-            {
-                return None;
-            }
-        }
-        // `signaturesRelatedTo` comes next, and of what it finds something else is said. Against an intersection only an object
-        // literal as written goes on to the index signatures (`structuredTypeRelatedTo`).
-        if !tm.shape().call.is_empty()
-            || !tm.shape().construct.is_empty()
-            || self.is_generic_mapped_type(source)
-            || self.is_intersection(target) && !self.is_object_literal_type(source)
-        {
-            return None;
-        }
-        // `indexSignaturesRelatedTo`: up to the first index signature of `target` that is not related. What is said of it goes on top.
-        let target_has_string_index = tm.shape().index.iter().any(|i| i.key == TypeId::STRING);
-        for info in &tm.shape().index {
-            let wanted = self.instantiate(info.value, tm.mapper);
-            if target_has_string_index && self.is_any(wanted) {
-                continue;
-            }
-            // `typeRelatedToIndexInfo`
-            let unfit = match self.applicable_index_info(&sm, info.key, None) {
-                Some(given) => (!self.related(given, wanted, relation)).then_some(given),
-                None if self.is_object_type_with_inferable_index(source) => {
-                    self.first_member_unfit_for_index_signature(&sm, info.key, wanted, relation)
-                }
-                None => return None,
-            };
-            if let Some(given) = unfit {
-                let found =
-                    self.excess_within(given, wanted, relation, at, end, head, depth + 1)?;
-                return Some(Diagnostic {
-                    start: found.start,
-                    code: head,
-                });
-            }
-        }
-        None
-    }
-
-    /// `membersRelatedToIndexer`: what the first of the members `sm` holds that is not related to `wanted`, which is what an index
-    /// signature for `key` gives.
-    fn first_member_unfit_for_index_signature(
-        &mut self,
-        sm: &Members,
-        key: TypeId,
-        wanted: TypeId,
-        relation: Relation,
-    ) -> Option<TypeId> {
-        for prop in &sm.shape().props {
-            if !self.is_name_applicable_to_index(prop.name, key) {
-                continue;
-            }
-            let declared = self.type_of_prop_as_read(prop, sm.mapper);
-            let given = if self.p.files.options.exact_optional_property_types
-                || declared.is_undefined()
-                || key == TypeId::NUMBER
-                || !prop.flags.contains(PropFlags::OPTIONAL)
-            {
-                declared
-            } else {
-                self.without_undefined(declared)
-            };
-            if !self.related(given, wanted, relation) {
-                return Some(given);
-            }
-        }
-        for info in &sm.shape().index {
-            // `isApplicableIndexType`
-            let applies = info.key == key
-                || key == TypeId::STRING && info.key != TypeId::SYMBOL
-                || key == TypeId::NUMBER && self.is_numeric_string_type(info.key)
-                || self.is_assignable(info.key, key);
-            if applies {
-                let given = self.instantiate(info.value, sm.mapper);
-                if !self.related(given, wanted, relation) {
-                    return Some(given);
-                }
-            }
-        }
-        None
-    }
-
-    /// 2353, or 2561 where it looks like a slip of the pen: `in_type` has no room for the property `prop` of an object literal
-    /// (`hasExcessProperties`). It is said at the name of the property, or on the node from `at` to `end` if that is not written in
-    /// the file at hand.
-    fn excess_property_error(
-        &mut self,
-        prop: &Prop,
-        in_type: TypeId,
-        at: u32,
-        end: u32,
-    ) -> Diagnostic {
-        let (start, end, is_identifier) = match prop.source {
-            PropSource::Literal(file, p) if self.checking.is_none_or(|checked| checked == file) => {
-                let (hir, written) = (self.hir(file), &self.hir(file)[p]);
-                // A name written as a string or a number is not taken for a slip of the pen.
-                let is_literal = matches!(
-                    hir.text.get(written.pos as usize),
-                    Some(b'"' | b'\'' | b'.' | b'0'..=b'9')
-                );
-                (
-                    written.pos,
-                    self.end_of_prop_name(file, p),
-                    matches!(written.key, PropKey::Name(_)) && !is_literal,
-                )
-            }
-            _ => (at, end, false),
-        };
-        let mut suggestions: Vec<Atom> = Vec::new();
-        if is_identifier {
-            // `getSuggestionForNonexistentProperty`, among the properties of `errorTarget`: of a union, those all its members have.
-            let text = self.files().atoms.bytes(prop.name);
-            let error_target = self.filter(in_type, |c, m| c.is_excess_property_check_target(m));
-            for &part in self.parts(error_target) {
-                let Some(members) = self.members(part) else {
-                    break;
-                };
-                let close: Vec<Atom> = members
-                    .shape()
-                    .props
-                    .iter()
-                    .map(|p| p.name)
-                    .filter(|&name| is_close(text, self.files().atoms.bytes(name)))
-                    .collect();
-                for name in close {
-                    if part == error_target || self.type_of_property(error_target, name).is_some() {
-                        suggestions.push(name);
-                    }
-                }
-                // `getPropertiesOfUnionOrIntersectionType`: no further than the first member without index signatures.
-                if !suggestions.is_empty() || members.shape().index.is_empty() {
-                    break;
-                }
-            }
-        }
-        let code = if suggestions.is_empty() { 2353 } else { 2561 };
-        self.explain_to(start, end, code, |c| {
-            let error_target = c.filter(in_type, |c, m| c.is_excess_property_check_target(m));
-            let mut arguments = vec![c.prop_to_string(prop), c.type_to_string(error_target)];
-            // `GetSpellingSuggestion`: of those that are as close, the one declared first.
-            let text = c.files().atoms.bytes(prop.name);
-            let distance = |name: Atom| edit_distance(text, c.files().atoms.bytes(name));
-            if let Some(&suggested) = suggestions
-                .iter()
-                .min_by(|&&a, &&b| distance(a).total_cmp(&distance(b)))
-            {
-                arguments.push(c.atom_text(suggested));
-            }
-            arguments
-        });
-        Diagnostic { start, code }
-    }
-
-    /// `isRelatedToEx`: what is never `null` or `undefined` is held against `X | null | undefined` as against `X`.
-    fn without_nullable_alternatives(&mut self, target: TypeId) -> TypeId {
-        let is_nullable = |t: TypeId| t.is_null() || t.is_undefined();
-        match self.parts(target) {
-            [a, only] if is_nullable(*a) && !is_nullable(*only) => self.force(*only),
-            [a, b, only] if is_nullable(*a) && is_nullable(*b) && !is_nullable(*only) => {
-                self.force(*only)
-            }
-            _ => target,
-        }
-    }
-
-    /// A `readonly` tuple or a `ReadonlyArray`.
-    fn is_readonly_array_or_tuple(&self, ty: TypeId) -> bool {
-        matches!(self.data(ty), TypeData::Tuple { readonly: true, .. })
-            || self.is_global_ref(ty, known::ReadonlyArray).is_some()
-    }
-
-    /// What is said first of `source` not fitting `target`, where `head` would be said for lack of anything better: the part of
-    /// `isRelatedToEx`, `reportErrorResults` and `reportRelationError` that decides on it.
-    /// `named_otherwise`: one of the two is written as an alias that is not the name it is compared under.
-    /// With it comes the target it is said of: `target`, or the part of `target` that `source` is held against where it is said.
-    fn head_of_relation_error(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        head: u32,
-        named_otherwise: bool,
-    ) -> (u32, TypeId) {
-        let said_of = target;
-        let (source, target) = (self.force(source), self.force(target));
-        let (source, target) = (self.regular(source), self.regular(target));
-        // `reportErrorResults`: the head names the two as they are given, what is missing is said of what they are compared as.
-        let names_differ = named_otherwise
-            || self.has_single_base_for_non_augmenting_subtype(source)
-            || self.has_single_base_for_non_augmenting_subtype(target)
-            || self.is_aliased_jsx_class_attributes(source, target);
-        // `TypeFlagsPrimitive`, which `boolean` and an enum have though they are unions.
-        let is_whole_enum = self.is_whole_enum(source);
-        let has_primitive_flag =
-            self.is_primitive(source) || self.is_boolean(source) || is_whole_enum;
-        // `TypeFlagsDefinitelyNonNullable`
-        let is_definitely_non_nullable = has_primitive_flag && !self.is_nullish(source)
-            || self.is_object_type(source)
-            || source == TypeId::OBJECT;
-        let target = if is_definitely_non_nullable {
-            self.without_nullable_alternatives(target)
-        } else {
-            target
-        };
-        let is_object_or_intersection = |c: &Self, t: TypeId| {
-            c.is_object_type(t) || matches!(c.data(t), TypeData::Intersection(_))
-        };
-        // Nothing in common with a type all of whose properties are optional. That is all that is said.
-        if (has_primitive_flag || is_object_or_intersection(self, source))
-            && self.is_global_ref(source, known::Object).is_none()
-            && is_object_or_intersection(self, target)
-            && self.is_weak_type(target)
-        {
-            // What an enum has is what its members have.
-            let holder = if is_whole_enum {
-                self.parts(source)[0]
-            } else {
-                source
-            };
-            let apparent = self.apparent_type(holder);
-            let has_something = self.members(apparent).is_some_and(|m| {
-                let s = m.shape();
-                !(s.props.is_empty() && s.call.is_empty() && s.construct.is_empty())
-            });
-            if has_something && !self.has_common_properties(holder, target) {
-                for construct in [false, true] {
-                    if let Some(&first) = self.signatures(source, construct).first() {
-                        let returned = self.sig_return(first);
-                        if self.is_assignable(returned, target) {
-                            return (2560, said_of);
-                        }
-                    }
-                }
-                return (2559, said_of);
-            }
-        }
-        // `reportErrorResults`: of attributes that do not fit `JSX.IntrinsicAttributes & ..` no more is said than what is wrong with
-        // the first part they do not fit (`typeRelatedToEachType`).
-        if let (TypeData::Synth(shape), TypeData::Intersection(parts)) =
-            (self.data(source), self.data(target))
-            && shape.literal == Literalness::JsxAttributes
-            && let Some(file) = self.checking
-            && let (Some(a), Some(b)) = (
-                self.jsx_type(file, known::IntrinsicAttributes),
-                self.jsx_type(file, known::IntrinsicClassAttributes),
-            )
-            && (parts.contains(&a) || parts.contains(&b))
-        {
-            // `IntersectionStateTarget`: part by part nothing is too much, and to have nothing in common is no fault.
-            let plain = self.synth(Shape {
-                literal: Literalness::No,
-                ..(**shape).clone()
-            });
-            for &part in parts.iter() {
-                if !self.is_assignable(plain, part)
-                    && (!self.is_weak_type(part) || self.has_common_properties(plain, part))
-                {
-                    return self.head_of_relation_error(source, part, 2322, false);
-                }
-            }
-        }
-        // `isConversionOrInterfaceImplementationMessage`
-        let gives_way = !matches!(head, 2352 | 2420 | 2720 | 2787 | 2788 | 2789);
-        if (self.is_object_type(source) || self.is_intersection_of_objects(source))
-            && self.is_object_type(target)
-        {
-            // `tryElaborateArrayLikeErrors`
-            if self.is_readonly_array_or_tuple(source) && self.is_mutable_array_or_tuple(target) {
-                return (4104, said_of);
-            }
-            // Of `Object` something else is said in between.
-            if gives_way
-                && !names_differ
-                && self.is_global_ref(source, known::Object).is_none()
-                && let Some(code) = self.why_not_assignable_at_the_surface(source, target)
-            {
-                return (code, said_of);
-            }
-        }
-        if head == 2322 {
-            // Two types that go by one name.
-            if source != target
-                && let (Some(a), Some(b)) = (
-                    self.fully_qualified_name(source),
-                    self.fully_qualified_name(target),
-                )
-                && a == b
-            {
-                return (2719, said_of);
-            }
-            if self.has_exact_optional_unassignable_properties(source, target) {
-                return (2375, said_of);
-            }
-            // `getSuggestedTypeForNonexistentStringLiteralType`
-            if let TypeData::StringLit { value, .. } = *self.data(source)
-                && self.is_union(target)
-            {
-                let text = self.files().atoms.bytes(value);
-                let is_misspelt = self.parts(target).iter().any(|&t| match *self.data(t) {
-                    TypeData::StringLit { value: other, .. } => {
-                        is_close(text, self.files().atoms.bytes(other))
-                    }
-                    _ => false,
-                });
-                if is_misspelt {
-                    return (2820, said_of);
-                }
-            }
-        } else if head == 2345 && self.has_exact_optional_unassignable_properties(source, target) {
-            return (2379, said_of);
-        }
-        (head, said_of)
     }
 
     /// `getSingleBaseForNonAugmentingSubtype`, whether there is one: a class or an interface that extends one type and adds nothing
@@ -4127,136 +3447,6 @@ impl Checker<'_> {
             }
         }
         false
-    }
-
-    /// An intersection that is its own apparent type: nothing in it but object types. What it lacks is said of it by name.
-    fn is_intersection_of_objects(&self, ty: TypeId) -> bool {
-        matches!(self.data(ty), TypeData::Intersection(parts) if parts.iter().all(|&p| self.is_object_type(p)))
-    }
-
-    /// What `typeToString` says with `UseFullyQualifiedType` of a type that has no more to it than a name: the names from the
-    /// inside out, and the file if it is a module that exports the outermost.
-    fn fully_qualified_name(&self, ty: TypeId) -> Option<(Vec<Atom>, Option<FileId>)> {
-        use crate::bind::Decl;
-        let named = match *self.data(ty) {
-            TypeData::TypeParam(file, tp, _) => {
-                return Some((vec![self.hir(file)[tp].name], None));
-            }
-            TypeData::Ref { target, ref args } if args.is_empty() => target,
-            _ => self.non_generic_alias_of(ty)?,
-        };
-        let files = self.files();
-        let (mut sym, mut names) = (named, Vec::new());
-        loop {
-            let symbol = files.symbol(sym);
-            // `import("./a").T`
-            if symbol.decls.contains(&Decl::File) {
-                return Some((names, Some(sym.file)));
-            }
-            names.push(symbol.name);
-            let Some(parent) = files.parent_of_symbol(sym) else {
-                return Some((names, None));
-            };
-            sym = parent;
-        }
-    }
-
-    /// 2741, 2739, 2740: `target` requires properties that `source` does not have.
-    fn why_not_assignable_at_the_surface(&mut self, source: TypeId, target: TypeId) -> Option<u32> {
-        if !(self.is_object_type(source) || self.is_intersection_of_objects(source))
-            || !self.is_object_type(target)
-            || self.is_deferred(source)
-            || self.is_deferred(target)
-        {
-            return None;
-        }
-        // `structuredTypeRelatedToWorker` compares the apparent type. Where that is another type (of a mapped type over what can only
-        // be arrays or tuples), it is the one said to lack something, and the head, which names `source`, stays (`chainArgsMatch`).
-        if self.apparent_type(source) != source {
-            return None;
-        }
-        // Between lists it is the elements that are looked at.
-        if self.is_tuple(target) && self.is_array_or_tuple(source) {
-            return None;
-        }
-        let (sm, tm) = (self.members(source)?, self.members(target)?);
-        // `getUnmatchedProperties`
-        let mut missing = 0;
-        for tp in &tm.shape().props {
-            // `isStaticPrivateIdentifierProperty`
-            let is_static_private = matches!(&tp.source, PropSource::Members(decls) if decls.first().is_some_and(|&(file, m)| {
-                let member = &self.hir(file)[m];
-                matches!(member.key, PropKey::Private(_)) && member.flags.contains(Flags::STATIC)
-            }));
-            if !is_static_private
-                && !tp.flags.contains(PropFlags::OPTIONAL)
-                && self.property_of_type(&sm, tp.name).is_none()
-            {
-                // `reportUnmatchedProperty`: something else is said, under the head.
-                if missing == 0 && self.declares_private_name_written_alike(source, &sm, tp.name) {
-                    return None;
-                }
-                missing += 1;
-            }
-        }
-        // `tryElaborateArrayLikeErrors`: several are only listed where that helps.
-        if missing > 1 {
-            let lists_them = if self.is_tuple(source) {
-                self.is_array_or_tuple(target)
-            } else if self.is_tuple(target) {
-                self.is_array(source)
-            } else {
-                true
-            };
-            if !lists_them {
-                return None;
-            }
-        }
-        // A function that lacks what an object has is told that it is not that kind of thing.
-        let s = sm.shape();
-        if missing > 0 && s.props.is_empty() && !(s.call.is_empty() && s.construct.is_empty()) {
-            let t = tm.shape();
-            if !((!t.call.is_empty() && !s.call.is_empty())
-                || (!t.construct.is_empty() && !s.construct.is_empty()))
-            {
-                return None;
-            }
-        }
-        match missing {
-            0 => None,
-            1 => Some(2741),
-            2..=5 => Some(2739),
-            _ => Some(2740),
-        }
-    }
-
-    /// Whether `name` is a `#x` and the class that `source`, whose members are `members`, is an instance of declares a `#x` itself:
-    /// two members that are written alike.
-    fn declares_private_name_written_alike(
-        &self,
-        source: TypeId,
-        members: &Members,
-        name: Atom,
-    ) -> bool {
-        use crate::bind::MemberOwner;
-        // The name as it is written, without what tells the `#x` of one class from that of another.
-        fn written(text: &[u8]) -> &[u8] {
-            &text[..text.iter().position(|&b| b == b'@').unwrap_or(text.len())]
-        }
-        let TypeData::Ref { target: class, .. } = *self.data(source) else {
-            return false;
-        };
-        let text = self.files().atoms.bytes(name);
-        if text.first() != Some(&b'#') || !self.files().flags(class).contains(SymFlags::CLASS) {
-            return false;
-        }
-        members.shape().props.iter().any(|p| {
-            written(self.files().atoms.bytes(p.name)) == written(text)
-                && matches!(&p.source, PropSource::Members(decls) if decls.iter().any(|&(file, m)| {
-                    let bound = self.bound(file);
-                    matches!(bound.member_owner[m.idx()], MemberOwner::Class(c) if self.files().sym(file, bound.class_symbol[c.idx()]) == class)
-                }))
-        })
     }
 }
 

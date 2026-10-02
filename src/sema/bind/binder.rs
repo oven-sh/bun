@@ -2045,9 +2045,18 @@ impl<'f> Binder<'f> {
                 } else {
                     SymFlags::PROPERTY
                 } | SymFlags::EXPORT_ONLY;
-                // `bindExportAssignment`
-                let container = self.b.scopes[self.scope.idx()].symbol;
+                // `bindExportAssignment`: `b.container.Symbol()`, which a block is not and a function is.
+                let container = &self.b.scopes[self.container_scope(self.scope).idx()];
+                let container = match container.kind {
+                    ScopeKind::Fn(f) => self.b.fn_symbol[f.idx()],
+                    _ => container.symbol,
+                };
                 if container.is_some() {
+                    // `GetExports`
+                    if self.b.symbols[container.idx()].exports.is_none() {
+                        let exports = self.new_table();
+                        self.b.symbols[container.idx()].exports = exports;
+                    }
                     let exports = self.b.symbols[container.idx()].exports;
                     self.declare_in(exports, name, flags, Decl::ExportExpr(id), container);
                 } else {

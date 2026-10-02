@@ -233,9 +233,11 @@ pub fn from_text(name: &str, text: &str) -> Option<(&'static str, Json)> {
         Kind::Boolean | Kind::Object | Kind::List(Element::Object) => return None,
         Kind::String | Kind::OneOf(..) => Json::String(text.to_owned()),
         Kind::Number => Json::Number(text.trim().parse().ok()?),
+        // `ParseListTypeOption`: of the items only those that are one of a few words are trimmed.
         Kind::List(Element::String) => Json::Array(
-            text.split(',')
-                .map(str::trim)
+            text.trim()
+                .split(',')
+                .map(|item| if name == "lib" { item.trim() } else { item })
                 .filter(|item| !item.is_empty())
                 .map(|item| Json::String(item.to_owned()))
                 .collect(),

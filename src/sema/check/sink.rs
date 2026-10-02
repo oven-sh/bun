@@ -41,6 +41,20 @@ pub(super) struct Reported {
 }
 
 impl Reported {
+    /// `NewDiagnostic`, of arguments that are printed.
+    pub(super) fn new(at: (FileId, u32, u32), code: u32, args: Vec<String>) -> Reported {
+        Reported {
+            file: at.0,
+            start: at.1,
+            end: at.2,
+            code,
+            args,
+            message_chain: Vec::new(),
+            related_information: Vec::new(),
+            is_suggestion: false,
+        }
+    }
+
     /// `AddRelatedInfo`
     pub(super) fn add_related_info(&mut self, related: Reported) -> &mut Self {
         self.related_information.push(related);
@@ -94,16 +108,7 @@ impl Checker<'_> {
                 Arg::Text(text) => text.to_owned(),
             })
             .collect();
-        Reported {
-            file: at.0,
-            start: at.1,
-            end: at.2,
-            code,
-            args,
-            message_chain: Vec::new(),
-            related_information: Vec::new(),
-            is_suggestion: false,
-        }
+        Reported::new(at, code, args)
     }
 
     /// `NewDiagnosticChainForNode`

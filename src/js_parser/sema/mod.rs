@@ -529,6 +529,8 @@ pub(crate) struct TypeSyntax {
     pub(crate) marks: Vec<(i32, Mark, i32)>,
     /// In the order they apply, parentheses among them: `(e) as T` is not `(e as T)`. `to` is where the type starts.
     pub(crate) casts: Vec<(ExprKey, CastKind, i32)>,
+    /// `hir::File::expr_ends`. Of two for one expression the later one counts.
+    pub(crate) expr_ends: Vec<(ExprKey, i32)>,
     /// `with { .. }` after a module specifier: where `with` is, and the attributes as an object literal.
     pub(crate) import_attributes: Vec<(i32, Expr)>,
     /// The module specifiers that are no string literals (`parseModuleSpecifier`).
@@ -582,6 +584,7 @@ impl TypeSyntax {
         TypeSyntax {
             marks: Vec::new(),
             casts: Vec::new(),
+            expr_ends: Vec::new(),
             import_attributes: Vec::new(),
             specifier_expressions: Vec::new(),
             kept_expressions: Default::default(),
@@ -748,6 +751,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
                 .kept_expressions
                 .insert(of.start, expressions.to_vec());
         }
+    }
+
+    /// `P::finish_expr`
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn note_expr_end(&mut self, expr: &Expr, end: bun_ast::Loc) {
+        let is_noted = match expr.data {
+            // `createMissingNode`: it takes no room.
+            ExprData::EMissing(_) => true,
+            // `parse_jsx_element` returns before the last ">" is taken, and text is no trivia: `hir::Jsx::end`.
+            ExprData::EJsxElement(_) => false,
+            // A literal is made before its token is taken.
+            _ => end.start > expr.loc.start,
+        };
+        if is_noted && let Some(syntax) = &mut self.type_syntax {
+            syntax.expr_ends.push((ExprKey::of(expr), end.start));
+        }
+    }
+
+    /// `new_expr`, of an expression that is put together when tokens after it have been taken. It ends at `end`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn new_expr_ending_at<T>(
+        &mut self,
+        t: T,
+        loc: bun_ast::Loc,
+        end: bun_ast::Loc,
+    ) -> Expr
+    where
+        T: bun_ast::expr::IntoExprData,
+    {
+        let expr = Expr::init(t, loc);
+        if self.log().errors != 0 {
+            self.note_expr_end(&expr, end);
+        }
+        expr
     }
 
     #[inline]

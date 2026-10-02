@@ -675,6 +675,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `parseConditionalExpressionRest`: without the colon, what would come after it is missing as well.
             p.lexer.expect(T::TColon)?;
             e_if.no = p.new_expr(E::Missing {}, p.lexer.loc());
+            p.finish_expr(&ternary);
             *left = ternary;
             return Ok(Continuation::Next);
         }
@@ -692,6 +693,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // condition ? yes : no
         //                     ^
+        p.finish_expr(&ternary);
 
         *left = ternary;
         Ok(Continuation::Next)

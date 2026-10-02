@@ -1417,6 +1417,13 @@ pub struct File {
     pub with_bodies: Few<(u32, u32)>,
     /// The start of each token that follows a token the parser skipped in a list (`abortParsingListOrMoveToNextToken`). Sorted.
     pub after_skipped: Few<u32>,
+    /// Where the parser stood when it finished an expression (`finishNode`), by `ExprId`: of those it finished after the first syntax
+    /// error of the file. 0, or past the end of the list: nothing is noted. Empty in a file that parses.
+    /// It says what the parts of an expression cannot: that recovery took tokens after the last part. So it can only lengthen what
+    /// check/spans.rs works out from the parts, which is exact where nothing was recovered from.
+    /// This is NOT tsgo's data model, where every node has an `end`, and that is on purpose: an `end` on every expression is paid by
+    /// every program, and only recovery needs it.
+    pub expr_ends: Vec<u32>,
     /// The array and object literals whose closing bracket the parser missed: where they open, and where they end, which is where the
     /// last token they took does (`finishNode`). Sorted.
     pub unclosed_literals: Few<(u32, u32)>,
@@ -1555,6 +1562,13 @@ arenas! {
 }
 
 impl File {
+    #[inline]
+    pub fn set_expr_end(&mut self, e: ExprId, end: u32) {
+        if self.expr_ends.len() <= e.idx() {
+            self.expr_ends.resize(e.idx() + 1, 0);
+        }
+        self.expr_ends[e.idx()] = end;
+    }
     #[inline]
     pub fn expr(&mut self, kind: ExprKind, pos: u32) -> ExprId {
         self.add_expr_node(Expr { kind, pos })

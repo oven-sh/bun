@@ -794,7 +794,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         let file = self.file;
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
         // The `a` of `export * from a` is neither an expression node nor a name in a type.
-        if matches!(bound.expr_parent[e.idx()], Parent::File) {
+        if hir.specifier_expressions.contains(&e) {
             return None;
         }
         // `export default a`, `export = a`: every meaning counts.

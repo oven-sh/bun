@@ -34,6 +34,8 @@ pub(crate) struct Lower<'p, 'a> {
     casts: HashMap<ExprKey, SmallVec<[(CastKind, i32); 2]>>,
     /// A bit for each place in the source, set where an expression in `casts` starts. Hardly any expression is in there.
     cast_starts: Vec<u64>,
+    /// `hir::File::expr_ends`
+    expr_ends: HashMap<ExprKey, i32>,
     kept_expressions: HashMap<i32, Vec<Expr>>,
     pub(super) source: &'a [u8],
     stack_check: bun_core::StackCheck,
@@ -147,6 +149,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                 list.push((kind, ty));
             }
         }
+        let mut expr_ends: HashMap<ExprKey, i32> = HashMap::default();
+        for (key, end) in syntax.expr_ends {
+            expr_ends.insert(key, end);
+        }
         let mut b = Builder::new(lexer, atoms);
         b.comments = p.lexer.all_comments.clone();
         b.ts = syntax.ast;
@@ -168,6 +174,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             list_props: Vec::new(),
             casts,
             cast_starts,
+            expr_ends,
             kept_expressions: syntax.kept_expressions,
             source: p.source.contents(),
             stack_check: bun_core::StackCheck::init(),
@@ -1986,6 +1993,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             return self.b.file.expr(ExprKind::Missing, pos);
         }
         let mut id = self.expr_without_casts(expr);
+        if !self.expr_ends.is_empty()
+            && let Some(&end) = self.expr_ends.get(&ExprKey::of(expr))
+        {
+            self.b.file.set_expr_end(id, end as u32);
+        }
         if self.may_have_casts(expr)
             && let Some(casts) = self.casts.get(&ExprKey::of(expr))
         {

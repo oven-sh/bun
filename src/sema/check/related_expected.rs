@@ -7,7 +7,8 @@ use super::*;
 use crate::bind::{Decl, FnOwner};
 
 impl Checker<'_> {
-    /// The end of `elaborateElement`. `said`: the error about the property or the element `name` of what is held against `target`.
+    /// The end of `elaborateElement`, for who has noted the error. `said`: the error about the property or the element `name` of what
+    /// is held against `target`.
     pub(super) fn relate_expected_property(
         &mut self,
         said: Option<Diagnostic>,
@@ -18,13 +19,19 @@ impl Checker<'_> {
             return;
         };
         self.relate(said.start, said.code, |c| {
-            // What is compared on the way says nothing about the comparison that is being reported.
-            let (gave_up, too_complex) = (c.relation_gave_up, c.relation_too_complex);
-            let related = c.where_expected_property_comes_from(target, name);
-            c.relation_gave_up = gave_up;
-            c.relation_too_complex = too_complex;
-            related.into_iter().collect()
+            c.expected_property(target, name).into_iter().collect()
         });
+    }
+
+    /// The end of `elaborateElement`: the related information of the error about the property or the element `name` of what is held
+    /// against `target`.
+    pub(super) fn expected_property(&mut self, target: TypeId, name: Atom) -> Option<Related> {
+        // What is compared on the way says nothing about the comparison that is being reported.
+        let (gave_up, too_complex) = (self.relation_gave_up, self.relation_too_complex);
+        let related = self.where_expected_property_comes_from(target, name);
+        self.relation_gave_up = gave_up;
+        self.relation_too_complex = too_complex;
+        related
     }
 
     /// 6501 at the index signature of `target` that stands in for `name`, or 6500 at what declares the property, or else `target`.

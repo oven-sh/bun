@@ -84,6 +84,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         source_len,
         text: _,
         unclosed_literals: _,
+        expr_ends: _,
         body,
         references,
         suppressed,
@@ -485,7 +486,10 @@ impl Dump<'_> {
 
     fn expr(&mut self, depth: usize, label: &str, id: ExprId) {
         let Expr { kind, pos } = node!(self, depth, label, exprs, id);
-        let head = format!("Expr {} pos={pos}", expr_kind_name(kind));
+        let mut head = format!("Expr {} pos={pos}", expr_kind_name(kind));
+        if let Some(end) = self.file.expr_ends.get(id.idx()).filter(|&&end| end != 0) {
+            head += &format!(" end={end}");
+        }
         let d = depth + 1;
         match kind {
             ExprKind::Missing

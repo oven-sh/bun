@@ -45,7 +45,6 @@ impl Checker<'_> {
                     target,
                     value,
                 } => check_plain_assignment(self, file, target, value, &mut sites, out),
-                ExprKind::Unary { op, operand } => check_unary(self, file, op, operand, out),
                 // `checkAssertion`
                 ExprKind::AsConst(operand) => {
                     if !matches!(self.hir(file)[operand].kind, ExprKind::Missing)
@@ -281,7 +280,7 @@ fn check_grammar_rest_element(
 // ───────────────────────────── how it is written ─────────────────────────────
 
 /// `GetEmitScriptTarget`: unsaid, it is the latest standard.
-fn language_version(c: &Checker<'_>) -> ScriptTarget {
+pub(super) fn language_version(c: &Checker<'_>) -> ScriptTarget {
     match c.p.files.options.target {
         ScriptTarget::None => ScriptTarget::ES2025,
         said => said,
@@ -452,11 +451,6 @@ fn is_in_ambient_context(c: &Checker<'_>, file: FileId, e: ExprId) -> bool {
 
 // ───────────────────────────── kinds of types ─────────────────────────────
 
-/// `number` or the type of a numeric literal: assignable to `number | bigint`, and no `bigint`.
-fn is_plain_number(c: &Checker<'_>, ty: TypeId) -> bool {
-    ty == TypeId::NUMBER || matches!(c.data(ty), TypeData::NumberLit { .. })
-}
-
 /// `TypeFlagsUndefined`
 fn is_undefined(_: &Checker<'_>, ty: TypeId) -> bool {
     ty.is_undefined()
@@ -532,7 +526,7 @@ pub(super) fn type_of_property_of_type(
 // ───────────────────────────── binary operators ─────────────────────────────
 
 /// `isLiteralExpressionOfObject`
-fn is_literal_expression_of_object(hir: &File, e: ExprId) -> bool {
+pub(super) fn is_literal_expression_of_object(hir: &File, e: ExprId) -> bool {
     let is_literal = match hir[e].kind {
         ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Regex | ExprKind::Class(_) => true,
         ExprKind::Fn(f) => hir[f].kind == FnKind::Expr,
@@ -541,7 +535,7 @@ fn is_literal_expression_of_object(hir: &File, e: ExprId) -> bool {
     is_literal && !is_parenthesized(hir, e)
 }
 
-/// `checkBinaryLikeExpression`, of `a op b` and `a op= b`: 2791 6807 2839, and on to what has a function of its own.
+/// `checkBinaryLikeExpression`, of `instanceof`, `in`, `&&=`, `||=` and `??=`: on to what has a function of its own.
 fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec<Diagnostic>) {
     let hir = c.hir(file);
     let (op, left, right, is_assignment) = match hir[e].kind {
@@ -554,132 +548,6 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
         _ => return,
     };
     match op {
-        BinOp::Sub
-        | BinOp::Mul
-        | BinOp::Div
-        | BinOp::Rem
-        | BinOp::Pow
-        | BinOp::Shl
-        | BinOp::Shr
-        | BinOp::UShr
-        | BinOp::BitAnd
-        | BinOp::BitOr
-        | BinOp::BitXor => {
-            let Some((l, r)) = operand_types(c, file, left, right) else {
-                return;
-            };
-            // Two numbers fit, and give a number.
-            if !(is_plain_number(c, l) && is_plain_number(c, r)) {
-                let (l, r) = (c.non_null_type(l), c.non_null_type(r));
-                // Of two booleans another operator is suggested, and that is all.
-                let is_boolean =
-                    |c: &Checker<'_>, t: TypeId| c.is_boolean(t) || c.is_boolean_like(t);
-                if matches!(op, BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor)
-                    && is_boolean(c, l)
-                    && is_boolean(c, r)
-                {
-                    return;
-                }
-                let numeric = c.union(&[TypeId::NUMBER, TypeId::BIGINT]);
-                let both_fit = c.is_assignable(l, numeric) && c.is_assignable(r, numeric);
-                let is_anything = |c: &Checker<'_>, t: TypeId| c.is_any(t) || t == TypeId::UNKNOWN;
-                let gives_number = is_anything(c, l) && is_anything(c, r)
-                    || !c.maybe_type_of_kind(l, Checker::is_bigint_like)
-                        && !c.maybe_type_of_kind(r, Checker::is_bigint_like);
-                if op == BinOp::Pow
-                    && !gives_number
-                    && c.is_assignable(l, TypeId::BIGINT)
-                    && c.is_assignable(r, TypeId::BIGINT)
-                    && language_version(c) < ScriptTarget::ES2016
-                {
-                    let start = c.start_inside_parentheses(file, e);
-                    out.push(Diagnostic { start, code: 2791 });
-                    c.note(start, c.end_inside_parentheses(file, e), 2791, Vec::new());
-                }
-                if !both_fit {
-                    return;
-                }
-            }
-            if is_assignment {
-                check_assignment_operator(c, file, left, ExprId::NONE, out);
-            }
-            // `errorOrSuggestion`: a suggestion anywhere else, it is an error in the initializer of a member of an enum.
-            let is_error = matches!(c.bound(file).expr_parent[e.idx()], Parent::EnumInit(_));
-            if matches!(op, BinOp::Shl | BinOp::Shr | BinOp::UShr)
-                && (is_error || c.captures_suggestions())
-                && let Some(EnumValue::Number(bits)) = c.constant_value(file, right)
-                && f64::from_bits(bits).abs() >= 32.0
-            {
-                let start = c.start_inside_parentheses(file, e);
-                out.push(Diagnostic { start, code: 6807 });
-                if !is_error {
-                    c.note_suggestion(start, 6807);
-                }
-                let end = c.end_inside_parentheses(file, e);
-                c.explain_to(start, end, 6807, |c| {
-                    let operator = match (op, is_assignment) {
-                        (BinOp::Shl, false) => "<<",
-                        (BinOp::Shl, true) => "<<=",
-                        (BinOp::Shr, false) => ">>",
-                        (BinOp::Shr, true) => ">>=",
-                        (_, false) => ">>>",
-                        (_, true) => ">>>=",
-                    };
-                    vec![
-                        c.source_text(file, c.start_of(file, left), c.end_of_expr(file, left)),
-                        operator.to_owned(),
-                        crate::atom::number_to_string(f64::from_bits(bits) % 32.0),
-                    ]
-                });
-            }
-        }
-        BinOp::Add if is_assignment => {
-            let Some((mut l, mut r)) = operand_types(c, file, left, right) else {
-                return;
-            };
-            // Two numbers give a number.
-            if is_plain_number(c, l) && is_plain_number(c, r) {
-                return check_assignment_operator(c, file, left, ExprId::NONE, out);
-            }
-            if !c.is_assignable(l, TypeId::STRING) && !c.is_assignable(r, TypeId::STRING) {
-                l = c.non_null_type(l);
-                r = c.non_null_type(r);
-            }
-            // `isTypeAssignableToKindEx(t, kind, strict)`
-            let is_strictly = |c: &mut Checker<'_>, t: TypeId, kind: TypeId| {
-                !c.is_any(t) && t != TypeId::UNKNOWN && !c.is_nullish(t) && c.is_assignable(t, kind)
-            };
-            let has_result = is_strictly(c, l, TypeId::NUMBER) && is_strictly(c, r, TypeId::NUMBER)
-                || is_strictly(c, l, TypeId::BIGINT) && is_strictly(c, r, TypeId::BIGINT)
-                || is_strictly(c, l, TypeId::STRING)
-                || is_strictly(c, r, TypeId::STRING)
-                || c.is_any(l)
-                || c.is_any(r);
-            // `checkForDisallowedESSymbolOperand`
-            if has_result
-                && !c.maybe_type_of_kind_considering_base_constraint(l, Checker::is_symbol_like)
-                && !c.maybe_type_of_kind_considering_base_constraint(r, Checker::is_symbol_like)
-            {
-                check_assignment_operator(c, file, left, ExprId::NONE, out);
-            }
-        }
-        BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
-            // A JavaScript file reports only `===` and `!==`.
-            if (is_literal_expression_of_object(hir, left)
-                || is_literal_expression_of_object(hir, right))
-                && (!hir.is_js || matches!(op, BinOp::EqEqEq | BinOp::NotEqEq))
-            {
-                let start = c.start_inside_parentheses(file, e);
-                out.push(Diagnostic { start, code: 2839 });
-                let always = if matches!(op, BinOp::EqEq | BinOp::EqEqEq) {
-                    "false"
-                } else {
-                    "true"
-                };
-                let end = c.end_inside_parentheses(file, e);
-                c.note(start, end, 2839, vec![always.to_owned()]);
-            }
-        }
         BinOp::Instanceof => check_instanceof(c, file, e, left, right, out),
         BinOp::In => check_right_operand_of_in(c, file, right, out),
         BinOp::And | BinOp::Or | BinOp::Nullish if is_assignment => {
@@ -700,8 +568,23 @@ fn check_reference_expression(
     optional_chain: u32,
     out: &mut Vec<Diagnostic>,
 ) -> bool {
-    let hir = c.hir(file);
-    let code = match hir[skip_assertions(hir, e)].kind {
+    let Some(code) = why_no_reference(c.hir(file), e, invalid, optional_chain) else {
+        return true;
+    };
+    let start = c.error_start_of(file, e);
+    out.push(Diagnostic { start, code });
+    c.note(start, c.error_end_of(file, e), code, Vec::new());
+    false
+}
+
+/// `checkReferenceExpression`: which of the two codes `e` gets, if it is no reference.
+pub(super) fn why_no_reference(
+    hir: &File,
+    e: ExprId,
+    invalid: u32,
+    optional_chain: u32,
+) -> Option<u32> {
+    match hir[skip_assertions(hir, e)].kind {
         ExprKind::Ident(_)
         | ExprKind::Missing
         | ExprKind::Dot {
@@ -709,14 +592,10 @@ fn check_reference_expression(
         }
         | ExprKind::Index {
             chain: Chain::No, ..
-        } => return true,
-        ExprKind::Dot { .. } | ExprKind::Index { .. } => optional_chain,
-        _ => invalid,
-    };
-    let start = c.error_start_of(file, e);
-    out.push(Diagnostic { start, code });
-    c.note(start, c.error_end_of(file, e), code, Vec::new());
-    false
+        } => None,
+        ExprKind::Dot { .. } | ExprKind::Index { .. } => Some(optional_chain),
+        _ => Some(invalid),
+    }
 }
 
 /// `a = b`, as `checkBinaryLikeExpression` has it.
@@ -1010,75 +889,6 @@ pub(super) fn exact_optional_write_type(
 }
 
 // ───────────────────────────── unary operators ─────────────────────────────
-
-/// `checkPrefixUnaryExpression`, `checkPostfixUnaryExpression`
-fn check_unary(
-    c: &mut Checker<'_>,
-    file: FileId,
-    op: UnOp,
-    operand: ExprId,
-    out: &mut Vec<Diagnostic>,
-) {
-    let hir = c.hir(file);
-    if !matches!(
-        op,
-        UnOp::Plus
-            | UnOp::Minus
-            | UnOp::BitNot
-            | UnOp::PreInc
-            | UnOp::PreDec
-            | UnOp::PostInc
-            | UnOp::PostDec
-    ) {
-        return;
-    }
-    let ty = c.type_of_expr(file, operand);
-    if !c.is_known(ty) || c.is_uncertain(file, operand) {
-        return;
-    }
-    if !matches!(op, UnOp::Plus | UnOp::Minus | UnOp::BitNot) {
-        let fits = is_plain_number(c, ty) || {
-            let there = c.non_null_type(ty);
-            let numeric = c.union(&[TypeId::NUMBER, TypeId::BIGINT]);
-            c.is_assignable(there, numeric)
-        };
-        if fits {
-            check_reference_expression(c, file, operand, 2357, 2777, out);
-        }
-        return;
-    }
-    // A signed literal is a literal.
-    if matches!(
-        (hir[operand].kind, op),
-        (ExprKind::Number(_), UnOp::Plus | UnOp::Minus) | (ExprKind::BigInt(_), UnOp::Minus)
-    ) && !is_parenthesized(hir, operand)
-    {
-        return;
-    }
-    c.check_not_nullish(file, operand, ty, out);
-    if c.maybe_type_of_kind_considering_base_constraint(ty, Checker::is_symbol_like) {
-        let start = c.error_start_of(file, operand);
-        out.push(Diagnostic { start, code: 2469 });
-        let operator = match op {
-            UnOp::Plus => "+",
-            UnOp::Minus => "-",
-            _ => "~",
-        };
-        let end = c.error_end_of(file, operand);
-        c.note(start, end, 2469, vec![operator.to_owned()]);
-    }
-    if op == UnOp::Plus
-        && c.maybe_type_of_kind_considering_base_constraint(ty, Checker::is_bigint_like)
-    {
-        let start = c.error_start_of(file, operand);
-        out.push(Diagnostic { start, code: 2736 });
-        let end = c.error_end_of(file, operand);
-        c.explain_to(start, end, 2736, |c| {
-            let base = c.base_of_literal(ty);
-            vec!["+".to_owned(), c.type_to_string(base)]
-        });
-    }
-}
 
 // ───────────────────────────── assertions ─────────────────────────────
 

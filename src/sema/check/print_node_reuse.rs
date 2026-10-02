@@ -5,6 +5,7 @@
 use super::super::errors_isolated_declarations::{
     Emit, Pseudo, PseudoElement, PseudoElementKind, PseudoParam,
 };
+use super::super::errors_misc::QueriedThisContainer;
 use super::super::errors_x_properties_jsx::start_of_member_name;
 use super::*;
 
@@ -1387,18 +1388,22 @@ impl<'p> Printer<'_, 'p> {
         };
         let names: Vec<Atom> = hir.ids(name).collect();
         let &first = names.first()?;
-        // The container of `this` cannot be named.
-        if first == known::this {
-            return None;
-        }
         let scope = self.c.bound(file).type_scope[node.idx()];
-        let introduces_error = self.track_existing_entity_name(
-            file,
-            SyntaxNode::EntityName(node),
-            scope,
-            first,
-            SymFlags::VALUE,
-        );
+        let introduces_error = if first == known::this {
+            // What is reported of it is dropped where the node is written from its type.
+            if !self.is_this_container_accessible(file, node) {
+                return None;
+            }
+            false
+        } else {
+            self.track_existing_entity_name(
+                file,
+                SyntaxNode::EntityName(node),
+                scope,
+                first,
+                SymFlags::VALUE,
+            )
+        };
         let arguments = self.visit_existing_type_nodes(file, args, 0)?;
         if introduces_error {
             return self.serialize_type_name(file, scope, &names, true, arguments);
@@ -1412,6 +1417,48 @@ impl<'p> Printer<'_, 'p> {
             ),
             TYPE_OPERATOR,
         ))
+    }
+
+    /// `trackExistingEntityName`, of the name after `typeof` in `query`, which starts with `this`: whether the symbol of
+    /// `getThisContainer` is accessible where the name is written. A member has no symbol: it is as accessible as what it is a member
+    /// of (`getContainersOfSymbol`).
+    fn is_this_container_accessible(&mut self, file: FileId, query: TypeNodeId) -> bool {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let TypeNodeKind::Typeof { expr, .. } = hir[query].kind else {
+            return false;
+        };
+        let scope = bound.type_scope[query.idx()];
+        let this = first_identifier(hir, expr);
+        let symbol = match self.c.this_container_of_type_query(file, this) {
+            Some(QueriedThisContainer::Fn(f)) => match bound.fns[f.idx()].owner {
+                FnOwner::Stmt(_) => bound.fn_symbol[f.idx()],
+                FnOwner::Member(m) => match bound.member_owner[m.idx()] {
+                    MemberOwner::Class(c) => bound.class_symbol[c.idx()],
+                    MemberOwner::Interface(i) => bound.interface_symbol[i.idx()],
+                    _ => SymbolId::NONE,
+                },
+                _ => SymbolId::NONE,
+            },
+            Some(QueriedThisContainer::Property) => {
+                let mut around = scope;
+                loop {
+                    if around.is_none() {
+                        break SymbolId::NONE;
+                    }
+                    if let ScopeKind::Class(c) = bound.scopes[around.idx()].kind {
+                        break bound.class_symbol[c.idx()];
+                    }
+                    around = bound.scopes[around.idx()].parent;
+                }
+            }
+            _ => SymbolId::NONE,
+        };
+        symbol.is_some() && scope.is_some() && {
+            let symbol = self.c.files().sym(file, symbol);
+            let at = Enclosing::at_scope(file, scope);
+            self.c
+                .is_symbol_accessible_at(symbol, SymFlags::VALUE, false, at)
+        }
     }
 
     /// `tryVisitTypeReference`

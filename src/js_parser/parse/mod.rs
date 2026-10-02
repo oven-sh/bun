@@ -1314,7 +1314,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             let mut value = if p.lexer.tolerant {
-                p.join_with_commas_keeping_missing(items)
+                p.join_with_commas_keeping_missing(items, &item_ends)
             } else {
                 Expr::join_all_with_comma(items)
             };
@@ -1328,8 +1328,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     1109,
                 );
                 let missing_loc = p.lexer.full_start_of(close_paren_loc.start as usize);
-                let missing = p.new_expr(E::Missing {}, missing_loc);
-                value = p.join_with_commas_keeping_missing(&[value, missing]);
+                let missing = p.new_expr_ending_at(E::Missing {}, missing_loc, missing_loc);
+                let ends = [missing_loc, missing_loc];
+                value = p.join_with_commas_keeping_missing(&[value, missing], &ends);
             }
             p.mark_expr_as_parenthesized(&mut value);
             p.mark_paren(&value, loc);
@@ -1345,7 +1346,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 1109,
             );
-            let value = p.new_expr(E::Missing {}, close_paren_loc);
+            let end = p.lexer.full_start_of(close_paren_loc.start as usize);
+            let value = p.new_expr_ending_at(E::Missing {}, close_paren_loc, end);
             p.mark_paren(&value, loc);
             return Ok(value);
         }
@@ -1356,19 +1358,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// `Expr::join_all_with_comma` drops missing operands. TypeScript keeps them (`makeBinaryExpression`), and reports 2695 for
-    /// the operand to their left.
+    /// the operand to their left. The ")" has been taken by now. `ends`: where each of `items` ends.
     #[cold]
     #[inline(never)]
-    fn join_with_commas_keeping_missing(&mut self, items: &[Expr]) -> Expr {
+    fn join_with_commas_keeping_missing(&mut self, items: &[Expr], ends: &[bun_ast::Loc]) -> Expr {
         let mut joined = items[0];
-        for item in &items[1..] {
-            joined = self.new_expr(
+        for (i, item) in items.iter().enumerate().skip(1) {
+            joined = self.new_expr_ending_at(
                 E::Binary {
                     op: js_ast::op::Code::BinComma,
                     left: joined,
                     right: *item,
                 },
                 joined.loc,
+                ends.get(i).copied().unwrap_or(bun_ast::Loc::EMPTY),
             );
         }
         joined

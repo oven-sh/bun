@@ -2826,11 +2826,11 @@ impl<'a> Lexer<'a> {
                     self.has_newline_before = true;
                 }
                 -1 => {
-                    self.start = self.end;
                     // TypeScript's `Scan`: `*/` is missed where the text ends, which is where the comment ends.
-                    if self.tolerate(self.start, 0, 1010) {
+                    if self.tolerate(self.end, 0, 1010) {
                         return Ok(());
                     }
+                    self.start = self.end;
                     self.add_syntax_error(
                         self.start,
                         format_args!("Expected \"*/\" to terminate multi-line comment"),
@@ -3393,11 +3393,11 @@ impl<'a> Lexer<'a> {
                                         self.has_newline_before = true;
                                     }
                                     -1 => {
-                                        self.start = self.end;
                                         // As in `scan_multi_line_comment_body`.
-                                        if self.tolerate(self.start, 0, 1010) {
+                                        if self.tolerate(self.end, 0, 1010) {
                                             break 'multi_line_comment;
                                         }
+                                        self.start = self.end;
                                         self.add_syntax_error(
                                             self.start,
                                             format_args!(

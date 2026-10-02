@@ -27,6 +27,13 @@ pub struct Related {
     pub args: Vec<String>,
 }
 
+impl Related {
+    /// As `ast.Diagnostic`. `None`: it is nowhere.
+    pub(super) fn into_reported(self) -> Option<Reported> {
+        Some(Reported::new(self.at?, self.code, self.args))
+    }
+}
+
 /// Given as the end of an error: it ends where it starts. TypeScript reports such errors on nodes that are missing and at bare positions.
 pub(super) const NO_LENGTH: u32 = u32::MAX;
 

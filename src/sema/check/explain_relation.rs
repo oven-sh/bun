@@ -1,7 +1,8 @@
 //! Why one type is not related to another: the lines under "Type 'A' is not assignable to type 'B'."
 //!
 //! The relation in `relate.rs` only says yes or no. This goes over a pair it has said no to once more, in the order of `relater.go`
-//! with `reportErrors` set, and collects what `reportError` is given there. A function named `x_reporting` is `x` of `relate.rs` plus
+//! with `reportErrors` set, and collects what `reportError` is given there. What it comes to is the error: its code, its node, its
+//! text (`relation_diagnostic`). It can come to a yes where the run without reports says no, and then there is no error. A function named `x_reporting` is `x` of `relate.rs` plus
 //! the reports. What `relater.go` compares without reports is asked of `relate.rs` with the same `Relater`, so that the comparisons
 //! under way count as they do there. A comparison without reports that can only end in an early "yes" is left out: the pair at hand
 //! is known not to be related. Nothing found out here goes into the cache of relations.
@@ -13,22 +14,27 @@ use super::relate::{
     Relater, Relation, STATE_NONE, STATE_REGULAR, STATE_SOURCE, STATE_TARGET, STRICT_ARITY,
     STRICT_CALLBACK, STRICT_TOP_SIGNATURE, SUCCEEDED, Ternary, UNMEASURABLE, VARIANCE_MASK,
 };
+use super::related::Place;
 use super::*;
 use std::rc::Rc;
 
 /// `ErrorChain`
-struct Reported {
+struct ErrorChain {
     next: Chain,
     code: u32,
     args: Vec<String>,
 }
 
 /// The line reported last comes first: it is the outermost.
-type Chain = Option<Rc<Reported>>;
+type Chain = Option<Rc<ErrorChain>>;
 
 /// A `Relater` that has an `errorNode`.
 struct Reporter {
     r: Relater,
+    /// `errorNode`. An end of `0`: with the token there.
+    error_node: Place,
+    /// The two types asked about, if one of them is written as an alias that is not the name it is compared under.
+    named_otherwise: Option<(TypeId, TypeId)>,
     /// `errorChain`
     chain: Chain,
     /// `relatedInfo`
@@ -119,7 +125,7 @@ impl Reporter {
                 args = vec![add_to_dotted_name(&head, &tail)];
             }
         }
-        self.chain = Some(Rc::new(Reported {
+        self.chain = Some(Rc::new(ErrorChain {
             next: self.chain.take(),
             code,
             args,
@@ -263,7 +269,226 @@ fn spelling_suggestion(name: &str, candidates: &[String]) -> Option<usize> {
 
 // ───────────────────────────── what is asked from outside ─────────────────────────────
 
+/// `createDiagnosticChainFromErrorChain(r.errorChain, r.errorNode, r.relatedInfo)`
+pub(super) struct RelationDiagnostic {
+    pub(super) at: Place,
+    /// The first, at level 0, is the message.
+    pub(super) lines: Vec<Line>,
+    pub(super) related: Vec<Related>,
+}
+
+impl RelationDiagnostic {
+    fn into_reported(self) -> Option<Reported> {
+        let mut diagnostic: Option<Reported> = None;
+        for line in self.lines.into_iter().rev() {
+            let mut outer = Reported::new(self.at, line.code, line.args);
+            outer.message_chain.extend(diagnostic);
+            diagnostic = Some(outer);
+        }
+        let mut diagnostic = diagnostic?;
+        let related = self.related.into_iter();
+        diagnostic.related_information = related.filter_map(Related::into_reported).collect();
+        Some(diagnostic)
+    }
+}
+
 impl<'p> Checker<'p> {
+    /// `checkTypeAssignableTo`
+    pub(super) fn check_type_assignable_to(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        error_node: Option<Place>,
+        head_message: Option<u32>,
+    ) -> bool {
+        self.check_type_assignable_to_ex(source, target, error_node, head_message, None)
+    }
+
+    /// `checkTypeAssignableToEx`
+    pub(super) fn check_type_assignable_to_ex(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        error_node: Option<Place>,
+        head_message: Option<u32>,
+        diagnostic_output: Option<&mut Vec<Reported>>,
+    ) -> bool {
+        let relation = Relation::Assignable;
+        self.check_type_related_to_ex(
+            source,
+            target,
+            relation,
+            error_node,
+            head_message,
+            diagnostic_output,
+        )
+    }
+
+    /// `checkTypeComparableTo`
+    pub(super) fn check_type_comparable_to(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        error_node: Option<Place>,
+        head_message: Option<u32>,
+    ) -> bool {
+        let relation = Relation::Comparable;
+        self.check_type_related_to_ex(source, target, relation, error_node, head_message, None)
+    }
+
+    /// `checkTypeRelatedToEx`: at most one diagnostic, to `diagnostic_output` or else to the sink. The run without reports comes first:
+    /// most are related, and it keeps what it finds. What cannot be told counts as related, and nothing is reported.
+    pub(super) fn check_type_related_to_ex(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        relation: Relation,
+        error_node: Option<Place>,
+        head_message: Option<u32>,
+        diagnostic_output: Option<&mut Vec<Reported>>,
+    ) -> bool {
+        let is_related = self.is_type_related_to_if_told(source, target, relation);
+        let (is_related, diagnostic) = match (is_related, error_node) {
+            (Some(true), _) => return true,
+            (_, None) => return false,
+            (None, Some(at)) => {
+                let args = [Arg::Type(source), Arg::Type(target)];
+                (false, Some(self.new_diagnostic(at, 2859, &args)))
+            }
+            (Some(false), Some(at)) => {
+                let (is_related, diagnostic) =
+                    self.relation_diagnostic(source, target, relation, at, head_message, false);
+                (
+                    is_related,
+                    diagnostic.and_then(RelationDiagnostic::into_reported),
+                )
+            }
+        };
+        if let Some(diagnostic) = diagnostic {
+            self.report_diagnostic(diagnostic, diagnostic_output);
+        }
+        is_related
+    }
+
+    /// `isTypeRelatedTo`. `None`: it got too complex. What cannot be told counts as related.
+    pub(super) fn is_type_related_to_if_told(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        relation: Relation,
+    ) -> Option<bool> {
+        if !self.is_known(source) || !self.is_known(target) {
+            return Some(true);
+        }
+        let gave_up_before = std::mem::replace(&mut self.relation_gave_up, false);
+        let too_complex_before = std::mem::replace(&mut self.relation_too_complex, false);
+        let is_related = self.related(source, target, relation);
+        let is_sure = !self.relation_gave_up && !self.timed_out();
+        let is_too_complex = self.relation_too_complex && !self.timed_out();
+        self.relation_gave_up |= gave_up_before;
+        self.relation_too_complex = too_complex_before;
+        (!is_too_complex).then_some(is_related || !is_sure)
+    }
+
+    /// `reportDiagnostic`
+    pub(super) fn report_diagnostic(
+        &mut self,
+        diagnostic: Reported,
+        diagnostic_output: Option<&mut Vec<Reported>>,
+    ) {
+        match diagnostic_output {
+            Some(output) => output.push(diagnostic),
+            None => {
+                self.add_diagnostic(diagnostic);
+            }
+        }
+    }
+
+    /// The run of `checkTypeRelatedToEx` with `reportErrors`: whether the two are related, and what is reported if they are not. `head`:
+    /// the code of `headMessage`. `is_named_otherwise`: see `Reporter::named_otherwise`.
+    pub(super) fn relation_diagnostic(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        relation: Relation,
+        error_node: Place,
+        head: Option<u32>,
+        is_named_otherwise: bool,
+    ) -> (bool, Option<RelationDiagnostic>) {
+        let mut x = Reporter {
+            r: Relater::new(relation, self.cycles),
+            error_node,
+            named_otherwise: is_named_otherwise.then(|| (self.force(source), self.force(target))),
+            chain: None,
+            related: Vec::new(),
+            budget: 2000,
+        };
+        // These two are never a `headMessage`: they are what `reportRelationError` says for lack of one.
+        let head = head.filter(|&code| code != 2322 && code != 2678);
+        // What the comparisons made on the way leave behind is for whoever asks a question, and nobody has.
+        let gave_up = self.relation_gave_up;
+        let too_complex = self.relation_too_complex;
+        let reliability = self.reliability;
+        let mut result =
+            self.is_related_to_ex_reporting(&mut x, source, target, REC_BOTH, head, STATE_NONE);
+        // Cut short on the way to the reasons: no reasons.
+        if x.r.overflow {
+            result = Ternary::FALSE;
+            (x.error_node, x.chain) = (error_node, None);
+            x.related.clear();
+            self.report_error_results_alone(&mut x, source, target, head);
+        }
+        self.relation_gave_up = gave_up;
+        self.relation_too_complex = too_complex;
+        self.reliability = reliability;
+        let lines = lines_of(&x.chain, 0);
+        let diagnostic = (!result.holds() && !lines.is_empty()).then_some(RelationDiagnostic {
+            at: x.error_node,
+            lines,
+            related: x.related,
+        });
+        (result.holds(), diagnostic)
+    }
+
+    /// What `reportErrorResults` says of the two by itself.
+    pub(super) fn relation_error_without_reasons(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        relation: Relation,
+        error_node: Place,
+        head: u32,
+    ) -> RelationDiagnostic {
+        let mut x = Reporter {
+            r: Relater::new(relation, self.cycles),
+            error_node,
+            named_otherwise: None,
+            chain: None,
+            related: Vec::new(),
+            budget: 0,
+        };
+        let head = Some(head).filter(|&code| code != 2322 && code != 2678);
+        self.report_error_results_alone(&mut x, source, target, head);
+        RelationDiagnostic {
+            at: error_node,
+            lines: lines_of(&x.chain, 0),
+            related: x.related,
+        }
+    }
+
+    fn report_error_results_alone(
+        &mut self,
+        x: &mut Reporter,
+        source: TypeId,
+        target: TypeId,
+        head: Option<u32>,
+    ) {
+        let (original_source, original_target) = (self.force(source), self.force(target));
+        let source = self.normalized_for_report(original_source, false);
+        let target = self.normalized_for_report(original_target, true);
+        self.report_error_results(x, original_source, original_target, source, target, head);
+    }
+
     /// The lines under the message of an error that says `source` is not assignable to `target`, outermost first, from level 1:
     /// `checkTypeAssignableTo(source, target, node, nil)` without its first line.
     pub(super) fn assignability_chain(&mut self, source: TypeId, target: TypeId) -> Vec<Line> {
@@ -324,26 +549,17 @@ impl<'p> Checker<'p> {
         head: Option<u32>,
         level: u32,
     ) -> (Vec<Line>, Vec<Related>) {
-        let mut x = Reporter {
-            r: Relater::new(relation, self.cycles),
-            chain: None,
-            related: Vec::new(),
-            budget: 2000,
-        };
-        // These two are never a `headMessage`: they are what `reportRelationError` says for lack of one.
-        let head = head.filter(|&code| code != 2322 && code != 2678);
-        // What the comparisons made on the way leave behind is for whoever asks a question, and nobody has.
-        let gave_up = self.relation_gave_up;
-        let too_complex = self.relation_too_complex;
-        let reliability = self.reliability;
-        self.is_related_to_ex_reporting(&mut x, source, target, REC_BOTH, head, STATE_NONE);
-        self.relation_gave_up = gave_up;
-        self.relation_too_complex = too_complex;
-        self.reliability = reliability;
-        if x.r.overflow {
-            return (Vec::new(), Vec::new());
+        // No node: only the lines are asked for.
+        let nowhere = (self.checking.unwrap_or(FileId(0)), 0, 0);
+        match self.relation_diagnostic(source, target, relation, nowhere, head, false) {
+            (_, Some(mut diagnostic)) => {
+                for line in &mut diagnostic.lines {
+                    line.level += level;
+                }
+                (diagnostic.lines, diagnostic.related)
+            }
+            _ => (Vec::new(), Vec::new()),
         }
-        (lines_of(&x.chain, level), x.related)
     }
 }
 
@@ -640,7 +856,7 @@ impl<'p> Checker<'p> {
                 } else {
                     target
                 };
-                self.report_relation_error(x, head, source, shown);
+                self.report_relation_error(x, head, source, shown, false);
                 return Ternary::FALSE;
             }
             let is_performing_common_property_checks = (relation != Relation::Comparable
@@ -719,6 +935,7 @@ impl<'p> Checker<'p> {
         target: TypeId,
         head: Option<u32>,
     ) {
+        let is_named_otherwise = x.named_otherwise == Some((original_source, original_target));
         let source = if self.has_alias(original_source)
             || self.has_single_base_for_non_augmenting_subtype(original_source)
         {
@@ -759,7 +976,7 @@ impl<'p> Checker<'p> {
             let name = self.prop_to_string(&prop);
             x.report(code, vec![intersection, name]);
         }
-        self.report_relation_error(x, head, source, target);
+        self.report_relation_error(x, head, source, target, is_named_otherwise);
         if let TypeData::TypeParam(file, tp, _) = *self.data(source)
             && self.constraint_of(source).is_none()
             && self.copy_may_extend(source, (file, tp), target)
@@ -900,13 +1117,15 @@ impl<'p> Checker<'p> {
             )
     }
 
-    /// `reportRelationError`
+    /// `reportRelationError`. `is_named_otherwise`: this names one of the two by an alias, what is missing is said of what they are
+    /// compared as (`chainArgsMatch`).
     fn report_relation_error(
         &mut self,
         x: &mut Reporter,
         message: Option<u32>,
         source: TypeId,
         target: TypeId,
+        is_named_otherwise: bool,
     ) {
         let (source_type, target_type) = self.type_names_for_error_display(source, target);
         let mut generalized_source = source;
@@ -989,7 +1208,8 @@ impl<'p> Checker<'p> {
             Some(generalized_source_type.as_str()),
             Some(target_type.as_str()),
         ];
-        let gives_way = !is_conversion_or_interface_implementation_message(message);
+        let gives_way =
+            !is_conversion_or_interface_implementation_message(message) && !is_named_otherwise;
         let is_said_already = match x.message_at(0) {
             Some(2353 | 2561) => true,
             Some(2859 | 2321 | 4104) => x.args_match(&names),
@@ -1216,15 +1436,20 @@ impl<'p> Checker<'p> {
                 let name = self.prop_to_string(prop);
                 let in_type = self.type_to_string(error_target);
                 if is_jsx {
+                    if let PropSource::Literal(file, p) = prop.source
+                        && x.error_node.0 == file
+                    {
+                        let end = self.end_of_jsx_attr_name(file, p);
+                        x.error_node = (file, self.hir(file)[p].pos, end);
+                    }
                     self.report_unknown_jsx_attribute(x, name, error_target, in_type);
                     return true;
                 }
                 // Only a name written as an identifier in the file at hand is taken for a slip of the pen.
                 let is_identifier = match prop.source {
-                    PropSource::Literal(file, p)
-                        if self.checking.is_none_or(|checked| checked == file) =>
-                    {
+                    PropSource::Literal(file, p) if x.error_node.0 == file => {
                         let (hir, written) = (self.hir(file), &self.hir(file)[p]);
+                        x.error_node = (file, written.pos, self.end_of_prop_name(file, p));
                         matches!(written.key, PropKey::Name(_))
                             && !matches!(
                                 hir.text.get(written.pos as usize),
@@ -2510,8 +2735,8 @@ impl<'p> Checker<'p> {
         if !unmatched.is_empty() {
             // `shouldReportUnmatchedPropertyError`: a function that lacks what an object has is not that kind of thing.
             let (s, t) = (sm.shape(), tm.shape());
-            let is_bare_function =
-                !(s.call.is_empty() && s.construct.is_empty()) && s.props.is_empty();
+            let is_bare_function = !(s.call.is_empty() && s.construct.is_empty())
+                && (s.props.is_empty() || !self.is_object_type(source));
             if !is_bare_function
                 || !t.call.is_empty() && !s.call.is_empty()
                 || !t.construct.is_empty() && !s.construct.is_empty()

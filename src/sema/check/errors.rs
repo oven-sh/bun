@@ -3893,12 +3893,12 @@ fn operator_text(op: BinOp, is_assignment: bool) -> String {
 type Related = fn(&mut Checker<'_>, TypeId, TypeId) -> bool;
 
 /// `bothAreBigIntLike`
-fn both_are_bigint_like(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
+pub(super) fn both_are_bigint_like(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
     c.is_assignable(left, TypeId::BIGINT) && c.is_assignable(right, TypeId::BIGINT)
 }
 
 /// `closeEnoughKind`: what `+` may well take.
-fn may_be_added(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
+pub(super) fn may_be_added(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
     [left, right].into_iter().all(|t| {
         c.is_any(t)
             || t == TypeId::UNKNOWN
@@ -3909,7 +3909,7 @@ fn may_be_added(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
 }
 
 /// What `<`, `<=`, `>` and `>=` take.
-fn can_be_ordered(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
+pub(super) fn can_be_ordered(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
     if c.is_any(left) || c.is_any(right) {
         return true;
     }
@@ -3922,59 +3922,9 @@ fn can_be_ordered(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
 }
 
 /// `isTypeEqualityComparableTo`, one way or the other.
-fn can_be_equal(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
+pub(super) fn can_be_equal(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
     let nullable = |t: TypeId| t.is_null() || t.is_undefined();
     nullable(left) || nullable(right) || c.are_comparable(left, right)
-}
-
-/// `reportOperatorError`, of `e`, which is `a op b` or `a op= b`: what goes with the 2365 or the 2367 at `start`. `left` and `right`:
-/// the types of the operands. `is_related`: what they fail.
-#[allow(clippy::too_many_arguments)]
-fn explain_operator_error(
-    c: &mut Checker<'_>,
-    file: FileId,
-    e: ExprId,
-    op: BinOp,
-    start: u32,
-    code: u32,
-    left: TypeId,
-    right: TypeId,
-    is_related: Option<Related>,
-) {
-    let end = c.end_inside_parentheses(file, e);
-    let mut would_work_with_await = false;
-    c.explain_to(start, end, code, |c| {
-        let (mut effective_left, mut effective_right) = (left, right);
-        if let Some(is_related) = is_related {
-            would_work_with_await = match (c.awaited_no_alias(left), c.awaited_no_alias(right)) {
-                (Some(l), Some(r)) if (l, r) != (left, right) => is_related(c, l, r),
-                _ => false,
-            };
-            if !would_work_with_await {
-                // `getBaseTypesIfUnrelated`
-                let (left_base, right_base) = (c.base_of_literal(left), c.base_of_literal(right));
-                if !is_related(c, left_base, right_base) {
-                    (effective_left, effective_right) = (left_base, right_base);
-                }
-            }
-        }
-        let (left, right) = c.type_names_for_error_display(effective_left, effective_right);
-        if code == 2367 {
-            return vec![left, right];
-        }
-        let is_assignment = matches!(c.hir(file)[e].kind, ExprKind::Assign { .. });
-        vec![operator_text(op, is_assignment), left, right]
-    });
-    // `errorAndMaybeSuggestAwait`
-    if would_work_with_await {
-        c.relate(start, code, |_| {
-            vec![super::explain::Related {
-                at: Some((file, start, end)),
-                code: 2773,
-                args: Vec::new(),
-            }]
-        });
-    }
 }
 
 /// `GetViableKeywordSuggestions`
@@ -4688,12 +4638,10 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
 impl Checker<'_> {
     fn check_operators(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut numeric = None;
         let index = self.exprs_by_kind(file);
         for e in super::errors_small::in_file_order([
             index.of(ExprTag::Binary),
             index.of(ExprTag::Assign),
-            index.of(ExprTag::Unary),
         ]) {
             let i = e.idx();
             if bound.is_unchecked(i) {
@@ -4767,29 +4715,11 @@ impl Checker<'_> {
                         );
                     }
                 }
-                ExprKind::Binary { op, left, right } => {
-                    self.check_binary(file, e, op, left, right, &mut numeric, out);
-                }
-                // Whatever is on the left, what is on the right is looked at.
                 ExprKind::Assign {
-                    op: Some(op),
+                    op: Some(BinOp::And | BinOp::Or | BinOp::Nullish),
                     target,
                     value,
-                } => {
-                    if self.check_binary(file, e, op, target, value, &mut numeric, out) {
-                        self.check_compound_assignment(file, e, op, target, value, out);
-                    }
-                }
-                ExprKind::Unary {
-                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                    operand,
-                } => {
-                    let ty = self.type_of_expr(file, operand);
-                    if self.is_known(ty) {
-                        let ty = self.check_not_nullish(file, operand, ty, out);
-                        self.check_arithmetic_operand(file, operand, ty, 2356, &mut numeric, out);
-                    }
-                }
+                } => self.check_logical_assignment(file, target, value, out),
                 _ => {}
             }
         }
@@ -4800,239 +4730,11 @@ impl Checker<'_> {
         !self.p.types.flags(ty).contains(TypeFlags::HAS_UNRESOLVED)
     }
 
-    /// `checkBinaryLikeExpression`, of an operator that makes something of two values. Whether it gets as far as
-    /// `checkAssignmentOperator`, which is where `op=` goes on from. `numeric`: see `number_or_bigint`.
-    #[allow(clippy::too_many_arguments)]
-    fn check_binary(
+    /// `checkAssignmentOperator`, of `target &&= value`, `target ||= value` and `target ??= value`: 2364, or 2322 if the value does not
+    /// fit where it is put.
+    fn check_logical_assignment(
         &mut self,
         file: FileId,
-        e: ExprId,
-        op: BinOp,
-        left: ExprId,
-        right: ExprId,
-        numeric: &mut Option<TypeId>,
-        out: &mut Vec<Diagnostic>,
-    ) -> bool {
-        match op {
-            BinOp::And | BinOp::Or | BinOp::Nullish => return true,
-            BinOp::Comma | BinOp::In | BinOp::Instanceof => return false,
-            _ => {}
-        }
-        // `checkNaNEquality`, which is not a matter of types.
-        if matches!(
-            op,
-            BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
-        ) && (self.is_global_nan(file, left) || self.is_global_nan(file, right))
-        {
-            let start = self.start_inside_parentheses(file, e);
-            out.push(Diagnostic { start, code: 2845 });
-            let end = self.end_inside_parentheses(file, e);
-            let always = if matches!(op, BinOp::EqEq | BinOp::EqEqEq) {
-                "false"
-            } else {
-                "true"
-            };
-            self.note(start, end, 2845, vec![always.to_owned()]);
-            let location = if self.is_global_nan(file, left) {
-                right
-            } else {
-                left
-            };
-            if !self.is_global_nan(file, location) {
-                self.relate(start, 2845, |c| {
-                    let hir = c.hir(file);
-                    // `IsEntityNameExpression(SkipParentheses(location))`
-                    let name = if matches!(hir[location].kind, ExprKind::Ident(_))
-                        || is_property_access_entity_name_expression(hir, location)
-                    {
-                        entity_name_text(c, file, location)
-                    } else {
-                        "...".to_owned()
-                    };
-                    let not = if always == "true" { "!" } else { "" };
-                    let (from, to) = c.error_range_of_expr(file, location);
-                    vec![super::explain::Related {
-                        at: Some((file, from, to)),
-                        code: 1369,
-                        args: vec![format!("{not}Number.isNaN({name})")],
-                    }]
-                });
-            }
-        }
-        let l = self.type_of_expr(file, left);
-        let r = self.type_of_expr(file, right);
-        if !self.is_known(l) || !self.is_known(r) {
-            // `checkArithmeticOperandType` checks each operand on its own. `&`, `|` and `^` look at both first (2447).
-            if matches!(
-                op,
-                BinOp::Sub
-                    | BinOp::Mul
-                    | BinOp::Div
-                    | BinOp::Rem
-                    | BinOp::Pow
-                    | BinOp::Shl
-                    | BinOp::Shr
-                    | BinOp::UShr
-            ) {
-                for (operand, ty, code) in [(left, l, 2362), (right, r, 2363)] {
-                    if self.is_known(ty) && !self.is_uncertain(file, operand) {
-                        let ty = self.check_not_nullish(file, operand, ty, out);
-                        self.check_arithmetic_operand(file, operand, ty, code, numeric, out);
-                    }
-                }
-            }
-            return false;
-        }
-        match op {
-            BinOp::Sub
-            | BinOp::Mul
-            | BinOp::Div
-            | BinOp::Rem
-            | BinOp::Pow
-            | BinOp::Shl
-            | BinOp::Shr
-            | BinOp::UShr
-            | BinOp::BitAnd
-            | BinOp::BitOr
-            | BinOp::BitXor => {
-                let l = self.check_not_nullish(file, left, l, out);
-                let r = self.check_not_nullish(file, right, r, out);
-                if matches!(op, BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor)
-                    && self.every_type(l, Self::is_boolean_like)
-                    && self.every_type(r, Self::is_boolean_like)
-                    && !l.is_never()
-                    && !r.is_never()
-                {
-                    // It is said of the operator, which is the token before the right operand: the tree does not keep where it is.
-                    let hir = self.hir(file);
-                    let operator: &[u8] = match (op, matches!(hir[e].kind, ExprKind::Assign { .. }))
-                    {
-                        (BinOp::BitAnd, false) => b"&",
-                        (BinOp::BitAnd, true) => b"&=",
-                        (BinOp::BitOr, false) => b"|",
-                        (BinOp::BitOr, true) => b"|=",
-                        (_, false) => b"^",
-                        (_, true) => b"^=",
-                    };
-                    let found =
-                        start_of_token_before(&hir.text, self.start_of(file, right), operator);
-                    let start = found.unwrap_or_else(|| self.start_inside_parentheses(file, e));
-                    out.push(Diagnostic { start, code: 2447 });
-                    let end = found.map_or(0, |at| at + operator.len() as u32);
-                    // `getSuggestedBooleanOperator`
-                    let suggested = match op {
-                        BinOp::BitAnd => "&&",
-                        BinOp::BitOr => "||",
-                        _ => "!==",
-                    };
-                    self.explain_to(start, end, 2447, |_| {
-                        vec![
-                            String::from_utf8_lossy(operator).into_owned(),
-                            suggested.to_owned(),
-                        ]
-                    });
-                    return false;
-                }
-                let left_fits = self.check_arithmetic_operand(file, left, l, 2362, numeric, out);
-                let right_fits = self.check_arithmetic_operand(file, right, r, 2363, numeric, out);
-                let anything = |c: &Self, t: TypeId| c.is_any(t) || t == TypeId::UNKNOWN;
-                let gives_number = anything(self, l) && anything(self, r)
-                    || !self.maybe_type_of_kind(l, Self::is_bigint_like)
-                        && !self.maybe_type_of_kind(r, Self::is_bigint_like);
-                if !gives_number {
-                    let both = self.is_assignable(l, TypeId::BIGINT)
-                        && self.is_assignable(r, TypeId::BIGINT);
-                    if !both || op == BinOp::UShr {
-                        let start = self.start_inside_parentheses(file, e);
-                        out.push(Diagnostic { start, code: 2365 });
-                        let is_related = (!both).then_some(both_are_bigint_like as Related);
-                        explain_operator_error(self, file, e, op, start, 2365, l, r, is_related);
-                    }
-                }
-                left_fits && right_fits
-            }
-            BinOp::Add => {
-                let (mut l, mut r) = (l, r);
-                // `isTypeAssignableToKindEx`, of number, bigint or string: the relation is asked about the operand itself, which sees to
-                // what a type parameter extends.
-                let is_kind = |c: &mut Self, t: TypeId, kind: TypeId, strict: bool| {
-                    !(strict && (c.is_any(t) || t == TypeId::UNKNOWN || c.is_nullish(t)))
-                        && c.is_assignable(t, kind)
-                };
-                if !is_kind(self, l, TypeId::STRING, false)
-                    && !is_kind(self, r, TypeId::STRING, false)
-                {
-                    l = self.check_not_nullish(file, left, l, out);
-                    r = self.check_not_nullish(file, right, r, out);
-                }
-                let has_result = is_kind(self, l, TypeId::NUMBER, true)
-                    && is_kind(self, r, TypeId::NUMBER, true)
-                    || is_kind(self, l, TypeId::BIGINT, true)
-                        && is_kind(self, r, TypeId::BIGINT, true)
-                    || is_kind(self, l, TypeId::STRING, true)
-                    || is_kind(self, r, TypeId::STRING, true)
-                    || self.is_any(l)
-                    || self.is_any(r);
-                if !has_result {
-                    let start = self.start_inside_parentheses(file, e);
-                    out.push(Diagnostic { start, code: 2365 });
-                    let is_related = Some(may_be_added as Related);
-                    explain_operator_error(self, file, e, op, start, 2365, l, r, is_related);
-                    return false;
-                }
-                // Symbols are only looked for once the two can be added.
-                !self.check_no_symbol_operand(file, e, op, left, right, l, r, out)
-            }
-            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                if self.check_no_symbol_operand(file, e, op, left, right, l, r, out) {
-                    return false;
-                }
-                let l = self.check_not_nullish(file, left, l, out);
-                let r = self.check_not_nullish(file, right, r, out);
-                if self.is_any(l) || self.is_any(r) {
-                    return false;
-                }
-                let (l, r) = (self.base_for_comparison(l), self.base_for_comparison(r));
-                let numeric = self.number_or_bigint(numeric);
-                let (ln, rn) = (
-                    self.is_assignable(l, numeric),
-                    self.is_assignable(r, numeric),
-                );
-                if !((ln && rn)
-                    || (!ln && !rn && (self.is_comparable(l, r) || self.is_comparable(r, l))))
-                {
-                    let start = self.start_inside_parentheses(file, e);
-                    out.push(Diagnostic { start, code: 2365 });
-                    let is_related = Some(can_be_ordered as Related);
-                    explain_operator_error(self, file, e, op, start, 2365, l, r, is_related);
-                }
-                false
-            }
-            BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
-                let nullable = |t: TypeId| t.is_null() || t.is_undefined();
-                if !(nullable(l)
-                    || nullable(r)
-                    || self.is_comparable(l, r)
-                    || self.is_comparable(r, l))
-                {
-                    let start = self.start_inside_parentheses(file, e);
-                    self.trace_pair(2367, start, l, r);
-                    out.push(Diagnostic { start, code: 2367 });
-                    let is_related = Some(can_be_equal as Related);
-                    explain_operator_error(self, file, e, op, start, 2367, l, r, is_related);
-                }
-                false
-            }
-            _ => false,
-        }
-    }
-
-    /// `checkAssignmentOperator`, of `target op= value`, which is `e`: 2364, or 2322 if what comes of it does not fit where it is put.
-    fn check_compound_assignment(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        op: BinOp,
         target: ExprId,
         value: ExprId,
         out: &mut Vec<Diagnostic>,
@@ -5048,19 +4750,14 @@ impl Checker<'_> {
         {
             reference = x;
         }
-        // The property that is written to, if its name is written out.
-        let property = match hir[reference].kind {
+        match hir[reference].kind {
             // `parseSuperExpression`: `super` that nothing follows is a property without a name.
-            ExprKind::Ident(_) | ExprKind::Missing | ExprKind::Super => None,
-            // Of `a?.b += 1` it is only said that it cannot be.
+            ExprKind::Ident(_) | ExprKind::Missing | ExprKind::Super => {}
+            // Of `a?.b ||= 1` it is only said that it cannot be.
             ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } if chain != Chain::No => {
                 return;
             }
-            ExprKind::Dot { obj, name, .. } => Some((obj, name)),
-            ExprKind::Index { obj, index, .. } => match hir[index].kind {
-                ExprKind::String(name) => Some((obj, name)),
-                _ => None,
-            },
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => {}
             _ => {
                 out.push(Diagnostic {
                     start: at,
@@ -5069,7 +4766,7 @@ impl Checker<'_> {
                 self.note(at, error_end_if_read(self, file, target), 2364, Vec::new());
                 return;
             }
-        };
+        }
         let (left, right) = (
             self.type_of_expr(file, target),
             self.type_of_expr(file, value),
@@ -5081,49 +4778,18 @@ impl Checker<'_> {
         {
             return;
         }
-        // `&&=`, `||=` and `??=` give a value as `=` does (`AssignmentKindDefinite`): what is on the right, to what the target is
-        // declared as, or asserted to be.
-        if matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) {
-            let is_declared = reference == target && !self.bound(file).is_arguments_object(target);
-            let mut wanted = if is_declared {
-                self.declared_type_of_reference(file, target)
-            } else {
-                left
-            };
-            // `checkAssignmentOperator`: `checkPropertyAccessExpression` with `writeOnly`.
-            if is_declared
-                && self.is_known(wanted)
-                && let ExprKind::Dot { obj, name, .. } = hir[target].kind
-            {
-                let object = self.type_of_expr(file, obj);
-                let object = self.non_null_type(object);
-                let (read, written) = (
-                    self.type_of_property(object, name),
-                    self.write_type_of_property(object, name),
-                );
-                if let Some(written) = written
-                    && read != Some(written)
-                {
-                    wanted = written;
-                }
-            }
-            self.check_assignable_with_end_from(
-                file,
-                right,
-                wanted,
-                at,
-                |c| error_end_if_read(c, file, target),
-                value,
-                2322,
-                out,
-            );
-            return;
-        }
-        // The others put what they make of the two where the target is, which is what it is known to hold there.
-        let mut wanted = left;
-        // A setter may take more than the getter gives: `checkPropertyAccessExpression` with `writeOnly`, `AccessFlagsWriting`.
-        if reference == target
-            && let Some((obj, name)) = property
+        // They give a value as `=` does (`AssignmentKindDefinite`): what is on the right, to what the target is declared as, or
+        // asserted to be.
+        let is_declared = reference == target && !self.bound(file).is_arguments_object(target);
+        let mut wanted = if is_declared {
+            self.declared_type_of_reference(file, target)
+        } else {
+            left
+        };
+        // `checkAssignmentOperator`: `checkPropertyAccessExpression` with `writeOnly`.
+        if is_declared
+            && self.is_known(wanted)
+            && let ExprKind::Dot { obj, name, .. } = hir[target].kind
         {
             let object = self.type_of_expr(file, obj);
             let object = self.non_null_type(object);
@@ -5137,16 +4803,13 @@ impl Checker<'_> {
                 wanted = written;
             }
         }
-        // `checkIdentifier`, `getFlowTypeOfAccessExpression`: a literal counts for all of its kind.
-        let wanted = self.base_of_literal(wanted);
-        let source = self.type_of_expr(file, e);
         self.check_assignable_with_end_from(
             file,
-            source,
+            right,
             wanted,
             at,
             |c| error_end_if_read(c, file, target),
-            ExprId::NONE,
+            value,
             2322,
             out,
         );
@@ -5187,10 +4850,208 @@ impl Checker<'_> {
         }
     }
 
-    /// 2469: an operator that does not take symbols is given one. `checkForDisallowedESSymbolOperand`. `e`: `left op right` or
-    /// `left op= right`.
+    /// The types of the two operands of an operator whose result does not go by them, looked at left to right. `None`: one of them
+    /// could not be found out, and nothing is said of the two.
+    pub(super) fn operand_types_if_sure(
+        &mut self,
+        file: FileId,
+        left: ExprId,
+        right: ExprId,
+    ) -> Option<(TypeId, TypeId)> {
+        let around = std::mem::replace(&mut self.uncertain, false);
+        let (l, r) = (
+            self.type_of_expr(file, left),
+            self.type_of_expr(file, right),
+        );
+        let is_sure = !self.uncertain && self.is_known(l) && self.is_known(r);
+        self.uncertain = around;
+        is_sure.then_some((l, r))
+    }
+
+    /// `getErrorRangeForNode` of `e`, parentheses around it not counted.
+    pub(super) fn place_of_expr(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
+        (
+            file,
+            self.start_inside_parentheses(file, e),
+            self.end_inside_parentheses(file, e),
+        )
+    }
+
+    /// `getErrorRangeForNode` of `e` as it is written, in its parentheses.
+    pub(super) fn place_of_written_expr(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
+        (
+            file,
+            self.error_start_of(file, e),
+            self.error_end_of(file, e),
+        )
+    }
+
+    /// `errorAndMaybeSuggestAwait`
+    fn error_and_maybe_suggest_await(
+        &mut self,
+        at: (FileId, u32, u32),
+        maybe_missing_await: bool,
+        code: u32,
+        args: &[Arg<'_>],
+    ) {
+        let did_you_forget = self.new_diagnostic(at, 2773, &[]);
+        let diagnostic = self.error(at, code, args);
+        if maybe_missing_await {
+            diagnostic.add_related_info(did_you_forget);
+        }
+    }
+
+    /// `reportOperatorErrorUnless`
+    pub(super) fn report_operator_error_unless(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        op: BinOp,
+        left: TypeId,
+        right: TypeId,
+        types_are_compatible: Related,
+    ) {
+        if !types_are_compatible(self, left, right) {
+            self.report_operator_error(file, e, op, left, right, Some(types_are_compatible));
+        }
+    }
+
+    /// `reportOperatorError`, of `e`, which is `a op b` or `a op= b`: 2365, 2367. `left` and `right`: the types of the operands.
+    /// `is_related`: what they fail.
+    pub(super) fn report_operator_error(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        op: BinOp,
+        left: TypeId,
+        right: TypeId,
+        is_related: Option<Related>,
+    ) {
+        let (mut effective_left, mut effective_right) = (left, right);
+        let mut would_work_with_await = false;
+        if let Some(is_related) = is_related {
+            would_work_with_await =
+                match (self.awaited_no_alias(left), self.awaited_no_alias(right)) {
+                    (Some(l), Some(r)) if (l, r) != (left, right) => is_related(self, l, r),
+                    _ => false,
+                };
+            if !would_work_with_await {
+                // `getBaseTypesIfUnrelated`
+                let (left_base, right_base) =
+                    (self.base_of_literal(left), self.base_of_literal(right));
+                if !is_related(self, left_base, right_base) {
+                    (effective_left, effective_right) = (left_base, right_base);
+                }
+            }
+        }
+        let (left, right) = self.type_names_for_error_display(effective_left, effective_right);
+        let at = self.place_of_expr(file, e);
+        if matches!(
+            op,
+            BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
+        ) {
+            let args = [Arg::Text(&left), Arg::Text(&right)];
+            return self.error_and_maybe_suggest_await(at, would_work_with_await, 2367, &args);
+        }
+        let is_assignment = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. });
+        let operator = operator_text(op, is_assignment);
+        let args = [Arg::Text(&operator), Arg::Text(&left), Arg::Text(&right)];
+        self.error_and_maybe_suggest_await(at, would_work_with_await, 2365, &args);
+    }
+
+    /// `checkNaNEquality`: 2845.
+    pub(super) fn check_nan_equality(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        is_equality: bool,
+        left: ExprId,
+        right: ExprId,
+    ) {
+        let (is_left_nan, is_right_nan) = (
+            self.is_global_nan(file, left),
+            self.is_global_nan(file, right),
+        );
+        if !is_left_nan && !is_right_nan {
+            return;
+        }
+        let hir = self.hir(file);
+        let location = if is_left_nan { right } else { left };
+        // `IsEntityNameExpression(SkipParentheses(location))`
+        let name = if matches!(hir[location].kind, ExprKind::Ident(_))
+            || is_property_access_entity_name_expression(hir, location)
+        {
+            entity_name_text(self, file, location)
+        } else {
+            "...".to_owned()
+        };
+        let not = if is_equality { "" } else { "!" };
+        let suggestion = format!("{not}Number.isNaN({name})");
+        let (from, to) = self.error_range_of_expr(file, location);
+        let did_you_mean = self.new_diagnostic((file, from, to), 1369, &[Arg::Text(&suggestion)]);
+        let always = if is_equality { "false" } else { "true" };
+        let diagnostic = self.error(self.place_of_expr(file, e), 2845, &[Arg::Text(always)]);
+        if !(is_left_nan && is_right_nan) {
+            diagnostic.add_related_info(did_you_mean);
+        }
+    }
+
+    /// 2447, of `&`, `|` or `^` between two booleans: `getSuggestedBooleanOperator`. It is said of the operator, which is the token
+    /// before the right operand: the tree does not keep where it is.
+    pub(super) fn report_boolean_operands(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        op: BinOp,
+        right: ExprId,
+    ) {
+        let hir = self.hir(file);
+        let operator = operator_text(op, matches!(hir[e].kind, ExprKind::Assign { .. }));
+        let suggested = match op {
+            BinOp::BitAnd => "&&",
+            BinOp::BitOr => "||",
+            _ => "!==",
+        };
+        let found =
+            start_of_token_before(&hir.text, self.start_of(file, right), operator.as_bytes());
+        let at = match found {
+            Some(start) => (file, start, start + operator.len() as u32),
+            None => self.place_of_token(file, self.start_inside_parentheses(file, e)),
+        };
+        self.error(at, 2447, &[Arg::Text(&operator), Arg::Text(suggested)]);
+    }
+
+    /// 6807: `errorOrSuggestion`, an error in the initializer of a member of an enum and a suggestion anywhere else.
+    pub(super) fn check_shift_count(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        op: BinOp,
+        left: ExprId,
+        right: ExprId,
+    ) {
+        let is_error = matches!(self.bound(file).expr_parent[e.idx()], Parent::EnumInit(_));
+        if (is_error || self.captures_suggestions())
+            && let Some(EnumValue::Number(bits)) = self.constant_value(file, right)
+            && f64::from_bits(bits).abs() >= 32.0
+        {
+            let is_assignment = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. });
+            let written = self.source_text(
+                file,
+                self.start_of(file, left),
+                self.end_of_expr(file, left),
+            );
+            let operator = operator_text(op, is_assignment);
+            let count = crate::atom::number_to_string(f64::from_bits(bits) % 32.0);
+            let args = [Arg::Text(&written), Arg::Text(&operator), Arg::Text(&count)];
+            let diagnostic = self.new_diagnostic(self.place_of_expr(file, e), 6807, &args);
+            self.add_error_or_suggestion(is_error, diagnostic);
+        }
+    }
+
+    /// `checkForDisallowedESSymbolOperand`: 2469. `e`: `left op right` or `left op= right`.
     #[allow(clippy::too_many_arguments)]
-    fn check_no_symbol_operand(
+    pub(super) fn check_for_disallowed_es_symbol_operand(
         &mut self,
         file: FileId,
         e: ExprId,
@@ -5199,7 +5060,6 @@ impl Checker<'_> {
         right: ExprId,
         l: TypeId,
         r: TypeId,
-        out: &mut Vec<Diagnostic>,
     ) -> bool {
         let mut may_be_symbol =
             |t| self.maybe_type_of_kind_considering_base_constraint(t, Self::is_symbol_like);
@@ -5208,19 +5068,116 @@ impl Checker<'_> {
         } else if may_be_symbol(r) {
             right
         } else {
-            return false;
+            return true;
         };
-        let start = self.error_start_of(file, offending);
-        out.push(Diagnostic { start, code: 2469 });
-        let end = self.error_end_of(file, offending);
+        let at = self.place_of_written_expr(file, offending);
         let is_assignment = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. });
-        self.explain_to(start, end, 2469, |_| vec![operator_text(op, is_assignment)]);
-        true
+        self.error(at, 2469, &[Arg::Text(&operator_text(op, is_assignment))]);
+        false
+    }
+
+    /// `checkArithmeticOperandType`: whether the operand will do.
+    pub(super) fn check_arithmetic_operand_type(
+        &mut self,
+        file: FileId,
+        operand: ExprId,
+        ty: TypeId,
+        code: u32,
+        is_await_valid: bool,
+    ) -> bool {
+        // Most operands are numbers.
+        if self.is_number_like(ty) {
+            return true;
+        }
+        let numeric = self.union(&[TypeId::NUMBER, TypeId::BIGINT]);
+        if self.is_assignable(ty, numeric) {
+            return true;
+        }
+        // `getAwaitedTypeOfPromise`
+        let awaited = if is_await_valid {
+            self.thenable_value(ty)
+                .and_then(|promised| self.awaited_or_none(promised))
+        } else {
+            None
+        };
+        let maybe_missing_await = awaited
+            .is_some_and(|awaited| self.is_known(awaited) && self.is_assignable(awaited, numeric));
+        let at = self.place_of_written_expr(file, operand);
+        self.error_and_maybe_suggest_await(at, maybe_missing_await, code, &[]);
+        false
+    }
+
+    /// `checkReferenceExpression`
+    pub(super) fn check_reference_expression(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        invalid_reference: u32,
+        invalid_optional_chain: u32,
+    ) -> bool {
+        let hir = self.hir(file);
+        let Some(code) = super::errors_x_operators::why_no_reference(
+            hir,
+            e,
+            invalid_reference,
+            invalid_optional_chain,
+        ) else {
+            return true;
+        };
+        let at = self.place_of_written_expr(file, e);
+        self.error(at, code, &[]);
+        false
+    }
+
+    /// `checkAssignmentOperator`, of `left op= ..` for an operator that makes `result` of two values: 2364 2779, or 2322 if that does
+    /// not fit where it is put. `left_type`: what `left` is known to hold, `null` and `undefined` ruled out.
+    pub(super) fn check_assignment_operator(
+        &mut self,
+        file: FileId,
+        left: ExprId,
+        left_type: TypeId,
+        result: TypeId,
+    ) {
+        let hir = self.hir(file);
+        // A setter may take more than the getter gives: `checkPropertyAccessExpression` with `writeOnly`, `AccessFlagsWriting`.
+        let property = match hir[left].kind {
+            ExprKind::Dot { obj, name, .. } => Some((obj, name)),
+            ExprKind::Index { obj, index, .. } => match hir[index].kind {
+                ExprKind::String(name) => Some((obj, name)),
+                _ => None,
+            },
+            _ => None,
+        };
+        let mut wanted = left_type;
+        if !self.is_error_type(left_type)
+            && let Some((obj, name)) = property
+        {
+            let object = self.type_of_expr(file, obj);
+            let object = self.non_null_type(object);
+            let (read, written) = (
+                self.type_of_property(object, name),
+                self.write_type_of_property(object, name),
+            );
+            if let Some(written) = written
+                && read != Some(written)
+            {
+                wanted = written;
+            }
+        }
+        if !self.check_reference_expression(file, left, 2364, 2779) {
+            return;
+        }
+        // `checkIdentifier`, `getFlowTypeOfAccessExpression`: a literal counts for all of its kind.
+        let wanted = self.base_of_literal(wanted);
+        if !self.is_assignable(result, wanted) {
+            let at = self.place_of_written_expr(file, left);
+            self.check_type_assignable_to(result, wanted, Some(at), None);
+        }
     }
 
     /// `getBaseTypeOfLiteralTypeForComparison`: `1` and `2` are compared as numbers, and a member of an enum as the string or the number
     /// it is, whatever else is in the enum.
-    fn base_for_comparison(&mut self, ty: TypeId) -> TypeId {
+    pub(super) fn base_for_comparison(&mut self, ty: TypeId) -> TypeId {
         self.map_type(ty, |c, m| match c.data(m) {
             TypeData::StringLit { .. }
             | TypeData::Template { .. }
@@ -5244,48 +5201,6 @@ impl Checker<'_> {
     /// `number | bigint`. `made`: it, from the first time it is asked for.
     fn number_or_bigint(&mut self, made: &mut Option<TypeId>) -> TypeId {
         *made.get_or_insert_with(|| self.union(&[TypeId::NUMBER, TypeId::BIGINT]))
-    }
-
-    /// `checkArithmeticOperandType`: whether the operand will do. `numeric`: see `number_or_bigint`.
-    fn check_arithmetic_operand(
-        &mut self,
-        file: FileId,
-        operand: ExprId,
-        ty: TypeId,
-        code: u32,
-        numeric: &mut Option<TypeId>,
-        out: &mut Vec<Diagnostic>,
-    ) -> bool {
-        let numeric = self.number_or_bigint(numeric);
-        let fits = self.is_assignable(ty, numeric);
-        if !fits {
-            let start = self.error_start_of(file, operand);
-            out.push(Diagnostic { start, code });
-            let end = self.error_end_of(file, operand);
-            self.note(start, end, code, Vec::new());
-            // `isAwaitValid`: not for what `++` and `--` work on.
-            if code != 2356 {
-                self.relate(start, code, |c| {
-                    // `getAwaitedTypeOfPromise`
-                    let awaited = c
-                        .thenable_value(ty)
-                        .and_then(|promised| c.awaited_or_none(promised));
-                    match awaited {
-                        Some(awaited)
-                            if c.is_known(awaited) && c.is_assignable(awaited, numeric) =>
-                        {
-                            vec![super::explain::Related {
-                                at: Some((file, start, end)),
-                                code: 2773,
-                                args: Vec::new(),
-                            }]
-                        }
-                        _ => Vec::new(),
-                    }
-                });
-            }
-        }
-        fits
     }
 
     /// `checkNonNullType`, for a pass.

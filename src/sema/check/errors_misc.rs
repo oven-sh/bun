@@ -156,10 +156,14 @@ impl Checker<'_> {
                             && !self.is_comparable(subject, case)
                             && !self.is_comparable(case, subject)
                         {
-                            // `checkTypeComparableTo`: what the relation says first, 2678 for lack of anything better.
                             let at = self.error_start_of(file, test);
                             let end = self.error_end_of(file, test);
-                            self.report_not_assignable_with_end(case, subject, at, end, 2678, out);
+                            self.check_type_comparable_to(
+                                case,
+                                subject,
+                                Some((file, at, end)),
+                                None,
+                            );
                         }
                     }
                 }

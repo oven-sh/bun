@@ -2727,7 +2727,7 @@ impl<'p> Checker<'p> {
         if source_is_structured_or_instantiable || is_structured_or_instantiable_kind(td) {
             if state & (STATE_TARGET | STATE_REGULAR) == 0
                 && is_object_literal_kind(sd)
-                && self.has_excess_properties(r, source, target).is_some()
+                && self.has_excess_properties(r, source, target)
             {
                 return Ternary::FALSE;
             }
@@ -2785,18 +2785,6 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── object literals and types that ask for nothing ─────────────────────────────
 
-    /// The first property written in the object literal `s` that `t` has no room for, or has other plans for.
-    pub(super) fn excess_property(
-        &mut self,
-        s: TypeId,
-        t: TypeId,
-        relation: Relation,
-    ) -> Option<Excess> {
-        let mut r = Relater::new(relation, self.cycles);
-        let (s, t) = (self.normalized(s, false), self.normalized(t, true));
-        self.has_excess_properties(&mut r, s, t)
-    }
-
     /// `isImplementationCompatibleWithOverload`. `None`: it cannot be told.
     pub(super) fn is_implementation_compatible_with_overload(
         &mut self,
@@ -2849,19 +2837,14 @@ impl<'p> Checker<'p> {
     }
 
     /// `hasExcessProperties`
-    fn has_excess_properties(
-        &mut self,
-        r: &mut Relater,
-        source: TypeId,
-        target: TypeId,
-    ) -> Option<Excess> {
+    fn has_excess_properties(&mut self, r: &mut Relater, source: TypeId, target: TypeId) -> bool {
         if !self.is_excess_property_check_target(target) {
-            return None;
+            return false;
         }
         let (sd, td) = (self.data(source), self.data(target));
         // `ObjectFlagsJSLiteral` on the target itself: without noImplicitAny a JS literal accepts any property.
         if !self.p.files.options.no_implicit_any && self.has_js_literal_flag(target) {
-            return None;
+            return false;
         }
         // What takes anything takes any object literal, but not any attribute.
         let is_jsx =
@@ -2870,7 +2853,7 @@ impl<'p> Checker<'p> {
             && (self.contains_global_object_type(target)
                 || !is_jsx && self.is_empty_object_type(target))
         {
-            return None;
+            return false;
         }
         // The type of an object literal checked under `CheckModeSkipContextSensitive` is fresh. It reaches the strict subtype relation
         // through `removeSubtypes`. `chooseOverload` compares its `getRegularTypeOfObjectLiteral`, under the other relations.
@@ -2891,7 +2874,9 @@ impl<'p> Checker<'p> {
             } => Some((file, e)),
             _ => None,
         };
-        let sm = self.members(source)?;
+        let Some(sm) = self.members(source) else {
+            return false;
+        };
         for prop in &sm.shape().props {
             // `isIgnoredJsxProperty`
             if is_jsx && self.files().atoms.bytes(prop.name).contains(&b'-') {
@@ -2923,7 +2908,7 @@ impl<'p> Checker<'p> {
                 continue;
             }
             if !self.is_known_property(reduced_target, prop.name) {
-                return Some(Excess::Unknown(prop.clone(), reduced_target));
+                return true;
             }
             if is_union {
                 let given = self.type_of_prop(prop, sm.mapper);
@@ -2934,11 +2919,11 @@ impl<'p> Checker<'p> {
                     .collect();
                 let wanted = self.union(&wanted);
                 if !self.is_related_to(r, given, wanted, REC_BOTH).holds() {
-                    return Some(Excess::Mismatch(given, wanted));
+                    return true;
                 }
             }
         }
-        None
+        false
     }
 
     /// `isTypeSubsetOf(globalObjectType, target)`
@@ -7390,12 +7375,4 @@ fn is_valid_bigint_string(s: &[u8]) -> bool {
         }
         digits => digits.iter().all(u8::is_ascii_digit),
     }
-}
-
-/// What is wrong with a property of an object literal, seen from where the literal goes.
-pub(super) enum Excess {
-    /// Nothing goes by that name in the type given.
-    Unknown(Prop, TypeId),
-    /// None of the alternatives it can be meant for takes what it holds: what it holds, what they take.
-    Mismatch(TypeId, TypeId),
 }

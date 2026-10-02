@@ -1110,7 +1110,13 @@ impl<'a> Spans<'a> {
             return 0;
         };
         let pos = pos as usize;
+        let noted = self
+            .hir
+            .expr_ends
+            .get(e.idx())
+            .map_or(0, |&end| end as usize);
         let end = match kind {
+            ExprKind::Missing if noted != 0 => return noted,
             ExprKind::Missing | ExprKind::Ident(known::empty) => {
                 return skip_trivia_back(self.text, pos);
             }
@@ -1250,7 +1256,7 @@ impl<'a> Spans<'a> {
                 self.eat_name(self.eat(self.token(pos), b"."))
             }
         };
-        end.max(pos)
+        end.max(pos).max(noted)
     }
 
     fn template_of_exprs(self, open: usize, exprs: IdList<ExprId>) -> usize {
@@ -2232,7 +2238,8 @@ impl Checker<'_> {
 
     /// `node.End()` of the template that opens at `open`, whatever is substituted in it.
     pub(super) fn end_of_template_at(&self, file: FileId, open: u32) -> u32 {
-        self.spans(file).template(open as usize, &|_, from| from) as u32
+        let spans = self.spans(file);
+        spans.template(open as usize, &|_, from| spans.close(from, b'}') - 1) as u32
     }
 
     /// Where what the bracket at `open` opens is closed: after the matching `)`, `]`, `}`.

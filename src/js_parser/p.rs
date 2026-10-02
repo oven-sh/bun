@@ -867,6 +867,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.module_scope
     }
 
+    /// `finishNode`: `expr` ends where the token before the current one does. For `hir::File::expr_ends`.
+    #[inline]
+    pub(crate) fn finish_expr(&mut self, expr: &Expr) {
+        if TYPESCRIPT && self.lexer.tolerant && self.log().errors != 0 {
+            self.note_expr_end(expr, self.lexer.full_start());
+        }
+    }
+
     #[inline]
     pub(crate) fn new_expr<T>(&mut self, t: T, loc: bun_ast::Loc) -> Expr
     where
@@ -875,6 +883,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The import-record side-effect is order-independent of `Expr.init`'s
         // Store allocation.
         let expr = Expr::init(t, loc);
+        self.finish_expr(&expr);
         if SCAN_ONLY {
             if let js_ast::ExprData::ECall(call) = expr.data {
                 if let js_ast::ExprData::EIdentifier(ident) = call.target.data {

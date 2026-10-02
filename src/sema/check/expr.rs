@@ -1,6 +1,8 @@
 //! The types of expressions.
 
+use super::errors::{both_are_bigint_like, can_be_equal, can_be_ordered, may_be_added};
 use super::errors_order::Named;
+use super::errors_x_operators::{is_literal_expression_of_object, language_version};
 use super::relate::Relation;
 use super::shape::{Access, Found};
 use super::*;
@@ -1724,7 +1726,7 @@ impl<'p> Checker<'p> {
             }
             ExprKind::New(_) => self.resolve_call(file, e).ret,
             ExprKind::Unary { op, operand } => self.type_of_unary(file, op, operand),
-            ExprKind::Binary { op, left, right } => self.type_of_binary(file, op, left, right),
+            ExprKind::Binary { op, left, right } => self.type_of_binary(file, e, op, left, right),
             ExprKind::Assign { op, target, value } => match op {
                 None => {
                     // `checkBinaryLikeExpression`: the left first. A pattern is taken apart, not looked at.
@@ -1744,7 +1746,7 @@ impl<'p> Checker<'p> {
                         source
                     }
                 }
-                Some(op) => self.type_of_binary(file, op, target, value),
+                Some(op) => self.type_of_binary(file, e, op, target, value),
             },
             // `checkConditionalExpression`
             ExprKind::Cond { test, yes, no } => {
@@ -4087,14 +4089,38 @@ impl<'p> Checker<'p> {
                             fresh: true,
                         })
                     }
-                    _ if op == UnOp::Plus => TypeId::NUMBER,
-                    _ => self.unary_result_type(ty),
+                    _ => {
+                        self.check_non_null_type(file, operand, ty);
+                        let (is_symbol, is_bigint) = (Self::is_symbol_like, Self::is_bigint_like);
+                        if self.maybe_type_of_kind_considering_base_constraint(ty, is_symbol) {
+                            let operator = match op {
+                                UnOp::Plus => "+",
+                                UnOp::Minus => "-",
+                                _ => "~",
+                            };
+                            let at = self.place_of_written_expr(file, operand);
+                            self.error(at, 2469, &[Arg::Text(operator)]);
+                        }
+                        if op != UnOp::Plus {
+                            return self.unary_result_type(ty);
+                        }
+                        if self.maybe_type_of_kind_considering_base_constraint(ty, is_bigint) {
+                            let base = self.base_of_literal(ty);
+                            let at = self.place_of_written_expr(file, operand);
+                            self.error(at, 2736, &[Arg::Text("+"), Arg::Type(base)]);
+                        }
+                        TypeId::NUMBER
+                    }
                 }
             }
             UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
                 let ty = self.type_of_expr(file, operand);
                 if ty == TypeId::SILENT_NEVER {
                     return ty;
+                }
+                let there = self.check_non_null_type(file, operand, ty);
+                if self.check_arithmetic_operand_type(file, operand, there, 2356, false) {
+                    self.check_reference_expression(file, operand, 2357, 2777);
                 }
                 self.unary_result_type(ty)
             }
@@ -4113,19 +4139,47 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `checkBinaryLikeExpression`, which looks at the left and then at the right, whatever the operator makes of them.
-    fn type_of_binary(&mut self, file: FileId, op: BinOp, left: ExprId, right: ExprId) -> TypeId {
+    /// `checkBinaryLikeExpression`, which looks at the left and then at the right, whatever the operator makes of them. `e`:
+    /// `errorNode`, which is `left op right` or `left op= right`.
+    fn type_of_binary(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        op: BinOp,
+        left: ExprId,
+        right: ExprId,
+    ) -> TypeId {
+        let is_assignment = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. });
         match op {
-            BinOp::Lt
-            | BinOp::Le
-            | BinOp::Gt
-            | BinOp::Ge
-            | BinOp::EqEq
-            | BinOp::NotEq
-            | BinOp::EqEqEq
-            | BinOp::NotEqEq => {
-                self.look_at(file, left);
-                self.look_at(file, right);
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                if let Some((l, r)) = self.operand_types_if_sure(file, left, right)
+                    && self.check_for_disallowed_es_symbol_operand(file, e, op, left, right, l, r)
+                {
+                    let l = self.check_non_null_type(file, left, l);
+                    let r = self.check_non_null_type(file, right, r);
+                    let (l, r) = (self.base_for_comparison(l), self.base_for_comparison(r));
+                    self.report_operator_error_unless(file, e, op, l, r, can_be_ordered);
+                }
+                TypeId::BOOLEAN
+            }
+            BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
+                // `CheckModeTypeOnly`: while a loop is under way the operands may be narrower than they are.
+                if let Some((l, r)) = self.operand_types_if_sure(file, left, right)
+                    && self.flow_loops.is_empty()
+                {
+                    let hir = self.hir(file);
+                    let is_equality = matches!(op, BinOp::EqEq | BinOp::EqEqEq);
+                    // A JavaScript file reports only `===` and `!==`.
+                    if (is_literal_expression_of_object(hir, left)
+                        || is_literal_expression_of_object(hir, right))
+                        && (!hir.is_js || matches!(op, BinOp::EqEqEq | BinOp::NotEqEq))
+                    {
+                        let always = if is_equality { "false" } else { "true" };
+                        self.error(self.place_of_expr(file, e), 2839, &[Arg::Text(always)]);
+                    }
+                    self.check_nan_equality(file, e, is_equality, left, right);
+                    self.report_operator_error_unless(file, e, op, l, r, can_be_equal);
+                }
                 TypeId::BOOLEAN
             }
             // `checkInExpression`, `checkInstanceOfExpression`
@@ -4221,27 +4275,53 @@ impl<'p> Checker<'p> {
                 if !self.is_assignable_to_kind(l, Self::is_string_like, TypeId::STRING, false)
                     && !self.is_assignable_to_kind(r, Self::is_string_like, TypeId::STRING, false)
                 {
-                    l = self.non_null_type(l);
-                    r = self.non_null_type(r);
+                    l = self.check_non_null_type(file, left, l);
+                    r = self.check_non_null_type(file, right, r);
                 }
-                if self.is_assignable_to_kind(l, Self::is_number_like, TypeId::NUMBER, true)
-                    && self.is_assignable_to_kind(r, Self::is_number_like, TypeId::NUMBER, true)
+                let result =
+                    if self.is_assignable_to_kind(l, Self::is_number_like, TypeId::NUMBER, true)
+                        && self.is_assignable_to_kind(r, Self::is_number_like, TypeId::NUMBER, true)
+                    {
+                        TypeId::NUMBER
+                    } else if self.is_assignable_to_kind(
+                        l,
+                        Self::is_bigint_like,
+                        TypeId::BIGINT,
+                        true,
+                    ) && self.is_assignable_to_kind(
+                        r,
+                        Self::is_bigint_like,
+                        TypeId::BIGINT,
+                        true,
+                    ) {
+                        TypeId::BIGINT
+                    } else if self.is_assignable_to_kind(
+                        l,
+                        Self::is_string_like,
+                        TypeId::STRING,
+                        true,
+                    ) || self.is_assignable_to_kind(
+                        r,
+                        Self::is_string_like,
+                        TypeId::STRING,
+                        true,
+                    ) {
+                        TypeId::STRING
+                    } else if self.is_error_type(l) || self.is_error_type(r) {
+                        TypeId::ERROR
+                    } else if self.is_any(l) || self.is_any(r) {
+                        TypeId::ANY
+                    } else {
+                        self.report_operator_error(file, e, op, l, r, Some(may_be_added));
+                        return TypeId::ANY;
+                    };
+                // Symbols are only looked for once the two can be added.
+                if self.check_for_disallowed_es_symbol_operand(file, e, op, left, right, l, r)
+                    && is_assignment
                 {
-                    TypeId::NUMBER
-                } else if self.is_assignable_to_kind(l, Self::is_bigint_like, TypeId::BIGINT, true)
-                    && self.is_assignable_to_kind(r, Self::is_bigint_like, TypeId::BIGINT, true)
-                {
-                    TypeId::BIGINT
-                } else if self.is_assignable_to_kind(l, Self::is_string_like, TypeId::STRING, true)
-                    || self.is_assignable_to_kind(r, Self::is_string_like, TypeId::STRING, true)
-                {
-                    TypeId::STRING
-                } else if self.is_error_type(l) || self.is_error_type(r) {
-                    TypeId::ERROR
-                } else {
-                    // One of them is `any`, or the two cannot be added: 2365 and `anyType`.
-                    TypeId::ANY
+                    self.check_assignment_operator(file, left, l, result);
                 }
+                result
             }
             _ => {
                 let (l, r) = (
@@ -4251,22 +4331,47 @@ impl<'p> Checker<'p> {
                 if l == TypeId::SILENT_NEVER || r == TypeId::SILENT_NEVER {
                     return TypeId::SILENT_NEVER;
                 }
-                let (l, r) = (self.non_null_type(l), self.non_null_type(r));
+                let l = self.check_non_null_type(file, left, l);
+                let r = self.check_non_null_type(file, right, r);
+                if matches!(op, BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor)
+                    && self.every_type(l, Self::is_boolean_like)
+                    && self.every_type(r, Self::is_boolean_like)
+                    && !l.is_never()
+                    && !r.is_never()
+                {
+                    self.report_boolean_operands(file, e, op, right);
+                    return TypeId::NUMBER;
+                }
+                let left_ok = self.check_arithmetic_operand_type(file, left, l, 2362, true);
+                let right_ok = self.check_arithmetic_operand_type(file, right, r, 2363, true);
                 let any_or_unknown = |c: &Self, t: TypeId| c.is_any(t) || t == TypeId::UNKNOWN;
-                if any_or_unknown(self, l) && any_or_unknown(self, r)
+                let result = if any_or_unknown(self, l) && any_or_unknown(self, r)
                     || !self.maybe_type_of_kind(l, Self::is_bigint_like)
                         && !self.maybe_type_of_kind(r, Self::is_bigint_like)
                 {
                     TypeId::NUMBER
-                } else if self.is_assignable(l, TypeId::BIGINT)
-                    && self.is_assignable(r, TypeId::BIGINT)
-                {
-                    // `bothAreBigIntLike`
+                } else if both_are_bigint_like(self, l, r) {
+                    if op == BinOp::UShr {
+                        self.report_operator_error(file, e, op, l, r, None);
+                    } else if op == BinOp::Pow
+                        && language_version(self) < crate::resolve::ScriptTarget::ES2016
+                    {
+                        self.error(self.place_of_expr(file, e), 2791, &[]);
+                    }
                     TypeId::BIGINT
                 } else {
-                    // A bigint and something else do not go together: 2365.
+                    self.report_operator_error(file, e, op, l, r, Some(both_are_bigint_like));
                     TypeId::ERROR
+                };
+                if left_ok && right_ok {
+                    if is_assignment {
+                        self.check_assignment_operator(file, left, l, result);
+                    }
+                    if matches!(op, BinOp::Shl | BinOp::Shr | BinOp::UShr) {
+                        self.check_shift_count(file, e, op, left, right);
+                    }
                 }
+                result
             }
         }
     }

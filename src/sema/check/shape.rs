@@ -2601,9 +2601,6 @@ impl<'p> Checker<'p> {
 
     /// The values a namespace merged with a function, a class or an enum exports.
     fn add_namespace_exports(&mut self, b: &mut Builder, sym: Sym) {
-        if !self.files().flags(sym).intersects(SymFlags::MODULE) {
-            return;
-        }
         for (name, export) in self.exports_in_order(sym) {
             // What assignments alone declare is left to `add_expandos`.
             let is_expando = |d: &(FileId, Decl)| matches!(d.1, Decl::Expando(_));

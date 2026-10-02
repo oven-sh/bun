@@ -54,6 +54,7 @@ pub struct StandaloneModuleGraph {
     pub linked_bytecode_payload: Option<(*mut [u8], [u32; LINKED_BYTECODE_REGION_COUNT])>,
     /// `JSC::AOT::Image`; empty when there is none. Starts on a page boundary of the mapped section and of the file.
     pub aot_image: &'static [u8],
+    pub aot_program_size: usize,
     /// Read by `from_fd`: the open file, and the address its first byte is mapped at. `None`: the graph is in the executable.
     pub file: Option<(Fd, *const u8)>,
     /// The slot table every module's `module_info` body indexes (`ModuleInfoSlotTable`); empty when there is none.
@@ -439,10 +440,9 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
                 }) + f.module_info.len()
             })
             .sum();
-        // (The original length, whether or not the text is in the file: this measures the size of the program.)
         let linked_payload = self
             .linked_bytecode_payload
-            .map_or(0, |(payload, _)| payload.len());
+            .map_or(self.aot_program_size, |(payload, _)| payload.len());
         let builtins: usize = self
             .builtin_bytecode
             .iter()
@@ -733,6 +733,8 @@ pub struct File {
     // starts `bytecode_entry_offset` into it.
     pub bytecode: *mut [u8],
     pub bytecode_entry_offset: u32,
+    /// The module was compiled ahead of time (`Flags::HAS_AOT_IMAGE`).
+    pub number_in_static_heap: Option<u32>,
     pub module_info: *mut [u8],
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
     /// Must match exactly at runtime for bytecode cache hits.
@@ -759,11 +761,6 @@ impl File {
             && (self.side == FileSide::Client || !self.loader.is_javascript_like())
     }
 
-    /// The executable was built without the text (`BUN_COMPILE_OMIT_SOURCE_TEXT`): `contents` is a buffer of zeros of
-    /// the same length.
-    pub fn has_no_text(&self) -> bool {
-        Bun__StandaloneModuleGraph__isNoText(self.contents.as_bytes().as_ptr())
-    }
 
     /// An `Encoding::Utf16` body as code units.
     fn utf16_units(&self) -> &'static [u16] {
@@ -986,85 +983,38 @@ bitflags::bitflags! {
         /// `bytecode_order::REGION_COUNT` regions ends (`u32` each; the first two regions are what the recorded run
         /// read). A module's `bytecode` then runs from its cache entry to the end of that payload.
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
-        /// After the linked payload's record: `StringPointer` to the machine code of the executable's functions
-        /// (`JSC::AOT::Image`), which starts on a page boundary of the file.
+        /// After the linked payload's record (there is none): `StringPointer` to the machine code of the executable's functions
+        /// (`JSC::AOT::Image`) and the objects after it (`JSC::StaticHeap`), which starts on a page boundary of the file.
+        /// Then a `u32`, the size of the bytecode that it was compiled from, as a measure of the program. Then a `u32` for
+        /// each file: zero, or one more than the number of the module in the static heap. Such a module has neither
+        /// `contents` nor `bytecode`. An internal module's `bytes` holds its number, with length zero.
         const HAS_AOT_IMAGE                 = 1 << 14;
-        /// After the image's record: for each file, a `u32`. If it is not zero, the file is a module that was built without its
-        /// text (`contents` is empty), and this is how long `contents` would have been.
-        const HAS_LENGTHS_OF_OMITTED_TEXT   = 1 << 15;
-        /// The linked payload is not in the file: the static heap that follows the machine code (`JSC::StaticHeap`)
-        /// holds the parts that are still needed. The payload's `StringPointer` has offset zero and the original
-        /// length. An internal module's `bytes` holds the offset of its cache entry in the payload, with length zero.
-        /// Every module's `bytecode` is empty. Record, after the lengths of omitted text: a `u32` for each file, which
-        /// is zero or one more than the offset of its cache entry.
-        const LINKED_BYTECODE_PAYLOAD_IS_LEFT_OUT = 1 << 16;
         /// `bun run --aot`: the program runs under `bun`, next to its sources, and sees their paths instead of the
         /// graph's.
         /// Record: a `StringPointer` for each file, the path of an entry point's source file, otherwise empty.
-        const PRESERVES_SOURCE_PATHS        = 1 << 17;
-        // _padding: u17
+        const PRESERVES_SOURCE_PATHS        = 1 << 15;
+        // _padding: u16
     }
 }
 
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
-/// A placeholder for the text of every module whose text was omitted: a buffer of zeros as long as the longest of them. Its pages
-/// are only committed if they are read, which should never happen.
-static NO_TEXT: std::sync::OnceLock<(usize, usize)> = std::sync::OnceLock::new();
-
-fn no_text(length: usize) -> Option<*const u8> {
-    let &(address, size) = NO_TEXT.get()?;
-    (length < size).then_some(address as *const u8)
-}
-
-/// Whether a string's characters are that placeholder. `Zig::SourceProvider` uses this to tell JSC that the text is
-/// missing.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__StandaloneModuleGraph__isNoText(characters: *const u8) -> bool {
-    NO_TEXT
-        .get()
-        .is_some_and(|&(address, _)| address == characters as usize)
-}
-
 unsafe extern "C" {
-    fn Bun__StaticHeap__copiesInImage(bytes: *const u8, len: usize, result: *mut usize) -> bool;
+    fn Bun__StaticHeap__stringTableInImage(bytes: *const u8, len: usize, result: *mut usize) -> bool;
     fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
     fn Bun__WTFStringHashUTF16(ptr: *const u16, len: usize) -> u32;
 }
-/// Where `wanted` is in the static heap that follows the machine code in `image` (`JSC::StaticHeap` keeps a copy of the bytecode
-/// string table, `which` 0, and of the linked bytecode payload, `which` 1, which its objects refer to). The executable does not
-/// need a second copy of either: a `StringPointer` can point into the image as well as anywhere else.
-fn find_in_static_heap(image: &[u8], which: usize, wanted: &[u8]) -> Option<usize> {
-    let mut copies = [0usize; 7];
-    // SAFETY: reads `len` bytes from `bytes`, writes seven `usize` to `result`.
-    if !unsafe { Bun__StaticHeap__copiesInImage(image.as_ptr(), image.len(), copies.as_mut_ptr()) } {
+/// Where the bytecode string table is in the static heap that follows the machine code in `image`, which keeps a copy that its
+/// objects refer to. The executable does not need a second one: a `StringPointer` can point into the image as well as
+/// anywhere else.
+fn find_string_table_in_static_heap(image: &[u8], wanted: &[u8]) -> Option<usize> {
+    let mut found = [0usize; 2];
+    // SAFETY: reads `len` bytes from `bytes`, writes two `usize` to `result`.
+    if !unsafe { Bun__StaticHeap__stringTableInImage(image.as_ptr(), image.len(), found.as_mut_ptr()) } {
         return None;
     }
-    if which == 1 && copies[4] != 0 {
-        return None;
-    }
-    let (offset, length) = (copies[which * 2], copies[which * 2 + 1]);
+    let [offset, length] = found;
     (image.get(offset..offset.checked_add(length)?)? == wanted).then_some(offset)
-}
-
-/// Whether the static heap in `image` records the original source positions that stack traces report.
-fn static_heap_has_positions(image: &[u8]) -> bool {
-    let mut copies = [0usize; 7];
-    // SAFETY: reads `len` bytes from `bytes`, writes seven `usize` to `result`.
-    let found =
-        unsafe { Bun__StaticHeap__copiesInImage(image.as_ptr(), image.len(), copies.as_mut_ptr()) };
-    found && copies[6] != 0
-}
-
-/// If the static heap in `image` was built without the linked payload (`BUN_COMPILE_OMIT_BYTECODE`): the address that represents
-/// the payload at run time, and its original length. Most of that range is unmapped. It only identifies the payload.
-fn payload_left_out_of_static_heap(image: &[u8]) -> Option<(usize, usize)> {
-    let mut copies = [0usize; 7];
-    // SAFETY: reads `len` bytes from `bytes`, writes seven `usize` to `result`.
-    if !unsafe { Bun__StaticHeap__copiesInImage(image.as_ptr(), image.len(), copies.as_mut_ptr()) } {
-        return None;
-    }
-    (copies[4] != 0).then_some((copies[5], copies[3]))
 }
 
 /// `WTF::StringImpl::hash()` for an 8-bit string with these bytes.
@@ -1091,6 +1041,7 @@ impl StandaloneModuleGraph {
                 bytecode_string_table: &[],
                 linked_bytecode_payload: None,
                 aot_image: &[],
+                aot_program_size: 0,
                 file: None,
                 module_info_string_table: &[],
                 prelinked_module_graph: &[],
@@ -1153,9 +1104,7 @@ impl StandaloneModuleGraph {
             None
         };
 
-        let payload_is_left_out = offsets
-            .flags
-            .contains(Flags::LINKED_BYTECODE_PAYLOAD_IS_LEFT_OUT);
+        let has_aot_image = offsets.flags.contains(Flags::HAS_AOT_IMAGE);
         let mut builtin_bytecode: Vec<(u32, *mut [u8], u32)> = Vec::new();
         if offsets.flags.contains(Flags::HAS_BUILTIN_BYTECODE) {
             let count = read_u32(record_at) as usize;
@@ -1168,7 +1117,7 @@ impl StandaloneModuleGraph {
                     length: read_u32(record_at + 8),
                 };
                 record_at += 3 * size_of::<u32>();
-                if payload_is_left_out {
+                if has_aot_image {
                     builtin_bytecode.push((id, std::ptr::from_mut::<[u8]>(&mut []), pointer.offset));
                     continue;
                 }
@@ -1279,17 +1228,14 @@ impl StandaloneModuleGraph {
                 *end = read_u32(record_at + 8 + i * size_of::<u32>());
             }
             record_at += LINKED_PAYLOAD_RECORD;
-            if (payload_is_left_out
-                || (ptr.offset as usize).saturating_add(ptr.length as usize) <= raw_len)
+            if (ptr.offset as usize).saturating_add(ptr.length as usize) <= raw_len
                 && linked_bytecode_region_ends.is_sorted()
                 && linked_bytecode_region_ends[LINKED_BYTECODE_REGION_COUNT - 1] == ptr.length
             {
                 linked_bytecode_payload = ptr;
             }
         }
-        if payload_is_left_out {
-            // (Handled below, once the address that represents the payload is known.)
-        } else if linked_bytecode_payload.length != 0 {
+        if linked_bytecode_payload.length != 0 {
             // Like a module's `bytecode`, an internal module's runs from its cache entry to the end of the payload.
             builtin_bytecode.retain_mut(|(_, bytes, entry_offset)| {
                 let start = (bytes.cast::<u8>() as usize).wrapping_sub(raw_ptr as usize);
@@ -1310,30 +1256,20 @@ impl StandaloneModuleGraph {
             builtin_bytecode.clear();
         }
         let mut aot_image: &'static [u8] = &[];
-        if offsets.flags.contains(Flags::HAS_AOT_IMAGE) && record_at + 8 <= raw_len {
+        let mut aot_program_size = 0usize;
+        let mut numbers_in_static_heap: Option<usize> = None;
+        if has_aot_image && record_at + 12 + 4 * modules_list_count <= raw_len {
             let ptr = StringPointer {
                 offset: read_u32(record_at),
                 length: read_u32(record_at + 4),
             };
-            record_at += 8;
+            aot_program_size = read_u32(record_at + 8) as usize;
+            numbers_in_static_heap = Some(record_at + 12);
+            record_at += 12 + 4 * modules_list_count;
             if (ptr.offset as usize).saturating_add(ptr.length as usize) <= raw_len {
                 // SAFETY: bounds checked; a read-only subrange disjoint from the writable ones, never freed.
                 aot_image = unsafe { slice_to(raw_const, raw_len, ptr) };
             }
-        }
-        let mut lengths_of_omitted_text: Option<usize> = None;
-        if offsets.flags.contains(Flags::HAS_LENGTHS_OF_OMITTED_TEXT)
-            && record_at + 4 * modules_list_count <= raw_len
-        {
-            lengths_of_omitted_text = Some(record_at);
-            record_at += 4 * modules_list_count;
-        }
-        let length_of_omitted_text =
-            |i: usize| lengths_of_omitted_text.map_or(0, |at| read_u32(at + 4 * i) as usize);
-        let mut entries_in_payload_left_out: Option<usize> = None;
-        if payload_is_left_out && record_at + 4 * modules_list_count <= raw_len {
-            entries_in_payload_left_out = Some(record_at);
-            record_at += 4 * modules_list_count;
         }
         let mut source_paths: Option<usize> = None;
         if offsets.flags.contains(Flags::PRESERVES_SOURCE_PATHS)
@@ -1349,67 +1285,11 @@ impl StandaloneModuleGraph {
             })
         };
         let _ = record_at;
-        // The slice that every `bytecode` is set to in that case. It is never read: it identifies the payload, and the
-        // entry's offset identifies the module.
-        let payload_left_out: Option<*mut [u8]> = payload_left_out_of_static_heap(aot_image)
-            .filter(|&(_, length)| {
-                payload_is_left_out
-                    && entries_in_payload_left_out.is_some()
-                    && length == linked_bytecode_payload.length as usize
-                    && length != 0
-            })
-            .map(|(address, length)| core::ptr::slice_from_raw_parts_mut(address as *mut u8, length));
-        if payload_is_left_out {
-            match payload_left_out {
-                Some(payload) => builtin_bytecode.retain_mut(|(_, bytes, entry_offset)| {
-                    *bytes = payload;
-                    (*entry_offset as usize) < payload.len()
-                }),
-                None => {
-                    builtin_bytecode.clear();
-                    linked_bytecode_payload = StringPointer::default();
-                }
-            }
-        }
-        // SAFETY (when it is in the file): the payload's bounds were checked when its record was read.
-        let linked_payload_bytes = || {
-            payload_left_out
-                .unwrap_or_else(|| unsafe { slice_to_mut(raw_ptr, raw_len, linked_bytecode_payload) })
-        };
         let has_linked_bytecode_payload =
             offsets.flags.contains(Flags::HAS_LINKED_BYTECODE_PAYLOAD);
         let mut file_prelinked_index = vec![u32::MAX; modules_list_count];
         for (module_index, &file) in prelinked_module_files.iter().enumerate() {
             file_prelinked_index[file as usize] = module_index as u32;
-        }
-
-        #[cfg(unix)]
-        {
-            let longest = (0..modules_list_count)
-                .map(length_of_omitted_text)
-                .max()
-                .filter(|&longest| longest != 0);
-            if let Some(longest) = longest {
-                NO_TEXT.get_or_init(|| {
-                    let size = (longest + 2).next_multiple_of(64 * 1024);
-                    // SAFETY: a fresh anonymous read-only mapping, never unmapped.
-                    let address = unsafe {
-                        libc::mmap(
-                            core::ptr::null_mut(),
-                            size,
-                            libc::PROT_READ,
-                            libc::MAP_PRIVATE | libc::MAP_ANON,
-                            -1,
-                            0,
-                        )
-                    };
-                    if address == libc::MAP_FAILED {
-                        (0, 0)
-                    } else {
-                        (address as usize, size)
-                    }
-                });
-            }
         }
 
         let mut modules = StringArrayHashMap::<File>::new();
@@ -1426,28 +1306,24 @@ impl StandaloneModuleGraph {
             let module = &module;
             // A cache entry inside the linked payload; anything else (an executable someone edited) has no bytecode:
             // what the entry refers to lies before it, so it cannot be decoded as a payload of its own.
-            let linked_entry_offset = if payload_left_out.is_some() {
-                entries_in_payload_left_out.and_then(|at| read_u32(at + 4 * i).checked_sub(1))
-            } else {
-                (linked_bytecode_payload.length != 0 && module.bytecode.length > 0).then(|| {
+            let linked_entry_offset = (linked_bytecode_payload.length != 0
+                && module.bytecode.length > 0)
+                .then(|| {
                     module
                         .bytecode
                         .offset
                         .wrapping_sub(linked_bytecode_payload.offset)
                 })
-            }
-            .filter(|&entry_offset| entry_offset < linked_bytecode_payload.length);
+                .filter(|&entry_offset| entry_offset < linked_bytecode_payload.length);
+            let number_in_static_heap =
+                numbers_in_static_heap.and_then(|at| read_u32(at + 4 * i).checked_sub(1));
             // SAFETY: each name/contents/sourcemap/bytecode_origin_path subrange is in-bounds
             // (serialized by `to_bytes`) and disjoint from the writable bytecode/module_info
             // subranges; section bytes are a live 'static allocation.
             let (name, contents, sourcemap_bytes, bytecode_origin) = unsafe {
                 (
                     slice_to_z(raw_const, raw_len, module.name),
-                    if let length @ 1.. = length_of_omitted_text(i) {
-                        no_text(length).map_or(ZStr::EMPTY, |zeros| ZStr::from_raw(zeros, length))
-                    } else {
-                        slice_to_z(raw_const, raw_len, module.contents)
-                    },
+                    slice_to_z(raw_const, raw_len, module.contents),
                     slice_to(raw_const, raw_len, module.sourcemap),
                     slice_to_z(raw_const, raw_len, module.bytecode_origin_path),
                 )
@@ -1469,7 +1345,8 @@ impl StandaloneModuleGraph {
                         LazySourceMap::None
                     },
                     bytecode: if linked_entry_offset.is_some() {
-                        linked_payload_bytes()
+                        // SAFETY: the payload's bounds were checked when its record was read.
+                        unsafe { slice_to_mut(raw_ptr, raw_len, linked_bytecode_payload) }
                     } else if module.bytecode.length > 0 && !has_linked_bytecode_payload {
                         // SAFETY: section bytes are a writable 'static allocation; JSC mutates
                         // bytecode in place. Subrange is in-bounds (serialized by to_bytes) and
@@ -1480,6 +1357,7 @@ impl StandaloneModuleGraph {
                         std::ptr::from_mut::<[u8]>(&mut [])
                     },
                     bytecode_entry_offset: linked_entry_offset.unwrap_or(0),
+                    number_in_static_heap,
                     module_info: if module.module_info.length > 0 {
                         // SAFETY: see bytecode above.
                         unsafe { slice_to_mut(raw_ptr, raw_len, module.module_info) }
@@ -1543,9 +1421,15 @@ impl StandaloneModuleGraph {
             flags: offsets.flags,
             builtin_bytecode,
             bytecode_string_table,
-            linked_bytecode_payload: (linked_bytecode_payload.length != 0)
-                .then(|| (linked_payload_bytes(), linked_bytecode_region_ends)),
+            linked_bytecode_payload: (linked_bytecode_payload.length != 0).then(|| {
+                (
+                    // SAFETY: the payload's bounds were checked when its record was read.
+                    unsafe { slice_to_mut(raw_ptr, raw_len, linked_bytecode_payload) },
+                    linked_bytecode_region_ends,
+                )
+            }),
             aot_image,
+            aot_program_size,
             file: None,
             module_info_string_table,
             prelinked_module_graph,
@@ -1553,11 +1437,6 @@ impl StandaloneModuleGraph {
             startup_module_count: startup_module_count.min(module_count as u32),
             runtime_options,
         })
-    }
-
-    fn linked_payload_is_left_out(&self) -> bool {
-        self.flags
-            .contains(Flags::LINKED_BYTECODE_PAYLOAD_IS_LEFT_OUT)
     }
 
     /// Ahead-of-time bytecode for internal module `id`, if the executable carries it.
@@ -1729,7 +1608,7 @@ pub(crate) fn to_bytes(
                 string_builder.cap += bytes.len().div_ceil(256) * 256 + 256 + 16;
             } else if output_file.output_kind == options::OutputKind::AotImage {
                 // On a page boundary, then its record.
-                string_builder.cap += bytes.len() + AOT_IMAGE_ALIGNMENT + 2 * size_of::<u32>();
+                string_builder.cap += bytes.len() + AOT_IMAGE_ALIGNMENT + 3 * size_of::<u32>();
             } else if output_file.output_kind == options::OutputKind::ModuleInfo {
                 string_builder.cap += bytes.len();
             } else if output_file.output_kind == options::OutputKind::ModuleInfoStringTable {
@@ -1762,7 +1641,7 @@ pub(crate) fn to_bytes(
     string_builder.cap += TRAILER.len();
     string_builder.cap += 16 + 4 * size_of::<u32>();
     string_builder.cap += (2 + bun_bundler::bytecode_order::REGION_COUNT) * size_of::<u32>();
-    string_builder.cap += 2 * output_files.len() * size_of::<u32>();
+    string_builder.cap += output_files.len() * size_of::<u32>();
     if flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
         string_builder.cap += output_files.len() * size_of::<StringPointer>();
     }
@@ -1830,21 +1709,13 @@ pub(crate) fn to_bytes(
         .iter()
         .find(|f| f.output_kind == options::OutputKind::AotImage)
         .map(|f| f.value.as_slice());
-    let payload_in_image: Option<usize> = aot_image
-        .zip(linked_payload)
-        .and_then(|(image, (payload, _))| find_in_static_heap(image, 1, payload));
-    let payload_is_left_out = aot_image
-        .zip(linked_payload)
-        .is_some_and(|(image, (payload, _))| {
-            payload_left_out_of_static_heap(image).is_some_and(|(_, length)| length == payload.len())
-        });
     let string_table_in_image: Option<(usize, usize)> = aot_image.and_then(|image| {
         let table = output_files
             .iter()
             .find(|f| f.output_kind == options::OutputKind::BytecodeStringTable)?
             .value
             .as_slice();
-        Some((find_in_static_heap(image, 0, table)?, table.len()))
+        Some((find_string_table_in_static_heap(image, table)?, table.len()))
     });
 
     // `Flags::HAS_PRELINKED_MODULE_GRAPH`: graph module index -> file-table position, so the runtime registers a whole
@@ -1884,7 +1755,7 @@ pub(crate) fn to_bytes(
                 linked_payload.is_some(),
                 string_table_in_image.is_some(),
             ));
-            if let Some((payload, _)) = linked_payload.filter(|_| payload_in_image.is_none() && !payload_is_left_out) {
+            if let Some((payload, _)) = linked_payload.filter(|_| aot_image.is_none()) {
                 linked_payload_ptr = append_bytecode_aligned(&mut string_builder, payload);
             }
         }
@@ -2028,7 +1899,7 @@ pub(crate) fn to_bytes(
             linked_payload.is_some(),
             string_table_in_image.is_some(),
         );
-        if let Some((payload, _)) = linked_payload.filter(|_| payload_in_image.is_none() && !payload_is_left_out) {
+        if let Some((payload, _)) = linked_payload.filter(|_| aot_image.is_none()) {
             linked_payload_ptr = append_bytecode_aligned(&mut string_builder, payload);
         }
         shared
@@ -2037,12 +1908,6 @@ pub(crate) fn to_bytes(
         aot_image.map(|image| append_aligned(&mut string_builder, image, AOT_IMAGE_ALIGNMENT));
     let mut bytecode_string_table_ptr = bytecode_string_table_ptr;
     if let Some(image_ptr) = aot_image_ptr {
-        if let (Some(offset), Some((payload, _))) = (payload_in_image, linked_payload) {
-            linked_payload_ptr = StringPointer {
-                offset: image_ptr.offset + offset as u32,
-                length: payload.len() as u32,
-            };
-        }
         if let Some((offset, length)) = string_table_in_image {
             bytecode_string_table_ptr = StringPointer {
                 offset: image_ptr.offset + offset as u32,
@@ -2051,13 +1916,9 @@ pub(crate) fn to_bytes(
         }
     }
     let mut builtin_bytecode_table = builtin_bytecode_table;
-    let mut entries_in_payload_left_out: Vec<u8> = Vec::new();
-    if let Some((payload, _)) = linked_payload.filter(|_| payload_is_left_out) {
-        linked_payload_ptr = StringPointer {
-            offset: 0,
-            length: payload.len() as u32,
-        };
-        // (The record already holds the entry's offset.)
+    let mut numbers_in_static_heap: Vec<u8> = Vec::new();
+    if aot_image.is_some() {
+        // (The record already holds the number.)
         for record in builtin_bytecode_table[4..].as_chunks_mut::<12>().0 {
             record[8..12].copy_from_slice(&0u32.to_le_bytes());
         }
@@ -2067,7 +1928,7 @@ pub(crate) fn to_bytes(
             } else {
                 0
             };
-            entries_in_payload_left_out.extend_from_slice(&entry.to_le_bytes());
+            numbers_in_static_heap.extend_from_slice(&entry.to_le_bytes());
             module.bytecode = StringPointer::default();
         }
     } else if linked_payload.is_some() {
@@ -2095,10 +1956,8 @@ pub(crate) fn to_bytes(
     // instead of one per embedded file.
     let mut source_map_header_list: Vec<u8> = Vec::new();
     let mut source_map_string_list: Vec<u8> = Vec::new();
-    // (`BUN_COMPILE_COMPACT_POSITIONS`: every position that a stack trace can report has already been resolved.)
-    let positions_are_in_static_heap = aot_image.is_some_and(static_heap_has_positions);
     for (module, output_file) in modules.iter_mut().zip(&module_files) {
-        if output_file.source_map_index != u32::MAX && !positions_are_in_static_heap {
+        if output_file.source_map_index != u32::MAX && aot_image.is_none() {
             serialize_json_source_map_for_standalone(
                 &mut source_map_header_list,
                 &mut source_map_string_list,
@@ -2113,35 +1972,20 @@ pub(crate) fn to_bytes(
         }
     }
 
-    // BUN_COMPILE_OMIT_SOURCE_TEXT=1: an executable whose functions were all compiled ahead of time is built without
-    // their source text. `Function.prototype.toString` then returns `[native code]`, and error messages quote the
-    // excerpts that the image keeps.
-    let omit_source_text = std::env::var_os("BUN_COMPILE_OMIT_SOURCE_TEXT").is_some_and(|v| v == "1");
     let mut source_hashes: Vec<u8> = Vec::with_capacity(modules.len() * size_of::<u32>());
-    let mut lengths_of_omitted_text: Vec<u8> = Vec::with_capacity(modules.len() * size_of::<u32>());
     for (index, (module, output_file)) in modules.iter_mut().zip(&module_files).enumerate() {
         let mut hash = 0u32;
-        let mut length_of_omitted_text = 0u32;
-        // (If the payload is omitted, `bytecode` is empty.)
-        let has_bytecode = module.bytecode.length != 0
-            || entries_in_payload_left_out
-                .get(index * 4..index * 4 + 4)
-                .is_some_and(|entry| entry != [0u8; 4]);
+        let is_in_static_heap = numbers_in_static_heap
+            .get(index * 4..index * 4 + 4)
+            .is_some_and(|number| number != [0u8; 4]);
         if is_stored_as_string(output_file) {
             let before = string_builder.len;
             (module.contents, module.encoding, hash) =
                 encode_text_module(&mut string_builder, output_file.value.as_slice());
-            // All of the module's code was compiled, so its text will never be parsed. Only the text's length,
-            // character width and hash are still needed.
-            if omit_source_text
-                && aot_image.is_some()
-                && has_bytecode
-                && module.contents.length != 0
-                && output_file.loader.is_javascript_like()
-            {
+            if is_in_static_heap && output_file.loader.is_javascript_like() {
                 string_builder.len = before;
-                length_of_omitted_text = module.contents.length;
                 module.contents = StringPointer::default();
+                hash = 0;
             }
         } else {
             module.contents = string_builder.append_count_z(output_file.value.as_slice());
@@ -2151,7 +1995,6 @@ pub(crate) fn to_bytes(
             hash = 0;
         }
         source_hashes.extend_from_slice(&hash.to_le_bytes());
-        lengths_of_omitted_text.extend_from_slice(&length_of_omitted_text.to_le_bytes());
     }
 
     // `Flags::PRESERVES_SOURCE_PATHS`: a `StringPointer` for each module, which is empty except for entry points.
@@ -2235,7 +2078,7 @@ pub(crate) fn to_bytes(
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_RUNTIME_OPTIONS;
     }
-    if let Some((_, region_ends)) = linked_payload {
+    if let Some((_, region_ends)) = linked_payload.filter(|_| aot_image.is_none()) {
         let mut record: Vec<u8> = Vec::with_capacity(8 + 4 * region_ends.len());
         record.extend_from_slice(&linked_payload_ptr.offset.to_le_bytes());
         record.extend_from_slice(&linked_payload_ptr.length.to_le_bytes());
@@ -2246,19 +2089,14 @@ pub(crate) fn to_bytes(
         flags |= Flags::HAS_LINKED_BYTECODE_PAYLOAD;
     }
     if let Some(ptr) = aot_image_ptr {
-        let mut record = [0u8; 8];
+        let mut record = [0u8; 12];
         record[0..4].copy_from_slice(&ptr.offset.to_le_bytes());
         record[4..8].copy_from_slice(&ptr.length.to_le_bytes());
+        let program_size = linked_payload.map_or(0, |(payload, _)| payload.len() as u32);
+        record[8..12].copy_from_slice(&program_size.to_le_bytes());
         let _ = string_builder.append_count(&record);
+        let _ = string_builder.append_count(&numbers_in_static_heap);
         flags |= Flags::HAS_AOT_IMAGE;
-    }
-    if lengths_of_omitted_text.iter().any(|&byte| byte != 0) {
-        let _ = string_builder.append_count(&lengths_of_omitted_text);
-        flags |= Flags::HAS_LENGTHS_OF_OMITTED_TEXT;
-    }
-    if payload_is_left_out {
-        let _ = string_builder.append_count(&entries_in_payload_left_out);
-        flags |= Flags::LINKED_BYTECODE_PAYLOAD_IS_LEFT_OUT;
     }
     if flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
         let _ = string_builder.append_count(&source_paths);
@@ -3549,12 +3387,12 @@ impl StandaloneModuleGraph {
             return;
         }
         let startup = &self.files.values()[..self.startup_module_count as usize];
-        let span = if startup.iter().any(|f| !f.bytecode.is_empty()) {
+        let span = if startup
+            .iter()
+            .any(|f| !f.bytecode.is_empty() || f.number_in_static_heap.is_some())
+        {
             // A linked payload follows the string table; its hot front is what any module reads at startup.
-            let linked_payload = self
-                .linked_bytecode_payload
-                .filter(|_| !self.linked_payload_is_left_out());
-            let linked_hot = linked_payload.map(|(payload, region_ends)| {
+            let linked_hot = self.linked_bytecode_payload.map(|(payload, region_ends)| {
                 // Heads of the modules the recorded run evaluated, then the function bodies it decoded.
                 core::ptr::slice_from_raw_parts_mut(payload.cast::<u8>(), region_ends[1] as usize)
             });
@@ -3562,9 +3400,7 @@ impl StandaloneModuleGraph {
                 startup
                     .iter()
                     .flat_map(|f| {
-                        let own_bytecode = if self.linked_payload_is_left_out() {
-                            f.module_info
-                        } else if self.linked_bytecode_payload.is_some() {
+                        let own_bytecode = if self.linked_bytecode_payload.is_some() {
                             core::ptr::slice_from_raw_parts_mut(f.bytecode.cast::<u8>(), 0)
                         } else {
                             f.bytecode
@@ -3589,7 +3425,6 @@ impl StandaloneModuleGraph {
             address_span(
                 startup
                     .iter()
-                    .filter(|f| !f.has_no_text())
                     .map(|f| (f.contents.as_bytes().as_ptr(), f.contents.len())),
             )
         };
@@ -3674,7 +3509,6 @@ impl StandaloneModuleGraph {
             self.files
                 .values()
                 .iter()
-                .filter(|f| !f.has_no_text())
                 .map(|f| (f.contents.as_bytes().as_ptr(), f.contents.len())),
         )?;
         let page = bun_alloc::page_size();
@@ -3977,17 +3811,8 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         header_list.extend_from_slice(&slice.length.to_le_bytes());
     }
 
-    // The text of the original source files is only used to quote source lines under an uncaught error. Reporting the position of
-    // an error (file, line, column) only needs the mappings and the names. BUN_COMPILE_OMIT_SOURCES_CONTENT=1 omits the text.
-    let omit_contents = std::env::var_os("BUN_COMPILE_OMIT_SOURCES_CONTENT").is_some_and(|v| v == "1");
     for item in sources_content.items() {
         let utf8 = item.as_str().ok_or(crate::Error::InvalidSourceMap)?;
-        if omit_contents {
-            // (Read as: no contents.)
-            header_list.extend_from_slice(&0u32.to_le_bytes());
-            header_list.extend_from_slice(&0u32.to_le_bytes());
-            continue;
-        }
 
         let offset = string_payload.len();
 

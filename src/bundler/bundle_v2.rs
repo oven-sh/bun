@@ -1514,7 +1514,7 @@ pub mod bv2_impl {
             ) -> Box<[u8]>;
             safe fn __bun_jsc_build_static_heap(
                 strings: &[u8],
-                original_position: Option<&dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>>,
+                original_position: &dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>,
             ) -> Vec<u8>;
             safe fn __bun_jsc_bytecode_link_encoder_new(
                 external_strings: core::ptr::NonNull<EncoderStringTable>,
@@ -1666,7 +1666,7 @@ pub mod bv2_impl {
         #[inline]
         pub(crate) fn build_static_heap(
             strings: &[u8],
-            original_position: Option<&dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>>,
+            original_position: &dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>,
         ) -> Vec<u8> {
             __bun_jsc_build_static_heap(strings, original_position)
         }
@@ -3377,13 +3377,16 @@ pub mod bv2_impl {
                 };
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
-            // `BUN_AOT=1` has the same effect as the option, for builds driven by a script that cannot pass it. It only applies to
-            // builds that the option is valid for, so the script's other builds are unaffected.
-            this.linker.options.aot = this.transpiler.options.aot
-                || (bun_core::env_var::BUN_AOT.get() == Some(true)
-                    && this.transpiler.options.bytecode
-                    && this.transpiler.options.compile_mode.is_executable()
-                    && this.transpiler.options.output_format == options::Format::Esm);
+            this.linker.options.aot = match bun_core::env_var::BUN_AOT.get() {
+                Some(false) => false,
+                Some(true) => {
+                    this.transpiler.options.aot
+                        || (this.transpiler.options.bytecode
+                            && this.transpiler.options.compile_mode.is_executable()
+                            && this.transpiler.options.output_format == options::Format::Esm)
+                }
+                None => this.transpiler.options.aot,
+            };
             this.linker.options.sound_types = this.transpiler.options.sound_types.is_enabled();
             this.linker.options.preserve_source_paths =
                 this.transpiler.options.preserve_source_paths;

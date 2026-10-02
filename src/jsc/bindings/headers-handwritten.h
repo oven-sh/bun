@@ -144,6 +144,8 @@ typedef struct ResolvedSource {
     bool bytecode_cache_owned;
     // The bytes outlive every VM (executable section / retired compile-cache blob): JSC may alias them.
     bool bytecode_cache_persistent;
+    // The module was compiled ahead of time: there are no bytes, and `bytecode_cache_entry_offset` is its number in JSC::StaticHeap.
+    bool is_in_static_heap;
     // Where this module's cache entry starts in `bytecode_cache` (non-zero: one payload shared by every module, JSC::BytecodeLinkEncoder).
     uint32_t bytecode_cache_entry_offset;
     // Owned; Zig::SourceProvider takes it (nulling the field).

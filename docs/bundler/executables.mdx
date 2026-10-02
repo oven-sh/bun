@@ -426,14 +426,9 @@ The compiler sees your whole program at once, and the executable differs from on
 - **Built-in objects are immutable.** Assigning to an existing property of a built-in object, such as `Array.prototype.push` or `Math.random`, throws a `TypeError` in strict mode and does nothing in sloppy mode. So does adding a property to `Object.prototype`. Objects that Bun or your program defines, such as `console` and `process`, stay mutable.
 - **`bun:ffi` is unavailable.** `bun:ffi` needs the JIT, and throws a `TypeError` that says so.
 - **The debugger is unavailable.**
+- **The executable has neither your source text nor bytecode.** `Function.prototype.toString()` returns `function name() { [native code] }` for your functions. Stack traces have the files, lines and columns of your sources.
 
 The build target must be the platform and the version of Bun that runs the build. `bun build` reports an error for any other `--target`.
-
-To run the executable from its bytecode instead of its machine code, set `BUN_AOT=0`:
-
-```bash icon="terminal" terminal
-BUN_AOT=0 ./myapp
-```
 
 #### Try your code without building an executable
 

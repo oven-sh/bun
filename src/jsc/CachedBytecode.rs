@@ -548,7 +548,7 @@ pub(crate) fn __bun_jsc_build_static_heap(
     strings: &[u8],
     // Maps the offset of a module's cache entry in the linked payload, and a line and column in its text (counting from
     // one), to the name of the original source and the line and column there.
-    original_position: Option<&dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>>,
+    original_position: &dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>,
 ) -> Vec<u8> {
     type Find = extern "C" fn(
         *mut core::ffi::c_void,
@@ -567,7 +567,7 @@ pub(crate) fn __bun_jsc_build_static_heap(
             ctx: *mut core::ffi::c_void,
             append: extern "C" fn(*mut core::ffi::c_void, *const u8, usize),
             find_ctx: *mut core::ffi::c_void,
-            find: Option<Find>,
+            find: Find,
         );
     }
     extern "C" fn find(
@@ -611,10 +611,8 @@ pub(crate) fn __bun_jsc_build_static_heap(
             strings.len(),
             (&raw mut out).cast(),
             append,
-            original_position
-                .as_ref()
-                .map_or(core::ptr::null_mut(), |f| core::ptr::from_ref(f).cast_mut().cast()),
-            original_position.is_some().then_some(find as Find),
+            core::ptr::from_ref(&original_position).cast_mut().cast(),
+            find,
         )
     };
     out

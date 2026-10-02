@@ -8,8 +8,6 @@ import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 // The compiler only targets arm64 so far.
 const supported = isArm64 && !isWindows;
 
-// An executable that did not use its image would still run, from its bytecode, and every test here would pass. So each
-// test checks that the image was used.
 const usesImage = (stdout: string): BundlerTestInput["run"] => ({
   env: { BUN_AOT_VERBOSE: "1" },
   validate({ stdout: actual, stderr }) {
@@ -253,24 +251,6 @@ describe.skipIf(!supported)("bundler", () => {
   }
 
   // The same executable can run without its image, from the bytecode that it also carries.
-  itBundledBase("compile/aot/CanBeTurnedOffWhenItRuns", {
-    backend: "cli",
-    target: "bun",
-    compile: { aot: true },
-    files: {
-      "/entry.ts": /* js */ `
-        console.log("Hello, world!");
-      `,
-    },
-    run: {
-      env: { BUN_AOT: "0", BUN_AOT_VERBOSE: "1" },
-      validate({ stdout, stderr }) {
-        expect(stdout).toBe("Hello, world!\n");
-        expect(stderr).toContain("[aot] not using the image: useAOT is off");
-      },
-    },
-  });
-
   test("compile/aot/BuildDoesNotDisturbTheCaller", async () => {
     using dir = tempDir("compile-aot-caller", {
       "app.ts": `console.log("from the executable");`,
@@ -436,8 +416,6 @@ test.skipIf(!supported)("--compile-aot requires --format=esm", async () => {
   ).toThrow("compile.aot requires format: 'esm'");
 });
 
-// Compiled code is for one instance of a program, which is the host's, whoever loads a module first. Without bytecode
-// there is nothing else to run, so this tells: a graph is refused, and the host is not.
 test.skipIf(!supported)(
   "a Bun.ModuleGraph that loads a module first does not take the host's compiled code",
   async () => {
@@ -452,7 +430,7 @@ test.skipIf(!supported)(
     });
     await using build = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", "entry.ts", "app.ts", "--outfile", "out"],
-      env: { ...bunEnv, BUN_COMPILE_OMIT_SOURCE_TEXT: "1", BUN_COMPILE_OMIT_BYTECODE: "1" },
+      env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -468,17 +446,15 @@ test.skipIf(!supported)(
   },
 );
 
-// Compiled code calls some builtins without their function objects ever having been made, and the source provider of a
-// builtin used to be made with its function object. Printing the error looked at the source of every frame.
 test.skipIf(!supported).each(["forEach", "map"])(
-  "an uncaught error from the callback of %s is reported in an executable without bytecode",
+  "an uncaught error from the callback of %s is reported",
   async method => {
     using dir = tempDir("compile-aot-uncaught", {
       "entry.ts": `[1].${method}(function callback() { throw new Error("thrown in the callback"); });`,
     });
     await using build = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
-      env: { ...bunEnv, BUN_COMPILE_OMIT_SOURCE_TEXT: "1", BUN_COMPILE_OMIT_BYTECODE: "1" },
+      env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -498,18 +474,13 @@ test.skipIf(!supported).each(["forEach", "map"])(
   },
 );
 
-// The data of an executable is mapped where it was built for. Its code used to be too, which left executable memory at an
-// address that anyone could know.
-test.skipIf(!supported).each([
-  ["with bytecode", {}],
-  ["without bytecode", { BUN_COMPILE_OMIT_SOURCE_TEXT: "1", BUN_COMPILE_OMIT_BYTECODE: "1" }],
-])("the code of an executable %s is not at a fixed address", async (_, env) => {
+test.skipIf(!supported)("the code of an executable is not at a fixed address", async () => {
   using dir = tempDir("compile-aot-address", {
     "entry.ts": `function add(a: number, b: number) { return a + b; } console.log(new (function Made(this: any) { this.sum = add(1, 2); } as any)().sum);`,
   });
   await using build = Bun.spawn({
     cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
-    env: { ...bunEnv, ...env },
+    env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -758,8 +729,6 @@ test.skipIf(!supported)("--cpu-prof charges time in native functions to the func
   expect(hits.busy).toBeGreaterThan(3 * (hits.stringify ?? 0));
 });
 
-// An executable without its machine code would still run, from its bytecode, so a build that cannot produce it has to fail.
-// An image holds at most 8 copies of the stubs, which is enough for 768 MB of code.
 test.skipIf(!supported)("a program with too much code for an image is an error", async () => {
   using dir = tempDir("compile-aot-too-large", { "entry.ts": `console.log(1);` });
   await using proc = Bun.spawn({
@@ -834,6 +803,30 @@ test.skipIf(!supported).each([
   expect(stdoutOfRun).toBe("1\n");
   expect(stderrOfRun).toContain("[aot] image: ");
   expect(exitCodeOfRun).toBe(0);
+});
+
+test.skipIf(!supported)("BUN_AOT=0 builds an executable that is not compiled ahead of time", async () => {
+  using dir = tempDir("compile-aot-env-off", { "entry.ts": `console.log(function named() {}.toString());` });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.ts", "--compile", "--compile-aot", "--outfile", "out"],
+    env: { ...bunEnv, BUN_AOT: "0" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+  await using proc = Bun.spawn({
+    cmd: [join(String(dir), "out")],
+    env: { ...bunEnv, BUN_AOT_VERBOSE: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, hasImage: stderr.includes("[aot] image: "), exitCode }).toEqual({
+    stdout: "function named() {}\n",
+    hasImage: false,
+    exitCode: 0,
+  });
 });
 
 test("--compile-aot requires --compile", async () => {

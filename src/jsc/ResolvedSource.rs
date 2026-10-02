@@ -45,7 +45,7 @@ pub struct ResolvedSource {
     pub origin_path: BunString,
 }
 
-/// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; uint32_t entry_offset; }`
+/// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; bool in_static_heap; uint32_t entry_offset; }`
 /// (headers-handwritten.h flattens these into `ResolvedSource`; keep the two in step).
 /// When `owned`, `ptr` is a `heap::into_raw(Box<[u8]>)` freed on drop (or by
 /// the C++ consumer once it `std::exchange`s the pointer out); otherwise it is
@@ -57,6 +57,8 @@ pub struct Bytecode {
     owned: bool,
     /// The bytes outlive every VM (executable section, retired compile-cache blob), so JSC may alias them instead of copying.
     persistent: bool,
+    /// The module was compiled ahead of time: there are no bytes, and `entry_offset` is its number in `JSC::StaticHeap`.
+    in_static_heap: bool,
     /// Where the module's cache entry starts in the bytes: non-zero when they are one payload shared by every module
     /// of an executable (`JSC::BytecodeLinkEncoder`).
     entry_offset: u32,
@@ -69,12 +71,20 @@ impl Default for Bytecode {
             len: 0,
             owned: false,
             persistent: false,
+            in_static_heap: false,
             entry_offset: 0,
         }
     }
 }
 
 impl Bytecode {
+    pub fn in_static_heap(number: u32) -> Self {
+        Self {
+            in_static_heap: true,
+            entry_offset: number,
+            ..Self::default()
+        }
+    }
     /// Borrowed from memory the caller guarantees is never freed or unmapped for the rest of the process
     /// (the executable's module graph section, NodeCompileCache's retired blobs).
     pub fn persistent(bytes: &[u8]) -> Self {
@@ -91,6 +101,7 @@ impl Bytecode {
             len: payload.len(),
             owned: false,
             persistent: true,
+            in_static_heap: false,
             entry_offset,
         }
     }
@@ -104,6 +115,7 @@ impl Bytecode {
             len,
             owned: true,
             persistent: false,
+            in_static_heap: false,
             entry_offset: 0,
         }
     }

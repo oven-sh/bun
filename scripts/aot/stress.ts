@@ -1,27 +1,23 @@
 #!/usr/bin/env bun
-// Runs WebKit's JSTests/stress through `bun build --compile --compile-aot`, and compares each test with itself run from
-// bytecode.
+// Runs WebKit's JSTests/stress through `bun build --compile --compile-aot`, and compares each test with itself in the same
+// build without ahead-of-time compilation (BUN_AOT=0).
 //
 //   bun scripts/aot/stress.ts --bun <bun> --tests <WebKit>/JSTests/stress --out <directory>
 //       [--runtime <bun-slim>] [--jobs 6] [--batch 50] [--limit <n>] [--only <regex of file names>]
 //
 // Tests are built in batches, one executable for each batch and configuration. A batch that cannot be built is halved
-// until the test that is at fault is alone. A test counts only if it passes when it runs from bytecode.
+// until the test that is at fault is alone. A test counts only if it passes in the reference.
 //
 // Writes <out>/results.tsv: test, verdict, detail. A run that is interrupted goes on from there. Verdicts:
 //   excluded, unbuildable-reference   not a test of ahead-of-time compilation
 //   same-*                            the same exit code and output
 //   BUILD-CRASH-*                     the compiler crashed
 //   DIFFERS-*                         and then one of:
-//     CRASH                           alone in its bundle, it ends with a signal that a program gets for a fault. A bug, whatever
-//                                     it does once the executable keeps its text
+//     CRASH                           alone in its bundle, it ends with a signal that a program gets for a fault
 //     only-in-a-batch                 the same once the test is alone in its bundle, in the reference too. What a test
 //                                     sees of its bundle depends on the other tests in it: the bundler renames what
 //                                     collides, and an error that is printed has line numbers. The reference of a batch
 //                                     may have been built from more tests, or from fewer
-//     only-without-text               alone, the same once the executable keeps its source text and bytecode. Look at it: the test
-//                                     may compare the text of a function or of an error message, or it may have found a
-//                                     bug that only shows there because more is inferred about a program that is closed
 //     REAL                            a bug
 import { spawn } from "node:child_process";
 import {
@@ -79,19 +75,14 @@ const needsShell = new RegExp(
   "m",
 );
 
-const withoutTextOrBytecode = {
-  BUN_COMPILE_OMIT_SOURCES_CONTENT: "1",
-  BUN_COMPILE_OMIT_SOURCE_TEXT: "1",
-  BUN_COMPILE_OMIT_BYTECODE: "1",
-  BUN_COMPILE_COMPACT_POSITIONS: "1",
-};
-type Kind = "reference" | "aot" | "validated" | "with-text";
+type Kind = "reference" | "aot" | "validated";
 const kinds: Record<Kind, { build: Record<string, string>; run: Record<string, string> }> = {
-  // Built-in objects are immutable in ahead-of-time compiled code, and some tests modify them.
-  "reference": { build: {}, run: { BUN_AOT: "0", BUN_JSC_useImmutableIntrinsics: "1" } },
-  "aot": { build: withoutTextOrBytecode, run: {} },
-  "validated": { build: { ...withoutTextOrBytecode, BUN_AOT_OPTIONS: "validateAOTInferredTypes=1" }, run: {} },
-  "with-text": { build: {}, run: {} },
+  "reference": {
+    build: { BUN_AOT: "0" },
+    run: { BUN_JSC_useImmutableIntrinsics: "1", BUN_JSC_hideTextOfFunctionsForTesting: "1" },
+  },
+  "aot": { build: {}, run: {} },
+  "validated": { build: { BUN_AOT_OPTIONS: "validateAOTInferredTypes=1" }, run: {} },
 };
 
 const environment = { ...process.env, BUN_ENABLE_CRASH_REPORTING: "0", NO_COLOR: "1" } as Record<string, string>;
@@ -245,12 +236,7 @@ async function runBatch(number: number, batch: string[]) {
         record(test, "CRASH", `exit=${compiled.code} | ${compiled.stderr.slice(-600)}`);
         continue;
       }
-      const outcome = await alone("with-text");
-      record(
-        test,
-        isSame(outcome) ? "only-without-text" : "REAL",
-        `exit=${outcome?.code} | ${outcome?.stderr.slice(-600)}`,
-      );
+      record(test, "REAL", `exit=${compiled?.code} | ${compiled?.stderr.slice(-600)}`);
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -299,7 +285,7 @@ const counts: Record<string, number> = {};
 for (const verdict of verdicts.values()) counts[verdict] = (counts[verdict] ?? 0) + 1;
 console.log(counts);
 for (const [test, verdict] of verdicts) {
-  if (verdict === "REAL" || verdict === "CRASH" || verdict === "only-without-text" || verdict.startsWith("BUILD-CRASH"))
+  if (verdict === "REAL" || verdict === "CRASH" || verdict.startsWith("BUILD-CRASH"))
     console.log(`${verdict}\t${test}`);
 }
 process.exitCode = Object.keys(counts).some(

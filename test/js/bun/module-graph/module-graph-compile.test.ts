@@ -6,7 +6,7 @@
 //
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isArm64, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 // ── sources embedded into the executable ──────────────────────────────────────────────────────────
@@ -188,8 +188,6 @@ const combos: Combo[] = [
   { name: "esm+splitting+bytecode", args: ["--format=esm", "--splitting", "--bytecode"] },
   { name: "esm+splitting+bytecode+minify", args: ["--format=esm", "--splitting", "--bytecode", "--minify"] },
   { name: "esm+splitting+bytecode+sourcemap", args: ["--format=esm", "--splitting", "--bytecode", "--sourcemap"] },
-  // The compiler only targets arm64 so far.
-  ...(isArm64 && !isWindows ? [{ name: "esm+splitting+aot", args: ["--format=esm", "--splitting", "--compile-aot"] }] : []),
 ];
 
 // All executables are built up front, concurrently; each describe awaits its own.

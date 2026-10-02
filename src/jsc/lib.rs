@@ -491,7 +491,7 @@ pub struct InitializeOptions {
     pub one_shot: bool,
     /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
     pub short_lived_globals: bool,
-    /// The executable has an AOT image and static heap: sets `JSC::Options::useAOT()`, which `BUN_AOT` and `BUN_JSC_useAOT` override.
+    /// The executable has an AOT image and static heap: sets `JSC::Options::useAOT()`.
     pub use_aot: bool,
 }
 

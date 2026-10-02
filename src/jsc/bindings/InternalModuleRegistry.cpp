@@ -124,7 +124,7 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
     UnlinkedFunctionExecutable* executable = nullptr;
     if (linked)
         s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
-    else if (hasBytecode) {
+    else if (hasBytecode && cachedSize) {
         executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ const_cast<uint8_t*>(cachedBytes), cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp);
         if (executable)
             s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);

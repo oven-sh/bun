@@ -341,19 +341,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useExplicitResourceManagement() = true;
             JSC::Options::useImportDefer() = true;
             JSC::Options::useTemporal() = true;
-            // An executable that was built with an AOT image and static heap uses them unless told not to, with BUN_AOT=0 or
-            // BUN_JSC_useAOT=0 (applied below). BUN_AOT exists because a Bun that does not know a BUN_JSC_ option refuses to start,
-            // and a child process may be a different Bun. BUN_AOT=1 asks the bundler for an AOT build and means nothing here: the
-            // process that runs the build has no image, and must not lose its JIT.
             JSC::Options::useAOT() = useAOT;
-            if (const char* value = getenv("BUN_AOT"); value && !strcmp(value, "0"))
-                JSC::Options::useAOT() = false;
-            // An executable that is built without its source text keeps the excerpts that its error messages quote.
-            if (const char* value = getenv("BUN_COMPILE_OMIT_SOURCE_TEXT"); value && !strcmp(value, "1"))
-                JSC::Options::useAOTSourceQuotes() = true;
-            // An executable that will never be interpreted is built without its bytecode.
-            if (const char* value = getenv("BUN_COMPILE_OMIT_BYTECODE"); value && !strcmp(value, "1"))
-                JSC::Options::omitBytecodeFromStaticHeap() = true;
             // For experiments: a comma-separated list of engine options, as name=value. Unlike a BUN_JSC_ variable, it
             // does not stop a Bun that does not know the option from starting, because such a Bun ignores it.
             if (const char* value = getenv("BUN_AOT_OPTIONS")) {

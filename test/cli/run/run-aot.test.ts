@@ -261,9 +261,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
       `,
     });
     // (Started from the parent directory: a path is relative to that, a URL to the file.)
-    const { stdout, stderr, exitCode } = await run(String(dir), true, "app/entry.ts", {
-      env: { BUN_COMPILE_OMIT_SOURCE_TEXT: "1" },
-    });
+    const { stdout, stderr, exitCode } = await run(String(dir), true, "app/entry.ts");
     expect({ said: JSON.parse(stdout), stderr, exitCode }).toEqual({
       said: {
         href: [true, "app/href.ts"],

@@ -1690,20 +1690,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         debug!("Bytecode external string table: {} bytes", bytes.len());
         if !aot_image.is_empty() {
             // The image ends on a page boundary, and so this starts on one.
-            // BUN_COMPILE_COMPACT_POSITIONS=1: the places that a stack trace can name are looked up in the source maps now, and
-            // the executable goes without the maps.
-            let maps = std::env::var_os("BUN_COMPILE_COMPACT_POSITIONS")
-                .is_some_and(|v| v == "1")
-                .then(|| SourceMapsByEntryOffset::of(&result));
-            let find = maps.as_ref().map(|maps| {
-                move |entry_offset: u32, line: u32, column: u32| maps.find(entry_offset, line, column)
-            });
-            let static_heap = crate::bundle_v2::dispatch::build_static_heap(
-                &bytes,
-                find.as_ref().map(|find| {
-                    find as &dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>
-                }),
-            );
+            let maps = SourceMapsByEntryOffset::of(&result);
+            let find =
+                |entry_offset: u32, line: u32, column: u32| maps.find(entry_offset, line, column);
+            let static_heap = crate::bundle_v2::dispatch::build_static_heap(&bytes, &find);
             has_static_heap = !static_heap.is_empty();
             aot_image.extend_from_slice(&static_heap);
         }

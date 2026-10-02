@@ -42,7 +42,6 @@
 #endif
 #include <wtf/PageBlock.h>
 
-extern "C" bool Bun__StandaloneModuleGraph__isNoText(const uint8_t* characters);
 
 namespace Zig {
 
@@ -119,6 +118,23 @@ Ref<SourceProvider> SourceProvider::create(
 
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         auto origin = getSourceOrigin();
+        if (resolvedSource.is_in_static_heap) {
+            JSC::SourceProvider* made = nullptr;
+            void* place = isForModuleGraph ? nullptr : JSC::StaticHeap::takePlaceForSourceProvider(globalObject->vm(), resolvedSource.bytecode_cache_entry_offset, sizeof(SourceProvider), made);
+            if (made && !resolvedSource.module_info)
+                return Ref { *static_cast<SourceProvider*>(made) };
+            auto provider = adoptRef(place
+                    ? *new (NotNull, place) SourceProvider(globalObject->bunVM(), resolvedSource, Ref { *StringImpl::empty() }, JSC::SourceTaintedOrigin::Untainted, origin, WTF::move(sourceURLString), TextPosition(), sourceType)
+                    : *new SourceProvider(globalObject->bunVM(), resolvedSource, Ref { *StringImpl::empty() }, JSC::SourceTaintedOrigin::Untainted, origin, WTF::move(sourceURLString), TextPosition(), sourceType));
+            provider->setHasNoText();
+            provider->setAOTModuleID(resolvedSource.bytecode_cache_entry_offset + 1);
+            if (place) {
+                provider->ref();
+                provider->becomeShareableBetweenThreads();
+                JSC::StaticHeap::didMakeSourceProvider(place);
+            }
+            return provider;
+        }
         if (resolvedSource.bytecode_cache != nullptr) {
             // Not owned: borrowed from the standalone module graph / compile cache. No destructor then, so that JSC treats
             // the bytes as outliving the CachedBytecode only when `bytecode_cache_persistent` says so (CachePayload::isOwnedOrPersistent).
@@ -132,28 +148,16 @@ Ref<SourceProvider> SourceProvider::create(
             if (resolvedSource.bytecode_cache_persistent)
                 bytecode->setPayloadIsPersistent();
             bytecode->setEntryOffset(resolvedSource.bytecode_cache_entry_offset);
-            // The static heap refers to the provider by its address, so it is constructed there and never moves.
-            JSC::SourceProvider* made = nullptr;
-            // (For the program itself. A further instance of it may come first.)
-            void* place = resolvedSource.bytecode_cache_persistent && !isForModuleGraph ? JSC::StaticHeap::takePlaceForSourceProvider(globalObject->vm(), resolvedSource.bytecode_cache_entry_offset, sizeof(SourceProvider), made) : nullptr;
-            // Another thread's VM has already loaded the module, and all VMs share its provider. (Analyzing a module from its
-            // module_info consumes the provider's copy, so in that case a new provider is needed.)
-            if (made && !resolvedSource.module_info)
-                return Ref { *static_cast<SourceProvider*>(made) };
-            Ref sourceImpl = string.isNull() ? Ref { *StringImpl::empty() } : Ref { *string.impl() };
-            auto provider = adoptRef(place
-                    ? *new (NotNull, place) SourceProvider(globalObject->bunVM(), resolvedSource, WTF::move(sourceImpl), JSC::SourceTaintedOrigin::Untainted, origin, WTF::move(sourceURLString), TextPosition(), sourceType)
-                    : *new SourceProvider(globalObject->bunVM(), resolvedSource, WTF::move(sourceImpl), JSC::SourceTaintedOrigin::Untainted, origin, WTF::move(sourceURLString), TextPosition(), sourceType));
-            if (place)
-                provider->ref();
+            auto provider = adoptRef(*new SourceProvider(
+                globalObject->bunVM(),
+                resolvedSource,
+                string.isNull() ? Ref { *StringImpl::empty() } : Ref { *string.impl() },
+                JSC::SourceTaintedOrigin::Untainted,
+                origin,
+                WTF::move(sourceURLString), TextPosition(),
+                sourceType));
             provider->m_hash = resolvedSource.source_code_hash;
             provider->m_cachedBytecode = WTF::move(bytecode);
-            if (StringView text = provider->source(); !text.isEmpty() && Bun__StandaloneModuleGraph__isNoText(text.is8Bit() ? text.span8().data() : reinterpret_cast<const uint8_t*>(text.span16().data())))
-                provider->setHasNoText();
-            if (place) {
-                provider->becomeShareableBetweenThreads();
-                JSC::StaticHeap::didMakeSourceProvider(place);
-            }
             return provider;
         }
 
@@ -396,7 +400,6 @@ static thread_local Vector<uint8_t> s_aotImageOfLastLink;
 // Kept until Bun__StaticHeap__build, which runs once all of the strings are known.
 static thread_local RefPtr<JSC::CachedBytecode> s_payloadOfLastLink;
 static thread_local Vector<uint32_t> s_modulesOfLastLink;
-static thread_local size_t s_startOfExpressionInfoOfLastLink;
 static thread_local Vector<JSC::ReportableSitesOfFunction> s_reportableSitesOfLastLink;
 static thread_local Vector<std::optional<Vector<uint32_t>>> s_variablesExportedByModulesOfLastLink;
 static thread_local Vector<uint8_t> s_aotImageForStaticHeap;
@@ -425,7 +428,6 @@ extern "C" bool Bun__BytecodeLinkEncoder__finish(JSC::BytecodeLinkEncoder* encod
     if (!s_aotImageOfLastLink.isEmpty()) {
         s_payloadOfLastLink = result.payload;
         s_modulesOfLastLink = WTF::move(result.entryOffsetsOfModules);
-        s_startOfExpressionInfoOfLastLink = result.regionEnds[JSC::BytecodeLinkRegions::ExpressionInfo - 1];
         s_reportableSitesOfLastLink = WTF::move(result.reportableSites);
         s_variablesExportedByModulesOfLastLink = WTF::move(result.variablesExportedByModules);
     }
@@ -517,21 +519,18 @@ extern "C" void Bun__StaticHeap__build(const uint8_t* strings, size_t stringsSiz
     RefPtr payload = std::exchange(s_payloadOfLastLink, nullptr);
     Vector<uint32_t> modules = std::exchange(s_modulesOfLastLink, { });
     Vector<std::optional<Vector<uint32_t>>> variablesExportedByModules = std::exchange(s_variablesExportedByModulesOfLastLink, { });
-    std::optional<JSC::StaticHeap::PositionsToKeep> positions;
-    if (find && JSC::Options::omitBytecodeFromStaticHeap()) {
-        positions.emplace(JSC::StaticHeap::PositionsToKeep { reportableSites, [&](uint32_t entryOffsetOfModule, JSC::LineColumn inModule, CString& nameOfSource, JSC::LineColumn& inSource) {
-            const uint8_t* name = nullptr;
-            size_t nameLength = 0;
-            uint32_t line = 0;
-            uint32_t column = 0;
-            if (!find(findCtx, entryOffsetOfModule, inModule.line, inModule.column, &name, &nameLength, &line, &column))
-                return false;
-            nameOfSource = CString(std::span { reinterpret_cast<const char*>(name), nameLength });
-            inSource = { line, column };
-            return true;
-        } });
-    }
-    Vector<uint8_t> image = JSC::StaticHeap::build(vm, { strings, stringsSize }, payload ? payload->span() : std::span<const uint8_t> { }, modules.span(), imageOfCode.span(), JSC::Options::omitBytecodeFromStaticHeap() ? s_startOfExpressionInfoOfLastLink : 0, positions ? &*positions : nullptr, reportableSites.span(), variablesExportedByModules.span());
+    JSC::StaticHeap::PositionsToKeep positions { reportableSites, [&](uint32_t entryOffsetOfModule, JSC::LineColumn inModule, CString& nameOfSource, JSC::LineColumn& inSource) {
+        const uint8_t* name = nullptr;
+        size_t nameLength = 0;
+        uint32_t line = 0;
+        uint32_t column = 0;
+        if (!find(findCtx, entryOffsetOfModule, inModule.line, inModule.column, &name, &nameLength, &line, &column))
+            return false;
+        nameOfSource = CString(std::span { reinterpret_cast<const char*>(name), nameLength });
+        inSource = { line, column };
+        return true;
+    } };
+    Vector<uint8_t> image = JSC::StaticHeap::build(vm, { strings, stringsSize }, payload ? payload->span() : std::span<const uint8_t> { }, modules.span(), imageOfCode.span(), positions, reportableSites.span(), variablesExportedByModules.span());
     append(ctx, image.span().data(), image.size());
 }
 
@@ -550,23 +549,16 @@ static int openExecutable()
     return open(path, O_RDONLY | O_CLOEXEC);
 }
 
-// `bytes` is the image of the code and the data that follows it. Reports where the static heap's copies of the string
-// table and of the bytecode are in it, as { offset, size, offset, size }. Returns false if there is no static heap.
-extern "C" bool Bun__StaticHeap__copiesInImage(const uint8_t* bytes, size_t length, size_t* result)
+extern "C" bool Bun__StaticHeap__stringTableInImage(const uint8_t* bytes, size_t length, size_t* result)
 {
     auto sizeOfCodeImage = JSC::aotImageSize({ bytes, length });
     if (!sizeOfCodeImage || *sizeOfCodeImage >= length)
         return false;
-    auto copies = JSC::StaticHeap::copiesIn({ bytes + *sizeOfCodeImage, length - *sizeOfCodeImage });
-    if (!copies)
+    auto found = JSC::StaticHeap::stringTableIn({ bytes + *sizeOfCodeImage, length - *sizeOfCodeImage });
+    if (!found)
         return false;
-    result[0] = *sizeOfCodeImage + copies->offsetOfStrings;
-    result[1] = copies->sizeOfStrings;
-    result[2] = *sizeOfCodeImage + copies->offsetOfPayload;
-    result[3] = copies->sizeOfPayload;
-    result[4] = copies->payloadIsOmitted;
-    result[5] = copies->addressOfPayload;
-    result[6] = copies->hasPositionsOfCallSites;
+    result[0] = *sizeOfCodeImage + found->first;
+    result[1] = found->second;
     return true;
 }
 

@@ -441,6 +441,12 @@ String sourceURL(JSC::StackVisitor& visitor)
     case JSC::StackVisitor::Frame::Module:
     case JSC::StackVisitor::Frame::Function:
     case JSC::StackVisitor::Frame::Global: {
+#if ENABLE(AOT)
+        if (auto function = visitor->aotFunction()) {
+            if (auto position = function.reportedPositionFor(visitor->bytecodeIndex()); position && position->source)
+                return JSC::StaticHeap::nameOfSource(position->source);
+        }
+#endif
         return sourceURL(visitor->codeBlock());
     }
     case JSC::StackVisitor::Frame::Native:

@@ -8,9 +8,16 @@
 #include "webcore/HTTPHeaderMap.h"
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/StringImpl.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/WTFString.h>
+#include <bun-uws/src/HttpRouter.h>
+#include <algorithm>
 #include <atomic>
 #include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
 #if !OS(WINDOWS)
 #include <pthread.h>
 #include <sched.h>
@@ -242,6 +249,119 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_spawnThreadsForTesting, (JSC::JSGlobalObject
     }
     return JSValue::encode(jsNumber(firstError));
 #endif
+}
+
+namespace {
+
+struct HttpRouterScriptData {
+    // uWS::HttpRouter adds its loop iterations to a member of this name.
+    uint64_t routerSteps = 0;
+    uint64_t request = 0;
+    std::string* trace = nullptr;
+};
+
+using ScriptedHttpRouter = uWS::HttpRouter<HttpRouterScriptData>;
+
+std::vector<std::string_view> splitFields(std::string_view text, char separator)
+{
+    std::vector<std::string_view> fields;
+    for (;;) {
+        size_t end = text.find(separator);
+        fields.push_back(text.substr(0, end));
+        if (end == std::string_view::npos)
+            return fields;
+        text.remove_prefix(end + 1);
+    }
+}
+
+bool hasEmpty(const std::vector<std::string_view>& list)
+{
+    return std::ranges::find(list, std::string_view()) != list.end();
+}
+
+bool parsePriority(std::string_view name, uint32_t& priority)
+{
+    if (name == "H")
+        priority = ScriptedHttpRouter::HIGH_PRIORITY;
+    else if (name == "M")
+        priority = ScriptedHttpRouter::MEDIUM_PRIORITY;
+    else if (name == "L")
+        priority = ScriptedHttpRouter::LOW_PRIORITY;
+    else
+        return false;
+    return true;
+}
+
+}
+
+// One uWS::HttpRouter call per script line, for tests. test/js/bun/http/bun-serve-routes.test.ts has the line formats.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_httpRouterScript, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto script = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto utf8 = script.utf8();
+    auto bytes = byteCast<char>(utf8.span());
+
+    auto router = std::make_unique<ScriptedHttpRouter>();
+    std::string output;
+    std::string trace;
+    uint32_t nextHandler = 0;
+    uint64_t requests = 0;
+
+    for (std::string_view line : splitFields(std::string_view(bytes.data(), bytes.size()), '\n')) {
+        if (line.empty())
+            continue;
+        auto fields = splitFields(line, ' ');
+        // An empty field or method name is a typing error in the script: no command runs.
+        std::string_view command = hasEmpty(fields) ? std::string_view() : fields[0];
+        uint32_t priority = 0;
+        std::vector<std::string_view> methods;
+        std::optional<uint64_t> yieldPercent;
+        if (command == "add" && fields.size() == 5) {
+            methods = splitFields(fields[2], ',');
+            yieldPercent = parseInteger<uint64_t>(StringView(std::span<const char>(fields[4].data(), fields[4].size())));
+        }
+
+        if (yieldPercent && parsePriority(fields[1], priority) && !hasEmpty(methods)) {
+            uint32_t id = nextHandler++;
+            router->add(methods, fields[3], [id, yieldPercent = *yieldPercent](ScriptedHttpRouter* r) {
+                auto& data = r->getUserData();
+                auto [top, params] = r->getParameters();
+                data.trace->append(" ").append(std::to_string(id)).append("(");
+                for (int i = 0; i <= top; i++) {
+                    if (i)
+                        data.trace->append(",");
+                    data.trace->append(params[i]);
+                }
+                data.trace->append(")");
+                // The same handler answers some requests and yields others.
+                uint64_t mixed = (uint64_t(id) * 0x9e3779b97f4a7c15ull) ^ (data.request * 0xbf58476d1ce4e5b9ull);
+                mixed ^= mixed >> 31;
+                return (mixed % 100) >= yieldPercent; }, priority);
+        } else if (command == "remove" && fields.size() == 4 && parsePriority(fields[1], priority)) {
+            output.append(router->remove(fields[2], fields[3], priority) ? "r1\n" : "r0\n");
+        } else if (command == "route" && fields.size() == 3) {
+            trace.clear();
+            router->getUserData().trace = &trace;
+            router->getUserData().request = requests++;
+            bool matched = router->route(fields[1], fields[2]);
+            output.append(matched ? "1" : "0").append(trace).append("\n");
+        } else if (command == "steps" && fields.size() == 1) {
+            output.append("s").append(std::to_string(router->getUserData().routerSteps)).append("\n");
+            router->getUserData().routerSteps = 0;
+        } else if (command == "sort" && fields.size() == 1) {
+            router->sortRoutes();
+        } else if (command == "reset" && fields.size() == 1) {
+            router = std::make_unique<ScriptedHttpRouter>();
+        } else {
+            throwTypeError(globalObject, scope, makeString("httpRouterScript: cannot run the line \""_s, WTF::String::fromUTF8(std::span(line.data(), line.size())), "\""_s));
+            return {};
+        }
+    }
+
+    return JSValue::encode(jsString(vm, WTF::String::fromUTF8(std::span(output.data(), output.size()))));
 }
 
 }

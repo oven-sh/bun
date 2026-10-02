@@ -45,6 +45,7 @@ void uws_h2_app_on_schedule_drain(uws_h2_app_t* app, void (*cb)(void*, void*), v
 bool uws_h2_app_drain(uws_h2_app_t* app) { return ((H2App*)app)->drain(); }
 void uws_h2_app_close(uws_h2_app_t* app) { ((H2App*)app)->close(); }
 void uws_h2_app_clear_routes(uws_h2_app_t* app) { ((H2App*)app)->clearRoutes(); }
+void uws_h2_app_sort_routes(uws_h2_app_t* app) { ((H2App*)app)->sortRoutes(); }
 
 #define H2_ROUTE(name, method)                                                                         \
     void uws_h2_app_##name(uws_h2_app_t* app, const char* pattern, size_t pattern_len,                 \

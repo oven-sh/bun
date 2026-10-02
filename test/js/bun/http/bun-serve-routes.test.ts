@@ -1,4 +1,5 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
+import { httpRouterScript } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import net from "node:net";
@@ -1105,5 +1106,606 @@ describe.concurrent("false route with no fetch handler", () => {
 
     proc.kill();
     await proc.exited;
+  });
+});
+
+describe("many routes", () => {
+  function buildFlatTable(n: number) {
+    const routes: Record<string, () => Response> = {};
+    for (let i = 0; i < n; i++) {
+      routes[`/leaf${i}`] = () => new Response(String(i));
+    }
+    return routes;
+  }
+
+  test("routes to the right handler in a large flat table", async () => {
+    const n = 1200;
+    using server = Bun.serve({ port: 0, routes: buildFlatTable(n) });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    const results = await Promise.all(
+      [0, 1, 123, n - 2, n - 1].map(i => fetch(`${base}/leaf${i}`).then(r => r.text())),
+    );
+    expect(results).toEqual(["0", "1", "123", String(n - 2), String(n - 1)]);
+
+    const miss = await fetch(`${base}/leaf${n}`);
+    expect(miss.status).toBe(404);
+  });
+
+  test("param and wildcard precedence is preserved in a large table", async () => {
+    const routes: Record<string, (req: BunRequest) => Response> = {};
+    for (let i = 0; i < 1000; i++) {
+      routes[`/api/static${i}`] = () => new Response(`static${i}`);
+    }
+    routes["/api/:id"] = req => new Response(`param:${req.params.id}`);
+    routes["/api/*"] = () => new Response("wild");
+
+    using server = Bun.serve({ port: 0, routes });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    expect(await fetch(`${base}/api/static0`).then(r => r.text())).toBe("static0");
+    expect(await fetch(`${base}/api/static999`).then(r => r.text())).toBe("static999");
+    expect(await fetch(`${base}/api/other`).then(r => r.text())).toBe("param:other");
+    expect(await fetch(`${base}/api/a/b`).then(r => r.text())).toBe("wild");
+  });
+
+  test("reload() replaces a large route table and routes correctly afterwards", async () => {
+    const n = 1000;
+    using server = Bun.serve({ port: 0, routes: buildFlatTable(n) });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    expect(await fetch(`${base}/leaf0`).then(r => r.text())).toBe("0");
+    expect(await fetch(`${base}/leaf${n - 1}`).then(r => r.text())).toBe(String(n - 1));
+
+    const replacement: Record<string, () => Response> = {};
+    for (let i = 0; i < n; i++) {
+      replacement[`/other${i}`] = () => new Response(`other${i}`);
+    }
+    server.reload({ routes: replacement });
+
+    expect((await fetch(`${base}/leaf0`)).status).toBe(404);
+    expect(await fetch(`${base}/other0`).then(r => r.text())).toBe("other0");
+    expect(await fetch(`${base}/other${n - 1}`).then(r => r.text())).toBe(`other${n - 1}`);
+
+    server.reload({ routes: buildFlatTable(n) });
+
+    expect((await fetch(`${base}/other0`)).status).toBe(404);
+    expect(await fetch(`${base}/leaf500`).then(r => r.text())).toBe("500");
+  });
+
+  // A static route that names HEAD registers HEAD twice, and the second
+  // registration replaces the first.
+  test("static routes that name HEAD are all served in a large table", async () => {
+    const n = 1000;
+    const routes: Record<string, { GET: Response; HEAD: Response }> = {};
+    for (let i = 0; i < n; i++) {
+      routes[`/file${i}`] = { GET: new Response(`get${i}`), HEAD: new Response(`head-${i}`) };
+    }
+    using server = Bun.serve({ port: 0, routes, fetch: () => new Response("fallback", { status: 404 }) });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    const seen: unknown[] = [];
+    for (const i of [0, 499, n - 1]) {
+      seen.push(await fetch(`${base}/file${i}`).then(r => r.text()));
+      const head = await fetch(`${base}/file${i}`, { method: "HEAD" });
+      seen.push([head.status, head.headers.get("content-length"), await head.text()]);
+    }
+    seen.push((await fetch(`${base}/file${n}`)).status);
+    expect(seen).toEqual(["get0", [200, "6", ""], "get499", [200, "8", ""], "get999", [200, "8", ""], 404]);
+  });
+
+  test("a route handler can reload() the table it was matched in", async () => {
+    const n = 300;
+    let generation = 0;
+    function table(g: number) {
+      const routes: Record<string, (req: BunRequest) => Response> = {};
+      for (let i = 0; i < n; i++) {
+        routes[`/g${g}/leaf${i}`] = () => new Response(`g${g}:${i}`);
+      }
+      routes["/swap"] = () => {
+        generation++;
+        server.reload({ routes: table(generation) });
+        return new Response(`swapped to ${generation}`);
+      };
+      routes["/:any"] = req => new Response(`param:${req.params.any}`);
+      return routes;
+    }
+    using server = Bun.serve({ port: 0, routes: table(0) });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    const seen: string[] = [];
+    for (let round = 0; round < 3; round++) {
+      seen.push(await fetch(`${base}/g${generation}/leaf${n - 1}`).then(r => r.text()));
+      seen.push(await fetch(`${base}/swap`).then(r => r.text()));
+      seen.push(String((await fetch(`${base}/g${generation - 1}/leaf0`)).status));
+      seen.push(await fetch(`${base}/other`).then(r => r.text()));
+    }
+    expect(seen).toEqual([
+      "g0:299",
+      "swapped to 1",
+      "404",
+      "param:other",
+      "g1:299",
+      "swapped to 2",
+      "404",
+      "param:other",
+      "g2:299",
+      "swapped to 3",
+      "404",
+      "param:other",
+    ]);
+  });
+});
+
+// uWS::HttpRouter with no server around it. A script line is one router call:
+//
+//   add <H|M|L> <method,method,...> <pattern> <percent>   H, M, L is the priority: high, medium, low
+//   remove <H|M|L> <method> <pattern>                     prints r1 or r0
+//   route <method> <url>                                  prints 1 or 0, then " id(param,...)" for each handler that ran
+//   steps                                                 prints s and the loop iterations since the last steps or reset line
+//   sort                                                  ends a registration pass
+//   reset                                                 a new router
+//
+// Handlers are numbered in the order they are added. The percent of an `add`
+// line is the share of requests the handler yields to the next handler: 0
+// answers every request, 100 yields every request.
+describe("uWS::HttpRouter", () => {
+  const run = (...lines: string[]) => httpRouterScript(lines.join("\n")).split("\n").slice(0, -1);
+
+  test.each([
+    "nonsense",
+    "route GET",
+    "remove GET /x",
+    "add X GET /x 0",
+    "add M GET /x",
+    "add M GET /x many",
+    "add M GET, /x 0",
+    "add M ,GET /x 0",
+    "remove M  /x",
+    "route  /x",
+    "route GET ",
+  ])("a line that is not a router call is an error: %s", line => {
+    expect(() => run(line)).toThrow(`httpRouterScript: cannot run the line "${line}"`);
+  });
+
+  // `steps` prints the loop iterations the router made since the last `steps`
+  // line. The count does not depend on the machine, and it is how the work for
+  // one route or one request grows with the number of sibling routes.
+  describe("work grows with the number of sibling routes", () => {
+    const methods = "GET,POST,PUT,DELETE";
+    function steps(routes: number, register: (i: number) => string[], requests: string[] = []) {
+      const lines: string[] = [];
+      for (let i = 0; i < routes; i++) lines.push(...register(i));
+      lines.push("sort", "steps");
+      for (const request of requests) lines.push(request, "steps");
+      return httpRouterScript(lines.join("\n"))
+        .split("\n")
+        .filter(line => line.startsWith("s"))
+        .map(line => Number(line.slice(1)));
+    }
+    const perRoute = (routes: number, register: (i: number) => string[]) => steps(routes, register)[0] / routes;
+
+    // 8 times the routes. The router on main scans the siblings of every node
+    // it passes, so each of these ratios was about 8.
+    test("registration", () => {
+      const register = (i: number) => [`add L ${methods} /leaf${i} 0`];
+      const small = perRoute(200, register);
+      const large = perRoute(1600, register);
+      expect({ small, large, linear: large < small * 2 }).toMatchObject({ linear: true });
+    });
+
+    test("registration of a route that is registered again", () => {
+      const register = (i: number) => [`add M HEAD /leaf${i} 0`, `add M GET /leaf${i} 0`, `add M HEAD /leaf${i} 0`];
+      const small = perRoute(200, register);
+      const large = perRoute(1600, register);
+      expect({ small, large, linear: large < small * 2 }).toMatchObject({ linear: true });
+    });
+
+    test("a request for the first route, the last route and no route", () => {
+      const register = (i: number) => [`add L ${methods} /leaf${i} 0`];
+      const requests = (routes: number) => ["route GET /leaf0", `route GET /leaf${routes - 1}`, "route GET /none"];
+      const [, firstSmall, lastSmall, noneSmall] = steps(200, register, requests(200));
+      const [, firstLarge, lastLarge, noneLarge] = steps(1600, register, requests(1600));
+      expect({
+        first: [firstSmall, firstLarge],
+        last: [lastSmall, lastLarge],
+        none: [noneSmall, noneLarge],
+        flat: firstLarge < firstSmall * 2 && lastLarge < lastSmall * 2 && noneLarge < noneSmall * 2,
+      }).toMatchObject({ flat: true });
+    });
+  });
+
+  // The name hash has 24 bits, so 12,000 sibling names have several pairs with
+  // the same hash. The second name of a pair takes one more step to find.
+  test("sibling names with equal hashes reach their own handlers", () => {
+    const count = 12_000;
+    const lines: string[] = [];
+    for (let i = 0; i < count; i++) lines.push(`add M GET /name-${i} 0`);
+    lines.push("sort", "steps");
+    for (let i = 0; i < count; i++) lines.push(`route GET /name-${i}`, "steps");
+    const output = httpRouterScript(lines.join("\n")).split("\n");
+    const wrong: number[] = [];
+    const stepCounts = new Set<string>();
+    for (let i = 0; i < count; i++) {
+      if (output[1 + i * 2] !== `1 ${i}()`) wrong.push(i);
+      stepCounts.add(output[2 + i * 2]);
+    }
+    expect({ wrong, someNamesTookMoreSteps: stepCounts.size > 1 }).toEqual({ wrong: [], someNamesTookMoreSteps: true });
+  });
+
+  // The cases of uWebSockets' tests/HttpRouter.cpp (Apache-2.0), with its
+  // handler names as comments.
+  describe("uWebSockets router tests", () => {
+    test("method priority", () => {
+      expect(
+        run(
+          "add L * /static/route 0", // 0 AS
+          "add M PATCH /static/route 100", // 1 PS
+          "add M GET /static/route 0", // 2 GS
+          "route nonsense /static/route",
+          "route GET /static",
+          "route POST /static/route",
+          "route GET /static/route",
+          "route PATCH /static/route",
+        ),
+      ).toEqual(["1 0()", "0", "1 0()", "1 2()", "1 1() 0()"]);
+    });
+
+    test("deep parameter routes", () => {
+      expect(
+        run(
+          "add M GET /something/:id/sync 100", // 0 ETT
+          "add M GET /something/:somethingId/pin 100", // 1 TVÅ
+          "add M GET /something/:id/:attribute 100", // 2 TRE
+          "route GET /something/1234/pin",
+          "route GET /something/1234/sync",
+        ),
+      ).toEqual(["0 1(1234) 2(1234,pin)", "0 0(1234) 2(1234,sync)"]);
+    });
+
+    test("pattern priority", () => {
+      expect(
+        run(
+          "add L * /a/b/c 100", // 0 AS
+          "add M GET /a/:b/c 100", // 1 GP
+          "add M GET /a/* 100", // 2 GW
+          "add M GET /a/b/c 100", // 3 GS
+          "add M POST /a/:b/c 100", // 4 PP
+          "add L * /a/:b/c 100", // 5 AP
+          "route POST /a/b/c",
+          "route GET /a/b/c",
+        ),
+      ).toEqual(["0 4(b) 0() 5(b)", "0 3() 1(b) 2() 0() 5(b)"]);
+    });
+
+    test("upgrade", () => {
+      expect(
+        run(
+          "add M GET /something 0", // 0 GS
+          "add M GET /* 100", // 1 GW
+          "add H GET /* 100", // 2 WW
+          "route GET /something",
+          "route GET /",
+        ),
+      ).toEqual(["1 2() 0()", "0 2() 1()"]);
+    });
+
+    test("bug reports", () => {
+      expect({
+        removedParameterRoute: run(
+          "add M GET /route 0",
+          "add M GET /route/:id 0",
+          "route GET /route/21",
+          "route GET /route",
+          "remove M GET /route",
+          "route GET /route",
+          "remove M GET /route/:id",
+          "route GET /route/21",
+        ),
+        manySlashes: run(
+          "add M GET /foo//////bar/baz/qux 100", // 0 MANYSLASH
+          "add M GET /foo 100", // 1 FOO
+          "route GET /foo",
+          "route GET /foo/",
+          "route GET /foo//bar/baz/qux",
+          "route GET /foo//////bar/baz/qux",
+        ),
+        wildcardAfterSlash: run("add M GET /test/* 100", "route GET /test/"),
+        upgradeBeforeStaticBeforeWildcard: run(
+          "add H GET /* 100", // 0 WW
+          "add M GET /ok 100", // 1 GS
+          "add M GET /* 100", // 2 GW
+          "route GET /ok",
+        ),
+        upgradeOnRoot: run("add H GET / 100", "add M GET / 100", "route GET /"),
+        upgradeStaticAny: run(
+          "add H GET /* 100", // 0 WW
+          "add M GET /static 100", // 1 GSL
+          "add L * /* 100", // 2 AW
+          "route GET /static",
+        ),
+        upgradeRootStaticAny: run(
+          "add H GET /* 100", // 0 WW
+          "add M GET / 100", // 1 GSS
+          "add M GET /static 100", // 2 GSL
+          "add L * /* 100", // 3 AW
+          "route GET /static",
+        ),
+        staticBeforeParameter: run(
+          "add M GET /foo 100", // 0 FOO
+          "add M GET /:id 100", // 1 ID
+          "add M GET /1ab 100", // 2 ONEAB
+          "route GET /1ab",
+        ),
+        staticBeforeWildcard: run(
+          "add M GET /* 100", // 0 STAR
+          "add M GET / 100", // 1 STATIC
+          "route GET /",
+        ),
+      }).toEqual({
+        removedParameterRoute: ["1 1(21)", "1 0()", "r1", "0", "r1", "0"],
+        manySlashes: ["0 1()", "0", "0", "0 0()"],
+        wildcardAfterSlash: ["0 0()"],
+        upgradeBeforeStaticBeforeWildcard: ["0 0() 1() 2()"],
+        upgradeOnRoot: ["0 0() 1()"],
+        upgradeStaticAny: ["0 0() 1() 2()"],
+        upgradeRootStaticAny: ["0 0() 2() 3()"],
+        staticBeforeParameter: ["0 2() 1(1ab)"],
+        staticBeforeWildcard: ["0 1() 0()"],
+      });
+    });
+
+    test("parameters", () => {
+      expect(
+        run(
+          "add M GET /candy/:kind/* 100", // 0 GPW
+          "add M GET /candy/lollipop/* 100", // 1 GLW
+          "add M GET /candy/:kind/:action 100", // 2 GPP
+          "add M GET /candy/lollipop/:action 100", // 3 GLP
+          "add M GET /candy/lollipop/eat 100", // 4 GLS
+          "route GET /candy/lollipop/eat",
+          "route GET /candy/lollipop/",
+          "route GET /candy/lollipop",
+          "route GET /candy/",
+        ),
+      ).toEqual(["0 4() 3(eat) 1() 2(lollipop,eat) 0(lollipop)", "0 1() 0(lollipop)", "0", "0"]);
+    });
+  });
+
+  // Two answers that follow from how the router keeps its methods, not from
+  // a route. Each has a test of its own here, so that a change to one of them
+  // is a change to a test with a name. Of the sequences below, only the ones
+  // that say so depend on them.
+  describe("a request that the routes of its method do not answer", () => {
+    test("runs the routes of ANY a second time when its method is *", () => {
+      expect(run("add L * /a 100", "route * /a")).toEqual(["0 0() 0()"]);
+    });
+
+    test("goes to the last method by name once a removal dropped the empty ANY node", () => {
+      expect(
+        run(
+          "add M GET /get 0", // 0
+          "add M POST /post 0", // 1
+          "add M PUT /put 0", // 2
+          "route PATCH /post", // a new router has an ANY node with no routes
+          "remove M PUT /put", // drops every node that it leaves empty
+          "route PATCH /post",
+          "route GET /post",
+          "add L * /any 0", // 3
+          "route PATCH /post",
+        ),
+      ).toEqual(["0", "r1", "1 1()", "1 1()", "0"]);
+    });
+  });
+
+  // The router reads the first 100 segments of a pattern and of a URL, and it
+  // steps over the first byte of a URL without a look at it.
+  describe("URL limits", () => {
+    const segments = (count: number, name = "s") => Buffer.alloc(count * (name.length + 1), "/" + name).toString();
+
+    test("a URL matches on its first 100 segments", () => {
+      expect(
+        run(
+          `add M GET ${segments(100)} 0`,
+          `route GET ${segments(99)}`,
+          `route GET ${segments(100)}`,
+          `route GET ${segments(101)}`,
+          `route GET ${segments(99)}/other`,
+        ),
+      ).toEqual(["0", "1 0()", "1 0()", "0"]);
+    });
+
+    test("a pattern is its first 100 segments", () => {
+      expect(
+        run(
+          `add M GET ${segments(100)} 0`,
+          `add M GET ${segments(100)}/more 0`, // replaces the route above
+          `route GET ${segments(100)}`,
+          `remove M GET ${segments(100)}/other`,
+          `route GET ${segments(100)}`,
+        ),
+      ).toEqual(["1 1()", "r1", "0"]);
+    });
+
+    test("a request has at most 100 parameters", () => {
+      expect(run(`add M GET ${segments(100, ":p")} 0`, `route GET ${segments(101, "v")}`)).toEqual([
+        `1 0(${Array(100).fill("v").join(",")})`,
+      ]);
+    });
+
+    test("the first byte of a URL is not read", () => {
+      expect(
+        run(
+          "add M GET / 0",
+          "add M GET /bc 0",
+          "route GET *", // the URL of `OPTIONS *`
+          "route GET abc",
+          "route GET a/bc",
+        ),
+      ).toEqual(["1 0()", "1 1()", "0"]);
+    });
+  });
+
+  // Fixed pseudo-random sequences of router calls. The digests are the output
+  // of the router on main at bf42a525d5, so a router change that sends any of
+  // these requests to other handlers, in another order or with other
+  // parameters changes a digest. To find the call, run the same script on a
+  // build without the change and compare the two outputs line by line.
+  describe("random call sequences", () => {
+    // With `anyStays`, one route under ANY is never removed and no request has
+    // the method *. Then neither of the two answers above is part of a digest.
+    function randomScript(seed: number, calls: number, names: number, anyStays: boolean) {
+      let state = (seed * 2654435761 + 1013904223) >>> 0;
+      const below = (n: number) => {
+        state ^= state << 13;
+        state >>>= 0;
+        state ^= state >>> 17;
+        state ^= state << 5;
+        state >>>= 0;
+        return state % n;
+      };
+      const pick = <T>(list: readonly T[]) => list[below(list.length)];
+      const patternSegments = ["a", "b", "c", "d", "", ":x", ":yy", ":", "*", "*z", "e", "a-longer-static-name", "a"];
+      const urlSegments = ["a", "b", "c", "d", "", "e", "zz", ":x", ":", "*", "*z", "a-longer-static-name", "q"];
+      const methods = ["GET", "POST", "HEAD", "PUT", "*"];
+      const requestMethods = anyStays ? ["GET", "POST", "HEAD", "PUT"] : methods;
+      const priorities = ["H", "M", "L"];
+      const depth = 1 + below(4);
+      const yields = below(3) === 0 ? 0 : 10 + below(70);
+      const routeShare = 20 + below(60);
+      const repeatShare = below(50);
+      const keeper = anyStays ? ["add L * /never-requested/keeper 100"] : [];
+      const path = (segments: readonly string[], maxDepth: number) => {
+        let out = "";
+        for (let i = 1 + below(maxDepth); i > 0; i--) {
+          out += "/" + (names && below(10) < 8 ? "name-" + below(names) : pick(segments));
+        }
+        return out;
+      };
+      const lines = [...keeper];
+      let added: string[] = [];
+      for (let i = 0; i < calls; i++) {
+        const dice = below(100);
+        if (dice < routeShare) {
+          // No route names PATCH.
+          lines.push(`route ${below(8) === 0 ? "PATCH" : pick(requestMethods)} ${path(urlSegments, depth + 1)}`);
+        } else if (dice < routeShare + 8) {
+          // Half of the removals name a route that was added.
+          if (added.length && below(2) === 0) {
+            const [, priority, list, pattern] = pick(added).split(" ");
+            lines.push(`remove ${priority} ${pick(list.split(","))} ${pattern}`);
+          } else {
+            lines.push(`remove ${pick(priorities)} ${pick(methods)} ${path(patternSegments, depth)}`);
+          }
+        } else if (dice < routeShare + 9 && (!names || below(400) === 0)) {
+          lines.push("reset", ...keeper);
+          added = [];
+        } else if (added.length && below(100) < repeatShare) {
+          // The same method, pattern and priority again replaces the route.
+          lines.push(pick(added));
+        } else {
+          const first = below(methods.length);
+          const list = Array.from({ length: 1 + below(3) }, (_, k) => methods[(first + k) % methods.length]);
+          // One method can be in the list twice.
+          if (below(12) === 0) list.push(list[0]);
+          const line = `add ${pick(priorities)} ${list.join(",")} ${path(patternSegments, depth)} ${yields}`;
+          lines.push(line);
+          added.push(line);
+        }
+      }
+      return lines.join("\n");
+    }
+    const digest = (script: string) => new Bun.CryptoHasher("sha1").update(httpRouterScript(script)).digest("hex");
+    // A sequence is made once. The test with `sort` lines runs each of them again.
+    const scripts = new Map<string, string>();
+    const sequence = (seed: number, calls: number, names: number, anyStays: boolean) => {
+      const key = [seed, calls, names, anyStays].join();
+      let script = scripts.get(key);
+      if (script === undefined) scripts.set(key, (script = randomScript(seed, calls, names, anyStays)));
+      return script;
+    };
+    const digests = (first: number, calls: number, names: number, anyStays: boolean, count: number) =>
+      Array.from({ length: count }, (_, i) => digest(sequence(first + i, calls, names, anyStays)));
+
+    // [first seed, calls in a sequence, names that the segments come from, one digest for each sequence]
+    const anyStays: [number, number, number, string[]][] = [
+      [
+        0,
+        300,
+        0,
+        [
+          "26435e859239dfdf4dffbf0f055c2b82bf0c9aaf",
+          "ab9c35cfeb906307b93107c8bf4cbf56939c690c",
+          "e0e22b8009e5fbfa9aa0edc5bf0dfa257a9a14f4",
+          "208e40aaf022f783e2fca15aa8d5ffbd23e98746",
+        ],
+      ],
+      [
+        4,
+        300,
+        0,
+        [
+          "9d0282bb17c46d200d3fec7a2356daf0029a9264",
+          "ada8ead40b263465bfb568d8f89dc9c1355ad393",
+          "a8e5287d2e28f181e9da024ee4ed34e895a4ef88",
+          "3fc6a684c249b500fbbc5906c3787c447111cfa3",
+        ],
+      ],
+      [100, 1500, 400, ["1f60f49c0dc9e6a3f8b726f8492c3af233eada51"]],
+    ];
+    const anyCanGo: [number, number, number, string[]][] = [
+      [
+        8,
+        300,
+        0,
+        [
+          "b876b3202217f84ed282e99acf126cda242c4bfd",
+          "2ad3026873476b04a034f823862e4c527750fc21",
+          "c7b32fd0f2c92098dff67fbfa4e00898fc53fba4",
+          "5e2592566bcbe845eec31a1ffc9fe303bf70dd66",
+        ],
+      ],
+      [
+        12,
+        300,
+        0,
+        [
+          "2a062a409e30f259463cfbb037e1f8b07a6635cc",
+          "7fba73040e79e3d42c910769d513f0612c4e09c9",
+          "8ead2fa9e9fb1c5314bc47721389f42574b849e0",
+          "a08d017f20adc574708862f34196740040b408c2",
+        ],
+      ],
+      [101, 1500, 400, ["83715563baee4189cf24b43185a248122012df68"]],
+    ];
+
+    test.each(anyStays)("an ANY route stays, from seed %d: %d calls, %d names", (first, calls, names, expected) => {
+      expect(digests(first, calls, names, true, expected.length)).toEqual(expected);
+    });
+
+    test.each(anyCanGo)(
+      "the ANY node can go and a request can have the method *, from seed %d: %d calls, %d names",
+      (first, calls, names, expected) => {
+        expect(digests(first, calls, names, false, expected.length)).toEqual(expected);
+      },
+    );
+
+    // A `sort` line lays the child lists out. Without one, the first request
+    // after a registration does it. Neither changes an answer: a `sort` before
+    // every call of a short sequence, and before one call in 7 of a long
+    // sequence, changes no digest.
+    test("a sort line changes no digest", () => {
+      const withSorts = (script: string, gap: number) =>
+        script
+          .split("\n")
+          .flatMap((line, i) => (i % gap === 0 ? ["sort", line] : [line]))
+          .join("\n");
+      const rows = [...anyStays.map(row => [true, ...row] as const), ...anyCanGo.map(row => [false, ...row] as const)];
+      expect(
+        rows.map(([stays, first, calls, names, expected]) =>
+          expected.map((_, i) => digest(withSorts(sequence(first + i, calls, names, stays), calls > 300 ? 7 : 1))),
+        ),
+      ).toEqual(rows.map(row => row[4]));
+    });
   });
 });

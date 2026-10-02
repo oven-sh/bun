@@ -677,6 +677,13 @@ public:
         }
     }
 
+    /* Sorts the router that domain() selected */
+    void sortRoutes() {
+        if (httpContext) {
+            httpContext->getSocketContextData()->currentRouter->sortRoutes();
+        }
+    }
+
 
     TemplatedApp &&head(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {

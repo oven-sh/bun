@@ -260,7 +260,10 @@ pub(crate) fn get_literal_text(
         | Kind::TemplateTail => {
             // If a NoSubstitutionTemplateLiteral appears to have a substitution in it, the original text had to include a backslash: `not \${a} substitution`.
             let text = a.text(node);
-            let raw_text = a.template_literal_like_data(node).raw_text;
+            let raw_text = a
+                .template_literal_like_data(node)
+                .unwrap_or_default()
+                .raw_text;
             let raw = !raw_text.is_empty() || text.is_empty();
             let text_len = if raw { raw_text.len() } else { text.len() };
             let mut b: Vec<u8> = Vec::with_capacity(3 + text_len);

@@ -1,17 +1,18 @@
 // printer/factory.go: the node factory of an emit context. Its hooks mark every node it makes as synthesized and link an updated or cloned node to its original.
 use crate::ast::{
-    Ast, Def, Factory, Kind, ModifierListId, NodeFlags, NodeId, NodeListId, NodeSink, NodeUpdate,
-    deep_clone_node,
+    Ast, Def, Factory, Kind, ModifierListId, NodeClone, NodeFlags, NodeId, NodeListId, NodeSink,
+    NodeUpdate, deep_clone_node,
 };
 use crate::printer::emitcontext::EmitContext;
 
-pub struct NodeFactory<'c> {
-    a: Ast<'c>,
-    base: Factory<'c>,
+// Two lifetimes: `Ast<'a>` is invariant, so with one the emit context would stay borrowed for as long as the tree lives.
+pub struct NodeFactory<'a, 'c> {
+    a: Ast<'a>,
+    base: Factory<'a>,
     emit_context: &'c mut EmitContext,
 }
 
-pub fn new_node_factory<'c>(a: Ast<'c>, context: &'c mut EmitContext) -> NodeFactory<'c> {
+pub fn new_node_factory<'a, 'c>(a: Ast<'a>, context: &'c mut EmitContext) -> NodeFactory<'a, 'c> {
     NodeFactory {
         a,
         base: Factory::new(a),
@@ -20,7 +21,7 @@ pub fn new_node_factory<'c>(a: Ast<'c>, context: &'c mut EmitContext) -> NodeFac
 }
 
 // ast.NodeFactoryHooks.OnCreate
-impl NodeSink for NodeFactory<'_> {
+impl NodeSink for NodeFactory<'_, '_> {
     fn alloc_node(&mut self, def: Def, kind: Kind, flags: NodeFlags, slots: &[u32]) -> NodeId {
         let node = self.base.alloc_node(def, kind, flags, slots);
         self.emit_context.on_create(self.a, node);
@@ -45,7 +46,7 @@ impl NodeSink for NodeFactory<'_> {
 }
 
 // ast.NodeFactoryHooks.OnUpdate
-impl NodeUpdate for NodeFactory<'_> {
+impl NodeUpdate for NodeFactory<'_, '_> {
     fn update_node(
         &mut self,
         node: NodeId,
@@ -62,7 +63,7 @@ impl NodeUpdate for NodeFactory<'_> {
     }
 }
 
-impl NodeFactory<'_> {
+impl NodeFactory<'_, '_> {
     // Node.Clone: ast.NodeFactoryHooks.OnCreate, then OnClone.
     pub fn clone_node(&mut self, node: NodeId) -> NodeId {
         let clone = self.base.clone_node(node);
@@ -76,5 +77,20 @@ impl NodeFactory<'_> {
     // NodeFactory.DeepCloneNode
     pub fn deep_clone_node(&mut self, node: NodeId) -> NodeId {
         deep_clone_node(self, self.a, node)
+    }
+}
+
+// What ast.DeepCloneNode clones with: a node through the hooks above, a list as the factory without hooks does.
+impl NodeClone for NodeFactory<'_, '_> {
+    fn clone_node(&mut self, node: NodeId) -> NodeId {
+        NodeFactory::clone_node(self, node)
+    }
+
+    fn clone_node_list(&mut self, list: NodeListId) -> NodeListId {
+        self.base.clone_node_list(list)
+    }
+
+    fn clone_modifier_list(&mut self, list: ModifierListId) -> ModifierListId {
+        self.base.clone_modifier_list(list)
     }
 }

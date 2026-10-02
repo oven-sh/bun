@@ -1,12 +1,12 @@
 // printer/printer.go: the emit printer, as far as the type printer of the checker runs it. Source maps are not part of the port: `sourceMapsDisabled` is always true and the source map state has no fields.
 use crate::ast::{
-    Ast, Kind, ModifierListId, NodeId, NodeListId, OperatorPrecedence, SymbolId, TokenFlags,
-    TypePrecedence, get_expression_precedence, get_source_file_of_node, get_type_node_precedence,
-    is_arrow_function, is_binding_pattern, is_decorator, is_expression, is_in_json_file,
-    is_jsdoc_kind, is_keyword_kind, is_member_name, is_modifier, is_numeric_literal,
-    is_optional_chain, is_parse_tree_node, is_punctuation_kind, is_source_file, is_statement,
-    is_string_literal, is_type_node, is_type_parameter_declaration, node_is_synthesized,
-    position_is_synthesized, skip_partially_emitted_expressions,
+    Ast, Kind, ModifierListId, NodeFactory, NodeId, NodeListId, OperatorPrecedence, SymbolId,
+    TokenFlags, TypePrecedence, get_expression_precedence, get_source_file_of_node,
+    get_type_node_precedence, is_arrow_function, is_binding_pattern, is_decorator, is_expression,
+    is_in_json_file, is_jsdoc_kind, is_keyword_kind, is_member_name, is_modifier,
+    is_numeric_literal, is_optional_chain, is_parse_tree_node, is_punctuation_kind, is_source_file,
+    is_statement, is_string_literal, is_type_node, is_type_parameter_declaration,
+    node_is_synthesized, position_is_synthesized, skip_partially_emitted_expressions,
 };
 use crate::core::{ScriptTarget, TextRange, new_text_range};
 use crate::nodebuilder::types::define_flags;
@@ -3031,8 +3031,8 @@ impl<'p> Printer<'p> {
         }
     }
 
-    // `sourceMapGenerator` has no parameter: source maps are not part of the port.
-    pub fn write(
+    // Printer.Write. `sourceMapGenerator` has no parameter: source maps are not part of the port.
+    pub fn write_exported(
         &mut self,
         node: NodeId,
         source_file: NodeId,

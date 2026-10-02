@@ -219,7 +219,6 @@ impl<'a> Transpiler<'a> {
     /// `fs()`/`fs_mut()` reborrow or across a resolver call that itself
     /// dereferences the shared singleton mutably.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn fs_mut<'r>(&self) -> &'r mut Fs::FileSystem {
         // SAFETY: `self.fs` is the non-null process-lifetime singleton (see
         // `fs()`). The unbounded `'r` mirrors the prior open-coded
@@ -248,7 +247,6 @@ impl<'a> Transpiler<'a> {
     /// aliased `*mut Log` (see field comment — same allocation is threaded
     /// into `linker.log` / `resolver.log`).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn log_mut<'r>(&self) -> &'r mut bun_ast::Log {
         // SAFETY: `self.log` is non-null after `init` (set to the
         // caller-provided arena `Log`) and outlives `self`. The unbounded `'r`
@@ -276,7 +274,6 @@ impl<'a> Transpiler<'a> {
     /// hold it across disjoint `&mut self.options` / `&mut self.resolver`
     /// borrows.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn env_mut(&self) -> &'a mut dot_env::Loader {
         // SAFETY: `self.env` is non-null after `init` — set to either the
         // caller-provided loader or the `dot_env::INSTANCE` singleton, both of
@@ -655,37 +652,6 @@ impl<'a> Transpiler<'a> {
     /// `self.options` so the resolver sees the same conditions/target/public_path.
     pub fn sync_resolver_opts(&mut self) {
         self.resolver.opts = resolver_bundle_options_subset(&self.options);
-    }
-
-    /// Print the loaded environment variables to stdout as 2-space-indented
-    /// JSON.
-    #[cold]
-    #[inline(never)]
-    pub fn dump_environment_variables(&self) {
-        use bun_js_printer::{Encoding, write_json_string};
-        // Dump `env.map.*` as 2-space-indented JSON. `bun_dotenv::Map` doesn't
-        // impl `serde::Serialize`, so iterate and emit the object by hand.
-        // Keys and values go through `write_json_string` (the same escaper the
-        // printer uses for metafile/HTML-manifest JSON) so `"` / `\` / control
-        // bytes are escaped as standard JSON requires.
-        bun_core::Output::flush();
-        let env = self.env_mut();
-        let w = bun_core::Output::writer();
-        let _ = w.write_all(b"{\n");
-        let mut first = true;
-        let mut it = env.map.iterator();
-        while let Some(pair) = it.next() {
-            if !first {
-                let _ = w.write_all(b",\n");
-            }
-            first = false;
-            let _ = w.write_all(b"  ");
-            let _ = write_json_string::<_, { Encoding::Utf8 }>(&**pair.key_ptr, w);
-            let _ = w.write_all(b": ");
-            let _ = write_json_string::<_, { Encoding::Utf8 }>(&*pair.value_ptr.value, w);
-        }
-        let _ = w.write_all(b"\n}\n");
-        bun_core::Output::flush();
     }
 }
 
@@ -1594,6 +1560,7 @@ impl<'a> Transpiler<'a> {
                     warn_about_unbundled_modules: !target.is_bun(),
                     allow_unresolved: &p_opts::AllowUnresolved::DEFAULT,
                     module_type: to_parser_module_type(this_parse.module_type),
+                    jsc_builtin_syntax: false,
                     output_format: p_opts::Format::Esm,
                     transform_only: self.options.transform_only,
                     import_meta_main_value: None,

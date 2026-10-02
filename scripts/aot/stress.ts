@@ -24,7 +24,16 @@
 //                                     bug that only shows there because more is inferred about a program that is closed
 //     REAL                            a bug
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statfsSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statfsSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -129,7 +138,9 @@ async function build(batch: string[], kind: Kind, directory: string) {
   writeFileSync(
     main,
     `import ${JSON.stringify(join(import.meta.dir, "stress-prelude.js"))};\nswitch (process.argv[2]) {\n` +
-      batch.map(test => `case ${JSON.stringify(test)}: require(${JSON.stringify(join(tests, test))}); break;\n`).join("") +
+      batch
+        .map(test => `case ${JSON.stringify(test)}: require(${JSON.stringify(join(tests, test))}); break;\n`)
+        .join("") +
       `default: throw new Error("no such test");\n}\n`,
   );
   const executable = join(directory, "executable");
@@ -158,7 +169,11 @@ async function build(batch: string[], kind: Kind, directory: string) {
   return { executable };
 }
 
-async function buildable(batch: string[], kind: Kind, directory: string): Promise<{ executable: string; batch: string[] }[]> {
+async function buildable(
+  batch: string[],
+  kind: Kind,
+  directory: string,
+): Promise<{ executable: string; batch: string[] }[]> {
   if (!batch.length) return [];
   const { executable, why } = await build(batch, kind, directory);
   if (executable) return [{ executable, batch }];
@@ -198,7 +213,11 @@ async function runBatch(number: number, batch: string[]) {
           if (outcome.code === 0 && sameOutput) record(test, `same-${kind}`);
           else {
             differing.add(test);
-            record(test, `DIFFERS-${kind}`, `exit=${outcome.code} stdout ${sameOutput ? "same" : "differs"} | ${outcome.stderr.slice(-900)}`);
+            record(
+              test,
+              `DIFFERS-${kind}`,
+              `exit=${outcome.code} stdout ${sameOutput ? "same" : "differs"} | ${outcome.stderr.slice(-900)}`,
+            );
           }
         }
         rmSync(executable);
@@ -214,7 +233,8 @@ async function runBatch(number: number, batch: string[]) {
         return outcome;
       };
       const expected = await alone("reference");
-      const isSame = (outcome?: Outcome) => !!outcome && !!expected && outcome.code === 0 && outcome.stdout === expected.stdout;
+      const isSame = (outcome?: Outcome) =>
+        !!outcome && !!expected && outcome.code === 0 && outcome.stdout === expected.stdout;
       const compiled = await alone("aot");
       if (isSame(compiled)) {
         record(test, "only-in-a-batch");
@@ -226,7 +246,11 @@ async function runBatch(number: number, batch: string[]) {
         continue;
       }
       const outcome = await alone("with-text");
-      record(test, isSame(outcome) ? "only-without-text" : "REAL", `exit=${outcome?.code} | ${outcome?.stderr.slice(-600)}`);
+      record(
+        test,
+        isSame(outcome) ? "only-without-text" : "REAL",
+        `exit=${outcome?.code} | ${outcome?.stderr.slice(-600)}`,
+      );
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -278,4 +302,8 @@ for (const [test, verdict] of verdicts) {
   if (verdict === "REAL" || verdict === "CRASH" || verdict === "only-without-text" || verdict.startsWith("BUILD-CRASH"))
     console.log(`${verdict}\t${test}`);
 }
-process.exitCode = Object.keys(counts).some(verdict => verdict === "REAL" || verdict === "CRASH" || verdict.startsWith("BUILD-CRASH")) ? 1 : 0;
+process.exitCode = Object.keys(counts).some(
+  verdict => verdict === "REAL" || verdict === "CRASH" || verdict.startsWith("BUILD-CRASH"),
+)
+  ? 1
+  : 0;

@@ -30,6 +30,10 @@
 #if OS(LINUX)
 #include <link.h>
 #endif
+#if OS(DARWIN)
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 #if OS(DARWIN) || OS(LINUX)
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -531,7 +535,7 @@ extern "C" void Bun__StaticHeap__build(const uint8_t* strings, size_t stringsSiz
     append(ctx, image.span().data(), image.size());
 }
 
-static bool s_imageIsAtItsAddress;
+static bool s_tablesOfImageAreAtTheirAddress;
 
 static int openExecutable()
 {
@@ -590,14 +594,13 @@ extern "C" void Bun__StaticHeap__map(const uint8_t* bytes, size_t length, int fi
     int fd = isInExecutable ? openExecutable() : fileDescriptor;
     if (fd < 0)
         return failed("cannot open the executable");
-    // The static heap refers to the code, and to the image's metadata about the code, by address.
+    // The static heap refers to the image's metadata about the code by address. (Not to the code: Bun__AOT__registerImage.)
     using Region = bmalloc::StaticRegion;
     auto codeRange = JSC::aotImageCodeRange({ bytes, length });
     off_t offsetOfCodeImage = *fileOffset - static_cast<off_t>(*sizeOfCodeImage);
     bool ok = codeRange && !(codeRange->first % WTF::pageSize())
-        && Region::map(Region::Arena::Image, Region::Access::Read, fd, offsetOfCodeImage, codeRange->first)
-        && Region::map(Region::Arena::Image, Region::Access::ReadAndExecute, fd, offsetOfCodeImage + codeRange->first, codeRange->second, codeRange->first);
-    s_imageIsAtItsAddress = ok;
+        && Region::map(Region::Arena::Image, Region::Access::Read, fd, offsetOfCodeImage, codeRange->first);
+    s_tablesOfImageAreAtTheirAddress = ok;
     ok = ok && JSC::StaticHeap::map(image, fd, *fileOffset);
     if (isInExecutable)
         close(fd);
@@ -645,12 +648,11 @@ extern "C" void Bun__AOT__registerImage(const uint8_t* bytes, size_t length, int
         return failed("not an image");
     auto [codeOffset, codeSize] = *range;
     void* code = nullptr;
-    if (s_imageIsAtItsAddress) {
-        // Bun__StaticHeap__map has mapped all of it.
-        bytes = reinterpret_cast<const uint8_t*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Image));
-        image = { bytes, length };
-        code = const_cast<uint8_t*>(bytes) + codeOffset;
-    } else if (codeSize) {
+    // Bun__StaticHeap__map has mapped what comes before the code.
+    if (s_tablesOfImageAreAtTheirAddress)
+        image = { reinterpret_cast<const uint8_t*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Image)), length };
+    // The code does not depend on where it is, so that is up to the system.
+    if (codeSize) {
         bool isInExecutable = fileDescriptor < 0;
         auto fileOffset = isInExecutable ? offsetInExecutableFile(bytes + codeOffset) : std::optional<off_t>(offsetInFile + static_cast<off_t>(codeOffset));
         if (!fileOffset)
@@ -661,7 +663,7 @@ extern "C" void Bun__AOT__registerImage(const uint8_t* bytes, size_t length, int
         if (fd < 0)
             return failed("cannot open the executable");
         code = mmap(nullptr, codeSize, PROT_READ | PROT_EXEC, MAP_PRIVATE, fd, *fileOffset);
-        // See bmalloc::StaticRegion::map.
+        // Darwin refuses an executable mapping of a file that is not signed (EPERM), but allows a mapping of one to be made executable.
         if (code == MAP_FAILED && errno == EPERM) {
             code = mmap(nullptr, codeSize, PROT_READ, MAP_PRIVATE, fd, *fileOffset);
             if (code != MAP_FAILED && mprotect(code, codeSize, PROT_READ | PROT_EXEC)) {
@@ -673,6 +675,10 @@ extern "C" void Bun__AOT__registerImage(const uint8_t* bytes, size_t length, int
             close(fd);
         if (code == MAP_FAILED)
             return failed(strerror(errno));
+#if OS(DARWIN)
+        // It cannot be made writable.
+        mach_vm_protect(mach_task_self(), reinterpret_cast<mach_vm_address_t>(code), codeSize, true, VM_PROT_READ | VM_PROT_EXECUTE);
+#endif
     }
     if (!JSC::registerAOTImage(image, code)) {
         if (code)

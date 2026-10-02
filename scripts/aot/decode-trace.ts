@@ -16,7 +16,9 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
 });
 if (positionals.length !== 1) {
-  console.error("usage: bun scripts/aot/decode-trace.ts <file or -> [--exe <unstripped bun>] [--map <map of the image>]");
+  console.error(
+    "usage: bun scripts/aot/decode-trace.ts <file or -> [--exe <unstripped bun>] [--map <map of the image>]",
+  );
   process.exit(1);
 }
 

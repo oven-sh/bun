@@ -19,15 +19,23 @@ import { readSamples } from "./lr-samples.ts";
 import { hex, ImageMap, nameOf } from "./map.ts";
 
 const { values, positionals } = parseArgs({
-  options: { map: { type: "string" }, offset: { type: "string" }, size: { type: "string" }, samples: { type: "string" } },
+  options: {
+    map: { type: "string" },
+    offset: { type: "string" },
+    size: { type: "string" },
+    samples: { type: "string" },
+    "code-at": { type: "string" },
+  },
   allowPositionals: true,
 });
 const [executable, ...wanted] = positionals;
 if (!executable || (!values.map && !(values.offset && values.size))) {
-  console.error("usage: bun scripts/aot/disassemble.ts <executable> (--map <map> [name or index...] | --offset <n> --size <n>)");
+  console.error(
+    "usage: bun scripts/aot/disassemble.ts <executable> (--map <map> [name or index...] | --offset <n> --size <n>)",
+  );
   process.exit(1);
 }
-const map = values.map ? new ImageMap(values.map) : undefined;
+const map = values.map ? new ImageMap(values.map, values["code-at"]) : undefined;
 const samples = values.samples && map ? readSamples(values.samples, map) : undefined;
 
 if (!wanted.length && !values.offset) {
@@ -67,8 +75,18 @@ function disassemble(offset: number, size: number) {
   writeFileSync(join(directory, "code.bin"), file.subarray(code + offset, code + offset + size));
   // A Mach-O object, on any host: in an ELF object what .incbin brings in is marked as data, and is not disassembled.
   writeFileSync(join(directory, "code.s"), `.text\n.incbin "${join(directory, "code.bin")}"\n`);
-  run(process.env.CC ?? "clang", ["-c", "--target=arm64-apple-macos", join(directory, "code.s"), "-o", join(directory, "code.o")]);
-  const listing = run(process.env.LLVM_OBJDUMP ?? "llvm-objdump", ["-d", "--no-show-raw-insn", join(directory, "code.o")]);
+  run(process.env.CC ?? "clang", [
+    "-c",
+    "--target=arm64-apple-macos",
+    join(directory, "code.s"),
+    "-o",
+    join(directory, "code.o"),
+  ]);
+  const listing = run(process.env.LLVM_OBJDUMP ?? "llvm-objdump", [
+    "-d",
+    "--no-show-raw-insn",
+    join(directory, "code.o"),
+  ]);
   for (const line of listing.split("\n")) {
     const [, address, instruction] = line.match(/^\s*([0-9a-f]+):\s*(.*)$/) ?? [];
     if (!address) continue;

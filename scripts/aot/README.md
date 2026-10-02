@@ -12,7 +12,7 @@ BUN_AOT_OPTIONS=aotMapFilePath=app.map bun build --compile --compile-aot app.ts 
 | --- | --- |
 | It crashed. Where? | `decode-trace.ts crash.txt --exe bun-profile --map app.map` decodes the trace string that the crash handler prints, locally. |
 | What code did this function get? | `disassemble.ts app --map app.map <name>`. Branches say which function or stub they go to. |
-| Where does the time go? | `sample <pid> 5 -file app.sample`, then `sample-report.ts app.sample --map app.map`: by compiled function and by stub. |
+| Where does the time go? | `sample <pid> 5 -file app.sample`, then `sample-report.ts app.sample --map app.map --code-at <address>`: by compiled function and by stub. The code is mapped at another address in every run; `BUN_AOT_VERBOSE=1` prints it at start ("of code at 0x..."). |
 | Which call sites are the stubs called from? | `lr-probe.c` and `lr-report.ts`. A stub pushes no frame, so `sample` gives its time to the wrong caller. `disassemble.ts --samples` puts the samples next to the instructions. |
 | Does it still do what the interpreter does? | `stress.ts` runs WebKit's `JSTests/stress` through `--compile-aot`, each test against itself run from bytecode. Run it after adding a lowering. |
 | How do I keep a runaway compile from taking the machine down? | `capped.ts <GB> <seconds> <command...>` |

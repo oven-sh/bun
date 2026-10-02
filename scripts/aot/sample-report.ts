@@ -2,7 +2,9 @@
 // Where an executable that was compiled ahead of time spends its time, from the output of macOS's `sample`.
 //
 //   sample <pid> <seconds> -file <file>
-//   bun scripts/aot/sample-report.ts <file> --map <map of the image> [--top 30] [--thread <substring of its name>]
+//   bun scripts/aot/sample-report.ts <file> --map <map of the image> --code-at <address> [--top 30] [--thread <substring of its name>]
+//
+// The address is where that process has the code, which it prints when it starts with BUN_AOT_VERBOSE=1 ("of code at 0x...").
 //
 // `sample` cannot name anything in the image. This gives each sample in it to a compiled function, a stub or the code
 // of a regular expression. See map.ts for the map.
@@ -13,18 +15,21 @@ import { parseArgs } from "node:util";
 import { type CompiledFunction, ImageMap, nameOf, type Place } from "./map.ts";
 
 const { values: args, positionals } = parseArgs({
-  options: { map: { type: "string" }, top: { type: "string", default: "30" }, thread: { type: "string" } },
+  options: {
+    map: { type: "string" },
+    "code-at": { type: "string" },
+    top: { type: "string", default: "30" },
+    thread: { type: "string" },
+  },
   allowPositionals: true,
 });
-if (positionals.length !== 1 || !args.map) {
-  console.error("usage: bun scripts/aot/sample-report.ts <output of sample> --map <map of the image>");
+if (positionals.length !== 1 || !args.map || !args["code-at"]) {
+  console.error(
+    "usage: bun scripts/aot/sample-report.ts <output of sample> --map <map of the image> --code-at <address>",
+  );
   process.exit(1);
 }
-const map = new ImageMap(args.map);
-if (!map.addressOfCode) {
-  console.error(`${args.map} does not say where the code is`);
-  process.exit(1);
-}
+const map = new ImageMap(args.map, args["code-at"]);
 
 function placeOf(frame: string): Place | undefined {
   const address = frame.match(/\[(0x[0-9a-f]+)\]/)?.[1];
@@ -93,7 +98,8 @@ console.log(`${inImage} samples in the image, ${totals.native} in the runtime un
 console.log(`${count(totals.function)} ${percent(totals.function, inImage)}  compiled functions`);
 console.log(`${count(totals.stub)} ${percent(totals.stub, inImage)}  stubs`);
 console.log(`${count(totals.regexp)} ${percent(totals.regexp, inImage)}  regular expressions`);
-if (totals.nothing) console.log(`${count(totals.nothing)} ${percent(totals.nothing, inImage)}  nothing that the map knows`);
+if (totals.nothing)
+  console.log(`${count(totals.nothing)} ${percent(totals.nothing, inImage)}  nothing that the map knows`);
 
 console.log(`\nstubs, by their own time`);
 for (const [name, samples] of [...byStub].sort((a, b) => b[1] - a[1]).slice(0, +args.top))

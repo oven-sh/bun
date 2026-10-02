@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, isArm64, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -438,32 +438,35 @@ test.skipIf(!supported)("--compile-aot requires --format=esm", async () => {
 
 // Compiled code is for one instance of a program, which is the host's, whoever loads a module first. Without bytecode
 // there is nothing else to run, so this tells: a graph is refused, and the host is not.
-test.skipIf(!supported)("a Bun.ModuleGraph that loads a module first does not take the host's compiled code", async () => {
-  using dir = tempDir("compile-aot-module-graph", {
-    "entry.ts": `
+test.skipIf(!supported)(
+  "a Bun.ModuleGraph that loads a module first does not take the host's compiled code",
+  async () => {
+    using dir = tempDir("compile-aot-module-graph", {
+      "entry.ts": `
       const url = new URL("./app.js", import.meta.url).href;
       const inGraph = await new Bun.ModuleGraph().import(url).then(() => "loaded", e => e.name + ": " + e.message.split(",")[0]);
       console.log(inGraph);
       console.log((await import(url)).count());
     `,
-    "app.ts": `let n = 0; export function count() { return ++n; }`,
-  });
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", "entry.ts", "app.ts", "--outfile", "out"],
-    env: { ...bunEnv, BUN_COMPILE_OMIT_SOURCE_TEXT: "1", BUN_COMPILE_OMIT_BYTECODE: "1" },
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
-  await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "SyntaxError: This code was compiled ahead of time\n1\n",
-    stderr: "",
-    exitCode: 0,
-  });
-});
+      "app.ts": `let n = 0; export function count() { return ++n; }`,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", "entry.ts", "app.ts", "--outfile", "out"],
+      env: { ...bunEnv, BUN_COMPILE_OMIT_SOURCE_TEXT: "1", BUN_COMPILE_OMIT_BYTECODE: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+    await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "SyntaxError: This code was compiled ahead of time\n1\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 // Compiled code calls some builtins without their function objects ever having been made, and the source provider of a
 // builtin used to be made with its function object. Printing the error looked at the source of every frame.
@@ -494,6 +497,46 @@ test.skipIf(!supported).each(["forEach", "map"])(
     });
   },
 );
+
+// The data of an executable is mapped where it was built for. Its code used to be too, which left executable memory at an
+// address that anyone could know.
+test.skipIf(!supported).each([
+  ["with bytecode", {}],
+  ["without bytecode", { BUN_COMPILE_OMIT_SOURCE_TEXT: "1", BUN_COMPILE_OMIT_BYTECODE: "1" }],
+])("the code of an executable %s is not at a fixed address", async (_, env) => {
+  using dir = tempDir("compile-aot-address", {
+    "entry.ts": `function add(a: number, b: number) { return a + b; } console.log(new (function Made(this: any) { this.sum = add(1, 2); } as any)().sum);`,
+  });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
+    env: { ...bunEnv, ...env },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+  await using proc = Bun.spawn({
+    cmd: [join(String(dir), "out")],
+    env: { ...bunEnv, BUN_AOT_VERBOSE: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const address = Number(stderr.match(/of code at (0x[0-9a-f]+)/)?.[1]);
+  // bmalloc::StaticRegion: eight arenas of 4 GB.
+  const start = isMacOS ? 0x200000000000 : 0x2000000000;
+  expect({
+    stdout,
+    usesStaticHeap: stderr.includes("[aot] static heap: "),
+    isInRegion: !(address < start || address >= start + 8 * 2 ** 32),
+    exitCode,
+  }).toEqual({
+    stdout: "3\n",
+    usesStaticHeap: true,
+    isInRegion: false,
+    exitCode: 0,
+  });
+});
 
 // The compiler must not depend on the JIT of the process that runs the build. It used to link regular expressions in
 // JIT memory. Without a JIT the executable silently had no code for them, and matched them with the interpreter, ten
@@ -665,7 +708,9 @@ test.skipIf(!supported)("a crash report locates the frames of compiled code", as
     .filter(line => line.startsWith("F\t"))
     .map(line => line.split("\t").slice(2, 4).map(Number));
   expect(functions).not.toBeEmpty();
-  expect(offsets.filter(offset => functions.some(([start, size]) => offset >= start && offset < start + size))).not.toBeEmpty();
+  expect(
+    offsets.filter(offset => functions.some(([start, size]) => offset >= start && offset < start + size)),
+  ).not.toBeEmpty();
   expect(exitCode).not.toBe(0);
 });
 

@@ -38,15 +38,16 @@ function lastAtOrBefore<T extends { offset: number }>(sorted: T[], offset: numbe
 export class ImageMap {
   /** By offset. */
   functions: CompiledFunction[] = [];
-  /** The address of the code in an executable. */
-  addressOfCode = 0;
+  /** Where the code is mapped in the process that the addresses are from. It differs from run to run: `BUN_AOT_VERBOSE=1` prints it. */
+  addressOfCode: number;
   sizeOfCode = 0;
   #stubs: { offset: number; name: string }[] = [];
   #copiesOfStubs: number[] = [];
   #sizeOfStubs = 0;
   #startOfRegExps = Infinity;
 
-  constructor(path: string) {
+  constructor(path: string, addressOfCode?: string) {
+    this.addressOfCode = Number(addressOfCode ?? 0);
     for (const line of readFileSync(path, "utf8").split("\n")) {
       const [what, ...fields] = line.split("\t");
       if (what === "F") {
@@ -55,7 +56,7 @@ export class ImageMap {
       } else if (what === "T") this.#stubs.push({ offset: +fields[0], name: fields[1] });
       else if (what === "C") this.#copiesOfStubs.push(+fields[0]);
       else if (what === "R") this.#startOfRegExps = +fields[0];
-      else if (what === "B") [this.addressOfCode, this.sizeOfCode] = fields.map(Number);
+      else if (what === "B") this.sizeOfCode = +fields[0];
     }
     this.functions.sort((a, b) => a.offset - b.offset);
     this.#stubs.sort((a, b) => a.offset - b.offset);
@@ -72,7 +73,8 @@ export class ImageMap {
     }
     if (offset >= this.#startOfRegExps && offset < this.sizeOfCode) return { in: "regexp" };
     const found = lastAtOrBefore(this.functions, offset);
-    if (found && offset < found.offset + found.size) return { in: "function", function: found, offset: offset - found.offset };
+    if (found && offset < found.offset + found.size)
+      return { in: "function", function: found, offset: offset - found.offset };
     return { in: "nothing" };
   }
 

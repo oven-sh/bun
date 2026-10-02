@@ -14,8 +14,16 @@ export type Samples = {
 };
 
 export function readSamples(path: string, map: ImageMap): Samples {
-  if (!map.addressOfCode) throw new Error("the map does not say where the code is");
-  const samples: Samples = { total: 0, own: new Map(), inStubs: new Map(), inStubsFromElsewhere: 0, inRegExps: 0, outside: 0 };
+  if (!map.addressOfCode)
+    throw new Error("--code-at <address>: where the process had the code (BUN_AOT_VERBOSE=1 prints it)");
+  const samples: Samples = {
+    total: 0,
+    own: new Map(),
+    inStubs: new Map(),
+    inStubsFromElsewhere: 0,
+    inRegExps: 0,
+    outside: 0,
+  };
   const offsetOf = (address: string) => {
     const offset = parseInt(address, 16) - map.addressOfCode;
     return offset >= 0 && offset < map.sizeOfCode ? offset : undefined;

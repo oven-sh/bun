@@ -1125,15 +1125,22 @@ describe.concurrent("onResolve", () => {
     "a.cjs": `exports.from = "a.cjs";`,
     "b.cjs": `exports.from = "b.cjs";`,
     "c.cjs": `exports.from = "c.cjs";`,
+    "a.js": `console.log("a.js");`,
+    "b.js": `console.log("b.js");`,
+    "c.js": `console.log("c.js");`,
+    "a.test.js": `console.log("a.test.js"); require("bun:test").test("passes", () => {});`,
+    "b.test.js": `console.log("b.test.js"); require("bun:test").test("passes", () => {});`,
+    "c.test.js": `console.log("c.test.js"); require("bun:test").test("passes", () => {});`,
     "plugin.ts": `
-      import { basename, extname, join } from "node:path";
+      import { basename, join } from "node:path";
       const next = { a: "b", b: "c", c: "d" };
       Bun.plugin({
         name: "redirect",
         setup(build) {
-          build.onResolve({ filter: /[\\\\/][abc]\\.[cm]js$/ }, ({ path }) => {
-            console.log("onResolve", basename(path));
-            return { path: join(import.meta.dir, next[basename(path, extname(path))] + extname(path)) };
+          build.onResolve({ filter: /[\\\\/][abc](\\.test)?\\.[cm]?js$/ }, ({ path }) => {
+            const name = basename(path);
+            console.log("onResolve", name);
+            return { path: join(import.meta.dir, next[name[0]] + name.slice(1)) };
           });
           build.onResolve({ filter: /\\.virtual$/ }, ({ path }) => {
             console.log("onResolve", basename(path));
@@ -1150,10 +1157,10 @@ describe.concurrent("onResolve", () => {
       });
     `,
   };
-  async function run(name: string, source: string) {
+  async function run(name: string, source: string, args = ["--preload", "./plugin.ts", name]) {
     using dir = tempDir("plugin-onresolve-once", { ...files, [name]: source });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--preload", "./plugin.ts", name],
+      cmd: [bunExe(), ...args],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -1186,6 +1193,17 @@ describe.concurrent("onResolve", () => {
     ],
   ])("is asked once by %s", async (_, name, source, asked, loaded) => {
     expect(await run(name, source)).toEqual({ stdout: ["onResolve " + asked, loaded], stderr: "", exitCode: 0 });
+  });
+
+  // What Bun loads itself has no importer.
+  it.each([
+    ["a later preload", "", ["--preload", "./plugin.ts", "--preload", "./a.js", "entry.cjs"], "a.js", "b.js"],
+    ["Module.runMain()", `require("node:module").runMain("./a.js");`, undefined, "a.js", "b.js"],
+    ["a test file", "", ["test", "--preload", "./plugin.ts", "./a.test.js"], "a.test.js", "b.test.js"],
+  ])("is asked once about %s", async (_, source, args, asked, loaded) => {
+    const { stdout, exitCode } = await run("entry.cjs", source, args);
+    // (bun test prints its version first.)
+    expect({ stdout: stdout.slice(-2), exitCode }).toEqual({ stdout: ["onResolve " + asked, loaded], exitCode: 0 });
   });
 
   it.each([

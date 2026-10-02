@@ -3808,9 +3808,12 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto name = makeAtomString(arg1->toWTFString());
+    // loadAndEvaluateModule() takes a key.
+    auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, arg1->toWTFString()), JSC::Identifier(), nullptr, /* useImportMap */ true);
+    if (scope.exception()) [[unlikely]]
+        return nullptr;
 
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, name, nullptr, nullptr);
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
     EXCEPTION_ASSERT(!!promise == !scope.exception());
     return promise;
 }

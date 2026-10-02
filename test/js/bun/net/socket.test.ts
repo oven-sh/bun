@@ -3985,6 +3985,41 @@ Reo=
       }
     });
 
+    // node:tls sends its ClientHello before such a FIN. Bun.connect does not.
+    it("shutdown() in open sends the FIN with no ClientHello before it", async () => {
+      const received = Promise.withResolvers<number>();
+      const peer = net.createServer({ allowHalfOpen: true }, socket => {
+        let bytes = 0;
+        socket.on("error", () => {});
+        socket.on("data", chunk => (bytes += chunk.length));
+        socket.on("end", () => received.resolve(bytes));
+      });
+      await once(peer.listen(0, "127.0.0.1"), "listening");
+      try {
+        using _client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: (peer.address() as net.AddressInfo).port,
+          tls: { rejectUnauthorized: false },
+          socket: {
+            open(socket) {
+              socket.shutdown();
+            },
+            // Without this handler `open` runs when the handshake reports, not when the socket opens.
+            handshake() {},
+            data() {},
+            close() {},
+            error() {},
+            connectError(_socket, err) {
+              received.reject(err);
+            },
+          },
+        });
+        expect(await received.promise).toBe(0);
+      } finally {
+        peer.close();
+      }
+    });
+
     // The SSL has no certificate to judge when the peer never sent one. That
     // must not replace the reason the handshake reported.
     it("getAuthorizationError() keeps the reason a handshake failed", async () => {

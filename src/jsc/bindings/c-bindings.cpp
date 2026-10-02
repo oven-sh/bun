@@ -686,6 +686,26 @@ extern "C" int __cxa_atexit(void (*)(void*), void*, void*);
 extern "C" struct mach_header __dso_handle;
 #endif
 
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
+// isatty() fails with EBADF on a closed fd and on an open O_PATH descriptor. Only a closed fd
+// becomes /dev/null. An open one stays what the parent passed.
+static NEVER_INLINE void openDevNullIfStdioIsClosed(int fd)
+{
+    if (fcntl(fd, F_GETFD) != -1 || errno != EBADF)
+        return;
+
+    bun_is_stdio_null[fd] = 1;
+    int devNullFd;
+    do {
+        devNullFd = open("/dev/null", O_RDWR | O_CLOEXEC, 0);
+    } while (devNullFd < 0 && errno == EINTR);
+
+    // Every lower fd is open, so open() returns this one.
+    if (devNullFd != fd) [[unlikely]]
+        abort();
+}
+#endif
+
 extern "C" void bun_initialize_process()
 {
     // Disable printf() buffering. We buffer it ourselves.
@@ -704,40 +724,13 @@ extern "C" void bun_initialize_process()
 
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 
-    int devNullFd_ = -1;
     bool anyTTYs = false;
-
-    const auto setDevNullFd = [&](int target_fd) -> void {
-        bun_is_stdio_null[target_fd] = 1;
-        if (devNullFd_ == -1) {
-            do {
-                devNullFd_ = open("/dev/null", O_RDWR | O_CLOEXEC, 0);
-            } while (devNullFd_ < 0 and errno == EINTR);
-        };
-
-        if (devNullFd_ == target_fd) {
-            devNullFd_ = -1;
-            return;
-        }
-
-        ASSERT(devNullFd_ != -1);
-        int err;
-        do {
-            err = dup2(devNullFd_, target_fd);
-        } while (err < 0 && errno == EINTR);
-
-        // dup2 returns target_fd on success, which is nonzero for 1 and 2.
-        if (err < 0) [[unlikely]] {
-            abort();
-        }
-    };
 
     for (int fd = 0; fd < 3; fd++) {
         int result = isatty(fd);
         if (result == 0) {
             if (errno == EBADF) [[unlikely]] {
-                // the fd is invalid, let's make sure it's always valid
-                setDevNullFd(fd);
+                openDevNullIfStdioIsClosed(fd);
             }
         } else {
             bun_stdio_tty[fd] = 1;
@@ -751,11 +744,6 @@ extern "C" void bun_initialize_process()
                 anyTTYs = true;
             }
         }
-    }
-
-    ASSERT(devNullFd_ == -1 || devNullFd_ > 2);
-    if (devNullFd_ > 2) {
-        close(devNullFd_);
     }
 
     // Restore TTY state on exit

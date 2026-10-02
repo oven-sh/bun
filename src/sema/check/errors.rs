@@ -168,6 +168,7 @@ impl Checker<'_> {
         pass!(check_calls);
         pass!(check_unused);
         pass!(check_grammar);
+        pass!(check_grammar_modifiers);
         pass!(check_duplicates);
         pass!(check_heritage);
         pass!(check_jsx);
@@ -5404,12 +5405,13 @@ impl Checker<'_> {
 
     /// Where `e` starts as it is written.
     pub(super) fn start_of(&self, file: FileId, e: ExprId) -> u32 {
-        start_from(self.hir(file), e, false)
+        let hir = self.hir(file);
+        open_parenthesis(hir, e).unwrap_or_else(|| start_inside_parentheses(hir, e))
     }
 
     /// Where `e` starts, not counting parentheses around the whole of it.
     pub(super) fn start_inside_parentheses(&self, file: FileId, e: ExprId) -> u32 {
-        start_from(self.hir(file), e, true)
+        start_inside_parentheses(self.hir(file), e)
     }
 }
 
@@ -5445,39 +5447,9 @@ impl Files {
                 StmtKind::ExportStar { star_pos, .. } => star_pos,
                 _ => hir[statement].start,
             },
-            Decl::ModuleExports(e) | Decl::ExportsProperty(e) => start_from(hir, e, true),
+            Decl::ModuleExports(e) | Decl::ExportsProperty(e) => start_inside_parentheses(hir, e),
             Decl::File | Decl::CommonJsVariable => 0,
         }
-    }
-}
-
-fn start_from(hir: &hir::File, mut e: ExprId, mut inside: bool) -> u32 {
-    loop {
-        if !std::mem::take(&mut inside)
-            && let Some(open) = open_parenthesis(hir, e)
-        {
-            return open;
-        }
-        // It starts where what it starts with starts.
-        e = match hir[e].kind {
-            ExprKind::Binary { left, .. } => left,
-            ExprKind::Assign { target, .. } => target,
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-            ExprKind::Call(c) | ExprKind::TaggedTemplate(c) => hir[c].callee,
-            ExprKind::Cond { test, .. } => test,
-            // `x as T`. `<T>x` and `<const>x` are put at the `<` they start with.
-            ExprKind::As { expr, ty } if hir[ty].pos > hir[expr].pos => expr,
-            ExprKind::AsConst(x) if hir[e].pos < hir[x].pos => return hir[e].pos,
-            ExprKind::NonNull(x)
-            | ExprKind::AsConst(x)
-            | ExprKind::Satisfies { expr: x, .. }
-            | ExprKind::Instantiation { expr: x, .. } => x,
-            ExprKind::Unary {
-                op: UnOp::PostInc | UnOp::PostDec,
-                operand,
-            } => operand,
-            _ => return hir[e].pos,
-        };
     }
 }
 

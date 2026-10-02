@@ -3517,8 +3517,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parameter.loc = self.lexer.loc();
             self.lexer.next()?;
         } else {
-            // The name is missing where the token before ends, and the token stays.
+            // The name is missing where the token before ends, and the token stays. Without a modifier that is all there is.
             parameter.loc = self.lexer.full_start();
+            if parameter.start == self.lexer.loc() {
+                parameter.start = parameter.loc;
+            }
             self.lexer.expect(T::TIdentifier)?;
         }
 

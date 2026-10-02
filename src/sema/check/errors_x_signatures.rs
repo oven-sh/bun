@@ -1617,12 +1617,13 @@ impl Checker<'_> {
                 if let Ok(found) = defaults.binary_search_by_key(&at, |d| d.0) {
                     let (_, list, index) = defaults[found];
                     let symbol = *symbol.get_or_insert_with(|| {
-                        bound.resolve(scope, hir.id_at(name, 0), SymFlags::TYPE)
+                        self.files()
+                            .resolve_name(file, scope, hir.id_at(name, 0), SymFlags::TYPE)
                     });
                     if symbol.is_some_and(|symbol| {
-                        list.iter()
-                            .skip(index)
-                            .any(|p| bound.type_param_symbol[p.idx()] == symbol)
+                        list.iter().skip(index).any(|p| {
+                            self.files().sym(file, bound.type_param_symbol[p.idx()]) == symbol
+                        })
                     }) {
                         out.push(Diagnostic {
                             start: hir.types[t].pos,

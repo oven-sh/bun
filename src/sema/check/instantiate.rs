@@ -321,6 +321,7 @@ impl<'p> Checker<'p> {
                 new.symbol_declared_at = shape.symbol_declared_at;
                 // `instantiateAnonymousType`
                 new.instantiation_expression = shape.instantiation_expression;
+                new.is_js_literal = shape.is_js_literal;
                 let instantiated = self.synth(new);
                 if self.is_generic_single_signature(shape) {
                     let holds = self.cycles == cycles_before;
@@ -388,7 +389,7 @@ impl<'p> Checker<'p> {
             }
             TypeData::Keyof(t) => {
                 let t = self.instantiate(*t, mapper);
-                self.keyof_with_origin(t)
+                self.keyof(t)
             }
             &TypeData::Substitution { base, constraint } => {
                 // A declared type has no mapper in tsgo. Here it has one of identity pairs.
@@ -539,19 +540,11 @@ impl<'p> Checker<'p> {
                 }
                 None => {
                     // `isArrayLikeType`, `getIndexTypeOfType(t, numberType)`. What is not like an array is an error.
-                    let mut found = None;
-                    if self.is_array_like(elem) {
-                        let apparent = self.apparent_type(elem);
-                        if let Some(members) = self.members(apparent)
-                            && let Some(info) = members
-                                .shape()
-                                .index
-                                .iter()
-                                .find(|info| info.key == TypeId::NUMBER)
-                        {
-                            found = Some(self.instantiate(info.value, members.mapper));
-                        }
-                    }
+                    let found = if self.is_array_like(elem) {
+                        self.number_index_type(elem)
+                    } else {
+                        None
+                    };
                     found.unwrap_or(TypeId::ERROR)
                 }
             };

@@ -74,30 +74,6 @@ impl<'p> Checker<'p> {
         self.keyof_ex(ty, false)
     }
 
-    /// `getIndexType`, where `keyof` is written or a `keyof T` that waited is instantiated. `getLiteralTypeFromProperties` gives the
-    /// union of the keys of a class, an interface or what has an alias the origin `keyof T`, which it is written as.
-    pub(super) fn keyof_with_origin(&mut self, ty: TypeId) -> TypeId {
-        let keys = self.keyof(ty);
-        if !self.is_union(keys) || !self.every_type(keys, |c, key| c.is_unit(key)) {
-            return keys;
-        }
-        let of = self.force(ty);
-        let of = self.reduced(of);
-        let has_origin = match self.data(of) {
-            TypeData::Ref { .. } => true,
-            TypeData::Anon {
-                origin: Origin::TypeLiteral(..),
-                ..
-            } => self.alias_for_display(of).is_some(),
-            _ => false,
-        };
-        if has_origin {
-            self.with_origin(keys, UnionOrigin::Keyof(of))
-        } else {
-            keys
-        }
-    }
-
     /// `getIndexTypeEx`. `no_reducible_check` is `IndexFlagsNoReducibleCheck`.
     pub(super) fn keyof_ex(&mut self, ty: TypeId, no_reducible_check: bool) -> TypeId {
         self.get_index_type_ex(ty, no_reducible_check, false)
@@ -256,7 +232,17 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        self.union(&keys)
+        let keys = self.union(&keys);
+        // `includeOrigin`: `indexFlags == IndexFlagsNone`
+        let has_origin = !no_reducible_check
+            && !no_index_signatures
+            && matches!(self.data(ty), TypeData::Ref { .. } | TypeData::Tuple { .. })
+            || self.alias_of_type(ty).is_some();
+        if has_origin && self.is_union(keys) {
+            self.with_origin(keys, UnionOrigin::Keyof(ty))
+        } else {
+            keys
+        }
     }
 
     /// `isKeyTypeIncluded(key, include)`, with what `getIndexTypeEx` includes under `IndexFlagsNoIndexSignatures`:

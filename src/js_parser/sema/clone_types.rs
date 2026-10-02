@@ -665,6 +665,7 @@ impl Builder<'_> {
             params: self.clone_params(params),
             this_ty: self.clone_type(this_param.ty),
             this_pos: this_param.loc.start as u32,
+            this_name_end: (this_param.loc.start as u32).saturating_add(4),
             ret: self.clone_type(return_type),
             body: FnBody::None,
             anchor: pos(open_paren_loc),
@@ -838,11 +839,13 @@ impl Builder<'_> {
             ..
         } = self.ts[id];
         let errors_before = self.file.early_errors.len();
+        let mut modifier_list = Span::EMPTY;
         if !modifiers.is_empty() {
             let modifiers: smallvec::SmallVec<[(Flags, u32); 4]> = self.ts[modifiers]
                 .iter()
                 .map(|modifier| (flags(modifier.flag), pos(modifier.loc)))
                 .collect();
+            modifier_list = self.add_modifier_list(&modifiers);
             let on = match kind {
                 ts::MemberKind::IndexSignature => Modified::IndexSignature,
                 ts::MemberKind::Getter | ts::MemberKind::Setter => Modified::Accessor,
@@ -893,6 +896,7 @@ impl Builder<'_> {
             },
             key,
             flags: flags(member_flags),
+            modifiers: modifier_list,
             // The type of an index signature is the return type of its signature: one node, not two.
             ty: if kind == ts::MemberKind::IndexSignature {
                 self.file[func].ret

@@ -58,10 +58,12 @@ pub(crate) enum Mark {
     /// From where a statement or a class expression is said to be, to its first token: a decorator or a modifier. From the dot before
     /// the `B` of `namespace A.B`, to `B`.
     DeclarationStart,
+    /// From the first token of a statement, the `{` of a block, the `finally` of its block or the initializer of a `for`, to where
+    /// its last token ends.
+    StatementEnd,
     /// From the `class` keyword, to a member the parser dropped. As many as there are.
     DroppedMember,
-    /// From the `with` keyword, to the token after its statement.
-    WithEnd,
+
     /// From the `(` of a function's parameters, to the token where its `{` was expected: the body is a missing block (`parseBlock`).
     MissingBody,
     /// From a tagged template whose last piece of text is missing or unterminated, to itself (`callIsIncomplete`).
@@ -621,6 +623,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
     pub(crate) fn mark_type_syntax(&mut self, from: bun_ast::Loc, what: Mark, to: bun_ast::Loc) {
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
             syntax.marks.push((from.start, what, to.start));
+        }
+    }
+
+    /// `finishNode`: what is noted from `from` ends where the token before the current one does.
+    #[inline]
+    pub(crate) fn mark_end(&mut self, from: bun_ast::Loc, what: Mark) {
+        if self.keeps_type_syntax() {
+            self.mark_type_syntax(from, what, self.lexer.full_start());
         }
     }
 

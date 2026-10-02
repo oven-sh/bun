@@ -661,7 +661,8 @@ impl Checker<'_> {
             if s.symbol.is_some()
                 && name != known::default
                 && let Some(default) = files.export(files.sym(file, s.symbol), known::default)
-                && files.symbol(default).name == name
+                && bound.export_symbol_of_local(scope, name).is_some()
+                && files.sym(file, bound.export_symbol_of_local(scope, name)) == default
                 && files.flags(default).intersects(meaning)
             {
                 return Some(default);

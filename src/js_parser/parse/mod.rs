@@ -275,7 +275,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     if let Some(named_at) = named_at {
                         p.mark_type_syntax(named_at, Mark::MemberStart, first_decorator_loc);
-                        p.mark_type_syntax(named_at, Mark::MemberEnd, p.lexer.full_start());
+                        p.mark_end(named_at, Mark::MemberEnd);
                     }
                 }
                 if let Some(starts) = &mut p.starts_for_parse_only {
@@ -2818,6 +2818,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             self.lexer.next()?;
         }
+        self.mark_end(open, Mark::StatementEnd);
         if self.lexer.token == T::TEquals && self.lexer.tolerant && !self.lexer.is_log_disabled {
             // A "=" right after the block is objected to and skipped.
             let range = self.lexer.range();

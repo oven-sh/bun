@@ -88,6 +88,8 @@ pub struct Module {
     pub project_reference_imports: Few<(Atom, ResolutionMode)>,
     /// The files it refers to, in the order it does: `/// <reference>`s, then imports.
     pub edges: Vec<FileId>,
+    /// `IsSourceFileFromExternalLibrary`: `lowestDepth > 0`, every way to it from a root file leads into a `node_modules`.
+    pub is_from_external_library: bool,
     /// Nothing refers to it, and it adds nothing to what all files see. So `hir` and `bound` are only there while a thread has it at hand:
     /// see `Files::bring_in`.
     pub is_transient: bool,
@@ -317,6 +319,8 @@ pub struct Files {
     pub by_path: FxHashMap<String, FileId>,
 
     pub globals: FxHashMap<Atom, Sym>,
+    /// `globalThisSymbol`: a module no file declares, whose `Exports` are `globals` and itself. A symbol of the first file.
+    pub global_this_symbol: Sym,
     ambient_modules: FxHashMap<Atom, Sym>,
     /// `declare module "*.svg"`
     ambient_patterns: Vec<(String, String, Sym)>,
@@ -458,8 +462,8 @@ impl ExactSizeIterator for Exports<'_> {}
 
 struct Loaded {
     module: Module,
-    /// (specifier, the way it is looked for, what it resolved to, whether that is brought into the program for it)
-    imports: Vec<(Atom, ResolutionMode, String, bool)>,
+    /// (specifier, the way it is looked for, what it resolved to, whether that is brought into the program for it, `increaseDepth`)
+    imports: Vec<(Atom, ResolutionMode, String, bool, bool)>,
     /// (path, is a lib, `increaseDepth`)
     references: Vec<(String, bool, bool)>,
 }
@@ -490,10 +494,12 @@ struct Resolving {
     resolutions: Vec<(Sym, bool)>,
     /// How often an alias was asked for while it was being resolved.
     circles: u32,
+    /// What is under way is the same whoever asked first. Not once `tryResolveAlias` has passed over some of it.
+    is_kept: bool,
 }
 
 thread_local! {
-    static RESOLVING: std::cell::RefCell<Resolving> = const { std::cell::RefCell::new(Resolving { resolutions: Vec::new(), circles: 0 }) };
+    static RESOLVING: std::cell::RefCell<Resolving> = const { std::cell::RefCell::new(Resolving { resolutions: Vec::new(), circles: 0, is_kept: true }) };
 }
 
 /// How a module is asked for, to `canHaveSyntheticDefault`: in a mode, or the way a plain `import` in a file is emitted.
@@ -1075,11 +1081,9 @@ fn implied_format_reason(
     }
 }
 
-/// `sourceFileMayBeEmitted`. `IsSourceFileFromExternalLibrary` and `GetProjectReferenceFromSource` are asked in `explain_source_files`.
+/// `sourceFileMayBeEmitted`. `GetProjectReferenceFromSource` is asked in `explain_source_files`.
 fn source_file_may_be_emitted(options: &Options, module: &Module, is_case_sensitive: bool) -> bool {
-    if module.is_lib
-        || module.hir.kind == FileKind::Declaration
-        || module.path.contains("/node_modules/")
+    if module.is_lib || module.hir.kind == FileKind::Declaration || module.is_from_external_library
     {
         return false;
     }
@@ -1131,37 +1135,9 @@ fn explain_source_files(
     if !is_reported.contains(&true) {
         return Vec::new();
     }
-    // `IsSourceFileFromExternalLibrary`: `lowestDepth > 0`. `IsExternalLibraryImport` goes by the path before links are followed, which
-    // is not kept, so a specifier that is not relative and that `paths` does not match counts as one that leads into a package.
-    let is_library_import = |spec: Atom| {
-        let text = atoms.text(spec);
-        !is_relative(&text)
-            && crate::resolve::best_pattern(options.paths.as_slice(), &text).is_none()
-    };
-    let mut is_local = is_root.clone();
-    let mut pending: Vec<usize> = (0..modules.len()).filter(|&i| is_root[i]).collect();
-    while let Some(i) = pending.pop() {
-        let module = &modules[i];
-        for &target in &module.edges {
-            if is_local[target.idx()] {
-                continue;
-            }
-            let mut specifiers = module
-                .imports
-                .iter()
-                .filter(|import| *import.1 == target)
-                .map(|import| import.0.0)
-                .peekable();
-            // No specifier: a `/// <reference>`.
-            if specifiers.peek().is_none() || specifiers.any(|spec| !is_library_import(spec)) {
-                is_local[target.idx()] = true;
-                pending.push(target.idx());
-            }
-        }
-    }
     for (i, reported) in is_reported.iter_mut().enumerate() {
         // `GetProjectReferenceFromSource`: which files belong to a referenced project is not known here.
-        *reported &= is_local[i] && (is_root[i] || !options.has_project_references);
+        *reported &= is_root[i] || !options.has_project_references;
     }
     if !is_reported.contains(&true) {
         return Vec::new();
@@ -1631,8 +1607,8 @@ impl Files {
                 ResolutionMode::None,
                 true,
             ) {
-                Some(path) => {
-                    let depth = u32::from(path.contains("/node_modules/"));
+                Some((path, is_external)) => {
+                    let depth = u32::from(is_external);
                     starts.push(add(
                         path,
                         false,
@@ -1658,6 +1634,8 @@ impl Files {
 
         // What is looked for without being brought in: it is found if it is in the program for another reason.
         let mut only_found: Vec<(FileId, Atom, ResolutionMode, String)> = Vec::new();
+        // The sub tasks: from which file to which, and `increaseDepth`.
+        let mut steps: Vec<(FileId, FileId, bool)> = Vec::new();
         // Only what nothing has been seen to refer to: the files the program starts from.
         let mut may_drop = options.drops_what_nothing_refers_to;
         let mut is_first = true;
@@ -1709,14 +1687,14 @@ impl Files {
                         &mut frontier,
                     );
                     loaded.module.edges.push(target);
+                    steps.push((*id, target, increases_depth));
                 }
-                for (spec, mode, path, brings_in) in loaded.imports {
-                    // `increaseDepth`: `IsExternalLibraryImport`, which also holds for a relative specifier.
-                    let is_in_package = path.contains("/node_modules/");
-                    let depth = depth + u32::from(is_in_package);
-                    // `elideOnDepth`: JavaScript deeper inside packages than `maxNodeModuleJsDepth` is not loaded.
-                    let is_elided = is_in_package
+                for (spec, mode, path, brings_in, increases_depth) in loaded.imports {
+                    let depth = depth + u32::from(increases_depth);
+                    // `elideOnDepth`, `isJsFileFromNodeModules`: JavaScript deeper inside packages than `maxNodeModuleJsDepth` is not loaded.
+                    let is_elided = increases_depth
                         && is_javascript(&path)
+                        && path.contains("/node_modules/")
                         && depth > options.max_node_module_js_depth;
                     // `shouldAddFile`: with `noResolve` nothing does.
                     if !brings_in || is_elided || options.no_resolve {
@@ -1726,9 +1704,26 @@ impl Files {
                     let target = add(path, false, depth, &mut modules, &mut depths, &mut frontier);
                     loaded.module.imports.insert((spec, mode), target);
                     loaded.module.edges.push(target);
+                    steps.push((*id, target, increases_depth));
                 }
                 modules[id.idx()] = Some(loaded.module);
             }
+        }
+        // `lowestDepth`: the least over all ways to a file. ("If we're seeing this task at a lower depth than before, reprocess its
+        // subtasks": `filesParser.start` of 7.0.2 starts them once, so there it depends on which thread came first.)
+        loop {
+            let mut is_lower = false;
+            for &(from, to, increases_depth) in &steps {
+                let depth = depths[from.idx()] + u32::from(increases_depth);
+                is_lower |= depth < depths[to.idx()];
+                depths[to.idx()] = depths[to.idx()].min(depth);
+            }
+            if !is_lower {
+                break;
+            }
+        }
+        for (module, &depth) in modules.iter_mut().flatten().zip(&depths) {
+            module.is_from_external_library = depth > 0;
         }
         program_errors.extend(resolver.resolution_problems());
         for (id, spec, mode, path) in only_found {
@@ -1872,6 +1867,10 @@ impl Files {
             modules,
             by_path,
             globals: FxHashMap::default(),
+            global_this_symbol: Sym {
+                file: FileId(0),
+                id: SymbolId::NONE,
+            },
             ambient_modules: FxHashMap::default(),
             ambient_patterns: Vec::new(),
             pattern_augmentations: FxHashMap::default(),
@@ -1970,12 +1969,12 @@ impl Files {
                             loaded
                                 .imports
                                 .iter()
-                                .filter(|(_, _, path, brings_in)| {
+                                .filter(|(_, _, path, brings_in, _)| {
                                     *brings_in
                                         && !options.no_resolve
                                         && !(is_javascript(path) && path.contains("/node_modules/"))
                                 })
-                                .map(|(_, _, path, _)| (path, false)),
+                                .map(|(_, _, path, ..)| (path, false)),
                         );
                     let found: Vec<(&String, bool, Option<String>)> = found
                         .map(|(path, is_lib)| (path, is_lib, resolver.package_id(path)))
@@ -2140,8 +2139,9 @@ impl Files {
             && (hir.is_js
                 || hir.kind != FileKind::Declaration
                     && (options.isolated_modules || hir.has_module_syntax))
-            && let Some(found) = resolver.resolve_module("tslib", path, default_mode)
+            && let Some(resolved) = resolver.resolve_module_name("tslib", path, default_mode)
         {
+            let found = resolved.file_name;
             let tslib = atoms.intern_str("tslib");
             if is_javascript(&found) {
                 untyped_imports.push((tslib, default_mode));
@@ -2154,19 +2154,21 @@ impl Files {
                         .map(|name| atoms.intern(name.as_bytes())),
                 ));
             } else {
-                imports.push((tslib, default_mode, found, true));
+                let increases_depth = resolved.is_external_library_import;
+                imports.push((tslib, default_mode, found, true, increases_depth));
             }
         }
         // Only a file that can have tags in it, going by its name, imports what they are made with.
         if (path.ends_with(".tsx") || path.ends_with(".jsx"))
             && let Some(runtime) = jsx_runtime_of(options, &hir, atoms)
-            && let Some(found) = resolver.resolve_module(&runtime, path, default_mode)
+            && let Some(resolved) = resolver.resolve_module_name(&runtime, path, default_mode)
         {
+            let found = resolved.file_name;
             let spec = atoms.intern_str(&runtime);
             let is_untyped = is_javascript(&found);
             if is_untyped {
                 untyped_imports.push((spec, default_mode));
-                if let Some(types) = resolver.alternate_result(&runtime, path, default_mode) {
+                if let Some(types) = resolved.alternate_result {
                     let types = atoms.intern(types.as_bytes());
                     untyped_import_alternates.push((spec, default_mode, types));
                 }
@@ -2183,7 +2185,8 @@ impl Files {
                 }
             }
             if !is_untyped || options.allow_js {
-                imports.push((spec, default_mode, found, true));
+                let increases_depth = resolved.is_external_library_import;
+                imports.push((spec, default_mode, found, true, increases_depth));
             }
         }
         // The arguments of `import()` calls, and of `require()` calls in JavaScript (`ForEachDynamicImportOrRequireCall`).
@@ -2270,10 +2273,14 @@ impl Files {
                 count += 1;
             }
             for (i, &mode) in modes[..count].iter().enumerate() {
-                match resolver.resolve_module_and_extension(&text, path, mode) {
-                    Some((found, _, _)) if is_javascript(&found) => {
+                let Some(resolved) = resolver.resolve_module_name(&text, path, mode) else {
+                    continue;
+                };
+                let increases_depth = resolved.is_external_library_import;
+                match resolved.file_name {
+                    found if is_javascript(&found) => {
                         untyped_imports.push((spec, mode));
-                        if let Some(types) = resolver.alternate_result(&text, path, mode) {
+                        if let Some(types) = resolved.alternate_result {
                             let types = atoms.intern(types.as_bytes());
                             untyped_import_alternates.push((spec, mode, types));
                         }
@@ -2298,23 +2305,23 @@ impl Files {
                         // another reason.
                         if options.allow_js {
                             let brings_in = !needs_jsx && (i < imported || !is_module_name);
-                            imports.push((spec, mode, found, brings_in));
+                            imports.push((spec, mode, found, brings_in, increases_depth));
                         }
                     }
                     // `needAllowArbitraryExtensions`: the file is refused, even if it is in the program for another reason.
-                    Some((found, _, true))
-                        if hir.kind != FileKind::Declaration
+                    found
+                        if resolved.has_arbitrary_extension
+                            && hir.kind != FileKind::Declaration
                             && !options.allow_arbitrary_extensions =>
                     {
                         arbitrary_extension_imports.push((spec, mode));
                         arbitrary_extension_files.push(atoms.intern(found.as_bytes()));
                     }
-                    Some((found, using_ts_extension, _)) => {
-                        if using_ts_extension {
+                    found => {
+                        if resolved.using_ts_extension {
                             ts_extension_imports.push((spec, mode));
                         }
-                        // `Extension` of what is redirected is that of the declaration file.
-                        let is_redirect = resolver.is_project_reference_redirect(&text, path, mode);
+                        let is_redirect = resolved.is_project_reference_redirect;
                         if is_redirect {
                             project_reference_imports.push((spec, mode));
                         }
@@ -2324,9 +2331,8 @@ impl Files {
                             jsx_imports.push((spec, mode, atoms.intern(found.as_bytes())));
                         }
                         let brings_in = !needs_jsx && (i < imported || !is_module_name);
-                        imports.push((spec, mode, found, brings_in));
+                        imports.push((spec, mode, found, brings_in, increases_depth));
                     }
-                    None => {}
                 }
             }
         }
@@ -2368,11 +2374,7 @@ impl Files {
                         mode
                     };
                     match resolver.resolve_type_reference(&value, parent_dir(path), mode, false) {
-                        Some(found) => {
-                            // `IsExternalLibraryImport`
-                            let is_in_package = found.contains("/node_modules/");
-                            types.push((found, false, is_in_package));
-                        }
+                        Some((found, is_external)) => types.push((found, false, is_external)),
                         None => missing_references.push((pos, 2688)),
                     }
                 }
@@ -2404,6 +2406,7 @@ impl Files {
             edges: Vec::new(),
             redirected_imports: Few::default(),
             project_reference_imports: project_reference_imports.into(),
+            is_from_external_library: false,
             is_transient: false,
             adds_nothing: false,
             is_dropped: false,
@@ -2707,6 +2710,7 @@ impl Files {
                 .map(|e| &mut e.1)
                 .for_each(stands_in);
         }
+        self.make_global_this_symbol();
         // What an alias was found to stand for while symbols were being put together may be a part of something by now.
         let symbols = Bases::new(self.modules.iter().map(|m| m.bound.symbols.len()));
         self.alias_symbol_links = ByNodeKept::new(&symbols);
@@ -2829,6 +2833,30 @@ impl Files {
 
     fn symbol_mut(&mut self, sym: Sym) -> &mut Symbol {
         &mut self.modules[sym.file.idx()].bound.symbols[sym.id.idx()]
+    }
+
+    /// `c.globalThisSymbol = c.newSymbolEx(ast.SymbolFlagsModule, "globalThis", ..)`, `c.globalThisSymbol.Exports = c.globals`
+    fn make_global_this_symbol(&mut self) {
+        if self.modules.is_empty() {
+            return;
+        }
+        let symbols = &mut self.modules[0].bound.symbols;
+        let global_this = Sym {
+            file: FileId(0),
+            id: SymbolId(symbols.len() as u32),
+        };
+        symbols.push(Symbol {
+            name: known::globalThis,
+            flags: SymFlags::MODULE | SymFlags::MERGED | SymFlags::TRANSIENT,
+            decls: bind::Decls::Many(Box::default()),
+            parent: SymbolId::NONE,
+            exports: bind::TableId::NONE,
+            export_symbol: SymbolId::NONE,
+        });
+        let mut exports = self.globals.clone();
+        exports.insert(known::globalThis, global_this);
+        self.merged_exports.insert(global_this, exports);
+        self.global_this_symbol = global_this;
     }
 
     /// `getMergedSymbol`
@@ -3012,7 +3040,7 @@ impl Files {
     fn keep_circular_aliases(&mut self, start: Sym) {
         let mut alias = start;
         while self.is_non_local_alias(alias) {
-            let links = *self.alias_links(alias);
+            let links = self.alias_links(alias);
             if links.is_circular {
                 if self.circular_at_merge.contains(&alias) {
                     return;
@@ -3468,12 +3496,14 @@ impl Files {
                 // may be the very name that is looked for.
                 let container = self.sym(file, s.symbol);
                 // "First see if the module has an export default and if the local name of that export default matches."
-                // `GetLocalSymbolForExportDefault(result).Name`: the binder keeps the declared name on the symbol.
-                if let Some(default) = self.export(container, known::default)
-                    && self.symbol(default).name == name
-                    && self.flags(default).intersects(meaning)
-                {
-                    return Ok(Some(default));
+                let of_local = bound.export_symbol_of_local(scope, name);
+                if of_local.is_some() {
+                    let default = self.sym(file, of_local);
+                    if self.export(container, known::default) == Some(default)
+                        && self.flags(default).intersects(meaning)
+                    {
+                        return Ok(Some(default));
+                    }
                 }
                 let held = self.export(container, name);
                 if !held.is_some_and(|sym| self.flags(sym).contains(SymFlags::EXPORT_ONLY))
@@ -3598,14 +3628,6 @@ impl Files {
     /// `usage` is how the specifier is emitted where it is asked for (`getEmitSyntaxForModuleSpecifierExpression`).
     pub fn synthetic_default(&self, usage: impl Usage, module: Sym) -> Option<Sym> {
         let usage = usage.mode(self);
-        // `declare module "m";` has whatever is asked of it, a default too.
-        if self
-            .decls_of(module)
-            .iter()
-            .any(|&(f, d)| matches!(d, Decl::Module(id) if !self.hir(f)[id].has_body))
-        {
-            return None;
-        }
         let is_file = self
             .symbol(module)
             .decls
@@ -3934,10 +3956,7 @@ impl Files {
     fn has_known_exports_uncached(&self, module: Sym) -> bool {
         self.export(module, known::export_equals).is_none()
             && self.symbol(module).exports.is_some()
-            && !self
-                .decls_of(module)
-                .iter()
-                .any(|&(f, d)| matches!(d, Decl::Module(id) if !self.hir(f)[id].has_body))
+            && !self.is_shorthand_ambient_module_symbol(module)
             && !self.module(module.file).path.ends_with(".json")
     }
 
@@ -4024,7 +4043,10 @@ impl Files {
         if !self.flags(sym).contains(SymFlags::ALIAS) {
             return Some(sym);
         }
-        self.alias_links(sym).alias_target
+        match self.alias_symbol_links.get_ref(&sym) {
+            Some(known) => known.alias_target,
+            None => self.alias_links(sym).alias_target,
+        }
     }
 
     /// The loop at the end of `resolveEntityName`: the first symbol from `sym` on that has `meaning` itself; where the way ends if none
@@ -4052,8 +4074,8 @@ impl Files {
     }
 
     /// `resolveAlias`, with all that it leaves in `aliasSymbolLinks`.
-    pub fn alias_links(&self, sym: Sym) -> &AliasSymbolLinks {
-        if let Some(known) = self.alias_symbol_links.get_ref(&sym) {
+    pub fn alias_links(&self, sym: Sym) -> AliasSymbolLinks {
+        if let Some(known) = self.alias_symbol_links.get(&sym) {
             return known;
         }
         // `pushTypeResolution`: an alias that is asked for while it is being resolved is in a circle with everything begun since.
@@ -4074,12 +4096,7 @@ impl Files {
             is_pushed
         });
         if !is_pushed {
-            return &AliasSymbolLinks {
-                immediate_target: None,
-                alias_target: None,
-                type_only_declaration: None,
-                is_circular: false,
-            };
+            return AliasSymbolLinks::default();
         }
         let mut links = AliasSymbolLinks::default();
         if let Some((file, decl)) = self.declaration_of_alias_symbol(sym) {
@@ -4102,12 +4119,70 @@ impl Files {
             };
         }
         // `popTypeResolution`
-        let begun = RESOLVING.with(|r| r.borrow_mut().resolutions.pop());
+        let (begun, is_kept) = RESOLVING.with(|r| {
+            let mut r = r.borrow_mut();
+            let (begun, is_kept) = (r.resolutions.pop(), r.is_kept);
+            if r.resolutions.is_empty() {
+                r.is_kept = true;
+            }
+            (begun, is_kept)
+        });
         if !begun.is_some_and(|begun| begun.1) {
             links.alias_target = None;
             links.is_circular = true;
         }
-        self.alias_symbol_links.insert_ref(sym, links)
+        if is_kept {
+            self.alias_symbol_links.insert(sym, links)
+        } else {
+            links
+        }
+    }
+
+    /// `tryResolveAlias`. `None`: `sym` is being resolved.
+    fn try_resolve_alias(&self, sym: Sym) -> Option<AliasSymbolLinks> {
+        if self.alias_symbol_links.get_ref(&sym).is_none() {
+            let is_begun = RESOLVING.with(|r| {
+                let mut r = r.borrow_mut();
+                let is_begun = r.resolutions.iter().any(|begun| begun.0 == sym);
+                // Asked first, it would have been resolved. The last is who is asking, whoever was first.
+                if is_begun && r.resolutions.last().is_some_and(|last| last.0 != sym) {
+                    r.is_kept = false;
+                    r.circles += 1;
+                }
+                is_begun
+            });
+            if is_begun {
+                return None;
+            }
+        }
+        Some(self.alias_links(sym))
+    }
+
+    /// `onFailedToResolveSymbol`, as far as aliases are the wiser for it: `getSpellingSuggestionForName` resolves all those it looks at.
+    fn on_failed_to_resolve_symbol(
+        &self,
+        file: FileId,
+        scope: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+    ) {
+        // `checkAndReportErrorForUsingTypeAsNamespace`: what is wrong is known.
+        let types = SymFlags::TYPE.difference(SymFlags::NAMESPACE);
+        if meaning == SymFlags::NAMESPACE && self.resolve_name(file, scope, name, types).is_some() {
+            return;
+        }
+        // `checkAndReportErrorForExportingPrimitiveType`, `checkAndReportErrorForUsingTypeAsValue`
+        if matches!(
+            self.atoms.bytes(name),
+            b"any" | b"string" | b"number" | b"boolean" | b"never" | b"unknown"
+        ) {
+            return;
+        }
+        let try_resolve_alias = &mut |sym| {
+            let target = self.try_resolve_alias(sym)?.alias_target;
+            Some(target.map_or(SymFlags::all(), |target| self.flags(target)))
+        };
+        self.suggested_symbol_for_nonexistent_symbol(file, scope, name, meaning, try_resolve_alias);
     }
 
     /// `resolveIndirectionAlias`. `type_only`: `typeOnlyDeclaration` of the source.
@@ -4170,7 +4245,9 @@ impl Files {
     ) -> Option<Sym> {
         let symbol = self.external_module_symbol(module);
         if self.is_non_local_alias(symbol) {
+            // Where the tables lose the way, types may know it: who goes on from here does so a step at a time.
             self.resolve_indirection_alias(symbol, type_only)
+                .or(Some(symbol))
         } else {
             Some(symbol)
         }
@@ -4229,13 +4306,13 @@ impl Files {
         })
     }
 
-    /// `isShorthandAmbientModuleSymbol`: `module`, if it is `declare module "m";`. What is imported from it by name is the module
-    /// itself (`getExternalModuleMember`), and so is its default (`getTargetOfModuleDefault`, `canHaveSyntheticDefault`).
-    fn shorthand_ambient_module_itself(&self, module: Sym) -> Option<Sym> {
-        self.decls_of(module)
-            .iter()
-            .any(|&(f, d)| matches!(d, Decl::Module(id) if !self.hir(f)[id].has_body))
-            .then_some(module)
+    /// `isShorthandAmbientModuleSymbol`: `ValueDeclaration`, which of several module declarations is the first, is
+    /// `declare module "m";`.
+    pub fn is_shorthand_ambient_module_symbol(&self, module: Sym) -> bool {
+        matches!(
+            self.decls_of(module).first(),
+            Some(&(file, Decl::Module(id))) if !self.hir(file)[id].has_body
+        )
     }
 
     /// `getImmediateAliasedSymbol`
@@ -4262,16 +4339,17 @@ impl Files {
                 .module_of_specifier_as(file, spec, mode)
                 .and_then(|module| {
                     // `{ default as d }` is the default import by another spelling, but not in a binding pattern.
-                    let found = if name == known::default && !matches!(decl, Decl::Require(_)) {
-                        self.default_of_module(file, module)
-                    } else {
-                        // `getExternalModuleMember`, `getExportOfModule`
-                        self.resolve_es_module_symbol(module, type_only);
-                        let star = self.type_only_export_star(module, name);
-                        self.mark_symbol_of_alias_declaration_if_type_only(node, star, type_only);
-                        self.module_export(module, name)
-                    };
-                    found.or_else(|| self.shorthand_ambient_module_itself(module))
+                    if name == known::default && !matches!(decl, Decl::Require(_)) {
+                        return self.default_of_module(file, module);
+                    }
+                    // `getExternalModuleMember`, `getExportOfModule`
+                    self.resolve_es_module_symbol(module, type_only);
+                    if self.is_shorthand_ambient_module_symbol(module) {
+                        return Some(module);
+                    }
+                    let star = self.type_only_export_star(module, name);
+                    self.mark_symbol_of_alias_declaration_if_type_only(node, star, type_only);
+                    self.module_export(module, name)
                 });
             self.mark_symbol_of_alias_declaration_if_type_only(node, None, type_only);
             return target;
@@ -4285,7 +4363,6 @@ impl Files {
                     self.mode_of_import(file, hir[import].mode),
                 )?;
                 self.default_of_module(file, module)
-                    .or_else(|| self.shorthand_ambient_module_itself(module))
             }
             // `getTargetOfNamespaceImport`
             Decl::ImportNamespace(import) => self
@@ -4316,18 +4393,33 @@ impl Files {
                     } else {
                         all
                     };
-                    return self.resolve_entity(
-                        file,
-                        bound.import_equals_scope[import.idx()],
-                        &names,
-                        meaning,
-                    );
+                    let scope = bound.import_equals_scope[import.idx()];
+                    let target = self.resolve_entity(file, scope, &names, meaning);
+                    // `globalThisSymbol` is found, and has no `Sym`.
+                    if target.is_none()
+                        && names[0] != known::globalThis
+                        && self
+                            .resolve_name(file, scope, names[0], SymFlags::NAMESPACE)
+                            .is_none()
+                    {
+                        self.on_failed_to_resolve_symbol(
+                            file,
+                            scope,
+                            names[0],
+                            SymFlags::NAMESPACE,
+                        );
+                    }
+                    return target;
                 }
             },
             // Without `from`.
             Decl::ExportSpec(spec) => {
                 let scope = bound.export_scope[hir[spec].export.idx()];
-                self.resolve_name(file, scope, hir[spec].local, all)
+                let target = self.resolve_name(file, scope, hir[spec].local, all);
+                if target.is_none() {
+                    self.on_failed_to_resolve_symbol(file, scope, hir[spec].local, all);
+                }
+                target
             }
             // `getTargetOfNamespaceExportDeclaration`
             Decl::UmdGlobal(_) => Some(self.external_module_symbol(self.file_symbol(file))),

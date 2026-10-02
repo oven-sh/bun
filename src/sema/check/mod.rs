@@ -21,6 +21,7 @@ mod errors_duplicates;
 mod errors_emit_helpers;
 mod errors_flow;
 mod errors_grammar;
+mod errors_grammar_modifiers;
 mod errors_heritage;
 mod errors_implicit;
 mod errors_isolated_declarations;
@@ -618,7 +619,6 @@ impl Program {
             keeps_boolean_in_arg_contexts: false,
             discriminated: FxHashMap::default(),
             optional_member: false,
-            no_infer_parameter: None,
             contextual_properties: FxHashMap::default(),
             candidate_holes: Vec::new(),
             trace_cycles: std::env::var_os("BUN_SEMA_TRACE_CYCLES").is_some(),
@@ -940,9 +940,6 @@ pub struct Checker<'p> {
     discriminated: FxHashMap<(FileId, ExprId, TypeId), TypeId>,
     /// The member `infer_from_member` is about to look at may be left out.
     optional_member: bool,
-    /// The type of the parameter that an argument is reported not to fit, if the parameter is written as `NoInfer<..>`. To tsgo
-    /// that is a substitution type whatever it stands for (`getNoInferType`), and no union.
-    no_infer_parameter: Option<TypeId>,
     /// See `contextual_property_of_value`.
     contextual_properties: FxHashMap<(TypeId, Atom), Option<TypeId>>,
     /// For each overloaded call being resolved: the type parameters of its candidates, as holes.

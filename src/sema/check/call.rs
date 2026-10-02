@@ -4370,11 +4370,7 @@ impl<'p> Checker<'p> {
             }
             TypeData::Keyof(of) => {
                 let keyed = vanishing(self, *of);
-                if keyed == *of {
-                    ty
-                } else {
-                    self.keyof_with_origin(keyed)
-                }
+                if keyed == *of { ty } else { self.keyof(keyed) }
             }
             TypeData::Ref { target, args } if self.p.deferred_references.get(&ty).is_none() => {
                 let mut new: Vec<TypeId> = Vec::with_capacity(args.len());
@@ -6005,8 +6001,9 @@ impl<'p> Checker<'p> {
             ExprKind::Object(_) => {
                 let scope = self.scope_of_expr(file, e);
                 let mapper = self.identity_mapper(file, scope);
+                let is_js_literal = self.is_js_literal(file, e);
                 let cached = self.intern(TypeData::Anon {
-                    origin: Origin::ObjectLiteral(file, e),
+                    origin: Origin::ObjectLiteral(file, e, is_js_literal),
                     mapper,
                 });
                 let Some(members) = self.members(cached) else {

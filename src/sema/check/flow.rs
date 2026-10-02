@@ -4746,7 +4746,7 @@ impl<'p> Checker<'p> {
 
     /// `markNodeAssignmentsWorker`: what `export { x }` names may be assigned to at any time, for all that can be seen from here.
     fn is_named_by_export_specifier(&self, file: FileId, symbol: SymbolId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let name = bound.symbols[symbol.idx()].name;
         hir.exports.iter().enumerate().any(|(i, export)| {
             export.spec.is_none()
@@ -4755,7 +4755,8 @@ impl<'p> Checker<'p> {
                     .items
                     .iter()
                     .any(|s| hir[s].local == name && !hir[s].type_only)
-                && bound.resolve(bound.export_scope[i], name, SymFlags::VALUE) == Some(symbol)
+                && files.resolve_name(file, bound.export_scope[i], name, SymFlags::VALUE)
+                    == Some(files.sym(file, symbol))
         })
     }
 

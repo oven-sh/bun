@@ -329,7 +329,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TDot {
             let dot_loc = p.lexer.loc();
             p.lexer.next()?;
-            p.mark_type_syntax(dot_loc, crate::sema::Mark::DeclarationStart, p.lexer.loc());
+            let inner_start = p.lexer.loc();
+            p.mark_type_syntax(dot_loc, crate::sema::Mark::DeclarationStart, inner_start);
 
             let mut _opts = ParseStatementOptions {
                 is_export: true,
@@ -341,6 +342,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Err(crate::Error::StackOverflow);
             }
             stmts.push(p.parse_type_script_namespace_stmt(dot_loc, &mut _opts)?);
+            p.mark_end(inner_start, crate::sema::Mark::StatementEnd);
         } else if p.lexer.token != T::TOpenBrace
             // `parseAmbientExternalModuleDeclaration`: for TypeScript only a module named by a string can do without a body.
             && (if p.lexer.tolerant {

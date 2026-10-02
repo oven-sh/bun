@@ -790,10 +790,11 @@ impl<'p> Checker<'p> {
                     if out.candidates.contains(&name) {
                         let bound = self.bound(file);
                         let scope = bound.type_scope[node.idx()];
-                        if let Some(id) = bound.resolve(scope, name, SymFlags::TYPE)
-                            && !out.type_params.contains(&Sym { file, id })
+                        let found = self.files().resolve_name(file, scope, name, SymFlags::TYPE);
+                        if let Some(found) = found
+                            && !out.type_params.contains(&found)
                         {
-                            out.type_params.push(Sym { file, id });
+                            out.type_params.push(found);
                         }
                     }
                 }
@@ -2412,7 +2413,7 @@ impl<'p> Checker<'p> {
             }
             TypeNodeKind::Keyof(inner) => {
                 let inner = self.type_from_node(file, inner);
-                self.keyof_with_origin(inner)
+                self.keyof(inner)
             }
             TypeNodeKind::Template { types, texts } => {
                 let types = self.types_from_nodes(file, types);

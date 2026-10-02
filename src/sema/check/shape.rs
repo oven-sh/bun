@@ -612,13 +612,6 @@ impl<'p> Checker<'p> {
                 let TypeData::Ref { args: params, .. } = self.data(declared) else {
                     return None;
                 };
-                // `getResolvedMembersOrExportsOfSymbol`: while the names that have to be worked out are, there is what has its name
-                // written out.
-                let resolved = self.shape_memo_or(
-                    declared,
-                    |c| c.build_declared_shape(target, false),
-                    |c| c.build_declared_shape(target, true),
-                );
                 // `resolveTypeReferenceMembers`: the arguments go with the type parameters around the declaration, then its own,
                 // then `this`. Where nothing is given for `this` it is the type the member is looked up in.
                 let this = args.get(params.len()).copied().unwrap_or(ty);
@@ -630,7 +623,21 @@ impl<'p> Checker<'p> {
                 let mut pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(given + 1);
                 pairs.extend(params.iter().copied().zip(args.iter().copied()).take(given));
                 pairs.push((self.intern(TypeData::ThisParam(target)), this));
-                Some((resolved, self.p.types.mapper(pairs)))
+                let mapper = self.p.types.mapper(pairs);
+                // All instantiations share what the declared type has, unless what they inherit goes by the type arguments.
+                let (key, under) = if declared != ty && self.inherits_from_type_arguments(target) {
+                    (ty, mapper)
+                } else {
+                    (declared, MapperId::IDENTITY)
+                };
+                // `getResolvedMembersOrExportsOfSymbol`: while the names that have to be worked out are, there is what has its name
+                // written out.
+                let resolved = self.shape_memo_or(
+                    key,
+                    |c| c.build_declared_shape(target, under, false),
+                    |c| c.build_declared_shape(target, under, true),
+                );
+                Some((resolved, mapper))
             }
             TypeData::Anon { origin, mapper } => {
                 let (origin, mapper) = (*origin, *mapper);
@@ -1501,9 +1508,36 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The instances of a class or an interface, in terms of its own type parameters. `early`: as far as the binder can name its
-    /// members.
-    fn build_declared_shape(&mut self, sym: Sym, early: bool) -> Shape {
+    /// Whether "the members of a base type, instantiated" are not "the members of the instantiated base type" for the class or
+    /// interface `sym`: a base type is a type parameter (`isValidBaseType`), or an instantiation of such a class or interface with
+    /// something generic.
+    fn inherits_from_type_arguments(&mut self, sym: Sym) -> bool {
+        for &base in self.base_types(sym).iter() {
+            let parts: &[TypeId] = match self.data(base) {
+                TypeData::Intersection(parts) => &parts[..],
+                _ => std::slice::from_ref(&base),
+            };
+            for &part in parts {
+                let goes_by_arguments = match *self.data(part) {
+                    TypeData::TypeParam(..) => true,
+                    TypeData::Ref { target, .. } => {
+                        target != sym
+                            && self.has_type_variables(part)
+                            && self.inherits_from_type_arguments(target)
+                    }
+                    _ => false,
+                };
+                if goes_by_arguments {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// The instances of a class or an interface, in terms of its own type parameters. `under`: what those stand for in the base types.
+    /// `early`: as far as the binder can name its members.
+    fn build_declared_shape(&mut self, sym: Sym, under: MapperId, early: bool) -> Shape {
         let mut b = Builder::default();
         for (file, decl) in self.files().decls(sym) {
             let hir = self.hir(file);
@@ -1525,6 +1559,7 @@ impl<'p> Checker<'p> {
         let bases = self.base_types(sym);
         let own = b.shape.props.len();
         for base in bases.iter().copied() {
+            let base = self.instantiate(base, under);
             self.inherit(&mut b, base, Some((sym, this)));
         }
         // `getNamedMembers`: what is declared here, then what is inherited, each in the order of `compareSymbols`.
@@ -2020,10 +2055,10 @@ impl<'p> Checker<'p> {
                     self.add_members(&mut b, file, members, false, MapperId::IDENTITY, false);
                 }
             }
-            Origin::ObjectLiteral(file, expr) => {
+            Origin::ObjectLiteral(file, expr, ..) => {
                 return self.build_object_literal_shape(file, expr);
             }
-            Origin::WidenedLiteral(file, expr) => {
+            Origin::WidenedLiteral(file, expr, ..) => {
                 let mut shape = self.build_object_literal_shape(file, expr);
                 // `getWidenedProperty`: methods and accessors stay as they are.
                 for prop in &mut shape.props {

@@ -8,6 +8,7 @@ use super::*;
 use crate::bind::{
     Bound, ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId,
 };
+use crate::program::SymbolTable;
 
 /// The meanings a name was looked up with.
 const VALUE: u8 = 1;
@@ -16,6 +17,8 @@ const NAMESPACE: u8 = 4;
 const ALL: u8 = 7;
 
 struct Unused<'a> {
+    files: &'a Files,
+    file: FileId,
     hir: &'a hir::File,
     bound: &'a Bound,
     atoms: &'a crate::atom::Interner,
@@ -90,6 +93,8 @@ impl Checker<'_> {
         };
         syntax_errors.sort_unstable();
         let mut u = Unused {
+            files: &self.p.files,
+            file,
             hir,
             bound,
             atoms: &self.p.files.atoms,
@@ -1210,7 +1215,23 @@ impl Unused<'_> {
         meaning: SymFlags,
         bit: u8,
     ) -> Option<SymbolId> {
-        let (found, found_in) = self.bound.resolve_with_scope(from, name, meaning)?;
+        let files = self.files;
+        // The scope looked into last.
+        let mut found_in = ScopeId::NONE;
+        let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
+            if let SymbolTable::Locals(_, scope) = table {
+                found_in = scope;
+            }
+            held.filter(|&sym| files.means(sym, meaning))
+        };
+        let found = files
+            .resolve_with(self.file, from, name, meaning, false, lookup)
+            .ok()??;
+        let found = files
+            .parts(found)
+            .iter()
+            .find(|part| part.file == self.file)?
+            .id;
         // `lastSelfReferenceLocation`: the declaration furthest out that the name is written in, short of where it is found.
         let mut inside = SymbolId::NONE;
         let mut scope = from;

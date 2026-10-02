@@ -22,12 +22,6 @@ use crate::resolve::{
 use crate::util::FxHashSet;
 use std::rc::Rc;
 
-/// `globalThisSymbol`, which no file declares.
-const GLOBAL_THIS: Sym = Sym {
-    file: FileId(u32::MAX),
-    id: SymbolId(u32::MAX),
-};
-
 /// Set in the id of the alias an `import * as ns` declares: the symbol `cloneTypeAsModuleType` makes for that import, which no file
 /// declares either.
 const MODULE_CLONE: u32 = 1 << 31;
@@ -332,8 +326,6 @@ struct SymbolTrackerImpl {
     error_name_node: Option<NameNode>,
     fallback_stack: Vec<FallbackNode>,
     late_marked_statements: Vec<StmtId>,
-    /// `resolver`
-    links: EmitResolverLinks,
 }
 
 /// `DeclarationTransformer`
@@ -428,7 +420,6 @@ impl<'c, 'p> DeclarationEmit<'c, 'p> {
                 error_name_node: None,
                 fallback_stack: Vec::new(),
                 late_marked_statements: Vec::new(),
-                links: EmitResolverLinks::default(),
             },
             enclosing: top,
             suppresses_new_contexts: false,
@@ -444,11 +435,10 @@ impl<'c, 'p> DeclarationEmit<'c, 'p> {
         self.tracker.current_source_file
     }
 
-    fn resolver(&mut self) -> EmitResolver<'_, 'p> {
-        EmitResolver {
-            c: &mut *self.c,
-            links: &mut self.tracker.links,
-        }
+    /// `tx.resolver`, which is the one the node builder asks.
+    fn with_resolver<T>(&mut self, ask: impl FnOnce(&mut EmitResolver<'_, 'p>) -> T) -> T {
+        let file = self.file();
+        self.c.with_emit_resolver(file, ask)
     }
 }
 
@@ -486,7 +476,7 @@ pub(super) struct EmitResolver<'a, 'p> {
     pub(super) links: &'a mut EmitResolverLinks,
 }
 
-/// The links the printers go by, kept between the types that are printed from one enclosing file.
+/// The links of the `EmitResolver`, which the printers and the declaration transformer go by, kept while they are asked from one file.
 #[derive(Default)]
 pub(super) struct SymbolChainCache {
     file: Option<FileId>,
@@ -531,7 +521,8 @@ impl<'p> Checker<'p> {
         let mut chain = self.with_emit_resolver(at.file, |resolver| {
             resolver.symbol_chain_ex(symbol, at, meaning, yields_module, 0)
         });
-        let starts_with_global_this = chain.len() > 1 && chain[0] == GLOBAL_THIS;
+        let starts_with_global_this =
+            chain.len() > 1 && chain[0] == self.files().global_this_symbol;
         if starts_with_global_this {
             chain.remove(0);
         }
@@ -576,7 +567,8 @@ impl<'p> Checker<'p> {
         let mut chain = self.with_emit_resolver(at.file, |resolver| {
             resolver.symbol_chain_ex(symbol, at, meaning, false, depth)
         });
-        let starts_with_global_this = chain.len() > 1 && chain[0] == GLOBAL_THIS;
+        let starts_with_global_this =
+            chain.len() > 1 && chain[0] == self.files().global_this_symbol;
         if starts_with_global_this {
             chain.remove(0);
         }
@@ -662,7 +654,7 @@ impl<'p> Checker<'p> {
     /// `exportTypeLinks.Get(symbol).target` of a symbol `cloneTypeAsModuleType` made, which has the flags, the name, the declarations,
     /// the parent and the exports of that. Any other symbol is given back.
     fn target_of_module_clone(&self, symbol: Sym) -> Sym {
-        if symbol == GLOBAL_THIS || symbol.id.0 & MODULE_CLONE == 0 {
+        if symbol.id.0 & MODULE_CLONE == 0 {
             return symbol;
         }
         let originating_import = Sym {
@@ -674,23 +666,14 @@ impl<'p> Checker<'p> {
     }
 
     fn flags_of(&self, symbol: Sym) -> SymFlags {
-        if symbol == GLOBAL_THIS {
-            return SymFlags::VALUE_MODULE;
-        }
         self.files().flags(self.target_of_module_clone(symbol))
     }
 
     fn decls_of(&self, symbol: Sym) -> Vec<(FileId, Decl)> {
-        if symbol == GLOBAL_THIS {
-            return Vec::new();
-        }
         self.files().decls(self.target_of_module_clone(symbol))
     }
 
     fn name_of(&self, symbol: Sym) -> Atom {
-        if symbol == GLOBAL_THIS {
-            return known::globalThis;
-        }
         self.files()
             .symbol(self.target_of_module_clone(symbol))
             .name
@@ -698,7 +681,7 @@ impl<'p> Checker<'p> {
 
     /// `symbolToString`
     fn symbol_text(&mut self, symbol: Sym) -> String {
-        if symbol == GLOBAL_THIS {
+        if symbol == self.files().global_this_symbol {
             return "globalThis".to_owned();
         }
         let symbol = self.target_of_module_clone(symbol);
@@ -708,9 +691,6 @@ impl<'p> Checker<'p> {
     /// `symbol.Parent`. The binder notes what a declaration is written in whether or not it is exported: only what is declared
     /// among the exports has a parent, be it refused there (`declareSymbolEx`).
     fn parent_of_symbol(&self, symbol: Sym) -> Option<Sym> {
-        if symbol == GLOBAL_THIS {
-            return None;
-        }
         let symbol = self.target_of_module_clone(symbol);
         let files = self.files();
         let declared = files.symbol(symbol);
@@ -734,12 +714,10 @@ impl<'p> Checker<'p> {
 
     /// `core.Some(symbol.Declarations, hasNonGlobalAugmentationExternalModuleSymbol)`
     fn is_external_module_symbol(&self, symbol: Sym) -> bool {
-        symbol != GLOBAL_THIS
-            && self
-                .files()
-                .parts(self.target_of_module_clone(symbol))
-                .iter()
-                .any(|&part| self.is_external_module_part(part))
+        self.files()
+            .parts(self.target_of_module_clone(symbol))
+            .iter()
+            .any(|&part| self.is_external_module_part(part))
     }
 
     /// `is_external_module_symbol`, of the symbol one file has made.
@@ -754,7 +732,7 @@ impl<'p> Checker<'p> {
 
     /// `getMergedSymbol`
     fn merged_symbol(&self, symbol: Sym) -> Sym {
-        if symbol == GLOBAL_THIS || symbol.id.0 & MODULE_CLONE != 0 {
+        if symbol.id.0 & MODULE_CLONE != 0 {
             return symbol;
         }
         self.files().canonical(symbol)
@@ -762,7 +740,7 @@ impl<'p> Checker<'p> {
 
     /// `getMergedSymbol(symbol.ExportSymbol)`
     fn export_symbol_of(&self, symbol: Sym) -> Option<Sym> {
-        if symbol == GLOBAL_THIS || symbol.id.0 & MODULE_CLONE != 0 {
+        if symbol.id.0 & MODULE_CLONE != 0 {
             return None;
         }
         let id = self.files().symbol(symbol).export_symbol;
@@ -771,7 +749,7 @@ impl<'p> Checker<'p> {
 
     /// `GetSourceFileOfModule`
     fn source_file_of_module(&self, symbol: Sym) -> Option<FileId> {
-        if symbol == GLOBAL_THIS {
+        if symbol == self.files().global_this_symbol {
             return None;
         }
         let files = self.files();
@@ -795,7 +773,7 @@ impl<'p> Checker<'p> {
 
     /// `core.FirstNonNil(symbol.Declarations, c.getExternalModuleContainer)`
     fn external_module_container_of_symbol(&self, symbol: Sym) -> Option<Sym> {
-        if symbol == GLOBAL_THIS {
+        if symbol == self.files().global_this_symbol {
             return None;
         }
         let files = self.files();
@@ -848,7 +826,7 @@ impl<'p> Checker<'p> {
 
     /// `resolveSymbol`
     fn resolve_symbol(&mut self, symbol: Sym) -> Sym {
-        if symbol == GLOBAL_THIS || symbol.id.0 & MODULE_CLONE != 0 {
+        if symbol.id.0 & MODULE_CLONE != 0 {
             return symbol;
         }
         let files = self.files();
@@ -1271,7 +1249,7 @@ impl<'p> EmitResolver<'_, 'p> {
             return Rc::clone(known);
         }
         let files = self.c.files();
-        let exports = if symbol == GLOBAL_THIS {
+        let exports = if symbol == files.global_this_symbol {
             Vec::new()
         } else if files.flags(symbol).intersects(SymFlags::MODULE) {
             // `getExportsOfModuleWorker`
@@ -1324,30 +1302,33 @@ impl<'p> EmitResolver<'_, 'p> {
                     .map(|id| Sym { file, id })
             }
             Table::Exports(symbol) => files.export_in_table(symbol, name),
-            Table::ResolvedExports(symbol) if symbol != GLOBAL_THIS => self
+            Table::ResolvedExports(symbol) if symbol != files.global_this_symbol => self
                 .exports_of_symbol(symbol)
                 .iter()
                 .find(|export| export.0 == name)
                 .map(|export| export.1),
             Table::ResolvedExports(_) | Table::Globals => {
                 if name == known::globalThis {
-                    return Some(GLOBAL_THIS);
+                    return Some(files.global_this_symbol);
                 }
                 files.globals.get(&name).copied()
             }
         }
     }
 
-    /// `symbols[symbol.Name]`. The binder keeps a default export under the name it is declared with, and exports it as `default`.
+    /// `symbols[symbol.Name]`. The name of a default export is `default`. The binder keeps the name it is declared with on the symbol.
     fn lookup_symbol(&mut self, table: Table, symbol: Sym) -> Option<Sym> {
-        let by_name = self.lookup(table, self.c.name_of(symbol));
-        if by_name.is_some_and(|found| self.c.merged_symbol(found) == symbol) {
-            return by_name;
-        }
-        match self.lookup(table, known::default) {
-            Some(default) if self.c.merged_symbol(default) == symbol => Some(default),
-            _ => by_name,
-        }
+        let files = self.c.files();
+        let is_default_export = self
+            .c
+            .parent_of_symbol(symbol)
+            .is_some_and(|parent| files.export(parent, known::default) == Some(symbol));
+        let name = if is_default_export {
+            known::default
+        } else {
+            self.c.name_of(symbol)
+        };
+        self.lookup(table, name)
     }
 
     /// `getSymbolTableAliases`, each with the name it is in the table under.
@@ -1365,7 +1346,7 @@ impl<'p> EmitResolver<'_, 'p> {
                     .collect()
             }
             Table::Exports(symbol) => files.each_export(symbol).filter(is_alias).collect(),
-            Table::ResolvedExports(symbol) if symbol != GLOBAL_THIS => self
+            Table::ResolvedExports(symbol) if symbol != files.global_this_symbol => self
                 .exports_of_symbol(symbol)
                 .iter()
                 .copied()
@@ -1517,12 +1498,13 @@ impl<'p> EmitResolver<'_, 'p> {
             return candidates.swap_remove(0);
         }
         if table == Table::Globals {
+            let global_this = self.c.files().global_this_symbol;
             return self.candidate_list_for_symbol(
                 symbol,
                 at,
                 meaning,
-                GLOBAL_THIS,
-                GLOBAL_THIS,
+                global_this,
+                global_this,
                 ignores_qualification,
                 visited,
             );
@@ -1733,7 +1715,7 @@ impl<'p> EmitResolver<'_, 'p> {
         if Some(container) == self.c.parent_of_symbol(symbol) {
             return Some(symbol);
         }
-        if container == GLOBAL_THIS {
+        if container == self.c.files().global_this_symbol {
             return None;
         }
         if let Some(equals) = self.c.files().export(container, known::export_equals)
@@ -2431,8 +2413,14 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if !tracked.as_local
             && (self.b.may_be_named > 0 || self.is_declared_in_javascript(tracked.symbol))
             && !self
-                .resolver()
-                .is_symbol_accessible(tracked.symbol, tracked.at, tracked.meaning, false)
+                .with_resolver(|resolver| {
+                    resolver.is_symbol_accessible(
+                        tracked.symbol,
+                        tracked.at,
+                        tracked.meaning,
+                        false,
+                    )
+                })
                 .is_accessible()
         {
             self.b.reported_diagnostic = true;
@@ -2442,14 +2430,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
             boundary.tracked.push(tracked);
         } else {
             let access = if tracked.as_local {
-                self.resolver().inaccessible(tracked.symbol, tracked.at)
+                self.with_resolver(|resolver| resolver.inaccessible(tracked.symbol, tracked.at))
             } else {
-                self.resolver().is_symbol_accessible(
-                    tracked.symbol,
-                    tracked.at,
-                    tracked.meaning,
-                    true,
-                )
+                self.with_resolver(|resolver| {
+                    resolver.is_symbol_accessible(tracked.symbol, tracked.at, tracked.meaning, true)
+                })
             };
             if self
                 .tracker
@@ -2543,7 +2528,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     matches!(d.1, Decl::Fn(f)
                         if d.0 == file && !matches!(hir[f].body, FnBody::None))
                 });
-                if !has_body || !self.resolver().is_declaration_visible(file, decl) {
+                if !has_body
+                    || !self.with_resolver(|resolver| resolver.is_declaration_visible(file, decl))
+                {
                     continue;
                 }
             }
@@ -2688,7 +2675,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             visited.push(symbol);
             at = None;
             for (file, decl) in files.decls(symbol) {
-                self.tracker.links.paint_visible(file, decl);
+                self.with_resolver(|resolver| resolver.links.paint_visible(file, decl));
                 // `import a = b.c` makes `b` visible.
                 if let Decl::ImportEquals(i) = decl
                     && let ImportEqualsTarget::Entity(names) = self.c.hir(file)[i].target
@@ -2761,7 +2748,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         };
         let file = self.file();
         if let Some(decl) = decl
-            && !self.resolver().is_declaration_visible(file, decl)
+            && !self.with_resolver(|resolver| resolver.is_declaration_visible(file, decl))
         {
             return false;
         }
@@ -2835,8 +2822,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
     fn transform_import_equals(&mut self, i: ImportEqualsId, s: StmtId) -> bool {
         let file = self.file();
         if !self
-            .resolver()
-            .is_declaration_visible(file, Decl::ImportEquals(i))
+            .with_resolver(|resolver| resolver.is_declaration_visible(file, Decl::ImportEquals(i)))
         {
             return false;
         }
@@ -2862,7 +2848,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let hir = self.c.hir(file);
         match hir[pat].kind {
             PatKind::Missing => false,
-            PatKind::Ident(_) => self.resolver().is_declaration_visible(file, Decl::Var(pat)),
+            PatKind::Ident(_) => {
+                self.with_resolver(|resolver| resolver.is_declaration_visible(file, Decl::Var(pat)))
+            }
             PatKind::Object(props) => props
                 .iter()
                 .any(|p| self.is_binding_name_visible(hir[p].value)),
@@ -3426,9 +3414,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
     /// `checkEntityNameVisibility`
     fn check_entity_name_visibility(&mut self, first: Atom, start: u32, meaning: Meaning) {
         let at = self.enclosing;
-        let access = self
-            .resolver()
-            .is_entity_name_visible(first, Some(start), meaning, at, true);
+        let access = self.with_resolver(|resolver| {
+            resolver.is_entity_name_visible(first, Some(start), meaning, at, true)
+        });
         self.tracker
             .handle_symbol_accessibility_error(self.c, access);
     }
@@ -3821,8 +3809,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
     /// `IsSymbolAccessible(symbol, b.ctx.enclosingDeclaration, meaning, false)`
     fn is_symbol_accessible(&mut self, symbol: Sym, meaning: Meaning) -> bool {
         let at = self.b.enclosing;
-        self.resolver()
-            .is_symbol_accessible(symbol, at, meaning, false)
+        self.with_resolver(|resolver| resolver.is_symbol_accessible(symbol, at, meaning, false))
             .is_accessible()
     }
 
@@ -3844,7 +3831,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             vec![symbol]
         } else {
             let at = self.b.enclosing;
-            self.resolver().symbol_chain(symbol, at, meaning, 0)
+            self.with_resolver(|resolver| resolver.symbol_chain(symbol, at, meaning, 0))
         };
         for &part in &chain[1..] {
             self.b.approximate_length += self.length_of(self.c.name_of(part)) + 1;
@@ -4359,7 +4346,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 let origin = *origin;
                 match origin {
                     Origin::GlobalThis => {
-                        return self.symbol_to_type_node(GLOBAL_THIS, Meaning::Value);
+                        let global_this = self.c.files().global_this_symbol;
+                        return self.symbol_to_type_node(global_this, Meaning::Value);
                     }
                     Origin::ClassStatic(symbol)
                     | Origin::EnumObject(symbol)
@@ -6314,12 +6302,11 @@ impl<'p> EmitResolver<'_, 'p> {
                     continue;
                 }
                 // The module says with `export =` that it is the symbol.
-                let is_the_module = parent != GLOBAL_THIS
-                    && self
-                        .c
-                        .files()
-                        .export(parent, known::export_equals)
-                        .is_some_and(|equals| self.c.is_same_reference(equals, symbol));
+                let is_the_module = self
+                    .c
+                    .files()
+                    .export(parent, known::export_equals)
+                    .is_some_and(|equals| self.c.is_same_reference(equals, symbol));
                 if !is_the_module {
                     if chain.is_empty() {
                         let last = self
@@ -6395,9 +6382,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
     /// `import_type_specifier_and_mode` with its error. `module` is what the chain of names for `symbol` starts with.
     fn import_type_specifier(&mut self, module: Sym, symbol: Sym) -> String {
         let importing = self.b.enclosing.file;
-        let (specifier, mode) = self
-            .resolver()
-            .import_type_specifier_and_mode(module, importing, false);
+        let (specifier, mode) = self.with_resolver(|resolver| {
+            resolver.import_type_specifier_and_mode(module, importing, false)
+        });
         if specifier.contains("/node_modules/") && mode.is_none() {
             self.b.encountered_error = true;
             let files = self.c.files();

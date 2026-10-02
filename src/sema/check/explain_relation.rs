@@ -1159,14 +1159,7 @@ impl<'p> Checker<'p> {
         if !self.is_excess_property_check_target(target) {
             return false;
         }
-        if matches!(
-            self.data(target),
-            TypeData::Anon {
-                origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..),
-                ..
-            }
-        ) && self.is_js_literal_type(target)
-        {
+        if !self.p.files.options.no_implicit_any && self.has_js_literal_flag(target) {
             return false;
         }
         let is_jsx = matches!(self.data(source), TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes);
@@ -1188,7 +1181,7 @@ impl<'p> Checker<'p> {
         }
         let literal = match *self.data(source) {
             TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e),
+                origin: Origin::ObjectLiteral(file, e, ..),
                 ..
             } => Some((file, e)),
             _ => None,

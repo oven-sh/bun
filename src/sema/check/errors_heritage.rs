@@ -770,9 +770,9 @@ impl Checker<'_> {
             .files()
             .sym(file, self.bound(file).interface_symbol[i.idx()]);
         let decls = self.files().decls_of(sym);
-        // Once for the interface: where it is first declared.
+        // `interfaceChecked`: once for the interface, at the first of its declarations that is checked.
         let first = decls.iter().find_map(|&(f, d)| match d {
-            Decl::Interface(id) => Some((f, id)),
+            Decl::Interface(id) if self.reports_semantic_errors(f) => Some((f, id)),
             _ => None,
         });
         let is_first = first == Some((file, i));

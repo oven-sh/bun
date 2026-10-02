@@ -710,6 +710,7 @@ pub struct Stmt {
     pub pos: u32,
     /// Where its first token is, decorators and modifiers included.
     pub start: u32,
+    pub loc: TextRange,
     /// `node.Modifiers()`
     pub modifiers: Span<ModifierId>,
 }
@@ -843,6 +844,9 @@ pub struct Func {
     /// Where the name of that parameter is, with or without a type. Of one that is made of a `@this` tag, where the name of the tag
     /// is; in a `@callback`, where the tag is. `u32::MAX`: there is none.
     pub this_pos: u32,
+    /// `Name().End()`. `this_pos`: the identifier the reparser makes for a `@this` tag on a function has no range. In a `@callback`
+    /// it has that of the tag (`thisIdent.Loc = thisTag.Loc`).
+    pub this_name_end: u32,
     pub ret: TypeNodeId,
     pub body: FnBody,
     /// The `(` of the parameters; the `=>` of an arrow function.
@@ -900,6 +904,8 @@ pub struct Member {
     pub start: u32,
     /// Its `;` or `,` is part of it.
     pub loc: TextRange,
+    /// `node.Modifiers()`. The `static` of `static { }` is none.
+    pub modifiers: Span<ModifierId>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1518,6 +1524,7 @@ impl File {
             kind,
             pos,
             start: pos,
+            loc: TextRange::default(),
             modifiers: Span::EMPTY,
         })
     }
@@ -1725,6 +1732,39 @@ pub fn is_parenthesized(hir: &File, e: ExprId) -> bool {
 pub fn open_parenthesis(hir: &File, e: ExprId) -> Option<u32> {
     let at = hir.parens.binary_search_by_key(&e.0, |p| p.0.0).ok()?;
     Some(hir.parens[at].1)
+}
+
+/// Where `e` starts, not counting parentheses around the whole of it. It starts where what it starts with starts.
+pub fn start_inside_parentheses(hir: &File, mut e: ExprId) -> u32 {
+    let mut is_outermost = true;
+    loop {
+        if !std::mem::take(&mut is_outermost)
+            && let Some(open) = open_parenthesis(hir, e)
+        {
+            return open;
+        }
+        e = match hir[e].kind {
+            ExprKind::Binary { left, .. } => left,
+            ExprKind::Assign { target, .. } => target,
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+            ExprKind::Call(c) | ExprKind::TaggedTemplate(c) => hir[c].callee,
+            ExprKind::Cond { test, .. } => test,
+            // Its decorators are part of it.
+            ExprKind::Class(c) => return hir[c].start,
+            // `x as T`. `<T>x` and `<const>x` are put at the `<` they start with.
+            ExprKind::As { expr, ty } if hir[ty].pos > hir[expr].pos => expr,
+            ExprKind::AsConst(x) if hir[e].pos < hir[x].pos => return hir[e].pos,
+            ExprKind::NonNull(x)
+            | ExprKind::AsConst(x)
+            | ExprKind::Satisfies { expr: x, .. }
+            | ExprKind::Instantiation { expr: x, .. } => x,
+            ExprKind::Unary {
+                op: UnOp::PostInc | UnOp::PostDec,
+                operand,
+            } => operand,
+            _ => return hir[e].pos,
+        };
+    }
 }
 
 /// `IsPrivateIdentifier`, of the name written at `pos`.

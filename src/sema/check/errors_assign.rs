@@ -39,6 +39,30 @@ fn unwrap_unary_tuples(
     (check, extends)
 }
 
+/// `covariant` in `getConditionalFlowTypeOfType`, from `node` up to `ancestor`: a parameter on the way turns it around.
+fn is_covariant_below(
+    hir: &hir::File,
+    parents: &[TypeNodeId],
+    mut node: TypeNodeId,
+    ancestor: TypeNodeId,
+) -> bool {
+    let mut covariant = true;
+    while node != ancestor {
+        let parent = parents[node.idx()];
+        let of_fn =
+            |f: FnId| hir[f].this_ty == node || hir[f].params.iter().any(|p| hir[p].ty == node);
+        covariant ^= match hir[parent].kind {
+            TypeNodeKind::Fn(f) => of_fn(f),
+            TypeNodeKind::Object(members) => members
+                .iter()
+                .any(|m| hir[m].func.is_some() && of_fn(hir[m].func)),
+            _ => false,
+        };
+        node = parent;
+    }
+    covariant
+}
+
 /// What `checkTypeRelatedToEx` was given where it reports an error.
 #[derive(Copy, Clone)]
 struct RelationError {
@@ -1517,22 +1541,12 @@ impl Checker<'_> {
         let hir = self.hir(file);
         let is_variable = self.is_type_variable(ty);
         let mut constraints: Vec<TypeId> = Vec::new();
-        let mut covariant = true;
+        let written_at = node;
         loop {
             let parent = parents[node.idx()];
             if parent.is_none() {
                 break;
             }
-            // A parameter turns things around, which a type variable does not mind.
-            let of_fn =
-                |f: FnId| hir[f].this_ty == node || hir[f].params.iter().any(|p| hir[p].ty == node);
-            covariant ^= match hir[parent].kind {
-                TypeNodeKind::Fn(f) => of_fn(f),
-                TypeNodeKind::Object(members) => members
-                    .iter()
-                    .any(|m| hir[m].func.is_some() && of_fn(hir[m].func)),
-                _ => false,
-            };
             if let TypeNodeKind::Cond {
                 check,
                 extends,
@@ -1540,12 +1554,13 @@ impl Checker<'_> {
                 ..
             } = hir[parent].kind
                 && yes == node
-                && (covariant || is_variable)
+                && (is_variable || is_covariant_below(hir, &parents, written_at, parent))
                 && let Some(constraint) = self.implied_constraint(file, ty, check, extends)
             {
                 constraints.push(constraint);
             }
-            if let TypeNodeKind::Mapped(m) = hir[parent].kind
+            if is_variable
+                && let TypeNodeKind::Mapped(m) = hir[parent].kind
                 && ty == self.type_param(file, hir[m].param)
                 && let Some((_, constraint)) = self.mapped_key_flow_constraint(file, parent, node)
             {
@@ -2816,7 +2831,7 @@ impl Checker<'_> {
         // `getBestMatchIndexedAccessTypeOrUndefined`
         let wanted = match self.indexed_access_by_name(target, name) {
             Some(wanted) => wanted,
-            None if self.is_union(target) && self.no_infer_parameter != Some(target) => {
+            None if self.is_union(target) => {
                 let Some(best) = self.best_matching_type(source, target) else {
                     return false;
                 };
@@ -3140,6 +3155,17 @@ impl Checker<'_> {
         named_otherwise: (bool, bool),
         out: &mut Vec<Diagnostic>,
     ) {
+        // `isRelatedToEx`: all that is said is said of `getNormalizedType` of the two. A substitution type has no alias to go by.
+        let source = match *self.data(source) {
+            TypeData::Substitution { base, constraint } => {
+                self.substitution_intersection(base, constraint)
+            }
+            _ => source,
+        };
+        let target = match *self.data(target) {
+            TypeData::Substitution { base, .. } => base,
+            _ => target,
+        };
         let error = RelationError {
             source,
             target,

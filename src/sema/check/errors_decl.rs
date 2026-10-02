@@ -774,12 +774,7 @@ impl Checker<'_> {
             return None;
         }
         let module = files.module_of_specifier_as(sym.file, spec, mode)?;
-        // `isShorthandAmbientModuleSymbol`
-        if files
-            .decls(module)
-            .iter()
-            .any(|&(f, d)| matches!(d, Decl::Module(id) if !files.hir(f)[id].has_body))
-        {
+        if files.is_shorthand_ambient_module_symbol(module) {
             return Some(files.flags(module));
         }
         let value = files.module_value(module);

@@ -188,6 +188,8 @@ impl<'p> Checker<'p> {
                 let index = self.force(index);
                 index != TypeId::BOOLEAN && self.is_union(index)
             }
+            // `getConditionalType` gives what is handed no alias `root.alias`: the alias whose body the node is.
+            (TypeData::Cond { .. }, _) => false,
             _ => self.takes_alias_of(ty, result),
         };
         if !takes_alias {

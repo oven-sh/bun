@@ -80,7 +80,7 @@ pub enum VisitedKind {
 }
 
 impl Checker<'_> {
-    /// `typeWriterWalker.visitNode` over `forEachASTNode`, in no particular order.
+    /// `typeWriterWalker.visitNode` over `forEachASTNode`.
     pub(super) fn visited_nodes(&self, file: FileId) -> Vec<VisitedNode> {
         let hir = self.hir(file);
         let mut visitor = Visitor {
@@ -96,6 +96,14 @@ impl Checker<'_> {
         visitor.type_nodes();
         // `forEachASTNode` leaves out what is reparsed from a JSDoc comment, and a comment is no child of a node.
         visitor.nodes.retain(|node| !hir.is_in_jsdoc(node.start));
+        // It goes down from the file. Of two expressions of one extent the one around the other was made later.
+        visitor.nodes.sort_by_key(|node| {
+            let made = match node.kind {
+                VisitedKind::Expression(e) => e.0,
+                _ => 0,
+            };
+            (node.start, std::cmp::Reverse((node.end, made)))
+        });
         visitor.nodes
     }
 
@@ -427,6 +435,13 @@ impl Visitor<'_, '_> {
             )
             .then_some(prop.value)
         }));
+        // `{ a = 1 } = o`: the value is an assignment to the name.
+        not_visited.extend(hir.props.iter().filter_map(|prop| {
+            match hir.exprs.get(prop.value.idx())?.kind {
+                ExprKind::Assign { target, .. } if prop.kind == PropKind::Shorthand => Some(target),
+                _ => None,
+            }
+        }));
         // `IsInExpressionContext` does not hold right under an `ExportAssignment`. The one statement of a JSON file is an
         // `ExpressionStatement`, which is kept as `export =`.
         not_visited.extend(hir.stmts.iter().filter_map(|stmt| match stmt.kind {
@@ -481,7 +496,9 @@ impl Visitor<'_, '_> {
                     && hir.text.get(before - 1) == Some(&b'=')
             }));
         }
-        let mut is_not_visited = vec![false; hir.exprs.len()];
+        // What nothing leads to is no node: the parser made it in an attempt it gave up.
+        let parents = self.c.bound(self.file).expr_parent.iter();
+        let mut is_not_visited: Vec<bool> = parents.map(|p| matches!(p, Parent::None)).collect();
         // An identifier the parser missed is visited wherever the lowered tree has it.
         let not_visited = not_visited
             .into_iter()
@@ -659,11 +676,13 @@ impl Visitor<'_, '_> {
                 );
             }
         }
-        for index in 0..hir.fns.len() {
+        for (index, function) in hir.fns.iter().enumerate() {
             let f = FnId(index as u32);
-            if let Some(start) = self.c.start_of_this_parameter(file, f) {
-                self.node(start, start + 4, VisitedKind::ThisParameter(f));
-            }
+            self.node(
+                function.this_pos,
+                function.this_name_end,
+                VisitedKind::ThisParameter(f),
+            );
         }
         for (index, import) in hir.import_equals.iter().enumerate() {
             let id = ImportEqualsId(index as u32);

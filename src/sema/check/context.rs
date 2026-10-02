@@ -452,7 +452,7 @@ impl<'p> Checker<'p> {
                 _ => None,
             },
             TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e),
+                origin: Origin::ObjectLiteral(file, e, ..),
                 ..
             } if self.is_assignment_target(file, e) => {
                 let hir = self.hir(file);
@@ -483,7 +483,7 @@ impl<'p> Checker<'p> {
                 Literalness::Pattern | Literalness::PatternWithComputedNames
             ),
             TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e),
+                origin: Origin::ObjectLiteral(file, e, ..),
                 ..
             } => self.is_assignment_target(*file, *e),
             TypeData::Tuple { elems: parts, .. } | TypeData::Union(parts) => {

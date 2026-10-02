@@ -313,7 +313,7 @@ impl Checker<'_> {
     }
 
     /// `GetEmitModuleFormatOfFile(file) == ModuleKindCommonJS`
-    fn xm_emits_commonjs(&self, file: FileId) -> bool {
+    pub(super) fn xm_emits_commonjs(&self, file: FileId) -> bool {
         // `GetImpliedNodeFormatForEmitWorker`
         match self.files().module(file).implied_format {
             ResolutionMode::Require => true,
@@ -1255,7 +1255,7 @@ impl Checker<'_> {
 
     /// Whether the file mentions `alias`, which a statement directly in the module `m` declares, or at the top of the file.
     fn xm_alias_is_used(&self, cx: &Cx<'_>, m: ModuleId, alias: Atom) -> bool {
-        let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
+        let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let scope = if m.is_none() {
             bound.scopes.first()
         } else {
@@ -1266,7 +1266,9 @@ impl Checker<'_> {
         };
         let all = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
         let means_it = |from: ScopeId, name: Atom| {
-            name == alias && from.is_some() && bound.resolve(from, name, all) == Some(symbol)
+            name == alias
+                && from.is_some()
+                && files.resolve_name(cx.file, from, name, all) == Some(files.sym(cx.file, symbol))
         };
         bound.expr_symbol.iter().zip(&bound.expr_parent).any(|(&s, parent)| s == symbol && !matches!(parent, Parent::None))
             || hir.types.iter().enumerate().any(|(t, node)| match node.kind {

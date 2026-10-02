@@ -105,10 +105,10 @@ pub enum Origin {
     TypeLiteral(FileId, TypeNodeId),
     /// `{ [K in T]: U }`
     Mapped(FileId, TypeNodeId),
-    /// `{ a: 1 }`, as the type of the expression: known to have nothing but what is written.
-    ObjectLiteral(FileId, ExprId),
+    /// `{ a: 1 }`, as the type of the expression: known to have nothing but what is written. The last: `ObjectFlagsJSLiteral`.
+    ObjectLiteral(FileId, ExprId, bool),
     /// The same once it is the type of a variable, a result, a type argument: an ordinary object type.
-    WidenedLiteral(FileId, ExprId),
+    WidenedLiteral(FileId, ExprId, bool),
     /// The constructor function of a class, with its static members.
     ClassStatic(Sym),
     /// A function declaration with all its overloads, and the namespace merged with it.
@@ -436,6 +436,8 @@ pub struct Shape {
     pub construct: Vec<SigId>,
     pub index: Vec<IndexInfo>,
     pub literal: Literalness,
+    /// `ObjectFlagsJSLiteral`
+    pub is_js_literal: bool,
     /// Of what `getInstantiationExpressionType` makes.
     pub instantiation_expression: Option<InstantiationExpression>,
     /// Of what `createDefaultPropertyWrapperForModule` makes: `originalSymbol`, the module, which is the `Parent` of its `default`.
@@ -791,8 +793,8 @@ fn is_type_local(data: &TypeData, file: FileId) -> bool {
                 || match origin {
                     Origin::TypeLiteral(f, _)
                     | Origin::Mapped(f, _)
-                    | Origin::ObjectLiteral(f, _)
-                    | Origin::WidenedLiteral(f, _) => *f == file,
+                    | Origin::ObjectLiteral(f, ..)
+                    | Origin::WidenedLiteral(f, ..) => *f == file,
                     Origin::ClassStatic(sym)
                     | Origin::Function(sym)
                     | Origin::EnumObject(sym)

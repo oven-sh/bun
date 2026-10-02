@@ -1143,7 +1143,11 @@ impl Bound {
             _ => return None,
         };
         let init = hir[d].init;
-        if !hir.is_js || init.is_none() || hir[d].ty.is_some() {
+        if !hir.is_js
+            || init.is_none()
+            || hir[d].ty.is_some()
+            || hir[d].flags.contains(Flags::EXPORT)
+        {
             return None;
         }
         Some((required_specifier(hir, init)?, part))
@@ -1251,6 +1255,15 @@ impl Bound {
             Decl::Module(it) => self.module_symbol[it.idx()],
             Decl::TypeParam(it) => self.type_param_symbol[it.idx()],
             _ => SymbolId::NONE,
+        }
+    }
+
+    /// `ExportSymbol` of the local symbol `scope` holds under `name`. `GetLocalSymbolForExportDefault(result).Name == name` is asked
+    /// this way round: `result` is that.
+    pub fn export_symbol_of_local(&self, scope: ScopeId, name: Atom) -> SymbolId {
+        match self.lookup(self.scopes[scope.idx()].locals, name) {
+            Some(local) => self.symbols[local.idx()].export_symbol,
+            None => SymbolId::NONE,
         }
     }
 
@@ -1374,70 +1387,6 @@ impl Bound {
         (meaning & self.symbols[local.idx()].flags)
             .intersects(SymFlags::VALUE)
             .then_some((code, property))
-    }
-
-    /// What `name` means in `scope`, going outwards, as far as this file knows.
-    pub fn resolve(&self, scope: ScopeId, name: Atom, meaning: SymFlags) -> Option<SymbolId> {
-        self.resolve_with_scope(scope, name, meaning)
-            .map(|found| found.0)
-    }
-
-    /// The same, with the scope it is found in.
-    pub fn resolve_with_scope(
-        &self,
-        mut scope: ScopeId,
-        name: Atom,
-        meaning: SymFlags,
-    ) -> Option<(SymbolId, ScopeId)> {
-        // `lastLocation`: the kind of the scope the search has just left.
-        let mut from = ScopeKind::Block;
-        while scope.is_some() {
-            if self
-                .type_parameter_out_of_reach(scope, name, meaning)
-                .is_some()
-            {
-                return None;
-            }
-            let s = &self.scopes[scope.idx()];
-            if let Some(symbol) = self.lookup(s.locals, name)
-                && self.symbols[symbol.idx()]
-                    .flags
-                    .intersects(meaning | SymFlags::ALIAS)
-                && self.is_seen_from(from, self.symbols[symbol.idx()].flags, meaning)
-            {
-                return Some((symbol, scope));
-            }
-            // "First see if the module has an export default and if the local name of that export default matches."
-            if s.symbol.is_some()
-                && name != crate::atom::known::default
-                && let Some(default) = self.lookup(
-                    self.symbols[s.symbol.idx()].exports,
-                    crate::atom::known::default,
-                )
-                && self.symbols[default.idx()].name == name
-                && self.symbols[default.idx()].flags.intersects(meaning)
-            {
-                return Some((default, scope));
-            }
-            // `Resolve`: nothing goes by the name `default` where it is exported. Of an enum and a namespace that are one symbol, the
-            // enum sees the members only and the namespace all but the members.
-            if s.symbol.is_some()
-                && name != crate::atom::known::default
-                && let Some(symbol) = self.lookup(self.symbols[s.symbol.idx()].exports, name)
-                && !self.symbols[symbol.idx()]
-                    .flags
-                    .contains(SymFlags::EXPORT_ONLY)
-                && self.symbols[symbol.idx()].flags.intersects(match s.kind {
-                    ScopeKind::Enum(_) => meaning & SymFlags::ENUM_MEMBER,
-                    _ => (meaning | SymFlags::ALIAS) & SymFlags::MODULE_MEMBER,
-                })
-            {
-                return Some((symbol, scope));
-            }
-            from = s.kind;
-            scope = s.parent;
-        }
-        None
     }
 
     pub fn heap_size(&self) -> usize {

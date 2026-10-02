@@ -479,7 +479,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut stmt_opts = ParseStatementOptions::default();
         let body = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
         p.pop_scope();
-        p.mark_type_syntax(loc, crate::sema::Mark::WithEnd, p.lexer.loc());
 
         Ok(p.s(
             S::With {
@@ -764,6 +763,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             if has_block {
                 p.end_of_block(finally_body_loc)?;
+                p.mark_end(finally_loc, crate::sema::Mark::StatementEnd);
             }
             finally = Some(js_ast::Finally {
                 loc: finally_loc,
@@ -991,6 +991,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // "in" expressions are allowed again
             p.allow_in = true;
+            if let Some(init) = &init_ {
+                p.mark_end(init.loc, crate::sema::Mark::StatementEnd);
+            }
 
             // `parseForOrForInOrForOfStatement`: after `await`, wherever the loop stands, `of` is expected, and nothing is taken
             // for it. Failing that the loop is what it looks like without.
@@ -3137,6 +3140,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if stmt.loc.start > loc.start {
             self.mark_type_syntax(stmt.loc, crate::sema::Mark::DeclarationStart, loc);
         }
+        self.mark_end(loc, crate::sema::Mark::StatementEnd);
         Ok(stmt)
     }
 }

@@ -139,7 +139,7 @@ impl Checker<'_> {
                 Some((file, e, scope))
             }
             TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e) | Origin::WidenedLiteral(file, e),
+                origin: Origin::ObjectLiteral(file, e, ..) | Origin::WidenedLiteral(file, e, ..),
                 ..
             } => matches!(self.hir(file)[e].kind, ExprKind::Object(_))
                 .then(|| (file, e, self.enclosing_scope_of_expr(file, e))),

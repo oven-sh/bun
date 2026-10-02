@@ -744,9 +744,15 @@ impl Dump<'_> {
             kind,
             pos,
             start,
+            loc,
             modifiers,
         } = node!(self, depth, label, stmts, id);
-        let mut head = format!("Stmt {} pos={pos} start={start}", stmt_kind_name(kind));
+        let mut head = format!(
+            "Stmt {} pos={pos} start={start} loc={}..{}",
+            stmt_kind_name(kind),
+            loc.pos,
+            loc.end
+        );
         for modifier in self.file.modifier_list(modifiers) {
             head += &format!(" {:?}@{}", modifier.kind, modifier.pos);
         }
@@ -914,6 +920,7 @@ impl Dump<'_> {
             params,
             this_ty,
             this_pos,
+            this_name_end,
             ret,
             body,
             anchor,
@@ -933,6 +940,7 @@ impl Dump<'_> {
         self.ty(d, "this_ty", this_ty);
         if this_pos != u32::MAX {
             put!(self, d, "this_pos", "{this_pos}");
+            put!(self, d, "this_name_end", "{this_name_end}");
         }
         self.ty(d, "ret", ret);
         match body {
@@ -995,16 +1003,18 @@ impl Dump<'_> {
             pos,
             start,
             loc,
+            modifiers,
         } = node!(self, depth, label, members, id);
-        put!(
-            self,
-            depth,
-            label,
+        let mut head = format!(
             "Member kind={} flags={flags:?} pos={pos} start={start} loc={}..{}",
             member_kind_name(kind),
             loc.pos,
             loc.end
         );
+        for modifier in self.file.modifier_list(modifiers) {
+            head += &format!(" {:?}@{}", modifier.kind, modifier.pos);
+        }
+        self.line(depth, label, &head);
         let d = depth + 1;
         self.key(d, "key", key);
         self.ty(d, "ty", ty);

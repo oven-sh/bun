@@ -8,12 +8,12 @@ use super::Checker;
 use crate::atom::{Atom, known};
 use crate::bind::{FnOwner, MemberOwner};
 use crate::hir::{
-    CallId, CaseId, ClassId, EnumId, EnumMemberId, ExportSpecId, Expr, ExprId, ExprKind, File,
-    FileKind, Flags, FnBody, FnId, FnKind, Func, INCOMPLETE_TEMPLATE, IdList, ImportEqualsTarget,
-    ImportSpecId, InterfaceId, JsxId, Keyword, MemberId, MemberKind, ModuleId, ParamId, PatElemId,
-    PatId, PatKind, PatPropId, PropId, PropKey, PropKind, Span, Stmt, StmtId, StmtKind,
-    TupleElemId, TypeNode, TypeNodeId, TypeNodeKind, TypeParamId, UnOp, VarDeclId,
-    is_parenthesized, open_parenthesis,
+    CallId, CaseId, ClassId, EnumMemberId, ExportSpecId, Expr, ExprId, ExprKind, File, FileKind,
+    Flags, FnBody, FnId, FnKind, Func, INCOMPLETE_TEMPLATE, IdList, ImportSpecId, InterfaceId,
+    JsxId, Keyword, MemberId, MemberKind, ParamId, PatElemId, PatId, PatKind, PatPropId, PropId,
+    PropKey, PropKind, Span, Stmt, StmtId, StmtKind, TupleElemId, TypeNode, TypeNodeId,
+    TypeNodeKind, TypeParamId, UnOp, VarDeclId, is_parenthesized, open_parenthesis,
+    start_inside_parentheses,
 };
 use crate::program::FileId;
 use bun_core::lexer;
@@ -917,11 +917,6 @@ impl<'a> Spans<'a> {
         }
     }
 
-    /// `parseSemicolon`: a `;` belongs to the statement wherever it is written.
-    fn semicolon(self, at: usize) -> usize {
-        self.eat(at, b";")
-    }
-
     /// `parseTypeMemberSemicolon`
     fn member_separator(self, at: usize) -> usize {
         match self.eat(at, b",") {
@@ -1060,47 +1055,6 @@ impl<'a> Spans<'a> {
         self.hir.types.get(node.idx()).map_or(0, |t| t.pos as usize)
     }
 
-    /// Where `e` starts, not counting parentheses around the whole of it. As `Checker::start_inside_parentheses`.
-    fn start_inside(self, mut e: ExprId) -> usize {
-        let mut is_outermost = true;
-        loop {
-            if !std::mem::take(&mut is_outermost)
-                && let Some(open) = open_parenthesis(self.hir, e)
-            {
-                return open as usize;
-            }
-            let Some(&Expr { kind, pos }) = self.hir.exprs.get(e.idx()) else {
-                return 0;
-            };
-            e = match kind {
-                ExprKind::Binary { left, .. } => left,
-                ExprKind::Assign { target, .. } => target,
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-                ExprKind::Call(c) | ExprKind::TaggedTemplate(c) => {
-                    match self.hir.calls.get(c.idx()) {
-                        Some(call) => call.callee,
-                        None => return pos as usize,
-                    }
-                }
-                ExprKind::Cond { test, .. } => test,
-                ExprKind::Class(c) => {
-                    return self.hir.classes.get(c.idx()).map_or(pos, |c| c.start) as usize;
-                }
-                ExprKind::As { expr, ty } if self.type_pos(ty) > self.expr_pos(expr) => expr,
-                ExprKind::AsConst(x) if (pos as usize) < self.expr_pos(x) => return pos as usize,
-                ExprKind::NonNull(x)
-                | ExprKind::AsConst(x)
-                | ExprKind::Satisfies { expr: x, .. }
-                | ExprKind::Instantiation { expr: x, .. } => x,
-                ExprKind::Unary {
-                    op: UnOp::PostInc | UnOp::PostDec,
-                    operand,
-                } => operand,
-                _ => return pos as usize,
-            };
-        }
-    }
-
     /// How many `(` are written one after the other from `open` on, before `inside`.
     fn parens_from(self, open: usize, inside: usize) -> usize {
         let (mut at, mut count) = (open, 0);
@@ -1124,7 +1078,8 @@ impl<'a> Spans<'a> {
         let end = self.expr_inside(e);
         match open_parenthesis(self.hir, e) {
             Some(open) => {
-                let count = self.parens_from((open as usize).max(start), self.start_inside(e));
+                let inside = start_inside_parentheses(self.hir, e) as usize;
+                let count = self.parens_from((open as usize).max(start), inside);
                 self.close_parens(end, count)
             }
             None => end,
@@ -1859,7 +1814,7 @@ impl<'a> Spans<'a> {
         match func.body {
             FnBody::Expr(e) => self.expr(e),
             FnBody::Block(stmts) => match self.hir.ids(stmts).next_back() {
-                Some(last) => self.close(self.stmt(last), b'}'),
+                Some(last) => self.close(self.hir[last].loc.end as usize, b'}'),
                 None => self.braces_after(self.signature(func)),
             }
             .max(func.anchor as usize),
@@ -1921,238 +1876,7 @@ impl<'a> Spans<'a> {
         self.close(inside.max(interface.name_pos as usize), b'}')
     }
 
-    fn enum_declaration(self, e: EnumId) -> usize {
-        let Some(declaration) = self.hir.enums.get(e.idx()) else {
-            return 0;
-        };
-        let inside = match declaration.members.iter().next_back() {
-            Some(last) => self.enum_member(last),
-            None => self.inside_braces_after(self.token(declaration.name_pos as usize)),
-        };
-        self.close(inside.max(declaration.name_pos as usize), b'}')
-    }
-
-    fn enum_member(self, member: EnumMemberId) -> usize {
-        let Some(member) = self.hir.enum_members.get(member.idx()) else {
-            return 0;
-        };
-        if member.init.is_some() {
-            self.expr(member.init)
-        } else {
-            self.name(member.pos as usize)
-        }
-    }
-
-    fn module(self, m: ModuleId) -> usize {
-        let Some(module) = self.hir.modules.get(m.idx()) else {
-            return 0;
-        };
-        let name_end = self.token(module.name_pos as usize);
-        if !module.has_body {
-            return self.semicolon(name_end);
-        }
-        match self.hir.ids(module.body).next_back() {
-            // `namespace A.B { }`: the braces are those of `B`.
-            Some(inner) if self.eat(name_end, b".") != name_end => self.stmt(inner),
-            Some(last) => self.close(self.stmt(last), b'}'),
-            None => self.braces_after(name_end),
-        }
-    }
-
     // ───────────────────────────── statements ─────────────────────────────
-
-    fn stmt(self, s: StmtId) -> usize {
-        let Some(&Stmt { kind, pos, .. }) = self.hir.stmts.get(s.idx()) else {
-            return 0;
-        };
-        let pos = pos as usize;
-        let end = match kind {
-            // `;`, or one of the statements nothing is kept of: `debugger;`, `"use strict";`
-            StmtKind::Empty => match self.byte(pos) {
-                b';' => pos + 1,
-                _ => self.semicolon(self.token(pos)),
-            },
-            StmtKind::Expr(e)
-            | StmtKind::Throw(e)
-            | StmtKind::ExportDefault(e)
-            | StmtKind::ExportAssign(e) => self.semicolon(self.expr(e)),
-            StmtKind::Var(decls) => self.semicolon(self.var_decl_list(decls, pos)),
-            StmtKind::Fn(f) => self.func(f),
-            StmtKind::Class(c) => self.class(c),
-            StmtKind::Interface(i) => self.interface(i),
-            StmtKind::TypeAlias(alias) => match self.hir.aliases.get(alias.idx()) {
-                Some(alias) => self.semicolon(self.ty_in(alias.ty, 0)),
-                None => self.token(pos),
-            },
-            StmtKind::Enum(e) => self.enum_declaration(e),
-            StmtKind::Module(m) => self.module(m),
-            StmtKind::Return(e) => {
-                let end = if e.is_some() {
-                    self.expr(e)
-                } else {
-                    self.token(pos)
-                };
-                self.semicolon(end)
-            }
-            StmtKind::If { yes, no, .. } => self.stmt(if no.is_some() { no } else { yes }),
-            StmtKind::For { body, .. }
-            | StmtKind::ForIn { body, .. }
-            | StmtKind::ForOf { body, .. }
-            | StmtKind::While { body, .. }
-            | StmtKind::Labeled { body, .. } => self.stmt(body),
-            StmtKind::DoWhile { test, .. } => self.semicolon(self.close(self.expr(test), b')')),
-            StmtKind::Block(stmts) => self.block(pos, stmts),
-            StmtKind::Switch { expr, cases } => {
-                // Where a `default` without statements is written is not kept.
-                let last = cases.iter().rev().find_map(|case| self.case(case));
-                let inside = last
-                    .unwrap_or_else(|| self.inside_braces_after(self.close(self.expr(expr), b')')));
-                self.close(inside, b'}')
-            }
-            StmtKind::Try {
-                block,
-                handler,
-                finalizer,
-                ..
-            } => self.stmt(if finalizer.is_some() {
-                finalizer
-            } else if handler.is_some() {
-                handler
-            } else {
-                block
-            }),
-            StmtKind::Break(label) | StmtKind::Continue(label) => {
-                let keyword_end = self.token(pos);
-                self.semicolon(if label.is_some() && label != known::empty {
-                    self.eat_name(keyword_end)
-                } else {
-                    keyword_end
-                })
-            }
-            StmtKind::Import(_) => self.semicolon(self.module_specifier_after(pos, true)),
-            StmtKind::ImportEquals(i) => {
-                let Some(import) = self.hir.import_equals.get(i.idx()) else {
-                    return self.token(pos);
-                };
-                let equals = self.eat(self.token(import.name_pos as usize), b"=");
-                self.semicolon(match import.target {
-                    // `require("m")`
-                    ImportEqualsTarget::Require(_) => {
-                        let callee_end = self.eat_name(equals);
-                        let open = self.skip_trivia(callee_end);
-                        if self.byte(open) == b'(' {
-                            self.bracket(open)
-                        } else {
-                            callee_end
-                        }
-                    }
-                    ImportEqualsTarget::Entity(names) => {
-                        self.entity_name(self.skip_trivia(equals), names)
-                    }
-                })
-            }
-            StmtKind::ExportNamed(export) => {
-                let clause_end = self.close(self.inside_braces_after(pos), b'}');
-                let has_specifier = self
-                    .hir
-                    .exports
-                    .get(export.idx())
-                    .is_some_and(|export| export.spec.is_some());
-                self.semicolon(if has_specifier {
-                    self.module_specifier_after(clause_end, false)
-                } else {
-                    clause_end
-                })
-            }
-            StmtKind::ExportStar { .. } => {
-                // `export * as "name" from "m"`: the first string may be the name.
-                let mut at = pos;
-                while self.eat_name(at) != at {
-                    at = self.eat_name(at);
-                }
-                at = self.eat(at, b"*");
-                let after_as = self.eat_word(at, b"as");
-                if after_as != at {
-                    at = self.token(self.skip_trivia(after_as));
-                }
-                self.semicolon(self.module_specifier_after(at, false))
-            }
-            // `export as namespace N`
-            StmtKind::ExportAsNamespace(_) => {
-                let mut at = pos;
-                for _ in 0..4 {
-                    at = self.eat_name(at);
-                }
-                self.semicolon(at)
-            }
-        };
-        end.max(pos)
-    }
-
-    /// From `at` in an import or an export, past the module specifier, which is the first string in no bracket, and the attributes
-    /// after it (`tryParseImportAttributes`, `parseExportDeclaration`).
-    fn module_specifier_after(self, mut at: usize, is_import: bool) -> usize {
-        loop {
-            let start = self.skip_trivia(at);
-            match self.byte(start) {
-                b'"' | b'\'' => {
-                    at = string_end(self.text, start);
-                    break;
-                }
-                b'{' => at = self.bracket(start),
-                b',' | b'*' => at = start + 1,
-                _ => match ident_end(self.text, start) {
-                    end if end > start => at = end,
-                    _ => return at,
-                },
-            }
-        }
-        let keyword = self.skip_trivia(at);
-        let is_on_same_line = line_end(self.text, at) >= keyword;
-        let takes_attributes = match self.word_at(keyword) {
-            b"with" => is_import || is_on_same_line,
-            b"assert" => is_on_same_line,
-            _ => false,
-        };
-        if takes_attributes {
-            self.braces_after(ident_end(self.text, keyword))
-        } else {
-            at
-        }
-    }
-
-    /// `VariableDeclarationList`: a variable statement, which starts at `pos`, without its `;`.
-    fn var_decl_list(self, decls: Span<VarDeclId>, pos: usize) -> usize {
-        match decls.iter().next_back() {
-            Some(last) => self.var_decl(last),
-            // Nothing is declared: it ends with the keyword.
-            None => {
-                let mut at = pos;
-                while matches!(
-                    self.word_at(self.skip_trivia(at)),
-                    b"export" | b"declare" | b"await"
-                ) {
-                    at = self.eat_name(at);
-                }
-                self.eat_name(at)
-            }
-        }
-    }
-
-    /// The block said to be at `pos`.
-    fn block(self, pos: usize, stmts: IdList<StmtId>) -> usize {
-        let last = self.hir.ids(stmts).next_back();
-        match (self.word_at(pos), last) {
-            // `with (e) statement` is kept as a block of the two.
-            (b"with", Some(last)) => self.stmt(last),
-            (_, Some(last)) => self.close(self.stmt(last), b'}'),
-            // The block after `finally` is put at the keyword.
-            (b"finally", None) => self.braces_after(pos + b"finally".len()),
-            (_, None) if self.byte(pos) == b'{' => self.bracket(pos),
-            // `parseBlock` without its `{`
-            (_, None) => skip_trivia_back(self.text, pos),
-        }
-    }
 
     /// Past the `:` of a `case` or `default` clause. `None` if where it is written is not kept.
     fn case_label(self, case: CaseId) -> Option<usize> {
@@ -2162,17 +1886,6 @@ impl<'a> Spans<'a> {
         }
         let pos = case.pos as usize;
         (self.word_at(pos) == b"default").then(|| self.eat(pos + b"default".len(), b":"))
-    }
-
-    fn case(self, case: CaseId) -> Option<usize> {
-        match self
-            .hir
-            .ids(self.hir.cases.get(case.idx())?.body)
-            .next_back()
-        {
-            Some(last) => Some(self.stmt(last)),
-            None => self.case_label(case),
-        }
     }
 
     /// `getErrorRangeForArrowFunction`: an arrow function whose block goes over several lines is pointed at by the first of them.
@@ -2383,16 +2096,16 @@ impl Checker<'_> {
     // ───────────────────────────── statements ─────────────────────────────
 
     /// `node.End()` of the statement `s`, its `;` included. The declarations in the head of a `for` are a statement here and have
-    /// none: `end_of_var_decl_list`.
+    /// none.
     pub fn end_of_stmt(&self, file: FileId, s: StmtId) -> u32 {
-        self.spans(file).stmt(s) as u32
+        self.hir(file).stmts.get(s.idx()).map_or(0, |s| s.loc.end)
     }
 
     /// `GetErrorRangeForNode` of the statement `s`: the name of a declaration or else its first token, the keyword of a `return`,
     /// the whole of anything else.
     pub(super) fn error_range_of_stmt(&self, file: FileId, s: StmtId) -> (u32, u32) {
         let (hir, spans) = (self.hir(file), self.spans(file));
-        let Some(&Stmt { kind, pos, .. }) = hir.stmts.get(s.idx()) else {
+        let Some(&Stmt { kind, pos, loc, .. }) = hir.stmts.get(s.idx()) else {
             return (0, 0);
         };
         let name = match kind {
@@ -2403,7 +2116,7 @@ impl Checker<'_> {
             StmtKind::Enum(e) => hir.enums.get(e.idx()).map(|e| (e.name, e.name_pos)),
             StmtKind::Module(m) => hir.modules.get(m.idx()).map(|m| (known::empty, m.name_pos)),
             StmtKind::Return(_) => Some((Atom::NONE, pos)),
-            _ => return (pos, spans.stmt(s) as u32),
+            _ => return (pos, loc.end),
         };
         let start = match name {
             Some((name, name_pos)) if name.is_some() => name_pos,
@@ -2612,17 +2325,6 @@ impl Checker<'_> {
         let after = spans.bracket(open);
         let dot = spans.eat(after, b".");
         (dot != after).then(|| spans.skip_trivia(dot) as u32)
-    }
-
-    /// Where the name of the `this` parameter of `f` is written. `None`: `f` has none, or has it from a `@this` tag.
-    pub(super) fn start_of_this_parameter(&self, file: FileId, f: FnId) -> Option<u32> {
-        let hir = self.hir(file);
-        let start = hir.fns.get(f.idx())?.this_pos;
-        // Of a tag it is the name after the `@`, in a `@callback` the `@`. `u32::MAX` is nowhere in the text.
-        let from_before = hir
-            .text
-            .get((start as usize).saturating_sub(1)..=start as usize)?;
-        (!from_before.contains(&b'@')).then_some(start)
     }
 
     /// The range of each name of the entity name `A.B.C` that is written at `pos`, up to a name that is missing.

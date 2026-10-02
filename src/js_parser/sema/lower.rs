@@ -589,14 +589,30 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     fn block(&mut self, stmts: &[Stmt], loc: ast::Loc) -> StmtId {
         let list = self.stmts(stmts, false);
-        self.b.file.stmt(StmtKind::Block(list), pos_of(loc))
+        let block = self.b.file.stmt(StmtKind::Block(list), pos_of(loc));
+        self.finish_stmt(block, pos_of(loc))
     }
 
     fn required_stmt(&mut self, stmt: &Stmt) -> StmtId {
         match self.stmt(stmt) {
             Some(id) => id,
-            None => self.b.file.stmt(StmtKind::Empty, pos_of(stmt.loc)),
+            None => {
+                let empty = self.b.file.stmt(StmtKind::Empty, pos_of(stmt.loc));
+                self.finish_stmt(empty, pos_of(stmt.loc))
+            }
         }
+    }
+
+    /// `finishNode`, of the statement `id`, whose first token is at `start`. A block whose `{` is missing takes no room.
+    fn finish_stmt(&mut self, id: StmtId, start: u32) -> StmtId {
+        let pos = self.b.full_start_of(start);
+        let from = ast::Loc {
+            start: start as i32,
+        };
+        let end = self.mark(from, Mark::StatementEnd).unwrap_or(pos);
+        let stmt = &mut self.b.file[id];
+        (stmt.start, stmt.loc) = (start, TextRange { pos, end });
+        id
     }
 
     /// What the parser has no more than a placeholder for, or less than everything of: parsed again from the source.
@@ -676,8 +692,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     fn stmt(&mut self, stmt: &Stmt) -> Option<StmtId> {
         let id = self.stmt_without_jsdoc(stmt);
         if let Some(id) = id {
-            let start = self.declaration_start(stmt.loc);
-            self.b.file[id].start = start;
+            self.finish_stmt(id, self.declaration_start(stmt.loc));
             self.statement_modifiers(stmt.loc, id);
         }
         // `S::Comment`, a comment kept for the printer, is no node. The parser puts it where the next statement starts.
@@ -737,10 +752,11 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     /// The initializer of a `for` statement, which is no statement: a comment before it belongs to nothing.
     fn for_initializer(&mut self, stmt: &Stmt) -> StmtId {
-        match self.stmt_without_jsdoc(stmt) {
+        let id = match self.stmt_without_jsdoc(stmt) {
             Some(id) => id,
             None => self.b.file.stmt(StmtKind::Empty, pos_of(stmt.loc)),
-        }
+        };
+        self.finish_stmt(id, pos_of(stmt.loc))
     }
 
     fn stmt_without_jsdoc(&mut self, stmt: &Stmt) -> Option<StmtId> {
@@ -936,7 +952,12 @@ impl<'p, 'a> Lower<'p, 'a> {
                     handler = self.block(catch.body.slice(), catch.body_loc);
                 }
                 let finalizer = match &s.finally {
-                    Some(finally) => self.block(finally.stmts.slice(), finally.loc),
+                    Some(finally) => {
+                        let block = self.block(finally.stmts.slice(), finally.loc);
+                        // It is put at the keyword, which is the token before it.
+                        self.b.file[block].loc.pos = pos_of(finally.loc) + b"finally".len() as u32;
+                        block
+                    }
                     None => StmtId::NONE,
                 };
                 StmtKind::Try {
@@ -954,13 +975,15 @@ impl<'p, 'a> Lower<'p, 'a> {
             StmtData::SWith(s) => {
                 let value = self.expr(&s.value);
                 let value = self.b.file.stmt(StmtKind::Expr(value), pos);
+                // The expression, which the `)` follows.
+                self.b.file[value].loc = TextRange {
+                    pos: self.b.full_start_of(pos_of(s.value.loc)),
+                    end: self.b.full_start_of(pos_of(s.body_loc)),
+                };
                 let body = self.required_stmt(&s.body);
                 // `parseWithStatement`: `NodeFlagsInWithStatement` is on the statement, not on what is in the parentheses.
                 let start = pos_of(s.body_loc) + 1;
-                let end = match &s.body.data {
-                    StmtData::SBlock(block) => pos_of(block.close_brace_loc) + 1,
-                    _ => self.mark(stmt.loc, Mark::WithEnd).unwrap_or(start),
-                };
+                let end = self.b.file[body].loc.end;
                 self.b.file.with_bodies.push((start, end));
                 StmtKind::Block(self.b.file.list(&[value, body]))
             }
@@ -1516,6 +1539,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             params,
             this_ty,
             this_pos: this_pos.unwrap_or(u32::MAX),
+            this_name_end: this_pos.map_or(u32::MAX, |at| at + 4),
             ret,
             body,
             anchor,
@@ -1578,6 +1602,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             params,
             this_ty: TypeNodeId::NONE,
             this_pos: u32::MAX,
+            this_name_end: u32::MAX,
             ret,
             body,
             anchor,
@@ -1716,6 +1741,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             pos: 0,
             start: 0,
             loc: TextRange::default(),
+            modifiers: Span::EMPTY,
         };
         if let Some(block) = property.class_static_block_ref() {
             member.kind = MemberKind::StaticBlock;
@@ -1724,6 +1750,15 @@ impl<'p, 'a> Lower<'p, 'a> {
             member.start = self
                 .mark(block.loc, Mark::MemberStart)
                 .unwrap_or(member.pos);
+            self.b.member_header_at(member.start);
+            let mut modifiers = self.b.header_modifiers.split_off(0);
+            // `parseModifiersEx(stopOnStartOfClassStaticBlock)`
+            if modifiers.last().is_some_and(|&(_, at)| {
+                skip_trivia(self.source, at as usize + b"static".len()) == member.pos as usize
+            }) {
+                modifiers.pop();
+            }
+            member.modifiers = self.b.add_modifier_list(&modifiers);
             let body = FnBody::Block(self.stmts(block.stmts.as_slice(), false));
             member.func = self.b.file.add_fn(Func {
                 kind: FnKind::StaticBlock,
@@ -1734,6 +1769,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 params: Span::EMPTY,
                 this_ty: TypeNodeId::NONE,
                 this_pos: u32::MAX,
+                this_name_end: u32::MAX,
                 ret: TypeNodeId::NONE,
                 body,
                 anchor: member.pos,
@@ -1761,6 +1797,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             member.flags = flags;
             member.ty = ty;
             modifiers = self.b.header_modifiers.split_off(0);
+            member.modifiers = self.b.add_modifier_list(&modifiers);
         }
 
         let text = self.b.lexer.contents;

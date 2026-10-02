@@ -906,7 +906,7 @@ struct Look<'a> {
     arbitrary_extension: &'a Cell<bool>,
     /// `resolvedPackageDirectory`: the `package.json` of a package by the name that is looked for has been come upon.
     found_package: &'a Cell<bool>,
-    /// `IsExternalLibraryImport`, of what was found for a name that is not relative.
+    /// `IsExternalLibraryImport`
     is_external: &'a Cell<bool>,
     /// Not `NodeResolutionFeaturesExports`: what the `exports` of a package in `node_modules` say is passed over.
     ignores_exports: bool,
@@ -960,25 +960,36 @@ impl Found {
     }
 }
 
+/// `module.ResolvedModule`
+#[derive(Clone, Debug)]
+pub struct ResolvedModule {
+    /// `ResolvedFileName`. For a declaration file of a referenced project, the source it is emitted from.
+    pub file_name: String,
+    pub using_ts_extension: bool,
+    /// `Extension` is one that takes `allowArbitraryExtensions` (`GetResolutionDiagnostic`).
+    pub has_arbitrary_extension: bool,
+    /// It was found in a `node_modules`, going by the path before links are followed.
+    pub is_external_library_import: bool,
+    /// The file with the types of a package whose `exports` only lead to JavaScript, found by passing them over.
+    pub alternate_result: Option<String>,
+    /// `file_name` stands in for a declaration file, and `Extension` is that of the declaration file.
+    pub is_project_reference_redirect: bool,
+}
+
 pub struct Resolver<'h> {
     host: &'h dyn Host,
     options: &'h Options,
     packages: RwLock<FxHashMap<String, Option<Arc<Package>>>>,
     dirs: RwLock<FxHashMap<String, bool>>,
     files: RwLock<FxHashMap<String, bool>>,
-    /// `AlternateResult`, by the key of `resolved`.
-    alternates: RwLock<FxHashMap<String, String>>,
-    /// What `resolve_module_and_extension` found. By the directory, `//`, the mode as a digit, and the specifier: no directory has `//`
-    /// in it.
-    resolved: ShardedMap<String, Option<(String, bool, bool)>>,
+    /// What `resolve_module_name` found. By the directory, `//`, the mode as a digit, and the specifier: no directory has `//` in it.
+    resolved: ShardedMap<String, Option<ResolvedModule>>,
     /// `resolutionState.diagnostics`, of all that was looked for: whether it is about `imports`, the entry, and the `package.json`.
     ambiguous_roots: std::sync::Mutex<Vec<(bool, String, String)>>,
     /// `OriginalPath` and `ResolvedFileName`, of what was found by way of a link. Only where declaration files are emitted.
     links: std::sync::Mutex<Vec<(String, String)>>,
     /// `knownSymlinks.Directories`: what a package directory in `node_modules` links to. `None`: it is not a link.
     linked_packages: RwLock<FxHashMap<String, Option<String>>>,
-    /// By the key of `resolved`.
-    project_reference_redirects: RwLock<FxHashMap<String, ()>>,
 }
 
 /// `guessDirectorySymlink`: the directory that is linked and the link, going by a file at `real` that was found at `link`.
@@ -1083,12 +1094,10 @@ impl<'h> Resolver<'h> {
             packages: RwLock::default(),
             dirs: RwLock::default(),
             files: RwLock::default(),
-            alternates: RwLock::default(),
             resolved: ShardedMap::default(),
             ambiguous_roots: Default::default(),
             links: Default::default(),
             linked_packages: RwLock::default(),
-            project_reference_redirects: RwLock::default(),
         }
     }
 
@@ -1245,27 +1254,16 @@ impl<'h> Resolver<'h> {
     /// `ResolveModuleName`: the file `spec` names. It may be JavaScript (`is_javascript`): then nothing declares its types.
     pub fn resolve_module(&self, spec: &str, from: &str, mode: ResolutionMode) -> Option<String> {
         self.resolve_module_name(spec, from, mode)
-            .map(|resolved| resolved.0)
+            .map(|resolved| resolved.file_name)
     }
 
-    /// `ResolveModuleName`: `ResolvedFileName` and `ResolvedUsingTsExtension` of the result.
+    /// `ResolveModuleName`
     pub fn resolve_module_name(
         &self,
         spec: &str,
         from: &str,
         mode: ResolutionMode,
-    ) -> Option<(String, bool)> {
-        self.resolve_module_and_extension(spec, from, mode)
-            .map(|resolved| (resolved.0, resolved.1))
-    }
-
-    /// The same, and whether `Extension` of the result is one that takes `allowArbitraryExtensions` (`GetResolutionDiagnostic`).
-    pub fn resolve_module_and_extension(
-        &self,
-        spec: &str,
-        from: &str,
-        mode: ResolutionMode,
-    ) -> Option<(String, bool, bool)> {
+    ) -> Option<ResolvedModule> {
         let key = resolution_key(spec, from, mode);
         if let Some(known) = self.resolved.get_ref(key.as_str()) {
             return known.clone();
@@ -1280,66 +1278,39 @@ impl<'h> Resolver<'h> {
             &found_package,
             &is_external,
         );
-        let found = self
-            .resolve_with(spec, from, look)
-            .map(|found| (found, using_ts_extension.get(), arbitrary_extension.get()));
-        // `resolveNodeLike`: whether there would be types but for the `exports` of the package.
-        if let Some((path, ..)) = &found
-            && found_package.get()
-            && is_external.get()
-            && self.options.resolve_package_json_exports
-            && look.import
-            && !is_relative(spec)
-            && is_javascript(path)
-        {
-            let without_exports = Look {
-                ignores_exports: true,
-                ..look.for_types()
+        let found = self.resolve_with(spec, from, look).map(|path| {
+            let mut resolved = ResolvedModule {
+                file_name: String::new(),
+                using_ts_extension: using_ts_extension.get(),
+                has_arbitrary_extension: arbitrary_extension.get(),
+                is_external_library_import: is_external.get(),
+                alternate_result: None,
+                is_project_reference_redirect: false,
             };
-            is_external.set(false);
-            if let Some(types) = self.resolve_with(spec, from, without_exports)
-                && is_external.get()
+            // `resolveNodeLike`: whether there would be types but for the `exports` of the package.
+            if found_package.get()
+                && resolved.is_external_library_import
+                && self.options.resolve_package_json_exports
+                && look.import
+                && !is_relative(spec)
+                && is_javascript(&path)
             {
-                self.alternates.write().unwrap().insert(key.clone(), types);
+                let without_exports = Look {
+                    ignores_exports: true,
+                    ..look.for_types()
+                };
+                is_external.set(false);
+                let types = self.resolve_with(spec, from, without_exports);
+                resolved.alternate_result = types.filter(|_| is_external.get());
             }
-        }
-        // `getSourceOfProjectReferenceRedirect`. Also where the output exists: a build would bring it up to date with the source first.
-        let found = found.map(|(path, using_ts_extension, arbitrary_extension)| {
-            match self.source_of_project_reference_redirect(&path) {
-                Some(source) => {
-                    self.project_reference_redirects
-                        .write()
-                        .unwrap()
-                        .insert(key.clone(), ());
-                    (source, using_ts_extension, arbitrary_extension)
-                }
-                None => (path, using_ts_extension, arbitrary_extension),
-            }
+            // `getSourceOfProjectReferenceRedirect`. Also where the output exists: a build would bring it up to date with the source
+            // first.
+            let source = self.source_of_project_reference_redirect(&path);
+            resolved.is_project_reference_redirect = source.is_some();
+            resolved.file_name = source.unwrap_or(path);
+            resolved
         });
         self.resolved.insert_ref(key, found).clone()
-    }
-
-    /// Whether what `resolve_module_and_extension` found is the source of a declaration file of a referenced project. The
-    /// resolution's own extension is then that of the declaration file.
-    pub fn is_project_reference_redirect(
-        &self,
-        spec: &str,
-        from: &str,
-        mode: ResolutionMode,
-    ) -> bool {
-        !self.options.referenced_outputs.is_empty()
-            && self
-                .project_reference_redirects
-                .read()
-                .unwrap()
-                .contains_key(&resolution_key(spec, from, mode))
-    }
-
-    /// `AlternateResult` of what `resolve_module_and_extension` found: the file with the types of a package whose `exports` only lead
-    /// to JavaScript, found by passing them over.
-    pub fn alternate_result(&self, spec: &str, from: &str, mode: ResolutionMode) -> Option<String> {
-        let alternates = self.alternates.read().unwrap();
-        alternates.get(&resolution_key(spec, from, mode)).cloned()
     }
 
     /// `newResolutionState`. `is_module`: the name is a module specifier. Otherwise it is the name in a `/// <reference types>`, which
@@ -1374,8 +1345,8 @@ impl<'h> Resolver<'h> {
     /// `resolveNodeLikeWorker`
     fn resolve_with(&self, spec: &str, from: &str, look: Look) -> Option<String> {
         let from_dir = parent_dir(from);
-        // `createResolvedModuleHandlingSymlink`: what is in a package is where the links to it lead.
-        let follows_links = !self.options.preserve_symlinks;
+        // `createResolvedModuleHandlingSymlink`: what a name that is not relative finds in a package is where the links to it lead.
+        let follows_links = !self.options.preserve_symlinks && !is_relative(spec);
         let real = |found: String| {
             let is_in_package = found.contains("/node_modules/");
             look.is_external.set(is_in_package);
@@ -1389,16 +1360,13 @@ impl<'h> Resolver<'h> {
         let starts_with_dots =
             spec.starts_with("./") || spec.starts_with("../") || spec == "." || spec == "..";
         if !starts_with_dots && let Some(found) = self.through_paths(spec, look) {
-            return Some(if is_relative(spec) {
-                found
-            } else {
-                real(found)
-            });
+            return Some(real(found));
         }
         if is_relative(spec) {
             return self
                 .through_root_dirs(spec, from_dir, look)
-                .or_else(|| self.relative(spec, from_dir, look));
+                .or_else(|| self.relative(spec, from_dir, look))
+                .map(real);
         }
         // One place after the other, until one of them has an answer.
         let mut found = Found::No;
@@ -1541,14 +1509,14 @@ impl<'h> Resolver<'h> {
     }
 
     /// `ResolveTypeReferenceDirective`: `/// <reference types="name" />` in a file in `from_dir`, resolved in `mode`; with
-    /// `is_automatic`, an entry of `compilerOptions.types`.
+    /// `is_automatic`, an entry of `compilerOptions.types`. `ResolvedFileName` and `IsExternalLibraryImport`.
     pub fn resolve_type_reference(
         &self,
         name: &str,
         from_dir: &str,
         mode: ResolutionMode,
         is_automatic: bool,
-    ) -> Option<String> {
+    ) -> Option<(String, bool)> {
         // `ResolvedTypeReferenceDirective` has no `ResolvedUsingTsExtension`.
         let ignored = Cell::new(false);
         let look = self.look(mode, false, &ignored, &ignored, &ignored, &ignored);
@@ -1576,14 +1544,16 @@ impl<'h> Resolver<'h> {
         {
             return None;
         }
+        let is_external = found.contains("/node_modules/");
         if let Some(source) = self.source_of_project_reference_redirect(&found) {
-            return Some(source);
+            return Some((source, is_external));
         }
-        Some(if self.options.preserve_symlinks {
+        let found = if self.options.preserve_symlinks {
             found
         } else {
             self.followed(found)
-        })
+        };
+        Some((found, is_external))
     }
 
     /// In the `node_modules/@types` of `from_dir` and of all that is around it.
@@ -2931,7 +2901,7 @@ mod tests {
         let flag = |spec: &str| {
             resolver
                 .resolve_module_name(spec, "/p/src/a.ts", ResolutionMode::Import)
-                .map(|resolved| resolved.1)
+                .map(|resolved| resolved.using_ts_extension)
         };
         for spec in [
             "./internal/foo.ts",
@@ -3006,7 +2976,9 @@ mod tests {
         let options = like_node();
         let resolver = Resolver::new(&host, &options);
         let reference = |name: &str| {
-            resolver.resolve_type_reference(name, "/p/src", ResolutionMode::Require, false)
+            resolver
+                .resolve_type_reference(name, "/p/src", ResolutionMode::Require, false)
+                .map(|found| found.0)
         };
         assert_eq!(reference("impl"), None);
         assert_eq!(reference("impl2"), None);

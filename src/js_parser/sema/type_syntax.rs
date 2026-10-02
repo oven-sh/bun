@@ -724,6 +724,18 @@ impl<'a> Builder<'a> {
         });
     }
 
+    /// `modifiers` as a `ModifierList`.
+    pub(crate) fn add_modifier_list(&mut self, modifiers: &[(Flags, u32)]) -> Span<ModifierId> {
+        let start = self.file.modifiers.len() as u32;
+        self.file
+            .modifiers
+            .extend(modifiers.iter().map(|&(flag, pos)| Modifier {
+                kind: ModifierKind::Keyword(flag),
+                pos,
+            }));
+        Span::new(start, modifiers.len() as u32)
+    }
+
     /// `statement` has the modifiers that were come upon since there were `base` of them. Its own `export` and `default` are none.
     pub(crate) fn take_statement_modifiers(&mut self, statement: StmtId, base: usize) {
         let own_keywords = match self.file[statement].kind {
@@ -807,7 +819,7 @@ impl<'a> Builder<'a> {
                 let start = self.pos();
                 self.statement_start = start;
                 let statement = self.parse_statement(Flags::AMBIENT)?;
-                self.file[statement].start = start;
+                self.finish_statement(statement, start);
                 self.take_statement_modifiers(statement, 0);
                 stmts.push(statement);
                 if self.pos() == start {
@@ -1345,6 +1357,7 @@ impl<'a> Builder<'a> {
             params,
             this_ty,
             this_pos,
+            this_name_end: this_pos.saturating_add(4),
             ret,
             body: FnBody::None,
             anchor,
@@ -1461,6 +1474,10 @@ impl<'a> Builder<'a> {
         for decorator in &mut self.member_decorators[first_decorator..] {
             decorator.0 = member.pos;
         }
+        // `parseModifiersEx(stopOnStartOfClassStaticBlock)`
+        let own_static = usize::from(member.kind == MemberKind::StaticBlock);
+        member.modifiers =
+            self.add_modifier_list(&modifiers[..modifiers.len().saturating_sub(own_static)]);
         if !modifiers.is_empty() {
             let on = match member.kind {
                 MemberKind::IndexSignature => Modified::ClassIndexSignature,
@@ -1505,6 +1522,7 @@ impl<'a> Builder<'a> {
             pos: start,
             start,
             loc: TextRange::default(),
+            modifiers: Span::EMPTY,
         };
         while self.tok() == T::TAt {
             // In an ambient class a member's own `declare`, which `NodeCanBeDecorated` goes by, is not told from that of the class.
@@ -1560,6 +1578,7 @@ impl<'a> Builder<'a> {
                 params,
                 this_ty: TypeNodeId::NONE,
                 this_pos: u32::MAX,
+                this_name_end: u32::MAX,
                 ret,
                 body: FnBody::None,
                 anchor: pos,
@@ -1680,6 +1699,7 @@ impl<'a> Builder<'a> {
                 params: Span::EMPTY,
                 this_ty: TypeNodeId::NONE,
                 this_pos: u32::MAX,
+                this_name_end: u32::MAX,
                 ret: TypeNodeId::NONE,
                 body: FnBody::None,
                 anchor: member.pos,
@@ -1753,7 +1773,8 @@ impl<'a> Builder<'a> {
             match self.tok() {
                 T::TSemicolon => {
                     self.next()?;
-                    stmts.push(self.file.stmt(StmtKind::Empty, pos));
+                    let empty = self.file.stmt(StmtKind::Empty, pos);
+                    stmts.push(self.finish_statement(empty, pos));
                 }
                 T::TReturn => {
                     self.next()?;
@@ -1766,7 +1787,8 @@ impl<'a> Builder<'a> {
                         self.parse_expr(0)?
                     };
                     self.semicolon()?;
-                    stmts.push(self.file.stmt(StmtKind::Return(value), pos));
+                    let statement = self.file.stmt(StmtKind::Return(value), pos);
+                    stmts.push(self.finish_statement(statement, pos));
                 }
                 _ => return Err(Error::SyntaxError),
             }
@@ -2634,7 +2656,7 @@ impl<'a> Builder<'a> {
             self.statement_start = start;
             let base = self.statement_modifiers.len();
             let statement = self.parse_statement(flags)?;
-            self.file[statement].start = start;
+            self.finish_statement(statement, start);
             self.take_statement_modifiers(statement, base);
             stmts.push(statement);
         }
@@ -2648,6 +2670,17 @@ impl<'a> Builder<'a> {
         }
         self.depth -= 1;
         Ok(self.file.list(&stmts))
+    }
+
+    /// `finishNode`, of a statement whose first token is at `start` and whose last token is the one before the current one.
+    fn finish_statement(&mut self, statement: StmtId, start: u32) -> StmtId {
+        let loc = TextRange {
+            pos: self.full_start_of(start),
+            end: self.full_start(),
+        };
+        let stmt = &mut self.file[statement];
+        (stmt.start, stmt.loc) = (start, loc);
+        statement
     }
 
     /// `checkGrammarModifiers` stops at the first thing that is wrong with the modifiers of a statement.
@@ -3667,6 +3700,7 @@ impl<'a> Builder<'a> {
             let inner_pos = self.pos();
             self.statement_start = inner_pos;
             let inner = self.parse_module(inner_pos, (flags & Flags::AMBIENT) | Flags::EXPORT)?;
+            self.finish_statement(inner, inner_pos);
             self.file.list(&[inner])
         } else {
             self.parse_block_of_statements(flags & Flags::AMBIENT)?

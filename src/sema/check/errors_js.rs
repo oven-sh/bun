@@ -63,12 +63,16 @@ impl Checker<'_> {
         hir.is_js && hir.check_directive.is_none() && self.files().options.check_js.is_none()
     }
 
-    /// `SkipTypeChecking`, as far as `noCheck` and `canIncludeBindAndCheckDiagnostics` go: whether anything but syntax is objected to.
+    /// `SkipTypeChecking`: whether anything but syntax is objected to.
     pub(super) fn reports_semantic_errors(&self, file: FileId) -> bool {
-        if self.files().options.no_check {
+        let options = &self.files().options;
+        let hir = self.hir(file);
+        if options.no_check
+            || options.skip_lib_check && hir.kind == FileKind::Declaration
+            || options.skip_default_lib_check && self.files().module(file).is_lib
+        {
             return false;
         }
-        let hir = self.hir(file);
         hir.check_directive != Some(false)
             && (!hir.is_js || self.is_plain_js(file) || self.is_check_js(file))
     }

@@ -2949,14 +2949,7 @@ impl<'p> Checker<'p> {
         }
         let (sd, td) = (self.data(source), self.data(target));
         // `ObjectFlagsJSLiteral` on the target itself: without noImplicitAny a JS literal accepts any property.
-        if matches!(
-            td,
-            TypeData::Anon {
-                origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..),
-                ..
-            }
-        ) && self.is_js_literal_type(target)
-        {
+        if !self.p.files.options.no_implicit_any && self.has_js_literal_flag(target) {
             return None;
         }
         // What takes anything takes any object literal, but not any attribute.
@@ -2982,7 +2975,7 @@ impl<'p> Checker<'p> {
         }
         let literal = match *sd {
             TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e),
+                origin: Origin::ObjectLiteral(file, e, ..),
                 ..
             } => Some((file, e)),
             _ => None,
@@ -4129,7 +4122,7 @@ impl<'p> Checker<'p> {
             } => (2, file.0, node.0),
             // `getWidenedTypeOfObjectLiteral`: an ordinary object type that has the symbol of the literal.
             TypeData::Anon {
-                origin: Origin::WidenedLiteral(file, e),
+                origin: Origin::WidenedLiteral(file, e, ..),
                 ..
             } => (6, file.0, e.0),
             TypeData::Anon {

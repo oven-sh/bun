@@ -311,7 +311,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 let ty = self.c.type_of_pat(file, pattern);
                 self.get_property_of_type(ty, name)
             }
-            VisitedKind::ThisParameter(f) => Some(this_parameter(file, f)),
+            VisitedKind::ThisParameter(f) => self.this_parameter(file, f),
             VisitedKind::Expression(e) | VisitedKind::AccessName(e) => {
                 let is_name = matches!(kind, VisitedKind::AccessName(_));
                 self.get_symbol_of_expression(e, is_name)
@@ -692,8 +692,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     /// `getSignatureFromDeclaration(function).thisParameter`
     fn this_parameter_of_function(&mut self, function: FnId) -> Option<Found> {
         let file = self.file;
-        if self.c.start_of_this_parameter(file, function).is_some() {
-            return Some(this_parameter(file, function));
+        if let Some(found) = self.this_parameter(file, function) {
+            return Some(found);
         }
         // "If only one accessor includes a this-type annotation, the other behaves as if it had the same type annotation"
         let other = match self.c.hir(file)[function].kind {
@@ -701,10 +701,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             FnKind::Setter => self.c.sibling_accessor(file, function, FnKind::Getter),
             _ => None,
         };
-        if let Some(other) = other
-            && self.c.start_of_this_parameter(file, other).is_some()
-        {
-            return Some(this_parameter(file, other));
+        if let Some(found) = other.and_then(|other| self.this_parameter(file, other)) {
+            return Some(found);
         }
         // `assignContextualParameterTypes`: a copy of that of the contextual signature, with its declarations.
         let FnOwner::Expr(owner) = self.c.bound(file).fns[function.idx()].owner else {
@@ -718,9 +716,30 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         }
         let context = self.c.contextual_signature(file, function)?;
         let (file, function, _) = self.c.sig_decl(context)?;
-        self.c
-            .start_of_this_parameter(file, function)
-            .map(|_| this_parameter(file, function))
+        self.this_parameter(file, function)
+    }
+
+    /// The symbol of the `this` parameter that `function` declares.
+    fn this_parameter(&self, file: FileId, function: FnId) -> Option<Found> {
+        let Func {
+            this_pos,
+            this_name_end,
+            ..
+        } = self.c.hir(file)[function];
+        if this_pos == u32::MAX {
+            return None;
+        }
+        // `DeclarationNameToString`
+        let name = if this_pos == this_name_end {
+            "(Missing)".to_owned()
+        } else {
+            self.c.source_text(file, this_pos, this_name_end)
+        };
+        Some(Found::Anonymous {
+            name,
+            file,
+            declaration: Declaration::ThisParameter(function),
+        })
     }
 
     /// `module.exports`, where `module` is the variable of a CommonJS module.
@@ -987,7 +1006,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 | Origin::EnumObject(symbol)
                 | Origin::Module(symbol) => Found::Symbol(symbol),
                 Origin::Namespace { module, .. } => Found::Symbol(module),
-                Origin::ObjectLiteral(file, e) | Origin::WidenedLiteral(file, e) => {
+                Origin::ObjectLiteral(file, e, ..) | Origin::WidenedLiteral(file, e, ..) => {
                     Found::Anonymous {
                         name: self.name_of_object_literal(file, e),
                         file,
@@ -1322,7 +1341,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 (self.c.start_inside_parentheses(file, e), Flags::empty())
             }
             Declaration::TypeNode(node) => (hir[node].pos, Flags::empty()),
-            Declaration::ThisParameter(function) => (hir[function].this_pos, Flags::empty()),
+            Declaration::ThisParameter(function) => (hir[function].this_pos, hir[function].flags),
         };
         // Where the token before it ends. `finishReparsedNode`: what is made of a JSDoc tag is where the tag is, and the scanner of
         // JSDoc comments has no trivia.
@@ -1589,13 +1608,6 @@ fn is_written_name(hir: &hir::File, pos: u32) -> bool {
     matches!(hir.text.get(pos as usize), Some(b'#' | b'0'..=b'9'))
 }
 
-fn this_parameter(file: FileId, function: FnId) -> Found {
-    Found::Anonymous {
-        name: "this".to_owned(),
-        file,
-        declaration: Declaration::ThisParameter(function),
-    }
-}
 /// `createExpressionFromSymbolChain`, past the first symbol: `.name`, or `[name]` for what is no identifier. The brackets of a
 /// computed name are not doubled.
 fn push_access(text: &mut String, name: &str, is_enum_member: bool) {

@@ -246,7 +246,9 @@ impl<'f> Binder<'f> {
             Decl::ImportDefault(_)
             | Decl::ImportNamespace(_)
             | Decl::ImportSpec(_)
-            | Decl::ImportEquals(_) => SymFlags::ALIAS,
+            | Decl::ImportEquals(_)
+            | Decl::ExportSpec(_)
+            | Decl::ExportStarAs(_) => SymFlags::ALIAS,
             _ => SymFlags::empty(),
         };
         if there.intersects(excludes) {
@@ -293,11 +295,15 @@ impl<'f> Binder<'f> {
             let is_own_name = matches!(there.decls[0], Decl::Class(c) if matches!(self.b.class_owner[c.idx()], ClassOwner::Expr(_)));
             let is_refused = !is_own_name && Self::is_refused(there.flags, flags, decl);
             let symbol = &mut self.b.symbols[existing.idx()];
-            symbol.decls.push(decl);
             if is_refused {
-                self.b.refused_declarations.push((existing, decl));
+                // Listed all the same, for errors_duplicates.rs, which goes through specifiers by itself.
+                if !matches!(decl, Decl::ExportSpec(_) | Decl::ExportStarAs(_)) {
+                    symbol.decls.push(decl);
+                    self.b.refused_declarations.push((existing, decl));
+                }
                 return self.new_symbol(name, includes, decl, parent);
             }
+            symbol.decls.push(decl);
             symbol.flags |= includes;
             // What is more than `export { a as b }` is in scope.
             symbol.flags.remove(SymFlags::EXPORT_ONLY);
@@ -376,26 +382,16 @@ impl<'f> Binder<'f> {
         symbol
     }
 
-    /// `declareSymbolEx` for `export { a as b }` and `export * as b` among the exports. `AliasExcludes`: it is one symbol with what
-    /// else is exported as `b`, of which each use takes the meaning it is after. Another alias that has the name keeps it, and so
-    /// does whatever is the default: what is refused is in no table.
+    /// `declareModuleMember`, `bindExportDeclaration`: `export { a as b }` and `export * as b` are declared among the exports.
+    /// `AliasExcludes`: one symbol with what else is exported as `b`, unless that is an alias.
     fn export_as(&mut self, name: Atom, flags: SymFlags, decl: Decl) {
         let container = self.b.scopes[self.scope.idx()].symbol;
         if container.is_some() {
             let exports = self.b.symbols[container.idx()].exports;
-            let Some(there) = self.tables[exports.idx()].get(&name).copied() else {
-                let symbol = self.new_symbol(name, flags, decl, container);
-                self.tables[exports.idx()].insert(name, symbol);
-                return;
-            };
-            let there = &mut self.b.symbols[there.idx()];
-            if name != known::default && !there.flags.contains(SymFlags::ALIAS) {
-                there.flags |= flags.difference(SymFlags::EXPORT_ONLY);
-                there.decls.push(decl);
-                return;
-            }
+            self.declare_in(exports, name, flags, decl, container);
+        } else {
+            self.new_symbol(name, flags, decl, container);
         }
-        self.new_symbol(name, flags, decl, container);
     }
 
     /// `export { a }` where `a` means nothing but what is exported as `a`. Made one symbol with that it stands for itself, and most
@@ -410,7 +406,14 @@ impl<'f> Binder<'f> {
             }
             for spec in export.items.iter() {
                 let (name, decl) = (f[spec].local, Decl::ExportSpec(spec));
+                // What the block keeps to itself under the name is what the specifier stands for.
+                let locals = self.b.scopes[scope.idx()].locals;
+                let is_kept_back = self.tables[locals.idx()].get(&name).is_some_and(|local| {
+                    let flags = self.b.symbols[local.idx()].flags;
+                    !flags.difference(SymFlags::EXPORT_VALUE).is_empty()
+                });
                 if f[spec].exported == name
+                    && !is_kept_back
                     && let Some(symbol) = self.lookup_name(name, scope)
                     && self.b.symbols[symbol.idx()].decls.len() > 1
                     && self.b.symbols[symbol.idx()].decls.contains(&decl)

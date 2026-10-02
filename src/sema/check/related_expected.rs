@@ -187,7 +187,7 @@ impl Checker<'_> {
                     let range = |c: &Self| (start, c.end_of_type_node(file, node));
                     return Some(self.place_in_file(file, start, range));
                 }
-                Origin::ObjectLiteral(file, e) | Origin::WidenedLiteral(file, e) => {
+                Origin::ObjectLiteral(file, e, ..) | Origin::WidenedLiteral(file, e, ..) => {
                     let start = self.start_inside_parentheses(file, e);
                     return Some((file, start, self.end_inside_parentheses(file, e)));
                 }

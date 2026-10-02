@@ -2687,7 +2687,10 @@ impl<'p> Checker<'p> {
         // The first check, in which the calls around `e` are resolved.
         self.type_of_expr(file, e);
         let outer = self.begin_recheck();
-        let ty = self.type_of_expr(file, e);
+        let ty = match self.quick_type_of_expr(file, e) {
+            Some(quick) => quick,
+            None => self.type_of_expr(file, e),
+        };
         self.end_recheck(outer);
         ty
     }
@@ -2756,6 +2759,7 @@ impl<'p> Checker<'p> {
         }
         shape.literal = Literalness::Literal;
         shape.symbol_declared_at = self.symbol_declaration_of_object_type(kept);
+        shape.is_js_literal = self.has_js_literal_flag(kept);
         self.synth(shape)
     }
 
@@ -3134,20 +3138,101 @@ impl<'p> Checker<'p> {
     /// What `...c` in the target of a destructuring assignment stands for, where `c` is a `target`, which is not like an array
     /// (`checkArrayLiteral`): what it has under a number, else what it yields, else `unknown`. That it is neither is no error here.
     fn rest_element_of_target(&mut self, target: TypeId) -> TypeId {
-        // `getIndexTypeOfType(spreadType, numberType)`
-        let apparent = self.apparent_type(target);
-        if let Some(members) = self.members(apparent)
-            && let Some(info) = members
-                .shape()
-                .index
-                .iter()
-                .find(|info| info.key == TypeId::NUMBER)
-        {
-            return self.instantiate(info.value, members.mapper);
+        if let Some(element) = self.number_index_type(target) {
+            return element;
         }
         match self.iterated_type(target, false) {
             TypeId::UNRESOLVED => TypeId::UNKNOWN,
             element => element,
+        }
+    }
+
+    /// `isJSLiteralType`
+    pub(super) fn is_js_literal_type(&mut self, ty: TypeId) -> bool {
+        // The flag means nothing under noImplicitAny.
+        if self.p.files.options.no_implicit_any {
+            return false;
+        }
+        match self.data(ty) {
+            TypeData::Union(members) => members
+                .iter()
+                .all(|&member| self.is_js_literal_type(member)),
+            TypeData::Intersection(members) => members
+                .iter()
+                .any(|&member| self.is_js_literal_type(member)),
+            _ if self.is_deferred(ty) => {
+                let constraint = self.base_constraint(ty);
+                constraint != ty && self.is_js_literal_type(constraint)
+            }
+            _ => self.has_js_literal_flag(ty),
+        }
+    }
+
+    /// `t.objectFlags&ObjectFlagsJSLiteral != 0`
+    pub(super) fn has_js_literal_flag(&self, ty: TypeId) -> bool {
+        match *self.data(ty) {
+            TypeData::Anon {
+                origin:
+                    Origin::ObjectLiteral(_, _, is_js_literal)
+                    | Origin::WidenedLiteral(_, _, is_js_literal),
+                ..
+            } => is_js_literal,
+            TypeData::Synth(ref shape) => shape.is_js_literal,
+            _ => false,
+        }
+    }
+
+    /// `checkObjectLiteral`: whether the type of `literal` gets `ObjectFlagsJSLiteral`. It is in a JavaScript file and has no contextual
+    /// type, or is empty and has expando members. A literal with a spread never has it.
+    pub(super) fn is_js_literal(&mut self, file: FileId, literal: ExprId) -> bool {
+        // `isJSLiteralType`, `hasExcessProperties`: nothing reads the flag under noImplicitAny.
+        if self.p.files.options.no_implicit_any {
+            return false;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if !hir.is_js {
+            return false;
+        }
+        if !crate::bind::Bound::expandos_of(&bound.object_expandos, literal).is_empty() {
+            return true;
+        }
+        let Some((call, argument)) = self.enclosing_call_argument(file, literal) else {
+            return self.contextual_type(file, literal).is_none();
+        };
+        // `getContextualTypeForArgumentAtIndex`: an argument always has a contextual type, `any` if the signature has no parameter for it.
+        if argument == literal {
+            return false;
+        }
+        // `getContextuallyTypedParameterType`: a parameter of an immediately invoked function expression gets the type of its
+        // argument as checked under `anySignature`, so the contextual type of that argument is `any`.
+        let is_iife = matches!(hir[call].kind, ExprKind::Call(c) if matches!(hir[hir[c].callee].kind, ExprKind::Fn(_)));
+        if is_iife {
+            self.iife_resolving.push((file, call));
+        }
+        let context = self.contextual_type(file, literal);
+        if is_iife {
+            self.iife_resolving.pop();
+        }
+        context.is_none()
+    }
+
+    /// The nearest call, `new` or tagged template that has `e` inside one of its arguments with only expressions in between, and
+    /// that argument.
+    fn enclosing_call_argument(&self, file: FileId, e: ExprId) -> Option<(ExprId, ExprId)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut child = e;
+        loop {
+            let parent = match bound.expr_parent[child.idx()] {
+                Parent::Expr(parent) if parent.is_some() => parent,
+                Parent::Prop(prop) => bound.prop_owner[prop.idx()],
+                _ => return None,
+            };
+            if let ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) =
+                hir[parent].kind
+            {
+                return (hir[call].callee != child).then_some((parent, child));
+            }
+            child = parent;
         }
     }
 
@@ -3158,8 +3243,9 @@ impl<'p> Checker<'p> {
         if !props.iter().any(|p| hir[p].kind == PropKind::Spread) {
             let scope = self.scope_of_expr(file, e);
             let mapper = self.identity_mapper(file, scope);
+            let is_js_literal = self.is_js_literal(file, e);
             let kept = self.intern(TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e),
+                origin: Origin::ObjectLiteral(file, e, is_js_literal),
                 mapper,
             });
             return if self.is_rechecking() {

@@ -902,7 +902,7 @@ impl<'p> Checker<'p> {
                 }
             },
             TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e) | Origin::WidenedLiteral(file, e),
+                origin: Origin::ObjectLiteral(file, e, ..) | Origin::WidenedLiteral(file, e, ..),
                 ..
             } => {
                 matches!(self.hir(*file)[*e].kind, ExprKind::Object(props) if props.is_empty())
@@ -1460,7 +1460,7 @@ impl<'p> Checker<'p> {
                 Origin::TypeLiteral(file, node) | Origin::Mapped(file, node) => {
                     at(file, self.hir(file)[node].pos)
                 }
-                Origin::ObjectLiteral(file, e) | Origin::WidenedLiteral(file, e) => {
+                Origin::ObjectLiteral(file, e, ..) | Origin::WidenedLiteral(file, e, ..) => {
                     at(file, self.hir(file)[e].pos)
                 }
                 Origin::ClassStatic(sym)

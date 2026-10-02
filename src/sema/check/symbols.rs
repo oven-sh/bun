@@ -205,10 +205,8 @@ impl<'p> Checker<'p> {
             return self.fresh(ty);
         }
         if flags.contains(SymFlags::VALUE_MODULE) {
-            // `isShorthandAmbientModuleSymbol`: of `declare module "m";` nothing is known.
-            if declarations_of(self.files(), sym)
-                .any(|(f, d)| matches!(d, Decl::Module(id) if !self.hir(f)[id].has_body))
-            {
+            // Of `declare module "m";` nothing is known.
+            if self.files().is_shorthand_ambient_module_symbol(sym) {
                 return TypeId::ANY;
             }
             return self.intern(TypeData::Anon {
@@ -736,6 +734,10 @@ impl<'p> Checker<'p> {
             let Some((spec, mode, name)) = files.external_module_member_of(file, decl) else {
                 continue;
             };
+            // `{ default as d }` is the default import by another spelling, but not in a binding pattern.
+            if name == known::default && !matches!(decl, Decl::Require(_)) {
+                continue;
+            }
             let Some(module) = files.module_of_specifier_as(file, spec, mode) else {
                 continue;
             };
@@ -1075,11 +1077,11 @@ impl<'p> Checker<'p> {
         if others.is_empty() {
             match self.data(ty) {
                 TypeData::Anon {
-                    origin: Origin::ObjectLiteral(file, e),
+                    origin: Origin::ObjectLiteral(file, e, is_js_literal),
                     mapper,
                 } => {
                     return self.intern(TypeData::Anon {
-                        origin: Origin::WidenedLiteral(*file, *e),
+                        origin: Origin::WidenedLiteral(*file, *e, *is_js_literal),
                         mapper: *mapper,
                     });
                 }
@@ -1165,6 +1167,8 @@ impl<'p> Checker<'p> {
             shape.index.push(IndexInfo { value, ..*info });
         }
         shape.symbol_declared_at = self.symbol_declaration_of_object_type(ty);
+        // "Retain js literal flag through widening"
+        shape.is_js_literal = self.has_js_literal_flag(ty);
         self.synth(shape)
     }
 
@@ -3226,7 +3230,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getIndexTypeOfType(ty, numberType)`
-    fn number_index_type(&mut self, ty: TypeId) -> Option<TypeId> {
+    pub(super) fn number_index_type(&mut self, ty: TypeId) -> Option<TypeId> {
         let mut elements = Vec::new();
         for &part in self.parts(ty) {
             let apparent = self.apparent_type(part);

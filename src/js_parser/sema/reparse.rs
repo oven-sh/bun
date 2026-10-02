@@ -162,12 +162,25 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.member_modifiers.clear();
         let mut host = Host::ClassMember(member);
         self.with_jsdoc(start, false, &mut host);
-        let Host::ClassMember(member) = host else {
+        let Host::ClassMember(mut member) = host else {
             return member;
         };
         if self.member_modifiers.is_empty() {
             return member;
         }
+        // Those that are made of tags come after those that are written.
+        let mut all: Vec<(Flags, u32)> = self
+            .b
+            .file
+            .modifier_list(member.modifiers)
+            .iter()
+            .filter_map(|modifier| match modifier.kind {
+                ModifierKind::Keyword(flag) => Some((flag, modifier.pos)),
+                ModifierKind::Decorator(_) => None,
+            })
+            .collect();
+        all.extend_from_slice(&self.member_modifiers);
+        member.modifiers = self.b.add_modifier_list(&all);
         // `checkGrammarModifiers`. What is wrong with the modifiers that are written has been said: they come first, in an order
         // nothing is wrong with, at no place.
         const NOWHERE: u32 = u32::MAX;
@@ -485,6 +498,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     pos: tag.pos,
                     end: tag.end,
                 },
+                modifiers: Span::EMPTY,
             });
         }
         let members = self.b.file.add_members(&members);
@@ -638,6 +652,10 @@ impl<'p, 'a> Lower<'p, 'a> {
         };
         let alias = self.b.file.add_alias(alias);
         let mut statement = self.b.file.stmt(StmtKind::TypeAlias(alias), tag.pos);
+        self.b.file[statement].loc = TextRange {
+            pos: tag.pos,
+            end: tag.end,
+        };
         // The outermost is exported by the binder, from a module alone (`IsImplicitlyExportedJSDocDeclaration`).
         for (depth, &namespace) in name.namespaces.iter().enumerate().rev() {
             let module = Module {
@@ -654,6 +672,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             };
             let module = self.b.file.add_module(module);
             statement = self.b.file.stmt(StmtKind::Module(module), namespace.start);
+            // `parseJSDocTypeNameWithNamespace`: the rest of the name is its body.
+            self.b.file[statement].loc = TextRange {
+                pos: namespace.start,
+                end: name.name.end,
+            };
         }
         self.reparsed.push(statement);
     }
@@ -731,6 +754,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                 };
                 let declaration = self.b.file.add_import(declaration);
                 let statement = self.b.file.stmt(StmtKind::Import(declaration), tag.pos);
+                self.b.file[statement].loc = TextRange {
+                    pos: tag.pos,
+                    end: tag.end,
+                };
                 self.reparsed.push(statement);
             }
             TagKind::Overload(signature) => {
@@ -742,6 +769,11 @@ impl<'p, 'a> Lower<'p, 'a> {
                     Host::Function(func) if self.b.file[func].kind == FnKind::Decl => {
                         let signature = self.reparse_signature(signature, Some(func), doc, tag);
                         let statement = self.b.file.stmt(StmtKind::Fn(signature), tag.name_pos);
+                        // `tag.TagName()`
+                        self.b.file[statement].loc = TextRange {
+                            pos: tag.name_pos,
+                            end: tag.name_pos + b"overload".len() as u32,
+                        };
                         self.reparsed.push(statement);
                     }
                     Host::ClassMember(member)
@@ -784,7 +816,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             Some(_) => self.gather_type_parameters(doc, false, TemplateOwner::Function),
             None => Span::EMPTY,
         };
-        let (mut this_ty, mut this_pos) = (TypeNodeId::NONE, u32::MAX);
+        let (mut this_ty, mut this_pos, mut this_name_end) = (TypeNodeId::NONE, u32::MAX, u32::MAX);
         let mut params = Vec::with_capacity(signature.params.len());
         for (index, param) in signature.params.iter().enumerate() {
             let property = match &param.kind {
@@ -793,6 +825,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                         this_ty = self.reparse_type(*ty);
                         // `thisIdent.Loc = thisTag.Loc`
                         this_pos = param.pos;
+                        this_name_end = param.end;
                     }
                     continue;
                 }
@@ -874,6 +907,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             params,
             this_ty,
             this_pos,
+            this_name_end,
             ret,
             body: FnBody::None,
             anchor: pos,
@@ -952,6 +986,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     self.b.file[func].this_ty = ty;
                     // `finishReparsedNode(thisParam, tag.TagName())`
                     self.b.file[func].this_pos = tag.name_pos;
+                    self.b.file[func].this_name_end = tag.name_pos;
                     // `checkParameter`: the parameter is where the name of the tag is.
                     let code = match self.b.file[func].kind {
                         FnKind::Arrow => Some(2730),

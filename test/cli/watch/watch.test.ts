@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -212,14 +212,14 @@ async function compileShim(dir: string): Promise<string> {
   return shimPath;
 }
 
-async function runWatcheeWithShim(dir: string, shimPath: string, args: string[]) {
+async function runWatcheeWithShim(dir: string, shimPath: string, args: string[], env: Record<string, string> = {}) {
   const existing = bunEnv.LD_PRELOAD;
   await using proc = Bun.spawn({
     // --debug-crash-handler-use-trace-string skips the debug build's slow
     // backtrace symbolication so an aborting child exits promptly.
     cmd: [bunExe(), "--debug-crash-handler-use-trace-string", ...args],
     cwd: dir,
-    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -273,43 +273,93 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(exitCode).not.toBe(0);
 });
 
-// inotify_init1 fails with EMFILE when the process is out of file descriptors
-// or the user is out of inotify instances (fs.inotify.max_user_instances). That
-// is the environment's limit, not a bug: watch mode must report it like any
-// other CLI error and exit 1 instead of aborting with a crash report.
+// On Linux, Watcher::init() fails only through inotify_init1. EMFILE there means
+// the user is out of inotify instances (fs.inotify.max_user_instances) or the
+// process is out of file descriptors. That is the environment's limit, not a
+// bug: every watch-mode entry point reports it as a CLI error and exits 1, and
+// nothing reaches the crash handler (no banner, no report upload, no SIGABRT).
 describe.skipIf(!isLinux || !cc)("watcher init failure", () => {
   const SHIM_C = /* c */ `
 #include <errno.h>
+#include <stdlib.h>
+#include <string.h>
 ${NO_CORE_C}
 int inotify_init1(int flags) {
   (void)flags;
-  errno = EMFILE;
+  const char *name = getenv("WATCH_SHIM_ERRNO");
+  errno = name && !strcmp(name, "ENFILE") ? ENFILE : name && !strcmp(name, "ENOMEM") ? ENOMEM : EMFILE;
   return -1;
 }
 `;
+  const INOTIFY_NOTE =
+    "note: this user is out of inotify instances (sysctl fs.inotify.max_user_instances), or this process is out of file descriptors (ulimit -n). Close other file watchers or raise the limit.\n";
 
-  const commands: [name: string, args: string[]][] = [
-    ["bun --watch", ["--watch", "watchee.js"]],
-    ["bun --hot", ["--hot", "watchee.js"]],
-    ["bun test --watch", ["test", "--watch", "watchee.test.js"]],
-    ["bun build --watch", ["build", "--watch", "watchee.js", "--outdir", "out"]],
-  ];
+  // `bun test` prints its version line before it creates the watcher.
+  const testBanner = /^bun test v[^\n]*\n/;
 
-  it.concurrent.each(commands)("%s reports EMFILE from inotify_init1 as an error and exits 1", async (_, args) => {
-    using dir = tempDir("watch-init-emfile", {
+  let dir: ReturnType<typeof tempDir>;
+  let shimPath: string;
+
+  beforeAll(async () => {
+    dir = tempDir("watch-init-fail", {
       "shim.c": SHIM_C,
       "watchee.js": "console.log('unreachable');\n",
       "watchee.test.js": "import { test } from 'bun:test';\ntest('unreachable', () => console.log('unreachable'));\n",
     });
-    const shimPath = await compileShim(String(dir));
-    const { stdout, stderr, exitCode, signalCode } = await runWatcheeWithShim(String(dir), shimPath, args);
+    shimPath = await compileShim(String(dir));
+  });
 
-    expect(stderr).toContain("error: Failed to enable File Watcher: EMFILE");
-    expect(stderr).toContain("note: ");
-    expect(stderr).toContain("fs.inotify.max_user_instances");
-    expect(stdout).not.toContain("unreachable");
-    expect(signalCode).toBeNull();
-    expect(exitCode).toBe(1);
+  afterAll(() => {
+    dir?.[Symbol.dispose]();
+  });
+
+  type Row = [name: string, errno: string, args: string[], env: Record<string, string>];
+  const rows: Row[] = [
+    ["bun --watch FILE", "EMFILE", ["--watch", "watchee.js"], {}],
+    ["bun --hot FILE", "EMFILE", ["--hot", "watchee.js"], {}],
+    ["bun run --watch FILE", "EMFILE", ["run", "--watch", "watchee.js"], {}],
+    ["bun --watch -e", "EMFILE", ["--watch", "-e", "console.log('unreachable')"], {}],
+    ["BUN_OPTIONS=--watch bun FILE", "EMFILE", ["watchee.js"], { BUN_OPTIONS: "--watch" }],
+    ["bun test --watch", "EMFILE", ["test", "--watch", "watchee.test.js"], {}],
+    ["bun test --hot", "EMFILE", ["test", "--hot", "watchee.test.js"], {}],
+    ["bun build --watch", "EMFILE", ["build", "--watch", "watchee.js", "--outdir", "out"], {}],
+    ["bun --watch FILE", "ENFILE", ["--watch", "watchee.js"], {}],
+    ["bun --watch FILE", "ENOMEM", ["--watch", "watchee.js"], {}],
+  ];
+
+  it.concurrent.each(rows)("%s: %s is an error with exit code 1", async (_, errno, args, env) => {
+    let crashReports = 0;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        crashReports++;
+        return new Response("OK");
+      },
+    });
+
+    const { stdout, stderr, exitCode, signalCode } = await runWatcheeWithShim(String(dir), shimPath, args, {
+      ...env,
+      WATCH_SHIM_ERRNO: errno,
+      BUN_CRASH_REPORT_URL: server.url.toString(),
+      BUN_ENABLE_CRASH_REPORTING: "1",
+    });
+
+    // A crash report is uploaded by a forked curl that inherits the stderr
+    // pipe, so stderr reaching EOF above means any upload has already landed.
+    expect({
+      stdout: stdout.replace(testBanner, ""),
+      stderr: stderr.replace(testBanner, ""),
+      crashReports,
+      signalCode,
+      exitCode,
+    }).toEqual({
+      stdout: "",
+      stderr: `error: Failed to enable File Watcher: ${errno}\n` + (errno === "EMFILE" ? INOTIFY_NOTE : ""),
+      crashReports: 0,
+      signalCode: null,
+      exitCode: 1,
+    });
   });
 });
 

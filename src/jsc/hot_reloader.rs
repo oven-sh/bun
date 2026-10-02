@@ -686,19 +686,32 @@ fn arm_watch_reload_grace_timer() {
     }
 }
 
-/// The watcher could not be created or started. Every caller asked for watch
-/// mode on the command line, so there is nothing to fall back to. The usual
-/// cause is an exhausted descriptor limit in the environment (EMFILE from
-/// `inotify_init1` / `kqueue`), which is a CLI error, not a crash to report.
+#[derive(Clone, Copy)]
+enum WatcherStep {
+    Init,
+    Start,
+}
+
+/// Never returns: `bun test --watch` and `bun build --watch` park on the watch flag alone.
 #[cold]
-fn exit_on_watcher_error(action: &str, err: bun_watcher::Error) -> ! {
+#[inline(never)]
+fn exit_on_watcher_error(step: WatcherStep, err: bun_watcher::Error) -> ! {
     bun_core::pretty_errorln!(
         "<red>error<r><d>:<r> Failed to {} File Watcher: {}",
-        action,
+        match step {
+            WatcherStep::Init => "enable",
+            WatcherStep::Start => "start",
+        },
         err.name()
     );
-    if let Some(hint) = err.limit_hint() {
-        bun_core::note!("{}", hint);
+    // `inotify_init1` reports both of these limits as EMFILE.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if matches!(step, WatcherStep::Init)
+        && err == bun_watcher::Error::Sys(bun_errno::SystemErrno::EMFILE)
+    {
+        bun_core::note!(
+            "this user is out of inotify instances (sysctl fs.inotify.max_user_instances), or this process is out of file descriptors (ulimit -n). Close other file watchers or raise the limit."
+        );
     }
     Output::flush();
     bun_core::Global::exit(1);
@@ -741,7 +754,7 @@ where
         // SAFETY: see above; `watcher_top_level_dir` returns `&'static [u8]`.
         let watcher = match Watcher::init(reloader, unsafe { (*this).watcher_top_level_dir() }) {
             Ok(w) => w,
-            Err(err) => exit_on_watcher_error("enable", err),
+            Err(err) => exit_on_watcher_error(WatcherStep::Init, err),
         };
 
         // SAFETY: see above.
@@ -756,7 +769,7 @@ where
 
         // SAFETY: `watcher_ptr` was just installed into the ctx and is live.
         if let Err(err) = unsafe { (*watcher_ptr).start() } {
-            exit_on_watcher_error("start", err);
+            exit_on_watcher_error(WatcherStep::Start, err);
         }
     }
 

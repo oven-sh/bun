@@ -2922,14 +2922,10 @@ namespace {
 
 // Any ArrayBufferView receiver is accepted (bounded by its element count, like `this.length`); anything else is
 // ERR_INVALID_ARG_TYPE("buf").
-static JSC::JSArrayBufferView* bufferAccessReceiver(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue thisValue)
+// A bare call leaves the caller's scope object in `this`; toThis() makes it the undefined a JS callee sees.
+static void throwBufferInvalidReceiver(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue thisValue)
 {
-    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(thisValue);
-    if (!view) [[unlikely]] {
-        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "buf"_s, "Buffer"_s, thisValue);
-        return nullptr;
-    }
-    return view;
+    Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "buf"_s, "Buffer"_s, thisValue.toThis(lexicalGlobalObject, JSC::ECMAMode::strict()));
 }
 
 // validateNumber(offset, 'offset')
@@ -3030,7 +3026,7 @@ static JSC::EncodedJSValue bufferRead(JSC::JSGlobalObject* lexicalGlobalObject, 
         if (!bufferAccessCheckOffsetType(lexicalGlobalObject, scope, offsetValue))
             return {};
         if (!view) [[unlikely]] {
-            bufferAccessReceiver(lexicalGlobalObject, scope, thisValue);
+            throwBufferInvalidReceiver(lexicalGlobalObject, scope, thisValue);
             return {};
         }
         auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteSize, view->type() != JSC::DataViewType);
@@ -3123,7 +3119,7 @@ static JSC::EncodedJSValue bufferWrite(JSC::JSGlobalObject* lexicalGlobalObject,
                 return {};
         }
         if (!view) [[unlikely]] {
-            bufferAccessReceiver(lexicalGlobalObject, scope, thisValue);
+            throwBufferInvalidReceiver(lexicalGlobalObject, scope, thisValue);
             return {};
         }
         auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteSize, view->type() != JSC::DataViewType);
@@ -3247,7 +3243,7 @@ static JSC::EncodedJSValue bufferReadVarWidth(JSC::JSGlobalObject* lexicalGlobal
         return {};
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
     if (!view) [[unlikely]] {
-        bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
+        throwBufferInvalidReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
         return {};
     }
     auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteLength, view->type() != JSC::DataViewType);
@@ -3310,7 +3306,7 @@ static JSC::EncodedJSValue bufferWriteVarWidth(JSC::JSGlobalObject* lexicalGloba
     }
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
     if (!view) [[unlikely]] {
-        bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
+        throwBufferInvalidReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
         return {};
     }
     // checkBounds(): the offset type was validated above; the range check is boundsError().
@@ -3385,7 +3381,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObj
         // offset still wins over a garbage receiver.
         if (!offsetVal.isUndefined() && !offsetVal.isNumber())
             return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
-        bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
+        throwBufferInvalidReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
         return {};
     }
     size_t byteLength = castedThis->length();
@@ -3421,7 +3417,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObj
         // offset still wins over a garbage receiver.
         if (!offsetVal.isUndefined() && !offsetVal.isNumber())
             return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
-        bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
+        throwBufferInvalidReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
         return {};
     }
     size_t byteLength = castedThis->length();
@@ -3456,7 +3452,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalOb
         // offset still wins over a garbage receiver.
         if (!offsetVal.isUndefined() && !offsetVal.isNumber())
             return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
-        bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
+        throwBufferInvalidReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
         return {};
     }
     size_t byteLength = castedThis->length();
@@ -3491,7 +3487,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
         // offset still wins over a garbage receiver.
         if (!offsetVal.isUndefined() && !offsetVal.isNumber())
             return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
-        bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
+        throwBufferInvalidReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
         return {};
     }
     size_t byteLength = castedThis->length();

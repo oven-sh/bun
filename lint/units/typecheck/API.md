@@ -3300,6 +3300,10 @@ named `c18` without a file until `1c525192d2`. "Verified" below says what was ch
   the value.
 - The link stores are in the checker, where upstream has them in the resolver that the checker holds. The record of
   the checker got the field `emit_resolver` at the place of upstream's `emitResolver`; `emitResolverOnce` has no field.
+  This changes the contract of the record (`checker-data-model-contract/bottom-up/data/checker-fields.tsv` 303:
+  `emitResolver` without a field, "declaration emit is out of scope"): `hasVisibleDeclarations`, which the symbol
+  accessibility of the checker calls for the names of a diagnostic, reads and writes `declarationLinks`, and the three
+  files that use the resolver name it as a value without fields, so the checker is the one place for what it keeps.
 - `getReferenceResolver`: the resolver holds the options and function pointers only, so it is made at each call, as
   `c03_init.rs` makes the name resolver. Six hooks are methods of the checker. `get_merged_symbol` and
   `get_export_symbol_of_value_symbol_if_exported` take `&self`, so their hooks are closures, and

@@ -1,0 +1,3 @@
+3 sources, 3 cases: 298 299 301
+by family: export-attributes-next-line 3
+by route: S-WITH 3

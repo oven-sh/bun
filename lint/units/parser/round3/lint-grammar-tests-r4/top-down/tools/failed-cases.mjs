@@ -10,7 +10,7 @@ const start = log.indexOf("a_lint_parse_reads_a_row_as_tsc_does stdout");
 const end = log.indexOf("\n---- ", start + 10) < 0 ? log.indexOf("\nfailures:", start) : Math.min(log.indexOf("\n---- ", start + 10), log.indexOf("\nfailures:", start));
 const body = log.slice(start, end);
 const failed = new Set();
-const re = /^([a-z-]+) (Ts|Tsx|Js|Decorators) ([^]*?): (Err\(|Ok\()/gm;
+const re = /^([a-z-]+) (Ts|Tsx|Js|Decorators) ([^]*?): (Err\(|Ok\(|kept\[|TS\d+ \[)/gm;
 for (let m; (m = re.exec(body)); ) failed.add(DIALECT[m[2]] + "\0" + m[3]);
 const byFamily = new Map(), byNeed = new Map();
 const list = [];

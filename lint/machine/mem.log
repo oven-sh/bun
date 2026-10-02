@@ -1,11 +1,3 @@
-10-02_12:58:27 anon=4377MB pids=80 load=540.72 top=ld.lld:4879MB
-10-02_12:59:00 anon=4773MB pids=80 load=583.79 top=ld.lld:5268MB
-10-02_12:59:34 anon=4821MB pids=80 load=581.30 top=ld.lld:5314MB
-10-02_13:00:06 anon=4858MB pids=80 load=574.40 top=ld.lld:5322MB
-10-02_13:00:38 anon=4894MB pids=80 load=539.87 top=ld.lld:5334MB
-10-02_13:01:11 anon=4904MB pids=80 load=506.12 top=ld.lld:5285MB
-10-02_13:01:41 anon=5074MB pids=80 load=465.61 top=ld.lld:5452MB
-10-02_13:02:11 anon=4245MB pids=64 load=460.80 top=ld.lld:4620MB
 10-02_13:02:42 anon=27MB pids=27 load=421.76 top=mariadbd:20MB
 10-02_13:03:13 anon=30MB pids=29 load=422.14 top=mariadbd:20MB
 10-02_13:03:44 anon=28MB pids=27 load=439.84 top=mariadbd:20MB
@@ -398,3 +390,11 @@
 10-02_16:42:14 anon=367MB pids=40 load=707.95 top=rustc:563MB
 10-02_16:42:55 anon=4MB pids=27 load=767.20 top=runc:[2:INIT]:9MB
 10-02_16:43:32 anon=3MB pids=27 load=782.47 top=runc:[2:INIT]:9MB
+10-02_16:44:09 anon=238MB pids=36 load=751.49 top=rustc:381MB
+10-02_16:44:45 anon=9MB pids=36 load=722.92 top=postgres:5MB
+10-02_16:45:23 anon=4MB pids=28 load=738.90 top=runc:[2:INIT]:9MB
+10-02_16:45:59 anon=8MB pids=30 load=734.91 top=runc:[2:INIT]:9MB
+10-02_16:46:33 anon=11MB pids=36 load=648.87 top=runc:[2:INIT]:9MB
+10-02_16:47:10 anon=3MB pids=27 load=660.29 top=runc:[2:INIT]:9MB
+10-02_16:47:44 anon=4MB pids=34 load=657.56 top=runc:[2:INIT]:9MB
+10-02_16:48:19 anon=195MB pids=34 load=706.63 top=rustc:334MB

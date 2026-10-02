@@ -1165,7 +1165,7 @@ describe.concurrent("what onResolve answers without a namespace", () => {
     "src/importer.mjs": `export { default } from "who.importer";`,
     "src/importer.cjs": `module.exports = require("who.importer");`,
     "plugin.ts": `
-      import { basename } from "node:path";
+      import { basename, join } from "node:path";
       const answers = {
         "relative.img": "./public/a.mjs",
         "extension.img": "./public/a",
@@ -1176,8 +1176,8 @@ describe.concurrent("what onResolve answers without a namespace", () => {
         "namespace.img": "served:thing",
         "absent.img": import.meta.dir + "/src/absent.served",
         "itself.img": "itself.img",
-        "symlink.img": import.meta.dir + "/src/link.img",
-        "long.img": "/" + Buffer.alloc(9000, "a") + ".js",
+        "symlink.img": join(import.meta.dir, "src", "link.img"),
+        "long.img": "/" + Buffer.alloc(200_000, "a") + ".js",
       };
       Bun.plugin({
         name: "answers",

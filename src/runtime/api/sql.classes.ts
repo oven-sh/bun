@@ -23,9 +23,6 @@ for (const type of types) {
         close: {
           fn: "doClose",
         },
-        connected: {
-          getter: "getConnected",
-        },
         ref: {
           fn: "doRef",
         },
@@ -37,11 +34,6 @@ for (const type of types) {
         },
         queries: {
           getter: "getQueries",
-          this: true,
-        },
-        onconnect: {
-          getter: "getOnConnect",
-          setter: "setOnConnect",
           this: true,
         },
         onclose: {

@@ -1,7 +1,17 @@
 import { udpSocket } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, disableAggressiveGCScope, expectRssDeltaBelow, isWindows, randomPort } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  disableAggressiveGCScope,
+  expectRssDeltaBelow,
+  isIPv6,
+  isWindows,
+  randomPort,
+  tempDir,
+} from "harness";
+import { closeSync, openSync } from "node:fs";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
 
@@ -44,6 +54,48 @@ describe("udpSocket()", () => {
     },
   );
 
+  // Converting the interface address runs user toString(), which can close
+  // the socket. The native side used to grab the socket before converting
+  // that argument, so the setsockopt went to the closed descriptor number,
+  // which the canary files opened from toString() have taken over by then
+  // (ENOTSOCK; a socket that reused it would have its membership changed).
+  test.each([
+    ["addMembership", (s: Bun.udp.Socket<"buffer">, iface: string) => s.addMembership("239.1.2.3", iface)],
+    ["dropMembership", (s: Bun.udp.Socket<"buffer">, iface: string) => s.dropMembership("239.1.2.3", iface)],
+    [
+      "addSourceSpecificMembership",
+      (s: Bun.udp.Socket<"buffer">, iface: string) => s.addSourceSpecificMembership("10.0.0.1", "232.1.1.1", iface),
+    ],
+    [
+      "dropSourceSpecificMembership",
+      (s: Bun.udp.Socket<"buffer">, iface: string) => s.dropSourceSpecificMembership("10.0.0.1", "232.1.1.1", iface),
+    ],
+  ] as const)(
+    "%s does not touch the descriptor when the socket is closed during interface coercion",
+    async (_, call) => {
+      using dir = tempDir("udp-membership-close", {});
+      const socket = await udpSocket({});
+      const canaries: number[] = [];
+      const iface = {
+        toString() {
+          socket.close();
+          for (let i = 0; i < 4; i++) canaries.push(openSync(path.join(String(dir), `canary-${i}`), "w"));
+          return "0.0.0.0";
+        },
+      };
+      let result;
+      try {
+        result = { returned: call(socket, iface as unknown as string) };
+      } catch (e: any) {
+        result = { message: e.message, code: e.code, syscall: e.syscall };
+      } finally {
+        for (const fd of canaries) closeSync(fd);
+      }
+      expect(canaries).toHaveLength(4);
+      expect(result).toEqual({ message: "Socket is closed", code: undefined, syscall: undefined });
+    },
+  );
+
   // `isString()` is `isStringLike()` and accepts boxed `new String(...)` /
   // `class extends String`, but `asString()` is a raw `static_cast<JSString*>`
   // that debug-asserts (and release type-confuses) on a StringObject cell.
@@ -77,6 +129,76 @@ describe("udpSocket()", () => {
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
   });
+
+  // An IPv6 address with a prefix length, or with a shortened IPv4 part, is
+  // not an address. ares_inet_pton read "::1/64" as the first 64 bits of ::1,
+  // so the datagram went to "::", which is this host. inet_aton stops at
+  // whitespace or a NUL, so the datagram went to the address before it. On
+  // Windows ares_inet_pton read IPv4 too: "127.1" as 127.1.0.0, and a trailing
+  // "/bits". The Windows resolver reads a dotted quad only.
+  test.each(
+    [
+      ["::1/64", "::1"],
+      ["::1/0", "::1"],
+      ["2001:db8::1/0", "::1"],
+      ["::ffff:127.1", "::1"],
+      ["127.0.0.1 rebound.example", "127.0.0.1"],
+      ["127.0.0.1\n", "127.0.0.1"],
+      ["127.0.0.1\0rebound.example", "127.0.0.1"],
+      ["127.0.0.1/32", "127.0.0.1"],
+      ["127.0.0.1/8", "127.0.0.1"],
+      ...(isWindows
+        ? [
+            ["127.1", "127.0.0.1"],
+            ["0x7f000001", "127.0.0.1"],
+            ["127.000.000.001", "127.0.0.1"],
+          ]
+        : []),
+    ].filter(([, loopback]) => loopback !== "::1" || isIPv6()),
+  )("send() does not take %j for an address", async (address, loopback) => {
+    const received: string[] = [];
+    const { promise: control, resolve: onControl } = Promise.withResolvers<void>();
+    const server = await udpSocket({
+      hostname: loopback,
+      socket: {
+        data(_socket, data) {
+          received.push(data.toString());
+          if (received.includes("control")) onControl();
+        },
+      },
+    });
+    const client = await udpSocket({ hostname: loopback });
+    try {
+      expect(() => client.send("send", server.port, address)).toThrow("Invalid address");
+      expect(() => client.sendMany(["sendMany", server.port, address])).toThrow("Invalid address");
+      // The loopback keeps the order, so nothing else is on its way.
+      client.send("control", server.port, loopback);
+      await control;
+      expect(received).toEqual(["control"]);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  test.skipIf(isWindows).each(["127.1", "0x7f000001", "2130706433"])(
+    "send() takes %j for 127.0.0.1, as getaddrinfo() does",
+    async address => {
+      const { promise: received, resolve: onData } = Promise.withResolvers<string>();
+      const server = await udpSocket({
+        hostname: "127.0.0.1",
+        socket: { data: (_socket, data) => onData(data.toString()) },
+      });
+      const client = await udpSocket({ hostname: "127.0.0.1" });
+      try {
+        client.send(address, server.port, address);
+        expect(await received).toBe(address);
+      } finally {
+        client.close();
+        server.close();
+      }
+    },
+  );
 
   test("connect with invalid hostname rejects", async () => {
     expect(async () =>

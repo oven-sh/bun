@@ -210,6 +210,9 @@ pub struct BundlerOptions {
     pub output_format: bundle_enums::Format,
     pub bytecode: bool,
     pub bytecode_depth: u32,
+    pub optimize_bytecode: bool,
+    /// `--bytecode-order`: payload order files, most important first.
+    pub bytecode_order: Vec<Box<[u8]>>,
     pub banner: Box<[u8]>,
     pub footer: Box<[u8]>,
     pub css_chunking: bool,
@@ -234,6 +237,8 @@ pub struct BundlerOptions {
     pub compile_autoload_tsconfig: bool,
     pub compile_autoload_package_json: bool,
     pub compile_executable_path: Option<Box<[u8]>>,
+    /// `--compile-jit-policy`: JSC tier-up threshold scale baked into the executable (1 = normal).
+    pub compile_jit_policy: f32,
     pub compile_assets: Vec<Box<[u8]>>,
     pub windows: bundle_enums::WindowsOptions,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
@@ -270,6 +275,8 @@ impl Default for BundlerOptions {
             output_format: bundle_enums::Format::Esm,
             bytecode: false,
             bytecode_depth: u32::MAX,
+            optimize_bytecode: true,
+            bytecode_order: Vec::new(),
             banner: Box::default(),
             footer: Box::default(),
             css_chunking: false,
@@ -290,6 +297,7 @@ impl Default for BundlerOptions {
             compile_autoload_tsconfig: false,
             compile_autoload_package_json: false,
             compile_executable_path: None,
+            compile_jit_policy: 1.0,
             compile_assets: Vec::new(),
             windows: bundle_enums::WindowsOptions::default(),
             allow_unresolved: None,
@@ -342,7 +350,6 @@ pub fn try_get<'a>() -> Option<&'a ContextData> {
 }
 
 pub struct DebugOptions {
-    pub dump_environment_variables: bool,
     pub silent: bool,
     pub hot_reload: HotReload,
     /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
@@ -369,7 +376,6 @@ impl Default for DebugOptions {
     #[inline(always)]
     fn default() -> Self {
         Self {
-            dump_environment_variables: false,
             silent: false,
             hot_reload: HotReload::None,
             watch_kill_signal: bun_core::SignalCode::DEFAULT,

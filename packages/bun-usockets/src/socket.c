@@ -169,6 +169,13 @@ __attribute__((always_inline)) int us_socket_is_established(struct us_socket_t *
     return us_internal_poll_type((struct us_poll_t *) s) != POLL_TYPE_SEMI_SOCKET;
 }
 
+int us_socket_queued_input(struct us_socket_t *s) {
+    if (s->flags.is_closed || !us_socket_is_established(s)) {
+        return LIBUS_QUEUED_INPUT_NONE;
+    }
+    return bsd_queued_input(us_poll_fd(&s->p));
+}
+
 /* Detach c from its group + drop the borrowed SSL_CTX ref, but leave c
  * allocated. After this, c->group is NULL and the embedding owner may safely
  * deinit; the only remaining link is into a loop-owned list. */
@@ -210,7 +217,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     }
     if (!c->error) {
         // if we have no error, we have to set that we were aborted aka we called close
-        c->error = ECONNABORTED;
+        c->error = LIBUS_ECANCELED;
     }
     struct us_socket_group_t *group = c->group;
 
@@ -257,13 +264,9 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     us_connecting_socket_free(c);
 }
 
-/* Tear the fd down + dispatch on_close. Bypasses the SSL layer entirely —
- * the public us_socket_close() routes through us_internal_ssl_close() first
- * so a client-initiated close sends close_notify and (with code==0) waits for
- * the peer's, instead of slamming the fd shut and racing the peer's
- * handshake/secureConnection event. openssl.c re-enters here once that
- * graceful path is done. */
-struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
+/* Tear the fd down and tell whoever holds `s` that it is gone, exactly once and whoever closed
+ * it: on_close if it opened, on_connect_error(connect_error) if it never did. */
+static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_t *s, int code, void *reason, int connect_error) {
   if (s->ssl && s->ssl_in_use) {
     /* A JS callback running from inside SSL_do_handshake/SSL_read (ALPN, SNI,
      * keylog, ...) destroyed this socket. Closing now frees the SSL and
@@ -279,6 +282,7 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
 
         if (s->flags.low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
+            if (s == loop->data.low_prio_iterator) loop->data.low_prio_iterator = s->next;
             if (!s->prev) loop->data.low_prio_head = s->next;
             else s->prev->next = s->next;
 
@@ -315,16 +319,17 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
         /* Mark the socket as closed */
         s->flags.is_closed = 1;
 
-        /* call the callback */
+        /* The fd is closed first: a handler may dial again (node:net autoSelectFamily), and on
+         * libuv a second uv_poll_t started while this one is active never fires. */
         struct us_socket_t *res = s;
         if (!(us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET)) {
             res = s->ssl ? us_internal_ssl_on_close(s, code, reason)
                          : us_dispatch_close(s, code, reason);
+        } else if (!s->connect_state) {
+            res = us_dispatch_connect_error(s, connect_error);
         }
-        /* SEMI_SOCKET: never-opened connect — owner is notified via
-         * on_connect_error from the connect path (after_open / close_all),
-         * not here. Dispatching here would double-fire on the natural path
-         * (after_open → handler.close → close_raw). */
+        /* A candidate of a us_connecting_socket_t is held through that, which hears
+         * on_connecting_error once every candidate has failed. */
 
         us_internal_ssl_detach(s);
 
@@ -339,52 +344,24 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
     return s;
 }
 
+/* Bypasses the SSL layer entirely — the public us_socket_close() routes through
+ * us_internal_ssl_close() first so a client-initiated close sends close_notify and (with
+ * code==0) waits for the peer's, instead of slamming the fd shut and racing the peer's
+ * handshake/secureConnection event. openssl.c re-enters here once that graceful path is done. */
+struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
+    /* Not an error a connect can fail with, so the holder can tell the two apart. */
+    return us_internal_socket_close_and_notify(s, code, reason, LIBUS_ECANCELED);
+}
+
+void us_internal_socket_connect_failed(struct us_socket_t *s, int error) {
+    us_internal_socket_close_and_notify(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, NULL, error);
+}
+
 __attribute__((always_inline)) struct us_socket_t *us_socket_close(struct us_socket_t *s, int code, void *reason) {
     if (s->ssl && !us_socket_is_closed(s)) {
         return us_internal_ssl_close(s, code, reason);
     }
     return us_internal_socket_close_raw(s, code, reason);
-}
-
-// This function is the same as us_socket_close but:
-// - does not emit on_close event
-// - does not close
-struct us_socket_t *us_socket_detach(struct us_socket_t *s) {
-    if (!us_socket_is_closed(s)) {
-        struct us_loop_t *loop = s->group->loop;
-
-        if (s->flags.low_prio_state == 1) {
-            /* Unlink this socket from the low-priority queue */
-            if (!s->prev) loop->data.low_prio_head = s->next;
-            else s->prev->next = s->next;
-
-            if (s->next) s->next->prev = s->prev;
-
-            s->prev = 0;
-            s->next = 0;
-            s->flags.low_prio_state = 0;
-            s->group->low_prio_count--;
-            /* Mirror the else branch: if this was the last thing keeping the
-             * group linked, drop it from the loop now rather than waiting for
-             * the next link/unlink to notice. */
-            us_internal_group_maybe_unlink(s->group);
-        } else {
-            us_internal_socket_group_unlink_socket(s->group, s);
-        }
-        us_poll_stop((struct us_poll_t *) s, loop);
-
-        us_internal_ssl_detach(s);
-
-        /* Link this socket to the close-list and let it be deleted after this iteration */
-        s->next = loop->data.closed_head;
-        loop->data.closed_head = s;
-
-        /* Mark the socket as closed */
-        s->flags.is_closed = 1;
-
-        return s;
-    }
-    return s;
 }
 
 struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) {
@@ -461,6 +438,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
+    s->hangup_closes_unsent = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -611,6 +589,13 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
     return written;
 }
 
+int us_socket_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
+    if (s->ssl) {
+        return us_internal_ssl_writev(s, iov, count);
+    }
+    return us_socket_raw_writev(s, iov, count);
+}
+
 int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
     if (us_socket_is_closed(s) ||
         us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN) {
@@ -726,6 +711,10 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
 }
 
 __attribute__((always_inline)) void us_socket_shutdown(struct us_socket_t *s) {
+    /* Nothing to half-close yet, and POLL_TYPE_SOCKET_SHUT_DOWN would pass for a socket that opened. */
+    if (!us_socket_is_established(s)) {
+        return;
+    }
     if (s->ssl) {
         us_internal_ssl_shutdown(s);
         return;

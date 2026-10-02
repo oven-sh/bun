@@ -1,26 +1,31 @@
 #!/usr/bin/env bun
 /**
- * Generates the `prereleases-5` and `build-metadata-2` fixtures used by the
- * `bun outdated` tests.
+ * Generates the fixtures for the colored version diff tests of `bun outdated`
+ * and `bun update -i`.
  *
- * In each one the `latest` tag extends the older tag byte for byte (`rc.1` ->
- * `rc.10`, `build.1` -> `build.10`), so the colored version diff has no
- * differing byte inside the shorter tag and must color the appended bytes.
- * The `prereleases-5` latest also carries a build tag longer than the 8 bytes
- * a semver string stores inline, so it is read from the manifest buffer.
+ * Semver tag strings up to 8 bytes are stored inline; longer ones are offsets
+ * into the string buffer they were parsed from, so printing a tag against the
+ * wrong buffer is only observable with a tag longer than that. A `latest` tag
+ * that extends the older tag byte for byte (`rc.1` -> `rc.10`) has no differing
+ * byte inside the shorter tag, so the diff has to color the appended bytes.
+ *
+ * - build-metadata-1@1.0.0
+ * - build-metadata-1@1.1.0-rc.0
+ * - build-metadata-1@1.1.0-rc.1+build.20240101   (latest)
+ * - prereleases-5@1.0.0-rc.1
+ * - prereleases-5@1.0.0-rc.10+build.20240101     (latest)
+ * - build-metadata-2@1.0.0+build.1
+ * - build-metadata-2@1.0.1+build.10              (latest)
+ *
  * Tarball names use `-` in place of `+`: the registry rejects a `+` in the
  * tarball URL, and the name of the file does not have to match the version.
- *
- * - prereleases-5@1.0.0-rc.1
- * - prereleases-5@1.0.0-rc.10+build.20240101   (latest)
- * - build-metadata-2@1.0.0+build.1
- * - build-metadata-2@1.0.1+build.10            (latest)
  */
 
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 
 const packages: Record<string, string[]> = {
+  "build-metadata-1": ["1.0.0", "1.1.0-rc.0", "1.1.0-rc.1+build.20240101"],
   "prereleases-5": ["1.0.0-rc.1", "1.0.0-rc.10+build.20240101"],
   "build-metadata-2": ["1.0.0+build.1", "1.0.1+build.10"],
 };

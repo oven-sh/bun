@@ -10,8 +10,8 @@
       "version": "1.0.0",
       "_id": "build-metadata-1@1.0.0",
       "dist": {
-        "integrity": "sha512-yANm0z79IFHFdniLr4g0fJqeRSA/ajV9wm82rfNSuGVX2r94YYnEFRssIARO9GdNhfBKfG5+g2ScSNa5E5RGAw==",
-        "shasum": "189a18eea309d671ac7419e4f0d260caaabae519",
+        "integrity": "sha512-ewaa+x90ysRw5eMEEqd4nXfZPS0w17WJdJ/0amcJnXjH5Kv/eopAQT3AszpVstCyl6fr8/MXblA+oX49wu6wJQ==",
+        "shasum": "d86abf52296c28f84bf0e98346038bf0e09c4f51",
         "tarball": "http://localhost:4873/build-metadata-1/-/build-metadata-1-1.0.0.tgz"
       }
     },
@@ -20,8 +20,8 @@
       "version": "1.1.0-rc.0",
       "_id": "build-metadata-1@1.1.0-rc.0",
       "dist": {
-        "integrity": "sha512-SVk+G1ztQh6qjHA1rhwYKgBHr/2PD9WesTKDHwPPIaQ8zcAa0TlphgHbJKb/WTsVhy2/lRhhTQu5OUbxCrpqCw==",
-        "shasum": "c8f1a45157a5f3c2e486bdfbe898304da8c782c5",
+        "integrity": "sha512-EYOieJZQg7NmBqefsIHNJO00+78LA3+KZIiDGCUrkRD4lqvAoqzeLdRHtF8sNjGp+rk76Y72PRqy3RqaEzCOTA==",
+        "shasum": "e093f4ef0b73cb72f2f0351835f0073194441406",
         "tarball": "http://localhost:4873/build-metadata-1/-/build-metadata-1-1.1.0-rc.0.tgz"
       }
     },
@@ -30,9 +30,9 @@
       "version": "1.1.0-rc.1+build.20240101",
       "_id": "build-metadata-1@1.1.0-rc.1+build.20240101",
       "dist": {
-        "integrity": "sha512-DPoVrtdy1Md8ZRNEawsVnFtHpZcGWzPzyQCcuz3c2h7wgvAbLHoqxnyFXbDWd0XOJqBsChvwdkJOUFQ+TUQ4Xw==",
-        "shasum": "8cf085a1db2b4366edffb008b6b339ccbdc45f18",
-        "tarball": "http://localhost:4873/build-metadata-1/-/build-metadata-1-1.1.0-rc.1+build.20240101.tgz"
+        "integrity": "sha512-11tS6fyTTZLf3YU+JxHHmqUPQvmetMeShZf+yClimYc4oWQED084PUPfDuIAcn572nIWSO7KSLr4bcHcSMZWsw==",
+        "shasum": "70463fe8544a2fe4a0d447e88e079ae369875532",
+        "tarball": "http://localhost:4873/build-metadata-1/-/build-metadata-1-1.1.0-rc.1-build.20240101.tgz"
       }
     }
   }

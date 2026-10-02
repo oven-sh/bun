@@ -10,8 +10,8 @@
       "version": "1.0.0-rc.1",
       "_id": "prereleases-5@1.0.0-rc.1",
       "dist": {
-        "integrity": "sha512-FFPR58z8IzSSVWxcxrZKlUeNeFBOeo3nY3qgR1MabfXpg1I9asYcsAJmakWzhDr0xpbVIr++hVNi07haESpx4Q==",
-        "shasum": "32c2558ecbf7492d1cf1e264f2b2cba9fac45fdf",
+        "integrity": "sha512-v8OJa3I21Hqsk7Z9Kpe7vVB0Bt2DDAlPyQgvc7G9stHA/3NOtDu2nIaon0yqT+R/KEl1OtDDZF/ROWILBv4g1Q==",
+        "shasum": "c102dd6fd84a66206c2d209073caf5b510896787",
         "tarball": "http://localhost:4873/prereleases-5/-/prereleases-5-1.0.0-rc.1.tgz"
       }
     },
@@ -20,8 +20,8 @@
       "version": "1.0.0-rc.10+build.20240101",
       "_id": "prereleases-5@1.0.0-rc.10+build.20240101",
       "dist": {
-        "integrity": "sha512-JbBfAFI4bjRlnaR5TM5RfF3d9Hhw14sNumVZ1EA4eHYs9OVFpWAZjO0DW53p8E0+7tAzVTYXrPma0XHQdny+7w==",
-        "shasum": "bb2e8bc443d9657d008cf0763c92f79937267a87",
+        "integrity": "sha512-lEYghx4bV6zhVZyJ/B2ts4riJoV0UJ6FUb/C4bkkcOR/fJBBxDC+2f2rkT9sGjg2woTmGi11E8RWMFIhtfEMOA==",
+        "shasum": "86f587dc970ebffdb9cbaec1b00544cc88dbb07a",
         "tarball": "http://localhost:4873/prereleases-5/-/prereleases-5-1.0.0-rc.10-build.20240101.tgz"
       }
     }

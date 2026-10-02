@@ -1904,6 +1904,227 @@ it.skipIf(isWindows)(
   },
 );
 
+describe("read/write optional arguments (Node 24)", () => {
+  const rangeError = (name: string, range: string, received: string | number) => ({
+    name: "RangeError",
+    code: "ERR_OUT_OF_RANGE",
+    message: `The value of "${name}" is out of range. It must be ${range}. Received ${received}`,
+  });
+  const typeError = (name: string, type: string, received: string) => ({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: `The "${name}" argument must be of type ${type}. Received ${received}`,
+  });
+  const positionError = typeError("position", "bigint or integer", "an instance of Object");
+  const offsetError = typeError("offset", "number", "null");
+  // Expected byte counts and diagnostics were recorded under Node 24.21.0.
+  const reads: [unknown[], unknown, unknown, unknown][] = [
+    [[], 8, 8, 8],
+    [[undefined], 8, typeError("options", "object", "undefined"), 8],
+    [[undefined, undefined, undefined], 0, 0, 8],
+    [[undefined, 2, 1], 2, 2, 2],
+    [[null, 2, 1], 8, 2, 2],
+    [[0, null, null], 0, 0, 8],
+    [[{ offset: undefined, length: undefined, position: undefined }], 8, 8, 8],
+    [[{ offset: null, length: 2, position: 1 }], offsetError, 2, 2],
+    [[{ length: null }], 0, 0, 8],
+    [[{ length: 2, position: 1n }], 2, 2, 2],
+    [[0, 2, 1n], 2, 2, 2],
+    [[0, 0, {}], positionError, positionError, positionError],
+    [[0, 2, {}], positionError, positionError, positionError],
+    [
+      [0, 0, -2],
+      rangeError("position", ">= -1 && <= 9007199254740991", -2),
+      rangeError("position", ">= -1 && <= 9007199254740991", -2),
+      rangeError("position", ">= -1 && <= 9007199254740991", -2),
+    ],
+    [
+      [0, 2, 2n ** 63n - 1n],
+      rangeError("position", ">= -1 && <= 9223372036854775805", "9_223_372_036_854_775_807n"),
+      rangeError("position", ">= -1 && <= 9223372036854775805", "9_223_372_036_854_775_807n"),
+      rangeError("position", ">= -1 && <= 9223372036854775805", "9_223_372_036_854_775_807n"),
+    ],
+    [
+      [-1, 2, 0],
+      rangeError("offset", ">= 0 && <= 9007199254740991", -1),
+      rangeError("offset", ">= 0 && <= 9007199254740991", -1),
+      rangeError("offset", ">= 0 && <= 9007199254740991", -1),
+    ],
+    [[0, -1, 0], rangeError("length", ">= 0", -1), rangeError("length", ">= 0", -1), rangeError("length", ">= 0", -1)],
+    [[7, 2, 0], rangeError("length", "<= 1", 2), rangeError("length", "<= 1", 2), rangeError("length", "<= 1", 2)],
+  ];
+
+  for (const [index, api] of ["readSync", "read", "FileHandle.read"].entries()) {
+    it(`${api} defaults, nulls, bigint positions and exact errors`, async () => {
+      using dir = tempDir("fs-read-arguments", { data: "abcdefgh" });
+      for (const [args, ...expected] of reads) {
+        const buffer = Buffer.alloc(8, 46);
+        const handle = api === "FileHandle.read" ? await promises.open(join(String(dir), "data"), "r") : undefined;
+        const fd = handle?.fd ?? openSync(join(String(dir), "data"), "r");
+        let result: unknown;
+        try {
+          if (handle) {
+            const value = await (handle.read as Function)(buffer, ...args);
+            expect(value.buffer).toBe(buffer);
+            result = value.bytesRead;
+          } else if (api === "readSync") {
+            result = (readSync as Function)(fd, buffer, ...args);
+          } else {
+            const { promise, resolve, reject } = Promise.withResolvers<number>();
+            (fs.read as Function)(fd, buffer, ...args, (err: unknown, bytesRead: number, actual: Buffer) => {
+              if (err) reject(err);
+              else if (actual !== buffer) reject(new Error("read did not return the original buffer"));
+              else resolve(bytesRead);
+            });
+            result = await promise;
+          }
+        } catch (error: any) {
+          result = { name: error.name, code: error.code, message: error.message };
+        } finally {
+          if (handle) await handle.close();
+          else closeSync(fd);
+        }
+        expect({ args, result }).toEqual({ args, result: expected[index] });
+        if (result === 0) expect(buffer.toString()).toBe("........");
+        if (result === 8) expect(buffer.toString()).toBe("abcdefgh");
+      }
+    });
+  }
+
+  for (const api of ["readSync", "read"] as const) {
+    it(`${api} rejects an undefined buffer and bigint length`, () => {
+      using dir = tempDir("fs-read-invalid-arguments", { data: "abcdefgh" });
+      const fd = openSync(join(String(dir), "data"), "r");
+      const callback = () => {
+        throw new Error("must throw synchronously");
+      };
+      try {
+        expect(() => (fs[api] as Function)(fd, undefined, 0, 2, 0, callback)).toThrow({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView. Received undefined',
+        });
+        expect(() => (fs[api] as Function)(fd, Buffer.alloc(8), 0, 1n, 0, callback)).toThrow({
+          name: "TypeError",
+          message: "Cannot mix BigInt and other types, use explicit conversions",
+        });
+      } finally {
+        closeSync(fd);
+      }
+    });
+    it(`${api} coerces length to a signed 32-bit integer`, async () => {
+      using dir = tempDir("fs-read-length", { data: "abcdefgh" });
+      for (const [length, expected] of [
+        [undefined, 0],
+        [null, 0],
+        [NaN, 0],
+        [Infinity, 0],
+        [1.5, 1],
+        ["2", 2],
+        [2 ** 32 + 2, 2],
+      ] as const) {
+        const fd = openSync(join(String(dir), "data"), "r");
+        try {
+          const buffer = Buffer.alloc(8, 46);
+          if (api === "readSync") expect((readSync as Function)(fd, buffer, 0, length, 0)).toBe(expected);
+          else {
+            const { promise, resolve, reject } = Promise.withResolvers<number>();
+            (fs.read as Function)(fd, buffer, 0, length, 0, (err: unknown, count: number) =>
+              err ? reject(err) : resolve(count),
+            );
+            expect(await promise).toBe(expected);
+          }
+          expect(buffer.toString()).toBe("abcdefgh".slice(0, expected) + "........".slice(expected));
+        } finally {
+          closeSync(fd);
+        }
+      }
+    });
+  }
+
+  const writes: [unknown[], number, string][] = [
+    [[], 8, "01234567"],
+    [[undefined, undefined, undefined], 8, "01234567"],
+    [[undefined, 2, 1], 2, "a01defgh"],
+    [[2, undefined, 0], 6, "234567gh"],
+    [[2, null, 0], 6, "234567gh"],
+    [[2, "2", 0], 6, "234567gh"],
+    [[2, 2n, 0], 6, "234567gh"],
+    [[null, 2, 1], 8, "01234567"],
+    [[{ offset: undefined, length: 2, position: 1 }], 2, "a01defgh"],
+    [[{ offset: null, length: null, position: null }], 8, "01234567"],
+    [[0, 2, 1n], 2, "01cdefgh"],
+  ];
+  for (const api of ["writeSync", "write"] as const) {
+    it(`${api} defaults unknown string encodings to UTF-8`, async () => {
+      using dir = tempDir("fs-write-encoding-default", {});
+      const file = join(String(dir), "data");
+      const fd = openSync(file, "w+");
+      try {
+        if (api === "writeSync") expect((writeSync as Function)(fd, "é", null, "unknown")).toBe(2);
+        else {
+          const { promise, resolve, reject } = Promise.withResolvers<number>();
+          (fs.write as Function)(fd, "é", null, "unknown", (err: unknown, count: number) =>
+            err ? reject(err) : resolve(count),
+          );
+          expect(await promise).toBe(2);
+        }
+        expect(readFileSync(file)).toEqual(Buffer.from("é"));
+      } finally {
+        closeSync(fd);
+      }
+    });
+    it(`${api} consumes every optional argument independently`, async () => {
+      using dir = tempDir("fs-write-arguments", {});
+      const file = join(String(dir), "data");
+      for (const [args, expected, contents] of writes) {
+        writeFileSync(file, "abcdefgh");
+        const fd = openSync(file, "r+");
+        const buffer = Buffer.from("01234567");
+        try {
+          if (api === "writeSync") expect((writeSync as Function)(fd, buffer, ...args)).toBe(expected);
+          else {
+            const { promise, resolve, reject } = Promise.withResolvers<number>();
+            (fs.write as Function)(fd, buffer, ...args, (err: unknown, count: number, actual: Buffer) => {
+              if (err) reject(err);
+              else if (actual !== buffer) reject(new Error("write did not return the original buffer"));
+              else resolve(count);
+            });
+            expect(await promise).toBe(expected);
+          }
+          expect(readFileSync(file, "utf8")).toBe(contents);
+        } finally {
+          closeSync(fd);
+        }
+      }
+    });
+    it(`${api} throws exact range errors before writing`, () => {
+      using dir = tempDir("fs-write-errors", { data: "abcdefgh" });
+      const file = join(String(dir), "data");
+      const fd = openSync(file, "r+");
+      const errors: [unknown[], unknown][] = [
+        [[undefined, 9, 0], rangeError("length", "<= 8", 9)],
+        [[undefined, -1, 0], rangeError("length", ">= 0", -1)],
+        [[9, undefined, 0], rangeError("offset", "<= 8", 9)],
+        [[0, 1.5, 0], rangeError("length", "an integer", 1.5)],
+        [[0, NaN, 0], rangeError("length", "an integer", "NaN")],
+      ];
+      try {
+        for (const [args, expected] of errors) {
+          expect(() =>
+            (fs[api] as Function)(fd, Buffer.alloc(8), ...args, () => {
+              throw new Error("must throw synchronously");
+            }),
+          ).toThrow(expected);
+          expect(readFileSync(file, "utf8")).toBe("abcdefgh");
+        }
+      } finally {
+        closeSync(fd);
+      }
+    });
+  }
+});
+
 describe("readSync", () => {
   it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
@@ -2351,12 +2572,8 @@ describe("explicit undefined behaves like an absent optional argument", () => {
     expect(outcome(() => explicit(c))).toEqual(outcome(() => absent(c)));
   });
 
-  // Node coerces a positional read `length` with `length |= 0`, so `undefined`
-  // reads 0 bytes. Bun validates it as an integer instead and throws
-  // ERR_OUT_OF_RANGE 'The value of "length" is out of range. It must be an
-  // integer. Received NaN'. The 3-argument form is the options overload in
-  // Node, so the comparison is against an explicit 0.
-  it.failing("readSync(fd, buffer, offset, undefined) reads 0 bytes like readSync(fd, buffer, offset, 0)", () => {
+  // The 3-argument form is the options overload; a positional undefined length coerces to zero.
+  it("readSync(fd, buffer, offset, undefined) reads 0 bytes like readSync(fd, buffer, offset, 0)", () => {
     using dir = tempDir("fs-undefined-arg", {});
     const c = makeCtx(String(dir));
     expect(outcome(() => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), 0, undefined)))).toEqual(

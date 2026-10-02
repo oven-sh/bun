@@ -30,16 +30,7 @@ pub(crate) fn to_match_snapshot(
         );
     }
 
-    let Some(buntest_strong) = this.bun_test() else {
-        let signature = get_signature("toMatchSnapshot", "", true);
-        return throw!(
-            this,
-            global,
-            signature,
-            "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n",
-        );
-    };
-    let _ = buntest_strong; // released by Drop at scope exit.
+    this.check_snapshot_context(global, "toMatchSnapshot")?;
 
     let mut hint_string = None;
     let mut property_matchers: Option<JSValue> = None;

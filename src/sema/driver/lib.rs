@@ -7,6 +7,8 @@ pub mod host;
 
 pub use bun_sema::messages::Category;
 
+use bun_sema::check::errors::Checked;
+use bun_sema::check::explain::Explained;
 use bun_sema::check::{Program, compute_ecma_line_starts};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
@@ -810,34 +812,11 @@ fn check_what_is_named(
             std::borrow::Cow::Borrowed(&module.hir.text[..])
         }
     };
-    let check_file = |file: FileId, only_syntax: bool| {
-        // Dropped last, after all that was found out about the file.
-        let _at_hand = program.files.bring_in(host, file);
-        let module = &program.files.modules[file.idx()];
-        let mut checker = program.checker();
-        checker.set_only_syntax(only_syntax);
-        // What the thread really has left, whatever thread it is and however it was built.
-        checker.set_stack_limit(bun_core::StackCheck::init().remaining());
-        checker.set_time_limit(request.file_time_limit);
-        let errors = checker.check_file_explained(file);
-        if let Some(after_file) = request.after_file
-            && !only_syntax
-            && !checker.timed_out()
-        {
-            after_file(&mut checker, file);
-        }
-        deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
-        if checker.timed_out() {
-            gave_up.lock().unwrap().push(module.path.clone());
-            return;
-        }
-        // What was found stands. What was not may be missing, and that is said.
-        if checker.ran_out_of_stack() {
-            incomplete.lock().unwrap().push(module.path.clone());
-        }
+    let show = |file: FileId, errors: Vec<Explained>| {
         if errors.is_empty() {
             return;
         }
+        let module = &program.files.modules[file.idx()];
         let text = &text_of(file)[..];
         let starts = compute_ecma_line_starts(text);
         let shown: Vec<Diagnostic> = errors
@@ -889,6 +868,57 @@ fn check_what_is_named(
             progress.errors.fetch_add(shown.len(), Ordering::Relaxed);
         }
         found.lock().unwrap().extend(shown);
+    };
+    let new_checker = |only_syntax: bool| {
+        let mut checker = program.checker();
+        checker.set_explains(true);
+        checker.set_only_syntax(only_syntax);
+        // What the thread really has left, whatever thread it is and however it was built.
+        checker.set_stack_limit(bun_core::StackCheck::init().remaining());
+        checker.set_time_limit(request.file_time_limit);
+        checker
+    };
+    // What was found in the files that the checker of another file may still report in.
+    let unfinished: Mutex<Vec<(FileId, Checked)>> = Mutex::new(Vec::new());
+    let check_file = |file: FileId, only_syntax: bool| {
+        // Dropped last, after all that was found out about the file.
+        let _at_hand = program.files.bring_in(host, file);
+        let module = &program.files.modules[file.idx()];
+        let mut checker = new_checker(only_syntax);
+        let checked = checker.check_file(file);
+        if let Some(after_file) = request.after_file
+            && !only_syntax
+            && !checker.timed_out()
+        {
+            after_file(&mut checker, file);
+        }
+        deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+        if checker.timed_out() {
+            gave_up.lock().unwrap().push(module.path.clone());
+            return;
+        }
+        // What was found stands. What was not may be missing, and that is said.
+        if checker.ran_out_of_stack() {
+            incomplete.lock().unwrap().push(module.path.clone());
+        }
+        // Nothing refers to a file that is only at hand for now, and what does not parse is nobody else's business.
+        if only_syntax || module.is_transient {
+            show(file, checker.finish_file(file, checked));
+        } else {
+            unfinished.lock().unwrap().push((file, checked));
+        }
+    };
+    let finish_files = || {
+        let unfinished: Vec<Mutex<Option<(FileId, Checked)>>> = unfinished
+            .lock()
+            .unwrap()
+            .drain(..)
+            .map(|one| Mutex::new(Some(one)))
+            .collect();
+        for_each_parallel(threads, unfinished.len(), &|i| {
+            let (file, checked) = unfinished[i].lock().unwrap().take().unwrap();
+            show(file, new_checker(false).finish_file(file, checked));
+        });
     };
     let take = |i: usize| {
         if is_taken[i].swap(true, Ordering::Relaxed) {
@@ -963,6 +993,7 @@ fn check_what_is_named(
             // Whoever finds out at the very end is the only one left to act on it.
             take_what_goes_first();
         });
+        finish_files();
         report.diagnostics.append(&mut found.lock().unwrap());
         report.diagnostics.extend(global_errors());
         // `iterateBaseline`: whoever writes something for every file does so for the files that are not checked as well.

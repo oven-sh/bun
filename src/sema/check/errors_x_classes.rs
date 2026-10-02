@@ -137,7 +137,7 @@ impl Checker<'_> {
                 ClassOwner::Stmt(s) => s.is_some(),
             };
             if is_bound && bound.class_symbol[c].is_some() {
-                self.check_class_like_declaration(file, ClassId(c as u32), out);
+                self.report_class_like_declaration(file, ClassId(c as u32), out);
             }
         }
         for i in 0..hir.interfaces.len() {
@@ -165,7 +165,7 @@ impl Checker<'_> {
     // ───────────────────────────── what a class extends and implements ─────────────────────────────
 
     /// The parts of `checkClassLikeDeclaration` that the codes above come from.
-    fn check_class_like_declaration(
+    fn report_class_like_declaration(
         &mut self,
         file: FileId,
         c: ClassId,

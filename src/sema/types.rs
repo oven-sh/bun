@@ -29,6 +29,9 @@ pub enum Intrinsic {
     /// `errorType`: what an expression or a type that is in error has. It has `TypeFlagsAny` and behaves like `any`, except where
     /// `isErrorType` is asked.
     Error,
+    /// `autoType`: the declared type of a variable whose type at a place is what control flow finds assigned to it. It has
+    /// `TypeFlagsAny`.
+    Auto,
     Unknown,
     Never,
     Void,
@@ -204,6 +207,7 @@ pub enum TypeData {
     ThisParam(Sym),
     /// A type parameter that is nobody's, put for a real one to see how a generic type varies with it.
     Marker(u8),
+    /// In the order of `CompareTypes`.
     Union(Box<[TypeId]>),
     Intersection(Box<[TypeId]>),
     /// An instance of a class or an interface.
@@ -470,6 +474,8 @@ pub enum Literalness {
     SyntheticDefault,
     /// `unknownEmptyObjectType`: the `{}` that `unknown` is where it is neither `null` nor `undefined`. It has no symbol.
     OfUnknown,
+    /// `autoArrayType` where there is no global `Array`. It has no symbol.
+    AutoArray,
 }
 
 impl Literalness {
@@ -586,7 +592,7 @@ pub struct Provenance {
 pub enum UnionOrigin {
     #[default]
     None,
-    /// The named unions it was made of, and the rest of its members.
+    /// The named unions it was made of, and the rest of its members, in the order of `CompareTypes`.
     Union(Box<[TypeId]>),
     /// The intersection it is the normal form of.
     Intersection(Box<[TypeId]>),
@@ -1077,6 +1083,7 @@ well_known! {
     // `markerSuperTypeForCheck`, `markerSubTypeForCheck`: `checkTypeParameterDeferred` verifies an `in` / `out` annotation with these.
     MARKER_SUPER_FOR_CHECK = TypeData::Marker(3),
     MARKER_SUB_FOR_CHECK = TypeData::Marker(4),
+    AUTO = TypeData::Intrinsic(Intrinsic::Auto),
     ERROR = TypeData::Intrinsic(Intrinsic::Error),
 }
 
@@ -1098,10 +1105,10 @@ impl TypeId {
         }
     }
 
-    /// `TypeFlagsAny`: `anyType` or `errorType`.
+    /// `TypeFlagsAny`: `anyType`, `errorType` or `autoType`.
     #[inline]
     pub fn is_any(self) -> bool {
-        self == TypeId::ANY || self == TypeId::ERROR
+        self == TypeId::ANY || self == TypeId::ERROR || self == TypeId::AUTO
     }
 
     /// `TypeFlagsUndefined`
@@ -1308,7 +1315,10 @@ impl TypeStore {
             | TypeData::Fns { mapper, .. }
             | TypeData::Cond { mapper, .. } => self.mapper_record(*mapper).1,
             TypeData::Synth(shape) => {
-                let is_plain = matches!(shape.literal, Literalness::No | Literalness::OfUnknown);
+                let is_plain = matches!(
+                    shape.literal,
+                    Literalness::No | Literalness::OfUnknown | Literalness::AutoArray
+                );
                 let mut flags = if is_plain {
                     TypeFlags::empty()
                 } else {

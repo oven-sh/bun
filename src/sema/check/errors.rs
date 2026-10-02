@@ -23,6 +23,20 @@ pub struct Diagnostic {
     pub code: u32,
 }
 
+/// What `check_file` found. `finish_file` makes the errors of the file of it.
+pub struct Checked {
+    /// `GetSyntacticDiagnostics`
+    syntactic: Vec<Diagnostic>,
+    /// `getBindAndCheckDiagnostics`. `None`: the file is not checked.
+    semantic: Option<Vec<Diagnostic>>,
+    /// `GetDeclarationDiagnostics`
+    declaration: Vec<Diagnostic>,
+    has_parse_diagnostics: bool,
+    never_checked: Vec<(u32, u32)>,
+    notes: Vec<explain::Note>,
+    suggestions: Vec<(u32, u32)>,
+}
+
 #[derive(Copy, Clone, Debug)]
 enum Container {
     File,
@@ -46,10 +60,17 @@ impl PartialEq for Container {
 }
 
 impl Checker<'_> {
-    pub fn check_file(&mut self, file: FileId) -> Vec<Diagnostic> {
+    /// All that asks a question about `file`. What it leads other files, or other files lead this one, to report is in the sink.
+    pub fn check_file(&mut self, file: FileId) -> Checked {
+        self.notes.borrow_mut().clear();
+        self.suggestions.borrow_mut().clear();
+        self.never_checked.borrow_mut().clear();
+        self.release_shapes_for_now();
+        self.is_type_checked = false;
         let hir = self.hir(file);
         if hir.kind == FileKind::Json {
-            return self.check_json_file(file);
+            let syntactic = self.check_json_file(file);
+            return self.checked(syntactic, None, Vec::new(), false);
         }
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate: only the second depends on whether the
         // file is checked.
@@ -124,15 +145,10 @@ impl Checker<'_> {
         }
         self.check_js_syntax(file, &mut syntactic);
         if self.only_syntax || !self.reports_semantic_errors(file) {
-            syntactic.sort_unstable();
-            syntactic.dedup();
-            return syntactic;
+            return self.checked(syntactic, None, Vec::new(), false);
         }
         self.checking = Some(file);
-        static IN_ORDER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *IN_ORDER.get_or_init(|| std::env::var_os("BUN_SEMA_IN_ORDER").is_some()) {
-            self.look_at_file_in_order(file);
-        }
+        self.check_source_file(file);
         // `BUN_SEMA_TRACE_PASSES=1`: which pass added or removed each error.
         static TRACE_PASSES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let trace_passes =
@@ -218,48 +234,81 @@ impl Checker<'_> {
                 }
             }
         }
-        if has_parse_diagnostics {
-            // `bindNamespaceExportDeclaration` reports 1184 whether or not the file parses.
-            out.retain(|d| {
-                !is_grammar_error(d.code)
-                    || d.code == 1184 && is_before_namespace_export(hir, d.start)
-            });
-        }
-        if self.is_plain_js(file) {
-            out.retain(|d| errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_ok());
-        } else {
-            // `JSDocDiagnostics`
-            out.extend(
-                hir.jsdoc_errors
-                    .iter()
-                    .map(|&(start, code)| Diagnostic { start, code }),
-            );
-            // Last: it goes by all that is left. `getDiagnosticsWithPrecedingDirectives`: not by what the parser says.
-            self.check_x_comment_directives(file, &mut out);
-        }
-        let suppressed = &hir.suppressed;
-        if !suppressed.is_empty() {
-            // 2578 is said once everything has been taken back, and stays.
-            out.retain(|d| {
-                d.code == 2578
-                    || !suppressed
-                        .iter()
-                        .any(|&(start, end)| (start..end).contains(&d.start))
-            });
-        }
-        // `GetDeclarationDiagnostics`: nor these.
-        self.check_module_exports_assignments(file, &mut out);
         // `GetDeclarationDiagnostics`: no comment directive takes these back, and plain JavaScript has them too.
+        let semantic = std::mem::take(&mut out);
+        self.check_module_exports_assignments(file, &mut out);
         pass!(check_isolated_declarations);
-        // `GetSyntacticDiagnostics`: no comment directive takes these back.
-        out.append(&mut syntactic);
-        // `GetDeclarationDiagnostics`: nor these.
         if self.files().options.emits_declaration_files {
             pass!(check_declaration_emit);
         }
+        self.is_type_checked = true;
+        self.checked(syntactic, Some(semantic), out, has_parse_diagnostics)
+    }
+
+    fn checked(
+        &self,
+        syntactic: Vec<Diagnostic>,
+        semantic: Option<Vec<Diagnostic>>,
+        declaration: Vec<Diagnostic>,
+        has_parse_diagnostics: bool,
+    ) -> Checked {
+        Checked {
+            syntactic,
+            semantic,
+            declaration,
+            has_parse_diagnostics,
+            never_checked: self.never_checked.take(),
+            notes: self.notes.take(),
+            suggestions: self.suggestions.take(),
+        }
+    }
+
+    /// The errors of `file`, once every file whose checker may report in it has been through `check_file`.
+    pub fn finish_file(&mut self, file: FileId, checked: Checked) -> Vec<explain::Explained> {
+        let hir = self.hir(file);
+        *self.notes.borrow_mut() = checked.notes;
+        *self.suggestions.borrow_mut() = checked.suggestions;
+        (self.checking, self.is_type_checked) = (Some(file), true);
+        let is_checked = checked.semantic.is_some();
+        let mut out = checked.semantic.unwrap_or_default();
+        if is_checked {
+            self.drain_sink(file, &checked.never_checked, &mut out);
+            if checked.has_parse_diagnostics {
+                // `bindNamespaceExportDeclaration` reports 1184 whether or not the file parses.
+                out.retain(|d| {
+                    !is_grammar_error(d.code)
+                        || d.code == 1184 && is_before_namespace_export(hir, d.start)
+                });
+            }
+            if self.is_plain_js(file) {
+                out.retain(|d| errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_ok());
+            } else {
+                // `JSDocDiagnostics`
+                out.extend(
+                    hir.jsdoc_errors
+                        .iter()
+                        .map(|&(start, code)| Diagnostic { start, code }),
+                );
+                // Last: it goes by all that is left. `getDiagnosticsWithPrecedingDirectives`: not by what the parser says.
+                self.check_x_comment_directives(file, &mut out);
+            }
+            let suppressed = &hir.suppressed;
+            if !suppressed.is_empty() {
+                // 2578 is said once everything has been taken back, and stays.
+                out.retain(|d| {
+                    d.code == 2578
+                        || !suppressed
+                            .iter()
+                            .any(|&(start, end)| (start..end).contains(&d.start))
+                });
+            }
+        }
+        // `GetSyntacticDiagnostics`, `GetDeclarationDiagnostics`: no comment directive takes these back.
+        out.extend(checked.declaration);
+        out.extend(checked.syntactic);
         out.sort_unstable();
         out.dedup();
-        out
+        self.explain_errors(file, out)
     }
 
     /// `GetSyntacticDiagnostics` of a JSON file. `getBindAndCheckDiagnostics` has nothing to say of one.
@@ -476,6 +525,7 @@ impl Checker<'_> {
                 self.start_of(file, e),
                 self.start_of_what_follows(file, StmtId(i as u32)),
             );
+            self.never_checked.borrow_mut().push((from, to));
             out.retain(|d| {
                 !(from..to).contains(&d.start)
                     || is_said_by_the_binder(d.code)
@@ -1627,6 +1677,8 @@ impl Checker<'_> {
             || declared == TypeId::UNKNOWN
             || declared == TypeId::VOID
             || self.is_any(declared)
+            // What finds out its type as it goes starts as `undefined` on its own account.
+            || declared == self.auto_array_type
         {
             return true;
         }
@@ -1656,11 +1708,7 @@ impl Checker<'_> {
         {
             return true;
         }
-        // What finds out its type as it goes starts as `undefined` on its own account.
         let symbol = bound.expr_symbol[e.idx()];
-        if self.auto_kind(file, symbol) != super::flow::Auto::No {
-            return true;
-        }
         // `isSameScopedBindingElement`: what a pattern binds, read in the nearest default around, which is one of the same pattern.
         // What is in the pattern is numbered before the initializer.
         if decl.pat != pat && e.0 < decl.init.0 {
@@ -3653,7 +3701,7 @@ impl Files {
                     files.each_export(container).filter(fits).map(named),
                 ),
                 SymbolTable::Globals => {
-                    // `getPrimitiveTypeAliasSuggestions`. `undefinedSymbol` and `globalThisSymbol` are entries of `globals`.
+                    // `getPrimitiveTypeAliasSuggestions`. `undefinedSymbol` is an entry of `globals`.
                     let primitives: [(&'static str, Atom); 6] = [
                         ("string", known::String),
                         ("number", known::Number),
@@ -3674,7 +3722,6 @@ impl Files {
                                 .intersects(SymFlags::VARIABLE)
                                 .then_some("undefined"),
                         )
-                        .chain(meaning.intersects(SymFlags::MODULE).then_some("globalThis"))
                         .map(|word| (word.as_bytes(), Meant::Word(word)));
                     let globals = files
                         .globals
@@ -5785,12 +5832,8 @@ impl Checker<'_> {
     /// Why the name `e` cannot be given a value, if it cannot. `checkIdentifier`
     fn why_not_assignable(&self, file: FileId, e: ExprId, name: Atom) -> Option<u32> {
         let Some(sym) = self.symbol_of_identifier(file, e, name) else {
-            // `undefinedSymbol` is made as a property and `globalThisSymbol` as a module: names, but of no variable.
-            return match name {
-                known::undefined => Some(2539),
-                known::globalThis => Some(2631),
-                _ => None,
-            };
+            // `undefinedSymbol` is made as a property: a name, but of no variable.
+            return (name == known::undefined).then_some(2539);
         };
         let flags = self.files().flags(sym);
         if flags.intersects(SymFlags::VARIABLE) {

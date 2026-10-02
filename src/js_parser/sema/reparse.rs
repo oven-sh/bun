@@ -816,16 +816,24 @@ impl<'p, 'a> Lower<'p, 'a> {
             Some(_) => self.gather_type_parameters(doc, false, TemplateOwner::Function),
             None => Span::EMPTY,
         };
-        let (mut this_ty, mut this_pos, mut this_name_end) = (TypeNodeId::NONE, u32::MAX, u32::MAX);
+        let mut this_param = ParamId::NONE;
         let mut params = Vec::with_capacity(signature.params.len());
         for (index, param) in signature.params.iter().enumerate() {
             let property = match &param.kind {
                 TagKind::This(ty) => {
-                    if this_ty.is_none() {
-                        this_ty = self.reparse_type(*ty);
+                    if this_param.is_none() {
                         // `thisIdent.Loc = thisTag.Loc`
-                        this_pos = param.pos;
-                        this_name_end = param.end;
+                        let name = self
+                            .b
+                            .atom(&self.source[param.pos as usize..param.end as usize]);
+                        let this = Param {
+                            pat: self.b.file.pat(PatKind::Ident(name), param.pos),
+                            ty: self.reparse_type(*ty),
+                            default: ExprId::NONE,
+                            flags: Flags::REPARSED,
+                            pos: param.pos,
+                        };
+                        this_param = self.b.file.add_param(this);
                     }
                     continue;
                 }
@@ -905,9 +913,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             name_pos: pos,
             type_params,
             params,
-            this_ty,
-            this_pos,
-            this_name_end,
+            this_param,
             ret,
             body: FnBody::None,
             anchor: pos,
@@ -978,15 +984,17 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             TagKind::This(ty) => {
                 let func = self.function_like_host(host);
-                if func.is_some()
-                    && self.b.file[func].this_ty.is_none()
-                    && self.b.file[func].this_pos == u32::MAX
-                {
-                    let ty = self.reparse_type(*ty);
-                    self.b.file[func].this_ty = ty;
+                if func.is_some() && self.b.file[func].this_param.is_none() {
                     // `finishReparsedNode(thisParam, tag.TagName())`
-                    self.b.file[func].this_pos = tag.name_pos;
-                    self.b.file[func].this_name_end = tag.name_pos;
+                    let this = Param {
+                        pat: self.b.file.pat(PatKind::Missing, tag.name_pos),
+                        ty: self.reparse_type(*ty),
+                        default: ExprId::NONE,
+                        flags: Flags::REPARSED,
+                        pos: tag.name_pos,
+                    };
+                    let this = self.b.file.add_param(this);
+                    self.b.file[func].this_param = this;
                     // `checkParameter`: the parameter is where the name of the tag is.
                     let code = match self.b.file[func].kind {
                         FnKind::Arrow => Some(2730),
@@ -1206,15 +1214,15 @@ impl<'p, 'a> Lower<'p, 'a> {
         if func.is_none() || self.has_full_signature(func) {
             return;
         }
+        let function = self.b.file[func];
         let Func {
             type_params,
             params,
-            this_ty,
             ret,
             ..
-        } = self.b.file[func];
-        let has_no_typed_params =
-            this_ty.is_none() && params.iter().all(|param| self.b.file[param].ty.is_none());
+        } = function;
+        let has_no_typed_params = function.this_ty(&self.b.file).is_none()
+            && params.iter().all(|param| self.b.file[param].ty.is_none());
         if type_params.is_empty() && ret.is_none() && has_no_typed_params {
             let ty = self.reparse_type(ty);
             self.b.file.jsdoc_types.push((JsDocTypeOwner::Fn(func), ty));

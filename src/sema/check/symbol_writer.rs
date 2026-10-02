@@ -721,19 +721,12 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
 
     /// The symbol of the `this` parameter that `function` declares.
     fn this_parameter(&self, file: FileId, function: FnId) -> Option<Found> {
-        let Func {
-            this_pos,
-            this_name_end,
-            ..
-        } = self.c.hir(file)[function];
-        if this_pos == u32::MAX {
-            return None;
-        }
+        let hir = self.c.hir(file);
+        let this = hir.params.get(hir[function].this_param.idx())?;
         // `DeclarationNameToString`
-        let name = if this_pos == this_name_end {
-            "(Missing)".to_owned()
-        } else {
-            self.c.source_text(file, this_pos, this_name_end)
+        let name = match hir[this.pat].kind {
+            PatKind::Ident(name) => self.c.files().atoms.text(name).to_string(),
+            _ => "(Missing)".to_owned(),
         };
         Some(Found::Anonymous {
             name,
@@ -1229,14 +1222,15 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                         .collect(),
                 }
             }
-            PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) if depth < 8 => {
+            PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) => {
                 let mut declarations = Vec::new();
                 for part in parts.iter() {
-                    declarations.extend(self.declarations_of_property(part, depth + 1));
+                    declarations.extend(self.declarations_of_property(part, depth));
                 }
                 declarations
             }
-            PropSource::Mapped(of, _) if depth < 8 => {
+            // `depth`: a mapped type over itself leads round in a circle. tsgo sets `Declarations` once, while the type is resolved.
+            PropSource::Mapped(of, _) if depth < 1000 => {
                 match self.c.synthetic_origin_of_mapped_property(*of, prop.name) {
                     Some(origin) => self.declarations_of_property(&origin, depth + 1),
                     None => Vec::new(),
@@ -1341,7 +1335,10 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 (self.c.start_inside_parentheses(file, e), Flags::empty())
             }
             Declaration::TypeNode(node) => (hir[node].pos, Flags::empty()),
-            Declaration::ThisParameter(function) => (hir[function].this_pos, hir[function].flags),
+            Declaration::ThisParameter(function) => {
+                let this = &hir[hir[function].this_param];
+                (this.pos, this.flags)
+            }
         };
         // Where the token before it ends. `finishReparsedNode`: what is made of a JSDoc tag is where the tag is, and the scanner of
         // JSDoc comments has no trivia.

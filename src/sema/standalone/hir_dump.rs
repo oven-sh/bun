@@ -918,9 +918,7 @@ impl Dump<'_> {
             name_pos,
             type_params,
             params,
-            this_ty,
-            this_pos,
-            this_name_end,
+            this_param,
             ret,
             body,
             anchor,
@@ -937,10 +935,8 @@ impl Dump<'_> {
         let d = depth + 1;
         self.span(d, "type_params", type_params, Self::type_param);
         self.span(d, "params", params, Self::param);
-        self.ty(d, "this_ty", this_ty);
-        if this_pos != u32::MAX {
-            put!(self, d, "this_pos", "{this_pos}");
-            put!(self, d, "this_name_end", "{this_name_end}");
+        if this_param.is_some() {
+            self.param(d, "this_param", this_param);
         }
         self.ty(d, "ret", ret);
         match body {

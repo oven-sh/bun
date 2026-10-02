@@ -1,4 +1,4 @@
-//! What comes back to itself: 2506 2310 2313 2615, and 2502 2577 7022 7023 7024.
+//! What comes back to itself: 2310 2313 2615, and 2502 2577 7022 7023 7024.
 //!
 //! In TypeScript 7.0.2's checker.go these fall out of `pushTypeResolution` finding what is asked for already under way, in
 //! `getBaseConstructorTypeOfClass`, `getBaseTypes` and `getResolvedBaseConstraint`: everything from there to the top of the stack
@@ -90,22 +90,9 @@ impl Checker<'_> {
                 continue;
             }
             let own = self.class_sym(file, ClassId(c as u32));
-            if self.is_in_own_base_expression(own) {
-                let class = &hir.classes[c];
-                if class.name.is_some() {
-                    out.push(Diagnostic {
-                        start: class.name_pos,
-                        code: 2506,
-                    });
-                } else {
-                    // `GetErrorRangeForNode`: the first token of a class expression without a name.
-                    out.push(Diagnostic {
-                        start: class.pos,
-                        code: 2506,
-                    });
-                    self.explain(class.pos, 2506, |c| vec![c.symbol_to_string(own)]);
-                }
-            } else if matches!(bound.class_owner[c], ClassOwner::Stmt(_)) && self.is_own_base(own) {
+            // `checkClassLikeDeclaration`
+            self.base_constructor_type_of_class(own);
+            if matches!(bound.class_owner[c], ClassOwner::Stmt(_)) && self.is_own_base(own) {
                 out.push(Diagnostic {
                     start: hir.classes[c].name_pos,
                     code: 2310,
@@ -688,22 +675,16 @@ impl Checker<'_> {
         }
     }
 
-    /// `getBaseConstructorTypeOfClass`: whether the expression that class `own` extends depends on the class.
-    fn is_in_own_base_expression(&mut self, own: Sym) -> bool {
-        self.base_constructor_type_of_class(own);
-        self.p.circular_base_constructors.get(&own).is_some()
-    }
-
     /// `getBaseTypes`: whether the base types of the class or interface `own` were asked for again while they were worked out.
     /// Every class declaration and every interface of that name is told, whichever of them extends what.
     fn is_own_base(&mut self, own: Sym) -> bool {
-        // A base constructor that comes back to itself is the error type, and there it ends.
-        if self.is_in_own_base_expression(own) {
-            return false;
-        }
         self.base_types(own);
         if self.p.circular_bases.get(&own).is_some() {
             return true;
+        }
+        // `resolveBaseTypesOfClass`: a base constructor type in error gives no base type, whatever is written.
+        if self.base_constructor_type_of_class(own) == TypeId::ERROR {
+            return false;
         }
         let mut seen: SmallVec<[Sym; 8]> = SmallVec::new();
         let mut todo = self.base_types_written(own);
@@ -788,7 +769,7 @@ impl Checker<'_> {
                         }
                     }
                 }
-                Decl::Class(_) if !self.is_in_own_base_expression(sym) => {
+                Decl::Class(_) if self.base_constructor_type_of_class(sym) != TypeId::ERROR => {
                     bases.extend(self.base_class_written(sym))
                 }
                 _ => {}

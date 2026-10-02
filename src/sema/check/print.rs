@@ -880,7 +880,9 @@ impl<'p> Printer<'_, 'p> {
         match self.c.data(ty) {
             TypeData::Intrinsic(intrinsic) => {
                 let (text, length) = match intrinsic {
-                    Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error => ("any", 3),
+                    Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error | Intrinsic::Auto => {
+                        ("any", 3)
+                    }
                     Intrinsic::Unknown => ("unknown", 0),
                     Intrinsic::Never => ("never", 5),
                     Intrinsic::Void => ("void", 4),
@@ -2411,7 +2413,7 @@ impl<'p> Printer<'_, 'p> {
     /// `formatUnionTypes`, of the members of `ty` in the order TypeScript keeps them in.
     fn format_union_types(&mut self, ty: TypeId) -> Vec<TypeId> {
         let types = match self.c.origin(ty) {
-            UnionOrigin::Union(origin) => self.c.in_order(origin),
+            UnionOrigin::Union(origin) => origin.to_vec(),
             _ => self.c.parts_in_order(ty),
         };
         let mut result = Vec::with_capacity(types.len());
@@ -2596,8 +2598,8 @@ impl<'p> Printer<'_, 'p> {
             TypeData::Anon { origin, .. } => {
                 let origin = *origin;
                 if origin == Origin::GlobalThis {
-                    self.approximate_length += 2 * ("globalThis".len() + 1);
-                    return Node::new("typeof globalThis", TYPE_OPERATOR);
+                    let global_this = self.c.files().global_this_symbol;
+                    return self.symbol_to_type_node(global_this, true, Vec::new());
                 }
                 if let Some(symbol) = self.symbol_to_query(ty, origin) {
                     if let Origin::Namespace {

@@ -1793,7 +1793,7 @@ impl<'a> Spans<'a> {
         } else {
             let inside = match func.params.iter().next_back() {
                 Some(last) => self.param(last),
-                None if func.this_ty.is_some() => self.ty_in(func.this_ty, 0),
+                None if func.this_ty(self.hir).is_some() => self.ty_in(func.this_ty(self.hir), 0),
                 None => anchor + 1,
             };
             self.close(inside.max(anchor + 1), closer)

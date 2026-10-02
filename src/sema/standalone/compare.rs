@@ -326,8 +326,9 @@ fn compare_errors(program: &Program, file: FileId, expected: &OracleFile, local:
     let mut checker = program.checker();
     checker.set_stack_limit(crate::STACK - (64 << 20));
     checker.set_time_limit(file_time_limit());
+    let checked = checker.check_file(file);
     let mine: Vec<(u32, u32)> = checker
-        .check_file(file)
+        .finish_file(file, checked)
         .into_iter()
         .map(|d| (d.start, d.code))
         .collect();

@@ -220,7 +220,7 @@ impl<'p> Checker<'p> {
                     // `HasContextSensitiveParameters`: a parameter without a type. A `this` that is used and not typed is one.
                     if func.params.iter().any(|p| hir[p].ty.is_none())
                         || func.kind != FnKind::Arrow
-                            && func.this_ty.is_none()
+                            && func.this_ty(hir).is_none()
                             && info.contains_this
                     {
                         return true;
@@ -7637,7 +7637,7 @@ impl<'p> Checker<'p> {
                 let non_null = self.non_nullable(expected);
                 let contextual = self.contextual_signature_in(file, func, non_null);
                 // `len(node.Parameters())` counts a `this` that is written.
-                let own = hir[func].params.len() + usize::from(hir[func].this_ty.is_some());
+                let own = hir[func].params.len() + usize::from(hir[func].this_ty(hir).is_some());
                 if let Some(contextual) = contextual
                     && self.sig_params(contextual).len() > own
                 {
@@ -8410,7 +8410,7 @@ impl<'p> Checker<'p> {
             && !func.flags.intersects(Flags::ASYNC | Flags::GENERATOR)
             && !func.params.iter().any(|p| hir[p].ty.is_none())
             // A function that is not an arrow function has an implicit `this` parameter if it uses `this`.
-            && (func.kind == FnKind::Arrow || func.this_ty.is_some() || !self.bound(file).fns[f.idx()].contains_this)
+            && (func.kind == FnKind::Arrow || func.this_ty(hir).is_some() || !self.bound(file).fns[f.idx()].contains_this)
     }
 
     /// The expression body of `f`, if `is_return_only_function`.
@@ -9393,8 +9393,8 @@ impl<'p> Checker<'p> {
                 self.infer_from_annotated_parameters_and_return(file, func, sig, inference);
             }
             // `assignContextualParameterTypes`, `applyToParameterTypes`: `this` comes first, unless the function says itself what it is.
-            let own_this_is_typed =
-                function.is_some_and(|(file, func)| self.hir(file)[func].this_ty.is_some());
+            let own_this_is_typed = function
+                .is_some_and(|(file, func)| self.hir(file)[func].this_ty(self.hir(file)).is_some());
             for sig in sigs {
                 let params = self.sig_params(sig);
                 let this = if own_this_is_typed {

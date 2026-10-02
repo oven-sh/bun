@@ -319,7 +319,7 @@ pub struct Files {
     pub by_path: FxHashMap<String, FileId>,
 
     pub globals: FxHashMap<Atom, Sym>,
-    /// `globalThisSymbol`: a module no file declares, whose `Exports` are `globals` and itself. A symbol of the first file.
+    /// `globalThisSymbol`: a module no file declares, which is in `globals` and whose `Exports` they are. A symbol of the first file.
     pub global_this_symbol: Sym,
     ambient_modules: FxHashMap<Atom, Sym>,
     /// `declare module "*.svg"`
@@ -2853,9 +2853,9 @@ impl Files {
             exports: bind::TableId::NONE,
             export_symbol: SymbolId::NONE,
         });
-        let mut exports = self.globals.clone();
-        exports.insert(known::globalThis, global_this);
-        self.merged_exports.insert(global_this, exports);
+        self.globals.insert(known::globalThis, global_this);
+        self.merged_exports
+            .insert(global_this, self.globals.clone());
         self.global_this_symbol = global_this;
     }
 

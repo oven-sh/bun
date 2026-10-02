@@ -954,8 +954,7 @@ impl EnumValues<'_, '_> {
             // `globalThis`, which exports what is global.
             ExprKind::Dot { obj, name, .. }
                 if matches!(hir[obj].kind, ExprKind::Ident(known::globalThis))
-                    && self.c.bound(file).expr_symbol[obj.idx()].is_none()
-                    && !files.globals.contains_key(&known::globalThis) =>
+                    && self.c.bound(file).expr_symbol[obj.idx()].is_none() =>
             {
                 files.global(name, meaning)?
             }

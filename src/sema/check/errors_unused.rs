@@ -799,7 +799,7 @@ fn is_thisless(hir: &hir::File, m: MemberId) -> bool {
     };
     f.ret.is_some()
         && is_thisless_type(hir, f.ret)
-        && (f.this_ty.is_none() || is_thisless_type(hir, f.this_ty))
+        && (f.this_ty(hir).is_none() || is_thisless_type(hir, f.this_ty(hir)))
         && f.params.iter().all(is_thisless_parameter)
         && f.type_params
             .iter()
@@ -904,7 +904,7 @@ fn collect_signature_scopes(hir: &hir::File, bound: &Bound, f: FnId, scopes: &mu
         collect_type_scopes(hir, bound, hir[p].constraint, scopes);
         collect_type_scopes(hir, bound, hir[p].default, scopes);
     }
-    collect_type_scopes(hir, bound, f.this_ty, scopes);
+    collect_type_scopes(hir, bound, f.this_ty(hir), scopes);
     for p in f.params.iter() {
         collect_type_scopes(hir, bound, hir[p].ty, scopes);
     }

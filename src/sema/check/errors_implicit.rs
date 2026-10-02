@@ -765,8 +765,8 @@ impl Checker<'_> {
         // is written. In a function type that is itself written in a comment, what follows `this:` is.
         if !matches!(decl.kind, FnKind::Getter | FnKind::Setter)
             && let Some(start) = super::errors_x_signatures::this_parameter(hir, func)
-            && (decl.this_ty.is_none()
-                || hir.is_in_jsdoc(hir[decl.this_ty].pos) && !hir.is_in_jsdoc(start))
+            && (decl.this_ty(hir).is_none()
+                || hir.is_in_jsdoc(hir[decl.this_ty(hir)].pos) && !hir.is_in_jsdoc(start))
         {
             // `getContextualThisParameterType`
             let is_told = match bound.fns[func.idx()].owner {
@@ -919,7 +919,7 @@ impl Checker<'_> {
                     });
                     let is_rest = param.flags.contains(Flags::REST);
                     // A leading `this` parameter is counted, and is not among `params`.
-                    let position = index + usize::from(decl.this_ty.is_some());
+                    let position = index + usize::from(decl.this_ty(hir).is_some());
                     // A parameter of which nothing is written takes no room.
                     let end = match self.end_of_param(file, p) {
                         end if name == known::empty && end <= param.pos => {

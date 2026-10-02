@@ -5,6 +5,7 @@
 
 use super::Checker;
 use super::errors::Diagnostic;
+use super::sink::Reported;
 use crate::messages::{self, Category};
 use crate::program::FileId;
 
@@ -41,6 +42,32 @@ pub(super) struct Note {
     related: Vec<Related>,
     /// It is an error of its own, though another with the same code is at the same place.
     is_another: bool,
+}
+
+impl From<Reported> for Note {
+    fn from(reported: Reported) -> Note {
+        Note {
+            start: reported.start,
+            code: reported.code,
+            end: if reported.end > reported.start {
+                reported.end
+            } else {
+                NO_LENGTH
+            },
+            args: reported.args,
+            chain: Vec::new(),
+            related: reported
+                .related_information
+                .into_iter()
+                .map(|related| Related {
+                    at: Some((related.file, related.start, related.end)),
+                    code: related.code,
+                    args: related.args,
+                })
+                .collect(),
+            is_another: true,
+        }
+    }
 }
 
 /// [`Related`] as it is shown.
@@ -390,14 +417,21 @@ impl Checker<'_> {
         }
     }
 
-    /// `check_file`, with messages.
+    /// `check_file` and `finish_file`, with messages, for whoever checks one file by itself.
     pub fn check_file_explained(&mut self, file: FileId) -> Vec<Explained> {
         let explained_before = std::mem::replace(&mut self.explains, true);
-        self.notes.borrow_mut().clear();
-        self.suggestions.borrow_mut().clear();
-        self.release_shapes_for_now();
-        let errors = self.check_file(file);
+        let checked = self.check_file(file);
+        let explained = self.finish_file(file, checked);
         self.explains = explained_before;
+        explained
+    }
+
+    /// `errors` as they are shown, with what has been noted of them.
+    pub(super) fn explain_errors(
+        &mut self,
+        file: FileId,
+        errors: Vec<Diagnostic>,
+    ) -> Vec<Explained> {
         let notes = self.notes.take();
         let mut explained: Vec<Explained> = Vec::with_capacity(errors.len());
         for d in errors {

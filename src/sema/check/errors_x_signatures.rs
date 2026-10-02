@@ -245,14 +245,10 @@ fn has_written_body(hir: &hir::File, f: FnId) -> bool {
     !matches!(hir[f].body, FnBody::None) || written_body(hir, f).is_some()
 }
 
-/// Where the leading `this` parameter of `f` is, if it has one.
+/// Where the name of the `this` parameter of `f` is, if one is written.
 pub(super) fn this_parameter(hir: &hir::File, f: FnId) -> Option<u32> {
-    let (text, func) = (&hir.text[..], &hir[f]);
-    if func.kind == FnKind::Arrow || text.get(func.anchor as usize) != Some(&b'(') {
-        return None;
-    }
-    let at = skip_trivia(text, func.anchor as usize + 1);
-    (word_at(text, at) == b"this").then_some(at as u32)
+    let this = hir.params.get(hir[f].this_param.idx())?;
+    (!this.flags.contains(Flags::REPARSED)).then(|| hir[this.pat].pos)
 }
 
 /// Where the parameter written at `start` ends: before the `,` or the `)` that is in no bracket opened since.
@@ -1993,9 +1989,9 @@ impl Checker<'_> {
             };
             if let Some(start) = this_parameter(hir, FnId(i as u32)) {
                 out.push(Diagnostic { start, code });
-                if func.this_ty.is_some() {
-                    let ty = start_of_written_type(&hir.text, hir[func.this_ty].pos);
-                    let end = self.end_of_type_node_from(file, func.this_ty, ty);
+                if func.this_ty(hir).is_some() {
+                    let ty = start_of_written_type(&hir.text, hir[func.this_ty(hir)].pos);
+                    let end = self.end_of_type_node_from(file, func.this_ty(hir), ty);
                     self.explain_to(start, end, code, |_| vec![]);
                 }
             }

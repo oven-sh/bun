@@ -431,7 +431,7 @@ impl Checker<'_> {
                 .collect();
             let is_getter = func.kind == FnKind::Getter;
             // `doesAccessorHaveCorrectParameterCount`: `this` is a parameter like another when it is the only one.
-            let has_only_this = !is_getter && params.is_empty() && func.this_ty.is_some();
+            let has_only_this = !is_getter && params.is_empty() && func.this_ty(hir).is_some();
             let code = if !func.type_params.is_empty() {
                 1094
             } else if params.len() != usize::from(!is_getter) && !has_only_this {

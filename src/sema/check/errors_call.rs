@@ -1793,7 +1793,7 @@ impl Checker<'_> {
         };
         let hir = self.hir(file);
         // A `this` parameter is not among `params`. What is made for a union may have one where its declaration has none.
-        let declares_this = hir[func].this_ty.is_some();
+        let declares_this = hir[func].this_ty(hir).is_some();
         let has_this = match self.p.types.sig(sig) {
             SigData::Synth { this, .. } => this.is_some(),
             _ => declares_this,

@@ -1496,12 +1496,24 @@ impl<'p, 'a> Lower<'p, 'a> {
             Some(at) => self.type_params_at(at),
             None => Span::EMPTY,
         };
-        let this_pos = self.mark(open, Mark::ThisParameter);
-        let this_annotation =
-            this_pos.and_then(|at| self.mark(ast::Loc { start: at as i32 }, Mark::Annotation));
-        let this_ty = match this_annotation {
-            Some(at) => self.type_at(at),
-            None => TypeNodeId::NONE,
+        let this_param = match self.mark(open, Mark::ThisParameter) {
+            Some(name_pos) => {
+                let name = ast::Loc {
+                    start: name_pos as i32,
+                };
+                let this = Param {
+                    pat: self
+                        .b
+                        .file
+                        .pat(PatKind::Ident(bun_sema::atom::known::this), name_pos),
+                    ty: self.annotation(name),
+                    default: ExprId::NONE,
+                    flags: Flags::empty(),
+                    pos: self.declaration_start(name),
+                };
+                self.b.file.add_param(this)
+            }
+            None => ParamId::NONE,
         };
         let params = self.params(
             func.args.slice(),
@@ -1537,9 +1549,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             name_pos: func.name.as_ref().map_or(pos, |n| pos_of(n.loc)),
             type_params,
             params,
-            this_ty,
-            this_pos: this_pos.unwrap_or(u32::MAX),
-            this_name_end: this_pos.map_or(u32::MAX, |at| at + 4),
+            this_param,
             ret,
             body,
             anchor,
@@ -1600,9 +1610,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             name_pos: pos,
             type_params,
             params,
-            this_ty: TypeNodeId::NONE,
-            this_pos: u32::MAX,
-            this_name_end: u32::MAX,
+            this_param: ParamId::NONE,
             ret,
             body,
             anchor,
@@ -1767,9 +1775,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 name_pos: member.pos,
                 type_params: Span::EMPTY,
                 params: Span::EMPTY,
-                this_ty: TypeNodeId::NONE,
-                this_pos: u32::MAX,
-                this_name_end: u32::MAX,
+                this_param: ParamId::NONE,
                 ret: TypeNodeId::NONE,
                 body,
                 anchor: member.pos,

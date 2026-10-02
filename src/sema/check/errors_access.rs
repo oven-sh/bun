@@ -534,7 +534,7 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let apparent = if object == TypeId::ANY {
+            let apparent = if object.is_any() {
                 Some(object)
             } else {
                 self.type_looked_into(object)
@@ -627,7 +627,7 @@ impl Checker<'_> {
                 let is_literal_key =
                     self.is_literal(key) && (self.is_string_like(key) || self.is_number_like(key));
                 // `objectType.flags&(TypeFlagsAny|TypeFlagsNever) != 0`: they have every key that is string-, number- or symbol-like.
-                if is_key_like && (apparent == TypeId::NEVER || apparent == TypeId::ANY) {
+                if is_key_like && (apparent == TypeId::NEVER || apparent.is_any()) {
                     continue;
                 }
                 if is_key_like
@@ -1389,16 +1389,6 @@ impl Checker<'_> {
             _ => None,
         };
         declared.map_or((1, FileId(0), 0), |(file, pos)| (0, file, pos))
-    }
-
-    /// `getNamedMembers`: `props` in the order of `compareSymbols`: by where the first declaration is, what has none last, by name.
-    pub(super) fn sort_named_members(&mut self, props: &mut [Prop]) {
-        let atoms = &self.files().atoms;
-        props.sort_by_cached_key(|prop| {
-            let (nowhere, file, pos) = self.order_of_property(prop);
-            let place = self.place_in_program_order(file, pos);
-            (nowhere, place, atoms.bytes(prop.name))
-        });
     }
 
     /// `getSuggestionForNonexistentIndexSignature`: it has a `get`, or a `set`, that takes the key.

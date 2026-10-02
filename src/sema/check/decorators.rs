@@ -385,6 +385,7 @@ impl<'p> Checker<'p> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // Those of a missing declaration or of a `this` parameter: `checkDecorators` never looks at them.
         for &(start, end) in &hir.stray_decorators {
+            self.never_checked.borrow_mut().push((start, end));
             out.retain(|d| d.start < start || d.start >= end);
         }
         let mut refused: Vec<DecoratorOwner> = Vec::new();
@@ -402,6 +403,7 @@ impl<'p> Checker<'p> {
                     DecoratorOwner::Member(m) => hir[m].pos,
                     DecoratorOwner::Param(p) => hir[hir[p].pat].pos,
                 };
+                self.never_checked.borrow_mut().push((at_sign + 1, end));
                 out.retain(|d| d.start <= at_sign || d.start >= end);
                 if !refused.contains(&owner) {
                     refused.push(owner);

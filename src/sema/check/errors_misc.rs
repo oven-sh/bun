@@ -402,7 +402,7 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match self.this_container_of_type_query(file, this) {
             Some(QueriedThisContainer::Fn(f)) => {
-                hir[f].this_ty.is_none()
+                hir[f].this_ty(hir).is_none()
                     && match bound.fns[f.idx()].owner {
                         FnOwner::Stmt(_) => true,
                         // That of a class has the `this` of the class.

@@ -1,8 +1,8 @@
 //! Declarations that are out of place or at odds with each other:
-//! 2369 2370 2371 2463, 2372 2373, 2428, 2440, 2507, 2374, 2717 2403.
+//! 2369 2370 2371 2463, 2372 2373, 2428, 2440, 2374, 2717 2403.
 //!
 //! Follows `checkParameter`, the end of `onSuccessfullyResolvedSymbol`, `checkTypeParameterListsIdentical`, `checkAliasSymbol`,
-//! `getSymbolFlags`, `getExternalModuleMember`, `getBaseConstructorTypeOfClass`, `checkTypeForDuplicateIndexSignatures` and
+//! `getSymbolFlags`, `getExternalModuleMember`, `checkTypeForDuplicateIndexSignatures` and
 //! `checkVariableLikeDeclaration` of TypeScript 7.0.2's checker.go, and `Resolve` of its nameresolver.go.
 
 use super::errors::Diagnostic;
@@ -20,7 +20,6 @@ impl Checker<'_> {
         self.check_parameter_references(file, out);
         self.check_merged_declarations(file, out);
         self.check_subsequent_property_declarations(file, out);
-        self.check_base_constructors(file, out);
         self.check_index_signatures(file, out);
     }
 
@@ -797,47 +796,6 @@ impl Checker<'_> {
             }
             // A property is a value and nothing else. `SymFlags::VALUE` would not say so: it shares bits with `TYPE` and `NAMESPACE`.
             _ => Some(SymFlags::FUNCTION_SCOPED_VARIABLE),
-        }
-    }
-
-    /// `getBaseConstructorTypeOfClass`: 2507
-    fn check_base_constructors(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for c in 0..hir.classes.len() {
-            let extends = hir.classes[c].extends;
-            if extends.is_none()
-                || bound.class_symbol[c].is_none()
-                || bound.is_unchecked(extends.idx())
-            {
-                continue;
-            }
-            // The error type, not for a circle (2506) and not because the expression has it.
-            let sym = self.class_sym(file, ClassId(c as u32));
-            if self.base_constructor_type_of_class(sym) != TypeId::ERROR
-                || self.p.circular_base_constructors.get(&sym).is_some()
-            {
-                continue;
-            }
-            let base = self.type_of_expr(file, extends);
-            if !self.is_known(base) || self.is_any(base) || self.is_uncertain(file, extends) {
-                continue;
-            }
-            let start = self.start_of(file, extends);
-            out.push(Diagnostic { start, code: 2507 });
-            let end = self.end_of_expr(file, extends);
-            self.explain_to(start, end, 2507, |c| vec![c.type_to_string(base)]);
-            if let TypeData::TypeParam(of, tp, _) = *self.data(base) {
-                self.relate(start, 2507, |c| {
-                    let constraint = c.constraint_of_type_param(base);
-                    let first = constraint.and_then(|t| c.signatures(t, true).first().copied());
-                    let returned = first.map_or(TypeId::UNKNOWN, |sig| c.sig_return(sig));
-                    vec![super::explain::Related {
-                        at: Some(c.place_of_type_parameter_declaration(of, tp)),
-                        code: 2735,
-                        args: vec![c.atom_text(c.hir(of)[tp].name), c.type_to_string(returned)],
-                    }]
-                });
-            }
         }
     }
 

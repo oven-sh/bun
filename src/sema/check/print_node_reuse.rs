@@ -40,7 +40,7 @@ impl<'p> Printer<'_, 'p> {
         if let Some((file, func, _)) = self.c.sig_decl(signature)
             && self.reuses_nodes_of(file)
         {
-            let written = self.c.hir(file)[func].this_ty;
+            let written = self.c.hir(file)[func].this_ty(self.c.hir(file));
             if written.is_some() && self.c.type_from_node(file, written) == this {
                 return self.reuse_type_node(file, written);
             }
@@ -527,8 +527,8 @@ impl<'p> Printer<'_, 'p> {
             type_parameters.push(declaration);
         }
         let mut parameters = Vec::with_capacity(params.len() + 1);
-        if function.this_ty.is_some() {
-            let this = self.reuse_type_node(file, function.this_ty);
+        if function.this_ty(self.c.hir(file)).is_some() {
+            let this = self.reuse_type_node(file, function.this_ty(self.c.hir(file)));
             parameters.push(format!("this: {}", this.text));
         }
         for param in params {
@@ -1088,8 +1088,9 @@ impl<'p> Printer<'_, 'p> {
     fn visit_parameter_declarations(&mut self, file: FileId, f: FnId) -> Option<String> {
         let function = self.c.hir(file)[f];
         let mut parameters = Vec::with_capacity(function.params.len() + 1);
-        if function.this_ty.is_some() {
-            let this = self.visit_existing_type_node(file, function.this_ty, 0)?;
+        if function.this_ty(self.c.hir(file)).is_some() {
+            let this =
+                self.visit_existing_type_node(file, function.this_ty(self.c.hir(file)), 0)?;
             parameters.push(format!("this: {}", this.text));
         }
         for p in function.params.iter() {

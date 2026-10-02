@@ -2025,14 +2025,15 @@ impl<'p> Checker<'p> {
         }))
     }
 
-    /// `ObjectFlagsNonInferrableType`: `ty` is, or holds, a literal looked at without the functions in it that wait for their
-    /// context.
+    /// `ObjectFlagsNonInferrableType`: `ty` is, or holds, `autoType` or a literal looked at without the functions in it that wait
+    /// for their context.
     fn is_non_inferrable(&self, ty: TypeId, depth: u32) -> bool {
         if depth > 8 {
             return false;
         }
         match self.data(ty) {
             TypeData::Synth(shape) => shape.literal == Literalness::Partial,
+            TypeData::Intrinsic(Intrinsic::Auto) => true,
             TypeData::Tuple { elems: list, .. }
             | TypeData::Ref { args: list, .. }
             | TypeData::Union(list)

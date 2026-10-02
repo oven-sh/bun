@@ -701,6 +701,8 @@ fn main() {
                     .unwrap()
                     .push(format!("tsconfig.json:1:1 TS{code}"));
             }
+            let checked: Vec<std::sync::Mutex<Option<bun_sema::check::errors::Checked>>> =
+                sources.iter().map(|_| Default::default()).collect();
             let start = std::time::Instant::now();
             bun_sema_standalone::for_each_parallel(threads, sources.len(), |i| {
                 let module = &program.files.modules[sources[i].0 as usize];
@@ -715,10 +717,21 @@ fn main() {
                 let mut checker = program.checker();
                 checker.set_stack_limit(bun_sema_standalone::STACK - (64 << 20));
                 checker.set_time_limit(time_limit);
-                let errors = checker.check_file(sources[i]);
+                *checked[i].lock().unwrap() = Some(checker.check_file(sources[i]));
                 if checker.timed_out() {
                     lines.lock().unwrap().push(format!("{path}:1:1 TIMEOUT"));
                 }
+            });
+            bun_sema_standalone::for_each_parallel(threads, sources.len(), |i| {
+                let Some(checked) = checked[i].lock().unwrap().take() else {
+                    return;
+                };
+                let module = &program.files.modules[sources[i].0 as usize];
+                let path = module.path.strip_prefix(&prefix).unwrap_or(&module.path);
+                let mut checker = program.checker();
+                checker.set_stack_limit(bun_sema_standalone::STACK - (64 << 20));
+                checker.set_time_limit(time_limit);
+                let errors = checker.finish_file(sources[i], checked);
                 if errors.is_empty() {
                     return;
                 }

@@ -557,7 +557,7 @@ pub(crate) struct TypeSyntax {
     /// The most recently parsed binding pattern. `NONE` if unusable.
     pub(crate) last_binding: ts::PatternId,
     /// The most recently parsed parameter list and the type of its `this` parameter. `None` if unusable.
-    pub(crate) last_params: Option<(ts::Span<ts::Param>, ts::ThisParam)>,
+    pub(crate) last_params: Option<ts::Span<ts::Param>>,
     /// `new`, `abstract new` and type parameters that precede the `(` of the function type about to be parsed.
     pub(crate) pending_fn_type_head: Option<keep::FnTypeHead>,
     /// The most recently parsed type parameters. `None` if unusable.

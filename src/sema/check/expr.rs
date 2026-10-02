@@ -1105,9 +1105,8 @@ impl<'p> Checker<'p> {
         initial: TypeId,
         target: TargetKind,
     ) -> TypeId {
-        // A definite assignment target keeps `autoType`, which accepts every value.
         if target.definite {
-            TypeId::ANY
+            TypeId::AUTO
         } else {
             self.flow_type_of_property(file, e, initial)
         }
@@ -1675,8 +1674,8 @@ impl<'p> Checker<'p> {
             }
             ExprKind::Yield { value, star } => {
                 let ty = self.type_of_yield(file, e, value, star);
-                // `checkYieldExpression` looks at what is yielded whatever comes of it.
-                if value.is_some() {
+                // `checkYieldExpression` looks at what is yielded whatever comes of it, in a generator.
+                if value.is_some() && self.containing_generator(file, e).is_some() {
                     self.look_at(file, value);
                 }
                 ty
@@ -1935,8 +1934,8 @@ impl<'p> Checker<'p> {
         };
         let Some(sym) = found else {
             return match name {
-                // `undefinedSymbol` and `globalThisSymbol` are no variables: 2539, 2631.
-                known::undefined | known::globalThis if self.is_written(file, e) => TypeId::ERROR,
+                // `undefinedSymbol` is no variable: 2539.
+                known::undefined if self.is_written(file, e) => TypeId::ERROR,
                 known::undefined => TypeId::UNDEFINED,
                 // In a property initializer or a static block the arguments object is an error (2815).
                 known::arguments
@@ -1945,10 +1944,6 @@ impl<'p> Checker<'p> {
                 {
                     self.global_ref(known::IArguments, &[])
                 }
-                known::globalThis => self.intern(TypeData::Anon {
-                    origin: Origin::GlobalThis,
-                    mapper: MapperId::IDENTITY,
-                }),
                 // `RequireSymbol`
                 known::require
                     if self.hir(file).is_js
@@ -2301,7 +2296,7 @@ impl<'p> Checker<'p> {
             Err(of_class) => of_class,
             Ok(func) => {
                 let f = &self.hir(file)[func];
-                if f.this_ty.is_some() || f.this_pos != u32::MAX {
+                if f.this_param.is_some() {
                     return Some(self.type_of_this_parameter(file, func));
                 }
                 // To the default of a parameter only a `this` parameter that is written counts.
@@ -2323,10 +2318,10 @@ impl<'p> Checker<'p> {
                     {
                         let other = &self.hir(file)[other];
                         // `getAccessorThisParameter`: only of an accessor that takes what one of its kind takes.
-                        if other.this_ty.is_some()
+                        if other.this_ty(self.hir(file)).is_some()
                             && other.params.len() == usize::from(wanted == FnKind::Setter)
                         {
-                            return Some(self.type_from_node(file, other.this_ty));
+                            return Some(self.type_from_node(file, other.this_ty(self.hir(file))));
                         }
                     }
                     if let FnOwner::Expr(owner) = self.bound(file).fns[func.idx()].owner
@@ -2350,12 +2345,12 @@ impl<'p> Checker<'p> {
     /// setter that of the `this` parameter of the getter, then `getContextualThisParameterType`, then `any`.
     pub(super) fn type_of_this_parameter(&mut self, file: FileId, func: FnId) -> TypeId {
         let f = self.hir(file)[func];
-        let mut declared = f.this_ty;
+        let mut declared = f.this_ty(self.hir(file));
         if declared.is_none()
             && f.kind == FnKind::Setter
             && let Some(getter) = self.sibling_accessor(file, func, FnKind::Getter)
         {
-            declared = self.hir(file)[getter].this_ty;
+            declared = self.hir(file)[getter].this_ty(self.hir(file));
         }
         if declared.is_some() {
             return self.type_from_node(file, declared);
@@ -2588,7 +2583,7 @@ impl<'p> Checker<'p> {
         self.is_context_sensitive(file, owner)
             || f.kind != FnKind::Arrow
                 && f.type_params.is_empty()
-                && f.this_ty.is_none()
+                && f.this_ty(self.hir(file)).is_none()
                 && self.bound(file).fns[func.idx()].contains_this
     }
 
@@ -3386,7 +3381,7 @@ impl<'p> Checker<'p> {
             self.type_from_node(file, hir[tp].constraint);
             self.type_from_node(file, hir[tp].default);
         }
-        self.type_from_node(file, f.this_ty);
+        self.type_from_node(file, f.this_ty(hir));
         for p in f.params.iter() {
             let param = &hir[p];
             if param.ty.is_some() {

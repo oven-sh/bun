@@ -15,7 +15,7 @@ use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
 use bun_ast::ts_syntax::{
     Flags, Name, Param, PatternElement, PatternId, PatternProperty, PropertyKey, ResolutionMode,
-    SignatureKind, ThisParam, TupleElement, TypeData, TypeId, TypeParam,
+    SignatureKind, TupleElement, TypeData, TypeId, TypeParam,
 };
 
 // Re-export so the parser-side type alias used in this file matches the
@@ -311,7 +311,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Keep mode stores the result in `TypeSyntax::last_params`.
         let keeps = self.should_keep_types();
         let mut parameters: Vec<Param> = Vec::new();
-        let mut this_param = Some(ThisParam::NONE);
+        let mut is_usable = true;
 
         while self.lexer.token != T::TCloseParen {
             let mut parameter = Param {
@@ -335,7 +335,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 parameter.flags |= Flags::REST;
             }
 
-            let (is_this, name_loc) = (self.lexer.token == T::TThis, self.lexer.loc());
             self.skip_type_script_binding()?;
             if keeps {
                 parameter.pattern = self.type_syntax_mut().last_binding;
@@ -363,15 +362,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 parameter.default = Some(self.skip_initializer_in_signature()?);
             }
             if keeps {
-                if !is_complete || (parameter.pattern.is_none() && !is_this) {
-                    this_param = None;
-                } else if is_this {
-                    this_param = this_param.and(Some(ThisParam {
-                        ty: parameter.ty,
-                        loc: name_loc,
-                    }));
-                } else {
+                if is_complete && parameter.pattern.is_some() {
                     parameters.push(parameter);
+                } else {
+                    is_usable = false;
                 }
             }
 
@@ -385,7 +379,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.lexer.expect(T::TCloseParen)?;
         if keeps {
-            self.finish_params(&parameters, this_param, open_paren);
+            self.finish_params(is_usable.then_some(&parameters[..]), open_paren);
         }
         Ok(())
     }
@@ -450,7 +444,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.expect(T::TOpenBracket)?;
         let keeps = self.should_keep_types();
         let mut parameters: Vec<Param> = Vec::new();
-        let mut this_param = Some(ThisParam::NONE);
+        let mut is_usable = true;
         let mut trailing_comma = None;
 
         let saved_contexts = self.enter_list(ListKind::Parameters);
@@ -481,7 +475,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 parameter.flags |= Flags::REST;
             }
 
-            let (is_this, name_loc) = (self.lexer.token == T::TThis, self.lexer.loc());
             if matches!(
                 self.lexer.token,
                 T::TIdentifier | T::TThis | T::TOpenBracket | T::TOpenBrace
@@ -515,15 +508,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 parameter.default = Some(self.skip_initializer_in_signature()?);
             }
             if keeps {
-                if !is_complete || (parameter.pattern.is_none() && !is_this) {
-                    this_param = None;
-                } else if is_this {
-                    this_param = this_param.and(Some(ThisParam {
-                        ty: parameter.ty,
-                        loc: name_loc,
-                    }));
-                } else {
+                if is_complete && parameter.pattern.is_some() {
                     parameters.push(parameter);
+                } else {
+                    is_usable = false;
                 }
             }
 
@@ -540,7 +528,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.lexer.expect(T::TCloseBracket)?;
         if keeps {
-            self.finish_params(&parameters, this_param, open_bracket);
+            self.finish_params(is_usable.then_some(&parameters[..]), open_bracket);
         }
         Ok(trailing_comma)
     }
@@ -730,7 +718,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let open_paren = self.lexer.loc().start;
             self.lexer.expect(T::TOpenParen)?;
             if self.should_keep_types() {
-                self.finish_params(&[], Some(ThisParam::NONE), open_paren);
+                self.finish_params(Some(&[]), open_paren);
             }
         } else if has_head || self.is_unambiguously_start_of_function_type() {
             self.skip_typescript_fn_args()?;
@@ -2995,7 +2983,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let keeps = self.should_keep_types();
         if keeps {
             member.open_paren = self.token_start();
-            member.parameters = Some(Some((Default::default(), ThisParam::NONE)));
+            member.parameters = Some(Some(Default::default()));
         }
         self.lexer.expect(T::TOpenParen)?;
         if self.lexer.token == T::TColon {

@@ -849,7 +849,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `compareSymbols`: by where they are first declared.
-    fn compare_symbols(&self, a: Sym, b: Sym) -> std::cmp::Ordering {
+    fn compare_symbols_of_chain(&self, a: Sym, b: Sym) -> std::cmp::Ordering {
         let place = |symbol: Sym| match self.decls_of(symbol).first() {
             Some(&(file, decl)) => {
                 let start = self.declaration_name_start(file, decl).unwrap_or(0);
@@ -863,7 +863,7 @@ impl<'p> Checker<'p> {
     fn compare_symbol_chains(&self, a: &[Sym], b: &[Sym]) -> std::cmp::Ordering {
         let mut order = a.len().cmp(&b.len());
         for (&x, &y) in a.iter().zip(b) {
-            order = order.then_with(|| self.compare_symbols(x, y));
+            order = order.then_with(|| self.compare_symbols_of_chain(x, y));
         }
         order
     }
@@ -1307,12 +1307,7 @@ impl<'p> EmitResolver<'_, 'p> {
                 .iter()
                 .find(|export| export.0 == name)
                 .map(|export| export.1),
-            Table::ResolvedExports(_) | Table::Globals => {
-                if name == known::globalThis {
-                    return Some(files.global_this_symbol);
-                }
-                files.globals.get(&name).copied()
-            }
+            Table::ResolvedExports(_) | Table::Globals => files.globals.get(&name).copied(),
         }
     }
 
@@ -1577,7 +1572,7 @@ impl<'p> EmitResolver<'_, 'p> {
                     candidates.push(alias);
                 }
             }
-            candidates.sort_by(|&a, &b| self.c.compare_symbols(a, b));
+            candidates.sort_by(|&a, &b| self.c.compare_symbols_of_chain(a, b));
             if let Some(&first) = candidates.first() {
                 return Some(first);
             }
@@ -1737,7 +1732,7 @@ impl<'p> EmitResolver<'_, 'p> {
             }
         }
         same.into_iter()
-            .min_by(|&a, &b| self.c.compare_symbols(a, b))
+            .min_by(|&a, &b| self.c.compare_symbols_of_chain(a, b))
     }
 
     /// `getAlternativeContainingModules`
@@ -3246,7 +3241,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             return;
         }
         let function = self.c.hir(self.file())[f];
-        self.visit_type(function.this_ty, false);
+        self.visit_type(function.this_ty(self.c.hir(self.file())), false);
         for p in function.params.iter() {
             self.ensure_parameter(p);
         }
@@ -3367,14 +3362,14 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 MemberKind::Constructor => self.update_param_list(f),
                 MemberKind::Getter => {
                     if !is_private {
-                        self.visit_type(hir[f].this_ty, false);
+                        self.visit_type(hir[f].this_ty(hir), false);
                     }
                     self.ensure_type(Typed::Signature(f), false);
                 }
                 // `updateAccessorParamList`
                 MemberKind::Setter => {
                     if !is_private {
-                        self.visit_type(hir[f].this_ty, false);
+                        self.visit_type(hir[f].this_ty(hir), false);
                         if let Some(value) = hir[f].params.iter().next() {
                             self.ensure_parameter(value);
                         }
@@ -3859,7 +3854,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
         match self.c.data(ty) {
             TypeData::Intrinsic(intrinsic) => {
                 self.b.approximate_length += match intrinsic {
-                    Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error => 3,
+                    Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error | Intrinsic::Auto => {
+                        3
+                    }
                     Intrinsic::Unknown => 0,
                     Intrinsic::Never => 5,
                     Intrinsic::Void | Intrinsic::Null | Intrinsic::NullDeclared => 4,
@@ -5345,7 +5342,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             self.reuse_type(file, hir[tp].constraint);
             self.reuse_type(file, hir[tp].default);
         }
-        self.reuse_type(file, function.this_ty);
+        self.reuse_type(file, function.this_ty(hir));
         for p in function.params.iter() {
             self.reuse_type(file, hir[p].ty);
         }
@@ -6243,7 +6240,7 @@ impl<'p> EmitResolver<'_, 'p> {
     /// `sortByBestName`
     fn sort_by_best_name(&self, a: &(Sym, String), b: &(Sym, String)) -> std::cmp::Ordering {
         if a.1.is_empty() || b.1.is_empty() {
-            return self.c.compare_symbols(a.0, b.0);
+            return self.c.compare_symbols_of_chain(a.0, b.0);
         }
         // `CountPathComponents`
         let components = |path: &str| path.strip_prefix("./").unwrap_or(path).matches('/').count();

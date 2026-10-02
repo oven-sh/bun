@@ -2542,7 +2542,9 @@ impl<'p> Checker<'p> {
             }
             // Twice is once.
             TypeData::StringMapping { kind: same, .. } if *same == kind => ty,
-            TypeData::Intrinsic(Intrinsic::Any | Intrinsic::Error | Intrinsic::String)
+            TypeData::Intrinsic(
+                Intrinsic::Any | Intrinsic::Error | Intrinsic::Auto | Intrinsic::String,
+            )
             | TypeData::UnresolvedName { .. }
             | TypeData::StringMapping { .. } => self.intern(TypeData::StringMapping { kind, ty }),
             _ if self.is_generic(ty) => self.intern(TypeData::StringMapping { kind, ty }),

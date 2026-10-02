@@ -205,6 +205,12 @@ impl<'p> Checker<'p> {
             return self.fresh(ty);
         }
         if flags.contains(SymFlags::VALUE_MODULE) {
+            if sym == self.files().global_this_symbol {
+                return self.intern(TypeData::Anon {
+                    origin: Origin::GlobalThis,
+                    mapper: MapperId::IDENTITY,
+                });
+            }
             // Of `declare module "m";` nothing is known.
             if self.files().is_shorthand_ambient_module_symbol(sym) {
                 return TypeId::ANY;
@@ -358,25 +364,11 @@ impl<'p> Checker<'p> {
                 }
                 self.type_of_symbol(next)
             }
-            // tsgo keeps `globalThisSymbol` in the globals. It has no `Sym` here.
-            None if self.is_import_equals_of_global_this(sym) => self.intern(TypeData::Anon {
-                origin: Origin::GlobalThis,
-                mapper: MapperId::IDENTITY,
-            }),
             _ => match self.type_of_alias_like_expression(sym) {
                 Some(ty) => ty,
                 None => self.type_of_unresolved_import(sym),
             },
         }
-    }
-
-    /// Whether `sym` is declared by `import a = globalThis`.
-    fn is_import_equals_of_global_this(&self, sym: Sym) -> bool {
-        let hir = self.hir(sym.file);
-        self.files().symbol(sym).decls.iter().any(|&decl| {
-            matches!(decl, Decl::ImportEquals(import)
-                if matches!(hir[import].target, ImportEqualsTarget::Entity(names) if names.len() == 1 && hir.id_at(names, 0) == known::globalThis))
-        })
     }
 
     /// The fallback of `getTargetOfAliasLikeExpression`, followed by `getTypeOfAlias`. In `export = e`, `export default e`,
@@ -799,11 +791,10 @@ impl<'p> Checker<'p> {
                 Decl::ImportSpec(_) | Decl::ExportSpec(_) => {
                     match files.external_module_member_of(file, decl) {
                         Some((spec, mode, name)) => (spec, name, mode),
-                        // `getTargetOfExportSpecifier` without a module: `resolveEntityName` finds nothing. `undefinedSymbol` and
-                        // `globalThisSymbol` have no `Sym`.
+                        // `getTargetOfExportSpecifier` without a module: `resolveEntityName` finds nothing. `undefinedSymbol` has
+                        // no `Sym`.
                         None => {
-                            return matches!(decl, Decl::ExportSpec(s)
-                                if !matches!(hir[s].local, known::undefined | known::globalThis));
+                            return matches!(decl, Decl::ExportSpec(s) if hir[s].local != known::undefined);
                         }
                     }
                 }
@@ -811,9 +802,9 @@ impl<'p> Checker<'p> {
                     ImportEqualsTarget::Require(spec) => {
                         (spec, Atom::NONE, ResolutionMode::Require)
                     }
-                    // `resolveAlias`: an entity name that resolves to nothing leaves `unknownSymbol`. `globalThis` has no `Sym`.
-                    ImportEqualsTarget::Entity(names) => {
-                        return names.len() != 1 || hir.id_at(names, 0) != known::globalThis;
+                    // `resolveAlias`: an entity name that resolves to nothing leaves `unknownSymbol`.
+                    ImportEqualsTarget::Entity(_) => {
+                        return true;
                     }
                 },
                 // `getTargetOfImportSpecifier` for a binding element, `getTargetOfImportEqualsDeclaration` for the whole module.
@@ -1160,7 +1151,7 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        self.sort_named_members(&mut shape.props);
+        self.get_named_members(&mut shape.props, |_| true, &[]);
         for info in &members.shape().index {
             let value = self.instantiate(info.value, members.mapper);
             let value = self.regular_object(value);
@@ -2045,6 +2036,30 @@ impl<'p> Checker<'p> {
             }
             return self.type_from_node(file, decl.ty);
         }
+        // Where an implicit `any` is an error, control flow says what the variable holds at a place. It goes by how the initializer
+        // is written, not by its type.
+        if self.p.files.options.no_implicit_any
+            && is_name
+            && !decl.flags.intersects(Flags::EXPORT | Flags::AMBIENT)
+            && hir.kind != FileKind::Declaration
+        {
+            match decl.init.is_some().then(|| hir[decl.init].kind) {
+                // `isNullOrUndefined`
+                None | Some(ExprKind::Null) if !is_constant => return TypeId::AUTO,
+                Some(ExprKind::Ident(known::undefined))
+                    if !is_constant && self.bound(file).expr_symbol[decl.init.idx()].is_none() =>
+                {
+                    return TypeId::AUTO;
+                }
+                // `isEmptyArrayLiteral`, which does not look into parentheses.
+                Some(ExprKind::Array(items))
+                    if items.is_empty() && !is_parenthesized(hir, decl.init) =>
+                {
+                    return self.auto_array_type;
+                }
+                _ => {}
+            }
+        }
         if decl.init.is_none() {
             // `getTypeFromBindingPattern`: what the pattern itself implies.
             return if is_name {
@@ -2071,28 +2086,6 @@ impl<'p> Checker<'p> {
                     .is_some()
             {
                 return self.unique_symbol_of_variable(file, decl.pat, name);
-            }
-        }
-        // Where an implicit `any` is an error, a variable written with `null` or `undefined` is the `any`, and one written with `[]`
-        // the `any[]`, of which control flow says what it holds at a place. It goes by how the initializer is written, not by its type.
-        if self.p.files.options.no_implicit_any
-            && is_name
-            && !decl.flags.intersects(Flags::EXPORT | Flags::AMBIENT)
-            && hir.kind != FileKind::Declaration
-        {
-            match hir[decl.init].kind {
-                // `isNullOrUndefined`
-                ExprKind::Null if !is_constant => return TypeId::ANY,
-                ExprKind::Ident(known::undefined)
-                    if !is_constant && self.bound(file).expr_symbol[decl.init.idx()].is_none() =>
-                {
-                    return TypeId::ANY;
-                }
-                // `isEmptyArrayLiteral`, which does not look into parentheses.
-                ExprKind::Array(items) if items.is_empty() && !is_parenthesized(hir, decl.init) => {
-                    return self.array_of(TypeId::ANY);
-                }
-                _ => {}
             }
         }
         let ty = self.type_of_declaration_initializer(file, decl.init);
@@ -3258,13 +3251,10 @@ impl<'p> Checker<'p> {
         value: ExprId,
         star: bool,
     ) -> TypeId {
-        let Some(func) = self.enclosing_fn_of_expr(file, e) else {
+        let Some(func) = self.containing_generator(file, e) else {
             return TypeId::ANY;
         };
         let f = &self.hir(file)[func];
-        if !f.flags.contains(Flags::GENERATOR) {
-            return TypeId::ANY;
-        }
         let is_async = f.flags.contains(Flags::ASYNC);
         if star {
             let ty = self.type_of_expr(file, value);
@@ -3284,6 +3274,12 @@ impl<'p> Checker<'p> {
         self.generator_return_types(declared, is_async)
             .n
             .unwrap_or(TypeId::ANY)
+    }
+
+    /// The generator that `e`, a `yield`, is written in. Where there is none `checkYieldExpression` returns `any` at once.
+    pub(super) fn containing_generator(&self, file: FileId, e: ExprId) -> Option<FnId> {
+        self.enclosing_fn_of_expr(file, e)
+            .filter(|&func| self.hir(file)[func].flags.contains(Flags::GENERATOR))
     }
 
     /// `checkGeneratorInstantiationAssignabilityToReturnType`: whether the generator that yields, returns and is sent what a `ty`

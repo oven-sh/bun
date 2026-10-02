@@ -13,8 +13,8 @@ use bun_ast::ts_syntax::{
     Flags, FunctionBody, IdList, ImportType, Interface, Keyword, MappedModifier, MappedType,
     Member, MemberKind, Modifier, Name, Param, Pattern, PatternData, PatternElement, PatternId,
     PatternProperty, PropertyKey, ResolutionMode, Signature, SignatureId, SignatureKind, Span,
-    Statement, StatementData, StatementId, ThisParam, TupleElement, Type, TypeAlias, TypeData,
-    TypeId, TypeParam,
+    Statement, StatementData, StatementId, TupleElement, Type, TypeAlias, TypeData, TypeId,
+    TypeParam,
 };
 use bun_ast::{Expr, Loc, StoreStr};
 use bun_collections::HashMap;
@@ -584,11 +584,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Called on an identifier binding.
     pub(crate) fn emit_identifier_binding(&mut self) {
-        // `this` is not a binding. Only its type annotation is kept.
-        if self.lexer.token == T::TThis {
-            self.type_syntax_mut().last_binding = PatternId::NONE;
-            return;
-        }
         let pattern = Pattern {
             data: PatternData::Identifier(self.token_text()),
             loc: self.lexer.loc(),
@@ -667,16 +662,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.type_syntax_mut().ast.add_modifiers(modifiers)
     }
 
-    /// Finishes a parameter list whose `(` is at `open_paren`. `this_param` is `None` if any parameter is unusable.
-    pub(crate) fn finish_params(
-        &mut self,
-        parameters: &[Param],
-        this_param: Option<ThisParam>,
-        open_paren: i32,
-    ) {
+    /// Finishes a parameter list whose `(` is at `open_paren`. `None` if any parameter is unusable.
+    pub(crate) fn finish_params(&mut self, parameters: Option<&[Param]>, open_paren: i32) {
         let syntax = self.type_syntax_mut();
-        syntax.last_params =
-            this_param.map(|this_param| (syntax.ast.add_params(parameters), this_param));
+        syntax.last_params = parameters.map(|parameters| syntax.ast.add_params(parameters));
         if let Some(parameters) = syntax.last_params {
             let kept = self.with_end(parameters);
             self.type_syntax_mut()
@@ -726,7 +715,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         head: Option<FnTypeHead>,
         open_paren: u32,
-        parameters: Option<(Span<Param>, ThisParam)>,
+        parameters: Option<Span<Param>>,
     ) {
         let head = head.unwrap_or(FnTypeHead {
             kind: SignatureKind::FunctionType,
@@ -735,7 +724,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             pos: open_paren,
         });
         let return_type = self.last_type();
-        let (Some(type_params), Some((params, this_param)), true) =
+        let (Some(type_params), Some(params), true) =
             (head.type_params, parameters, return_type.is_some())
         else {
             return self.clear_last_type();
@@ -745,7 +734,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             flags: head.flags,
             type_params,
             params,
-            this_param,
             return_type,
             body: None,
             open_paren_loc: loc(open_paren),
@@ -782,7 +770,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         flags: Flags,
         pos: u32,
     ) -> Option<SignatureId> {
-        let (params, this_param) = member.parameters??;
+        let params = member.parameters??;
         let type_params = member.type_parameters.unwrap_or(Some(Span::EMPTY))?;
         let return_type = member.ty.unwrap_or(TypeId::NONE);
         if member.ty.is_some() && return_type.is_none() {
@@ -793,7 +781,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             flags,
             type_params,
             params,
-            this_param,
             return_type,
             body: None,
             open_paren_loc: loc(member.open_paren),
@@ -944,7 +931,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if member.bracket_kind == BracketKind::IndexParameters {
             let (flags, modifiers) =
                 self.member_modifiers(&member.words, member.newline_before_bracket)?;
-            let (params, _) = member.parameters??;
+            let params = member.parameters??;
             made.flags |= flags;
             made.modifiers = modifiers;
             made.kind = MemberKind::IndexSignature;
@@ -953,7 +940,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 flags: made.flags,
                 type_params: Span::EMPTY,
                 params,
-                this_param: ThisParam::NONE,
                 return_type: ty,
                 body: None,
                 open_paren_loc: loc(member.bracket_pos),
@@ -1037,7 +1023,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         flags: made.flags,
                         type_params: Span::EMPTY,
                         params,
-                        this_param: ThisParam::NONE,
                         return_type: ty,
                         body: None,
                         open_paren_loc: loc(member.bracket_pos),
@@ -1326,7 +1311,7 @@ pub(crate) struct KeptNodes {
     pub(crate) type_arguments: HashMap<i32, KeptNode<IdList<Type>>>,
     pub(crate) type_parameters: HashMap<i32, KeptNode<Span<TypeParam>>>,
     /// Keyed by the offset of `(`. The second value is the type of a `this` parameter.
-    pub(crate) parameters: HashMap<i32, KeptNode<(Span<Param>, ThisParam)>>,
+    pub(crate) parameters: HashMap<i32, KeptNode<Span<Param>>>,
     /// Keyed by the offset of `{`.
     pub(crate) object_types: HashMap<i32, KeptNode<ObjectTypeBody>>,
 }
@@ -1395,7 +1380,7 @@ pub(crate) struct TypeMemberParts {
     /// Outer `None`: no type parameters. Inner `None`: unusable.
     pub(crate) type_parameters: Option<Option<Span<TypeParam>>>,
     pub(crate) open_paren: u32,
-    pub(crate) parameters: Option<Option<(Span<Param>, ThisParam)>>,
+    pub(crate) parameters: Option<Option<Span<Param>>>,
     /// Where the comma before the `]` of an index signature is.
     pub(crate) trailing_comma: Option<Loc>,
     /// The type after `:`. `Some(NONE)` means unusable.

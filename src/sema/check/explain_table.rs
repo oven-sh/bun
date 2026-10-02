@@ -93,7 +93,6 @@ static TABLE: &[(u32, &[Source])] = &[
     (2484, &[Name]),
     (2502, &[Name]),
     (2503, &[Name]),
-    (2506, &[Name]),
     (2509, &[Const("never")]),
     (2539, &[Name]),
     (2540, &[Name]),

@@ -44,16 +44,6 @@ impl PartialEq for Reference {
 
 impl Eq for Reference {}
 
-/// A variable without a declared type whose type at a place is what was last assigned on the way there.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) enum Auto {
-    No,
-    /// `let x`, `let x = null`
-    Value,
-    /// `let x = []`, `const x = []`
-    Array,
-}
-
 /// Answers that hold whoever asks, kept by the checker that worked them out.
 #[derive(Default)]
 pub(super) struct FlowMemo {
@@ -145,7 +135,6 @@ struct Walk {
     /// What it is where the walk ends without having met an assignment. See `initial_of`.
     initial: TypeId,
     start: Start,
-    auto: Auto,
     crossing: Crossing,
     labels: Labels,
     /// The `finally` blocks being gone back through: where each starts, and the label whose edges count instead.
@@ -332,7 +321,6 @@ impl Walk {
         reference: Reference,
         declared: TypeId,
         initial: TypeId,
-        auto: Auto,
         crosses_functions: bool,
     ) -> Walk {
         Walk {
@@ -340,7 +328,6 @@ impl Walk {
             declared,
             initial,
             start: Start::Known,
-            auto,
             crossing: if crosses_functions {
                 Crossing::Yes
             } else {
@@ -482,7 +469,11 @@ impl<'p> Checker<'p> {
                 })
             }
             TypeData::Intrinsic(
-                Intrinsic::Any | Intrinsic::Error | Intrinsic::Unknown | Intrinsic::Unresolved,
+                Intrinsic::Any
+                | Intrinsic::Error
+                | Intrinsic::Auto
+                | Intrinsic::Unknown
+                | Intrinsic::Unresolved,
             )
             | TypeData::UnresolvedName { .. } => m,
             _ if c.is_definitely_falsy(m) => m,
@@ -649,7 +640,8 @@ impl<'p> Checker<'p> {
     fn adjusted_type_with_facts(&mut self, ty: TypeId, include: u32) -> TypeId {
         use facts::*;
         if self.is_any(ty) {
-            // It has every fact. What is intersected with `{}` below is `errorType` if it is an error type.
+            // It has every fact. What is intersected with `{}` below is `errorType` if it is an error type, and `anyType` if it is
+            // `autoType`.
             let is_intersected = self.p.files.options.strict_null_checks
                 && matches!(
                     include,
@@ -657,6 +649,8 @@ impl<'p> Checker<'p> {
                 );
             return if is_intersected && self.is_error_type(ty) {
                 TypeId::ERROR
+            } else if is_intersected && ty == TypeId::AUTO {
+                TypeId::ANY
             } else {
                 ty
             };
@@ -1256,7 +1250,8 @@ impl<'p> Checker<'p> {
                         && hir[p].default.is_none()
                         && !hir[p].flags.contains(Flags::REST) =>
                 {
-                    let place = p.0 - hir[func].params.start + hir[func].this_ty.is_some() as u32;
+                    let place =
+                        p.0 - hir[func].params.start + hir[func].this_ty(hir).is_some() as u32;
                     plain(self.number_name(place as f64))
                 }
                 _ => None,
@@ -1540,7 +1535,7 @@ impl<'p> Checker<'p> {
             at: ExprId::NONE,
             has_key: true,
         };
-        let mut walk = Walk::new(reference, parent_ty, parent_ty, Auto::No, true);
+        let mut walk = Walk::new(reference, parent_ty, parent_ty, true);
         self.flow_depth += 1;
         let outer = std::mem::replace(&mut self.walk_declared, parent_ty);
         let narrowed = self.flow_type(&mut walk, flow);
@@ -1577,7 +1572,7 @@ impl<'p> Checker<'p> {
         let func = bound.param_fn[p.idx()];
         let params = hir[func].params;
         // A `this` parameter is one of the parameters that are counted.
-        let count = params.len() + hir[func].this_ty.is_some() as usize;
+        let count = params.len() + hir[func].this_ty(hir).is_some() as usize;
         let flow = bound.expr_flow[e.idx()];
         // `isContextSensitiveFunctionOrObjectLiteralMethod`: one with type parameters of its own takes nothing from where it is.
         if count < 2
@@ -1620,7 +1615,7 @@ impl<'p> Checker<'p> {
             at: ExprId::NONE,
             has_key: true,
         };
-        let mut walk = Walk::new(reference, rest_ty, rest_ty, Auto::No, true);
+        let mut walk = Walk::new(reference, rest_ty, rest_ty, true);
         self.flow_depth += 1;
         let outer = std::mem::replace(&mut self.walk_declared, rest_ty);
         let narrowed = self.flow_type(&mut walk, flow);
@@ -1660,7 +1655,7 @@ impl<'p> Checker<'p> {
     /// `walk` starts from `declared | undefined`.
     fn start_unassigned(&mut self, walk: &mut Walk) {
         let declared = walk.declared;
-        if walk.auto == Auto::No
+        if declared != self.auto_array_type
             && self.p.files.options.strict_null_checks
             && !self.is_any(declared)
             && declared != TypeId::UNKNOWN
@@ -3123,10 +3118,13 @@ impl<'p> Checker<'p> {
             return ty;
         };
         if self.is_any(ty) {
-            // Nothing is declared in it: the intersection with `Record<K, unknown>` below, which is `errorType` of an error type.
+            // Nothing is declared in it: the intersection with `Record<K, unknown>` below, which is `errorType` of an error type
+            // and `anyType` of `autoType`.
             let is_intersected = sense && self.global_type_symbol(known::Record).is_some();
             return if is_intersected && self.is_error_type(ty) {
                 TypeId::ERROR
+            } else if is_intersected && ty == TypeId::AUTO {
+                TypeId::ANY
             } else {
                 ty
             };
@@ -3958,6 +3956,9 @@ impl<'p> Checker<'p> {
         let declared = self.narrowable_type(file, e, declared);
         // `checkIdentifier`: a variable that is not known to hold anything where its flow starts may be `undefined` there.
         let ty = self.flow_type_of(file, e, declared, true);
+        if self.is_automatic_type(declared) && !self.is_evolving_array_operation_target(file, e) {
+            return self.convert_auto_to_any(ty);
+        }
         // 2454 is said of this. The declared type keeps further errors down.
         if ty != declared
             && self.contains_undefined(ty)
@@ -4148,8 +4149,9 @@ impl<'p> Checker<'p> {
         }
         let bound = self.bound(file);
         let flow = bound.expr_flow[e.idx()];
+        // `getTypeAtFlowNode`: an unreachable flow node has `convertAutoToAny(declaredType)`.
         if flow == UNREACHABLE {
-            return declared;
+            return self.convert_auto_to_any(declared);
         }
         let Some(reference) = self.reference_of(file, e) else {
             return declared;
@@ -4157,13 +4159,10 @@ impl<'p> Checker<'p> {
         if self.flow_depth > 12 {
             return declared;
         }
-        let auto = match reference.root {
-            Root::Symbol(s) if reference.path.is_empty() => self.auto_kind(file, s),
-            _ => Auto::No,
-        };
+        let is_automatic = self.is_automatic_type(declared);
         // Nothing but `[]` was ever assigned to it: where it is being filled it is an array of anything, whatever is in it
         // by then. Not looking spares asking what is being put in it while working out what that is expected to be.
-        if auto == Auto::Array
+        if declared == self.auto_array_type
             && let Root::Symbol(s) = reference.root
             && !bound.symbols[s.idx()].flags.contains(SymFlags::ASSIGNED)
             && bound.symbols[s.idx()].decls.len() == 1
@@ -4189,7 +4188,7 @@ impl<'p> Checker<'p> {
             match reference.root {
                 Root::Symbol(s) => {
                     let flags = bound.symbols[s.idx()].flags;
-                    if flags.contains(SymFlags::CONST) && auto != Auto::Array {
+                    if flags.contains(SymFlags::CONST) && declared != self.auto_array_type {
                         Crossing::Yes
                     } else if flags.intersects(SymFlags::VARIABLE) {
                         Crossing::PastLastAssignment(s, e)
@@ -4210,15 +4209,17 @@ impl<'p> Checker<'p> {
         // whatever it was left as (`isOuterVariable`), unless nothing ever assigns to it (`isNeverInitialized`). For `x!` it is
         // `undefined` to begin with wherever that is written (`isAutomaticTypeInNonNull`).
         let mut initial = declared;
-        if auto != Auto::No
-            && let Root::Symbol(s) = reference.root
-        {
-            let is_outer = self.skip_invoked_fns(file, self.enclosing_fn_of_expr(file, e))
-                != self.skip_invoked_fns(file, self.declaring_fn(file, s));
-            if !is_outer
-                || self.is_never_initialized(file, s)
-                || self.is_operand_of_non_null(file, e)
-            {
+        if is_automatic {
+            let assume_initialized = match reference.root {
+                Root::Symbol(s) if self.is_value_declaration_in_file(file, s) => {
+                    self.skip_invoked_fns(file, self.enclosing_fn_of_expr(file, e))
+                        != self.skip_invoked_fns(file, self.declaring_fn(file, s))
+                        && !self.is_never_initialized(file, s)
+                }
+                // `isAlias`, or `isOuterVariable`: the declaration container is another file.
+                _ => true,
+            };
+            if !assume_initialized || self.is_operand_of_non_null(file, e) {
                 initial = self.undefined_as_declared();
             }
         }
@@ -4235,11 +4236,11 @@ impl<'p> Checker<'p> {
         {
             initial = self.type_with_facts(declared, facts::NE_UNDEFINED);
         }
-        let mut walk = Walk::new(reference, declared, initial, auto, false);
+        let mut walk = Walk::new(reference, declared, initial, false);
         walk.crossing = crossing;
         if starts_unassigned {
             self.start_unassigned(&mut walk);
-        } else if is_variable && auto == Auto::No {
+        } else if is_variable && !is_automatic {
             // What finds out its type as it goes is taken to hold a value.
             walk.start = Start::Unsettled;
         }
@@ -4267,16 +4268,15 @@ impl<'p> Checker<'p> {
         // `newFlowType`: an incomplete `never` is `silentNeverType`.
         self.met_loop_under_way |= ty == TypeId::NEVER && walk.incomplete;
         if let TypeData::EvolvingArray(_) = self.data(ty) {
-            // `getFlowTypeOfReference`: what is done to fill it is done to an array of anything (`autoArrayType`), whatever the
-            // variable is declared as.
+            // `getFlowTypeOfReference`: what is done to fill it is done to `autoArrayType`, whatever the variable is declared as.
             return if self.is_evolving_array_operation_target(file, e) {
-                self.array_of(TypeId::ANY)
+                self.auto_array_type
             } else {
                 self.finalize_evolving_array(ty)
             };
         }
         // `checkIdentifier`: of one that is being filled before there is anything to fill, 2454 is said, and it is what it is declared as.
-        if auto != Auto::No
+        if is_automatic
             && walk.initial.is_undefined()
             && self.contains_undefined(ty)
             && self.is_evolving_array_operation_target(file, e)
@@ -4291,7 +4291,7 @@ impl<'p> Checker<'p> {
             return declared;
         }
         // `checkIdentifier`, `isAutomaticTypeInNonNull`
-        if auto != Auto::No && self.is_operand_of_non_null(file, e) {
+        if is_automatic && self.is_operand_of_non_null(file, e) {
             return self.non_nullable(ty);
         }
         ty
@@ -4437,7 +4437,7 @@ impl<'p> Checker<'p> {
         reference.path.extend(names.iter().rev().copied());
         // Nowhere is it written.
         reference.at = ExprId::NONE;
-        let mut walk = Walk::new(reference, declared, declared, Auto::No, false);
+        let mut walk = Walk::new(reference, declared, declared, false);
         self.flow_depth += 1;
         let outer = std::mem::replace(&mut self.walk_declared, declared);
         let ty = self.flow_type(&mut walk, flow);
@@ -4474,7 +4474,7 @@ impl<'p> Checker<'p> {
             at: ExprId::NONE,
             has_key: true,
         };
-        let mut walk = Walk::new(reference, declared, initial, Auto::No, false);
+        let mut walk = Walk::new(reference, declared, initial, false);
         self.flow_depth += 1;
         let outer = std::mem::replace(&mut self.walk_declared, declared);
         let ty = self.flow_type(&mut walk, exit);
@@ -4519,9 +4519,9 @@ impl<'p> Checker<'p> {
             at: ExprId::NONE,
             has_key: true,
         };
-        let mut walk = Walk::new(reference, TypeId::ANY, initial, Auto::Value, false);
+        let mut walk = Walk::new(reference, TypeId::AUTO, initial, false);
         self.flow_depth += 1;
-        let outer = std::mem::replace(&mut self.walk_declared, TypeId::ANY);
+        let outer = std::mem::replace(&mut self.walk_declared, TypeId::AUTO);
         let ty = self.flow_type(&mut walk, exit);
         self.walk_declared = outer;
         self.flow_depth -= 1;
@@ -4540,7 +4540,7 @@ impl<'p> Checker<'p> {
         if self.is_every_type_nullable(ty) {
             return None;
         }
-        Some(ty)
+        Some(self.convert_auto_to_any(ty))
     }
 
     /// `getFlowTypeOfProperty`: the flow type of `e`, an access to a property whose declared type is `autoType` in the constructor
@@ -4562,9 +4562,9 @@ impl<'p> Checker<'p> {
         let Some(reference) = self.reference_of(file, e) else {
             return TypeId::ANY;
         };
-        let mut walk = Walk::new(reference, TypeId::ANY, initial, Auto::Value, false);
+        let mut walk = Walk::new(reference, TypeId::AUTO, initial, false);
         self.flow_depth += 1;
-        let outer = std::mem::replace(&mut self.walk_declared, TypeId::ANY);
+        let outer = std::mem::replace(&mut self.walk_declared, TypeId::AUTO);
         let ty = self.flow_type(&mut walk, flow);
         self.walk_declared = outer;
         self.flow_depth -= 1;
@@ -4579,14 +4579,14 @@ impl<'p> Checker<'p> {
         }
         // `unreachableNeverType` gives the declared type.
         if ty == TypeId::NEVER && !self.is_reachable_by_walk(&walk, flow) {
-            return TypeId::ANY;
+            return TypeId::AUTO;
         }
         // `newFlowType`: an incomplete `never` is `silentNeverType`.
         self.met_loop_under_way |= ty == TypeId::NEVER && walk.incomplete;
         if let TypeData::EvolvingArray(_) = self.data(ty) {
-            // `autoArrayType` for the target of `push`, `unshift`, `length` and `x[n] = v`.
+            // The target of `push`, `unshift`, `length` and `x[n] = v`.
             return if self.is_evolving_array_operation_target(file, e) {
-                self.array_of(TypeId::ANY)
+                self.auto_array_type
             } else {
                 self.finalize_evolving_array(ty)
             };
@@ -4596,7 +4596,7 @@ impl<'p> Checker<'p> {
             && self.is_operand_of_non_null(file, e)
             && self.type_with_facts(ty, facts::NE_UNDEFINED_OR_NULL) == TypeId::NEVER
         {
-            return TypeId::ANY;
+            return TypeId::AUTO;
         }
         ty
     }
@@ -4607,80 +4607,30 @@ impl<'p> Checker<'p> {
         self.contains_undefined(ty)
     }
 
-    /// Whether the variable finds out its type as it goes: `getTypeForVariableLikeDeclaration` gives `autoType` or `autoArrayType` for
-    /// its first declaration (`symbol.ValueDeclaration`), however many more there are.
-    pub(super) fn auto_kind(&self, file: FileId, symbol: SymbolId) -> Auto {
-        let hir = self.hir(file);
-        let bound = self.bound(file);
-        // Only where an implicit `any` would be an error is the trouble taken to find something better.
-        if !self.p.files.options.no_implicit_any {
-            return Auto::No;
-        }
-        let s = &bound.symbols[symbol.idx()];
-        // A type of the same name may be declared first.
-        let is_variable = |d: &Decl| matches!(d, Decl::Var(_) | Decl::Param(_));
-        let Some(&Decl::Var(pat)) = s.decls.iter().find(|&d| is_variable(d)) else {
-            return Auto::No;
-        };
-        let PatParent::Var(d) = bound.pat_parent[pat.idx()] else {
-            return Auto::No;
-        };
-        let decl = &hir[d];
-        if decl.ty.is_some()
-            || decl.flags.intersects(Flags::EXPORT | Flags::AMBIENT)
-            || hir.kind == FileKind::Declaration
-        {
-            return Auto::No;
-        }
-        let is_constant = matches!(
-            decl.kind,
-            VarKind::Const | VarKind::Using | VarKind::AwaitUsing
-        );
-        // It goes by how the initializer is written: `null!` and `[] satisfies T` are something else.
-        let kind = if decl.init.is_none() {
-            if is_constant { Auto::No } else { Auto::Value }
+    /// `t == c.autoType || t == c.autoArrayType`
+    pub(super) fn is_automatic_type(&self, ty: TypeId) -> bool {
+        ty == TypeId::AUTO || ty == self.auto_array_type
+    }
+
+    /// `convertAutoToAny`
+    pub(super) fn convert_auto_to_any(&mut self, ty: TypeId) -> TypeId {
+        if ty == TypeId::AUTO {
+            TypeId::ANY
+        } else if ty == self.auto_array_type {
+            self.array_of(TypeId::ANY)
         } else {
-            match hir[decl.init].kind {
-                // `isNullOrUndefined`
-                ExprKind::Null if !is_constant => Auto::Value,
-                ExprKind::Ident(known::undefined)
-                    if !is_constant && bound.expr_symbol[decl.init.idx()].is_none() =>
-                {
-                    Auto::Value
-                }
-                // `isEmptyArrayLiteral`, which does not look into parentheses.
-                ExprKind::Array(items) if items.is_empty() && !is_parenthesized(hir, decl.init) => {
-                    Auto::Array
-                }
-                _ => Auto::No,
-            }
-        };
-        if kind == Auto::No {
-            return kind;
+            ty
         }
-        // Of a global that several files declare, the first of all has the say. What another file declares is not followed here.
-        if s.flags.contains(SymFlags::MERGED) {
-            let sym = self.files().sym(file, symbol);
-            if self
-                .files()
-                .decls_of(sym)
-                .into_iter()
-                .find(|(_, d)| is_variable(d))
-                != Some((file, Decl::Var(pat)))
-            {
-                return Auto::No;
-            }
-        }
-        let stmt = bound.var_stmt[d.idx()];
-        if stmt.is_none() || !matches!(hir[stmt].kind, StmtKind::Var(_)) {
-            return Auto::No;
-        }
-        if let crate::bind::Parent::Stmt(parent) = bound.stmt_parent[stmt.idx()]
-            && matches!(hir[parent].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == stmt)
-        {
-            return Auto::No;
-        }
-        kind
+    }
+
+    /// Whether `symbol` is a variable and `symbol.ValueDeclaration` is in `file`. Of a global that several files declare it is the
+    /// first of all.
+    fn is_value_declaration_in_file(&self, file: FileId, symbol: SymbolId) -> bool {
+        self.files()
+            .decls_of(self.files().sym(file, symbol))
+            .iter()
+            .find(|d| matches!(d.1, Decl::Var(_) | Decl::Param(_)))
+            .is_some_and(|d| d.0 == file)
     }
 
     fn declaring_fn(&self, file: FileId, symbol: SymbolId) -> Option<FnId> {
@@ -4922,7 +4872,7 @@ impl<'p> Checker<'p> {
             return ty;
         };
         if element == TypeId::NEVER {
-            return self.array_of(TypeId::ANY);
+            return self.auto_array_type;
         }
         // An object literal is no subtype of one that lacks a property it has (`propertiesRelatedTo`): as alternatives to one another
         // they get each other's properties first. None is fresh in the array.
@@ -5211,7 +5161,9 @@ impl<'p> Checker<'p> {
                 }
                 Flow::ArrayMutation { before, expr } => {
                     // `getTypeAtFlowArrayMutation`: what is done to something else is passed by.
-                    if walk.auto != Auto::No && self.is_mutation_of(&walk.reference, expr) {
+                    if self.is_automatic_type(walk.declared)
+                        && self.is_mutation_of(&walk.reference, expr)
+                    {
                         pending.push(Pending::Mutation(expr));
                     }
                     flow = before;
@@ -5222,7 +5174,9 @@ impl<'p> Checker<'p> {
                     sense,
                 } => {
                     // An array that is being filled is looked at by every test.
-                    if walk.auto != Auto::No || self.is_test_about(&walk.reference, flow, expr) {
+                    if self.is_automatic_type(walk.declared)
+                        || self.is_test_about(&walk.reference, flow, expr)
+                    {
                         pending.push(Pending::Cond(expr, sense));
                     } else {
                         passed += 1;
@@ -5651,14 +5605,16 @@ impl<'p> Checker<'p> {
             }
             c.assignment_reduced_type(declared, assigned)
         };
-        let auto = walk.auto;
-        // `isTypeAssignableTo(assignedType, declaredType)`: anything is assignable to `autoType`. `any`, `never`, arrays and tuples are
-        // assignable to `autoArrayType`.
-        let is_assignable_to_auto = |c: &Self, assigned: TypeId| {
-            auto != Auto::Array
-                || c.is_any(assigned)
-                || assigned == TypeId::NEVER
-                || c.every_type(assigned, |k, m| k.is_array(m) || k.is_tuple(m))
+        let is_automatic = self.is_automatic_type(walk.declared);
+        // What `getInitialOrAssignedType` gives, held against `autoType` or `autoArrayType`.
+        let widened_for_auto = |c: &mut Self, declared: TypeId, assigned: TypeId| -> TypeId {
+            let assigned = narrowable(c, assigned);
+            let assigned = c.widen_literal(assigned);
+            if c.is_assignable(assigned, declared) {
+                assigned
+            } else {
+                c.array_of(TypeId::ANY)
+            }
         };
         let assigned_to_auto = |c: &mut Self, walk: &mut Walk, value: ExprId| -> TypeId {
             // `isEmptyArrayAssignment`
@@ -5670,13 +5626,7 @@ impl<'p> Checker<'p> {
             c.eager.push(c.stack.len());
             let assigned = c.assigned_type(walk, value);
             c.eager.pop();
-            let assigned = narrowable(c, assigned);
-            let assigned = c.widen_literal(assigned);
-            if is_assignable_to_auto(c, assigned) {
-                assigned
-            } else {
-                c.array_of(TypeId::ANY)
-            }
+            widened_for_auto(c, walk.declared, assigned)
         };
         match target {
             FlowTarget::Var(d) => {
@@ -5701,7 +5651,7 @@ impl<'p> Checker<'p> {
                     }
                     return Some(walk.declared);
                 }
-                if auto != Auto::No && init.is_some() {
+                if is_automatic && init.is_some() {
                     return Some(assigned_to_auto(self, walk, init));
                 }
                 if init.is_none() {
@@ -5719,13 +5669,16 @@ impl<'p> Checker<'p> {
                 if walk.reference.root != Root::Symbol(bound.pat_symbol[p.idx()]) {
                     return None;
                 }
-                if !walk.reference.path.is_empty()
-                    || auto != Auto::No
-                    || !self.is_union(walk.declared)
+                if !walk.reference.path.is_empty() || !is_automatic && !self.is_union(walk.declared)
                 {
                     return Some(walk.declared);
                 }
-                match self.initial_type_of_pat(file, p) {
+                let assigned = self.initial_type_of_pat(file, p);
+                if is_automatic {
+                    let assigned = assigned.unwrap_or(TypeId::ERROR);
+                    return Some(widened_for_auto(self, walk.declared, assigned));
+                }
+                match assigned {
                     Some(assigned) => Some(reduce(self, walk.declared, assigned)),
                     None => Some(walk.declared),
                 }
@@ -5760,7 +5713,7 @@ impl<'p> Checker<'p> {
                         // Not `[x = d] = v`, where `d` is only for want of anything better.
                         && !self.is_assignment_target(file, parent)
                     {
-                        if auto != Auto::No {
+                        if is_automatic {
                             return Some(assigned_to_auto(self, walk, value));
                         }
                         let declared = if self.is_in_compound_like_assignment(file, e) {
@@ -5788,29 +5741,25 @@ impl<'p> Checker<'p> {
                     }
                     // `getAssignedType` of what is deleted is `undefined`.
                     if is_deleted {
-                        return Some(if auto != Auto::No {
+                        return Some(if is_automatic {
                             TypeId::UNDEFINED
                         } else {
                             reduce(self, walk.declared, TypeId::UNDEFINED)
                         });
                     }
-                    if auto == Auto::No && !self.is_union(walk.declared) {
+                    if !is_automatic && !self.is_union(walk.declared) {
                         return Some(walk.declared);
                     }
                     // `[x] = v`, `({ a: x } = v)`
-                    if let Some(assigned) = self.destructured_type(file, e) {
-                        if auto != Auto::No {
-                            let assigned = narrowable(self, assigned);
-                            let assigned = self.widen_literal(assigned);
-                            return Some(if is_assignable_to_auto(self, assigned) {
-                                assigned
-                            } else {
-                                self.array_of(TypeId::ANY)
-                            });
-                        }
-                        return Some(reduce(self, walk.declared, assigned));
+                    let assigned = self.destructured_type(file, e);
+                    if is_automatic {
+                        let assigned = assigned.unwrap_or(TypeId::ERROR);
+                        return Some(widened_for_auto(self, walk.declared, assigned));
                     }
-                    return Some(walk.declared);
+                    return Some(match assigned {
+                        Some(assigned) => reduce(self, walk.declared, assigned),
+                        None => walk.declared,
+                    });
                 }
                 if self.is_proper_prefix(&walk.reference, e) {
                     return Some(walk.declared);
@@ -6206,7 +6155,7 @@ impl<'p> Checker<'p> {
         let (class, is_static) = match self.this_container(file, e)? {
             Err(of_class) => of_class,
             Ok(func) => {
-                let this_ty = self.hir(file)[func].this_ty;
+                let this_ty = self.hir(file)[func].this_ty(self.hir(file));
                 if this_ty.is_some() {
                     return Some(self.type_from_node(file, this_ty));
                 }
@@ -6636,12 +6585,12 @@ impl<'p> Checker<'p> {
                 if self.is_assignment_to_readonly_property(file, target, obj, name) {
                     return TypeId::UNRESOLVED;
                 }
-                // `isThisPropertyAccessInConstructor`: a definite assignment target keeps `autoType`.
+                // `isThisPropertyAccessInConstructor`
                 if self
                     .auto_this_property(file, target, object, name)
                     .is_some()
                 {
-                    return TypeId::ANY;
+                    return TypeId::AUTO;
                 }
                 // Through what a type parameter extends no index signature is written to.
                 if self.is_generic_object_type(object)
@@ -6702,14 +6651,14 @@ impl<'p> Checker<'p> {
                         return TypeId::UNRESOLVED;
                     }
                 }
-                // `getPropertyTypeForIndexType`: `isThisPropertyAccessInConstructor` makes the property `autoType`.
+                // `getPropertyTypeForIndexType`, `isThisPropertyAccessInConstructor`
                 if hir.is_js
                     && let Some(name) = self.property_name_of_type(key)
                     && self
                         .auto_this_property(file, target, object, name)
                         .is_some()
                 {
-                    return TypeId::ANY;
+                    return TypeId::AUTO;
                 }
                 // `AccessFlagsWriting`, and `AccessFlagsNoIndexSignatures` for what waits for type parameters, `this` aside.
                 let no_index_signatures = self.is_generic_object_type(object)
@@ -6904,7 +6853,7 @@ impl<'p> Checker<'p> {
             // `getTypeAtFlowNode`: of what control does not get to, the declared type is said.
             declared
         } else {
-            let mut walk = Walk::new(reference.clone(), declared, initial, Auto::No, false);
+            let mut walk = Walk::new(reference.clone(), declared, initial, false);
             let ty = self.flow_type(&mut walk, before);
             // Nothing is known of what comes after a call that never returns.
             if ty == TypeId::NEVER && !self.is_reachable_by_walk(&walk, before) {

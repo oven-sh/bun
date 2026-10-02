@@ -839,14 +839,10 @@ pub struct Func {
     pub name_pos: u32,
     pub type_params: Span<TypeParamId>,
     pub params: Span<ParamId>,
-    /// The type of a leading `this` parameter.
-    pub this_ty: TypeNodeId,
-    /// Where the name of that parameter is, with or without a type. Of one that is made of a `@this` tag, where the name of the tag
-    /// is; in a `@callback`, where the tag is. `u32::MAX`: there is none.
-    pub this_pos: u32,
-    /// `Name().End()`. `this_pos`: the identifier the reparser makes for a `@this` tag on a function has no range. In a `@callback`
-    /// it has that of the tag (`thisIdent.Loc = thisTag.Loc`).
-    pub this_name_end: u32,
+    /// `GetThisParameter`: the first parameter, if it is named `this`. It is not among `params`. The reparser makes one of a `@this`
+    /// tag (`Flags::REPARSED`), where the name of the tag is and with a name that is missing (`NewIdentifier("this")` has no range);
+    /// in a `@callback`, where the tag is and with the text of the tag for a name (`thisIdent.Loc = thisTag.Loc`).
+    pub this_param: ParamId,
     pub ret: TypeNodeId,
     pub body: FnBody,
     /// The `(` of the parameters; the `=>` of an arrow function.
@@ -854,6 +850,15 @@ pub struct Func {
     pub pos: u32,
     /// Where its first token is, decorators and modifiers included. That of the member, for a method or an accessor.
     pub start: u32,
+}
+
+impl Func {
+    /// The type that is written on the `this` parameter.
+    #[inline]
+    pub fn this_ty(&self, hir: &File) -> TypeNodeId {
+        let this = hir.params.get(self.this_param.idx());
+        this.map_or(TypeNodeId::NONE, |this| this.ty)
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1546,6 +1551,20 @@ impl File {
     #[inline]
     pub fn pat(&mut self, kind: PatKind, pos: u32) -> PatId {
         self.add_pat_node(Pat { kind, pos })
+    }
+    /// `GetThisParameter`: the first of `params` if it is named `this`, and the others.
+    pub fn split_this_parameter(&self, params: Span<ParamId>) -> (ParamId, Span<ParamId>) {
+        match params.iter().next() {
+            Some(first)
+                if matches!(
+                    self[self[first].pat].kind,
+                    PatKind::Ident(crate::atom::known::this)
+                ) =>
+            {
+                (first, Span::new(params.start + 1, params.len - 1))
+            }
+            _ => (ParamId::NONE, params),
+        }
     }
     pub fn number(&mut self, value: f64) -> u32 {
         self.numbers.push(value);

@@ -446,7 +446,7 @@ impl<'p> Checker<'p> {
         if let Some(m) = hir.members.iter().position(|m| m.ty == t) {
             return Some(Node::Member(MemberId(m as u32)));
         }
-        if let Some(f) = hir.fns.iter().position(|f| f.ret == t || f.this_ty == t) {
+        if let Some(f) = hir.fns.iter().position(|f| f.ret == t) {
             return Some(self.iso_node_of_fn(file, FnId(f as u32)));
         }
         let asserts = |e: &Expr| match e.kind {
@@ -513,9 +513,8 @@ impl<'p> Checker<'p> {
                 ..
             } => {
                 matches!(hir[root].kind, ExprKind::Ident(known::globalThis))
-                    && self
-                        .symbol_of_identifier(file, root, known::globalThis)
-                        .is_none()
+                    && self.symbol_of_identifier(file, root, known::globalThis)
+                        == Some(self.files().global_this_symbol)
             }
             _ => false,
         }
@@ -2264,7 +2263,7 @@ impl<'p> Checker<'p> {
             self.iso_reuse_type_node(tx, hir[tp].constraint);
             self.iso_reuse_type_node(tx, hir[tp].default);
         }
-        self.iso_reuse_type_node(tx, hir[func].this_ty);
+        self.iso_reuse_type_node(tx, hir[func].this_ty(hir));
         for param in params {
             self.iso_write_pseudo(tx, &param.ty);
         }
@@ -2740,7 +2739,7 @@ impl<'p> Checker<'p> {
             self.iso_reuse_type_node(tx, hir[tp].constraint);
             self.iso_reuse_type_node(tx, hir[tp].default);
         }
-        self.iso_reuse_type_node(tx, hir[f].this_ty);
+        self.iso_reuse_type_node(tx, hir[f].this_ty(hir));
         for p in hir[f].params.iter() {
             self.iso_reuse_type_node(tx, hir[p].ty);
         }
@@ -3183,7 +3182,7 @@ impl<'p> Checker<'p> {
                     self.iso_write_type_of_declaration(tx, file, Node::Param(p), Some(ty), true);
                 }
                 if file == tx.file {
-                    self.iso_reuse_type_node(tx, f.this_ty);
+                    self.iso_reuse_type_node(tx, f.this_ty(self.hir(file)));
                 } else if let Some(this) = self.sig_this_type(sig) {
                     self.iso_write_type(tx, this);
                 }
@@ -4035,7 +4034,7 @@ impl<'p> Checker<'p> {
     /// `updateParamList`, `ensureParameter`
     fn iso_update_param_list(&mut self, tx: &mut Emit, f: FnId) {
         let hir = self.hir(tx.file);
-        self.iso_visit_type(tx, hir[f].this_ty);
+        self.iso_visit_type(tx, hir[f].this_ty(hir));
         for p in hir[f].params.iter() {
             self.iso_visit_binding_name(tx, hir[p].pat);
             self.iso_ensure_type_of_parameter(tx, p);

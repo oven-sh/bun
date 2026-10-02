@@ -49,8 +49,9 @@ fn is_covariant_below(
     let mut covariant = true;
     while node != ancestor {
         let parent = parents[node.idx()];
-        let of_fn =
-            |f: FnId| hir[f].this_ty == node || hir[f].params.iter().any(|p| hir[p].ty == node);
+        let of_fn = |f: FnId| {
+            hir[f].this_ty(hir) == node || hir[f].params.iter().any(|p| hir[p].ty == node)
+        };
         covariant ^= match hir[parent].kind {
             TypeNodeKind::Fn(f) => of_fn(f),
             TypeNodeKind::Object(members) => members
@@ -1046,6 +1047,8 @@ impl Checker<'_> {
                     d.1,
                     Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_)
                 ) && (is_value_module || !matches!(d.1, Decl::Module(_)))
+                    && (!matches!(d.1, Decl::Var(_) | Decl::Param(_))
+                        || self.is_symbol_of_declaration(sym, *d))
             });
             // Only among variables: with any other value the name is taken twice, which is said elsewhere.
             if decls.len() < 2
@@ -1055,11 +1058,9 @@ impl Checker<'_> {
             {
                 continue;
             }
-            // `declareModuleMember`: what is kept and what is exported are two symbols, each with a first declaration of its own.
-            // `Some(None)`: there is one, and nothing is held against it.
-            let mut firsts: [Option<Option<TypeId>>; 2] = [None, None];
-            // `symbol.ValueDeclaration` of each.
-            let mut first_names = [(file, PatId::NONE); 2];
+            // The type of `symbol.ValueDeclaration`. `Some(None)`: there is one, and nothing is held against it.
+            let mut first_type: Option<Option<TypeId>> = None;
+            let mut value_declaration = (file, PatId::NONE);
             for &(of, decl) in &decls {
                 let (Decl::Var(pat) | Decl::Param(pat)) = decl else {
                     continue;
@@ -1067,16 +1068,15 @@ impl Checker<'_> {
                 let written = self.var_decl_of_pat(of, pat);
                 // `declareSymbolEx`: `let` and `const` share a name with nothing. Whichever comes second gets a symbol of its own.
                 let is_var = written.is_none_or(|d| self.hir(of)[d].kind == VarKind::Var);
-                let slot = written.is_some_and(|d| self.is_exported_var_decl(of, d)) as usize;
-                let Some(first) = firsts[slot] else {
+                let Some(first) = first_type else {
                     let ty = if is_var {
-                        self.type_of_pat(of, pat)
+                        let ty = self.type_of_pat(of, pat);
+                        self.convert_auto_to_any(ty)
                     } else {
                         TypeId::UNRESOLVED
                     };
-                    firsts[slot] =
-                        Some((self.is_known(ty) && !self.is_error_type(ty)).then_some(ty));
-                    first_names[slot] = (of, pat);
+                    first_type = Some((self.is_known(ty) && !self.is_error_type(ty)).then_some(ty));
+                    value_declaration = (of, pat);
                     continue;
                 };
                 let Some(declared) = first else { continue };
@@ -1085,6 +1085,7 @@ impl Checker<'_> {
                     continue;
                 }
                 let here = self.type_of_pat(of, pat);
+                let here = self.convert_auto_to_any(here);
                 if !self.is_known(here)
                     || self.is_error_type(here)
                     || self.is_identical(declared, here)
@@ -1101,7 +1102,7 @@ impl Checker<'_> {
                         c.type_to_string(here),
                     ]
                 });
-                let (first_of, first_name) = first_names[slot];
+                let (first_of, first_name) = value_declaration;
                 self.relate(start, 2403, |c| {
                     // `GetErrorRangeForNode`: all of a parameter, the name of anything else.
                     let at = match c.bound(first_of).pat_parent[first_name.idx()] {
@@ -1140,7 +1141,6 @@ impl Checker<'_> {
         }
         let sym = self.files().sym(file, id);
         let is_value_module = self.files().flags(sym).contains(SymFlags::VALUE_MODULE);
-        let is_exported = self.is_exported_var_decl(file, written);
         let mut first = None;
         for (of, decl) in self.files().decls(sym) {
             match decl {
@@ -1151,9 +1151,7 @@ impl Checker<'_> {
                     if other.is_some_and(|d| self.hir(of)[d].kind != VarKind::Var) {
                         return own;
                     }
-                    if first.is_none()
-                        && other.is_some_and(|d| self.is_exported_var_decl(of, d)) == is_exported
-                    {
+                    if first.is_none() && self.is_symbol_of_declaration(sym, (of, decl)) {
                         first = Some((of, name));
                     }
                 }
@@ -1175,35 +1173,15 @@ impl Checker<'_> {
         }
     }
 
-    /// `declareModuleMember`: whether the namespace or module the declaration `d` is written in exports it.
-    fn is_exported_var_decl(&self, file: FileId, d: VarDeclId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if hir[d].flags.contains(Flags::EXPORT) {
-            return true;
-        }
-        let stmt = bound.var_stmt[d.idx()];
-        if stmt.is_none() {
-            return false;
-        }
-        // `NodeFlagsExportContext`: what is ambient and has no export statement exports all there is in it.
-        let statements = match bound.stmt_parent[stmt.idx()] {
-            Parent::Module(m)
-                if hir[m].flags.contains(Flags::AMBIENT) || hir.kind == FileKind::Declaration =>
-            {
-                hir[m].body
-            }
-            Parent::File if hir.kind == FileKind::Declaration && hir.has_module_syntax => hir.body,
-            _ => return false,
-        };
-        !hir.ids(statements).any(|s| {
-            matches!(
-                hir[s].kind,
-                StmtKind::ExportNamed(_)
-                    | StmtKind::ExportStar { .. }
-                    | StmtKind::ExportAssign(_)
-                    | StmtKind::ExportDefault(_)
-            )
-        })
+    /// `getSymbolOfDeclaration(declaration) == sym`. The local symbol of a module or a namespace also lists what is exported under its
+    /// name, which adds no value to it and is never its `ValueDeclaration`.
+    fn is_symbol_of_declaration(
+        &self,
+        sym: Sym,
+        (file, decl): (FileId, crate::bind::Decl),
+    ) -> bool {
+        let own = self.bound(file).symbol_of_declaration(decl);
+        own.is_some() && self.files().sym(file, own) == sym
     }
 
     /// `getTypeFromImportTypeNode`: the symbol `import("spec").A.B` names as a type. `None` if the module or a name is not found.
@@ -1492,7 +1470,7 @@ impl Checker<'_> {
                 .params
                 .iter()
                 .map(|p| hir[p].ty)
-                .chain([func.ret, func.this_ty])
+                .chain([func.ret, func.this_ty(hir)])
             {
                 if x.is_some() {
                     parents[x.idx()] = me;

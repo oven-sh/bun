@@ -434,20 +434,6 @@ pub struct FunctionBody {
     pub stmts: StoreSlice<Stmt>,
 }
 
-/// The `this` parameter of a signature: its type, if it has one, and where its name is.
-#[derive(Copy, Clone)]
-pub struct ThisParam {
-    pub ty: TypeId,
-    pub loc: Loc,
-}
-
-impl ThisParam {
-    pub const NONE: ThisParam = ThisParam {
-        ty: TypeId::NONE,
-        loc: Loc::EMPTY,
-    };
-}
-
 /// `<T>(this: A, b: B): R`
 #[derive(Copy, Clone)]
 pub struct Signature {
@@ -455,7 +441,6 @@ pub struct Signature {
     pub flags: Flags,
     pub type_params: Span<TypeParam>,
     pub params: Span<Param>,
-    pub this_param: ThisParam,
     pub return_type: TypeId,
     /// `get name() { .. }` in a type, which is an error.
     pub body: Option<FunctionBody>,

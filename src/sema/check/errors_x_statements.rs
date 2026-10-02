@@ -146,7 +146,7 @@ fn why_no_reference(hir: &File, mut e: ExprId, codes: [u32; 2]) -> Option<u32> {
 }
 
 /// A `with` statement is kept as a block of its object and its body, put where the keyword is.
-fn is_with_statement(hir: &File, s: StmtId) -> bool {
+pub(super) fn is_with_statement(hir: &File, s: StmtId) -> bool {
     matches!(hir[s].kind, StmtKind::Block(list) if list.len() == 2)
         && is_word_at(&hir.text, hir[s].pos as usize, b"with")
 }
@@ -1665,6 +1665,9 @@ impl Checker<'_> {
         // `checkExternalImportOrExportDeclaration` reports 1141 for a module specifier that is no string literal and returns.
         for &specifier in &hir.specifier_expressions {
             let range = self.start_of(file, specifier)..self.end_of_expr(file, specifier);
+            self.never_checked
+                .borrow_mut()
+                .push((range.start, range.end));
             out.retain(|d| {
                 !range.contains(&d.start)
                     || d.code == 1141
@@ -1682,6 +1685,7 @@ impl Checker<'_> {
                     || is_said_by_the_parser(d.code)
                         && hir.early_errors.contains(&(d.start, d.code))
             });
+            self.never_checked.borrow_mut().append(&mut skipped);
         }
     }
 }

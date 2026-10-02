@@ -128,7 +128,9 @@ impl<'p> Checker<'p> {
         match self.data(ty) {
             TypeData::UnresolvedName { .. } => tf::ANY,
             TypeData::Intrinsic(intrinsic) => match intrinsic {
-                Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error => tf::ANY,
+                Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error | Intrinsic::Auto => {
+                    tf::ANY
+                }
                 Intrinsic::Unknown => tf::UNKNOWN,
                 Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared => {
                     tf::UNDEFINED
@@ -177,6 +179,8 @@ impl<'p> Checker<'p> {
         match self.data(ty) {
             TypeData::Union(members) => out.extend_from_slice(members),
             TypeData::Intrinsic(Intrinsic::Never) => {}
+            // `TypeFlagsAny`: the union is `anyType`.
+            TypeData::Intrinsic(Intrinsic::Auto) => out.push(TypeId::ANY),
             _ => out.push(ty),
         }
     }
@@ -194,7 +198,7 @@ impl<'p> Checker<'p> {
             [] => return TypeId::NEVER,
             [one] => return one,
             // `addTypeToUnion` sets `TypeFlagsIncludesError`: only a list of one type is returned as it is.
-            [a, b] if a == b && !self.is_error_type(a) => return a,
+            [a, b] if a == b && !self.is_error_type(a) && a != TypeId::AUTO => return a,
             [a, b] if merge_constrained => Some(if a < b { (a, b) } else { (b, a) }),
             _ => None,
         };
@@ -230,6 +234,7 @@ impl<'p> Checker<'p> {
         if !self.p.files.options.strict_null_checks {
             members.retain(|m| !m.is_undefined() && !m.is_null());
         }
+        self.sort_types(&mut members);
         match members[..] {
             [] => TypeId::NEVER,
             [only] => only,
@@ -372,6 +377,8 @@ impl<'p> Checker<'p> {
                 }
             }
         }
+        // So far they were in the order of their ids.
+        self.sort_types(&mut members);
         let union = match members[..] {
             [] => TypeId::NEVER,
             [only] => only,
@@ -380,7 +387,7 @@ impl<'p> Checker<'p> {
         (union, is_plain)
     }
 
-    /// The end of `getUnionTypeWorker`: the union of `members`, which was made of `given`. It has a denormalized `origin` where some of
+    /// The end of `getUnionTypeWorker`: the union of `members`, in order, which was made of `given`. It has a denormalized `origin` where some of
     /// `given` are unions that have a name, or were made of such, and no member is in two of them.
     fn union_of_named_unions(&self, given: &[TypeId], members: &[TypeId]) -> TypeId {
         let mut named: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
@@ -399,11 +406,7 @@ impl<'p> Checker<'p> {
         let mut origin: Vec<TypeId> = members
             .iter()
             .copied()
-            .filter(|m| {
-                !named
-                    .iter()
-                    .any(|&u| self.parts(u).binary_search(m).is_ok())
-            })
+            .filter(|m| !named.iter().any(|&u| self.contains_type(self.parts(u), *m)))
             .collect();
         if let [only] = named[..]
             && origin.is_empty()
@@ -412,9 +415,9 @@ impl<'p> Checker<'p> {
         }
         let in_named: usize = named.iter().map(|&u| self.parts(u).len()).sum();
         let origin = if in_named + origin.len() == members.len() {
-            // The order they were given in is no part of what the union is.
-            named.sort_unstable();
+            // `insertType`
             origin.extend_from_slice(&named);
+            self.sort_types(&mut origin);
             UnionOrigin::Union(origin.into())
         } else {
             UnionOrigin::None
@@ -712,12 +715,13 @@ impl<'p> Checker<'p> {
         if keep.iter().all(|&k| k) {
             return union;
         }
-        let kept: Vec<TypeId> = members
+        let mut kept: Vec<TypeId> = members
             .iter()
             .zip(&keep)
             .filter(|(_, k)| **k)
             .map(|(&m, _)| m)
             .collect();
+        self.sort_types(&mut kept);
         match kept[..] {
             [] => TypeId::NEVER,
             [only] => only,
@@ -771,7 +775,7 @@ impl<'p> Checker<'p> {
                             let left: Vec<TypeId> = origin
                                 .iter()
                                 .copied()
-                                .filter(|u| self.is_union(*u) || kept.binary_search(u).is_ok())
+                                .filter(|u| self.is_union(*u) || kept.contains(u))
                                 .collect();
                             if origin.len() - left.len() == members.len() - kept.len() {
                                 if let [only] = left[..] {
@@ -1317,7 +1321,7 @@ impl<'p> Checker<'p> {
                 // Looked at with an earlier union.
                 if unions[..k]
                     .iter()
-                    .any(|&earlier| self.parts(earlier).binary_search(&t).is_ok())
+                    .any(|&earlier| self.contains_type(self.parts(earlier), t))
                 {
                     continue;
                 }
@@ -1349,7 +1353,7 @@ impl<'p> Checker<'p> {
     /// `eachUnionContains`: `"a"` is in a union that has `string`.
     fn each_union_contains(&self, unions: &[TypeId], t: TypeId) -> bool {
         for &union in unions {
-            let has = |wanted: TypeId| self.parts(union).binary_search(&wanted).is_ok();
+            let has = |wanted: TypeId| self.contains_type(self.parts(union), wanted);
             if has(t) {
                 continue;
             }
@@ -1512,14 +1516,25 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `compareTypeNames`
+    /// `compareSymbols`, as far as the first declarations go.
+    fn compare_symbols(&self, s: Sym, t: Sym) -> std::cmp::Ordering {
+        let place = |symbol: Sym| {
+            let (_, file, pos) = self.symbol_place(symbol)?;
+            Some(self.place_in_program_order(file, pos))
+        };
+        some_first(place(s), place(t))
+    }
+
+    /// `compareTypeNames`. Two aliases of one name go by their symbols, and an alias comes before another symbol of its name: there
+    /// `CompareTypes` goes on to what the types are made of, and is no order.
     fn compare_type_names(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         let (x, y) = (self.alias_of_type(a), self.alias_of_type(b));
         let symbol = |alias: &Option<(Sym, Vec<TypeId>)>| alias.as_ref().map(|alias| alias.0);
         some_first(self.type_name(a, symbol(&x)), self.type_name(b, symbol(&y))).then_with(
             || match (&x, &y) {
                 (Some((s, x)), Some((t, y))) if s == t => self.compare_type_lists(x, y),
-                _ => std::cmp::Ordering::Equal,
+                (Some((s, _)), Some((t, _))) => self.compare_symbols(*s, *t),
+                _ => y.is_some().cmp(&x.is_some()),
             },
         )
     }
@@ -1545,7 +1560,8 @@ impl<'p> Checker<'p> {
         if a == b {
             return Equal;
         }
-        let by_flags = self.sort_order_flags(a).cmp(&self.sort_order_flags(b));
+        let flags = self.sort_order_flags(a);
+        let by_flags = flags.cmp(&self.sort_order_flags(b));
         if by_flags.is_ne() {
             return by_flags;
         }
@@ -1575,16 +1591,28 @@ impl<'p> Checker<'p> {
             (self.data(a), self.data(b)),
             (TypeData::Ref { target: s, .. }, TypeData::Ref { target: t, .. }) if s == t
         );
-        let by_symbol = self
-            .compare_type_names(a, b)
-            .then_with(|| match are_of_one_symbol {
-                true => Equal,
-                false => some_first(place(a), place(b)),
-            })
-            .then_with(|| originating_import(a).cmp(&originating_import(b)))
-            .then_with(|| is_no_reference(a).cmp(&is_no_reference(b)));
-        if by_symbol.is_ne() {
-            return by_symbol;
+        // The other kinds have no alias, no name and no symbol.
+        const NAMED: u32 = tf::OBJECT
+            | tf::UNION
+            | tf::INTERSECTION
+            | tf::INDEXED_ACCESS
+            | tf::CONDITIONAL
+            | tf::TYPE_PARAMETER
+            | tf::STRING_MAPPING
+            | tf::ENUM
+            | tf::UNIQUE_ES_SYMBOL;
+        if flags & NAMED != 0 {
+            let by_symbol = self
+                .compare_type_names(a, b)
+                .then_with(|| match are_of_one_symbol {
+                    true => Equal,
+                    false => some_first(place(a), place(b)),
+                })
+                .then_with(|| originating_import(a).cmp(&originating_import(b)))
+                .then_with(|| is_no_reference(a).cmp(&is_no_reference(b)));
+            if by_symbol.is_ne() {
+                return by_symbol;
+            }
         }
         match (self.data(a), self.data(b)) {
             (TypeData::Ref { target: s, args: x }, TypeData::Ref { target: t, args: y }) => {
@@ -1622,11 +1650,9 @@ impl<'p> Checker<'p> {
                 let (o, p) = (self.origin(a), self.origin(b));
                 flags(o).cmp(&flags(p)).then_with(|| match (o, p) {
                     (UnionOrigin::Keyof(x), UnionOrigin::Keyof(y)) => types(*x, *y),
-                    (UnionOrigin::Union(x), UnionOrigin::Union(y)) => {
-                        lists(&self.in_order(x), &self.in_order(y))
-                    }
-                    (UnionOrigin::Intersection(x), UnionOrigin::Intersection(y)) => lists(x, y),
-                    _ => lists(&self.parts_in_order(a), &self.parts_in_order(b)),
+                    (UnionOrigin::Union(x), UnionOrigin::Union(y))
+                    | (UnionOrigin::Intersection(x), UnionOrigin::Intersection(y)) => lists(x, y),
+                    _ => lists(self.parts(a), self.parts(b)),
                 })
             }
             // Its members are as written.
@@ -1650,11 +1676,23 @@ impl<'p> Checker<'p> {
                 is_zero(*y).cmp(&is_zero(*x))
             }
             (TypeData::Marker(x), TypeData::Marker(y)) => x.cmp(y),
+            // By name, then by id. They are made with the checker, in this order.
+            (TypeData::Intrinsic(_), TypeData::Intrinsic(_)) => a.cmp(&b),
             (TypeData::Keyof(x), TypeData::Keyof(y))
-            | (TypeData::Substitution { base: x, .. }, TypeData::Substitution { base: y, .. })
+            | (TypeData::EvolvingArray(x), TypeData::EvolvingArray(y))
             | (TypeData::StringMapping { ty: x, .. }, TypeData::StringMapping { ty: y, .. }) => {
                 types(*x, *y)
             }
+            (
+                TypeData::Substitution {
+                    base: x,
+                    constraint: c,
+                },
+                TypeData::Substitution {
+                    base: y,
+                    constraint: d,
+                },
+            ) => types(*x, *y).then_with(|| types(*c, *d)),
             (
                 TypeData::IndexedAccess {
                     obj: o, index: i, ..
@@ -1673,31 +1711,56 @@ impl<'p> Checker<'p> {
                     .cmp(t.iter().map(text))
                     .then_with(|| lists(x, y))
             }
-            (TypeData::Anon { mapper: x, .. }, TypeData::Anon { mapper: y, .. })
-            | (TypeData::Fns { mapper: x, .. }, TypeData::Fns { mapper: y, .. })
-            | (TypeData::Cond { mapper: x, .. }, TypeData::Cond { mapper: y, .. }) => {
-                self.compare_type_mappers(*x, *y)
+            // `ObjectFlagsObjectTypeKindMask`, then `compareTypeMappers`: what has none comes last.
+            (x, y) => {
+                let kind = |data: &TypeData| match data {
+                    TypeData::Anon {
+                        origin: Origin::Mapped(..),
+                        ..
+                    } => 1u8,
+                    TypeData::ReverseMapped { .. } => 2,
+                    TypeData::EvolvingArray(_) => 3,
+                    _ => 0,
+                };
+                let mapper = |data: &TypeData| match *data {
+                    TypeData::Anon { mapper, .. }
+                    | TypeData::Fns { mapper, .. }
+                    | TypeData::Cond { mapper, .. }
+                    | TypeData::TypeParam(_, _, mapper) => Some(mapper),
+                    _ => None,
+                };
+                kind(x)
+                    .cmp(&kind(y))
+                    .then_with(|| match (mapper(x), mapper(y)) {
+                        (Some(x), Some(y)) => self.compare_type_mappers(x, y),
+                        (x, y) => y.is_some().cmp(&x.is_some()),
+                    })
             }
-            _ => Equal,
         }
     }
 
-    /// `CompareTypes`: the order TypeScript keeps the members of a union in.
+    /// `CompareTypes`: the order the members of a union, and of an origin that is a union, are kept in. It goes by nothing but the two
+    /// types: the same members have to come to the same union whoever makes it, and whenever.
     pub fn compare_types(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         self.compare_types_without_ids(a, b).then(a.cmp(&b))
     }
 
-    /// The members of a union in the order TypeScript goes through them. They are stored by id.
-    pub fn parts_in_order(&self, ty: TypeId) -> Vec<TypeId> {
-        self.in_order(self.parts(ty))
+    fn sort_types(&self, types: &mut [TypeId]) {
+        types.sort_by(|&a, &b| self.compare_types(a, b));
     }
 
-    /// `types` in that order.
-    pub(super) fn in_order(&self, types: &[TypeId]) -> Vec<TypeId> {
-        let mut types = types.to_vec();
-        if types.len() > 1 {
-            types.sort_by(|&a, &b| self.compare_types(a, b));
+    /// `containsType`, of the members of a union.
+    pub(super) fn contains_type(&self, types: &[TypeId], t: TypeId) -> bool {
+        if types.len() <= 8 {
+            return types.contains(&t);
         }
         types
+            .binary_search_by(|&member| self.compare_types(member, t))
+            .is_ok()
+    }
+
+    /// `parts`, to keep.
+    pub fn parts_in_order(&self, ty: TypeId) -> Vec<TypeId> {
+        self.parts(ty).to_vec()
     }
 }

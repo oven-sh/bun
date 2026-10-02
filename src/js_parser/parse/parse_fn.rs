@@ -718,6 +718,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Neither decorators nor modifiers may be applied to "this" parameters.
             p.lexer
                 .ts_error(bun_ast::Range { loc: start, len: 0 }, 1433);
+            p.mark_type_syntax(loc, Mark::DeclarationStart, start);
         }
         if is_first {
             p.note_stray_decorators(decorators.slice(), loc);

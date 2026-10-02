@@ -641,12 +641,17 @@ impl Builder<'_> {
             flags: signature_flags,
             type_params,
             params,
-            this_param,
             return_type,
             body,
             open_paren_loc,
             loc,
         } = self.ts[id];
+        let type_params = self.clone_type_params(type_params);
+        let params = self.clone_params(params);
+        let (this_param, params) = match kind {
+            ts::SignatureKind::IndexSignature => (ParamId::NONE, params),
+            _ => self.file.split_this_parameter(params),
+        };
         let func = Func {
             kind: match kind {
                 ts::SignatureKind::Method => FnKind::Method,
@@ -661,11 +666,9 @@ impl Builder<'_> {
             flags: flags(signature_flags),
             name,
             name_pos: pos(loc),
-            type_params: self.clone_type_params(type_params),
-            params: self.clone_params(params),
-            this_ty: self.clone_type(this_param.ty),
-            this_pos: this_param.loc.start as u32,
-            this_name_end: (this_param.loc.start as u32).saturating_add(4),
+            type_params,
+            params,
+            this_param,
             ret: self.clone_type(return_type),
             body: FnBody::None,
             anchor: pos(open_paren_loc),

@@ -696,6 +696,7 @@ impl<'p> Checker<'p> {
                                 ..Default::default()
                             };
                             c.add_all_expandos(&mut b, file, named, keyed);
+                            c.get_named_members(&mut b.shape.props, |_| true, &[]);
                             shape = b.shape;
                         }
                     }
@@ -1568,14 +1569,34 @@ impl<'p> Checker<'p> {
         } else {
             Vec::new()
         };
-        let mut keyed: Vec<(bool, (u8, u32, u32), Prop)> = Vec::with_capacity(b.shape.props.len());
-        for (i, prop) in std::mem::take(&mut b.shape.props).into_iter().enumerate() {
-            let is_inherited = i >= own && !self.is_within_ranges_of_declarations(&prop, &ranges);
-            keyed.push((is_inherited, self.place_in_program(&prop), prop));
-        }
-        keyed.sort_by(|x, y| (x.0, x.1).cmp(&(y.0, y.1)));
-        b.shape.props = keyed.into_iter().map(|entry| entry.2).collect();
+        self.get_named_members(&mut b.shape.props, |i| i < own, &ranges);
         b.shape
+    }
+
+    /// `getNamedMembers`: `props` in the order TypeScript keeps the properties of a resolved type in. What the declarations of a class or
+    /// an interface contain comes first, then the rest, each in the order of `compareSymbols`: by where the first declaration is, what
+    /// has none last, by name. `is_contained`: whether the property at a position is known to be contained. Of the others
+    /// `isDeclarationContainedBy` is asked, with `ranges`. For what is no class or interface everything is.
+    pub(super) fn get_named_members(
+        &mut self,
+        props: &mut Vec<Prop>,
+        is_contained: impl Fn(usize) -> bool,
+        ranges: &[(u32, u32)],
+    ) {
+        if props.len() < 2 {
+            return;
+        }
+        let atoms = &self.files().atoms;
+        let mut keyed = Vec::with_capacity(props.len());
+        for (i, prop) in std::mem::take(props).into_iter().enumerate() {
+            let is_outside =
+                !is_contained(i) && !self.is_within_ranges_of_declarations(&prop, ranges);
+            let (nowhere, file, pos) = self.order_of_property(&prop);
+            let place = self.place_in_program_order(file, pos);
+            keyed.push(((is_outside, nowhere, place, atoms.bytes(prop.name)), prop));
+        }
+        keyed.sort_by(|x, y| x.0.cmp(&y.0));
+        props.extend(keyed.into_iter().map(|entry| entry.1));
     }
 
     /// `Loc` of each declaration of the class or interface `sym`.
@@ -1626,14 +1647,6 @@ impl<'p> Checker<'p> {
             _ => return false,
         };
         ranges.iter().any(|&(from, to)| from <= start && end <= to)
-    }
-
-    /// `compareSymbols`, of properties: by the file the first declaration is in, then by where it is there. What has none comes last.
-    fn place_in_program(&mut self, prop: &Prop) -> (u8, u32, u32) {
-        match self.order_of_property(prop) {
-            (0, file, pos) => (0, self.files().rank_of_file(file), pos),
-            (nowhere, ..) => (nowhere, 0, 0),
-        }
     }
 
     /// `declareSymbolEx`: a class or an interface that is refused the name is listed with what has it, and is a symbol of its own.
@@ -1691,7 +1704,16 @@ impl<'p> Checker<'p> {
         self.uncertain = uncertain;
         let holds = self.leave();
         if self.left_a_circle {
-            self.p.circular_base_constructors.insert(class, ());
+            // `GetErrorRangeForNode`: the name, or the first token of a class expression without one.
+            let declaration = &self.hir(file)[c];
+            let start = if declaration.name.is_some() {
+                declaration.name_pos
+            } else {
+                declaration.pos
+            };
+            let at = (file, start, self.end_of_token_at(file, start));
+            let err = self.new_diagnostic(at, 2506, &[Arg::Sym(class)]);
+            self.commit(err);
             return self.p.base_constructor_types.insert(class, TypeId::ERROR);
         }
         // `nullWideningType`, which is `nullType` under `strictNullChecks`.
@@ -1705,6 +1727,28 @@ impl<'p> Checker<'p> {
         {
             constructor
         } else {
+            let extends = self.hir(file)[c].extends;
+            if holds
+                && !self.bound(file).is_unchecked(extends.idx())
+                && !self.is_uncertain(file, extends)
+            {
+                let at = (
+                    file,
+                    self.start_of(file, extends),
+                    self.end_of_expr(file, extends),
+                );
+                let mut err = self.new_diagnostic(at, 2507, &[Arg::Type(constructor)]);
+                if let TypeData::TypeParam(of, tp, _) = *self.data(constructor) {
+                    let constraint = self.constraint_of_type_param(constructor);
+                    let first = constraint.and_then(|t| self.signatures(t, true).first().copied());
+                    let returned = first.map_or(TypeId::UNKNOWN, |sig| self.sig_return(sig));
+                    let at = self.place_of_type_parameter_declaration(of, tp);
+                    let args = [Arg::Atom(self.hir(of)[tp].name), Arg::Type(returned)];
+                    let related = self.new_diagnostic(at, 2735, &args);
+                    err.add_related_info(related);
+                }
+                self.commit(err);
+            }
             TypeId::ERROR
         };
         // What was settled meanwhile stands.
@@ -2049,6 +2093,9 @@ impl<'p> Checker<'p> {
 
     fn build_origin_shape(&mut self, origin: Origin) -> Shape {
         let mut b = Builder::default();
+        // What `get_named_members` is told. Only the static side of a class has a container.
+        let mut contained = [0..usize::MAX, 0..0];
+        let mut ranges = Vec::new();
         match origin {
             Origin::TypeLiteral(file, node) => {
                 if let TypeNodeKind::Object(members) = self.hir(file)[node].kind {
@@ -2156,7 +2203,11 @@ impl<'p> Checker<'p> {
                     source: PropSource::Type(instance),
                     mapper: MapperId::IDENTITY,
                 });
+                let exports_from = b.shape.props.len();
                 self.add_namespace_exports(&mut b, sym);
+                // The static members, and what a merged namespace exports. Nothing declares `prototype`.
+                contained = [0..own, exports_from..b.shape.props.len()];
+                ranges = self.ranges_of_declarations(sym);
                 // Static members are inherited too.
                 let base = self.base_constructor_type_of_class(sym);
                 // `getPropertiesOfType`: a type variable answers with what it extends.
@@ -2340,6 +2391,7 @@ impl<'p> Checker<'p> {
                     .map(|(&name, &sym)| (name, sym))
                     .collect();
                 globals.sort_unstable();
+                let global_this = self.files().global_this_symbol;
                 for (name, sym) in globals {
                     // Whether it is a value is asked of what it stands for; how it is scoped, of the name itself.
                     if self.symbol_is_value(sym)
@@ -2347,33 +2399,32 @@ impl<'p> Checker<'p> {
                             SymFlags::BLOCK_SCOPED_VARIABLE | SymFlags::CLASS | SymFlags::ENUM,
                         )
                     {
+                        // `globalThisSymbol` is made with `CheckFlagsReadonly`.
+                        let flags = if sym == global_this {
+                            PropFlags::READONLY
+                        } else {
+                            PropFlags::empty()
+                        };
                         b.add(Prop {
                             name,
-                            flags: PropFlags::empty(),
+                            flags,
                             source: PropSource::Symbol(sym),
                             mapper: MapperId::IDENTITY,
                         });
                     }
                 }
-                let this = self.intern(TypeData::Anon {
-                    origin: Origin::GlobalThis,
+                // `undefinedSymbol`
+                b.add(Prop {
+                    name: known::undefined,
+                    flags: PropFlags::empty(),
+                    source: PropSource::Type(TypeId::UNDEFINED),
                     mapper: MapperId::IDENTITY,
                 });
-                // Of the two, only `globalThis` is made with `CheckFlagsReadonly`.
-                for (name, ty, flags) in [
-                    (known::globalThis, this, PropFlags::READONLY),
-                    (known::undefined, TypeId::UNDEFINED, PropFlags::empty()),
-                ] {
-                    b.add(Prop {
-                        name,
-                        flags,
-                        source: PropSource::Type(ty),
-                        mapper: MapperId::IDENTITY,
-                    });
-                }
             }
             Origin::Mapped(..) => {}
         }
+        let is_contained = |i: usize| contained.iter().any(|range| range.contains(&i));
+        self.get_named_members(&mut b.shape.props, is_contained, &ranges);
         b.shape
     }
 
@@ -3170,7 +3221,7 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        self.sort_named_members(&mut b.shape.props);
+        self.get_named_members(&mut b.shape.props, |_| true, &[]);
         // An index signature holds for the result if it holds for both. (Nothing at all on the left does not count.)
         let left_is_nothing = left == TypeId::EMPTY_OBJECT;
         let mut index = Vec::new();

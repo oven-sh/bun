@@ -1,69 +1,77 @@
-//! The order TypeScript looks at a file in. `checkSourceFile`: the statements from top to bottom, each with all that is in it, then
-//! what was put off on the way (`checkDeferredNodes`): the bodies of function expressions and the members of class expressions.
+//! `checkSourceFile`: the statements of a file from top to bottom, each with all that is in it, then what was put off on the way
+//! (`checkDeferredNodes`): the bodies of function expressions and the members of class expressions.
 //!
-//! Nothing is reported here. Every question is asked for the first time in the place TypeScript asks it, so that where the answer
-//! depends on what is under way, it is the same answer. The passes that report errors find it kept.
+//! A function here has the name of the function of checker.go it is the port of. It visits what that one visits, in that order, and
+//! returns where that one returns. So every question is asked for the first time in the place TypeScript asks it, and where the
+//! answer depends on what is under way, it is the same answer.
 
+use super::errors_x_statements::is_with_statement;
 use super::*;
 use crate::bind::Parent;
-use std::collections::VecDeque;
 
-enum PutOff {
-    Function(FnId),
+/// `deferredNodes`
+pub(super) enum DeferredNode {
+    FunctionExpression(FnId),
     ClassExpression(ClassId),
 }
 
 impl Checker<'_> {
-    pub(super) fn look_at_file_in_order(&mut self, file: FileId) {
-        let hir = self.hir(file);
+    /// `checkSourceFile`
+    pub(super) fn check_source_file(&mut self, file: FileId) {
         let uncertain = self.uncertain;
-        let mut put_off = VecDeque::new();
-        for s in hir.ids(hir.body) {
-            self.statement_in_order(file, s, &mut put_off);
-        }
-        // `checkDeferredNodes`: what is put off meanwhile goes to the end of the line.
-        while let Some(next) = put_off.pop_front() {
-            if self.timed_out() {
-                break;
-            }
-            match next {
-                // `checkFunctionExpressionOrObjectLiteralMethodDeferred`
-                PutOff::Function(func) => {
-                    if hir[func].ret.is_none() {
-                        self.return_type_of_fn(file, func);
-                    }
-                    self.body_in_order(file, func, &mut put_off);
-                }
-                // `checkClassExpressionDeferred`
-                PutOff::ClassExpression(class) => self.members_in_order(file, class, &mut put_off),
-            }
-        }
+        self.check_source_elements(file, self.hir(file).body);
+        self.check_deferred_nodes(file);
         self.uncertain = uncertain;
     }
 
-    fn body_in_order(&mut self, file: FileId, func: FnId, put_off: &mut VecDeque<PutOff>) {
+    /// `checkSourceElements`
+    fn check_source_elements(&mut self, file: FileId, statements: IdList<StmtId>) {
+        for s in self.hir(file).ids(statements) {
+            self.check_source_element(file, s);
+        }
+    }
+
+    /// `checkDeferredNodes`: what is put off meanwhile goes to the end of the line.
+    fn check_deferred_nodes(&mut self, file: FileId) {
         let hir = self.hir(file);
-        match hir[func].body {
-            FnBody::Block(list) => {
-                for s in hir.ids(list) {
-                    self.statement_in_order(file, s, put_off);
-                }
+        while let Some(node) = self.deferred_nodes.pop_front() {
+            if self.timed_out() {
+                break;
             }
-            FnBody::Expr(e) => self.expression_in_order(file, e, put_off),
+            match node {
+                // `checkFunctionExpressionOrObjectLiteralMethodDeferred`
+                DeferredNode::FunctionExpression(func) => {
+                    if hir[func].ret.is_none() {
+                        self.return_type_of_fn(file, func);
+                    }
+                    self.check_function_body(file, func);
+                }
+                // `checkClassExpressionDeferred`
+                DeferredNode::ClassExpression(class) => self.check_class_members(file, class),
+            }
+        }
+        self.deferred_nodes.clear();
+    }
+
+    /// `checkSourceElement(node.Body())`, `checkExpressionCached(node.Body())`
+    fn check_function_body(&mut self, file: FileId, func: FnId) {
+        match self.hir(file)[func].body {
+            FnBody::Block(list) => self.check_source_elements(file, list),
+            FnBody::Expr(e) => self.check_expression(file, e),
             FnBody::None => {}
         }
     }
 
     /// `checkSignatureDeclaration`
-    fn signature_in_order(&mut self, file: FileId, func: FnId, put_off: &mut VecDeque<PutOff>) {
+    fn check_signature_declaration(&mut self, file: FileId, func: FnId) {
         let hir = self.hir(file);
         for p in hir[func].params.iter() {
             let param = &hir[p];
             if param.ty.is_some() {
                 self.type_from_node(file, param.ty);
             }
-            self.pattern_in_order(file, param.pat, put_off);
-            self.expression_in_order(file, param.default, put_off);
+            self.check_binding_name(file, param.pat);
+            self.check_expression(file, param.default);
         }
         if hir[func].ret.is_some() {
             self.type_from_node(file, hir[func].ret);
@@ -71,21 +79,16 @@ impl Checker<'_> {
     }
 
     /// `checkFunctionOrMethodDeclaration`, `checkConstructorDeclaration`, `checkAccessorDeclaration`: the body is not put off.
-    fn declared_function_in_order(
-        &mut self,
-        file: FileId,
-        func: FnId,
-        put_off: &mut VecDeque<PutOff>,
-    ) {
+    fn check_function_or_method_declaration(&mut self, file: FileId, func: FnId) {
         if func.is_none() {
             return;
         }
-        self.signature_in_order(file, func, put_off);
-        self.body_in_order(file, func, put_off);
+        self.check_signature_declaration(file, func);
+        self.check_function_body(file, func);
     }
 
-    /// `checkVariableLikeDeclaration`, of the names in a pattern.
-    fn pattern_in_order(&mut self, file: FileId, pat: PatId, put_off: &mut VecDeque<PutOff>) {
+    /// `checkVariableLikeDeclaration`, as far as `node.Name()` goes: a name, or the elements of a pattern (`checkBindingElement`).
+    fn check_binding_name(&mut self, file: FileId, pat: PatId) {
         if pat.is_none() {
             return;
         }
@@ -98,85 +101,101 @@ impl Checker<'_> {
             PatKind::Object(props) => {
                 for p in props.iter() {
                     if let PropKey::Computed(key) = hir[p].key {
-                        self.expression_in_order(file, key, put_off);
+                        self.check_expression(file, key);
                     }
-                    self.pattern_in_order(file, hir[p].value, put_off);
-                    self.expression_in_order(file, hir[p].default, put_off);
+                    self.check_binding_name(file, hir[p].value);
+                    self.check_expression(file, hir[p].default);
                 }
             }
             PatKind::Array(elems) => {
                 for e in elems.iter() {
-                    self.pattern_in_order(file, hir[e].pat, put_off);
-                    self.expression_in_order(file, hir[e].default, put_off);
+                    self.check_binding_name(file, hir[e].pat);
+                    self.check_expression(file, hir[e].default);
                 }
             }
         }
     }
 
-    /// `checkClassLikeDeclaration`
-    fn class_in_order(&mut self, file: FileId, class: ClassId, put_off: &mut VecDeque<PutOff>) {
+    /// `checkVariableDeclarationList`
+    fn check_variable_declaration_list(&mut self, file: FileId, decls: Span<VarDeclId>) {
+        let hir = self.hir(file);
+        for d in decls.iter() {
+            let decl = &hir[d];
+            if decl.ty.is_some() {
+                self.type_from_node(file, decl.ty);
+            }
+            self.check_binding_name(file, decl.pat);
+            self.check_expression(file, decl.init);
+        }
+    }
+
+    /// `checkClassLikeDeclaration`, up to the members.
+    fn check_class_like_declaration(&mut self, file: FileId, class: ClassId) {
         let symbol = self.bound(file).class_symbol[class.idx()];
         if symbol.is_some() {
             let sym = self.files().sym(file, symbol);
             self.declared_type(sym);
             self.type_of_symbol(sym);
-            self.expression_in_order(file, self.hir(file)[class].extends, put_off);
+            self.check_expression(file, self.hir(file)[class].extends);
             self.base_types(sym);
         }
     }
 
-    fn members_in_order(&mut self, file: FileId, class: ClassId, put_off: &mut VecDeque<PutOff>) {
+    /// `checkSourceElements(node.Members())` of `checkClassLikeDeclaration`
+    fn check_class_members(&mut self, file: FileId, class: ClassId) {
         let hir = self.hir(file);
         for m in hir[class].members.iter() {
             let member = &hir[m];
             if let PropKey::Computed(key) = member.key {
-                self.expression_in_order(file, key, put_off);
+                self.check_expression(file, key);
             }
             if member.ty.is_some() {
                 self.type_from_node(file, member.ty);
             }
-            self.declared_function_in_order(file, member.func, put_off);
-            self.expression_in_order(file, member.init, put_off);
+            self.check_function_or_method_declaration(file, member.func);
+            self.check_expression(file, member.init);
         }
     }
 
-    /// `checkSourceElement`
-    fn statement_in_order(&mut self, file: FileId, s: StmtId, put_off: &mut VecDeque<PutOff>) {
+    /// `checkSourceElement`, of a statement.
+    fn check_source_element(&mut self, file: FileId, s: StmtId) {
         if s.is_none() || self.timed_out() {
             return;
         }
-        let hir = self.hir(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
         match hir[s].kind {
-            StmtKind::Expr(e)
-            | StmtKind::Throw(e)
-            | StmtKind::ExportDefault(e)
-            | StmtKind::ExportAssign(e) => self.expression_in_order(file, e, put_off),
-            // `checkReturnStatement` asks what the function returns before it looks at what is returned.
+            StmtKind::Expr(e) | StmtKind::Throw(e) => self.check_expression(file, e),
+            // `checkExportAssignment`: out of place, or in a namespace, it is not looked at.
+            StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
+                let is_looked_at = match bound.stmt_parent[s.idx()] {
+                    Parent::File => true,
+                    Parent::Module(m) => !matches!(hir[m].name, ModuleName::Ident(_)),
+                    _ => false,
+                };
+                if is_looked_at {
+                    self.check_expression(file, e);
+                }
+            }
+            // `checkReturnStatement`: in no function, or in a static block, what is returned is not looked at. Elsewhere it is asked
+            // what the function returns first.
             StmtKind::Return(e) => {
-                if let Some(func) = self.enclosing_fn(file, Parent::Stmt(s)) {
+                if let Some(func) = self.enclosing_fn(file, Parent::Stmt(s))
+                    && hir[func].kind != FnKind::StaticBlock
+                {
                     self.return_type_of_fn(file, func);
-                }
-                self.expression_in_order(file, e, put_off);
-            }
-            StmtKind::Var(decls) => {
-                for d in decls.iter() {
-                    let decl = &hir[d];
-                    if decl.ty.is_some() {
-                        self.type_from_node(file, decl.ty);
-                    }
-                    self.pattern_in_order(file, decl.pat, put_off);
-                    self.expression_in_order(file, decl.init, put_off);
+                    self.check_expression(file, e);
                 }
             }
-            StmtKind::Fn(func) => self.declared_function_in_order(file, func, put_off),
+            StmtKind::Var(decls) => self.check_variable_declaration_list(file, decls),
+            StmtKind::Fn(func) => self.check_function_or_method_declaration(file, func),
             StmtKind::Class(class) => {
-                self.class_in_order(file, class, put_off);
-                self.members_in_order(file, class, put_off);
+                self.check_class_like_declaration(file, class);
+                self.check_class_members(file, class);
             }
             StmtKind::If { test, yes, no } => {
-                self.expression_in_order(file, test, put_off);
-                self.statement_in_order(file, yes, put_off);
-                self.statement_in_order(file, no, put_off);
+                self.check_expression(file, test);
+                self.check_source_element(file, yes);
+                self.check_source_element(file, no);
             }
             StmtKind::For {
                 init,
@@ -184,39 +203,53 @@ impl Checker<'_> {
                 update,
                 body,
             } => {
-                self.statement_in_order(file, init, put_off);
-                self.expression_in_order(file, test, put_off);
-                self.expression_in_order(file, update, put_off);
-                self.statement_in_order(file, body, put_off);
+                self.check_source_element(file, init);
+                self.check_expression(file, test);
+                self.check_expression(file, update);
+                self.check_source_element(file, body);
             }
-            StmtKind::ForIn { left, expr, body }
-            | StmtKind::ForOf {
+            // `checkForInStatement`: the object first.
+            StmtKind::ForIn { left, expr, body } => {
+                self.check_expression(file, expr);
+                self.check_source_element(file, left);
+                self.check_source_element(file, body);
+            }
+            // `checkForOfStatement`: what is iterated is looked at for the variable (`checkRightHandSideOfForOf`), so not at all
+            // where none is declared, and before what is written in the place of a declaration.
+            StmtKind::ForOf {
                 left, expr, body, ..
             } => {
-                self.statement_in_order(file, left, put_off);
-                self.expression_in_order(file, expr, put_off);
-                self.statement_in_order(file, body, put_off);
+                match hir[left].kind {
+                    StmtKind::Var(decls) if decls.is_empty() => {}
+                    StmtKind::Var(_) => {
+                        self.check_source_element(file, left);
+                        self.check_expression(file, expr);
+                    }
+                    _ => {
+                        self.check_expression(file, expr);
+                        self.check_source_element(file, left);
+                    }
+                }
+                self.check_source_element(file, body);
             }
             StmtKind::While { test, body } => {
-                self.expression_in_order(file, test, put_off);
-                self.statement_in_order(file, body, put_off);
+                self.check_expression(file, test);
+                self.check_source_element(file, body);
             }
             StmtKind::DoWhile { body, test } => {
-                self.statement_in_order(file, body, put_off);
-                self.expression_in_order(file, test, put_off);
+                self.check_source_element(file, body);
+                self.check_expression(file, test);
             }
-            StmtKind::Block(list) => {
-                for s in hir.ids(list) {
-                    self.statement_in_order(file, s, put_off);
-                }
+            // `checkWithStatement`: the object, and not the body.
+            StmtKind::Block(list) if is_with_statement(hir, s) => {
+                self.check_source_element(file, hir.id_at(list, 0));
             }
+            StmtKind::Block(list) => self.check_source_elements(file, list),
             StmtKind::Switch { expr, cases } => {
-                self.expression_in_order(file, expr, put_off);
+                self.check_expression(file, expr);
                 for c in cases.iter() {
-                    self.expression_in_order(file, hir[c].test, put_off);
-                    for s in hir.ids(hir[c].body) {
-                        self.statement_in_order(file, s, put_off);
-                    }
+                    self.check_expression(file, hir[c].test);
+                    self.check_source_elements(file, hir[c].body);
                 }
             }
             StmtKind::Try {
@@ -225,19 +258,15 @@ impl Checker<'_> {
                 finalizer,
                 ..
             } => {
-                self.statement_in_order(file, block, put_off);
-                self.statement_in_order(file, handler, put_off);
-                self.statement_in_order(file, finalizer, put_off);
+                self.check_source_element(file, block);
+                self.check_source_element(file, handler);
+                self.check_source_element(file, finalizer);
             }
-            StmtKind::Labeled { body, .. } => self.statement_in_order(file, body, put_off),
-            StmtKind::Module(module) => {
-                for s in hir.ids(hir[module].body) {
-                    self.statement_in_order(file, s, put_off);
-                }
-            }
+            StmtKind::Labeled { body, .. } => self.check_source_element(file, body),
+            StmtKind::Module(module) => self.check_source_elements(file, hir[module].body),
             StmtKind::Enum(e) => {
                 for m in hir[e].members.iter() {
-                    self.expression_in_order(file, hir[m].init, put_off);
+                    self.check_expression(file, hir[m].init);
                 }
             }
             _ => {}
@@ -320,7 +349,7 @@ impl Checker<'_> {
     }
 
     /// `checkExpression`: `e`, then whatever in it that did not need looking at.
-    fn expression_in_order(&mut self, file: FileId, e: ExprId, put_off: &mut VecDeque<PutOff>) {
+    fn check_expression(&mut self, file: FileId, e: ExprId) {
         if e.is_none() || self.is_stack_low() {
             return;
         }
@@ -332,46 +361,54 @@ impl Checker<'_> {
         match hir[e].kind {
             ExprKind::Template { exprs, .. } | ExprKind::Array(exprs) => {
                 for x in hir.ids(exprs) {
-                    self.expression_in_order(file, x, put_off);
+                    self.check_expression(file, x);
                 }
             }
             ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
-                self.expression_in_order(file, hir[c].callee, put_off);
+                self.check_expression(file, hir[c].callee);
                 for x in hir.ids(hir[c].args) {
-                    self.expression_in_order(file, x, put_off);
+                    self.check_expression(file, x);
                 }
             }
             ExprKind::Object(props) => {
                 for p in props.iter() {
                     if let PropKey::Computed(key) = hir[p].key {
-                        self.expression_in_order(file, key, put_off);
+                        self.check_expression(file, key);
                     }
-                    self.expression_in_order(file, hir[p].value, put_off);
+                    self.check_expression(file, hir[p].value);
                 }
             }
             // `checkFunctionExpressionOrObjectLiteralMethod`: the signature now, and what it returns if something is expected of it.
             ExprKind::Fn(func) => {
-                self.signature_in_order(file, func, put_off);
+                self.check_signature_declaration(file, func);
                 if hir[func].ret.is_none() && self.contextual_signature(file, func).is_some() {
                     self.return_type_of_fn(file, func);
                 }
-                put_off.push_back(PutOff::Function(func));
+                self.deferred_nodes
+                    .push_back(DeferredNode::FunctionExpression(func));
             }
+            // `checkClassExpression`
             ExprKind::Class(class) => {
-                self.class_in_order(file, class, put_off);
-                put_off.push_back(PutOff::ClassExpression(class));
+                self.check_class_like_declaration(file, class);
+                self.deferred_nodes
+                    .push_back(DeferredNode::ClassExpression(class));
+            }
+            // `checkYieldExpression`: outside a generator what is yielded is not looked at.
+            ExprKind::Yield { value, .. } => {
+                if self.containing_generator(file, e).is_some() {
+                    self.check_expression(file, value);
+                }
             }
             ExprKind::Dot { obj: x, .. }
             | ExprKind::Unary { operand: x, .. }
             | ExprKind::Spread(x)
             | ExprKind::Await(x)
-            | ExprKind::Yield { value: x, .. }
             | ExprKind::As { expr: x, .. }
             | ExprKind::Satisfies { expr: x, .. }
             | ExprKind::AsConst(x)
             | ExprKind::NonNull(x)
             | ExprKind::Instantiation { expr: x, .. }
-            | ExprKind::ImportCall(x, _) => self.expression_in_order(file, x, put_off),
+            | ExprKind::ImportCall(x, _) => self.check_expression(file, x),
             ExprKind::Index {
                 obj: a, index: b, ..
             }
@@ -383,21 +420,21 @@ impl Checker<'_> {
                 value: b,
                 ..
             } => {
-                self.expression_in_order(file, a, put_off);
-                self.expression_in_order(file, b, put_off);
+                self.check_expression(file, a);
+                self.check_expression(file, b);
             }
             ExprKind::Cond { test, yes, no } => {
-                self.expression_in_order(file, test, put_off);
-                self.expression_in_order(file, yes, put_off);
-                self.expression_in_order(file, no, put_off);
+                self.check_expression(file, test);
+                self.check_expression(file, yes);
+                self.check_expression(file, no);
             }
             ExprKind::Jsx(jsx) => {
-                self.expression_in_order(file, hir[jsx].tag, put_off);
+                self.check_expression(file, hir[jsx].tag);
                 for p in hir[jsx].attrs.iter() {
-                    self.expression_in_order(file, hir[p].value, put_off);
+                    self.check_expression(file, hir[p].value);
                 }
                 for x in hir.ids(hir[jsx].children) {
-                    self.expression_in_order(file, x, put_off);
+                    self.check_expression(file, x);
                 }
             }
             _ => {}

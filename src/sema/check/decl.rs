@@ -761,7 +761,7 @@ impl<'p> Checker<'p> {
             }
             self.collect_mentions(file, hir[p].ty, out);
         }
-        self.collect_mentions(file, f.this_ty, out);
+        self.collect_mentions(file, f.this_ty(hir), out);
         self.collect_mentions(file, f.ret, out);
     }
 
@@ -3412,7 +3412,10 @@ impl<'p> Checker<'p> {
                 .files()
                 .resolve_name(file, scope, first, SymFlags::VALUE)
             {
-                Some(sym) => self.type_of_symbol(sym),
+                Some(sym) => {
+                    let ty = self.type_of_symbol(sym);
+                    self.convert_auto_to_any(ty)
+                }
                 None => return TypeId::UNRESOLVED,
             }
         };
@@ -3779,7 +3782,7 @@ impl<'p> Checker<'p> {
             _ => return None,
         };
         let f = &self.hir(file)[func];
-        if f.this_ty.is_none() && f.this_pos == u32::MAX {
+        if f.this_param.is_none() {
             return None;
         }
         let declared = self.type_of_this_parameter(file, func);

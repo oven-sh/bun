@@ -281,9 +281,6 @@ pub(crate) fn modifier_error(
 /// What `Builder::parse_parameter_list` read.
 struct ParameterList {
     params: Vec<Param>,
-    /// The type of a `this` parameter, and where its name is.
-    this_ty: TypeNodeId,
-    this_pos: u32,
     /// Where the comma right before the closing token is.
     trailing_comma: Option<u32>,
     /// Where the `...` of the first parameter is, if it has `Flags::REST`.
@@ -1071,17 +1068,14 @@ impl<'a> Builder<'a> {
     }
 
     /// `<T>(a: A, b?: B)`
-    fn parse_signature_head(
-        &mut self,
-    ) -> R<(Span<TypeParamId>, u32, Span<ParamId>, (TypeNodeId, u32))> {
+    fn parse_signature_head(&mut self) -> R<(Span<TypeParamId>, u32, Span<ParamId>)> {
         let type_params = if self.tok() == T::TLessThan {
             self.parse_type_params()?
         } else {
             Span::EMPTY
         };
         let anchor = self.pos();
-        let (params, this) = self.parse_params()?;
-        Ok((type_params, anchor, params, this))
+        Ok((type_params, anchor, self.parse_params()?))
     }
 
     fn keyword(&mut self, k: Keyword, pos: u32) -> R<TypeNodeId> {
@@ -1342,7 +1336,8 @@ impl<'a> Builder<'a> {
         start: u32,
     ) -> R<FnId> {
         let pos = name_pos;
-        let (type_params, anchor, params, (this_ty, this_pos)) = self.parse_signature_head()?;
+        let (type_params, anchor, params) = self.parse_signature_head()?;
+        let (this_param, params) = self.file.split_this_parameter(params);
         let ret = if self.eat(T::TColon)? {
             self.parse_type()?
         } else {
@@ -1355,9 +1350,7 @@ impl<'a> Builder<'a> {
             name_pos,
             type_params,
             params,
-            this_ty,
-            this_pos,
-            this_name_end: this_pos.saturating_add(4),
+            this_param,
             ret,
             body: FnBody::None,
             anchor,
@@ -1576,9 +1569,7 @@ impl<'a> Builder<'a> {
                 name_pos: pos,
                 type_params: Span::EMPTY,
                 params,
-                this_ty: TypeNodeId::NONE,
-                this_pos: u32::MAX,
-                this_name_end: u32::MAX,
+                this_param: ParamId::NONE,
                 ret,
                 body: FnBody::None,
                 anchor: pos,
@@ -1697,9 +1688,7 @@ impl<'a> Builder<'a> {
                 name_pos: member.pos,
                 type_params: Span::EMPTY,
                 params: Span::EMPTY,
-                this_ty: TypeNodeId::NONE,
-                this_pos: u32::MAX,
-                this_name_end: u32::MAX,
+                this_param: ParamId::NONE,
                 ret: TypeNodeId::NONE,
                 body: FnBody::None,
                 anchor: member.pos,
@@ -1922,33 +1911,25 @@ impl<'a> Builder<'a> {
 
     // ───────────────────────────── parameters ─────────────────────────────
 
-    /// `(a: A, b?: B, ...c: C[])`. The second value is the type of a leading `this`, and where its name is.
-    fn parse_params(&mut self) -> R<(Span<ParamId>, (TypeNodeId, u32))> {
+    /// `(a: A, b?: B, ...c: C[])`
+    fn parse_params(&mut self) -> R<Span<ParamId>> {
         let kept = self.kept.parameters.get(&(self.pos() as i32)).copied();
-        if let Some((parameters, this)) = self.reuse_kept(kept)? {
-            let this = (self.clone_type(this.ty), this.loc.start as u32);
-            return Ok((self.clone_params(parameters), this));
+        if let Some(parameters) = self.reuse_kept(kept)? {
+            return Ok(self.clone_params(parameters));
         }
         if self.tolerant && self.tok() != T::TOpenParen {
             // `parseParameters`: without the `(` the list is empty, and no `)` is looked for.
-            return Ok((Span::EMPTY, (TypeNodeId::NONE, u32::MAX)));
+            return Ok(Span::EMPTY);
         }
         self.expect(T::TOpenParen)?;
-        self.parse_params_inner()
-    }
-
-    fn parse_params_inner(&mut self) -> R<(Span<ParamId>, (TypeNodeId, u32))> {
         let list = self.parse_parameter_list(T::TCloseParen)?;
-        let this = (list.this_ty, list.this_pos);
-        Ok((self.file.add_params(&list.params), this))
+        Ok(self.file.add_params(&list.params))
     }
 
     /// `parseDelimitedList(PCParameters, parseParameter)` and then `close`. The opening token has been consumed.
     fn parse_parameter_list(&mut self, close: T) -> R<ParameterList> {
         let mut list = ParameterList {
             params: Vec::new(),
-            this_ty: TypeNodeId::NONE,
-            this_pos: u32::MAX,
             trailing_comma: None,
             first_rest: 0,
             first_question: 0,
@@ -2010,12 +1991,23 @@ impl<'a> Builder<'a> {
         if !flags.is_empty() {
             flags |= Flags::PARAMETER_PROPERTY;
         }
+        // `parseNameOfParameter` takes `this` for a name.
         if self.tok() == T::TThis {
-            list.this_pos = self.pos();
+            let name_pos = self.pos();
+            let pat = self.file.pat(PatKind::Ident(known::this), name_pos);
             self.next()?;
-            if self.eat(T::TColon)? {
-                list.this_ty = self.parse_type_or_error()?;
-            }
+            let ty = if self.eat(T::TColon)? {
+                self.parse_type_or_error()?
+            } else {
+                TypeNodeId::NONE
+            };
+            list.params.push(Param {
+                pat,
+                ty,
+                default: ExprId::NONE,
+                flags: Flags::empty(),
+                pos: start,
+            });
             return Ok(());
         }
         let rest_pos = self.pos();

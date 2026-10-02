@@ -2823,12 +2823,16 @@ impl<'f> Binder<'f> {
         self.type_params(f.type_params, id);
         // Only what a block declares is not seen from the parameters and the return type.
         let has_body_locals = matches!(f.body, FnBody::Block(_));
-        let has_param_scope = has_body_locals && (f.this_ty.is_some() || !f.params.is_empty());
+        let this_ty = f.this_ty(self.f);
+        let has_param_scope = has_body_locals && (this_ty.is_some() || !f.params.is_empty());
         if has_param_scope {
             self.push_scope(ScopeKind::Param(id), SymbolId::NONE);
         }
-        if f.this_ty.is_some() {
-            self.ty(f.this_ty);
+        if f.this_param.is_some() {
+            self.b.param_fn[f.this_param.idx()] = id;
+        }
+        if this_ty.is_some() {
+            self.ty(this_ty);
         }
         for p in f.params.iter() {
             self.b.param_fn[p.idx()] = id;

@@ -940,6 +940,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.mark_type_syntax(item.loc, Mark::Optional, item.loc);
             }
 
+            // An arrow function inside the item has moved `latest_arrow_arg_loc` on.
+            let binding = item.loc;
             if is_spread {
                 // The type checker goes by where an argument of a call of "async" starts (`parseSpreadElement`).
                 let dots = if p.lexer.tolerant {
@@ -962,7 +964,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 p.lexer.next()?;
                 if p.keeps_type_syntax() {
-                    let binding = p.latest_arrow_arg_loc;
                     p.mark_type_syntax(binding, Mark::Annotation, p.lexer.loc());
                     if errors.invalid_expr_after_question.map(|r| r.loc.start)
                         != question_before.map(|r| r.loc.start)

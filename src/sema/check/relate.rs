@@ -283,6 +283,7 @@ fn is_primitive_kind(data: &TypeData) -> bool {
             Intrinsic::Unresolved
                 | Intrinsic::Any
                 | Intrinsic::Error
+                | Intrinsic::Auto
                 | Intrinsic::Unknown
                 | Intrinsic::Never
                 | Intrinsic::Object
@@ -552,9 +553,8 @@ impl<'p> Checker<'p> {
     fn flags_for_identity(&self, ty: TypeId) -> u32 {
         match self.data(ty.plain()) {
             // `TypeFlagsAny`
-            TypeData::Intrinsic(Intrinsic::Error) | TypeData::UnresolvedName { .. } => {
-                Intrinsic::Any as u32
-            }
+            TypeData::Intrinsic(Intrinsic::Error | Intrinsic::Auto)
+            | TypeData::UnresolvedName { .. } => Intrinsic::Any as u32,
             TypeData::Intrinsic(i) => *i as u32,
             TypeData::StringLit { .. } => 32,
             TypeData::NumberLit { .. } => 33,
@@ -2410,12 +2410,10 @@ impl<'p> Checker<'p> {
             return None;
         }
         let sym = self.files().sym(file, symbol);
-        // As in `alias_of`.
-        if self.stack.contains(&Query::Declared(sym))
-            || self
-                .files()
-                .flags(sym)
-                .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
+        if self
+            .files()
+            .flags(sym)
+            .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
         {
             return None;
         }
@@ -2454,6 +2452,8 @@ impl<'p> Checker<'p> {
     /// `t.alias`: `hosting_alias_of`, or else `alias_of`.
     pub(super) fn type_alias_of(&mut self, t: TypeId) -> Option<(Sym, Vec<TypeId>)> {
         match self.hosting_alias_of(t) {
+            // As in `alias_of`.
+            Some(alias) if self.stack.contains(&Query::Declared(alias.0)) => None,
             Some(alias) => Some(alias),
             None => self.alias_of(t),
         }
@@ -2849,7 +2849,7 @@ impl<'p> Checker<'p> {
                 && r.relation_count > 0
                 && r.source_stack.len() < 100
                 && r.target_stack.len() < 100
-                && types.binary_search(&source).is_ok()
+                && self.contains_type(types, source)
             {
                 return Ternary::TRUE;
             }
@@ -3371,7 +3371,7 @@ impl<'p> Checker<'p> {
         state: u8,
     ) -> Ternary {
         let (types, is_union) = self.constituents_and_is_union(source);
-        if is_union && types.binary_search(&target).is_ok() {
+        if is_union && self.contains_type(types, target) {
             return Ternary::TRUE;
         }
         for &t in types {
@@ -3448,7 +3448,7 @@ impl<'p> Checker<'p> {
     ) -> Ternary {
         let (types, is_union) = self.constituents_and_is_union(target);
         if is_union {
-            if types.binary_search(&source).is_ok() {
+            if self.contains_type(types, source) {
                 return Ternary::TRUE;
             }
             // A literal is in a union of primitives, in one form or the other, or its primitive is; or it does not fit.
@@ -3479,8 +3479,8 @@ impl<'p> Checker<'p> {
                     )
                 }) {
                     return Ternary::of(
-                        primitive.is_some_and(|p| types.binary_search(&p).is_ok())
-                            || types.binary_search(&alternate).is_ok(),
+                        primitive.is_some_and(|p| self.contains_type(types, p))
+                            || self.contains_type(types, alternate),
                     );
                 }
             }
@@ -7026,7 +7026,14 @@ impl<'p> Checker<'p> {
     pub(super) fn is_object_type_with_inferable_index(&mut self, t: TypeId) -> bool {
         match self.data(t) {
             // It has no symbol.
-            TypeData::Synth(shape) if shape.literal == Literalness::OfUnknown => false,
+            TypeData::Synth(shape)
+                if matches!(
+                    shape.literal,
+                    Literalness::OfUnknown | Literalness::AutoArray
+                ) =>
+            {
+                false
+            }
             TypeData::Intersection(parts) => parts
                 .iter()
                 .all(|&p| self.is_object_type_with_inferable_index(p)),

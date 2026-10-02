@@ -599,6 +599,10 @@ impl Visitor<'_, '_> {
         let (hir, file) = (self.hir, self.file);
         let bound = self.c.bound(file);
         for (index, pat) in hir.pats.iter().enumerate() {
+            // What nothing leads to is no node. The name of a `this` parameter is visited with its function.
+            if matches!(bound.pat_parent[index], crate::bind::PatParent::None) {
+                continue;
+            }
             let kind = VisitedKind::BindingName(PatId(index as u32));
             match pat.kind {
                 PatKind::Ident(known::empty) => self.missing_identifier(pat.pos, kind),
@@ -677,12 +681,17 @@ impl Visitor<'_, '_> {
             }
         }
         for (index, function) in hir.fns.iter().enumerate() {
-            let f = FnId(index as u32);
-            self.node(
-                function.this_pos,
-                function.this_name_end,
-                VisitedKind::ThisParameter(f),
-            );
+            // What the reparser makes of a tag is no node of the file.
+            if let Some(this) = hir.params.get(function.this_param.idx())
+                && !this.flags.contains(Flags::REPARSED)
+            {
+                let start = hir[this.pat].pos;
+                self.node(
+                    start,
+                    start + 4,
+                    VisitedKind::ThisParameter(FnId(index as u32)),
+                );
+            }
         }
         for (index, import) in hir.import_equals.iter().enumerate() {
             let id = ImportEqualsId(index as u32);

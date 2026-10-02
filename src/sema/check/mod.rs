@@ -65,6 +65,7 @@ mod relate;
 mod related;
 mod related_expected;
 mod shape;
+mod sink;
 mod spans;
 pub mod symbol_writer;
 mod symbols;
@@ -85,6 +86,7 @@ use errors::edit_distance;
 use errors_x_regexp_scanner::levenshtein_with_max;
 use errors_x_typenodes::array_element_type_node;
 use errors_x_typenodes::has_parse_diagnostics;
+use sink::Arg;
 use spans::end_of_brackets;
 use spans::is_identifier_part;
 use spans::jsx_identifier_end;
@@ -183,9 +185,8 @@ pub struct Program {
     flows_too_deep: NodeSet<(FileId, ExprId)>,
     /// The classes and interfaces whose base types depend on themselves, the aliases that do, and the mapped types whose keys do.
     circular_bases: NodeSet<Sym>,
-    /// `resolvedBaseConstructorType` of each class, and the classes whose base expression depends on them (2506).
+    /// `resolvedBaseConstructorType` of each class.
     base_constructor_types: ByNode<Sym, TypeId>,
-    circular_base_constructors: NodeSet<Sym>,
     circular_aliases: NodeSet<Sym>,
     circular_mapped_keys: NodeSet<(FileId, TypeNodeId)>,
     /// Type nodes at which 2615 is reported: the type of a property of a mapped type depends on itself. See
@@ -193,6 +194,7 @@ pub struct Program {
     circular_mapped_props: NodeSet<(FileId, TypeNodeId)>,
     /// `GetGlobalDiagnostics`: what is wrong and is in no file. `Cannot find global type 'Array'.` The code, and what goes into the message.
     global_errors: std::sync::Mutex<std::collections::BTreeSet<(u32, Vec<String>)>>,
+    sink: sink::Sink,
     /// Which property of which mapped type it is, for the message.
     circular_mapped_prop_names: ByNodeKept<(FileId, TypeNodeId), (TypeId, Atom)>,
     /// `MappedType.containsError`
@@ -409,7 +411,7 @@ impl Program {
             flows_too_deep: NodeSet::new(&exprs),
             circular_bases: NodeSet::new(&symbols),
             base_constructor_types: ByNode::new(&symbols),
-            circular_base_constructors: NodeSet::new(&symbols),
+            sink: sink::Sink::new(files.modules.len()),
             circular_aliases: NodeSet::new(&symbols),
             circular_mapped_keys: NodeSet::new(&type_nodes),
             circular_mapped_props: NodeSet::new(&type_nodes),
@@ -516,8 +518,9 @@ impl Program {
                 self.exprs_at_hand.insert(file_at_hand, empty_slots(count))
             })
         };
-        Checker {
+        let mut checker = Checker {
             p: self,
+            auto_array_type: TypeId::NEVER,
             file_at_hand,
             exprs_at_hand,
             stack: Vec::new(),
@@ -561,6 +564,8 @@ impl Program {
             relation_too_complex: false,
             relation_too_deep: false,
             checking: None,
+            is_type_checked: false,
+            never_checked: Default::default(),
             never_in_progress: Vec::new(),
             recent_members: Box::new([shape::RecentMembers::NONE; shape::RECENT_MEMBERS]),
             recent_signatures: Box::new(
@@ -623,6 +628,7 @@ impl Program {
             candidate_holes: Vec::new(),
             trace_cycles: std::env::var_os("BUN_SEMA_TRACE_CYCLES").is_some(),
             looked_at: Default::default(),
+            deferred_nodes: Default::default(),
             trace_relations: std::env::var_os("BUN_SEMA_TRACE_RELATIONS").is_some(),
             trace_slow_relations: std::env::var_os("BUN_SEMA_TRACE_SLOW_RELATIONS").is_some(),
             resolving: Vec::new(),
@@ -645,7 +651,16 @@ impl Program {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(u64::MAX),
-        }
+        };
+        checker.auto_array_type = match checker.array_of(TypeId::AUTO) {
+            // It is a marker: without a global `Array` it is a type of its own all the same.
+            TypeId::EMPTY_OBJECT => checker.synth(Shape {
+                literal: Literalness::AutoArray,
+                ..Shape::default()
+            }),
+            array => array,
+        };
+        checker
     }
 }
 
@@ -740,6 +755,8 @@ struct QueryFrame {
 
 pub struct Checker<'p> {
     pub p: &'p Program,
+    /// `autoArrayType`
+    auto_array_type: TypeId,
     stack: Vec<Query>,
     /// For each entry of `stack`.
     frames: Vec<QueryFrame>,
@@ -823,6 +840,10 @@ pub struct Checker<'p> {
     pub(super) relation_too_deep: bool,
     /// The file whose errors are being looked for. For debugging.
     pub(super) checking: Option<FileId>,
+    /// `NodeCheckFlagsTypeChecked` of `checking`: `check_file` is through with it.
+    is_type_checked: bool,
+    /// From where to where in `checking` `checkSourceFile` never comes. The passes that go through all nodes of a kind do.
+    never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
     /// The intersections it is being found out of whether anything can be them.
     pub(super) never_in_progress: Vec<TypeId>,
     /// What was last found in `Program::members`, in the tables of signatures and in `intersected_props`, by the low bits of the key.
@@ -928,6 +949,8 @@ pub struct Checker<'p> {
     trace_cycles: bool,
     /// With `trace_cycles`: the expressions that have been looked at.
     looked_at: crate::util::FxHashSet<(FileId, ExprId)>,
+    /// `deferredNodes` of the file being checked.
+    deferred_nodes: std::collections::VecDeque<in_order::DeferredNode>,
     /// Say which property or signature a relation between two object types fails on.
     pub(super) trace_relations: bool,
     trace_slow_relations: bool,

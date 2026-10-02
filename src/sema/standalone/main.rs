@@ -77,7 +77,11 @@ fn print_loaded_sizes(program: &bun_sema::check::Program) {
         add(&mut rows, "hir.early_errors", &m.hir.early_errors);
         add(&mut rows, "hir.checker_errors", &m.hir.checker_errors);
         add(&mut rows, "hir.references", &m.hir.references);
-        add(&mut rows, "hir.suppressed", &m.hir.suppressed);
+        add(
+            &mut rows,
+            "hir.comment_directives",
+            &m.hir.comment_directives,
+        );
         add(&mut rows, "hir.with_bodies", &m.hir.with_bodies);
         add(&mut rows, "hir.after_skipped", &m.hir.after_skipped);
         add(&mut rows, "hir.stray_decorators", &m.hir.stray_decorators);

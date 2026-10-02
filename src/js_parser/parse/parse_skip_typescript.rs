@@ -420,15 +420,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    /// `parseBracketedList(PCParameters, parseParameter, "[", "]")`, at the "[" of an index signature. TypeScript's parser takes any
-    /// parameters there, and its checker objects (`checkGrammarIndexSignatureParameters`).
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn skip_index_signature_parameters(&mut self) -> Result<(), Error> {
-        self.skip_index_signature_parameter_list()?;
-        Ok(())
-    }
-
     /// Returns where the comma before the "]" is, if there is one. Keep mode stores the parameters in `TypeSyntax::last_params`.
     #[cold]
     #[inline(never)]
@@ -3002,7 +2993,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `parseIndexSignatureDeclaration`, at the "[", up to the separator.
     #[cold]
     #[inline(never)]
-    fn skip_index_signature(&mut self, member: &mut TypeMemberParts) -> Result<(), Error> {
+    pub(crate) fn skip_index_signature(
+        &mut self,
+        member: &mut TypeMemberParts,
+    ) -> Result<(), Error> {
         let keeps = self.should_keep_types();
         if keeps {
             member.bracket_pos = self.token_start();
@@ -3606,6 +3600,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TOpenBrace => {
                     // "export type {foo}"
                     // "export type {foo} from 'bar'"
+                    self.note_type_only_export();
                     let _ = self.parse_export_clause()?;
                     if self.lexer.is_contextual_keyword(b"from") {
                         self.lexer.next()?;
@@ -3625,12 +3620,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // https://github.com/microsoft/TypeScript/pull/52217
                     // - export type * as Foo from 'bar';
                     // - export type Foo from 'bar';
+                    self.note_type_only_export();
+                    self.note_star();
                     self.lexer.next()?;
                     if self.lexer.is_contextual_keyword(b"as") {
                         // "export type * as ns from 'path'"
                         self.lexer.next()?;
-                        let _ = self.parse_clause_alias(b"export")?;
+                        let alias = self.parse_clause_alias(b"export")?;
+                        self.note_namespace_export(Some(alias));
                         self.lexer.next()?;
+                    } else {
+                        self.note_namespace_export(None);
                     }
                     self.lexer.expect_contextual_keyword(b"from")?;
                     let _ = self.parse_path()?;

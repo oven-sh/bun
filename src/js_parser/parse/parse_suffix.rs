@@ -452,7 +452,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
         p.mark_cast(left, crate::sema::CastKind::Tag, p.lexer.loc());
-        let head = E::Str::new(p.lexer.raw_template_contents());
+        let head = p.tagged_template_contents();
         p.lexer.next()?;
 
         let loc = left.loc;
@@ -460,7 +460,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *left = p.new_expr(
             E::Template {
                 tag: Some(tag),
-                head: E::TemplateContents::Raw(head),
+                head,
                 parts: E::Template::empty_parts(),
             },
             loc,
@@ -487,7 +487,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
         p.mark_cast(left, crate::sema::CastKind::Tag, p.lexer.loc());
-        let head = E::Str::new(p.lexer.raw_template_contents());
+        let head = p.tagged_template_contents();
         let (parts, tail_loc) = p.parse_template_parts(true)?;
         // `hasCorrectArity`: a call with a template whose last literal is missing or unterminated is incomplete.
         if p.lexer.tolerant && p.lexer.unterminated_at == tail_loc.start as usize {
@@ -498,7 +498,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *left = p.new_expr(
             E::Template {
                 tag: Some(tag),
-                head: E::TemplateContents::Raw(head),
+                head,
                 parts,
             },
             loc,

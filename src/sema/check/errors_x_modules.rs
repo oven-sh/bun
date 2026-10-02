@@ -1036,26 +1036,25 @@ impl Checker<'_> {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let (import, pos) = (hir[i], hir[s].pos);
         if self.xm_is_in_place(cx, s, import.spec, false, around, out) {
-            // `checkGrammarImportClause`, of `import defer * as ns`. A default name (18058) and named imports (18059) come first.
+            // `checkGrammarImportClause`, of `import defer ..`
             let mut is_clause_refused = false;
-            if cx.grammar
-                && import.namespace.is_some()
-                && import.default.is_none()
-                && !import.type_only
-                && !matches!(
+            if cx.grammar && import.is_deferred {
+                let is_supported = matches!(
                     self.p.files.options.module,
                     ModuleKind::EsNext | ModuleKind::Preserve
-                )
-            {
-                let clause = skip_trivia(cx.text, word_end(cx.text, pos as usize));
-                if word_at(cx.text, clause) == b"defer" {
+                );
+                let code = if import.default.is_some() {
+                    Some(18058)
+                } else if import.namespace.is_none() {
+                    Some(18059)
+                } else {
+                    (!is_supported).then_some(18060)
+                };
+                if let Some(code) = code {
                     is_clause_refused = true;
-                    out.push(Diagnostic {
-                        start: clause as u32,
-                        code: 18060,
-                    });
-                    let end = self.end_of_name_at(cx.file, import.namespace_pos);
-                    self.note(clause as u32, end, 18060, Vec::new());
+                    let start = import.clause_start;
+                    out.push(Diagnostic { start, code });
+                    self.note(start, import.clause_end, code, Vec::new());
                 }
             }
             let is_missing = self.xm_module_is_missing(

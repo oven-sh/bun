@@ -42,12 +42,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut decorators: BumpVec<'_, ExprNodeIndex> = BumpVec::new_in(p.arena);
         while p.lexer.token == T::TAt {
-            let at = p.lexer.loc();
+            let at_sign = p.lexer.loc();
             p.lexer.next()?;
 
             if p.lexer.tolerant {
-                decorators.push(p.parse_decorator_expression_tolerant()?);
-                p.note_decorator_end(at);
+                let decorator = p.parse_decorator_expression_tolerant()?;
+                p.mark_type_syntax(decorator.loc, crate::sema::Mark::AtSign, at_sign);
+                decorators.push(decorator);
                 continue;
             }
 
@@ -281,6 +282,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let name_loc = p.lexer.loc();
         let mut name_text = p.lexer.identifier;
         let name_is_string = p.lexer.token == T::TStringLiteral;
+        let mut string_name: &'a [u8] = b"";
+        let mut has_body = true;
         if p.lexer.token == T::TIdentifier
             || !p.lexer.tolerant
             || p.lexer.is_identifier_or_keyword()
@@ -290,6 +293,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // A string names no symbol. After a dot (`parseIdentifierName`) anything but a word stays, and the name is missing.
             name_text = b"";
             if name_is_string {
+                if p.keeps_type_syntax() {
+                    string_name = p.lexer.to_utf8_e_string()?.data.slice();
+                }
                 p.lexer.next()?;
             } else {
                 p.lexer.expect(T::TIdentifier)?;
@@ -332,7 +338,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let dot_loc = p.lexer.loc();
             p.lexer.next()?;
             let inner_start = p.lexer.loc();
-            p.mark_type_syntax(dot_loc, crate::sema::Mark::DeclarationStart, inner_start);
 
             let mut _opts = ParseStatementOptions {
                 is_export: true,
@@ -343,7 +348,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !p.stack_check.is_safe_to_recurse() {
                 return Err(crate::Error::StackOverflow);
             }
-            stmts.push(p.parse_type_script_namespace_stmt(dot_loc, &mut _opts)?);
+            let inner_loc = if p.keeps_type_syntax() {
+                inner_start
+            } else {
+                dot_loc
+            };
+            stmts.push(p.parse_type_script_namespace_stmt(inner_loc, &mut _opts)?);
             p.mark_end(inner_start, crate::sema::Mark::StatementEnd);
         } else if p.lexer.token != T::TOpenBrace
             // `parseAmbientExternalModuleDeclaration`: for TypeScript only a module named by a string can do without a body.
@@ -353,6 +363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 opts.is_typescript_declare
             })
         {
+            has_body = false;
             p.lexer.expect_or_insert_semicolon()?;
         } else {
             // `parseModuleBlock`: without a "{" there are no statements and no "}" is expected.
@@ -373,6 +384,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.has_non_local_export_declare_inside_namespace =
             old_has_non_local_export_declare_inside_namespace;
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+
+        // The rest serves code generation.
+        if p.keeps_type_syntax() {
+            use crate::sema::parse_declarations::ModuleNameKind;
+            p.pop_and_discard_scope(scope_index);
+            let (name, kind) = if name_is_string {
+                (string_name, ModuleNameKind::String)
+            } else {
+                (name_text, ModuleNameKind::Identifier)
+            };
+            let body = has_body.then(|| stmts.into_bump_slice_mut());
+            return Ok(p.keep_module(loc, name_loc, name, kind, body, opts.is_export));
+        }
 
         // Add any exported members from this namespace's body as members of the
         // associated namespace object.
@@ -588,6 +612,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt, Error> {
         let p = self;
         p.lexer.expect(T::TEquals)?;
+        let names_base = p.begin_entity_name();
+        let mut external = None;
 
         let kind = js_ast::LocalKind::KConst;
         // `parseEntityName`: anything but a name stays, and the name is missing.
@@ -606,18 +632,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             target_loc,
         );
         let mut value = target;
+        p.push_entity_name();
         p.lexer.expect(T::TIdentifier)?;
 
         if name == b"require" && p.lexer.token == T::TOpenParen {
             // "import ns = require('x')"
             p.lexer.next()?;
             let path = if p.lexer.token != T::TStringLiteral && p.lexer.tolerant {
-                // `parseModuleSpecifier`: any expression. 1141 is reported when the statement is read again.
+                // `parseModuleSpecifier`: any expression. `checkExternalImportOrExportDeclaration` reports 1141 unless it is
+                // missing. `checkGrammarModuleElementContext` returns first in a block or a function.
                 let at = p.lexer.loc();
                 let specifier = p.parse_expr(Level::Lowest)?;
-                p.keep_expressions(at, &[specifier]);
+                let is_written = !specifier.is_missing();
+                if is_written && p.current_scope().kind == ScopeKind::Entry {
+                    p.ts_checker_error(at, 1141);
+                }
+                external = Some(bun_ast::ts_syntax::ModuleReference::External {
+                    text: None,
+                    loc: at,
+                    expression: is_written.then_some(specifier),
+                });
                 specifier
             } else {
+                external = p.external_module_reference();
                 let path_estr = p.lexer.to_e_string()?;
                 let path_loc = p.lexer.loc();
                 let path = p.new_expr(path_estr, path_loc);
@@ -644,6 +681,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut prev_value = value;
             while p.lexer.token == T::TDot {
                 p.lexer.next()?;
+                p.push_entity_name();
                 let dot_name = E::Str::new(p.lexer.identifier);
                 let dot_name_loc = p.lexer.loc();
                 value = p.new_expr(
@@ -662,6 +700,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.expect_or_insert_semicolon()?;
 
+        if p.keeps_type_syntax() {
+            return Ok(p.keep_import_equals(names_base, external, loc));
+        }
         if opts.is_typescript_declare {
             // "import type foo = require('bar');"
             // "import type foo = bar.baz;"
@@ -778,6 +819,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name.ref_,
                 TSNamespaceMemberData::Namespace(exported_members),
             );
+        } else if p.keeps_type_syntax() {
+            name = p.keep_name(name_loc, name_text);
         }
 
         // `parseEnumDeclaration`: without a "{" there are no members and no "}" is expected.
@@ -925,6 +968,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if opts.is_typescript_declare {
             if opts.scope.is_namespace() && opts.is_export {
                 p.has_non_local_export_declare_inside_namespace = true;
+            }
+            if p.keeps_type_syntax() {
+                return Ok(p.s(
+                    S::Enum {
+                        name,
+                        arg: Ref::NONE,
+                        values: bun_ast::StoreSlice::new_mut(values.into_bump_slice_mut()),
+                        is_export: opts.is_export,
+                    },
+                    loc,
+                ));
             }
 
             return Ok(p.s(S::TypeScript::default(), loc));

@@ -491,6 +491,11 @@ impl<'a> Parser<'a> {
             )
         };
         let failed = || bun_sema::hir::File {
+            kind: if is_declaration_file {
+                bun_sema::hir::FileKind::Declaration
+            } else {
+                Default::default()
+            },
             has_errors: true,
             has_parse_diagnostics: true,
             ..Default::default()
@@ -525,6 +530,8 @@ impl<'a> Parser<'a> {
         if p.lexer.token == js_lexer::T::THashbang && p.lexer.next().is_err() {
             return (failed(), false);
         }
+        // The parser stands on the first token: these are the comments `getCommentPragmas` goes through.
+        let leading_comments = p.lexer.all_comments.len();
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
             // Everything in a declaration file is ambient.
@@ -535,43 +542,11 @@ impl<'a> Parser<'a> {
         let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts);
         parsing.set(parsing.get() + began.elapsed());
         let awaited = p.top_level_await_keyword.len > 0;
-        if is_declaration_file {
-            // For now this parser only provides the type nodes. `type_syntax::Builder` still reads the statements around them.
-            if stmts.is_err() {
-                return (
-                    bun_sema::hir::File {
-                        kind: bun_sema::hir::FileKind::Declaration,
-                        ..failed()
-                    },
-                    false,
-                );
-            }
-            let syntax = *p.type_syntax.take().unwrap();
-            let logged = Self::logged_syntax_errors(p.log(), self.source.contents());
-            let error_arguments = Self::error_arguments(p.log());
-            let error_ends = Self::error_ends(p.log(), self.source.contents(), p.is_jsx_enabled());
-            let opening_brackets = Self::opening_brackets(p.log());
-            let mut file = crate::sema::lower::Lower::run_declaration_file(
-                p,
-                syntax,
-                atoms,
-                scratch_lexer(&self),
-                logged.is_some(),
-            );
-            if file.has_parse_diagnostics
-                && let Some((syntactic, checker)) = logged
-            {
-                file.opening_brackets.extend(opening_brackets);
-                file.early_errors.extend(syntactic);
-                file.checker_errors.extend(checker);
-                file.error_arguments.extend(error_arguments);
-                file.error_ends.extend(error_ends);
-            }
-            return (file, false);
-        }
         let Ok(stmts) = stmts else {
             return (failed(), awaited);
         };
+        // Before `jsdoc::read_comments` sends the lexer through the comments again.
+        let comment_directives = core::mem::take(&mut p.lexer.comment_directives);
         // What is objected to without the tree suffering is for the checker to say, in its own words.
         // Sorted by which part of TypeScript reports it.
         let (mut syntactic, mut grammar, mut checker) = (Vec::new(), Vec::new(), Vec::new());
@@ -601,12 +576,14 @@ impl<'a> Parser<'a> {
             }
         }
         let syntax = *p.type_syntax.take().unwrap();
-        let mut file = crate::sema::lower::Lower::run(
-            p,
-            syntax,
-            stmts.as_slice(),
+        let mut file =
+            crate::sema::lower::Lower::run(p, syntax, stmts.as_slice(), atoms, is_declaration_file);
+        file.comment_directives = comment_directives.into();
+        crate::sema::comments::process_pragmas_into_fields(
+            &p.lexer,
+            leading_comments,
             atoms,
-            scratch_lexer(&self),
+            &mut file,
         );
         file.has_errors = has_errors;
         if !opening_brackets.is_empty() {
@@ -674,32 +651,6 @@ impl<'a> Parser<'a> {
             .filter(|msg| msg.kind == bun_ast::Kind::Err)
             .filter_map(|msg| crate::sema::error_end(&msg.data, contents, has_jsx))
             .collect()
-    }
-
-    /// The syntax errors in `log`, and the errors TypeScript's checker reports with a plain `c.error`: start and code.
-    /// `None` if there is no syntax error, or an error that has no code.
-    fn logged_syntax_errors(
-        log: &bun_ast::Log,
-        contents: &[u8],
-    ) -> Option<(Vec<(u32, u32)>, Vec<(u32, u32)>)> {
-        let (mut syntactic, mut checker) = (Vec::new(), Vec::new());
-        for msg in log.msgs.iter().filter(|m| m.kind == bun_ast::Kind::Err) {
-            let offset = msg.data.location.as_ref().map(|l| l.offset);
-            let at = offset.and_then(|o| contents.get(o..)).unwrap_or_default();
-            match (crate::sema::early_error(&msg.data.text, at), offset) {
-                (Some((0, _)), _) => {}
-                (Some((code, delta)), Some(offset)) => {
-                    let start = (offset as i64 + i64::from(delta)).max(0) as u32;
-                    if msg.data.text.starts_with(b"TC") {
-                        checker.push((start, code));
-                    } else if Self::is_syntactic_error(&msg.data.text, code) {
-                        syntactic.push((start, code));
-                    }
-                }
-                _ => return None,
-            }
-        }
-        (!syntactic.is_empty()).then_some((syntactic, checker))
     }
 
     /// Whether TypeScript's parser or scanner reports the logged error `text`, which `early_error` translated to `code`.

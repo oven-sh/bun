@@ -302,16 +302,6 @@ impl Checker<'_> {
                 // Last: it goes by all that is left. `getDiagnosticsWithPrecedingDirectives`: not by what the parser says.
                 self.check_x_comment_directives(file, &mut out);
             }
-            let suppressed = &hir.suppressed;
-            if !suppressed.is_empty() {
-                // 2578 is said once everything has been taken back, and stays.
-                out.retain(|d| {
-                    d.code == 2578
-                        || !suppressed
-                            .iter()
-                            .any(|&(start, end)| (start..end).contains(&d.start))
-                });
-            }
         }
         // `GetSyntacticDiagnostics`, `GetDeclarationDiagnostics`: no comment directive takes these back.
         out.extend(checked.declaration);
@@ -4324,7 +4314,7 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             c.note(start, super::explain::NO_LENGTH, code, Vec::new());
         }
         // `checkGrammarImportClause`: said of the clause, which ends before the `from`.
-        1363 | 18058 | 18059 => {
+        1363 => {
             let specifier = hir
                 .specifier_uses
                 .iter()

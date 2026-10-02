@@ -88,7 +88,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         modifiers_of_params: _,
         body,
         references,
-        suppressed,
+        comment_directives,
         with_bodies,
         after_skipped,
         stray_decorators,
@@ -213,9 +213,16 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         put!(d, 0, "", "deferred_import_call close_pos={close_pos}");
     }
 
-    put!(d, 0, "", "suppressed[{}]:", suppressed.len());
-    for &(from, to) in suppressed {
-        put!(d, 1, "", "{from}..{to}");
+    put!(
+        d,
+        0,
+        "",
+        "comment_directives[{}]:",
+        comment_directives.len()
+    );
+    for directive in comment_directives {
+        let CommentDirective { start, end, kind } = directive;
+        put!(d, 1, "", "{start}..{end} {kind:?}");
     }
 
     let mut uses: Vec<(u32, String, String)> = specifier_uses
@@ -1203,9 +1210,11 @@ impl Dump<'_> {
             namespace,
             namespace_pos,
             clause_start,
+            clause_end,
             namespace_start,
             named,
             type_only,
+            is_deferred,
             mode,
         } = node!(self, depth, label, imports, id);
         put!(
@@ -1216,6 +1225,12 @@ impl Dump<'_> {
             self.q(spec),
             self.q(default),
             self.q(namespace)
+        );
+        put!(
+            self,
+            depth + 1,
+            "clause",
+            "end={clause_end} is_deferred={is_deferred}"
         );
         self.span(depth + 1, "named", named, Self::import_spec);
     }

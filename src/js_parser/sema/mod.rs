@@ -5,18 +5,20 @@
 //! syntax-only `bun_ast::ts_syntax` nodes for them (see [`keep`]). The JavaScript AST is identical in both modes.
 //! After the parse pass, where ordinary builds start the visit pass, [`lower`] walks the statements and clones them and the type syntax
 //! ([`clone_types`]) into the type checker's tree.
-//! Statements and class members that the parser drops are still read from the source text by [`type_syntax::Builder`].
 //!
 //! In JavaScript the types are in JSDoc comments. Before the lowering, [`jsdoc`] reads the tags of the comments the lexer recorded, and
 //! has the parser read the types in them. During the lowering, [`reparse`] makes ordinary annotations, casts and declarations of the
 //! tags of each comment that belongs to a node.
 
+pub(crate) mod builder;
 pub(crate) mod clone_types;
+pub(crate) mod comments;
 pub(crate) mod jsdoc;
 pub(crate) mod keep;
 pub(crate) mod lower;
+pub(crate) mod lower_modules;
+pub(crate) mod parse_declarations;
 pub(crate) mod reparse;
-pub(crate) mod type_syntax;
 
 use bun_ast::ts_syntax as ts;
 use bun_ast::{Expr, ExprData};
@@ -32,7 +34,7 @@ pub(crate) enum Mark {
     Definite,
     /// From the `(` of a function's parameters or the `=>` of an arrow function, to the return type or the `:` before it.
     ReturnType,
-    /// From the token after `<T, U>`, to its `<`.
+    /// From the token after `<T, U>`, from the `class` keyword, or from where an arrow function is said to be, to the `<`.
     TypeParameters,
     /// From the `(` of a function's parameters, to its `this` parameter. The type is the `Annotation` of that.
     ThisParameter,
@@ -48,7 +50,7 @@ pub(crate) enum Mark {
     ExtendsArguments,
     /// From the `class` keyword, to an element of an `extends` clause that is not the first. As many as there are.
     OtherExtends,
-    /// From the `class` keyword, to what follows `implements`. As many as there are clauses.
+    /// From the `class` keyword, to an element of its first `implements` clause. As many as there are.
     Implements,
     /// From the name of a member of a class (the `{` of a static block) or of an object literal (the `e` of `...e`), to its first
     /// token: a decorator, a modifier, `get`, `set`, `*`, `[`, `...`.
@@ -64,8 +66,18 @@ pub(crate) enum Mark {
     /// From the first token of a statement, the `{` of a block, the `finally` of its block or the initializer of a `for`, to where
     /// its last token ends.
     StatementEnd,
-    /// From the `class` keyword, to a member the parser dropped. As many as there are.
-    DroppedMember,
+    /// From an expression statement whose first token is `(`, to itself (`hasParen`, `parseExpressionOrLabeledStatement`).
+    HasParen,
+    /// From the `class` keyword, to an element of an `implements` clause that is not the first. As many as there are.
+    OtherImplements,
+    /// From the `class` keyword, to the `ts_syntax::Member` that is an index signature of the class. As many as there are.
+    IndexSignature,
+    /// From the name of a module, to itself: it is a string (`parseAmbientExternalModuleDeclaration`).
+    StringName,
+    /// From the name of a module, to itself: it is `global` (`NodeFlagsGlobalAugmentation`).
+    GlobalName,
+    /// From the name of a module, to itself: `declare module "a";`.
+    NoBody,
 
     /// From the `(` of a function's parameters, to the token where its `{` was expected: the body is a missing block (`parseBlock`).
     MissingBody,
@@ -75,6 +87,8 @@ pub(crate) enum Mark {
     SkippedToken,
     /// From the `import` of `import.defer(..)`, to its `)`.
     DeferredImportClose,
+    /// From the expression of a decorator, to its `@`.
+    AtSign,
     /// From a decorator that decorates nothing (`note_stray_decorators`), to where what comes after the decorators starts.
     StrayDecorator,
     /// From the bracket that opens an array or object literal whose closing bracket is missed, to where the token before the miss ends.
@@ -465,63 +479,8 @@ pub fn summarize(
     }
     file.legacy_decorators = experimental_decorators;
     file.is_js = is_js;
-    file.check_directive = check_directive(text);
-    if is_js || path.ends_with(b"x") {
-        file.jsx_pragmas = bun_sema::hir::JsxPragmas::scan(text, atoms);
-    }
     file.shrink_to_fit();
     (file, parsing.get())
-}
-
-/// `getCommentPragmas`, `extractPragmas`, for `ts-check` and `ts-nocheck`: looked for in the comments before the first token.
-fn check_directive(text: &[u8]) -> Option<bool> {
-    let line_end = |from: usize| {
-        bun_core::strings::index_of_any(&text[from..], b"\n\r").map_or(text.len(), |n| from + n)
-    };
-    let mut i = if text.starts_with(b"\xEF\xBB\xBF") {
-        3
-    } else {
-        0
-    };
-    if text[i..].starts_with(b"#!") {
-        i = line_end(i);
-    }
-    let mut found = None;
-    loop {
-        while text.get(i).is_some_and(u8::is_ascii_whitespace) {
-            i += 1;
-        }
-        if text[i..].starts_with(b"//") {
-            let end = line_end(i);
-            let mut p = i + 2;
-            if text.get(p) == Some(&b'/') {
-                p += 1;
-            }
-            while p < end && matches!(text[p], b' ' | b'\t') {
-                p += 1;
-            }
-            if p < end && text[p] == b'@' {
-                let name = &text[p + 1..end];
-                let name = &name[..name
-                    .iter()
-                    .position(|&c| !(c.is_ascii_alphabetic() || c == b'-'))
-                    .unwrap_or(name.len())];
-                if name.eq_ignore_ascii_case(b"ts-check") {
-                    found = Some(true);
-                } else if name.eq_ignore_ascii_case(b"ts-nocheck") {
-                    found = Some(false);
-                }
-            }
-            i = end;
-        } else if text[i..].starts_with(b"/*") {
-            match bun_core::strings::index_of(&text[i + 2..], b"*/") {
-                Some(n) => i += n + 4,
-                None => return found,
-            }
-        } else {
-            return found;
-        }
-    }
 }
 
 pub(crate) struct TypeSyntax {
@@ -566,6 +525,8 @@ pub(crate) struct TypeSyntax {
     pub(crate) next_braces_are_interface_body: bool,
     /// The body of the most recently parsed object type. `None` if unusable.
     pub(crate) last_object_type: Option<keep::ObjectTypeBody>,
+    /// The index signature `parse_class_index_signature` read last. `NONE` if there is none.
+    pub(crate) last_index_signature: ts::MemberId,
     /// The TypeScript-only statement emitted while parsing the current statement. `NONE` if there is none.
     pub(crate) last_statement: ts::StatementId,
     /// The modifiers consumed so far, for the current statement and the statements around it.
@@ -574,10 +535,8 @@ pub(crate) struct TypeSyntax {
     pub(crate) statement_modifiers_base: usize,
     /// `node.Modifiers()` of each statement that has any: where the statement is said to be, and the list.
     pub(crate) modifier_lists: Vec<(i32, ts::Span<ts::Modifier>)>,
-    /// Statements other than declarations that were parsed in an ambient context: (start, start of the next token, statement).
-    pub(crate) ambient_statements: Vec<(i32, i32, bun_ast::Stmt)>,
-    /// Initializers of variables declared in an ambient context: (start of the binding, initializer).
-    pub(crate) ambient_initializers: Vec<(i32, keep::KeptNode<Expr>)>,
+    /// The statements being parsed that start with `import` or `export`, the innermost last.
+    pub(crate) module_syntax: Vec<parse_declarations::ModuleSyntax>,
 }
 
 impl TypeSyntax {
@@ -603,12 +562,12 @@ impl TypeSyntax {
             last_type_params: None,
             next_braces_are_interface_body: false,
             last_object_type: None,
+            last_index_signature: ts::MemberId::NONE,
             last_statement: ts::StatementId::NONE,
             statement_modifiers: Vec::new(),
             statement_modifiers_base: 0,
             modifier_lists: Vec::new(),
-            ambient_statements: Vec::new(),
-            ambient_initializers: Vec::new(),
+            module_syntax: Vec::new(),
         }
     }
 }
@@ -624,6 +583,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
             syntax.marks.push((from.start, what, to.start));
         }
+    }
+
+    /// What was noted from `from` a moment ago.
+    #[cold]
+    pub(crate) fn noted(&self, from: bun_ast::Loc, what: Mark) -> Option<bun_ast::Loc> {
+        let marks = &self.type_syntax.as_ref()?.marks;
+        let mark = marks
+            .iter()
+            .rev()
+            .find(|mark| mark.0 == from.start && mark.1 == what)?;
+        Some(bun_ast::Loc { start: mark.2 })
     }
 
     /// `E::JSXElement::syntax`
@@ -651,37 +621,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
     pub(crate) fn mark_end(&mut self, from: bun_ast::Loc, what: Mark) {
         if self.keeps_type_syntax() {
             self.mark_type_syntax(from, what, self.lexer.full_start());
-        }
-    }
-
-    /// `stmt` starts at `start` and was parsed in an ambient context, and the lexer is at what follows. The caller drops it, but
-    /// TypeScript checks it like any other (`checkGrammarStatementInAmbientContext`).
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn note_ambient_statement(&mut self, start: bun_ast::Loc, stmt: &bun_ast::Stmt) {
-        use bun_ast::stmt::Data;
-        let end = self.lexer.loc().start;
-        let Some(syntax) = &mut self.type_syntax else {
-            return;
-        };
-        match &stmt.data {
-            Data::SBlock(_)
-            | Data::SBreak(_)
-            | Data::SContinue(_)
-            | Data::SDoWhile(_)
-            | Data::SExpr(_)
-            | Data::SForIn(_)
-            | Data::SForOf(_)
-            | Data::SFor(_)
-            | Data::SIf(_)
-            | Data::SLabel(_)
-            | Data::SReturn(_)
-            | Data::SSwitch(_)
-            | Data::SThrow(_)
-            | Data::STry(_)
-            | Data::SWhile(_)
-            | Data::SWith(_) => syntax.ambient_statements.push((start.start, end, *stmt)),
-            _ => {}
         }
     }
 

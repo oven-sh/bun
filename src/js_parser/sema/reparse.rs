@@ -11,12 +11,12 @@ use bun_sema::atom::Atom;
 use bun_sema::hir::*;
 use smallvec::SmallVec;
 
+use super::builder::{Modified, modifier_error};
 use super::jsdoc::{
     self, ClassName, DeclaredName, JsDoc, Name, Property, Signature, Tag, TagKind, TagType,
     TypeExpr,
 };
 use super::lower::Lower;
-use super::type_syntax::{Modified, modifier_error};
 
 /// The node a JSDoc comment belongs to, as far as hosted tags tell one kind from another.
 pub(super) enum Host {
@@ -748,9 +748,12 @@ impl<'p, 'a> Lower<'p, 'a> {
                         .map_or(Atom::NONE, |name| self.name_atom(name)),
                     namespace_pos: import.namespace.map_or(0, |name| name.start),
                     clause_start: import.clause_start,
+                    // Only what is said of `import defer` asks.
+                    clause_end: import.clause_start,
                     namespace_start: import.namespace_start,
                     named: self.b.file.add_import_specs(&named),
                     type_only: true,
+                    is_deferred: false,
                     mode,
                 };
                 let declaration = self.b.file.add_import(declaration);

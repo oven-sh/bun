@@ -824,10 +824,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Even anonymous classes can have TypeScript type parameters
         if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_parameters(
-                TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
-                    | TypeParameterFlag::ALLOW_CONST_MODIFIER,
-            )?;
+            p.skip_class_type_parameters(class_keyword.loc)?;
         }
 
         let class = p.parse_class(
@@ -905,10 +902,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Even anonymous classes can have TypeScript type parameters
         if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_parameters(
-                TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
-                    | TypeParameterFlag::ALLOW_CONST_MODIFIER,
-            )?;
+            p.skip_class_type_parameters(class_keyword.loc)?;
         }
 
         // spec passes the arena-backed `[]ExprNodeIndex` slice directly into
@@ -1276,6 +1270,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //     <A = B>(x) => {}
         if Self::IS_TYPESCRIPT_ENABLED && p.is_jsx_enabled() {
             if p.is_ts_arrow_fn_jsx()? {
+                p.mark_type_syntax(loc, crate::sema::Mark::TypeParameters, loc);
                 let _ =
                     p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
                 p.lexer.expect(T::TOpenParen)?;
@@ -1335,6 +1330,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             ..Default::default()
                         },
                     )?;
+                    if matches!(value.data, ExprData::EArrow(_)) && value.loc == loc {
+                        p.mark_type_syntax(loc, crate::sema::Mark::TypeParameters, loc);
+                    }
                     // "<T>(x).y" turned out to be a cast, of "(x).y".
                     if p.keeps_type_syntax()
                         && !(matches!(value.data, ExprData::EArrow(_)) && value.loc == loc)

@@ -424,7 +424,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// `parseNamedImports`, `parseNamedExports`. Returns the specifiers that are not type-only, and whether any is type-only.
-    /// The statement is read again from the source for the checker, so only the tokens consumed and the errors matter.
+    /// All of them are kept for the checker.
     #[cold]
     #[inline(never)]
     fn parse_specifiers_tolerant(
@@ -434,9 +434,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let mut items = bun_alloc::ArenaVec::<ClauseItem>::new_in(p.arena);
         let mut had_type_only = false;
+        let mut kept: smallvec::SmallVec<[bun_ast::ts_syntax::Specifier; 8]> =
+            smallvec::SmallVec::new();
         // `parseBracketedList`: without a "{" there is no list, and no "}" is expected.
         if p.lexer.token != T::TOpenBrace {
             p.lexer.expect(T::TOpenBrace)?;
+            p.keep_specifiers(&kept);
             return Ok((items.into_bump_slice_mut(), false));
         }
         p.lexer.next()?;
@@ -449,6 +452,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             let start = p.lexer.loc();
             let specifier = p.parse_specifier_tolerant(is_import)?;
+            kept.push(bun_ast::ts_syntax::Specifier {
+                loc: start,
+                is_type_only: specifier.is_type_only,
+                property_name: specifier.property_name.map(ModuleExportName::syntax),
+                name: specifier.name.syntax(),
+            });
             let other = specifier.property_name.unwrap_or(specifier.name);
             // The name in this file, and the name in the other module or for other modules.
             let (local, alias) = if is_import {
@@ -477,6 +486,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         p.lexer.list_contexts = saved_contexts;
         p.lexer.expect(T::TCloseBrace)?;
+        p.keep_specifiers(&kept);
         Ok((items.into_bump_slice_mut(), had_type_only))
     }
 
@@ -555,6 +565,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let range = p.lexer.range();
         if !p.can_parse_module_export_name() {
+            // `createMissingNode`: where the token before it ends.
+            let range = bun_ast::Range {
+                loc: p.lexer.full_start(),
+                len: 0,
+            };
             p.lexer.expect(T::TIdentifier)?;
             return Ok(ModuleExportName {
                 text: b"",
@@ -781,6 +796,17 @@ struct ModuleExportName<'a> {
     is_string: bool,
     /// `nameOk`: false for a reserved word where an import declares a name.
     is_ok: bool,
+}
+
+impl ModuleExportName<'_> {
+    fn syntax(self) -> bun_ast::ts_syntax::ModuleExportName {
+        bun_ast::ts_syntax::ModuleExportName {
+            text: bun_ast::StoreStr::new(self.text),
+            loc: self.range.loc,
+            end: self.range.end(),
+            is_string: self.is_string,
+        }
+    }
 }
 
 /// What `parse_specifier_tolerant` read.

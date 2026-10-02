@@ -1902,11 +1902,11 @@ impl Checker<'_> {
         let hir = self.hir(file);
         let text = &hir.text[..];
         // `SkipTypeChecking`
-        if says_no_check(text) {
+        if hir.check_directive == Some(false) {
             out.clear();
             return;
         }
-        let directives = comment_directives(text);
+        let directives = &hir.comment_directives;
         if directives.is_empty() {
             return;
         }
@@ -1914,7 +1914,8 @@ impl Checker<'_> {
         let line_of = |pos: u32| line_starts.partition_point(|&start| start <= pos) - 1;
         // `directivesByLine`: the line, where the directive starts, whether an error is expected, and whether one came.
         let mut by_line: Vec<(usize, u32, bool, bool)> = Vec::new();
-        for &(start, _, expects_error) in &directives {
+        for &CommentDirective { start, kind, .. } in directives {
+            let expects_error = kind == CommentDirectiveKind::ExpectError;
             let line = line_of(start);
             // The last in a line is the one that counts.
             if by_line.last().is_some_and(|last| last.0 == line) {
@@ -1968,8 +1969,8 @@ impl Checker<'_> {
                 out.push(Diagnostic { start, code: 2578 });
                 let end = directives
                     .iter()
-                    .find(|directive| directive.0 == start)
-                    .map_or(0, |directive| directive.1);
+                    .find(|directive| directive.start == start)
+                    .map_or(0, |directive| directive.end);
                 self.note(start, end, 2578, Vec::new());
             }
         }
@@ -2217,227 +2218,4 @@ fn is_comment_or_blank_line(text: &[u8], mut at: usize) -> bool {
         at += 1;
     }
     at == text.len() || text[at] == b'\r' || text[at] == b'\n' || text[at..].starts_with(b"//")
-}
-
-/// `processCommentDirective`: the comment from `start` to `end`, or its last line if it can have several.
-fn process_comment_directive(
-    text: &[u8],
-    start: usize,
-    end: usize,
-    multiline: bool,
-    out: &mut Vec<(u32, u32, bool)>,
-) {
-    let mut at = start;
-    let skip = |at: &mut usize, wanted: &[u8]| {
-        while *at < end && wanted.contains(&text[*at]) {
-            *at += 1;
-        }
-    };
-    if multiline {
-        skip(&mut at, b" \t");
-        skip(&mut at, b"/*");
-    } else {
-        at += 2;
-        skip(&mut at, b"/");
-    }
-    skip(&mut at, b" \t");
-    if at >= end || text[at] != b'@' {
-        return;
-    }
-    let rest = &text[at + 1..];
-    if rest.starts_with(b"ts-expect-error") {
-        out.push((start as u32, end as u32, true));
-    } else if rest.starts_with(b"ts-ignore") {
-        out.push((start as u32, end as u32, false));
-    }
-}
-
-/// Whether a `/` after `before` starts a regular expression rather than divides.
-fn can_start_regular_expression(before: &[u8]) -> bool {
-    let Some(&last) = before.last() else {
-        return true;
-    };
-    match word_before(before, before.len()) {
-        // After `<` it closes a JSX element.
-        [] => !matches!(last, b')' | b']' | b'}' | b'<' | b'"' | b'\'' | b'`'),
-        word => is_keyword_before_expression(word),
-    }
-}
-
-/// Whether `@ts-` is written anywhere in `text`.
-fn says_ts_directive(text: &[u8]) -> bool {
-    const BLOCK: usize = 128;
-    let mut start = 0;
-    while start < text.len() {
-        let end = (start + BLOCK).min(text.len());
-        if text[start..end].contains(&b'@')
-            && (start..end).any(|at| text[at] == b'@' && text[at + 1..].starts_with(b"ts-"))
-        {
-            return true;
-        }
-        start = end;
-    }
-    false
-}
-
-/// The comments of `text` that are `@ts-ignore` or `@ts-expect-error`: where each starts and ends, as `CommentDirective.Loc` has it,
-/// and whether it expects an error. What is in strings, templates and regular expressions is no comment.
-fn comment_directives(text: &[u8]) -> Vec<(u32, u32, bool)> {
-    let mut out = Vec::new();
-    if !says_ts_directive(text) {
-        return out;
-    }
-    // For each `${` that is open, how many `{` are open inside of it.
-    let mut substitutions: Vec<u32> = Vec::new();
-    // Where the last token ended.
-    let mut token_end = 0;
-    let mut at = 0;
-    while at < text.len() {
-        let c = text[at];
-        let next = text.get(at + 1).copied();
-        let mut in_template = false;
-        match c {
-            b'/' if next == Some(b'/') => {
-                let start = at;
-                while at < text.len() && line_break_len(text, at) == 0 {
-                    at += 1;
-                }
-                process_comment_directive(text, start, at, false, &mut out);
-                continue;
-            }
-            b'/' if next == Some(b'*') => {
-                let mut last_line_start = at;
-                at += 2;
-                while at < text.len() {
-                    if text[at..].starts_with(b"*/") {
-                        at += 2;
-                        break;
-                    }
-                    let len = line_break_len(text, at);
-                    at += len.max(1);
-                    if len > 0 {
-                        last_line_start = at;
-                    }
-                }
-                process_comment_directive(text, last_line_start, at, true, &mut out);
-                continue;
-            }
-            b'/' if can_start_regular_expression(&text[..token_end]) => {
-                // Up to the `/` that closes it, if there is one in the line.
-                let mut end = at + 1;
-                let mut in_class = false;
-                while end < text.len()
-                    && line_break_len(text, end) == 0
-                    && (in_class || text[end] != b'/')
-                {
-                    match text[end] {
-                        b'\\' => end += 1,
-                        b'[' => in_class = true,
-                        b']' => in_class = false,
-                        _ => {}
-                    }
-                    end += 1;
-                }
-                at = if end < text.len() && text[end] == b'/' {
-                    end + 1
-                } else {
-                    at + 1
-                };
-            }
-            b'"' | b'\'' => {
-                at += 1;
-                while at < text.len() && text[at] != c && line_break_len(text, at) == 0 {
-                    at += if text[at] == b'\\' { 2 } else { 1 };
-                }
-                at += 1;
-            }
-            b'`' => {
-                at += 1;
-                in_template = true;
-            }
-            b'{' => {
-                if let Some(depth) = substitutions.last_mut() {
-                    *depth += 1;
-                }
-                at += 1;
-            }
-            b'}' => {
-                at += 1;
-                match substitutions.pop() {
-                    Some(0) => in_template = true,
-                    Some(depth) => substitutions.push(depth - 1),
-                    None => {}
-                }
-            }
-            _ => {
-                at += 1;
-                if c.is_ascii_whitespace() {
-                    continue;
-                }
-            }
-        }
-        if in_template {
-            while at < text.len() && text[at] != b'`' {
-                if text[at..].starts_with(b"${") {
-                    substitutions.push(0);
-                    at += 1;
-                    break;
-                }
-                at += if text[at] == b'\\' { 2 } else { 1 };
-            }
-            at += 1;
-        }
-        at = at.min(text.len());
-        token_end = at;
-    }
-    out
-}
-
-/// `// @ts-nocheck` among the comments at the top, with no `// @ts-check` after it: `getCommentPragmas`, `CheckJsDirective`.
-fn says_no_check(text: &[u8]) -> bool {
-    let mut is_off = false;
-    let mut at = 0;
-    if text.starts_with(b"#!") {
-        while at < text.len() && line_break_len(text, at) == 0 {
-            at += 1;
-        }
-    }
-    loop {
-        while at < text.len() && text[at].is_ascii_whitespace() {
-            at += 1;
-        }
-        if text[at..].starts_with(b"/*") {
-            match text[at + 2..].windows(2).position(|w| w == b"*/") {
-                Some(n) => at += n + 4,
-                None => return is_off,
-            }
-            continue;
-        }
-        if !text[at..].starts_with(b"//") {
-            return is_off;
-        }
-        let start = at;
-        while at < text.len() && line_break_len(text, at) == 0 {
-            at += 1;
-        }
-        // `extractPragmas`
-        let comment = &text[start + 2..at];
-        let comment = comment.strip_prefix(b"/").unwrap_or(comment);
-        let blanks = comment
-            .iter()
-            .take_while(|&&c| c == b' ' || c == b'\t')
-            .count();
-        let Some(rest) = comment[blanks..].strip_prefix(b"@") else {
-            continue;
-        };
-        let name = &rest[..rest
-            .iter()
-            .take_while(|&&c| c.is_ascii_alphabetic() || c == b'-')
-            .count()];
-        if name.eq_ignore_ascii_case(b"ts-nocheck") {
-            is_off = true;
-        } else if name.eq_ignore_ascii_case(b"ts-check") {
-            is_off = false;
-        }
-    }
 }

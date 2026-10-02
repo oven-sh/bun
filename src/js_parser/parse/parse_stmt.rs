@@ -1,5 +1,6 @@
 #![allow(clippy::single_match)]
 #![warn(unused_must_use)]
+use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt;
 use bun_core;
 
@@ -234,8 +235,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && let Some(first) = decorators.values.first()
         {
             let at_sign = |p: &Self, decorator: &Expr| {
-                let before = &p.source.contents()[..decorator.loc.start.max(0) as usize];
-                bun_ast::usize2loc(before.iter().rposition(|&b| b == b'@').unwrap_or(0))
+                p.noted(decorator.loc, crate::sema::Mark::AtSign)
+                    .unwrap_or(decorator.loc)
             };
             let loc = at_sign(p, first);
             p.lexer
@@ -550,6 +551,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `value`/`stmt_opts` are reinitialized every iteration before any read, so
                 // declare per-iteration.
                 let mut value: Option<js_ast::Expr> = None;
+                let clause_loc = p.lexer.loc();
                 if p.lexer.token == T::TDefault {
                     if found_default {
                         if !p.lexer.tolerant {
@@ -627,7 +629,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 cases.push(js_ast::Case {
                     value,
                     body: bun_ast::StoreSlice::from_bump(body),
-                    loc: bun_ast::Loc::EMPTY,
+                    loc: clause_loc,
                 });
             }
             p.lexer.expect(T::TCloseBrace)?;
@@ -1051,7 +1053,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let body = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
                 return Ok(p.s(
                     S::ForOf {
-                        is_await: is_for_await,
+                        // `parseForOrForInOrForOfStatement`: `await` after `for` makes it one wherever the loop stands.
+                        is_await: is_for_await || wrote_await && p.lexer.tolerant,
                         init: init_.unwrap(),
                         value,
                         body,
@@ -1231,8 +1234,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // ─── heavy bodies still blocked ──────────────────────────────────────────
-    #[inline(never)]
+    #[inline]
     fn t_export(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions<'a>,
+        loc: bun_ast::Loc,
+    ) -> Result<Stmt> {
+        p.begin_module_syntax(opts);
+        let stmt = Self::parse_statement_after_export(p, opts, loc);
+        let kept = p.end_module_syntax();
+        Ok(p.keep_export(kept, stmt?, loc))
+    }
+
+    #[inline(never)]
+    fn parse_statement_after_export(
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
@@ -1285,14 +1300,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if Self::IS_TYPESCRIPT_ENABLED
                     && (opts.scope != StatementScope::Nested || p.lexer.tolerant)
                 {
+                    // `parseDeclarationWorker`: any import may follow `export`, which `checkImportDeclaration` reports (1191).
                     opts.is_export = true;
-                    let mut stmt = p.parse_stmt(opts)?;
-                    // `parseDeclarationWorker`: any import may follow `export`. An import declaration is read again from the
-                    // modifier on, which `checkImportDeclaration` reports (1191).
-                    if p.lexer.tolerant && matches!(stmt.data, js_ast::StmtData::SImport(_)) {
-                        stmt.loc = loc;
-                    }
-                    return Ok(stmt);
+                    return p.parse_stmt(opts);
                 }
 
                 p.lexer.unexpected()?;
@@ -1330,10 +1340,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // "export as namespace ns;"
                         p.lexer.next()?;
                         p.lexer.expect_contextual_keyword(b"namespace")?;
+                        let name = p.identifier_syntax();
                         p.lexer.expect(T::TIdentifier)?;
                         p.lexer.expect_or_insert_semicolon()?;
 
-                        return Ok(p.s(S::TypeScript::default(), loc));
+                        return Ok(p.keep_namespace_export_declaration(name, loc));
                     }
                 }
 
@@ -1380,7 +1391,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     ..Default::default()
                                 };
                                 p.skip_type_script_type_stmt(&mut skipper, loc)?;
-                                return Ok(p.s(S::TypeScript::default(), loc));
+                                return Ok(p.type_script_statement(loc));
                             }
                             StmtIdentifier::SNamespace
                             | StmtIdentifier::SAbstract
@@ -1664,6 +1675,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
 
+                p.note_star();
                 p.lexer.next()?;
                 // Both arms below assign exactly once before any read.
                 let namespace_ref: Ref;
@@ -1674,6 +1686,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "export * as ns from 'path'"
                     p.lexer.next()?;
                     let name = p.parse_clause_alias(b"export")?;
+                    p.note_namespace_export(Some(name));
                     namespace_ref = p.store_name_in_ref(name);
                     alias = Some(G::ExportStarAlias {
                         loc: p.lexer.loc(),
@@ -1684,6 +1697,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     path = p.parse_path()?;
                 } else {
                     // "export * from 'path'"
+                    p.note_namespace_export(None);
                     p.lexer.expect_contextual_keyword(b"from")?;
                     path = p.parse_path()?;
                     // Sanitize the basename into an identifier and copy into the arena.
@@ -1745,7 +1759,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 let export_clause = p.parse_export_clause()?;
-                if p.lexer.is_contextual_keyword(b"from") {
+                if p.lexer.is_contextual_keyword(b"from")
+                    // `parseExportDeclaration`: a string on the same line is the specifier after a forgotten "from" (1005).
+                    || (p.lexer.token == T::TStringLiteral
+                        && p.lexer.tolerant
+                        && !p.lexer.has_newline_before)
+                {
                     p.lexer.expect_contextual_keyword(b"from")?;
                     let parsed_path = p.parse_path()?;
 
@@ -1938,8 +1957,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ))))
     }
 
-    #[inline(never)]
+    #[inline]
     fn t_import(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions<'a>,
+        loc: bun_ast::Loc,
+    ) -> Result<Stmt> {
+        p.begin_module_syntax(opts);
+        let stmt = Self::parse_statement_after_import(p, opts, loc);
+        let kept = p.end_module_syntax();
+        Ok(p.keep_import(kept, stmt?, loc))
+    }
+
+    #[inline(never)]
+    fn parse_statement_after_import(
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
@@ -1947,6 +1978,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let previous_import_keyword = p.esm_import_keyword;
         p.esm_import_keyword = p.lexer.range();
         p.lexer.next()?;
+        p.note_import_clause();
         let mut stmt: S::Import = S::Import {
             namespace_ref: Ref::NONE,
             import_record_index: u32::MAX,
@@ -1997,6 +2029,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
 
+                p.note_star();
                 p.lexer.next()?;
                 p.lexer.expect_contextual_keyword(b"as")?;
                 stmt = S::Import {
@@ -2005,6 +2038,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     import_record_index: u32::MAX,
                     ..Default::default()
                 };
+                p.note_namespace_import_name();
                 p.lexer.expect(T::TIdentifier)?;
                 p.lexer.expect_contextual_keyword(b"from")?;
             }
@@ -2057,6 +2091,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }),
                     ..Default::default()
                 };
+                p.note_default_import();
                 p.lexer.next()?;
 
                 // "import defer * as ns from 'path'"
@@ -2077,6 +2112,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && p.lexer.token == T::TAsterisk
                     && (!opts.is_export || p.lexer.tolerant)
                 {
+                    p.note_deferred_import();
                     // Same scope restriction as `import * as ns from 'path'`:
                     // ESM import declarations are only valid at module scope
                     // (or inside a TypeScript `declare namespace`).
@@ -2084,6 +2120,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.lexer.unexpected()?;
                         return Err(crate::Error::SyntaxError);
                     }
+                    p.note_star();
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"as")?;
                     stmt = S::Import {
@@ -2093,6 +2130,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         phase_defer: true,
                         ..Default::default()
                     };
+                    p.note_namespace_import_name();
                     p.lexer.expect(T::TIdentifier)?;
                     p.lexer.expect_contextual_keyword(b"from")?;
 
@@ -2133,6 +2171,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     });
                                 if !leave_from {
+                                    p.note_type_only_import();
+                                    p.note_default_import();
                                     let name = p.lexer.identifier;
                                     let name_loc = p.lexer.loc();
                                     p.lexer.next()?;
@@ -2181,8 +2221,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                             T::TAsterisk => {
                                 // "import type * as foo from 'bar';"
+                                p.note_type_only_import();
+                                p.note_star();
                                 p.lexer.next()?;
                                 p.lexer.expect_contextual_keyword(b"as")?;
+                                p.note_namespace_import_name();
                                 p.lexer.expect(T::TIdentifier)?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
                                 if p.lexer.tolerant && !Self::is_at_string_specifier(p) {
@@ -2195,6 +2238,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             T::TOpenBrace => {
                                 // "import type {foo} from 'bar';"
+                                p.note_type_only_import();
                                 let _ = p.parse_import_clause()?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
                                 if p.lexer.tolerant && !Self::is_at_string_specifier(p) {
@@ -2234,10 +2278,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     match p.lexer.token {
                         // "import defaultItem, * as ns from 'path'"
                         T::TAsterisk => {
+                            p.note_star();
                             p.lexer.next()?;
                             p.lexer.expect_contextual_keyword(b"as")?;
                             stmt.namespace_ref = p.store_name_in_ref(p.lexer.identifier);
                             stmt.star_name_loc = p.lexer.loc();
+                            p.note_namespace_import_name();
                             p.lexer.expect(T::TIdentifier)?;
                         }
                         // "import defaultItem, {item1, item2} from 'path'"
@@ -2284,8 +2330,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         match p.lexer.token {
             T::TAsterisk => {
+                p.note_star();
                 p.lexer.next()?;
                 p.lexer.expect_contextual_keyword(b"as")?;
+                p.note_namespace_import_name();
                 p.lexer.expect(T::TIdentifier)?;
             }
             T::TOpenBrace => {
@@ -2319,8 +2367,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(syntax) = &mut p.type_syntax {
             syntax.specifier_expressions.push(specifier);
         }
+        p.keep_module_specifier(None, specifier.loc);
         p.lexer.expect_or_insert_semicolon()?;
-        // Read again from the source, which only finds that the file is a module.
         Ok(p.s(S::TypeScript::default(), loc))
     }
 
@@ -2337,10 +2385,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// The rest of `parseImportDeclarationOrImportEqualsDeclaration` after a `defer` modifier that is not followed by `*`.
-    /// `checkGrammarImportClause` reports a default name (18058) and named imports (18059). Tolerant mode only.
+    /// Tolerant mode only.
     #[cold]
     #[inline(never)]
     fn import_after_defer(p: &mut Self, loc: bun_ast::Loc) -> Result<Stmt> {
+        p.note_deferred_import();
         let mut stmt = S::Import {
             namespace_ref: Ref::NONE,
             import_record_index: u32::MAX,
@@ -2352,6 +2401,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc: p.lexer.loc(),
                 ref_: p.store_name_in_ref(p.lexer.identifier),
             });
+            p.note_default_import();
             p.lexer.next()?;
         }
         // `tryParseImportClause`
@@ -2364,10 +2414,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 match p.lexer.token {
                     T::TAsterisk => {
+                        p.note_star();
                         p.lexer.next()?;
                         p.lexer.expect_contextual_keyword(b"as")?;
                         stmt.namespace_ref = p.store_name_in_ref(p.lexer.identifier);
                         stmt.star_name_loc = p.lexer.loc();
+                        p.note_namespace_import_name();
                         p.lexer.expect(T::TIdentifier)?;
                     }
                     T::TOpenBrace => {
@@ -2442,6 +2494,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
     ) -> Result<Stmt> {
         let is_identifier = p.lexer.token == T::TIdentifier;
+        let has_paren = p.lexer.token == T::TOpenParen;
         let name = p.lexer.identifier;
         if p.lexer.tolerant && is_identifier && Self::IS_TYPESCRIPT_ENABLED {
             if let Some(stmt) = Self::parse_declaration_after_modifiers(p, opts)? {
@@ -2503,6 +2556,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Self::missing_semicolon_after_expr(p, &expr, loc)?;
         } else {
             p.lexer.expect_or_insert_semicolon()?;
+        }
+        if has_paren {
+            p.mark_type_syntax(loc, crate::sema::Mark::HasParen, loc);
         }
         Ok(p.s(
             S::SExpr {
@@ -2602,16 +2658,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.missing_semicolon_after(b"", expr.loc)
     }
 
-    /// Where the backtick of a tagged template is. The raw text of its head is a slice of the source, unless it contains "\r".
+    /// Where the backtick of a tagged template is.
     fn tagged_template_start(p: &Self, template: &js_ast::E::Template) -> Option<bun_ast::Loc> {
-        let js_ast::E::TemplateContents::Raw(head) = &template.head else {
-            return None;
-        };
-        let text = p.lexer.contents;
-        let offset = head.as_ptr().addr().checked_sub(text.as_ptr().addr())?;
-        (1..=text.len())
-            .contains(&offset)
-            .then(|| bun_ast::usize2loc(offset - 1))
+        let tag = crate::sema::ExprKey::of(template.tag.as_ref()?);
+        let casts = &p.type_syntax.as_ref()?.casts;
+        let noted = casts
+            .iter()
+            .rev()
+            .find(|cast| cast.0 == tag && cast.1 == crate::sema::CastKind::Tag)?;
+        Some(bun_ast::Loc { start: noted.2 })
     }
 
     /// `parseErrorForMissingSemicolonAfter`, for a node that is not a tagged template. Call where no semicolon can be parsed.
@@ -2713,7 +2768,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     };
                     p.skip_type_script_type_stmt(&mut stmt_opts, loc)?;
-                    return Ok(Some(p.s(S::TypeScript::default(), loc)));
+                    return Ok(Some(p.type_script_statement(loc)));
                 }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtNamespace
@@ -2751,7 +2806,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
 
                     p.skip_type_script_interface_stmt(&mut stmt_opts, loc)?;
-                    return Ok(Some(p.s(S::TypeScript::default(), loc)));
+                    return Ok(Some(p.type_script_statement(loc)));
                 }
                 // "interface \n Foo {}"
                 // "export interface \n Foo {}"
@@ -2789,18 +2844,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         body_opts.is_typescript_declare = true;
                         body_opts.scope = StatementScope::Namespace;
                     }
-                    let _ = p.parse_stmts_up_to(T::TCloseBrace, &mut body_opts)?;
+                    let body = p.parse_stmts_up_to(T::TCloseBrace, &mut body_opts)?;
                     p.lexer.expect(T::TCloseBrace)?;
                     if p.lexer.tolerant {
                         // The statements inside are dropped.
                         p.discard_scopes_up_to(scope_index);
+                    }
+                    if p.keeps_type_syntax() {
+                        let body = Some(body.into_bump_slice_mut());
+                        return Ok(Some(p.keep_global(loc, loc, body, opts.is_export)));
                     }
                     return Ok(Some(p.s(S::TypeScript::default(), loc)));
                 }
                 // `parseAmbientExternalModuleDeclaration`: without a "{" there is no body.
                 if p.lexer.tolerant && matches!(p.lexer.token, T::TIdentifier | T::TExport) {
                     p.lexer.expect_or_insert_semicolon()?;
-                    return Ok(Some(p.s(S::TypeScript::default(), loc)));
+                    return Ok(Some(p.keep_global(loc, loc, None, opts.is_export)));
                 }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtDeclare => {
@@ -2836,19 +2895,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // "declare global { ... }"
                 if p.lexer.is_contextual_keyword(b"global") {
+                    let name_loc = p.lexer.loc();
                     p.lexer.next()?;
                     // `parseAmbientExternalModuleDeclaration`: without a "{" there is no body.
                     if p.lexer.token != T::TOpenBrace && p.lexer.tolerant {
                         p.lexer.expect_or_insert_semicolon()?;
-                        return Ok(Some(p.s(S::TypeScript::default(), loc)));
+                        return Ok(Some(p.keep_global(
+                            name_loc,
+                            name_loc,
+                            None,
+                            opts.is_export,
+                        )));
                     }
                     p.lexer.expect(T::TOpenBrace)?;
                     let scope_index = p.scopes_in_order.len();
-                    let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+                    let body = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
                     p.lexer.expect(T::TCloseBrace)?;
                     // The statements inside are dropped, so discard any scopes they
                     // recorded or the visit pass will hit a scope order mismatch.
                     p.discard_scopes_up_to(scope_index);
+                    if p.keeps_type_syntax() {
+                        let body = Some(body.into_bump_slice_mut());
+                        return Ok(Some(p.keep_global(
+                            name_loc,
+                            name_loc,
+                            body,
+                            opts.is_export,
+                        )));
+                    }
                     return Ok(Some(p.s(S::TypeScript::default(), loc)));
                 }
 
@@ -2869,14 +2943,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     };
                     p.skip_type_script_type_stmt(&mut stmt_opts, type_keyword_loc)?;
-                    return Ok(Some(p.s(S::TypeScript::default(), loc)));
+                    return Ok(Some(p.type_script_statement(loc)));
                 }
 
                 // "declare const x: any"
                 let after_declare_range = p.lexer.range();
                 let scope_index = p.scopes_in_order.len();
                 let stmt = p.parse_stmt(opts)?;
-                p.note_ambient_statement(after_declare_range.loc, &stmt);
+                // The type checker is told of every declaration. That it says `declare` is among its modifiers.
+                if p.keeps_type_syntax() {
+                    return Ok(Some(stmt));
+                }
                 // Anything unexpected is a syntax error ("declare foo", "declare type \n Foo").
                 // esbuild rewinds its lexer here; we point at the range captured above instead.
                 if !matches!(

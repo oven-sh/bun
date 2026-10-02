@@ -1093,10 +1093,14 @@ pub struct Import {
     pub namespace_pos: u32,
     /// Where the token after `import` is: the first of the import clause.
     pub clause_start: u32,
+    /// `importClause.End()`
+    pub clause_end: u32,
     /// Where the `*` of `* as namespace` is.
     pub namespace_start: u32,
     pub named: Span<ImportSpecId>,
     pub type_only: bool,
+    /// `importClause.PhaseModifier` is `defer`.
+    pub is_deferred: bool,
     /// As in [`SpecifierUse`].
     pub mode: ResolutionMode,
 }
@@ -1338,60 +1342,21 @@ impl Default for JsxPragmas {
     }
 }
 
-impl JsxPragmas {
-    /// `getCommentPragmas`, `extractPragmas`: what the `/* */` comments before the first token of `text` say. Of two that say the
-    /// same thing the last counts (`GetPragmaFromSourceFile`).
-    pub fn scan(text: &[u8], atoms: &crate::atom::Interner) -> JsxPragmas {
-        let mut pragmas = JsxPragmas::default();
-        let is_blank = |c: &u8| matches!(c, b' ' | b'\t');
-        let is_line_break = |c: &u8| matches!(c, b'\n' | b'\r');
-        let mut rest = text;
-        if rest.starts_with(b"#!") {
-            rest = &rest[rest.iter().position(is_line_break).unwrap_or(rest.len())..];
-        }
-        loop {
-            rest = rest.trim_ascii_start();
-            if rest.starts_with(b"//") {
-                rest = &rest[rest.iter().position(is_line_break).unwrap_or(rest.len())..];
-                continue;
-            }
-            if !rest.starts_with(b"/*") {
-                break;
-            }
-            let end =
-                bun_core::strings::index_of(&rest[2..], b"*/").map_or(rest.len(), |at| at + 2);
-            let comment = &rest[2..end];
-            rest = &rest[(end + 2).min(rest.len())..];
-            for line in comment.split(is_line_break) {
-                // Of a line, the first `@name` counts, and the word after it.
-                let Some(at) = line
-                    .windows(2)
-                    .position(|w| w[0] == b'@' && !is_blank(&w[1]))
-                else {
-                    continue;
-                };
-                let mut words = line[at + 1..].split(is_blank).filter(|w| !w.is_empty());
-                let (Some(name), Some(argument)) = (words.next(), words.next()) else {
-                    continue;
-                };
-                if name.eq_ignore_ascii_case(b"jsx") {
-                    pragmas.factory = atoms.intern(argument);
-                } else if name.eq_ignore_ascii_case(b"jsxFrag") {
-                    pragmas.fragment_factory = atoms.intern(argument);
-                } else if name.eq_ignore_ascii_case(b"jsxImportSource") {
-                    pragmas.import_source = atoms.intern(argument);
-                } else if name.eq_ignore_ascii_case(b"jsxRuntime") {
-                    // `GetJSXImplicitImportBase`
-                    pragmas.classic = match argument {
-                        b"classic" => Some(true),
-                        b"automatic" => Some(false),
-                        _ => None,
-                    };
-                }
-            }
-        }
-        pragmas
-    }
+/// `ast.CommentDirective`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct CommentDirective {
+    /// `Loc`. Of a `/* */` comment it starts where the last line of the comment does.
+    pub start: u32,
+    pub end: u32,
+    pub kind: CommentDirectiveKind,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum CommentDirectiveKind {
+    /// `@ts-expect-error`
+    ExpectError,
+    /// `@ts-ignore`
+    Ignore,
 }
 
 /// What the parser hands over for one source file.
@@ -1441,8 +1406,8 @@ pub struct File {
     pub body: IdList<StmtId>,
     /// `/// <reference ... />`. The last is what `resolution-mode=` says, of a `types` reference only.
     pub references: Few<(ReferenceKind, Atom, u32, ResolutionMode)>,
-    /// The lines `// @ts-ignore` and `// @ts-expect-error` are about: from where to where. In order.
-    pub suppressed: Few<(u32, u32)>,
+    /// `CommentDirectives`, in order.
+    pub comment_directives: Few<CommentDirective>,
     /// The statement of each `with (e) statement`, from right after the `)` to where it ends.
     pub with_bodies: Few<(u32, u32)>,
     /// The start of each token that follows a token the parser skipped in a list (`abortParsingListOrMoveToNextToken`). Sorted.
@@ -1803,7 +1768,7 @@ impl File {
             jsdoc_param_errors,
             decorators,
             directives,
-            suppressed
+            comment_directives
         );
     }
 }

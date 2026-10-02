@@ -27,7 +27,7 @@ use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
     FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
     ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
-    StmtList, TypeParameterFlag,
+    StmtList,
 };
 use crate::sema::Mark;
 use bun_ast as js_ast;
@@ -261,6 +261,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 has_decorators = has_decorators || opts.ts_decorators.len() > 0;
             }
 
+            let modifiers_base = p.pushed_modifiers();
             // This property may turn out to be a type in TypeScript, which should be ignored
             if let Some(property) =
                 p.parse_property(js_ast::g::PropertyKind::Normal, &mut opts, None)?
@@ -276,6 +277,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if let Some(named_at) = named_at {
                         p.mark_type_syntax(named_at, Mark::MemberStart, first_decorator_loc);
                         p.mark_end(named_at, Mark::MemberEnd);
+                        p.end_parameter_modifiers(modifiers_base, named_at);
                     }
                 }
                 if let Some(starts) = &mut p.starts_for_parse_only {
@@ -315,7 +317,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Discard any scopes recorded while parsing them or the visit pass
                 // will hit a scope order mismatch.
                 p.discard_scopes_up_to(property_scope_index);
-                p.mark_type_syntax(class_keyword.loc, Mark::DroppedMember, first_decorator_loc);
+                if p.keeps_type_syntax() {
+                    p.finish_class_index_signature(
+                        class_keyword.loc,
+                        first_decorator_loc,
+                        modifiers_base,
+                    );
+                }
             }
         }
         p.lexer.list_contexts = saved_contexts;
@@ -417,16 +425,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         p.discard_scopes_up_to(scope_index);
                         p.mark_type_syntax(class_keyword.loc, Mark::OtherExtends, start.loc);
+                        p.keep_expressions(start.loc, &[value]);
                         if count == 1 && !stop_checking {
                             p.lexer.ts_grammar_error(start, 1174);
                             stop_checking = true;
                         }
                     }
                 } else {
-                    // The lowering reads the types of a clause from the first one on.
-                    if count == 0 {
-                        p.mark_type_syntax(class_keyword.loc, Mark::Implements, start.loc);
-                    }
+                    let clause = if seen_implements {
+                        Mark::OtherImplements
+                    } else {
+                        Mark::Implements
+                    };
+                    p.mark_type_syntax(class_keyword.loc, clause, start.loc);
                     // `extends` after the type starts the next clause.
                     let opts = crate::typescript::SkipTypeOptionsBitset::only(
                         crate::typescript::SkipTypeOptions::DisallowConditionalTypes,
@@ -445,6 +456,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             | T::TNoSubstitutionTemplateLiteral
                             | T::TTemplateHead
                     ) {
+                        // `checkClassLikeDeclaration`: only `A.B<C>` can be implemented.
+                        p.ts_checker_error(start.loc, 2500);
+                        p.forget_kept_type(start.loc);
                         p.parse_rest_of_implemented(start.loc)?;
                     }
                 }
@@ -527,7 +541,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let tail: E::TemplateContents = if !include_raw {
                 E::TemplateContents::Cooked(p.lexer.to_e_string()?)
             } else {
-                E::TemplateContents::Raw(p.lexer.raw_template_contents().into())
+                p.tagged_template_contents()
             };
 
             parts.push(E::TemplatePart {
@@ -1557,15 +1571,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name.as_mut().unwrap().ref_ = p
                     .declare_symbol(js_ast::symbol::Kind::Class, name_loc, name_text)
                     .expect("unreachable");
+            } else if p.keeps_type_syntax() {
+                name = Some(p.keep_name(name_loc, name_text));
             }
         }
 
         // Even anonymous classes can have TypeScript type parameters
         if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_parameters(
-                TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
-                    | TypeParameterFlag::ALLOW_CONST_MODIFIER,
-            )?;
+            p.skip_class_type_parameters(class_keyword.loc)?;
         }
         let mut class_opts = ParseClassOptions {
             allow_ts_decorators: true,
@@ -1586,6 +1599,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.pop_and_discard_scope(scope_index);
                 if opts.scope.is_namespace() && opts.is_export {
                     p.has_non_local_export_declare_inside_namespace = true;
+                }
+                if p.keeps_type_syntax() {
+                    let is_export = opts.is_export;
+                    return Ok(p.s(S::Class { class, is_export }, loc));
                 }
 
                 return Ok(p.s(S::TypeScript::default(), loc));
@@ -2388,11 +2405,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if p.lexer.token == T::TEquals {
                 p.lexer.next()?;
-                let initializer = p.parse_expr(Level::Comma)?;
-                if Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare {
-                    p.note_ambient_initializer(local.loc, initializer);
-                }
-                value = Some(initializer);
+                value = Some(p.parse_expr(Level::Comma)?);
             }
 
             p.mark_end(local.loc, Mark::VariableLikeEnd);
@@ -2566,6 +2579,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let path_text = p.lexer.to_utf8_e_string()?;
             // SAFETY: E::String slice8() is arena-owned for 'a.
             path.text = unsafe { bun_collections::detach_lifetime(path_text.slice8()) };
+            p.keep_module_specifier(Some(path.text), path.loc);
             p.lexer.next()?;
         } else {
             // Any expression is accepted and never checked. `checkExternalImportOrExportDeclaration` reports 1141 unless it
@@ -2577,13 +2591,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(syntax) = &mut p.type_syntax {
                 syntax.specifier_expressions.push(value);
             }
+            p.keep_module_specifier(None, path.loc);
         }
 
-        // After an import, `with` can be on the next line. The old reader reports `assert` (2880).
+        // After an import, `with` can be on the next line.
         let is_with = p.lexer.token == T::TWith;
         if (is_with || p.lexer.is_contextual_keyword(b"assert"))
             && (!p.lexer.has_newline_before || (is_with && !p.is_in_export_statement()))
         {
+            if !is_with {
+                let range = p.lexer.range();
+                p.lexer.ts_error(range, 2880);
+            }
             p.parse_import_attributes()?;
         }
 
@@ -2608,6 +2627,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let open_brace_loc = p.lexer.loc();
         let mut properties = BumpVec::<G::Property>::new_in(p.arena);
+        // `getResolutionModeOverride`: what the first attribute says. It counts if it is the only one.
+        let mut mode = bun_ast::ts_syntax::ResolutionMode::None;
 
         if p.lexer.token != T::TOpenBrace {
             // Reported, and there are no attributes.
@@ -2624,7 +2645,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // `parseImportAttribute`
                 let element_start = p.lexer.loc();
-                let key = if p.lexer.token == T::TStringLiteral {
+                let is_string_key = p.lexer.token == T::TStringLiteral;
+                let key = if is_string_key {
                     let text = p.lexer.to_e_string()?;
                     p.new_expr(text, element_start)
                 } else {
@@ -2633,7 +2655,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 p.lexer.next()?;
                 p.lexer.expect(T::TColon)?;
+                let literal_end = matches!(
+                    p.lexer.token,
+                    T::TStringLiteral | T::TNoSubstitutionTemplateLiteral
+                )
+                .then(|| p.lexer.range().end());
                 let value = p.parse_expr(Level::Comma)?;
+                if properties.is_empty() {
+                    mode = p.resolution_mode_of_attribute(&key, is_string_key, &value, literal_end);
+                }
                 properties.push(G::Property {
                     key: Some(key),
                     value: Some(value),
@@ -2650,6 +2680,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             p.lexer.list_contexts = saved_contexts;
             p.lexer.expect_close_brace_of_attributes(open_brace_loc)?;
+        }
+        if properties.len() == 1 {
+            p.keep_resolution_mode(mode);
         }
 
         let object = p.new_expr(
@@ -2722,7 +2755,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let outer_modifiers_base = p.begin_statement();
             let mut stmt = p.parse_stmt(&mut current_opts)?;
             let is_typescript_only = matches!(stmt.data, js_ast::stmt::Data::STypeScript(_));
-            let syntax = p.end_statement(
+            p.end_statement(
                 outer_modifiers_base,
                 if is_typescript_only {
                     stmt_start
@@ -2730,9 +2763,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     stmt.loc
                 },
             );
-            if Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare {
-                p.note_ambient_statement(stmt_start, &stmt);
-            }
             if p.reparses_rest_of_file && eend == T::TEndOfFile && p.lexer.loc() == stmt_start {
                 p.lexer.next()?;
             }
@@ -2742,15 +2772,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Skip TypeScript types entirely
             if Self::IS_TYPESCRIPT_ENABLED {
-                if let js_ast::stmt::Data::STypeScript(_) = stmt.data {
+                if let js_ast::stmt::Data::STypeScript(placeholder) = stmt.data {
                     // The visit pass drops it.
                     if p.keeps_type_syntax() {
+                        let syntax = placeholder.syntax;
                         stmts.push(p.s(S::TypeScript { syntax }, stmt_start));
                     }
                     continue;
                 }
             }
-            let mut skip = matches!(stmt.data, js_ast::stmt::Data::SEmpty(_));
+            // `parseEmptyStatement`: a node like any other to the type checker.
+            let mut skip =
+                matches!(stmt.data, js_ast::stmt::Data::SEmpty(_)) && !p.keeps_type_syntax();
             // Parse one or more directives at the beginning
             if is_directive_prologue {
                 is_directive_prologue = false;
@@ -3284,6 +3317,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     p.lexer.next()?;
                                     p.parse_paren_expr(async_range.loc, level, opts)?
                                 };
+                                if matches!(expr.data, js_ast::expr::Data::EArrow(_)) {
+                                    p.mark_type_syntax(
+                                        async_range.loc,
+                                        Mark::TypeParameters,
+                                        type_arguments,
+                                    );
+                                }
                                 // "async<T>()" turned out to be a call.
                                 if let js_ast::expr::Data::ECall(call) = &expr.data {
                                     p.mark_type_syntax(

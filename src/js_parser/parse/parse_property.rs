@@ -135,10 +135,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // "class Foo { foo(): void; foo(): void {} }"
         if func.flags.contains(flags::Function::IsForwardDeclaration) {
-            // A member of an object literal stays in the tree. So does a class member with syntax errors, which cannot be read
-            // again from the source text.
-            let stays = p.lexer.tolerant
-                && (!opts.is_class || p.lexer.prev_error_loc.start >= key_range.loc.start);
+            // A member of an object literal stays in the tree. The type checker is told of every member of a class.
+            let stays = p.lexer.tolerant && !opts.is_class || p.keeps_type_syntax();
             if !stays {
                 // Skip this property entirely
                 p.pop_and_discard_scope(scope_index);
@@ -363,7 +361,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && !matches!(kind, PropertyKind::Get | PropertyKind::Set)
                         && p.is_unambiguously_index_signature()
                     {
-                        p.skip_class_index_signature()?;
+                        p.parse_class_index_signature()?;
                         return Ok(None);
                     }
                     is_computed = true;
@@ -536,10 +534,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         {
                                             if opts.is_async && !opts.is_class {
                                                 // `checkGrammarModifiers`. Those of a class member are gone over
-                                                // where its header is read again.
+                                                // when it is lowered.
                                                 p.lexer.ts_error(name_range, 1030);
                                             }
                                             opts.is_async = true;
+                                            p.push_member_modifier(opts, keyword, name_range.loc);
 
                                             // p.markSyntaxFeature(ObjectAccessors, name_range)
 
@@ -556,6 +555,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                 == Some(PropertyModifierKeyword::PStatic)
                                         {
                                             opts.is_static = true;
+                                            p.push_member_modifier(opts, keyword, name_range.loc);
                                             kind = PropertyKind::Normal;
                                             errors = None;
                                             continue 'restart;
@@ -569,10 +569,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             && !p.lexer.has_newline_before
                                             && raw == b"declare"
                                         {
+                                            p.push_member_modifier(opts, keyword, name_range.loc);
                                             let scope_index = p.scopes_in_order.len();
                                             if let Some(_prop) =
                                                 p.parse_property(kind, opts, None)?
                                             {
+                                                if p.keeps_type_syntax() {
+                                                    return Ok(Some(_prop));
+                                                }
                                                 let mut prop = _prop;
                                                 if prop.kind == PropertyKind::Normal
                                                     && prop.value.is_none()
@@ -596,10 +600,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             && raw == b"abstract"
                                         {
                                             opts.is_ts_abstract = true;
+                                            p.push_member_modifier(opts, keyword, name_range.loc);
                                             let scope_index = p.scopes_in_order.len();
                                             if let Some(prop) =
                                                 p.parse_property(kind, opts, None)?
                                             {
+                                                if p.keeps_type_syntax() {
+                                                    return Ok(Some(prop));
+                                                }
                                                 if prop.kind == PropertyKind::Normal
                                                     && prop.value.is_none()
                                                     && opts.ts_decorators.len() > 0
@@ -623,6 +631,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PAccessor)
                                         {
+                                            p.push_member_modifier(opts, keyword, name_range.loc);
                                             kind = PropertyKind::AutoAccessor;
                                             errors = None;
                                             continue 'restart;
@@ -640,6 +649,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             && PropertyModifierKeyword::find(raw) == Some(keyword)
                                             && !(p.lexer.has_newline_before && p.lexer.tolerant)
                                         {
+                                            p.push_member_modifier(opts, keyword, name_range.loc);
                                             errors = None;
                                             continue 'restart;
                                         }
@@ -657,6 +667,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     has_object_modifier = true;
                                     // `checkGrammarObjectLiteralExpression`
                                     p.lexer.ts_grammar_error(name_range, 1042);
+                                } else {
+                                    p.push_uncommon_member_modifier(raw, name_range.loc);
                                 }
                                 continue 'restart;
                             }
@@ -824,6 +836,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.lexer.token == T::TQuestion {
                         // "class X { foo?: number }"
                         // "class X { foo!: number }"
+                        p.mark_type_syntax(key.loc, crate::sema::Mark::Optional, key.loc);
                         p.lexer.next()?;
                     } else if p.lexer.token == T::TExclamation
                         && !p.lexer.has_newline_before
@@ -832,6 +845,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && !opts.is_generator
                     {
                         // "class X { foo!: number }"
+                        p.mark_type_syntax(key.loc, crate::sema::Mark::Definite, key.loc);
                         p.lexer.next()?;
                         has_definite_assignment_assertion_operator = true;
                     }
@@ -910,6 +924,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Skip over types
                     if p.lexer.token == T::TColon {
                         p.lexer.next()?;
+                        p.mark_type_syntax(key.loc, crate::sema::Mark::Annotation, p.lexer.loc());
                         if p.options.features.emit_decorator_metadata
                             && opts.is_class
                             && opts.ts_decorators.len() > 0
@@ -1218,23 +1233,5 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => b"",
         };
         self.missing_semicolon_after(name, key.loc)
-    }
-
-    /// `parseIndexSignatureDeclaration`, at the `[` of a class member. The caller drops the member.
-    #[cold]
-    #[inline(never)]
-    fn skip_class_index_signature(&mut self) -> crate::CrateResult<()> {
-        self.skip_index_signature_parameters()?;
-        if self.lexer.token == T::TColon {
-            self.lexer.next()?;
-            self.skip_type_script_type(Level::Lowest)?;
-        }
-        // `parseTypeMemberSemicolon`
-        if self.lexer.token == T::TComma {
-            self.lexer.next()?;
-        } else {
-            self.lexer.expect_or_insert_semicolon()?;
-        }
-        Ok(())
     }
 }

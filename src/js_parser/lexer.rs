@@ -172,6 +172,7 @@ pub struct LexerSnapshot<'a> {
     pub(crate) await_name_seen: bool,
     // Vec buffer lengths — restore() truncates back to these.
     pub(crate) all_comments_len: usize,
+    pub(crate) comment_directives_len: usize,
     pub(crate) comments_to_preserve_before_len: usize,
 }
 
@@ -263,6 +264,10 @@ pub struct Lexer<'a> {
     /// `@name`, an intrinsic in the source of one of JavaScriptCore's builtins, is a name like any other.
     pub(crate) jsc_builtin_syntax: bool,
     pub(crate) all_comments: Vec<Range>,
+    /// `Scanner.commentDirectives`. Tolerant mode only: see `sema::comments`.
+    pub(crate) comment_directives: Vec<bun_sema::hir::CommentDirective>,
+    /// `lastLineStart`, of the `/* */` comment that was scanned last.
+    pub(crate) last_line_start: usize,
     /// `skipJSDocLeadingAsterisks`: a type in a JSDoc comment is being scanned, where the first `*` of a line is trivia. Set for the
     /// type checker only.
     pub(crate) skips_jsdoc_asterisks: bool,
@@ -383,6 +388,7 @@ impl<'a> Lexer<'a> {
             list_contexts: self.list_contexts,
             await_name_seen: self.await_name_seen,
             all_comments_len: self.all_comments.len(),
+            comment_directives_len: self.comment_directives.len(),
             comments_to_preserve_before_len: self.comments_to_preserve_before.len(),
         }
     }
@@ -430,6 +436,8 @@ impl<'a> Lexer<'a> {
         debug_assert!(self.temp_buffer_u16.is_empty());
 
         self.all_comments.truncate(original.all_comments_len);
+        self.comment_directives
+            .truncate(original.comment_directives_len);
         self.comments_to_preserve_before
             .truncate(original.comments_to_preserve_before_len);
     }
@@ -2717,6 +2725,9 @@ impl<'a> Lexer<'a> {
             // Save the original comment text so we can subtract comments from the
             // character frequency analysis used by symbol minification
             self.all_comments.push(self.range());
+            if self.tolerant {
+                self.process_comment_directive(is_multiline_comment);
+            }
         }
 
         // Omit the trailing "*/" from the checks below
@@ -2811,6 +2822,7 @@ impl<'a> Lexer<'a> {
         let contents: &[u8] = self.contents;
         // Consume the `*` of the opening `/*`.
         self.step_with(contents);
+        self.last_line_start = self.start;
 
         loop {
             match self.code_point {
@@ -2824,6 +2836,7 @@ impl<'a> Lexer<'a> {
                 0x0D | 0x0A | 0x2028 | 0x2029 => {
                     self.step_with(contents);
                     self.has_newline_before = true;
+                    self.last_line_start = self.end;
                 }
                 -1 => {
                     // TypeScript's `Scan`: `*/` is missed where the text ends, which is where the comment ends.
@@ -3102,6 +3115,8 @@ impl<'a> Lexer<'a> {
             track_react_suppressions: false,
             jsc_builtin_syntax: false,
             all_comments: Vec::new(),
+            comment_directives: Vec::new(),
+            last_line_start: 0,
             skips_jsdoc_asterisks: false,
             jsdoc_asterisk_end: 0,
         }
@@ -3374,11 +3389,13 @@ impl<'a> Lexer<'a> {
                             // `full_start_of` walks back over comments.
                             if self.tolerant {
                                 self.all_comments.push(self.range());
+                                self.process_comment_directive(false);
                             }
                             continue;
                         }
                         0x2A => {
                             self.step();
+                            self.last_line_start = self.start;
                             'multi_line_comment: loop {
                                 match self.code_point {
                                     0x2A => {
@@ -3391,6 +3408,7 @@ impl<'a> Lexer<'a> {
                                     0x0D | 0x0A | 0x2028 | 0x2029 => {
                                         self.step();
                                         self.has_newline_before = true;
+                                        self.last_line_start = self.end;
                                     }
                                     -1 => {
                                         // As in `scan_multi_line_comment_body`.
@@ -3412,6 +3430,7 @@ impl<'a> Lexer<'a> {
                             }
                             if self.tolerant {
                                 self.all_comments.push(self.range());
+                                self.process_comment_directive(true);
                             }
                             continue;
                         }

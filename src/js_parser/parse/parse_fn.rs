@@ -130,11 +130,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if opts.is_typescript_declare
                 || func.flags.contains(Flags::Function::IsForwardDeclaration)
             {
-                // A declaration with syntax errors cannot be read again from the source text, so it stays in the tree.
-                if p.lexer.prev_error_loc.start > loc.start
-                    && p.lexer.tolerant
-                    && !opts.is_typescript_declare
-                {
+                // The type checker is told of every declaration.
+                if p.keeps_type_syntax() {
                     p.pop_scope();
                     if has_if_scope {
                         p.pop_scope();

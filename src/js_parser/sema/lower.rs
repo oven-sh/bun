@@ -1,9 +1,9 @@
 //! From the statements as the parse pass left them (nothing bound, folded or dropped) to `bun_sema::hir`.
 
+use super::builder::{Builder, Modified};
 use super::clone_types::PendingPart;
 use super::jsdoc::Comments;
 use super::reparse::Host;
-use super::type_syntax::{Builder, Modified};
 use super::{CastKind, ExprKey, Mark, TypeSyntax};
 use crate::p::P;
 use bun_ast::expr::Data;
@@ -55,6 +55,8 @@ pub(crate) struct Lower<'p, 'a> {
     pub(super) full_signatures: bun_collections::HashMap<u32, ()>,
     /// The functions whose `@param` tags were compared with their parameters.
     pub(super) documented_functions: bun_collections::HashMap<u32, ()>,
+    /// `NodeFlagsAmbient`: what is being lowered is in a declaration file, or in a declaration that says `declare`.
+    is_ambient: bool,
 }
 
 fn pos_of(loc: ast::Loc) -> u32 {
@@ -84,7 +86,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         syntax: TypeSyntax,
         stmts: &[Stmt],
         atoms: &'a Interner,
-        lexer: crate::lexer::Lexer<'a>,
+        is_declaration_file: bool,
     ) -> hir::File {
         // `withJSDoc`: only in JavaScript is anything made of the tags.
         let (syntax, jsdoc) = if p.lexer.is_javascript_file() {
@@ -92,40 +94,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         } else {
             (syntax, Comments::default())
         };
-        Self::run_on(p, syntax, Some(stmts), atoms, lexer, false, jsdoc)
-    }
-
-    /// For a `.d.ts` file. The parser's statements are not used yet: `type_syntax::Builder` reads the statements from the source and
-    /// takes the type nodes the parser kept.
-    /// `has_syntax_errors`: the parser logged syntax errors. If the file cannot be read without going on from them, the result says
-    /// `has_parse_diagnostics` and the caller reports them.
-    pub(crate) fn run_declaration_file(
-        p: &'p P<'a, true, false>,
-        syntax: TypeSyntax,
-        atoms: &'a Interner,
-        lexer: crate::lexer::Lexer<'a>,
-        has_syntax_errors: bool,
-    ) -> hir::File {
-        Self::run_on(
-            p,
-            syntax,
-            None,
-            atoms,
-            lexer,
-            has_syntax_errors,
-            Comments::default(),
-        )
-    }
-
-    fn run_on(
-        p: &'p P<'a, true, false>,
-        syntax: TypeSyntax,
-        stmts: Option<&[Stmt]>,
-        atoms: &'a Interner,
-        lexer: crate::lexer::Lexer<'a>,
-        has_syntax_errors: bool,
-        jsdoc: Comments,
-    ) -> hir::File {
+        let p: &'p P<'a, true, false> = p;
         let mut marks = syntax.marks;
         marks.sort_unstable();
         marks.dedup();
@@ -153,15 +122,10 @@ impl<'p, 'a> Lower<'p, 'a> {
         for (key, end) in syntax.expr_ends {
             expr_ends.insert(key, end);
         }
-        let mut b = Builder::new(lexer, atoms);
+        let mut b = Builder::new(p.source.contents(), p.lexer.is_javascript_file(), atoms);
         b.comments = p.lexer.all_comments.clone();
         b.ts = syntax.ast;
         b.kept = syntax.by_offset;
-        b.ambient_statements = syntax.ambient_statements;
-        b.ambient_statements.sort_by_key(|statement| statement.0);
-        b.ambient_initializers = syntax.ambient_initializers;
-        b.ambient_initializers
-            .sort_by_key(|initializer| initializer.0);
         let mut this = Lower {
             b,
             p,
@@ -186,25 +150,16 @@ impl<'p, 'a> Lower<'p, 'a> {
             object_literals_around: 0,
             full_signatures: Default::default(),
             documented_functions: Default::default(),
+            is_ambient: is_declaration_file,
         };
         this.b.file.source_len = this.source.len() as u32;
-        let Some(stmts) = stmts else {
-            this.b.declaration_file(false);
-            if this.b.file.has_errors && has_syntax_errors {
-                this.b.start_over();
-                this.b.declaration_file(true);
-                this.b.file.has_parse_diagnostics = true;
-            }
-            this.fill_in_pending_parts();
-            this.b.file.parens.sort_unstable_by_key(|p| p.0.0);
-            return this.b.file;
-        };
-        this.b.file.kind = if p.is_jsx_enabled() {
+        this.b.file.kind = if is_declaration_file {
+            FileKind::Declaration
+        } else if p.is_jsx_enabled() {
             FileKind::Tsx
         } else {
             FileKind::Ts
         };
-        this.b.scan_references();
         let body = this.stmts(stmts, true);
         this.b.file.after_skipped = this
             .marks
@@ -292,13 +247,6 @@ impl<'p, 'a> Lower<'p, 'a> {
                     let default = self.expr(&default);
                     self.b.file.pat_elems[element.idx()].default = default;
                 }
-                PendingPart::RequireExpression(import, at) => {
-                    let at = ast::Loc { start: at as i32 };
-                    if let Some(expression) = self.kept_expressions(at).first() {
-                        let expression = self.expr(expression);
-                        self.b.file[import].expression = expression;
-                    }
-                }
                 PendingPart::HeritageExpression(node) => {
                     let at = ast::Loc {
                         start: self.b.file[node].pos as i32,
@@ -309,34 +257,6 @@ impl<'p, 'a> Lower<'p, 'a> {
                     }
                 }
             }
-        }
-        let mut filled_in_any = false;
-        while let Some((placeholder, statement)) = self.b.pending_statements.pop() {
-            self.fill_in_ambient_statement(placeholder, &statement);
-            filled_in_any = true;
-        }
-        while let Some((decl, initializer)) = self.b.pending_initializers.pop() {
-            let initializer = self.expr(&initializer);
-            self.b.file.var_decls[decl.idx()].init = initializer;
-            filled_in_any = true;
-        }
-        if filled_in_any {
-            self.fill_in_pending_parts();
-        }
-    }
-
-    /// Turns the empty statement `placeholder` into `statement`, which the parser read there in an ambient context.
-    fn fill_in_ambient_statement(&mut self, placeholder: StmtId, statement: &Stmt) {
-        let Some(lowered) = self.stmt(statement) else {
-            return;
-        };
-        let kind = self.b.file[lowered].kind;
-        self.b.file.set_stmt_kind(placeholder, kind);
-        // Nothing refers to `lowered` yet.
-        if lowered.idx() + 1 == self.b.file.stmts.len() {
-            self.b.file.stmts.pop();
-        } else {
-            self.b.file.stmts[lowered.idx()].kind = StmtKind::Empty;
         }
     }
 
@@ -384,22 +304,21 @@ impl<'p, 'a> Lower<'p, 'a> {
             .kept
             .types
             .get(&(skip_trivia(self.source, at as usize) as i32))
-            .map(|kept| kept.node);
+            .copied();
         match kept {
             Some(ty) => self.b.clone_type(ty),
-            None => self.b.type_at(at),
+            None => self.b.error_type(at),
         }
     }
 
     /// `<T>(x)` was first parsed as the type parameters of an arrow function and turned out to be a cast. Builds the cast's type from
     /// the single type parameter. `after_less_than` is the offset right after the `<`.
     fn cast_type_from_type_params(&mut self, after_less_than: u32) -> Option<TypeNodeId> {
-        let params = self
+        let params = *self
             .b
             .kept
             .type_parameters
-            .get(&(after_less_than.checked_sub(1)? as i32))?
-            .node;
+            .get(&(after_less_than.checked_sub(1)? as i32))?;
         let &[param] = &self.b.ts[params] else {
             return None;
         };
@@ -418,29 +337,19 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     /// The type arguments whose `<` is at `at`.
     fn type_args_at(&mut self, at: u32) -> IdList<TypeNodeId> {
-        let kept = self
-            .b
-            .kept
-            .type_arguments
-            .get(&(at as i32))
-            .map(|kept| kept.node);
+        let kept = self.b.kept.type_arguments.get(&(at as i32)).copied();
         match kept {
             Some(arguments) => self.b.clone_type_list(arguments),
-            None => self.b.type_args_at(at),
+            None => IdList::EMPTY,
         }
     }
 
     /// The type parameters whose `<` is at `at`.
     fn type_params_at(&mut self, at: u32) -> Span<TypeParamId> {
-        let kept = self
-            .b
-            .kept
-            .type_parameters
-            .get(&(at as i32))
-            .map(|kept| kept.node);
+        let kept = self.b.kept.type_parameters.get(&(at as i32)).copied();
         match kept {
             Some(parameters) => self.b.clone_type_params(parameters),
-            None => self.b.type_params_at(at),
+            None => Span::EMPTY,
         }
     }
 
@@ -451,10 +360,18 @@ impl<'p, 'a> Lower<'p, 'a> {
         } else {
             at
         };
-        let kept = self.b.kept.types.get(&(start as i32)).map(|kept| kept.node);
+        let kept = self.b.kept.types.get(&(start as i32)).copied();
         match kept {
             Some(ty) => self.b.clone_type(ty),
-            None => self.b.return_type_at(at),
+            None => self.b.error_type(at),
+        }
+    }
+
+    /// `parseExpressionWithTypeArguments` after `implements`, at `at`. What is no `A.B<C>` was objected to by the parser.
+    fn implemented_at(&mut self, at: u32) -> TypeNodeId {
+        match self.b.kept.types.get(&(at as i32)).copied() {
+            Some(ty) => self.b.clone_type(ty),
+            None => self.b.file.ty(TypeNodeKind::Error, at),
         }
     }
 
@@ -490,12 +407,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             if is_top_level
                 && matches!(
                     stmt.data,
-                    StmtData::SImport(_)
-                        | StmtData::SExportClause(_)
-                        | StmtData::SExportDefault(_)
-                        | StmtData::SExportEquals(_)
-                        | StmtData::SExportFrom(_)
-                        | StmtData::SExportStar(_)
+                    StmtData::SExportDefault(_) | StmtData::SExportEquals(_)
                 )
             {
                 self.b.file.has_module_syntax = true;
@@ -628,35 +540,41 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// What the parser has no more than a placeholder for, or less than everything of: parsed again from the source.
-    fn reparse(&mut self, loc: ast::Loc) -> Option<StmtId> {
-        let stmt = self.b.statement_at(pos_of(loc), Flags::empty());
-        if stmt.is_none() {
-            self.b.file.syntax_errors += 1;
-        }
-        stmt
-    }
-
     /// Clones a statement that only exists in TypeScript.
-    fn ts_statement(&mut self, id: ts::StatementId, start: u32) -> Option<StmtId> {
+    fn ts_statement(&mut self, id: ts::StatementId) -> Option<StmtId> {
         let ts::Statement {
             data,
             modifiers,
             loc,
         } = self.b.ts[id];
-        let (flags, export_pos) = self.b.clone_statement_modifiers(modifiers);
+        let (mut flags, export_pos) = self.b.clone_statement_modifiers(modifiers);
+        flags |= self.ambient();
         // A statement starts at its decorators or at `export`, but not at `declare`.
-        let has_decorators = self.source.get(start as usize) == Some(&b'@');
-        let pos = if has_decorators {
-            start
-        } else {
-            export_pos.unwrap_or_else(|| pos_of(loc))
-        };
+        let first_decorator = self.b.ts[modifiers]
+            .iter()
+            .filter(|modifier| modifier.decorator.is_some())
+            .map(|modifier| pos_of(modifier.loc))
+            .min();
+        // These are said to be at `export` or at their keyword, decorated or not.
+        let keyword = export_pos.unwrap_or_else(|| pos_of(loc));
+        let pos = first_decorator.map_or(keyword, |at_sign| at_sign.min(keyword));
         let statement = match data {
             ts::StatementData::Interface(interface) => {
                 self.b.clone_interface(interface, flags, pos)
             }
             ts::StatementData::TypeAlias(alias) => Some(self.b.clone_type_alias(alias, flags, pos)),
+            ts::StatementData::Import(import) => Some(self.import_declaration(import, keyword)),
+            ts::StatementData::ImportEquals(import) => {
+                let mut flags = flags & (Flags::EXPORT | Flags::AMBIENT);
+                if self.is_ambient {
+                    flags |= Flags::AMBIENT;
+                }
+                Some(self.import_equals_declaration(import, flags, keyword))
+            }
+            ts::StatementData::Export(export) => Some(self.export_declaration(export, keyword)),
+            ts::StatementData::ExportAsNamespace(name) => {
+                Some(self.namespace_export_declaration(name, keyword))
+            }
         };
         if statement.is_none() {
             self.b.file.syntax_errors += 1;
@@ -664,7 +582,55 @@ impl<'p, 'a> Lower<'p, 'a> {
         statement
     }
 
+    /// `NodeFlagsAmbient`, as a flag of a declaration.
+    #[inline]
+    fn ambient(&self) -> Flags {
+        if self.is_ambient {
+            Flags::AMBIENT
+        } else {
+            Flags::empty()
+        }
+    }
+
+    /// All that the modifiers say which the parser took for the statement, the member or the parameter it says is at `loc`.
+    fn modifier_flags_at(&self, loc: ast::Loc) -> Flags {
+        let Some(list) = self.modifier_list_at(loc) else {
+            return Flags::empty();
+        };
+        self.b.ts[list]
+            .iter()
+            .fold(Flags::empty(), |flags, modifier| {
+                flags | Flags::from_bits_retain(modifier.flag.bits())
+            })
+    }
+
+    /// The same, one by one, with where each is.
+    fn modifiers_at(&self, loc: ast::Loc) -> Vec<(Flags, u32)> {
+        let Some(list) = self.modifier_list_at(loc) else {
+            return Vec::new();
+        };
+        self.b.ts[list]
+            .iter()
+            .filter(|modifier| modifier.decorator.is_none())
+            .map(|modifier| {
+                (
+                    Flags::from_bits_retain(modifier.flag.bits()),
+                    pos_of(modifier.loc),
+                )
+            })
+            .collect()
+    }
+
     fn stmt(&mut self, stmt: &Stmt) -> Option<StmtId> {
+        // `declare` makes all of the statement ambient.
+        let was_ambient = self.is_ambient;
+        self.is_ambient |= self.modifier_flags_at(stmt.loc).contains(Flags::AMBIENT);
+        let id = self.stmt_in_context(stmt);
+        self.is_ambient = was_ambient;
+        id
+    }
+
+    fn stmt_in_context(&mut self, stmt: &Stmt) -> Option<StmtId> {
         let id = self.stmt_without_jsdoc(stmt);
         if let Some(id) = id {
             self.finish_stmt(id, self.declaration_start(stmt.loc));
@@ -720,7 +686,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         let mut host = match id.map(|id| (id, self.b.file[id].kind)) {
             Some((_, StmtKind::Var(decls))) => Host::VariableStatement(decls),
             // `parseExpressionOrLabeledStatement`: what starts with a parenthesis leaves the comment to that.
-            Some((_, StmtKind::Expr(_))) if self.source.get(start as usize) == Some(&b'(') => {
+            Some((_, StmtKind::Expr(_))) if self.mark(stmt.loc, Mark::HasParen).is_some() => {
                 return;
             }
             Some((id, StmtKind::Expr(_))) => Host::ExpressionStatement(id),
@@ -742,6 +708,12 @@ impl<'p, 'a> Lower<'p, 'a> {
             .unwrap_or_else(|| pos_of(loc))
     }
 
+    /// Where the `@` of `decorator` is.
+    fn at_sign(&self, decorator: &Expr) -> u32 {
+        self.mark(decorator.loc, Mark::AtSign)
+            .unwrap_or_else(|| pos_of(decorator.loc))
+    }
+
     /// The initializer of a `for` statement, which is no statement: a comment before it belongs to nothing.
     fn for_initializer(&mut self, stmt: &Stmt) -> StmtId {
         let id = match self.stmt_without_jsdoc(stmt) {
@@ -761,70 +733,27 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.b.statement_start = start;
         let kind = match &stmt.data {
             StmtData::STypeScript(placeholder) if placeholder.syntax.is_some() => {
-                return self.ts_statement(placeholder.syntax, pos);
+                return self.ts_statement(placeholder.syntax);
             }
-            // The `B` of `namespace A.B { }` that the parser dropped: its placeholder is at the dot.
-            StmtData::STypeScript(_) if self.source.get(pos as usize) == Some(&b'.') => {
-                let module = self.b.nested_module_at(pos);
-                if module.is_none() {
-                    self.b.file.syntax_errors += 1;
-                }
-                return module;
-            }
-            StmtData::STypeScript(_)
-            | StmtData::SImport(_)
+            // Nothing is left of it.
+            StmtData::STypeScript(_) => return None,
+            // The parser gives `S::TypeScript` for these (`keep_import`, `keep_export`).
+            StmtData::SImport(_)
             | StmtData::SExportClause(_)
             | StmtData::SExportFrom(_)
-            | StmtData::SExportStar(_) => return self.reparse(stmt.loc),
-            StmtData::SLocal(local) if local.origin.is_ts_import_equals() => {
-                // `export import a = b` is said to be where `import` is.
-                let before = self.b.lexer.contents[..pos as usize].trim_ascii_end();
-                if local.is_export && before.ends_with(b"export") {
-                    return self.reparse(ast::Loc {
-                        start: (before.len() - 6) as i32,
-                    });
-                }
-                if local.is_export {
-                    // `parseDeclaration`: `export public import a = b`. Other modifiers stand between `export` and `import`.
-                    let statement = self.b.statement_at(pos, Flags::EXPORT);
-                    if statement.is_none() {
-                        self.b.file.syntax_errors += 1;
-                    }
-                    return statement;
-                }
-                return self.reparse(stmt.loc);
-            }
-            // `export declare var a = 1` in a namespace: the parser keeps `export var a` of it, put where `declare` is.
-            StmtData::SLocal(local)
-                if self.source[pos as usize..]
-                    .strip_prefix(b"declare")
-                    .is_some_and(|rest| rest.first().is_some_and(u8::is_ascii_whitespace)) =>
-            {
-                let before = self.source[..pos as usize].trim_ascii_end();
-                let whole = if before.ends_with(b"export") {
-                    self.b
-                        .statement_at((before.len() - 6) as u32, Flags::empty())
-                } else {
-                    self.b.statement_at(pos, Flags::EXPORT)
-                };
-                match whole {
-                    Some(id) => return Some(id),
-                    // An initializer the parser of declarations does not know: the names, at least.
-                    None => self.local(local, stmt.loc),
-                }
-            }
+            | StmtData::SExportStar(_) => return None,
             StmtData::SDirective(directive) => {
                 let text = self.b.atom(directive.value.slice());
                 self.b.file.directives.push((pos, text));
                 return None;
             }
-            StmtData::SComment(_)
-            | StmtData::SEmpty(_)
-            | StmtData::SDebugger(_)
-            | StmtData::SLazyExport(_) => return None,
+            StmtData::SEmpty(_) => StmtKind::Empty,
+            StmtData::SComment(_) | StmtData::SDebugger(_) | StmtData::SLazyExport(_) => {
+                return None;
+            }
             StmtData::SBlock(s) => StmtKind::Block(self.stmts(s.stmts.slice(), false)),
             StmtData::SExpr(s) => StmtKind::Expr(self.expr(&s.value)),
-            StmtData::SLocal(s) => self.local(s, stmt.loc),
+            StmtData::SLocal(s) => self.local(s),
             StmtData::SReturn(s) => StmtKind::Return(self.optional_expr(s.value.as_ref())),
             StmtData::SThrow(s) => StmtKind::Throw(self.expr(&s.value)),
             StmtData::SIf(s) => {
@@ -860,16 +789,11 @@ impl<'p, 'a> Lower<'p, 'a> {
                 let left = self.for_initializer(&s.init);
                 let expr = self.expr(&s.value);
                 let body = self.required_stmt(&s.body);
-                // `parseForOrForInOrForOfStatement`: `await` after `for` makes it one wherever it stands. The parser forgets the
-                // one it objects to.
-                let is_await = s.is_await
-                    || self.source[skip_trivia(self.source, pos as usize + 3)..]
-                        .starts_with(b"await");
                 StmtKind::ForOf {
                     left,
                     expr,
                     body,
-                    is_await,
+                    is_await: s.is_await,
                 }
             }
             StmtData::SWhile(s) => {
@@ -888,29 +812,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 for case in s.cases.slice() {
                     let test = self.optional_expr(case.value.as_ref());
                     let body = self.clause_stmts(case.body.slice());
-                    // The parser does not say where a clause starts: back from what follows the keyword.
-                    let text = self.b.lexer.contents;
-                    let pos = match (&case.value, case.body.slice().first()) {
-                        (Some(value), _) => {
-                            let before = text[..pos_of(value.loc) as usize].trim_ascii_end();
-                            let before = before
-                                .strip_suffix(b"(")
-                                .map_or(before, <[u8]>::trim_ascii_end);
-                            if before.ends_with(b"case") {
-                                before.len() as u32 - 4
-                            } else {
-                                pos_of(value.loc)
-                            }
-                        }
-                        (None, Some(first)) => {
-                            let before = text[..pos_of(first.loc) as usize].trim_ascii_end();
-                            match before.strip_suffix(b":").map(<[u8]>::trim_ascii_end) {
-                                Some(rest) if rest.ends_with(b"default") => rest.len() as u32 - 7,
-                                _ => pos_of(first.loc),
-                            }
-                        }
-                        (None, None) => 0,
-                    };
+                    let pos = pos_of(case.loc);
                     // `parseCaseClause`, `parseDefaultClause`
                     self.with_jsdoc(pos, false, &mut Host::Other);
                     cases.push(Case { test, body, pos });
@@ -989,18 +891,17 @@ impl<'p, 'a> Lower<'p, 'a> {
                 StmtKind::Continue(s.label.as_ref().map_or(Atom::NONE, |l| self.name(l.ref_)))
             }
             StmtData::SFunction(s) => {
-                let mut flags = Flags::empty();
+                let mut flags = self.ambient();
                 if s.func.flags.contains(ast::flags::Function::IsExport) {
                     flags |= Flags::EXPORT;
                 }
                 StmtKind::Fn(self.func(&s.func, FnKind::Decl, flags, pos, start))
             }
             StmtData::SClass(s) => {
-                let flags = if s.is_export {
-                    Flags::EXPORT
-                } else {
-                    Flags::empty()
-                };
+                let mut flags = self.ambient() | self.modifier_flags_at(stmt.loc) & Flags::ABSTRACT;
+                if s.is_export {
+                    flags |= Flags::EXPORT;
+                }
                 StmtKind::Class(self.class(&s.class, flags, pos, start))
             }
             StmtData::SExportDefault(s) => match &s.value {
@@ -1009,13 +910,16 @@ impl<'p, 'a> Lower<'p, 'a> {
                     StmtData::SFunction(f) => StmtKind::Fn(self.func(
                         &f.func,
                         FnKind::Decl,
-                        Flags::EXPORT | Flags::DEFAULT,
+                        Flags::EXPORT | Flags::DEFAULT | self.ambient(),
                         pos,
                         start,
                     )),
                     StmtData::SClass(c) => StmtKind::Class(self.class(
                         &c.class,
-                        Flags::EXPORT | Flags::DEFAULT,
+                        Flags::EXPORT
+                            | Flags::DEFAULT
+                            | self.ambient()
+                            | self.modifier_flags_at(stmt.loc) & Flags::ABSTRACT,
                         pos,
                         start,
                     )),
@@ -1045,15 +949,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                     });
                 }
                 let members = self.b.file.add_enum_members(&members);
-                let mut flags = if s.is_export {
-                    Flags::EXPORT
-                } else {
-                    Flags::empty()
-                };
-                if self.source[pos as usize..].starts_with(b"const")
-                    || self.source[pos as usize..].starts_with(b"export const")
-                {
-                    flags |= Flags::CONST;
+                let mut flags = self.ambient() | self.modifier_flags_at(stmt.loc) & Flags::CONST;
+                if s.is_export {
+                    flags |= Flags::EXPORT;
                 }
                 StmtKind::Enum(self.b.file.add_enum(Enum {
                     name: self.name(s.name.ref_),
@@ -1064,29 +962,31 @@ impl<'p, 'a> Lower<'p, 'a> {
                 }))
             }
             StmtData::SNamespace(s) => {
-                let body = self.stmts(s.stmts.slice(), false);
-                let name_pos = pos_of(s.name.loc);
-                // `parseAmbientExternalModuleDeclaration`: `module "a" { .. }` without `declare`. The parser's symbol is not named by the string.
-                let is_quoted = matches!(self.source.get(name_pos as usize), Some(b'"' | b'\''));
-                let quoted_name = if is_quoted {
-                    self.b.string_at(name_pos)
+                let name = if self.mark(s.name.loc, Mark::GlobalName).is_some() {
+                    ModuleName::Global
+                } else if self.mark(s.name.loc, Mark::StringName).is_some() {
+                    ModuleName::String(self.name(s.name.ref_))
                 } else {
-                    Atom::NONE
+                    ModuleName::Ident(self.name(s.name.ref_))
                 };
+                let mut flags = self.ambient();
+                // `parseAmbientExternalModuleDeclaration`: what is in it is ambient, with or without `declare`.
+                let was_ambient = self.is_ambient;
+                self.is_ambient |= !matches!(name, ModuleName::Ident(_));
+                if name == ModuleName::Global {
+                    flags |= Flags::AMBIENT;
+                }
+                if s.is_export {
+                    flags |= Flags::EXPORT;
+                }
+                let body = self.stmts(s.stmts.slice(), false);
+                self.is_ambient = was_ambient;
                 StmtKind::Module(self.b.file.add_module(Module {
-                    name: if quoted_name.is_some() {
-                        ModuleName::String(quoted_name)
-                    } else {
-                        ModuleName::Ident(self.name(s.name.ref_))
-                    },
-                    name_pos,
-                    flags: if s.is_export {
-                        Flags::EXPORT
-                    } else {
-                        Flags::empty()
-                    },
+                    name,
+                    name_pos: pos_of(s.name.loc),
+                    flags,
                     body,
-                    has_body: true,
+                    has_body: self.mark(s.name.loc, Mark::NoBody).is_none(),
                     stmt: StmtId::NONE,
                 }))
             }
@@ -1094,38 +994,19 @@ impl<'p, 'a> Lower<'p, 'a> {
         Some(self.b.file.stmt(kind, pos))
     }
 
-    fn local(&mut self, s: &S::Local, loc: ast::Loc) -> StmtKind {
-        let mut kind = match s.kind {
+    fn local(&mut self, s: &S::Local) -> StmtKind {
+        let kind = match s.kind {
             S::Kind::KVar => VarKind::Var,
             S::Kind::KLet => VarKind::Let,
             S::Kind::KConst => VarKind::Const,
             S::Kind::KUsing => VarKind::Using,
             S::Kind::KAwaitUsing => VarKind::AwaitUsing,
         };
-        // `export declare let a` in a namespace: the parser makes an `export var a` of it, put where `declare` is.
-        let mut is_ambient = false;
-        if let Some(rest) = self.source[pos_of(loc) as usize..].strip_prefix(b"declare")
-            && rest.first().is_some_and(u8::is_ascii_whitespace)
-        {
-            is_ambient = true;
-            let rest = rest.trim_ascii_start();
-            kind = if rest.starts_with(b"const") {
-                VarKind::Const
-            } else if rest.starts_with(b"let") {
-                VarKind::Let
-            } else {
-                VarKind::Var
-            };
-        }
         let base = self.list_decls.len();
         for decl in s.decls.iter() {
-            let mut flags = if s.is_export {
-                Flags::EXPORT
-            } else {
-                Flags::empty()
-            };
-            if is_ambient {
-                flags |= Flags::AMBIENT;
+            let mut flags = self.ambient();
+            if s.is_export {
+                flags |= Flags::EXPORT;
             }
             if self.mark(decl.binding.loc, Mark::Definite).is_some() {
                 flags |= Flags::DEFINITE;
@@ -1437,7 +1318,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             let default = self.optional_expr(arg.default.as_ref());
             // It starts with what decorates it.
             if let Some(first) = arg.ts_decorators.first() {
-                pos = pos.min(self.b.at_sign_before(pos_of(first.loc)));
+                pos = pos.min(self.at_sign(first));
             }
             if let Some(code) = parameter_property_error {
                 self.b.file.early_errors.push((pos, code));
@@ -1469,7 +1350,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 let of_parameter: Vec<(ExprId, u32)> = decorators[first_decorator..]
                     .iter()
                     .zip(arg.ts_decorators.iter())
-                    .map(|(&(_, e), written)| (e, self.b.at_sign_before(pos_of(written.loc))))
+                    .map(|(&(_, e), written)| (e, self.at_sign(written)))
                     .collect();
                 let list = self.b.modifiers_with_decorators(keywords, &of_parameter);
                 modifier_lists.push((i, list));
@@ -1541,6 +1422,10 @@ impl<'p, 'a> Lower<'p, 'a> {
         {
             FnBody::None
         } else {
+            // `checkGrammarStatementInAmbientContext`, `checkGrammarAccessor`
+            if flags.contains(Flags::AMBIENT) {
+                self.b.file.early_errors.push((pos_of(func.body.loc), 1183));
+            }
             FnBody::Block(self.stmts(func.body.stmts.slice(), false))
         };
         // `parseBlock` without its `{`: a missing block, which is not the same as no body.
@@ -1576,13 +1461,10 @@ impl<'p, 'a> Lower<'p, 'a> {
         } else {
             self.mark(arrow.body.loc, Mark::ArrowToken)
         };
-        let head = &self.source[pos as usize..];
-        let type_params =
-            if head.starts_with(b"<") || (arrow.is_async && head.starts_with(b"async")) {
-                self.b.arrow_type_params_at(pos)
-            } else {
-                Span::EMPTY
-            };
+        let type_params = match self.mark(loc, Mark::TypeParameters) {
+            Some(at) => self.type_params_at(at),
+            None => Span::EMPTY,
+        };
         let params = self.params(arrow.args.slice(), arrow.has_rest_arg);
         let (this_param, params) = self.b.file.split_this_parameter(params);
         let ret = match arrow_token
@@ -1631,23 +1513,14 @@ impl<'p, 'a> Lower<'p, 'a> {
         })
     }
 
-    fn class(&mut self, class: &G::Class, mut flags: Flags, pos: u32, start: u32) -> ClassId {
+    fn class(&mut self, class: &G::Class, flags: Flags, pos: u32, start: u32) -> ClassId {
         let keyword = class.class_keyword.loc;
         // `GetContainingClass`: its decorators and heritage clauses are inside it too.
         self.b.classes_around += 1;
-        let type_params = self.b.class_type_params_at(pos_of(keyword));
-        // `abstract` comes before the keyword on the same line (`scanStartOfDeclaration`, `nextTokenIsClassKeywordOnSameLine`), after
-        // `export` or `export default` if they are there.
-        let before = &self.source[..pos_of(keyword) as usize];
-        let trimmed = before.trim_ascii_end();
-        if let Some(rest) = trimmed.strip_suffix(b"abstract")
-            && !rest.last().is_some_and(|&c| {
-                c.is_ascii_alphanumeric() || matches!(c, b'_' | b'$') || c >= 0x80
-            })
-            && !bun_core::strings::contains_any(&before[trimmed.len()..], b"\n\r")
-        {
-            flags |= Flags::ABSTRACT;
-        }
+        let type_params = match self.mark(keyword, Mark::TypeParameters) {
+            Some(at) => self.type_params_at(at),
+            None => Span::EMPTY,
+        };
         let mut extends = self.optional_expr(class.extends.as_ref());
         let mut extends_args = match self.mark(keyword, Mark::ExtendsArguments) {
             Some(at) => self.type_args_at(at),
@@ -1667,24 +1540,25 @@ impl<'p, 'a> Lower<'p, 'a> {
         let other_extends: Vec<ExprId> = self
             .marks_from(keyword, Mark::OtherExtends)
             .into_iter()
-            .filter_map(|at| self.b.member_expr_at(at))
+            .filter_map(|at| {
+                let kept = self.kept_expressions(ast::Loc { start: at as i32 });
+                kept.first().map(|extended| self.expr(extended))
+            })
             .collect();
         let other_extends = self.b.file.list(&other_extends);
-        let mut clauses = self.marks_from(keyword, Mark::Implements).into_iter();
-        let implements = match clauses.next() {
-            Some(at) => self.b.type_list_at(at),
-            None => IdList::EMPTY,
-        };
-        let mut other_implements: Vec<TypeNodeId> = Vec::new();
-        for at in clauses {
-            let clause = self.b.type_list_at(at);
-            other_implements.extend(self.b.file.ids(clause));
-        }
-        let other_implements = self.b.file.list(&other_implements);
+        let [implements, other_implements] =
+            [Mark::Implements, Mark::OtherImplements].map(|clause| {
+                let elements: Vec<TypeNodeId> = self
+                    .marks_from(keyword, clause)
+                    .into_iter()
+                    .map(|at| self.implemented_at(at))
+                    .collect();
+                self.b.file.list(&elements)
+            });
         let of_class: Vec<(ExprId, u32)> = class
             .ts_decorators
             .iter()
-            .map(|d| (self.expr(d), self.b.at_sign_before(pos_of(d.loc))))
+            .map(|d| (self.expr(d), self.at_sign(d)))
             .collect();
         let outer_is_abstract = std::mem::replace(
             &mut self.b.in_abstract_class,
@@ -1697,7 +1571,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             let decorators: Vec<(ExprId, u32)> = property
                 .ts_decorators
                 .iter()
-                .map(|d| (self.expr(d), self.b.at_sign_before(pos_of(d.loc))))
+                .map(|d| (self.expr(d), self.at_sign(d)))
                 .collect();
             let mut member = self.class_member(property);
             // `parseClassElement`
@@ -1721,14 +1595,10 @@ impl<'p, 'a> Lower<'p, 'a> {
             of_members.extend(decorators.into_iter().map(|(e, _)| (member.pos, e)));
             members.push(member);
         }
-        for at in self.marks_from(keyword, Mark::DroppedMember) {
-            match self.b.class_member_at(at, false) {
-                Some(member) => {
-                    members.push(member);
-                    of_members.append(&mut self.b.member_decorators);
-                }
-                None => self.b.file.syntax_errors += 1,
-            }
+        for member in self.marks_from(keyword, Mark::IndexSignature) {
+            let is_ambient = self.is_ambient;
+            let member = ts::MemberId::from_index(member);
+            members.push(self.b.clone_class_index_signature(member, is_ambient));
         }
         self.b.in_abstract_class = outer_is_abstract;
         self.b.classes_around -= 1;
@@ -1787,14 +1657,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             member.start = self
                 .mark(block.loc, Mark::MemberStart)
                 .unwrap_or(member.pos);
-            self.b.member_header_at(member.start);
-            let mut modifiers = self.b.header_modifiers.split_off(0);
-            // `parseModifiersEx(stopOnStartOfClassStaticBlock)`
-            if modifiers.last().is_some_and(|&(_, at)| {
-                skip_trivia(self.source, at as usize + b"static".len()) == member.pos as usize
-            }) {
-                modifiers.pop();
-            }
+            let modifiers = self.modifiers_at(block.loc);
             member.modifiers = self.b.add_modifier_list(&modifiers);
             let body = FnBody::Block(self.stmts(block.stmts.as_slice(), false));
             member.func = self.b.file.add_fn(Func {
@@ -1825,17 +1688,24 @@ impl<'p, 'a> Lower<'p, 'a> {
         if is_named_by_bigint {
             member.key = PropKey::None;
         }
-        let mut modifiers = Vec::new();
         if let Some(start) = self.mark(key.loc, Mark::MemberStart) {
             member.start = start;
-            let (flags, ty) = self.b.member_header_at(start);
-            member.flags = flags;
-            member.ty = ty;
-            modifiers = self.b.header_modifiers.split_off(0);
-            member.modifiers = self.b.add_modifier_list(&modifiers);
         }
+        let modifiers = self.modifiers_at(key.loc);
+        member.modifiers = self.b.add_modifier_list(&modifiers);
+        // Its own `declare` makes a property or a method ambient.
+        let is_parent_ambient = self.is_ambient;
+        member.flags = modifiers
+            .iter()
+            .fold(self.ambient(), |flags, modifier| flags | modifier.0);
+        if self.mark(key.loc, Mark::Optional).is_some() {
+            member.flags |= Flags::OPTIONAL;
+        } else if self.mark(key.loc, Mark::Definite).is_some() {
+            member.flags |= Flags::DEFINITE;
+        }
+        member.ty = self.annotation(key.loc);
 
-        let text = self.b.lexer.contents;
+        let text = self.source;
         let is_quoted = !is_computed && matches!(text.get(member.pos as usize), Some(b'"' | b'\''));
         // `getLiteralTypeFromPropertyName`: `"0"` and `["0"]` name with a string, `0` and `[0]` with a number. An identifier is a
         // string to the parser as well.
@@ -1889,10 +1759,14 @@ impl<'p, 'a> Lower<'p, 'a> {
                 self.b.check_modifiers(
                     &modifiers,
                     on,
-                    false,
+                    is_parent_ambient,
                     matches!(member.key, PropKey::Private(_)),
                     member.pos,
                 );
+            }
+            // `parseClassElement`: but not an accessor or a constructor.
+            if !is_parent_ambient && !matches!(member_kind, MemberKind::Method) {
+                member.flags.remove(Flags::AMBIENT);
             }
             // On a member these are only objected to.
             member
@@ -1916,7 +1790,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             self.b.check_modifiers(
                 &modifiers,
                 Modified::Property,
-                false,
+                is_parent_ambient,
                 matches!(member.key, PropKey::Private(_)),
                 member.pos,
             );
@@ -2011,7 +1885,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    fn expr(&mut self, expr: &Expr) -> ExprId {
+    pub(super) fn expr(&mut self, expr: &Expr) -> ExprId {
         // Where what has been made of it so far starts.
         let mut pos = pos_of(expr.loc);
         if !self.stack_check.is_safe_to_recurse() {
@@ -2145,11 +2019,8 @@ impl<'p, 'a> Lower<'p, 'a> {
     fn template_text(&mut self, contents: &ast::E::TemplateContents) -> Atom {
         match contents {
             ast::E::TemplateContents::Cooked(s) => self.string(s),
-            // Under a tag.
-            ast::E::TemplateContents::Raw(s) => {
-                let cooked = self.b.lexer.cooked_template_contents(s.slice());
-                self.b.atom(&cooked)
-            }
+            // `tagged_template_contents` makes none for the type checker.
+            ast::E::TemplateContents::Raw(s) => self.b.atom(s.slice()),
         }
     }
 

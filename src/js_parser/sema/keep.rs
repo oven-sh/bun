@@ -115,40 +115,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.emit_type(TypeData::Predicate { param, ty, asserts }, pos);
     }
 
-    /// Wraps `node` with the current lexer position, which is the first token after it.
-    #[inline]
-    fn with_end<X>(&self, node: X) -> KeptNode<X> {
-        KeptNode {
-            node,
-            end: self.token_start(),
-            newline_before_end: self.lexer.has_newline_before,
-        }
-    }
-
-    /// The lexer is after `initializer`, of the variable whose binding is at `binding`, in an ambient context. The caller drops the
-    /// statement, but TypeScript checks the initializer (`checkAmbientInitializer`).
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn note_ambient_initializer(&mut self, binding: Loc, initializer: bun_ast::Expr) {
-        let kept = self.with_end(initializer);
-        if let Some(syntax) = &mut self.type_syntax {
-            syntax.ambient_initializers.push((binding.start, kept));
-        }
-    }
-
-    /// The lexer is after the decorator whose `@` is at `at`.
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn note_decorator_end(&mut self, at: Loc) {
-        let kept = self.with_end(());
-        if let Some(syntax) = &mut self.type_syntax {
-            syntax.by_offset.decorators.insert(at.start, kept);
-        }
-    }
-
     /// Records a finished top-level type by its start offset.
     pub(crate) fn record_type(&mut self, start: i32, ty: TypeId) {
-        let kept = self.with_end(ty);
+        let kept = ty;
         self.type_syntax_mut().by_offset.types.insert(start, kept);
     }
 
@@ -312,7 +281,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let arguments = self.finish_type_list(from);
         self.type_syntax_mut().last_type_args = arguments;
         if let Some(arguments) = arguments {
-            let kept = self.with_end(arguments);
+            let kept = arguments;
             self.type_syntax_mut()
                 .by_offset
                 .type_arguments
@@ -721,7 +690,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let syntax = self.type_syntax_mut();
         syntax.last_params = parameters.map(|parameters| syntax.ast.add_params(parameters));
         if let Some(parameters) = syntax.last_params {
-            let kept = self.with_end(parameters);
+            let kept = parameters;
             self.type_syntax_mut()
                 .by_offset
                 .parameters
@@ -735,7 +704,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         syntax.last_type_params =
             parameters.map(|parameters| syntax.ast.add_type_params(parameters));
         if let Some(parameters) = syntax.last_type_params {
-            let kept = self.with_end(parameters);
+            let kept = parameters;
             self.type_syntax_mut()
                 .by_offset
                 .type_parameters
@@ -961,7 +930,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Builds one member. `Err` is the body of a mapped type. `None` means unusable.
-    fn build_type_member(
+    pub(crate) fn build_type_member(
         &mut self,
         member: &TypeMemberParts,
     ) -> Option<Result<Member, MappedType>> {
@@ -1198,7 +1167,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         };
         if let Some(object_type) = syntax.last_object_type {
-            let kept = self.with_end(object_type);
+            let kept = object_type;
             self.type_syntax_mut()
                 .by_offset
                 .object_types
@@ -1222,12 +1191,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// Called after each statement, which is said to be at `loc`. Returns the TypeScript-only statement that was emitted for it, if
-    /// any.
+    /// Called after each statement, which is said to be at `loc`.
     #[inline]
-    pub(crate) fn end_statement(&mut self, outer_modifiers_base: usize, loc: Loc) -> StatementId {
+    pub(crate) fn end_statement(&mut self, outer_modifiers_base: usize, loc: Loc) {
         if !self.should_keep_types() {
-            return StatementId::NONE;
+            return;
         }
         let syntax = self.type_syntax_mut();
         let base = syntax.statement_modifiers_base;
@@ -1239,7 +1207,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             syntax.statement_modifiers.truncate(base);
         }
         syntax.statement_modifiers_base = outer_modifiers_base;
-        std::mem::replace(&mut syntax.last_statement, StatementId::NONE)
+    }
+
+    /// The statement at `loc` that only exists in TypeScript, and was emitted last.
+    #[inline]
+    pub(crate) fn type_script_statement(&mut self, loc: Loc) -> bun_ast::Stmt {
+        let syntax = match &mut self.type_syntax {
+            Some(syntax) => std::mem::replace(&mut syntax.last_statement, StatementId::NONE),
+            None => StatementId::NONE,
+        };
+        self.s(bun_ast::S::TypeScript { syntax }, loc)
     }
 
     /// Called when the modifier at `loc` has been recognized as part of the current statement. So is the `export` of an export
@@ -1312,7 +1289,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn emit_statement(&mut self, data: StatementData, keyword_loc: Loc) {
+    pub(super) fn emit_statement(&mut self, data: StatementData, keyword_loc: Loc) {
         let TypeSyntax {
             ast,
             statement_modifiers,
@@ -1421,30 +1398,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-/// A node the parser built, plus where the following token starts, so that `type_syntax::Builder` can take the node and continue after
-/// it.
-#[derive(Copy, Clone)]
-pub(crate) struct KeptNode<T> {
-    pub(crate) node: T,
-    pub(crate) end: u32,
-    /// Whether the following token is on a new line.
-    pub(crate) newline_before_end: bool,
-}
-
 /// Nodes the parser built, keyed by start offset. An abandoned speculative parse may leave entries behind. Nothing asks for them, or the
 /// parse that succeeds overwrites them.
 #[derive(Default)]
 pub(crate) struct KeptNodes {
-    pub(crate) types: HashMap<i32, KeptNode<TypeId>>,
+    pub(crate) types: HashMap<i32, TypeId>,
     /// Keyed by the offset of `<`.
-    pub(crate) type_arguments: HashMap<i32, KeptNode<IdList<Type>>>,
-    pub(crate) type_parameters: HashMap<i32, KeptNode<Span<TypeParam>>>,
+    pub(crate) type_arguments: HashMap<i32, IdList<Type>>,
+    pub(crate) type_parameters: HashMap<i32, Span<TypeParam>>,
     /// Keyed by the offset of `(`. The second value is the type of a `this` parameter.
-    pub(crate) parameters: HashMap<i32, KeptNode<Span<Param>>>,
+    pub(crate) parameters: HashMap<i32, Span<Param>>,
     /// Keyed by the offset of `{`.
-    pub(crate) object_types: HashMap<i32, KeptNode<ObjectTypeBody>>,
-    /// Where each decorator ends, keyed by the offset of `@`.
-    pub(crate) decorators: HashMap<i32, KeptNode<()>>,
+    pub(crate) object_types: HashMap<i32, ObjectTypeBody>,
 }
 
 /// An identifier, keyword, string, number or private name at the start of an object type member. It is either a modifier or the member's

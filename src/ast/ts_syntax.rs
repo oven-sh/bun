@@ -35,6 +35,11 @@ impl<T> Id<T> {
     pub const fn index(self) -> usize {
         self.0 as usize
     }
+
+    #[inline]
+    pub const fn from_index(index: u32) -> Self {
+        Id(index, PhantomData)
+    }
 }
 
 impl<T> Copy for Id<T> {}
@@ -547,6 +552,11 @@ pub struct Statement {
 pub enum StatementData {
     Interface(Id<Interface>),
     TypeAlias(Id<TypeAlias>),
+    Import(Id<Import>),
+    ImportEquals(Id<ImportEquals>),
+    Export(Id<Export>),
+    /// `export as namespace name`
+    ExportAsNamespace(Name),
 }
 
 #[derive(Copy, Clone)]
@@ -570,6 +580,105 @@ pub struct TypeAlias {
     pub name: Name,
     pub type_params: Span<TypeParam>,
     pub ty: TypeId,
+}
+
+/// `parseModuleSpecifier`, and what the import attributes after it say.
+#[derive(Copy, Clone)]
+pub struct ModuleSpecifier {
+    /// The value of the string. `None` for any other expression, which is an error.
+    pub text: Option<StoreStr>,
+    pub loc: Loc,
+    /// From `with { "resolution-mode": "import" }`.
+    pub mode: ResolutionMode,
+}
+
+/// `parseModuleExportName`: a word or a string. A name that is missing is empty, and is where the token before it ends.
+#[derive(Copy, Clone)]
+pub struct ModuleExportName {
+    pub text: StoreStr,
+    pub loc: Loc,
+    /// `node.End()`
+    pub end: Loc,
+    pub is_string: bool,
+}
+
+/// `name`, `property_name as name`, with or without `type` before it.
+#[derive(Copy, Clone)]
+pub struct Specifier {
+    /// Of its first token: `type`, or the first name.
+    pub loc: Loc,
+    pub is_type_only: bool,
+    pub property_name: Option<ModuleExportName>,
+    pub name: ModuleExportName,
+}
+
+/// `* as name`
+#[derive(Copy, Clone)]
+pub struct NamespaceImport {
+    pub star_loc: Loc,
+    /// Empty if it is missing, and then where the token before it ends.
+    pub name: Name,
+}
+
+/// `import default_name, * as namespace from "module"`, `import { specifiers } from "module"`, `import "module"`
+#[derive(Copy, Clone)]
+pub struct Import {
+    /// Of the token after `import`.
+    pub clause_loc: Loc,
+    /// `importClause.End()`
+    pub clause_end: Loc,
+    pub is_type_only: bool,
+    /// `import defer ..`
+    pub is_deferred: bool,
+    pub default_name: Option<Name>,
+    pub namespace: Option<NamespaceImport>,
+    /// `None` without `{ }`.
+    pub specifiers: Option<Span<Specifier>>,
+    pub module: ModuleSpecifier,
+    /// It is a statement of the body of a module that is ambient.
+    pub is_in_ambient_module: bool,
+}
+
+#[derive(Copy, Clone)]
+pub enum ModuleReference {
+    /// `a.b.c`. A name that is missing is empty.
+    EntityName(Span<Name>),
+    /// `require("module")`. `expression`: the argument if it is no string, which is an error. With neither, there is no argument.
+    External {
+        text: Option<StoreStr>,
+        loc: Loc,
+        expression: Option<Expr>,
+    },
+}
+
+/// `import name = reference`
+#[derive(Copy, Clone)]
+pub struct ImportEquals {
+    pub name: Name,
+    pub is_type_only: bool,
+    pub reference: ModuleReference,
+    /// It is a statement of the body of a module that is ambient.
+    pub is_in_ambient_module: bool,
+}
+
+#[derive(Copy, Clone)]
+pub enum ExportClause {
+    /// `*`, `* as alias`. `alias_loc`: of the token after `*`, or after `as`.
+    Star {
+        star_loc: Loc,
+        alias: Option<ModuleExportName>,
+        alias_loc: Loc,
+    },
+    /// `{ specifiers }`
+    Named(Span<Specifier>),
+}
+
+/// `export clause`, `export clause from "module"`
+#[derive(Copy, Clone)]
+pub struct Export {
+    pub is_type_only: bool,
+    pub clause: ExportClause,
+    pub module: Option<ModuleSpecifier>,
 }
 
 /// What `E::JSXElement` has no place for.
@@ -662,6 +771,10 @@ define_syntax! {
     statements: Statement, add_statement, add_statements;
     interfaces: Interface, add_interface, add_interfaces;
     type_aliases: TypeAlias, add_type_alias, add_type_aliases;
+    specifiers: Specifier, add_specifier, add_specifiers;
+    imports: Import, add_import, add_imports;
+    import_equals: ImportEquals, add_import_equals, add_import_equals_nodes;
+    exports: Export, add_export, add_exports;
     jsx: Jsx, add_jsx, add_jsx_nodes;
 }
 

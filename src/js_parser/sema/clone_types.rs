@@ -7,14 +7,13 @@ use bun_ast::Expr;
 use bun_ast::ts_syntax as ts;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{
-    Alias, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, Func, IdList, ImportEqualsId,
-    Interface, Keyword, Mapped, MappedModifier, Member, MemberId, MemberKind, Param, ParamId,
-    PatElem, PatElemId, PatId, PatKind, PatProp, PatPropId, PropKey, ResolutionMode, Span,
-    SpecifierKind, SpecifierUse, StmtId, StmtKind, TextRange, TupleElem, TypeNodeId, TypeNodeKind,
-    TypeParam, TypeParamId,
+    Alias, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, Func, IdList, Interface, Keyword,
+    Mapped, MappedModifier, Member, MemberId, MemberKind, Param, ParamId, PatElem, PatElemId,
+    PatId, PatKind, PatProp, PatPropId, PropKey, ResolutionMode, Span, SpecifierKind, SpecifierUse,
+    StmtId, StmtKind, TextRange, TupleElem, TypeNodeId, TypeNodeKind, TypeParam, TypeParamId,
 };
 
-use super::type_syntax::{Builder, Modified, modifier_error};
+use super::builder::{Builder, Modified, modifier_error};
 
 /// A part of a cloned node that is written as a JavaScript expression or function body. The lowering converts it and fills it in.
 pub(crate) enum PendingPart {
@@ -34,8 +33,6 @@ pub(crate) enum PendingPart {
     PatternElementDefault(PatElemId, Expr),
     /// `interface I extends expression`
     HeritageExpression(TypeNodeId),
-    /// `import x = require(expression)`, and where the expression starts.
-    RequireExpression(ImportEqualsId, u32),
 }
 
 macro_rules! assert_same_flags {
@@ -859,7 +856,26 @@ impl Builder<'_> {
         cloned
     }
 
+    /// An index signature that is a member of a class. `is_ambient`: of an ambient one.
+    pub(crate) fn clone_class_index_signature(
+        &mut self,
+        id: ts::MemberId,
+        is_ambient: bool,
+    ) -> Member {
+        let mut member = self.clone_member_of(id, Some(is_ambient));
+        if is_ambient {
+            member.flags |= Flags::AMBIENT;
+            self.file[member.func].flags |= Flags::AMBIENT;
+        }
+        member
+    }
+
     fn clone_member(&mut self, id: ts::MemberId) -> Member {
+        self.clone_member_of(id, None)
+    }
+
+    /// `in_class`: it is a member of a class, and whether that is ambient.
+    fn clone_member_of(&mut self, id: ts::MemberId, in_class: Option<bool>) -> Member {
         let ts::Member {
             kind,
             key,
@@ -882,6 +898,9 @@ impl Builder<'_> {
                 .collect();
             modifier_list = self.add_modifier_list(&modifiers);
             let on = match kind {
+                ts::MemberKind::IndexSignature if in_class.is_some() => {
+                    Modified::ClassIndexSignature
+                }
                 ts::MemberKind::IndexSignature => Modified::IndexSignature,
                 ts::MemberKind::Getter | ts::MemberKind::Setter => Modified::Accessor,
                 ts::MemberKind::Property => Modified::PropertySignature,
@@ -891,8 +910,8 @@ impl Builder<'_> {
             if let Some(error) = modifier_error(
                 &modifiers,
                 on,
-                false,
-                false,
+                in_class.is_some() && self.in_abstract_class,
+                in_class == Some(true),
                 matches!(key, ts::PropertyKey::Private(_)),
             ) {
                 self.file.early_errors.push(error);

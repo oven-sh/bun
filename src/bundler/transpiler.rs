@@ -605,14 +605,7 @@ impl<'a> Transpiler<'a> {
                         .any(|k| &**k == options::default_user_defines::node_env::KEY)
                 });
 
-        // `parse_env_json` needs a thread-local AST store to build
-        // `E::String` nodes in. That work
-        // is now done lazily inside `DefineData::parse`, only on the JSON-parse
-        // slow path — the common case (`bun run` with no user `--define`)
-        // resolves every define through the literal fast path and never
-        // allocates an AST store. A store lazily created on the slow path is
-        // reclaimed by the next `Store::begin()` (every subsequent file parse),
-        // so the dropped `defer reset` is a no-op in practice.
+        // `DefineData::parse` creates the AST stores that `parse_env_json` needs.
 
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
@@ -1198,25 +1191,7 @@ impl<'a> Transpiler<'a> {
             core::ptr::NonNull::new(log).expect("Transpiler::init_in_place: log is non-null");
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
-        // These two `create()`s are eager (not deferred to the first `parse()`)
-        // because option setup below needs the AST stores *unconditionally*:
-        // `from_api` → `defines_from_transform_options` always materialises at
-        // least `process.env.NODE_ENV` via `parse_env_json`, whose `E::String`
-        // payload lands in the thread-local Expr store (then a `StoreResetGuard`
-        // resets it — which `expect()`s the store exists). So there is no
-        // "transpile nothing" spawn that skips them. They are *cheap*, though:
-        // `Store::init()` only allocates the small `Store` header — the first
-        // `~BLOCK_SIZE` `Block` buffer is malloc'd lazily on the first
-        // `append()` (`ast/new_store.rs`), so a store that is `create()`d but
-        // never written to here (the `Stmt` store — `load_defines` only emits
-        // `E::String` expression nodes) costs nothing beyond that header.
-        // `store_ast_alloc_heap::enter()` is NOT called here: `--define`
-        // object-literal JSON is parsed below (during option setup) and the
-        // bundler holds its `StoreRef<E::Object>` across every `reset_store()`,
-        // so its embedded `Vec<Property>` must stay on the global heap.
-        // `reset_store()`'s first call lazily `enter()`s (the side arena's
-        // `reset()` branches to `enter()` on null ARENA), so per-file ASTs
-        // *do* get the side arena from the first parsed file onward.
+        // Eager: option setup parses at least `process.env.NODE_ENV` through these stores.
 
         // `FileSystem::init` wants `&'static [u8]`. Intern via `DirnameStore`
         // (the same path `FileSystem::init` already uses for the

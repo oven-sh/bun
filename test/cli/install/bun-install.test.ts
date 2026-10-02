@@ -16,6 +16,7 @@ import {
   toBeValidBin,
   toBeWorkspaceLink,
   toHaveBins,
+  withBoundedMainThreadStack,
 } from "harness";
 import { basename, join, resolve, sep } from "path";
 import {
@@ -11924,4 +11925,31 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
       expect(exitCode).toBe(0);
     });
   });
+});
+
+// Each depth on the ladder must install or fail with the parser's error, never with a signal.
+it.concurrent("installs with a deeply nested value in package.json", async () => {
+  const depths = Array.from({ length: 8 }, (_, i) => 384 << i);
+  const outcomes = await Promise.all(
+    depths.map(async depth => {
+      const deep = Buffer.alloc(depth * 5, '{"a":').toString() + "1" + Buffer.alloc(depth, "}").toString();
+      using dir = tempDir("bun-install-deep-package-json", {
+        "package.json": `{"name":"root","version":"1.0.0","deep":${deep},"dependencies":{"dep":"file:./dep"}}`,
+        "dep/package.json": `{"name":"dep","version":"1.0.0"}`,
+      });
+      await using proc = Bun.spawn({
+        cmd: withBoundedMainThreadStack([bunExe(), "install"]),
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode === 0 && stdout.includes("+ dep@dep")) return "installed";
+      if (exitCode === 1 && stderr.includes("error: JSON document is too deeply nested")) return "too deep";
+      return { depth, stdout, stderr, exitCode, signalCode: proc.signalCode };
+    }),
+  );
+  expect(outcomes.filter(outcome => typeof outcome !== "string")).toEqual([]);
+  expect(outcomes[0]).toBe("installed");
 });

@@ -5,7 +5,7 @@ const { validateBoolean, validateAbortSignal, validateObject, validateNumber } =
 const { resistStopPropagation } = require("internal/shared");
 
 const symbolAsyncIterator = Symbol.asyncIterator;
-const setImmediateGlobal = globalThis.setImmediate;
+const setImmediateGlobal = $setImmediate;
 const setTimeoutGlobal = globalThis.setTimeout;
 const setIntervalGlobal = globalThis.setInterval;
 

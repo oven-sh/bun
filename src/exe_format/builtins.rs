@@ -18,7 +18,7 @@ use crate::pe::{DOSHeader, PEHeader, SectionHeader};
 use crate::read_struct;
 
 const MAGIC: &[u8; 8] = b"BUNBLTNS";
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 const HEADER_SIZE: usize = 48;
 const RECORD_SIZE: usize = 6 * 4;
 

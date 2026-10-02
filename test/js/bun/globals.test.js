@@ -206,6 +206,213 @@ it("globals are deletable", () => {
   expect(exitCode).toBe(0);
 });
 
+// Built-in modules schedule their own work (a socket's 'close', an observer's
+// delivery, an abort listener) with setImmediate / clearImmediate /
+// queueMicrotask. They reach them through private names, so fake timers or
+// anything else that replaces or deletes the public globals cannot strand it.
+// Node's lib/ keeps private references the same way.
+describe.concurrent("built-in modules do not schedule through replaced globals", () => {
+  /** Runs `source` in a fresh process and returns what it printed. */
+  async function run(source) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+  }
+
+  it("an http2 session closes with setImmediate replaced", async () => {
+    // A session whose close was handed to the replaced function never closes,
+    // and the process hangs.
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const http2 = require("node:http2");
+      globalThis.setImmediate = () => {};
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      server.on("close", () => console.log("server closed"));
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("close", () => console.log("session closed"));
+        const req = client.request({ ":path": "/" });
+        req.resume();
+        req.on("close", () => {
+          console.log("stream closed");
+          client.close();
+          server.close();
+        });
+      });
+    `);
+    expect({ events: stdout.split("\n").sort(), stderr, exitCode }).toEqual({
+      events: ["server closed", "session closed", "stream closed"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("an http2 session over a Duplex keeps its write callbacks with setImmediate replaced", async () => {
+    // Over a JS socket the session defers each write callback by one
+    // setImmediate, a reference it takes when the session is constructed.
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const http2 = require("node:http2");
+      const { duplexPair } = require("node:stream");
+      globalThis.setImmediate = () => {};
+      const [clientSide, serverSide] = duplexPair();
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      server.emit("connection", serverSide);
+      const client = http2.connect("http://localhost", { createConnection: () => clientSide });
+      client.on("close", () => console.log("session closed"));
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      req.end("hello", () => console.log("request body written"));
+      req.resume();
+      req.on("end", () => console.log("response ended"));
+      req.on("close", () => {
+        console.log("stream closed");
+        client.close();
+      });
+    `);
+    expect({ events: stdout.split("\n").sort(), stderr, exitCode }).toEqual({
+      events: ["request body written", "response ended", "session closed", "stream closed"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A PerformanceObserver hands its delivery to setImmediate. Prints the names
+  // of the "function" entries it got by the time the process exits.
+  const observeFunctionEntries = /* js */ `
+    const seen = [];
+    new PerformanceObserver(list => seen.push(...list.getEntries().map(entry => entry.name))).observe({
+      entryTypes: ["function"],
+    });
+    process.on("exit", () => console.log(seen.join(",")));
+  `;
+  const requirePerfHooks = `const { PerformanceObserver, performance } = require("node:perf_hooks");`;
+
+  it("a PerformanceObserver delivers entries queued while setImmediate was replaced, and later ones", async () => {
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      ${requirePerfHooks}
+      ${observeFunctionEntries}
+      const realSetImmediate = setImmediate;
+      globalThis.setImmediate = () => {};
+      performance.timerify(function first() {})();
+      globalThis.setImmediate = realSetImmediate;
+      performance.timerify(function second() {})();
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "first,second", stderr: "", exitCode: 0 });
+  });
+
+  it.each([
+    ["deleted before node:perf_hooks is loaded", `delete globalThis.setImmediate; ${requirePerfHooks}`],
+    ["set to a non-function", `${requirePerfHooks} globalThis.setImmediate = 1;`],
+    [
+      "mocked by node:test's mock.timers",
+      `${requirePerfHooks} require("node:test").mock.timers.enable({ apis: ["setImmediate"] });`,
+    ],
+    [
+      "replaced in an ES module",
+      `import { PerformanceObserver, performance } from "node:perf_hooks"; globalThis.setImmediate = () => {};`,
+    ],
+  ])("a PerformanceObserver delivers with setImmediate %s", async (_, setup) => {
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      ${setup}
+      ${observeFunctionEntries}
+      performance.timerify(function first() {})();
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "first", stderr: "", exitCode: 0 });
+  });
+
+  it.each([
+    ["replaced", `globalThis.queueMicrotask = () => {};`],
+    ["deleted", `delete globalThis.queueMicrotask;`],
+    ["set to a non-function", `globalThis.queueMicrotask = 1;`],
+  ])("events.addAbortListener() calls the listener of an aborted signal with queueMicrotask %s", async (_, setup) => {
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const { addAbortListener } = require("node:events");
+      ${setup}
+      let called = false;
+      addAbortListener(AbortSignal.abort(), () => {
+        called = true;
+      });
+      process.on("exit", () => console.log("listener called:", called));
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "listener called: true", stderr: "", exitCode: 0 });
+  });
+
+  it("fs.watch() with an aborted signal emits 'close' with queueMicrotask replaced", async () => {
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const fs = require("node:fs");
+      globalThis.queueMicrotask = () => {};
+      let closed = false;
+      fs.watch(process.cwd(), { signal: AbortSignal.abort() }).on("close", () => {
+        closed = true;
+      });
+      process.on("exit", () => console.log("close emitted:", closed));
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "close emitted: true", stderr: "", exitCode: 0 });
+  });
+
+  it.each([
+    ["replaced", `globalThis.setImmediate = globalThis.clearImmediate = () => {};`],
+    ["deleted", `delete globalThis.setImmediate; delete globalThis.clearImmediate;`],
+  ])("node:timers exports the original functions with the globals %s before it is loaded", async (_, setup) => {
+    // The public globals keep their shape: same name, length and descriptor,
+    // and the one function object that node:timers and the built-ins use.
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const util = require("node:util");
+      const original = {};
+      const shape = {};
+      for (const name of ["setImmediate", "clearImmediate", "queueMicrotask"]) {
+        const { value, ...flags } = Object.getOwnPropertyDescriptor(globalThis, name);
+        original[name] = value;
+        shape[name] = { name: value.name, length: value.length, ...flags };
+      }
+      const { get, ...promisifyFlags } = Object.getOwnPropertyDescriptor(original.setImmediate, util.promisify.custom);
+      shape.promisifyCustom = { get: typeof get, ...promisifyFlags };
+      ${setup}
+      const timers = require("node:timers");
+      const result = {
+        shape,
+        setImmediate: timers.setImmediate === original.setImmediate,
+        clearImmediate: timers.clearImmediate === original.clearImmediate,
+        promisified: util.promisify(original.setImmediate) === require("node:timers/promises").setImmediate,
+        readline: typeof require("node:readline").createInterface,
+      };
+      require("node:timers/promises").setImmediate("resolved").then(value => {
+        result.promises = value;
+      });
+      process.on("exit", () => console.log(JSON.stringify(result)));
+    `);
+    const global = { length: 1, writable: true, enumerable: true, configurable: true };
+    expect({ result: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      result: {
+        shape: {
+          setImmediate: { name: "setImmediate", ...global },
+          clearImmediate: { name: "clearImmediate", ...global },
+          queueMicrotask: { name: "queueMicrotask", ...global },
+          promisifyCustom: { get: "function", enumerable: true, configurable: false },
+        },
+        setImmediate: true,
+        clearImmediate: true,
+        promisified: true,
+        readline: "function",
+        promises: "resolved",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 it("self is a getter", () => {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, "self");
   expect(descriptor.get).toBeInstanceOf(Function);

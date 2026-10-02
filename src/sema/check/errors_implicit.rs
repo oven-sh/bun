@@ -1154,15 +1154,12 @@ impl Checker<'_> {
         {
             let ty = self.type_of_expr(file, default);
             let arity = match self.data(ty) {
-                TypeData::Tuple {
-                    elems: types,
-                    flags,
-                    ..
-                } if !flags
-                    .iter()
-                    .any(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC)) =>
+                TypeData::Tuple { flags, .. }
+                    if !flags
+                        .iter()
+                        .any(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC)) =>
                 {
-                    Some(types.len())
+                    Some(flags.len())
                 }
                 _ => None,
             };

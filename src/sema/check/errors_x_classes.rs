@@ -201,7 +201,6 @@ impl Checker<'_> {
                 continue;
             }
             let implemented = self.type_from_node(file, node);
-            let implemented = self.force(implemented);
             let implemented = self.reduced_base_type(implemented);
             if self.is_settled_base(implemented) && !self.is_valid_base_type(implemented) {
                 out.push(Diagnostic {
@@ -321,7 +320,6 @@ impl Checker<'_> {
         };
         let mapper = self.decl_params_mapper(sym, file, class.type_params);
         let base = self.instantiate(base, mapper);
-        let base = self.force(base);
         if self.is_error_type(base) {
             return nothing;
         }
@@ -645,7 +643,6 @@ impl Checker<'_> {
 
     /// `isValidBaseType`: `any`, an object type whose members can be told, or an intersection of such. What is not known passes.
     pub(super) fn is_valid_base_type(&mut self, ty: TypeId) -> bool {
-        let ty = self.force(ty);
         if !self.is_known(ty) {
             return true;
         }

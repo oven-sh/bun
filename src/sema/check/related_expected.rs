@@ -181,7 +181,6 @@ impl Checker<'_> {
 
     /// `GetErrorRangeForNode` of `ty.symbol.Declarations[0]`
     pub(super) fn first_declaration_of_type_symbol(&mut self, ty: TypeId) -> Option<Place> {
-        let ty = self.force(ty);
         let sym = match self.data(ty) {
             TypeData::Ref { target, .. } => *target,
             TypeData::Fns { decls, .. } => {

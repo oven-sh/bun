@@ -165,79 +165,113 @@ impl UniqueSymbolDeclaration {
     }
 }
 
-/// `TypeReference.target`, of a deferred type reference.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum DeferredTarget {
-    /// A generic class or interface.
-    Declared(Sym),
-    /// `getArrayOrTupleTargetType`. `readonly`: `isReadonlyTypeOperator(node.Parent)`.
-    ArrayOrTuple { readonly: bool },
+/// `TypeReference.resolvedTypeArguments`. Whoever wants them asks `Checker::type_arguments` (`getTypeArguments`).
+#[derive(Clone, Debug)]
+pub enum TypeArguments {
+    /// `createTypeReference`
+    Given(Box<[TypeId]>),
+    /// `createDeferredTypeReference`
+    Deferred(Box<DeferredTypeArguments>),
 }
 
-/// `createDeferredTypeReference`: a reference to a generic class or interface, an array type or a tuple type, written at `node` in
-/// the declaration of a type alias. Its type arguments are resolved when they are first asked for (`getTypeArguments`).
-/// `mapper`: what the type parameters around the node stand for. It is interned by all but `resolved`.
-pub struct DeferredReference {
+const _: () = assert!(size_of::<TypeArguments>() == 16);
+
+/// `TypeReference.node` and `mapper`: the reference to a generic class or interface, the array type or the tuple type written at
+/// `node`, in the declaration of a type alias, and what the type parameters around the node stand for. It is interned by these.
+#[derive(Clone, Debug)]
+pub struct DeferredTypeArguments {
     pub file: FileId,
     pub node: TypeNodeId,
     pub mapper: MapperId,
-    pub target: DeferredTarget,
-    /// `resolvedTypeArguments`, as the `TypeData::Ref` or `TypeData::Tuple` that has them. `TypeStore::get` gives this once it is
-    /// there, so a reference that is resolved is one like any other, with a number of its own.
-    resolved: OnceLock<TypeData>,
+    resolved: OnceLock<Box<[TypeId]>>,
 }
 
-impl DeferredReference {
-    pub fn new(file: FileId, node: TypeNodeId, mapper: MapperId, target: DeferredTarget) -> Self {
-        DeferredReference {
-            file,
-            node,
-            mapper,
-            target,
-            resolved: OnceLock::new(),
-        }
-    }
-
+impl DeferredTypeArguments {
     #[inline]
     pub fn is_resolved(&self) -> bool {
         self.resolved.get().is_some()
     }
 
     #[inline]
-    fn key(&self) -> (FileId, TypeNodeId, MapperId, DeferredTarget) {
-        (self.file, self.node, self.mapper, self.target)
+    fn key(&self) -> (FileId, TypeNodeId, MapperId) {
+        (self.file, self.node, self.mapper)
     }
 }
 
-impl Clone for DeferredReference {
-    fn clone(&self) -> Self {
-        DeferredReference {
-            file: self.file,
-            node: self.node,
-            mapper: self.mapper,
-            target: self.target,
-            resolved: self.resolved.clone(),
+impl TypeArguments {
+    pub fn deferred(file: FileId, node: TypeNodeId, mapper: MapperId) -> TypeArguments {
+        TypeArguments::Deferred(Box::new(DeferredTypeArguments {
+            file,
+            node,
+            mapper,
+            resolved: OnceLock::new(),
+        }))
+    }
+
+    /// They, if they are there.
+    #[inline]
+    pub fn resolved(&self) -> Option<&[TypeId]> {
+        match self {
+            TypeArguments::Given(given) => Some(given),
+            TypeArguments::Deferred(deferred) => {
+                deferred.resolved.get().map(|resolved| &resolved[..])
+            }
+        }
+    }
+
+    /// `t.AsTypeReference().node != nil`
+    #[inline]
+    pub fn as_deferred(&self) -> Option<&DeferredTypeArguments> {
+        match self {
+            TypeArguments::Given(_) => None,
+            TypeArguments::Deferred(deferred) => Some(deferred),
         }
     }
 }
 
-impl PartialEq for DeferredReference {
+impl Default for TypeArguments {
+    fn default() -> Self {
+        TypeArguments::Given(Box::default())
+    }
+}
+
+impl From<Box<[TypeId]>> for TypeArguments {
+    fn from(given: Box<[TypeId]>) -> Self {
+        TypeArguments::Given(given)
+    }
+}
+
+impl From<Vec<TypeId>> for TypeArguments {
+    fn from(given: Vec<TypeId>) -> Self {
+        TypeArguments::Given(given.into())
+    }
+}
+
+impl From<&[TypeId]> for TypeArguments {
+    fn from(given: &[TypeId]) -> Self {
+        TypeArguments::Given(given.into())
+    }
+}
+
+impl PartialEq for TypeArguments {
     fn eq(&self, other: &Self) -> bool {
-        self.key() == other.key()
+        match (self, other) {
+            (TypeArguments::Given(a), TypeArguments::Given(b)) => a == b,
+            (TypeArguments::Deferred(a), TypeArguments::Deferred(b)) => a.key() == b.key(),
+            _ => false,
+        }
     }
 }
 
-impl Eq for DeferredReference {}
+impl Eq for TypeArguments {}
 
-impl std::hash::Hash for DeferredReference {
+/// Those that are given are hashed as the list they are: see `TypeParts`.
+impl std::hash::Hash for TypeArguments {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        std::hash::Hash::hash(&self.key(), state);
-    }
-}
-
-impl std::fmt::Debug for DeferredReference {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(&self.key(), f)
+        match self {
+            TypeArguments::Given(given) => std::hash::Hash::hash(given, state),
+            TypeArguments::Deferred(deferred) => std::hash::Hash::hash(&deferred.key(), state),
+        }
     }
 }
 
@@ -301,20 +335,13 @@ pub enum TypeData {
     /// An instance of a class or an interface.
     Ref {
         target: Sym,
-        args: Box<[TypeId]>,
+        args: TypeArguments,
     },
     Tuple {
-        elems: Box<[TypeId]>,
+        elems: TypeArguments,
         flags: Box<[ElemFlags]>,
         readonly: bool,
     },
-    /// A reference to a type alias that was in the middle of being resolved: `type J = string | J[]`.
-    LazyAlias {
-        sym: Sym,
-        args: Box<[TypeId]>,
-    },
-    /// A deferred type reference whose type arguments have not been resolved. See `DeferredReference`.
-    Deferred(Box<DeferredReference>),
     Anon {
         origin: Origin,
         mapper: MapperId,
@@ -687,8 +714,6 @@ bitflags::bitflags! {
         const HAS_MARKER = 4;
         /// The type of an object literal expression, or what a binding pattern implies, is somewhere in it.
         const HAS_OBJECT_LITERAL = 8;
-        /// A union or an intersection with a `LazyAlias` among its members, or with another such type among them.
-        const HAS_LAZY_MEMBER = 16;
     }
 }
 
@@ -889,6 +914,10 @@ fn is_prop_local(prop: &Prop, file: FileId) -> bool {
 /// Whether `data` mentions `file`, which is the one at hand, or anything that does.
 fn is_type_local(data: &TypeData, file: FileId) -> bool {
     let any = |ids: &[TypeId]| ids.iter().any(MaybeLocal::is_local);
+    let arguments = |arguments: &TypeArguments| match arguments {
+        TypeArguments::Given(given) => any(given),
+        TypeArguments::Deferred(deferred) => deferred.file == file || deferred.mapper.is_local(),
+    };
     match data {
         TypeData::Intrinsic(_)
         | TypeData::StringLit { .. }
@@ -910,15 +939,8 @@ fn is_type_local(data: &TypeData, file: FileId) -> bool {
         }
         TypeData::Substitution { base, constraint } => base.is_local() || constraint.is_local(),
         TypeData::Union(t) | TypeData::Intersection(t) => any(t),
-        TypeData::Ref { target: sym, args } | TypeData::LazyAlias { sym, args } => {
-            sym.file == file || any(args)
-        }
-        TypeData::Tuple { elems, .. } => any(elems),
-        TypeData::Deferred(reference) => {
-            reference.file == file
-                || reference.mapper.is_local()
-                || matches!(reference.target, DeferredTarget::Declared(sym) if sym.file == file)
-        }
+        TypeData::Ref { target: sym, args } => sym.file == file || arguments(args),
+        TypeData::Tuple { elems, .. } => arguments(elems),
         TypeData::Anon { origin, mapper } => {
             mapper.is_local()
                 || match origin {
@@ -1057,7 +1079,10 @@ impl TypeParts<'_> {
                     target: known_target,
                     args: known,
                 },
-            ) => target == *known_target && *args == **known,
+            ) => {
+                target == *known_target
+                    && matches!(known, TypeArguments::Given(known) if *args == **known)
+            }
             (
                 TypeParts::Tuple {
                     elems,
@@ -1069,7 +1094,11 @@ impl TypeParts<'_> {
                     flags: known_flags,
                     readonly: known_readonly,
                 },
-            ) => readonly == *known_readonly && *elems == **known && *flags == **known_flags,
+            ) => {
+                readonly == *known_readonly
+                    && matches!(known, TypeArguments::Given(known) if *elems == **known)
+                    && *flags == **known_flags
+            }
             (
                 TypeParts::Fns { decls, mapper },
                 TypeData::Fns {
@@ -1128,7 +1157,7 @@ impl std::hash::Hash for TypeParts<'_> {
             TypeParts::Ref { target, args } => {
                 let empty = TypeData::Ref {
                     target,
-                    args: Box::default(),
+                    args: TypeArguments::default(),
                 };
                 kind(empty, state);
                 target.hash(state);
@@ -1140,7 +1169,7 @@ impl std::hash::Hash for TypeParts<'_> {
                 readonly,
             } => {
                 let empty = TypeData::Tuple {
-                    elems: Box::default(),
+                    elems: TypeArguments::default(),
                     flags: Box::default(),
                     readonly,
                 };
@@ -1321,6 +1350,18 @@ impl TypeStore {
 
     /// For each kind of thing that is kept: what it is, how many there are, and how many bytes they take, what they point to included.
     pub fn sizes(&self) -> Vec<(String, usize, usize)> {
+        fn arguments_bytes(arguments: &TypeArguments) -> usize {
+            match arguments {
+                TypeArguments::Given(given) => given.len() * 4,
+                TypeArguments::Deferred(deferred) => {
+                    size_of::<DeferredTypeArguments>()
+                        + deferred
+                            .resolved
+                            .get()
+                            .map_or(0, |resolved| resolved.len() * 4)
+                }
+            }
+        }
         fn shape_bytes(shape: &Shape) -> usize {
             shape.props.capacity() * size_of::<Prop>()
                 + shape.props.iter().map(prop_bytes).sum::<usize>()
@@ -1343,14 +1384,10 @@ impl TypeStore {
             let (name, payload) = match &self.types.items.get(i).made.0 {
                 TypeData::Union(t) => ("type: union", t.len() * 4),
                 TypeData::Intersection(t) => ("type: intersection", t.len() * 4),
-                TypeData::Ref { args, .. } => ("type: reference", args.len() * 4),
-                TypeData::LazyAlias { args, .. } => ("type: lazy alias", args.len() * 4),
-                TypeData::Deferred(_) => {
-                    ("type: deferred reference", size_of::<DeferredReference>())
-                }
+                TypeData::Ref { args, .. } => ("type: reference", arguments_bytes(args)),
                 TypeData::Tuple { elems, flags, .. } => (
                     "type: tuple",
-                    elems.len() * 4 + flags.len() * size_of::<ElemFlags>(),
+                    arguments_bytes(elems) + flags.len() * size_of::<ElemFlags>(),
                 ),
                 TypeData::Anon { .. } => ("type: anonymous object", 0),
                 TypeData::Fns { decls, .. } => ("type: functions", decls.len() * 8),
@@ -1403,31 +1440,32 @@ impl TypeStore {
 
     #[inline]
     pub fn get(&self, id: TypeId) -> &TypeData {
-        Self::resolved_data(&self.record(id).made.0)
+        &self.record(id).made.0
     }
 
-    /// `data`, or what a deferred type reference has been resolved to.
-    #[inline(always)]
-    fn resolved_data(data: &TypeData) -> &TypeData {
-        match data {
-            TypeData::Deferred(reference) => reference.resolved.get().unwrap_or(data),
-            _ => data,
-        }
-    }
-
-    /// `t.AsTypeReference().node != nil`: the deferred type reference that `id` is, resolved or not.
+    /// `t.AsTypeReference().node != nil`: what the deferred type reference `id` is made of, resolved or not.
     #[inline]
-    pub fn deferred(&self, id: TypeId) -> Option<&DeferredReference> {
-        match &self.record(id).made.0 {
-            TypeData::Deferred(reference) => Some(&**reference),
+    pub fn deferred(&self, id: TypeId) -> Option<&DeferredTypeArguments> {
+        match self.get(id) {
+            TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => args.as_deferred(),
             _ => None,
         }
     }
 
-    /// `d.resolvedTypeArguments = ..`, unless it has them.
-    pub fn resolve_deferred(&self, id: TypeId, resolved: TypeData) {
-        if let Some(reference) = self.deferred(id) {
-            let _ = reference.resolved.set(resolved);
+    /// `d.resolvedTypeArguments`, of a reference or a tuple type, if they are there.
+    #[inline]
+    pub fn resolved_type_arguments(&self, id: TypeId) -> Option<&[TypeId]> {
+        match self.get(id) {
+            TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => args.resolved(),
+            _ => None,
+        }
+    }
+
+    /// `d.resolvedTypeArguments = ..`, unless it has them. What it has.
+    pub fn resolve_deferred(&self, id: TypeId, resolved: Box<[TypeId]>) -> &[TypeId] {
+        match self.deferred(id) {
+            Some(deferred) => deferred.resolved.get_or_init(|| resolved),
+            None => &[],
         }
     }
 
@@ -1452,7 +1490,7 @@ impl TypeStore {
     #[inline]
     pub fn get_with_flags(&self, id: TypeId) -> (&TypeData, TypeFlags) {
         let record = self.record(id);
-        (Self::resolved_data(&record.made.0), record.flags)
+        (&record.made.0, record.flags)
     }
 
     pub fn len(&self) -> u32 {
@@ -1477,8 +1515,15 @@ impl TypeStore {
             // `instantiateType` leaves what has `TypeFlagsAny` as it is, whatever its alias type arguments are.
             TypeData::UnresolvedName { .. } => TypeFlags::empty(),
             TypeData::Union(t) | TypeData::Intersection(t) => all(t),
-            TypeData::Ref { args, .. } | TypeData::LazyAlias { args, .. } => all(args),
-            TypeData::Tuple { elems, .. } => all(elems),
+            TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => match args {
+                TypeArguments::Given(given) => all(given),
+                // `couldContainTypeVariables`: `t.AsTypeReference().node != nil`. `createDeferredTypeReference` sets no propagating
+                // flags.
+                TypeArguments::Deferred(deferred) => self
+                    .mapper_record(deferred.mapper)
+                    .1
+                    .difference(TypeFlags::HAS_OBJECT_LITERAL),
+            },
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(..),
                 mapper,
@@ -1487,11 +1532,6 @@ impl TypeStore {
             TypeData::Anon { mapper, .. }
             | TypeData::Fns { mapper, .. }
             | TypeData::Cond { mapper, .. } => self.mapper_record(*mapper).1,
-            // `couldContainTypeVariables`: `t.AsTypeReference().node != nil`. `createDeferredTypeReference` sets no propagating flags.
-            TypeData::Deferred(reference) => self
-                .mapper_record(reference.mapper)
-                .1
-                .difference(TypeFlags::HAS_OBJECT_LITERAL),
             TypeData::Synth(shape) => {
                 let is_plain = matches!(
                     shape.literal,
@@ -1613,17 +1653,6 @@ impl TypeStore {
         }
         // Unlike the others, it is not handed on by what the type is made of.
         flags.set(TypeFlags::MAY_BE_REDUCED, may_be_reduced);
-        let has_lazy_member = match &data {
-            TypeData::Union(members) | TypeData::Intersection(members) => {
-                members.iter().any(|&member| {
-                    let (of_member, member_flags) = self.get_with_flags(member);
-                    matches!(of_member, TypeData::LazyAlias { .. })
-                        || member_flags.contains(TypeFlags::HAS_LAZY_MEMBER)
-                })
-            }
-            _ => false,
-        };
-        flags.set(TypeFlags::HAS_LAZY_MEMBER, has_lazy_member);
         TypeRecord {
             flags,
             made,

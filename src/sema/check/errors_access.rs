@@ -629,7 +629,7 @@ impl Checker<'_> {
             2493 => {
                 // `getTypeReferenceArity`
                 let length = match self.data(object) {
-                    TypeData::Tuple { elems, .. } => elems.len(),
+                    TypeData::Tuple { flags, .. } => flags.len(),
                     _ => 0,
                 };
                 vec![self.type_to_string(object), length.to_string(), name]
@@ -862,7 +862,7 @@ impl Checker<'_> {
         // `createUnionOrIntersectionProperty`: what one member has is a property of the union.
         if place >= 0.0
             && place.fract() == 0.0
-            && self.some_type(object, |c, m| matches!(c.data(m), TypeData::Tuple { elems, .. } if (place as usize) < elems.len()))
+            && self.some_type(object, |c, m| matches!(c.data(m), TypeData::Tuple { flags, .. } if (place as usize) < flags.len()))
         {
             return None;
         }
@@ -1262,7 +1262,6 @@ impl Checker<'_> {
                 self.type_from_node(file, obj),
                 self.type_from_node(file, index),
             );
-            let (object, keys) = (self.force(object), self.force(keys));
             // `shouldDeferIndexedAccessType`
             if !self.is_known(object)
                 || !self.is_known(keys)

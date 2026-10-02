@@ -109,36 +109,6 @@ impl<'p> Checker<'p> {
         types.iter().map(|&t| self.instantiate(t, mapper)).collect()
     }
 
-    /// The type arguments `args` of a deferred type reference under `mapper`. `getObjectTypeInstantiation` leaves them to the first
-    /// `getTypeArguments`. Here they are instantiated at once, but an instantiation of a generic alias that hits an instantiation limit
-    /// stays a reference to the alias, which hits the limit again where it is resolved.
-    fn instantiate_deferred_type_arguments(
-        &mut self,
-        args: &[TypeId],
-        mapper: MapperId,
-    ) -> Vec<TypeId> {
-        let mut new = Vec::with_capacity(args.len());
-        for &arg in args {
-            let Some(reference) = self.as_unresolved_alias_reference(arg) else {
-                new.push(self.instantiate(arg, mapper));
-                continue;
-            };
-            let (events, unreported) = (self.deep_events, self.unreported_event);
-            self.deferring_type_arguments += 1;
-            let instantiated = self.instantiate(arg, mapper);
-            self.deferring_type_arguments -= 1;
-            if self.deep_events == events {
-                new.push(instantiated);
-                continue;
-            }
-            // The memo entries around do not depend on the limit.
-            self.deep_events = events;
-            self.unreported_event = unreported;
-            new.push(self.instantiate(reference, mapper));
-        }
-        new
-    }
-
     /// `getInstantiatedSymbol`
     pub(super) fn instantiate_prop(&mut self, prop: &mut Prop, mapper: MapperId) {
         match &mut prop.source {
@@ -230,11 +200,26 @@ impl<'p> Checker<'p> {
         mapper: MapperId,
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
-        let Some(reference) = self.p.types.deferred(ty) else {
+        let Some(deferred) = self.p.types.deferred(ty) else {
             return ty;
         };
-        let (file, node, target) = (reference.file, reference.node, reference.target);
-        let new = self.map_mapper(reference.mapper, mapper);
+        let (file, node) = (deferred.file, deferred.node);
+        let new = self.map_mapper(deferred.mapper, mapper);
+        let arguments = TypeArguments::deferred(file, node, new);
+        let reference = match self.data(ty) {
+            TypeData::Ref { target, .. } => TypeData::Ref {
+                target: *target,
+                args: arguments,
+            },
+            TypeData::Tuple {
+                flags, readonly, ..
+            } => TypeData::Tuple {
+                elems: arguments,
+                flags: flags.clone(),
+                readonly: *readonly,
+            },
+            _ => return ty,
+        };
         let instantiated;
         let alias = match (alias, self.stored_alias(ty)) {
             (None, Some((symbol, type_arguments))) => {
@@ -243,9 +228,7 @@ impl<'p> Checker<'p> {
             }
             _ => alias,
         };
-        let made = self.deferred_type_reference(file, node, new, target, alias);
-        self.resolve_type_arguments_ahead(made);
-        made
+        self.deferred_type_reference(reference, alias)
     }
 
     fn instantiate_uncached(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
@@ -257,34 +240,18 @@ impl<'p> Checker<'p> {
             TypeData::Union(_) | TypeData::Intersection(_) => {
                 self.instantiate_union_or_intersection(ty, mapper, None)
             }
-            TypeData::Ref { target, args } => {
-                let is_deferred = self.p.deferred_references.get(&ty).is_some();
-                let args = if is_deferred {
-                    self.instantiate_deferred_type_arguments(args, mapper)
-                } else {
-                    self.instantiate_all(args, mapper)
-                };
-                let new = self.intern(TypeData::Ref {
-                    target: *target,
-                    args: args.into(),
-                });
-                if is_deferred && self.has_type_variables(new) {
-                    self.p.deferred_references.insert(new, ());
-                }
-                new
-            }
-            TypeData::LazyAlias { sym, args } => {
+            TypeData::Ref { target, .. } => {
+                let args = self.type_arguments(ty);
                 let args = self.instantiate_all(args, mapper);
-                self.intern(TypeData::LazyAlias {
-                    sym: *sym,
+                self.intern(TypeData::Ref {
+                    target: *target,
                     args: args.into(),
                 })
             }
             TypeData::Tuple {
-                elems,
-                flags,
-                readonly,
+                flags, readonly, ..
             } => {
+                let elems = self.type_arguments(ty);
                 let elems = self.instantiate_all(elems, mapper);
                 self.normalized_tuple(&elems, flags, *readonly)
             }
@@ -461,7 +428,7 @@ impl<'p> Checker<'p> {
             .zip(flags)
             .map(|(&elem, flag)| {
                 if flag.contains(ElemFlags::VARIADIC) {
-                    self.force(elem)
+                    elem
                 } else {
                     elem
                 }
@@ -510,10 +477,6 @@ impl<'p> Checker<'p> {
                     origin: Origin::Mapped(..),
                     ..
                 } => self.is_generic(elem),
-                // An alias that is still being worked out is looked at again when it is instantiated.
-                TypeData::LazyAlias { .. } => {
-                    self.is_no_infer(elem) || self.has_type_variables(elem)
-                }
                 _ => false,
             };
             if waits {
@@ -522,11 +485,10 @@ impl<'p> Checker<'p> {
                 continue;
             }
             if let TypeData::Tuple {
-                elems: inner,
-                flags: inner_flags,
-                ..
+                flags: inner_flags, ..
             } = self.data(elem)
             {
+                let inner = self.type_arguments(elem);
                 // Too large to represent (2799, 2800): the error type.
                 if inner.len() + out_elems.len() >= 10_000 {
                     // `c.error(c.currentNode, ..)`: 2799 is reported at the innermost type node being resolved. Inside an
@@ -548,11 +510,7 @@ impl<'p> Checker<'p> {
             // Anything else is taken for an array.
             let element = match self.array_element(elem) {
                 Some(element) => element,
-                None if matches!(self.data(elem), TypeData::LazyAlias { .. })
-                    || !self.is_known(elem) =>
-                {
-                    TypeId::UNRESOLVED
-                }
+                None if !self.is_known(elem) => TypeId::UNRESOLVED,
                 None => {
                     // `isArrayLikeType`, `getIndexTypeOfType(t, numberType)`. What is not like an array is an error.
                     let found = if self.is_array_like(elem) {
@@ -595,7 +553,6 @@ impl<'p> Checker<'p> {
         returned: TypeId,
         inferred: MapperId,
     ) {
-        let returned = self.force(returned);
         let TypeData::Fns { mapper: outer, .. } = self.data(returned) else {
             return;
         };

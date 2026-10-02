@@ -264,10 +264,9 @@ impl Checker<'_> {
         for &name in &names[1..] {
             // `getPropertyOfType`: of the apparent type, with what every function and every object has. `any` has no properties, and
             // what an index signature covers is none.
-            let forced = self.force(ty);
-            let reduced = self.reduced(forced);
+            let reduced = self.reduced(ty);
             let apparent = self.apparent_type(reduced);
-            if !self.is_known(forced) || !self.is_known(apparent) {
+            if !self.is_known(ty) || !self.is_known(apparent) {
                 return None;
             }
             ty = if self.is_union(apparent) {

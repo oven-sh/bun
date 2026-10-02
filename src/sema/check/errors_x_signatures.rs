@@ -1549,7 +1549,6 @@ impl Checker<'_> {
                     continue;
                 }
                 let declared = self.declared_type(sym);
-                let declared = self.force(declared);
                 if !self.is_known(declared) {
                     continue;
                 }
@@ -2205,7 +2204,6 @@ impl Checker<'_> {
 
     /// `getAwaitedTypeNoAliasEx`, for what it reports. `false`: there is no awaited type.
     fn look_for_awaited_type(&mut self, t: TypeId, state: &mut Awaiting) -> bool {
-        let t = self.force(t);
         if !self.is_known(t) || state.stack.len() > 64 {
             state.found |= Awaiting::UNKNOWN;
             return true;
@@ -2235,7 +2233,6 @@ impl Checker<'_> {
             return true;
         }
         if let Some(promised) = self.promised_type_of_promise_like(t) {
-            let promised = self.force(promised);
             if t == promised || state.stack.contains(&promised) {
                 state.found |= Awaiting::CIRCULAR;
                 return false;
@@ -2300,10 +2297,9 @@ impl Checker<'_> {
             let is_annotated = func.ret.is_some();
             if is_annotated && !func.flags.contains(Flags::GENERATOR) {
                 let ret = self.type_from_node(file, func.ret);
-                let ret = self.force(ret);
                 let start = start_of_written_type(&hir.text, hir[func.ret].pos);
                 if self.is_known(ret) && !self.is_error_type(ret) {
-                    if has_promise_type && self.is_global_ref(ret, known::Promise).is_none() {
+                    if has_promise_type && !self.is_reference_to_global(ret, known::Promise) {
                         out.push(Diagnostic { start, code: 1064 });
                         let end = self.end_of_type_node_from(file, func.ret, start);
                         self.explain_to(start, end, 1064, |c| {

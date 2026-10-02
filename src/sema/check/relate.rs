@@ -265,7 +265,6 @@ fn is_object_kind(data: &TypeData) -> bool {
         data,
         TypeData::Ref { .. }
             | TypeData::Tuple { .. }
-            | TypeData::Deferred(_)
             | TypeData::Anon { .. }
             | TypeData::Fns { .. }
             | TypeData::Synth(_)
@@ -403,10 +402,12 @@ fn is_normalized_kind(data: &TypeData) -> bool {
         | TypeData::Intersection(_)
         | TypeData::IndexedAccess { .. }
         | TypeData::Cond { .. }
-        | TypeData::LazyAlias { .. }
-        | TypeData::Deferred(_)
         | TypeData::Substitution { .. } => false,
-        TypeData::Tuple { .. } => !is_generic_tuple_kind(data),
+        // `t.AsTypeReference().node != nil`
+        TypeData::Ref { args, .. } => args.as_deferred().is_none(),
+        TypeData::Tuple { elems, .. } => {
+            elems.as_deferred().is_none() && !is_generic_tuple_kind(data)
+        }
         _ => !is_fresh_literal_kind(data),
     }
 }
@@ -489,17 +490,6 @@ impl<'p> Checker<'p> {
             TypeData::Union(_) => self.is_boolean(ty) || self.union_enum_symbol(ty).is_some(),
             _ => is_primitive_kind(data),
         }
-    }
-
-    /// `force`, and what the result is.
-    #[inline]
-    fn forced_as(&mut self, ty: TypeId) -> (TypeId, &'p TypeData) {
-        let data = self.data(ty);
-        if matches!(data, TypeData::LazyAlias { .. } | TypeData::Deferred(_)) {
-            let ty = self.force(ty);
-            return (ty, self.data(ty));
-        }
-        (ty, data)
     }
 
     /// `TypeId::plain`, and what the result is. `data`: what `ty` is.
@@ -926,7 +916,7 @@ impl<'p> Checker<'p> {
             self.gave_up();
             return false;
         }
-        let ((source, sd), (target, td)) = (self.forced_as(source), self.forced_as(target));
+        let (sd, td) = (self.data(source), self.data(target));
         // Every rule goes by the flags, which the kinds of `undefined` and of `null` share.
         let ((source, sd), (target, td)) = (self.plain_as(source, sd), self.plain_as(target, td));
         let ((source, sd), (target, td)) =
@@ -1342,14 +1332,33 @@ impl<'p> Checker<'p> {
             }
             TypeData::Union(types)
             | TypeData::Intersection(types)
-            | TypeData::Ref { args: types, .. }
-            | TypeData::Tuple { elems: types, .. } => types
+            | TypeData::Ref {
+                args: TypeArguments::Given(types),
+                ..
+            }
+            | TypeData::Tuple {
+                elems: TypeArguments::Given(types),
+                ..
+            } => types
                 .iter()
                 .all(|&t| self.collect_open_type_params(t, open, seen)),
             TypeData::Anon {
                 origin: Origin::Mapped(..),
                 ..
             } => false,
+            TypeData::Ref {
+                args: TypeArguments::Deferred(deferred),
+                ..
+            }
+            | TypeData::Tuple {
+                elems: TypeArguments::Deferred(deferred),
+                ..
+            } => self
+                .p
+                .types
+                .mapping(deferred.mapper)
+                .iter()
+                .all(|pair| self.collect_open_type_params(pair.1, open, seen)),
             TypeData::Anon { mapper, .. } | TypeData::Fns { mapper, .. } => self
                 .p
                 .types
@@ -1423,10 +1432,9 @@ impl<'p> Checker<'p> {
                     self.simplified(t, writing)
                 }
                 TypeData::Tuple {
-                    elems,
-                    flags,
-                    readonly,
+                    flags, readonly, ..
                 } if flags.iter().any(|f| f.contains(ElemFlags::VARIADIC)) => {
+                    let elems = self.type_arguments(t);
                     let simpler: SmallVec<[TypeId; 8]> =
                         elems.iter().map(|&e| self.simplified(e, writing)).collect();
                     if simpler[..] == elems[..] {
@@ -1434,15 +1442,6 @@ impl<'p> Checker<'p> {
                     } else {
                         self.normalized_tuple(&simpler, flags, *readonly)
                     }
-                }
-                TypeData::LazyAlias { .. } => self.force(t),
-                // `getTypeArguments(t)`
-                TypeData::Deferred(_) => {
-                    self.resolve_type_arguments(t);
-                    if matches!(self.data(t), TypeData::Deferred(_)) {
-                        return t;
-                    }
-                    continue;
                 }
                 &TypeData::Substitution { base, .. } if writing => base,
                 &TypeData::Substitution { base, constraint } => {
@@ -1512,12 +1511,6 @@ impl<'p> Checker<'p> {
 
     /// `getSimplifiedIndexedAccessType`
     fn simplified_indexed_access(&mut self, t: TypeId, writing: bool) -> TypeId {
-        // An access that waits on an alias is looked into, cached or not: see `force_reference`.
-        if let TypeData::IndexedAccess { obj, .. } = *self.data(t)
-            && matches!(self.data(obj), TypeData::LazyAlias { .. })
-        {
-            self.force(obj);
-        }
         if let Some(&known) = self.simplified.get(&(t, writing)) {
             return known;
         }
@@ -1540,7 +1533,7 @@ impl<'p> Checker<'p> {
         let TypeData::IndexedAccess { obj, index, .. } = *self.data(t) else {
             return t;
         };
-        let object = self.force(obj);
+        let object = obj;
         let object = self.simplified(object, writing);
         let index_ty = self.simplified(index, writing);
         // T[A | B] is T[A] | T[B] to read, T[A] & T[B] to write.
@@ -1589,10 +1582,11 @@ impl<'p> Checker<'p> {
         }
         // A tuple with `...T` in it, at a place that is none of the fixed ones: any of its elements for `number`, else any from the
         // first that is not fixed on. `getElementTypeOfSliceOfTupleType`
-        if let TypeData::Tuple { elems, flags, .. } = self.data(object)
+        if let TypeData::Tuple { flags, .. } = self.data(object)
             && self.is_generic_tuple_type(object)
             && self.is_number_like(index_ty)
         {
+            let elems = self.type_arguments(object);
             let from = if index_ty == TypeId::NUMBER {
                 0
             } else {
@@ -2067,7 +2061,6 @@ impl<'p> Checker<'p> {
             return self.cond_true(t);
         }
         let check = self.cond_check(t);
-        let check = self.force(check);
         // `isDeferredType(checkType, checkTuples)`
         let hir = self.hir(file);
         let simple_tuple_len = |node: TypeNodeId| match hir[node].kind {
@@ -2082,7 +2075,11 @@ impl<'p> Checker<'p> {
             simple_tuple_len(nodes[0]).is_some_and(|len| simple_tuple_len(nodes[1]) == Some(len));
         let check_is_deferred = self.is_generic(check)
             || check_tuples
-                && matches!(self.data(check), TypeData::Tuple { elems, .. } if elems.iter().any(|&e| self.is_generic(e)));
+                && self.is_tuple(check)
+                && self
+                    .type_arguments(check)
+                    .iter()
+                    .any(|&e| self.is_generic(e));
         let mut pairs = self.p.types.mapping(mapper).to_vec();
         if check_is_deferred {
             for &param in &params {
@@ -2371,10 +2368,11 @@ impl<'p> Checker<'p> {
         if !self.p.types.flags(t).contains(TypeFlags::HAS_MARKER) || self.is_array(t) {
             return false;
         }
-        let TypeData::Ref { target, args } = self.data(t) else {
+        let TypeData::Ref { target, .. } = self.data(t) else {
             return false;
         };
         let params = self.all_type_params_of_symbol(*target);
+        let args = self.type_arguments(t);
         self.are_marker_arguments(*target, &params, args)
     }
 
@@ -2622,10 +2620,7 @@ impl<'p> Checker<'p> {
             return Ternary::TRUE;
         }
         let head = if REPORT { r.head_message.take() } else { None };
-        let ((original_source, original_sd), (original_target, original_td)) = (
-            self.forced_as(original_source),
-            self.forced_as(original_target),
-        );
+        let (original_sd, original_td) = (self.data(original_source), self.data(original_target));
         let relation = r.relation;
         let is_from_related = std::mem::take(&mut r.is_from_related)
             && original_source == r.top_source
@@ -2777,7 +2772,7 @@ impl<'p> Checker<'p> {
                     || self.has_primitive_flag_as(source, sd))
                 && (relation != Relation::Comparable || self.is_unit(source))
                 && !(matches!(sd, TypeData::Ref { .. })
-                    && self.is_global_ref(source, known::Object).is_some())
+                    && self.is_reference_to_global(source, known::Object))
                 && self.is_weak_type(target)
                 && {
                     let apparent = self.apparent_type(source);
@@ -3054,7 +3049,7 @@ impl<'p> Checker<'p> {
     pub(super) fn contains_global_object_type(&self, target: TypeId) -> bool {
         self.parts(target)
             .iter()
-            .any(|&p| self.is_global_ref(p, known::Object).is_some())
+            .any(|&p| self.is_reference_to_global(p, known::Object))
     }
 
     /// `getTypeOfPropertyInType`
@@ -3572,13 +3567,16 @@ impl<'p> Checker<'p> {
 
     fn has_generic_arguments(&self, t: TypeId) -> bool {
         // `isNonDeferredTypeReference`
-        if self.p.types.deferred(t).is_some() {
-            return false;
+        let (TypeData::Ref {
+            args: TypeArguments::Given(args),
+            ..
         }
-        let args: &[TypeId] = match self.data(t) {
-            TypeData::Ref { args, .. } => args,
-            TypeData::Tuple { elems, .. } => elems,
-            _ => return false,
+        | TypeData::Tuple {
+            elems: TypeArguments::Given(args),
+            ..
+        }) = self.data(t)
+        else {
+            return false;
         };
         args.iter().any(|&arg| {
             matches!(
@@ -3596,29 +3594,25 @@ impl<'p> Checker<'p> {
         depth: u32,
         ignore_constraints: bool,
     ) {
-        let args: &'p [TypeId] = match self.data(reference) {
-            TypeData::Ref { target, args } => {
+        match self.data(reference) {
+            TypeData::Ref { target, .. } => {
                 key.hasher.write_u8(b'r');
                 key.hasher.write_u32(target.file.0);
                 key.hasher.write_u32(target.id.0);
-                args
             }
             // `getTupleKey`: the element flags and `readonly` identify a tuple target.
             TypeData::Tuple {
-                elems,
-                flags,
-                readonly,
+                flags, readonly, ..
             } => {
                 key.hasher.write_u8(if *readonly { b'!' } else { b't' });
                 key.hasher.write_usize(flags.len());
                 for flag in flags.iter() {
                     key.hasher.write_u32(flag.bits());
                 }
-                elems
             }
             _ => return,
-        };
-        for &arg in args {
+        }
+        for &arg in self.type_arguments(reference) {
             let is_this = matches!(self.data(arg), TypeData::ThisParam(_));
             if is_this || matches!(self.data(arg), TypeData::TypeParam(..)) {
                 // The constraint of a `this` type is the class or interface it belongs to.
@@ -4070,8 +4064,6 @@ impl<'p> Checker<'p> {
             return known;
         }
         let before = self.what_only_holds_for_now();
-        // What an alias stands for while it is being worked out depends on who asks.
-        let mut met_alias = false;
         let mut t = of;
         let has_symbol = |c: &Self, ty: TypeId| {
             matches!(
@@ -4106,8 +4098,6 @@ impl<'p> Checker<'p> {
             let Some(target) = self.mapped_modifiers_type(t) else {
                 break;
             };
-            met_alias |= matches!(self.data(target), TypeData::LazyAlias { .. });
-            let target = self.force(target);
             let found = match self.data(target) {
                 TypeData::Intersection(parts) => parts.iter().any(|&p| has_symbol(self, p)),
                 _ => has_symbol(self, target),
@@ -4117,7 +4107,7 @@ impl<'p> Checker<'p> {
             }
             t = target;
         }
-        if !met_alias && self.what_only_holds_for_now() == before {
+        if self.what_only_holds_for_now() == before {
             self.p.mapped_targets.insert(of, t);
         }
         t
@@ -4145,8 +4135,15 @@ impl<'p> Checker<'p> {
     /// newer than the one around it. `data`: what `t` is.
     fn holds_object_literals(&self, t: TypeId, data: &TypeData) -> bool {
         let inside: &[TypeId] = match data {
-            TypeData::Tuple { elems, .. } => elems,
-            TypeData::Ref { args, .. } if !args.is_empty() && self.is_array(t) => args,
+            // What is written as a type is no array literal.
+            TypeData::Tuple {
+                elems: TypeArguments::Given(elems),
+                ..
+            } => elems,
+            TypeData::Ref {
+                args: TypeArguments::Given(args),
+                ..
+            } if !args.is_empty() && self.is_array(t) => args,
             _ => return false,
         };
         inside.iter().any(|&e| {
@@ -4592,32 +4589,30 @@ impl<'p> Checker<'p> {
         }
         // `[...U]` fits `T` if `U` does; `U` fits `readonly [...T]`, and `[...T]` if `U` is a mutable array or tuple.
         if let TypeData::Tuple {
-            elems,
-            flags,
-            readonly,
+            flags, readonly, ..
         } = sd
-            && elems.len() == 1
+            && flags.len() == 1
             && flags[0].contains(ElemFlags::VARIADIC)
             && !*readonly
         {
-            let result = self.is_related_to(r, elems[0], target, REC_SOURCE);
+            let element = self.type_arguments(source)[0];
+            let result = self.is_related_to(r, element, target, REC_SOURCE);
             if result.holds() {
                 return result;
             }
         }
         if let TypeData::Tuple {
-            elems,
-            flags,
-            readonly,
+            flags, readonly, ..
         } = td
-            && elems.len() == 1
+            && flags.len() == 1
             && flags[0].contains(ElemFlags::VARIADIC)
             && (*readonly || {
                 let constraint = self.base_constraint_or_type(source);
                 self.is_mutable_array_or_tuple(constraint)
             })
         {
-            let result = self.is_related_to(r, source, elems[0], REC_TARGET);
+            let element = self.type_arguments(target)[0];
+            let result = self.is_related_to(r, source, element, REC_TARGET);
             if result.holds() {
                 return result;
             }
@@ -5172,7 +5167,7 @@ impl<'p> Checker<'p> {
             return Ternary::FALSE;
         }
         match (sd, td) {
-            (TypeData::Ref { target: st, args: sa }, TypeData::Ref { target: tt, args: ta })
+            (TypeData::Ref { target: st, .. }, TypeData::Ref { target: tt, .. })
                 // With a wildcard for every type parameter there are no marker types left.
                 if st == tt && (relation == Relation::Permissive || !self.is_marker_type(source) && !self.is_marker_type(target)) =>
             {
@@ -5182,12 +5177,13 @@ impl<'p> Checker<'p> {
                 if variances.is_empty() {
                     return Ternary::UNKNOWN;
                 }
+                let (sa, ta) = (self.type_arguments(source), self.type_arguments(target));
                 if let Some(result) = self.relate_variances::<REPORT>(r, sa, ta, &variances, state, shared) {
                     return result;
                 }
             }
-            (_, TypeData::Ref { args, .. }) if !args.is_empty() && self.is_array(target)
-                && (self.is_global_ref(target, known::ReadonlyArray).is_some() && self.every_type(source, |c, m| c.is_array_or_tuple(m))
+            (_, TypeData::Ref { .. }) if self.is_array(target)
+                && (self.is_reference_to_global(target, known::ReadonlyArray) && self.every_type(source, |c, m| c.is_array_or_tuple(m))
                     || self.every_type(source, |c, m| matches!(c.data(m), TypeData::Tuple { readonly: false, .. }))) =>
             {
                 if relation != Relation::Identity {
@@ -5359,7 +5355,8 @@ impl<'p> Checker<'p> {
     /// of a reference to a class or an interface, where `members` finds it.
     pub(super) fn reference_with_this(&mut self, t: TypeId, this_argument: TypeId) -> TypeId {
         match self.data(t) {
-            TypeData::Ref { target, args } => {
+            TypeData::Ref { target, .. } => {
+                let args = self.type_arguments(t);
                 if self.all_type_params_of_symbol(*target).len() != args.len() {
                     return t;
                 }
@@ -5386,7 +5383,7 @@ impl<'p> Checker<'p> {
     }
 
     pub(super) fn is_mutable_array_or_tuple(&self, t: TypeId) -> bool {
-        self.is_global_ref(t, known::Array).is_some()
+        self.is_reference_to_global(t, known::Array)
             || matches!(
                 self.data(t),
                 TypeData::Tuple {
@@ -5401,7 +5398,8 @@ impl<'p> Checker<'p> {
         if let Some(element) = self.array_element(t) {
             return element;
         }
-        if let TypeData::Tuple { elems, flags, .. } = self.data(t) {
+        if let TypeData::Tuple { flags, .. } = self.data(t) {
+            let elems = self.type_arguments(t);
             return self.tuple_element_union(elems, flags);
         }
         if let TypeData::Union(parts) = self.data(t) {
@@ -5431,7 +5429,6 @@ impl<'p> Checker<'p> {
         index: TypeId,
         no_index_signatures: bool,
     ) -> Option<TypeId> {
-        let (object, index) = (self.force(object), self.force(index));
         let object = self.reduced(object);
         let index = self.key_into_string_index_only(object, index);
         // `getReducedApparentType`: a type parameter answers with what it extends.
@@ -5480,10 +5477,11 @@ impl<'p> Checker<'p> {
                     } else {
                         ty
                     });
-                } else if let TypeData::Tuple { elems, flags, .. } = self.data(apparent)
+                } else if let TypeData::Tuple { flags, .. } = self.data(apparent)
                     && self.is_numeric_name(name)
                 {
                     // `getRestTypeOfTupleType`
+                    let elems = self.type_arguments(apparent);
                     let fixed = Self::fixed_length(flags);
                     of_each.push(if fixed < flags.len() {
                         self.tuple_element_union(&elems[fixed..], &flags[fixed..])
@@ -5810,11 +5808,12 @@ impl<'p> Checker<'p> {
         let mut result = Ternary::TRUE;
         let td = self.data(target);
         if let TypeData::Tuple {
-            elems: target_elems,
             flags: target_flags,
             readonly: target_readonly,
+            ..
         } = td
         {
+            let target_elems = self.type_arguments(target);
             let variable = ElemFlags::REST | ElemFlags::VARIADIC;
             let target_has_rest_element = target_flags.iter().any(|f| f.intersects(variable));
             if self.is_array_or_tuple(source) {
@@ -5822,16 +5821,14 @@ impl<'p> Checker<'p> {
                 let (source_elems, source_flags, source_readonly): (&[TypeId], &[ElemFlags], bool) =
                     match self.data(source) {
                         TypeData::Tuple {
-                            elems,
-                            flags,
-                            readonly,
-                        } => (elems, flags, *readonly),
+                            flags, readonly, ..
+                        } => (self.type_arguments(source), flags, *readonly),
                         _ => {
                             one_element = [self.array_element(source).unwrap_or(TypeId::ANY)];
                             (
                                 &one_element,
                                 &[ElemFlags::REST],
-                                self.is_global_ref(source, known::ReadonlyArray).is_some(),
+                                self.is_reference_to_global(source, known::ReadonlyArray),
                             )
                         }
                     };
@@ -6744,11 +6741,11 @@ impl<'p> Checker<'p> {
         (declared != sig).then_some(declared)
     }
 
-    /// The tuple a rest parameter is declared as, if it is one.
-    fn rest_tuple(&self, params: &[SigParam]) -> Option<(&'p [TypeId], &'p [ElemFlags])> {
+    /// `elementInfos` of the tuple a rest parameter is declared as, if it is one.
+    fn rest_tuple(&self, params: &[SigParam]) -> Option<&'p [ElemFlags]> {
         let last = params.last().filter(|p| p.rest)?;
         match self.data(last.ty) {
-            TypeData::Tuple { elems, flags, .. } => Some((elems, flags)),
+            TypeData::Tuple { flags, .. } => Some(flags),
             _ => None,
         }
     }
@@ -6763,7 +6760,7 @@ impl<'p> Checker<'p> {
     /// `getParameterCount`: a rest parameter counts as one, a tuple for what is in it.
     pub(super) fn parameter_count(&self, params: &[SigParam]) -> usize {
         match self.rest_tuple(params) {
-            Some((_, flags)) => {
+            Some(flags) => {
                 let fixed = Self::fixed_length(flags);
                 params.len() + fixed - usize::from(fixed == flags.len())
             }
@@ -6776,7 +6773,7 @@ impl<'p> Checker<'p> {
         match params.last() {
             Some(last) if last.rest => self
                 .rest_tuple(params)
-                .is_none_or(|(_, flags)| Self::fixed_length(flags) != flags.len()),
+                .is_none_or(|flags| Self::fixed_length(flags) != flags.len()),
             _ => false,
         }
     }
@@ -6784,7 +6781,7 @@ impl<'p> Checker<'p> {
     /// `getMinArgumentCount`
     pub(super) fn min_argument_count(&mut self, params: &[SigParam]) -> usize {
         let mut count = None;
-        if let Some((_, flags)) = self.rest_tuple(params) {
+        if let Some(flags) = self.rest_tuple(params) {
             let required = flags
                 .iter()
                 .position(|f| !f.contains(ElemFlags::REQUIRED))
@@ -6812,7 +6809,8 @@ impl<'p> Checker<'p> {
     pub(super) fn effective_rest_type(&mut self, params: &[SigParam]) -> Option<TypeId> {
         let last = params.last().filter(|p| p.rest)?;
         match self.data(last.ty) {
-            TypeData::Tuple { elems, flags, .. } => {
+            TypeData::Tuple { flags, .. } => {
+                let elems = self.type_arguments(last.ty);
                 let fixed = Self::fixed_length(flags);
                 (fixed != flags.len()).then(|| self.tuple(&elems[fixed..], &flags[fixed..], false))
             }

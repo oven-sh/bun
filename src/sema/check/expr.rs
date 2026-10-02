@@ -264,7 +264,6 @@ impl<'p> Checker<'p> {
                 } else {
                     self.type_of_expr_uncached(file, e)
                 };
-                let ty = self.force(ty);
                 let uncertain = self.uncertain;
                 self.uncertain |= around;
                 if uncertain || afresh {
@@ -373,7 +372,6 @@ impl<'p> Checker<'p> {
         // The loop type is incomplete: nothing computed since the loop was pushed is cached.
         self.taint_from(pushed_at);
         let ty = self.type_of_expr_uncached(file, e);
-        let ty = self.force(ty);
         self.leave();
         Some(ty)
     }
@@ -763,7 +761,6 @@ impl<'p> Checker<'p> {
                 mapper,
             } => {
                 let keys = self.mapped_constraint(file, node, mapper);
-                let keys = self.force(keys);
                 match *self.data(keys) {
                     TypeData::Keyof(of) if matches!(self.data(of), TypeData::TypeParam(..)) => {
                         self.is_const_type_variable(of, depth)
@@ -771,7 +768,8 @@ impl<'p> Checker<'p> {
                     _ => false,
                 }
             }
-            TypeData::Tuple { elems, flags, .. } => {
+            TypeData::Tuple { flags, .. } => {
+                let elems = self.type_arguments(ty);
                 elems.iter().zip(flags.iter()).any(|(&e, f)| {
                     f.contains(ElemFlags::VARIADIC) && self.is_const_type_variable(e, depth)
                 })
@@ -971,9 +969,6 @@ impl<'p> Checker<'p> {
             && self.is_known(receiver)
             && !self.is_uncertain(file, obj)
             && self.is_known(apparent)
-            && !self.some_type(apparent, |c, m| {
-                matches!(c.data(m), TypeData::LazyAlias { .. })
-            })
     }
 
     /// `leftType` of `checkPropertyAccessExpressionOrQualifiedName`: what the property of `obj.name` is looked up in, and whether the
@@ -1567,9 +1562,7 @@ impl<'p> Checker<'p> {
                         let written =
                             self.indexed_access_for_writing(receiver, key, no_index_signatures);
                         match written {
-                            Some(written) if self.force(written) != self.force(ty) => {
-                                Some(self.force(written))
-                            }
+                            Some(written) if written != ty => Some(written),
                             // 2862 and nil
                             None if no_index_signatures => None,
                             _ => read,
@@ -2781,7 +2774,6 @@ impl<'p> Checker<'p> {
     fn settled_context_of_literal(&mut self, file: FileId, literal: ExprId) -> Option<TypeId> {
         let expected = self.contextual_type(file, literal)?;
         let settled = self.settled_by_enclosing_call(file, literal, expected);
-        let settled = self.force(settled);
         self.contextual.push((file, literal, settled));
         let apparent = self.contextual_type_for_object_literal(file, literal);
         self.contextual.pop();

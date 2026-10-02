@@ -386,7 +386,6 @@ impl Checker<'_> {
                 continue;
             }
             let ty = self.type_from_node(file, node);
-            let ty = self.force(ty);
             if !self.is_known(ty) || self.contextual_call_signature(file, func, ty).is_some() {
                 continue;
             }

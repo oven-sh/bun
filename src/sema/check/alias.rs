@@ -3,7 +3,6 @@
 //! type, a mapped type, a conditional type) has the alias whose body the node is, and keeps one only if it was instantiated under
 //! another (`getTypeFromTypeAliasReference`).
 
-use super::decl::is_variadic_tuple_element;
 use super::*;
 use crate::bind::ScopeId;
 use smallvec::SmallVec;
@@ -49,30 +48,17 @@ impl<'p> Checker<'p> {
 
     /// `ty` with `alias` and `type_arguments` for `Type.alias`.
     pub(super) fn with_alias(&self, ty: TypeId, alias: Sym, type_arguments: &[TypeId]) -> TypeId {
-        if let Some(reference) = self.p.types.deferred(ty) {
-            return self.deferred_type_reference(
-                reference.file,
-                reference.node,
-                reference.mapper,
-                reference.target,
-                Some((alias, type_arguments)),
-            );
-        }
         let origin = match self.p.types.provenance(ty) {
             Some(provenance) => provenance.origin.clone(),
             None => UnionOrigin::None,
         };
-        let aliased = self.p.types.intern_with(
+        self.p.types.intern_with(
             self.data(ty).clone(),
             Provenance {
                 alias: Some((alias, type_arguments.into())),
                 origin,
             },
-        );
-        if self.p.deferred_references.get(&ty).is_some() {
-            self.p.deferred_references.insert(aliased, ());
-        }
-        aliased
+        )
     }
 
     /// `t.alias`. What is known by the node it is written at has the alias whose body the node is, with what its mapper puts for the
@@ -82,7 +68,6 @@ impl<'p> Checker<'p> {
             return Some((*alias, type_arguments.to_vec()));
         }
         let (file, node, mapper) = match *self.data(ty) {
-            TypeData::LazyAlias { sym, ref args } => return Some((sym, args.to_vec())),
             TypeData::Anon {
                 origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
                 mapper,
@@ -163,45 +148,24 @@ impl<'p> Checker<'p> {
         Some((alias, self.local_type_params_of_symbol(alias)))
     }
 
-    /// What `getTypeFromUnionTypeNode` and `createDeferredTypeReference` of an array or a tuple type do with
-    /// `getAliasForTypeNode(node)`. `ty`: what `node` comes to.
+    /// What `getTypeFromUnionTypeNode` does with `getAliasForTypeNode(node)`. `ty`: what `node` comes to.
     pub(super) fn with_alias_for_type_node(
         &mut self,
         file: FileId,
         node: TypeNodeId,
         ty: TypeId,
     ) -> TypeId {
-        if !self.bound(file).type_by_alias[node.idx()] || self.p.types.deferred(ty).is_some() {
-            return ty;
-        }
-        let hir = self.hir(file);
-        let (keeps_alias, is_reference) = match (hir[node].kind, self.data(ty)) {
-            (TypeNodeKind::Union(_), TypeData::Union(_)) => (true, false),
-            (TypeNodeKind::Array(_), TypeData::Ref { .. }) => (true, true),
-            // `[]` is its target, and a tuple type with a variadic element is never deferred. `getTupleTargetType`: `[...X[]]` is an
-            // array.
-            (TypeNodeKind::Tuple(elems), TypeData::Tuple { .. } | TypeData::Ref { .. }) => (
-                !elems.is_empty()
-                    && !elems
-                        .iter()
-                        .any(|e| is_variadic_tuple_element(hir, &hir[e])),
-                true,
-            ),
-            _ => (false, false),
-        };
-        if !keeps_alias {
+        if !self.bound(file).type_by_alias[node.idx()]
+            || !matches!(self.hir(file)[node].kind, TypeNodeKind::Union(_))
+            || !self.is_union(ty)
+        {
             return ty;
         }
         let scope = self.bound(file).type_scope[node.idx()];
-        let Some((alias, type_arguments)) = self.alias_for_type_node(file, scope, node) else {
-            return ty;
-        };
-        let made_before = self.p.types.len();
-        let aliased = self.with_alias(ty, alias, &type_arguments);
-        if is_reference {
-            self.p.types.mark_manifest(aliased, made_before);
+        match self.alias_for_type_node(file, scope, node) {
+            Some((alias, type_arguments)) => self.with_alias(ty, alias, &type_arguments),
+            None => ty,
         }
-        aliased
     }
 
     /// `instantiateTypeWithAlias`, given an alias.
@@ -269,7 +233,6 @@ impl<'p> Checker<'p> {
                 TypeData::Ref { .. } | TypeData::Tuple { .. },
                 TypeData::Ref { .. } | TypeData::Tuple { .. },
             )
-            | (TypeData::LazyAlias { .. }, TypeData::LazyAlias { .. })
             | (TypeData::Fns { .. }, TypeData::Fns { .. })
             | (TypeData::Synth(_), TypeData::Synth(_)) => true,
             (TypeData::Anon { origin: a, .. }, TypeData::Anon { origin: b, .. }) => a == b,
@@ -355,43 +318,17 @@ impl<'p> Checker<'p> {
             }
             _ => alias,
         };
-        // `indexed_access_of_alias_under_way`: the access goes on waiting while the type arguments of the alias are generic.
-        // `getTypeArguments` of the instantiated reference starts over until `instantiationDepth == 100` and stores the access all
-        // the same. `force_reference` reports that where the alias is first looked into.
-        if matches!(self.data(declared), TypeData::LazyAlias { .. }) && self.has_type_variables(obj)
-        {
-            if obj != declared {
-                self.p
-                    .excessive
-                    .insert(Deep::Instantiation(obj, MapperId::IDENTITY), ());
-                self.p
-                    .has_excessive
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-            let waiting = self.intern(TypeData::IndexedAccess {
-                obj,
-                index,
-                undefined,
-            });
-            return match alias {
-                Some((alias, type_arguments)) => self.with_alias(waiting, alias, type_arguments),
-                None => waiting,
-            };
-        }
         // `getIndexedAccessTypeEx(.., t.accessFlags, nil)`: there is no node to complain at, so what is not there is `unknown`.
         self.indexed_access_flagged(obj, index, undefined, alias)
             .unwrap_or(TypeId::UNKNOWN)
     }
 
     /// `ty` as `createTypeReference` makes it: a reference or a tuple without the alias of the deferred reference it is.
-    pub(super) fn without_alias_of_reference(&self, ty: TypeId) -> TypeId {
-        match self.data(ty) {
-            data @ (TypeData::Ref { .. } | TypeData::Tuple { .. })
-                if self.stored_alias(ty).is_some() || self.p.types.deferred(ty).is_some() =>
-            {
-                self.intern(data.clone())
-            }
-            _ => ty,
+    pub(super) fn without_alias_of_reference(&mut self, ty: TypeId) -> TypeId {
+        if self.stored_alias(ty).is_none() && self.p.types.deferred(ty).is_none() {
+            return ty;
         }
+        let arguments = self.type_arguments(ty);
+        self.create_type_reference(ty, arguments)
     }
 }

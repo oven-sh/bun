@@ -201,7 +201,6 @@ impl Checker<'_> {
     /// `getTypeWithThisArgument`: what `ty` has, with `this_argument` for `this`. A reference has no place for that, so the type is
     /// made up.
     fn with_this_argument(&mut self, ty: TypeId, this_argument: TypeId) -> TypeId {
-        let ty = self.force(ty);
         match self.data(ty) {
             TypeData::Ref { target, .. } => {
                 let own_this = self.intern(TypeData::ThisParam(*target));

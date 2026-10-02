@@ -71,7 +71,6 @@ impl<'p> Checker<'p> {
             };
         }
         let ty = self.type_of_symbol_uncached(sym);
-        let ty = self.force(ty);
         let holds = self.leave();
         if self.left_a_circle {
             let ty = self.type_of_circular_symbol(sym, Some(ty));
@@ -1108,10 +1107,17 @@ impl<'p> Checker<'p> {
             TypeData::Union(parts) | TypeData::Intersection(parts) => parts
                 .iter()
                 .any(|&p| self.contains_object_literal(p, depth + 1)),
-            TypeData::Tuple { elems, .. } => elems
+            // `createDeferredTypeReference` sets no propagating flags.
+            TypeData::Tuple {
+                elems: TypeArguments::Given(elems),
+                ..
+            } => elems
                 .iter()
                 .any(|&e| self.contains_object_literal(e, depth + 1)),
-            TypeData::Ref { args, .. } => {
+            TypeData::Ref {
+                args: TypeArguments::Given(args),
+                ..
+            } => {
                 !args.is_empty()
                     && self.is_array(ty)
                     && args
@@ -1176,22 +1182,23 @@ impl<'p> Checker<'p> {
                 None => ty,
             },
             TypeData::Tuple {
-                elems,
+                elems: TypeArguments::Given(elems),
                 flags,
                 readonly,
             } => match self.widen_nullish_each(elems, depth) {
                 Some(widened) => self.tuple(&widened, flags, *readonly),
                 None => ty,
             },
-            TypeData::Ref { target, args } if self.is_array(ty) => {
-                match self.widen_nullish_each(args, depth) {
-                    Some(widened) => self.intern(TypeData::Ref {
-                        target: *target,
-                        args: widened.into(),
-                    }),
-                    None => ty,
-                }
-            }
+            TypeData::Ref {
+                target,
+                args: TypeArguments::Given(args),
+            } if self.is_array(ty) => match self.widen_nullish_each(args, depth) {
+                Some(widened) => self.intern(TypeData::Ref {
+                    target: *target,
+                    args: widened.into(),
+                }),
+                None => ty,
+            },
             _ => ty,
         }
     }
@@ -1238,7 +1245,7 @@ impl<'p> Checker<'p> {
                 self.intersection(&widened)
             }
             TypeData::Tuple {
-                elems,
+                elems: TypeArguments::Given(elems),
                 flags,
                 readonly,
             } => {
@@ -1246,7 +1253,10 @@ impl<'p> Checker<'p> {
                     elems.iter().map(|&e| self.widen_objects(e, None)).collect();
                 self.tuple(&widened, flags, *readonly)
             }
-            TypeData::Ref { target, args } => {
+            TypeData::Ref {
+                target,
+                args: TypeArguments::Given(args),
+            } => {
                 let args: Vec<TypeId> = args.iter().map(|&a| self.widen_objects(a, None)).collect();
                 self.intern(TypeData::Ref {
                     target: *target,
@@ -1433,7 +1443,6 @@ impl<'p> Checker<'p> {
             };
         }
         let ty = self.type_of_pat_uncached(file, pat);
-        let ty = self.force(ty);
         let holds = self.leave();
         if self.left_a_circle {
             self.p.circular_pats.insert((file, pat), ());
@@ -1463,7 +1472,7 @@ impl<'p> Checker<'p> {
             return ty;
         }
         let ty = self.type_of_pat_uncached(file, pat);
-        self.force(ty)
+        ty
     }
 
     /// The result of `getTypeOfVariableOrParameterOrPropertyWorker` for a parameter of a function argument, when that request is
@@ -1539,7 +1548,6 @@ impl<'p> Checker<'p> {
         if arg_index < rest_index {
             return None;
         }
-        let rest = self.force(rest);
         let TypeData::Tuple { flags, .. } = self.data(rest) else {
             return None;
         };
@@ -1721,13 +1729,11 @@ impl<'p> Checker<'p> {
                     && hir[elem].default.is_none()
                     && !hir[elem].is_rest
                     && let PatKind::Array(elems) = hir[parent].kind
-                    && let TypeData::Tuple {
-                        elems: have, flags, ..
-                    } = self.data(parent_ty)
+                    && let TypeData::Tuple { flags, .. } = self.data(parent_ty)
                     && !flags
                         .iter()
                         .any(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-                    && (elem.0 - elems.start) as usize >= have.len()
+                    && (elem.0 - elems.start) as usize >= flags.len()
                 {
                     return self.undefined_as_declared();
                 }
@@ -1779,7 +1785,7 @@ impl<'p> Checker<'p> {
             }
             _ => return self.type_of_pat(file, parent),
         };
-        self.force(ty)
+        ty
     }
 
     /// The head of `getBindingElementTypeFromParentType`: what `pattern` takes apart, given that what it stands for is a `ty`. Where
@@ -2008,7 +2014,6 @@ impl<'p> Checker<'p> {
 
     /// `getBindingElementTypeFromParentType`, for an array pattern: element `index` of what is destructured; from `index` on if `rest`.
     pub fn element_of_destructured(&mut self, ty: TypeId, index: usize, rest: bool) -> TypeId {
-        let ty = self.force(ty);
         if self.is_any(ty) {
             return ty;
         }
@@ -2040,7 +2045,10 @@ impl<'p> Checker<'p> {
             });
             if self.every_type(constraint, |c, m| c.is_tuple(m)) {
                 return self.map_type(constraint, |c, m| match c.data(m) {
-                    TypeData::Tuple { elems, flags, .. } => c.slice_tuple(elems, flags, index, 0),
+                    TypeData::Tuple { flags, .. } => {
+                        let elems = c.type_arguments(m);
+                        c.slice_tuple(elems, flags, index, 0)
+                    }
                     _ => m,
                 });
             }
@@ -2097,7 +2105,6 @@ impl<'p> Checker<'p> {
         omitted_keys: TypeId,
         symbol: Option<(FileId, u32)>,
     ) -> TypeId {
-        let ty = self.force(ty);
         if self.is_any(ty) {
             return ty;
         }
@@ -2264,7 +2271,6 @@ impl<'p> Checker<'p> {
                 };
             }
             let declared = self.type_from_node(file, decl.ty);
-            let declared = self.force(declared);
             return if self.is_any(declared) || declared == TypeId::UNKNOWN {
                 declared
             } else {
@@ -2525,13 +2531,12 @@ impl<'p> Checker<'p> {
             }
             PatKind::Array(elems) => {
                 let TypeData::Tuple {
-                    elems: types,
-                    flags,
-                    readonly,
+                    flags, readonly, ..
                 } = self.data(ty)
                 else {
                     return ty;
                 };
+                let types = self.type_arguments(ty);
                 if flags
                     .iter()
                     .any(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
@@ -2637,7 +2642,7 @@ impl<'p> Checker<'p> {
                     Some(known) => known,
                     None => {
                         let ty = self.return_type_of_fn_uncached(file, func);
-                        self.force(ty)
+                        ty
                     }
                 };
                 let holds = self.leave();
@@ -2664,7 +2669,6 @@ impl<'p> Checker<'p> {
             };
         }
         let ty = self.return_type_of_fn_uncached(file, func);
-        let ty = self.force(ty);
         let holds = self.leave();
         if self.left_a_circle {
             self.p.fn_return_types.set(file, func.idx(), TypeId::ANY);
@@ -3087,7 +3091,6 @@ impl<'p> Checker<'p> {
             |c: &Self, m: TypeId| matches!(c.data(m), TypeData::BigIntLit { .. });
         let is_unique_symbol =
             |c: &Self, m: TypeId| matches!(c.data(m), TypeData::UniqueSymbol { .. });
-        let contextual = self.force(contextual);
         if let TypeData::Union(parts) | TypeData::Intersection(parts) = self.data(contextual) {
             return parts.iter().any(|&p| self.is_literal_context(candidate, p));
         }
@@ -3176,7 +3179,6 @@ impl<'p> Checker<'p> {
     /// `getAwaitedTypeNoAlias`: the same, but what may turn out to be a promise stands for itself, not wrapped in `Awaited`.
     pub(super) fn awaited_no_alias(&mut self, ty: TypeId) -> Option<TypeId> {
         self.guard("awaited");
-        let ty = self.force(ty);
         if self.is_any(ty) || self.is_primitive(ty) || self.awaited_argument(ty).is_some() {
             return Some(ty);
         }
@@ -3209,8 +3211,8 @@ impl<'p> Checker<'p> {
         awaited
     }
 
-    /// What is being worked out about a type is passed over in silence by whoever comes upon it meanwhile (`force` leaves a reference to
-    /// an alias that is on `stack` alone). Whether there is nothing of the kind: what is made of a type now is made of it at any time.
+    /// What is being worked out about a type is passed over in silence by whoever comes upon it meanwhile. Whether there is nothing of
+    /// the kind: what is made of a type now is made of it at any time.
     fn is_nothing_about_types_under_way(&self) -> bool {
         self.awaiting.is_empty()
             && self.instantiation_depth == 0
@@ -3261,7 +3263,6 @@ impl<'p> Checker<'p> {
             return Some(ty);
         }
         if let Some(promised) = self.thenable_value(ty) {
-            let promised = self.force(promised);
             // A promise of itself, or of a promise of itself, is never settled.
             if promised == ty || self.awaiting.contains(&promised) {
                 return None;
@@ -3371,7 +3372,6 @@ impl<'p> Checker<'p> {
 
     /// `getPromisedTypeOfPromise`: what the callback given to `ty.then` is called with. `None`: a `ty` is no promise.
     pub(super) fn thenable_value(&mut self, ty: TypeId) -> Option<TypeId> {
-        let ty = self.force(ty);
         if self.is_any(ty) {
             return None;
         }
@@ -3445,7 +3445,6 @@ impl<'p> Checker<'p> {
 
     /// `getIteratedTypeOrElementType`. `None`: a `ty` cannot be gone through.
     pub(super) fn iterated_type_if_any(&mut self, ty: TypeId, is_async: bool) -> Option<TypeId> {
-        let ty = self.force(ty);
         if self.is_any(ty) {
             return Some(ty);
         }
@@ -3521,7 +3520,7 @@ impl<'p> Checker<'p> {
         let Some(declared) = self.declared_or_contextual_return_type(file, func) else {
             return TypeId::ANY;
         };
-        let mut declared = self.force(declared);
+        let mut declared = declared;
         // Of the alternatives it says it returns, those that a generator is.
         if f.ret.is_some() && self.is_union(declared) {
             declared = self.filter(declared, |c, t| c.is_what_a_generator_is(t, is_async));
@@ -3591,7 +3590,6 @@ impl<'p> Checker<'p> {
         mut said: Option<&mut Vec<u32>>,
     ) -> Iter3 {
         self.guard("iterable_types");
-        let ty = self.force(ty);
         let ty = self.reduced(ty);
         if self.is_any(ty) {
             return Iter3::all(ty);
@@ -3621,7 +3619,8 @@ impl<'p> Checker<'p> {
         // What the library that has `Iterable` says of arrays, tuples and strings comes to this.
         if sync && self.global_type_of_arity(known::Iterable, 3).is_some() {
             let element = match self.data(ty) {
-                TypeData::Tuple { elems, flags, .. } => {
+                TypeData::Tuple { flags, .. } => {
+                    let elems = self.type_arguments(ty);
                     Some(self.tuple_element_union(elems, flags))
                 }
                 _ if self.is_string_like(ty) => Some(TypeId::STRING),
@@ -3828,7 +3827,6 @@ impl<'p> Checker<'p> {
         is_async: bool,
         mut said: Option<&mut Vec<u32>>,
     ) -> Iter3 {
-        let ty = self.force(ty);
         if self.is_any(ty) {
             return Iter3::all(ty);
         }
@@ -4013,7 +4011,6 @@ impl<'p> Checker<'p> {
 
     /// `getIterationTypesOfIteratorResult`: what `ty`, which `next` gives, says is yielded and returned.
     fn iteration_types_of_iterator_result(&mut self, ty: TypeId) -> Iter3 {
-        let ty = self.force(ty);
         if self.is_any(ty) {
             return Iter3::all(ty);
         }

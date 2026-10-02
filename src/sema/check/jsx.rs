@@ -178,7 +178,7 @@ impl<'p> Checker<'p> {
             && let Some(members) = self.members(elements)
             && let Some(value) = self.applicable_index_info(&members, TypeId::STRING, Some(name))
         {
-            return Some(self.force(value));
+            return Some(value);
         }
         self.type_of_property(elements, name)
     }

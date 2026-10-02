@@ -59,7 +59,6 @@ impl<'p> Checker<'p> {
                 self.is_generic(name)
             }
             TypeData::Template { .. } | TypeData::StringMapping { .. } => true,
-            TypeData::LazyAlias { .. } => false,
             // `getGenericObjectFlags`
             &TypeData::Substitution { base, constraint } => {
                 self.is_generic(base) || self.is_generic(constraint)
@@ -97,7 +96,6 @@ impl<'p> Checker<'p> {
             let keys = self.get_index_type_ex(of, no_reducible_check, no_index_signatures);
             return self.no_infer(keys);
         }
-        let ty = self.force(ty);
         if ty == TypeId::UNRESOLVED {
             return ty;
         }
@@ -155,7 +153,6 @@ impl<'p> Checker<'p> {
             && self.mapped_decl(file, node).name_ty.is_none()
         {
             let constraint = self.mapped_constraint(file, node, mapper);
-            let constraint = self.force(constraint);
             if self.is_known(constraint) {
                 return constraint;
             }
@@ -174,7 +171,6 @@ impl<'p> Checker<'p> {
             && self.mapped_decl(file, node).name_ty.is_some()
         {
             let constraint = self.mapped_constraint(file, node, mapper);
-            let constraint = self.force(constraint);
             if self.is_known(constraint) {
                 let decl = self.mapped_decl(file, node);
                 let param = self.type_param(file, decl.param);
@@ -274,7 +270,6 @@ impl<'p> Checker<'p> {
         mapper: MapperId,
     ) -> Option<TypeId> {
         let constraint = self.mapped_constraint(file, node, mapper);
-        let constraint = self.force(constraint);
         if !self.is_known(constraint) {
             return None;
         }
@@ -535,7 +530,6 @@ impl<'p> Checker<'p> {
         include_undefined: bool,
         alias: Option<(Sym, &[TypeId])>,
     ) -> Option<TypeId> {
-        let (obj, index) = (self.force(obj), self.force(index));
         if obj == TypeId::UNRESOLVED || index == TypeId::UNRESOLVED {
             return Some(TypeId::UNRESOLVED);
         }
@@ -609,7 +603,6 @@ impl<'p> Checker<'p> {
             && self.mapped_decl(file, node).name_ty.is_none()
         {
             let keys = self.mapped_constraint(file, node, mapper);
-            let keys = self.force(keys);
             for &key in self.parts(keys) {
                 if self.property_name_of_type(key).is_some() {
                     return false;
@@ -733,13 +726,12 @@ impl<'p> Checker<'p> {
     /// the tuple for `this` (`getTupleBaseType`, `resolveObjectTypeMembers`): the members of the tuple take all of that array's.
     fn holder_of_index_signatures(&mut self, ty: TypeId) -> TypeId {
         let TypeData::Tuple {
-            elems,
-            flags,
-            readonly,
+            flags, readonly, ..
         } = self.data(ty)
         else {
             return ty;
         };
+        let elems = self.type_arguments(ty);
         if self.p.members.get(&ty).is_some() {
             return ty;
         }
@@ -833,9 +825,10 @@ impl<'p> Checker<'p> {
             );
         }
         if let Some(name) = name
-            && let TypeData::Tuple { elems, flags, .. } = self.data(apparent)
+            && let TypeData::Tuple { flags, .. } = self.data(apparent)
             && self.is_numeric_name(name)
         {
+            let elems = self.type_arguments(apparent);
             let at: f64 = self.files().atoms.text(name).parse().unwrap_or(f64::NAN);
             let variable = flags
                 .iter()
@@ -973,7 +966,6 @@ impl<'p> Checker<'p> {
             value = self.applicable_index_info(members, TypeId::STRING, None);
         }
         if let Some(value) = value {
-            let value = self.force(value);
             // An enum knows the names of its own members.
             let is_own_member = matches!(
                 (self.data(obj), self.data(index)),
@@ -1051,7 +1043,6 @@ impl<'p> Checker<'p> {
             self.note_depth(key, Some(events));
             self.p.conditionals.insert((file, node, mapper), ty);
         }
-        self.settle_deferred_references();
         ty
     }
 
@@ -1082,7 +1073,6 @@ impl<'p> Checker<'p> {
         if matches!(self.data(check_declared), TypeData::TypeParam(..))
             && let Some(value) = self.p.types.map(mapper, check_declared)
         {
-            let value = self.force(value);
             // `getConditionalTypeInstantiation`: an intersection nothing can be is not there to be gone through.
             let value = self.reduced(value);
             if (value.is_never() || self.is_union(value))
@@ -1119,10 +1109,7 @@ impl<'p> Checker<'p> {
     }
 
     fn has_generic_element(&mut self, ty: TypeId) -> bool {
-        let TypeData::Tuple { elems, .. } = self.data(ty) else {
-            return false;
-        };
-        elems.iter().any(|&e| self.is_generic(e))
+        self.is_tuple(ty) && self.type_arguments(ty).iter().any(|&e| self.is_generic(e))
     }
 
     /// `getConditionalType`
@@ -1164,14 +1151,12 @@ impl<'p> Checker<'p> {
             let check_declared = self.type_from_node(file, check);
             let check_variable = self.actual_type_variable(check_declared);
             let check_ty = self.instantiate(check_variable, mapper);
-            let check_ty = self.force(check_ty);
             let extends_declared = self.type_from_node(file, extends);
             if check_ty == TypeId::UNRESOLVED {
                 return TypeId::UNRESOLVED;
             }
             // `extendsType`, which is not `inferredExtendsType`.
             let extends_before_inference = self.instantiate(extends_declared, mapper);
-            let extends_before_inference = self.force(extends_before_inference);
             if check_ty == TypeId::ERROR || extends_before_inference == TypeId::ERROR {
                 return TypeId::ERROR;
             }
@@ -1206,7 +1191,6 @@ impl<'p> Checker<'p> {
                 }
             }
             let extends_ty = self.instantiate(extends_declared, combined);
-            let extends_ty = self.force(extends_ty);
             if extends_ty == TypeId::UNRESOLVED {
                 return TypeId::UNRESOLVED;
             }
@@ -1358,7 +1342,6 @@ impl<'p> Checker<'p> {
             return Err(declared);
         }
         if is_distributive && let Some(value) = self.p.types.map(root_mapper, root_check) {
-            let value = self.force(value);
             if self.is_union(value) || value.is_never() {
                 return Err(declared);
             }
@@ -1582,7 +1565,6 @@ impl<'p> Checker<'p> {
         let Some(value) = self.p.types.map(mapper, source) else {
             return anon(self);
         };
-        let value = self.force(value);
         if value == source {
             return anon(self);
         }
@@ -1669,10 +1651,7 @@ impl<'p> Checker<'p> {
         let any_as_array = self.has_any_flag(t)
             && !self.stack.contains(&Query::Constraint(source))
             && match self.constraint_of_type_param(source) {
-                Some(constraint) => {
-                    let constraint = self.force(constraint);
-                    self.every_type(constraint, |c, m| c.is_array_or_tuple(m))
-                }
+                Some(constraint) => self.every_type(constraint, |c, m| c.is_array_or_tuple(m)),
                 None => false,
             };
         // `instantiateMappedArrayType`
@@ -1684,7 +1663,7 @@ impl<'p> Checker<'p> {
             let readonly = match mapped.readonly {
                 MappedModifier::Add => true,
                 MappedModifier::Remove => false,
-                MappedModifier::None => self.is_global_ref(t, known::ReadonlyArray).is_some(),
+                MappedModifier::None => self.is_reference_to_global(t, known::ReadonlyArray),
             };
             return if readonly {
                 self.readonly_array_of(element)
@@ -1693,11 +1672,10 @@ impl<'p> Checker<'p> {
             };
         }
         if let TypeData::Tuple {
-            elems,
-            flags,
-            readonly,
+            flags, readonly, ..
         } = self.data(t)
         {
+            let elems = self.type_arguments(t);
             // `instantiateMappedTupleType`: up to the first rest or variadic element each is looked up by its place. From there
             // on places are not known: what is spread is mapped as a whole, the others as the element of an array of their own.
             let fixed = flags
@@ -1941,10 +1919,11 @@ impl<'p> Checker<'p> {
         if self.is_generic(index) {
             return None;
         }
-        if let TypeData::Tuple { elems, flags, .. } = self.data(obj) {
+        if let TypeData::Tuple { flags, .. } = self.data(obj) {
             if !self.defers_access(obj, index, false) {
                 return None;
             }
+            let elems = self.type_arguments(obj);
             // `T[A | B]` is `T[A] | T[B]`.
             if let TypeData::Union(keys) = self.data(index) {
                 let mut types = Vec::with_capacity(keys.len());
@@ -2219,12 +2198,6 @@ impl<'p> Checker<'p> {
             TypeId::ERROR
         };
         let ty = self.instantiate(template, prop.mapper);
-        // `instantiateType` resolves a reference to a type alias here, inside the resolution.
-        let ty = if matches!(self.data(ty), TypeData::LazyAlias { .. }) {
-            self.force(ty)
-        } else {
-            ty
-        };
         let ty = self.mapped_property_type(
             ty,
             mapped.optional,
@@ -2256,7 +2229,6 @@ impl<'p> Checker<'p> {
         let mapped = self.mapped_decl(file, node);
         let param = self.type_param(file, mapped.param);
         let constraint = self.mapped_constraint(file, node, mapper);
-        let constraint = self.force(constraint);
         let mut shape = Shape::default();
         if constraint == TypeId::UNRESOLVED {
             return shape;
@@ -2438,26 +2410,6 @@ impl<'p> Checker<'p> {
     /// `getTemplateLiteralType`: `` `${A}text${B}` ``
     pub fn template_type(&mut self, texts: &[Atom], types: &[TypeId]) -> TypeId {
         self.guard("template_type");
-        // An alias that was being worked out when it was mentioned is taken for what it stands for, if that is known by now.
-        let forced: Vec<TypeId>;
-        let types = if types
-            .iter()
-            .any(|&t| matches!(self.data(t), TypeData::LazyAlias { .. }))
-        {
-            forced = types
-                .iter()
-                .map(|&t| {
-                    if matches!(self.data(t), TypeData::LazyAlias { .. }) {
-                        self.force(t)
-                    } else {
-                        t
-                    }
-                })
-                .collect();
-            &forced[..]
-        } else {
-            types
-        };
         if types.iter().any(|t| t.is_never()) {
             return TypeId::NEVER;
         }
@@ -2534,10 +2486,7 @@ impl<'p> Checker<'p> {
                             new_texts.push(self.files().atoms.bytes(inner_texts[j + 1]).to_vec());
                         }
                         new_texts.last_mut().unwrap().extend_from_slice(next);
-                    } else if self.is_generic(ty)
-                        || self.is_pattern_literal_placeholder(ty)
-                        || matches!(self.data(ty), TypeData::LazyAlias { .. })
-                    {
+                    } else if self.is_generic(ty) || self.is_pattern_literal_placeholder(ty) {
                         new_types.push(ty);
                         new_texts.push(next.to_vec());
                     } else {
@@ -2601,7 +2550,6 @@ impl<'p> Checker<'p> {
 
     /// `getStringMappingType`
     pub fn string_mapping(&mut self, kind: StringMappingKind, ty: TypeId) -> TypeId {
-        let ty = self.force(ty);
         match self.data(ty) {
             TypeData::Union(_) => self.map_type(ty, |c, m| c.string_mapping(kind, m)),
             TypeData::Intrinsic(

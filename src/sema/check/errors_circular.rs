@@ -365,12 +365,10 @@ impl Checker<'_> {
             {
                 // A variable of that type that is read while the file is emitted makes the type first.
                 let made = self.type_from_node(file, TypeNodeId(n as u32));
-                let made = self.force(made);
                 // Under whichever alias: the keys of the mapped type, which lead into the circle, are the same.
                 let made = self.intern(self.data(made).clone());
                 let variable = if matches!(self.data(made), TypeData::Anon { .. }) {
                     self.first_variable_read_by_emit(file, |c, ty| {
-                        let ty = c.force(ty);
                         c.intern(c.data(ty).clone()) == made
                     })
                 } else {

@@ -842,7 +842,10 @@ impl Checker<'_> {
         match self.data(first) {
             // Of an intersection, the classes and interfaces in it that are not instantiations of generic ones.
             TypeData::Intersection(parts) => parts.iter().any(|&part| match self.data(part) {
-                TypeData::Ref { target: base, args } if args.is_empty() => {
+                TypeData::Ref {
+                    target: base,
+                    args: TypeArguments::Given(args),
+                } if args.is_empty() => {
                     *base == target || self.has_protected_accessible_base(target, *base, depth + 1)
                 }
                 _ => false,

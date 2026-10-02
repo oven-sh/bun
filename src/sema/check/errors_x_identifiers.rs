@@ -1189,7 +1189,6 @@ impl Pass<'_, '_> {
 
     /// `isValidSpreadType`
     fn is_valid_spread_type(&mut self, ty: TypeId) -> bool {
-        let ty = self.c.force(ty);
         let ty = self
             .c
             .map_type(ty, |c, m| c.base_constraint_of(m).unwrap_or(m));

@@ -540,7 +540,6 @@ impl<'p> Checker<'p> {
             return OF_UNKNOWN;
         }
         let strict = self.p.files.options.strict_null_checks;
-        let ty = self.force(ty);
         // What waits for type parameters goes by what it extends, and so does an intersection. A template that mentions no type
         // parameter extends itself.
         let ty = if self.is_deferred(ty)
@@ -548,7 +547,7 @@ impl<'p> Checker<'p> {
             || self.is_instantiable(ty) && self.has_type_variables(ty)
         {
             let constraint = self.base_constraint_of(ty).unwrap_or(TypeId::UNKNOWN);
-            self.force(constraint)
+            constraint
         } else {
             ty
         };
@@ -1752,10 +1751,11 @@ impl<'p> Checker<'p> {
             }
             // Past the fixed elements of a tuple there is what the rest of it holds, and nothing where it ends.
             let apparent = self.apparent_type(m);
-            if let TypeData::Tuple { elems, flags, .. } = self.data(apparent)
+            if let TypeData::Tuple { flags, .. } = self.data(apparent)
                 && self.is_numeric_name(name)
                 && self.prop_ref(apparent, name).is_none()
             {
+                let elems = self.type_arguments(apparent);
                 let fixed = flags
                     .iter()
                     .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
@@ -2878,7 +2878,6 @@ impl<'p> Checker<'p> {
 
     /// `isTypeDerivedFrom`: going by what is said to extend what, not by what is in it.
     pub(super) fn is_type_derived_from(&mut self, source: TypeId, target: TypeId) -> bool {
-        let (source, target) = (self.force(source), self.force(target));
         if let TypeData::Union(parts) = self.data(source) {
             return parts.iter().all(|&s| self.is_type_derived_from(s, target));
         }
@@ -2896,10 +2895,10 @@ impl<'p> Checker<'p> {
         if self.is_empty_anonymous_object_type(target) {
             return is_object;
         }
-        if self.is_global_ref(target, known::Object).is_some() {
+        if self.is_reference_to_global(target, known::Object) {
             return is_object && !self.is_empty_anonymous_object_type(source);
         }
-        if self.is_global_ref(target, known::Function).is_some() {
+        if self.is_reference_to_global(target, known::Function) {
             return self.is_object_type(source) && self.is_function_object_type(source);
         }
         let TypeData::Ref { target: base, .. } = *self.data(target) else {
@@ -2908,7 +2907,7 @@ impl<'p> Checker<'p> {
         if self.has_base(source, base, 0) {
             return true;
         }
-        if self.is_global_ref(target, known::Array).is_some() {
+        if self.is_reference_to_global(target, known::Array) {
             let readonly = self.readonly_array_of(TypeId::ANY);
             return self.is_type_derived_from(source, readonly);
         }
@@ -3311,8 +3310,8 @@ impl<'p> Checker<'p> {
             Some(target) => {
                 // `any` is not narrowed to exactly `Object` or `Function`.
                 if self.is_any(ty)
-                    && (self.is_global_ref(target, known::Object).is_some()
-                        || self.is_global_ref(target, known::Function).is_some())
+                    && (self.is_reference_to_global(target, known::Object)
+                        || self.is_reference_to_global(target, known::Function))
                 {
                     return ty;
                 }
@@ -3393,7 +3392,6 @@ impl<'p> Checker<'p> {
 
     /// `everyType(ty, IsNullableType)`
     fn is_every_type_nullable(&mut self, ty: TypeId) -> bool {
-        let ty = self.force(ty);
         !ty.is_never()
             && self
                 .parts(ty)
@@ -4155,7 +4153,6 @@ impl<'p> Checker<'p> {
                 let around = self.inferential.replace((file, e));
                 let ty = self.type_of_expr_uncached(file, e);
                 self.inferential = around;
-                let ty = self.force(ty);
                 (ty != ordinary && self.is_known(ty)).then_some(ty)
             }
             // `checkConditionalExpression` hands the mode on.
@@ -6220,7 +6217,7 @@ impl<'p> Checker<'p> {
             // `getReturnTypeFromAnnotation`: `never` by another name.
             _ => {
                 let returned = self.type_from_node(file, ret);
-                self.force(returned).is_never()
+                returned.is_never()
             }
         }
     }
@@ -6388,7 +6385,6 @@ impl<'p> Checker<'p> {
                 return false;
             };
             let ty = self.type_of_expr_outside_loops(file, operand);
-            let ty = self.force(ty);
             let ty = self.base_constraint_of(ty).unwrap_or(ty);
             if ty == TypeId::UNRESOLVED {
                 return false;
@@ -6408,7 +6404,6 @@ impl<'p> Checker<'p> {
                 .any(|&m| self.type_facts(m, not_equal) == not_equal);
         }
         let ty = self.type_of_expr_outside_loops(file, expr);
-        let ty = self.force(ty);
         let ty = self.base_constraint_of(ty).unwrap_or(ty);
         // `isLiteralType`
         if cases.is_empty() || !self.every_type(ty, |c, m| c.is_unit(m)) {
@@ -6601,10 +6596,7 @@ impl<'p> Checker<'p> {
                 let no_index_signatures = self.is_generic_object_type(object)
                     && !matches!(self.data(object), TypeData::ThisParam(_));
                 match self.indexed_access_for_writing(object, key, no_index_signatures) {
-                    Some(ty) => {
-                        let ty = self.force(ty);
-                        self.remove_missing_type(ty, true)
-                    }
+                    Some(ty) => self.remove_missing_type(ty, true),
                     None => TypeId::UNRESOLVED,
                 }
             }

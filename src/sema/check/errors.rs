@@ -218,7 +218,6 @@ impl Checker<'_> {
             pass!(check_x_regexp_scanner);
         }
         pass!(check_x_typenodes);
-        // It goes by the 2456 that has just been said.
         pass!(recount_type_arguments_of_circular_aliases);
         // These three put other words in the place of what has been said: of declarations that are not one symbol after all, of what is
         // assigned, of names that are not found.
@@ -1082,7 +1081,6 @@ impl Checker<'_> {
     /// every object has does not count, what an index signature covers is no property, and `any` has none.
     fn has_declared_property(&mut self, ty: TypeId, name: Atom) -> bool {
         // `getReducedApparentType`
-        let ty = self.force(ty);
         let ty = self.reduced(ty);
         let ty = self.apparent_type(ty);
         let ty = self.reduced(ty);
@@ -2656,21 +2654,16 @@ impl Checker<'_> {
         file: FileId,
         out: &mut Vec<Diagnostic>,
     ) {
-        if !out.iter().any(|d| d.code == 2456) {
-            return;
-        }
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut circular: Vec<Sym> = Vec::new();
         for (a, alias) in hir.aliases.iter().enumerate() {
-            let said = Diagnostic {
-                start: alias.name_pos,
-                code: 2456,
-            };
-            if !alias.type_params.is_empty()
-                && bound.alias_symbol[a].is_some()
-                && out.contains(&said)
-            {
-                circular.push(self.files().sym(file, bound.alias_symbol[a]));
+            if alias.type_params.is_empty() || bound.alias_symbol[a].is_none() {
+                continue;
+            }
+            let sym = self.files().sym(file, bound.alias_symbol[a]);
+            self.declared_type(sym);
+            if self.p.circular_aliases.get(&sym).is_some() {
+                circular.push(sym);
             }
         }
         if circular.is_empty() {

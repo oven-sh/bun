@@ -436,8 +436,8 @@ impl<'p> Checker<'p> {
         let ty = self.type_of_expr(file, inner);
         match self.data(ty) {
             // `getEffectiveCallArguments`: a `...T` in it is a spread of `T`, a `...X[]` one of `X[]`.
-            TypeData::Tuple { elems, flags, .. } => {
-                for (&e, f) in elems.iter().zip(flags.iter()) {
+            TypeData::Tuple { flags, .. } => {
+                for (&e, f) in self.type_arguments(ty).iter().zip(flags.iter()) {
                     if f.contains(ElemFlags::VARIADIC) {
                         let element = self.indexed_access(e, TypeId::NUMBER);
                         push(Arg::Spread(element, e, f.label(), a));
@@ -467,12 +467,13 @@ impl<'p> Checker<'p> {
         if self.is_array(ty) {
             return Some(ty);
         }
-        let TypeData::Ref { target, args } = self.data(ty).clone() else {
+        let &TypeData::Ref { target, .. } = self.data(ty) else {
             return None;
         };
         if depth > 8 {
             return None;
         }
+        let args = self.type_arguments(ty);
         let params = self.all_type_params_of_symbol(target);
         let mapper = self.mapper_from(&params, &args[..params.len().min(args.len())]);
         for base in self.base_types(target).to_vec() {
@@ -828,29 +829,29 @@ impl<'p> Checker<'p> {
             let receiver = self.apparent_type(receiver);
             let mut elements = Vec::new();
             let mut readonly = false;
-            let all_arrays = self.is_union(receiver)
-                && self.parts(receiver).to_vec().into_iter().all(|part| {
-                    match self.data(part).clone() {
-                        TypeData::Tuple {
-                            elems,
-                            flags,
-                            readonly: r,
-                        } => {
-                            readonly |= r;
-                            elements.push(self.tuple_element_union(&elems, &flags));
-                            true
-                        }
-                        _ => match self.array_it_extends(part, 0) {
-                            Some(array) => {
-                                readonly |=
-                                    self.is_global_ref(array, known::ReadonlyArray).is_some();
-                                elements.extend(self.array_element(array));
+            let all_arrays =
+                self.is_union(receiver)
+                    && self.parts(receiver).to_vec().into_iter().all(|part| {
+                        match self.data(part) {
+                            TypeData::Tuple {
+                                flags, readonly: r, ..
+                            } => {
+                                readonly |= r;
+                                let elems = self.type_arguments(part);
+                                elements.push(self.tuple_element_union(elems, flags));
                                 true
                             }
-                            None => false,
-                        },
-                    }
-                });
+                            _ => match self.array_it_extends(part, 0) {
+                                Some(array) => {
+                                    readonly |=
+                                        self.is_reference_to_global(array, known::ReadonlyArray);
+                                    elements.extend(self.array_element(array));
+                                    true
+                                }
+                                None => false,
+                            },
+                        }
+                    });
             if all_arrays {
                 let element = self.union(&elements);
                 let merged = if readonly {
@@ -1770,7 +1771,6 @@ impl<'p> Checker<'p> {
                 }
                 let ty = self.type_of_expr(file, e);
                 // `getSingleSignature`, of either kind.
-                let ty = self.force(ty);
                 if !self.is_object_type(ty) {
                     return false;
                 }
@@ -2013,7 +2013,6 @@ impl<'p> Checker<'p> {
         args: &[TypeId],
         node: InstantiationExpression,
     ) -> TypeId {
-        let ty = self.force(ty);
         if self.is_any(ty) || ty == TypeId::SILENT_NEVER {
             return ty;
         }
@@ -2274,7 +2273,8 @@ impl<'p> Checker<'p> {
         if self.is_any(t) || self.is_mutable_array_or_tuple(base) {
             return t;
         }
-        if let TypeData::Tuple { elems, flags, .. } = self.data(t) {
+        if let TypeData::Tuple { flags, .. } = self.data(t) {
+            let elems = self.type_arguments(t);
             return self.tuple(elems, flags, false);
         }
         self.normalized_tuple(&[t], &[ElemFlags::VARIADIC], false)
@@ -2664,17 +2664,18 @@ impl<'p> Checker<'p> {
     /// a lesser priority (`inferToMappedType`). Signatures, and what a mapped type that does not know its keys yet holds, are not
     /// gone into.
     fn is_inferred_from_literal(&mut self, target: TypeId, type_param: TypeId, depth: u32) -> bool {
-        let target = self.force(target);
         if target == type_param {
             return true;
         }
         if depth > 4 || !self.mentions(target, type_param) {
             return false;
         }
-        if let TypeData::Union(parts)
-        | TypeData::Intersection(parts)
-        | TypeData::Tuple { elems: parts, .. } = self.data(target)
-        {
+        let parts: Option<&'p [TypeId]> = match self.data(target) {
+            TypeData::Union(parts) | TypeData::Intersection(parts) => Some(parts),
+            TypeData::Tuple { .. } => Some(self.type_arguments(target)),
+            _ => None,
+        };
+        if let Some(parts) = parts {
             return parts
                 .iter()
                 .any(|&part| self.is_inferred_from_literal(part, type_param, depth + 1));
@@ -2774,7 +2775,6 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         match hir[e].kind {
             ExprKind::Object(props) => {
-                let context = self.force(context);
                 let mut apparent = None;
                 for p in props.iter() {
                     let prop = &hir[p];
@@ -4000,7 +4000,6 @@ impl<'p> Checker<'p> {
     /// a function is no `string`, whatever its parameters turn out to be.
     fn has_room_for_literal(&mut self, file: FileId, arg: ExprId, param: TypeId) -> bool {
         let is_function = matches!(self.hir(file)[arg].kind, ExprKind::Fn(_));
-        let param = self.force(param);
         self.parts(param).iter().any(|&part| {
             if self.is_any(part)
                 || part == TypeId::UNKNOWN
@@ -4042,7 +4041,6 @@ impl<'p> Checker<'p> {
         ) {
             return false;
         }
-        let param = self.force(param);
         self.parts(param).iter().all(|&part| {
             self.is_primitive(part)
                 || self.is_object_type(part)
@@ -4248,7 +4246,7 @@ impl<'p> Checker<'p> {
             return None;
         }
         let instantiated = self.without_no_infer(instantiated);
-        if self.force(instantiated) != contextual {
+        if instantiated != contextual {
             return None;
         }
         Some(self.without_no_infer(pushed))
@@ -4374,7 +4372,6 @@ impl<'p> Checker<'p> {
         if depth > 4 || !self.has_type_variables(ty) {
             return ty;
         }
-        let ty = self.force(ty);
         let vanishing = |c: &mut Self, t: TypeId| {
             let t = c.without_holes_that_vanish(t, so_far, depth + 1);
             if c.p.types.map(so_far, t) == Some(TypeId::UNRESOLVED) {
@@ -4412,10 +4409,10 @@ impl<'p> Checker<'p> {
                 let keyed = vanishing(self, *of);
                 if keyed == *of { ty } else { self.keyof(keyed) }
             }
-            TypeData::Ref { target, args }
-                if self.p.deferred_references.get(&ty).is_none()
-                    && self.p.types.deferred(ty).is_none() =>
-            {
+            TypeData::Ref {
+                target,
+                args: TypeArguments::Given(args),
+            } => {
                 let mut new: Vec<TypeId> = Vec::with_capacity(args.len());
                 for &arg in args.iter() {
                     new.push(self.without_holes_that_vanish(arg, so_far, depth + 1));
@@ -4430,7 +4427,7 @@ impl<'p> Checker<'p> {
                 }
             }
             TypeData::Tuple {
-                elems,
+                elems: TypeArguments::Given(elems),
                 flags,
                 readonly,
             } => {
@@ -4532,7 +4529,10 @@ impl<'p> Checker<'p> {
                 }
                 self.union(&left)
             }
-            TypeData::Ref { target, args } => {
+            TypeData::Ref {
+                target,
+                args: TypeArguments::Given(args),
+            } => {
                 let new: SmallVec<[TypeId; 8]> = args
                     .iter()
                     .map(|&a| self.remove_unresolved_params_from_unions(a, mapper, depth + 1))
@@ -4542,7 +4542,7 @@ impl<'p> Checker<'p> {
                 }
                 self.intern(TypeData::Ref {
                     target: *target,
-                    args: Box::from(&new[..]),
+                    args: new[..].into(),
                 })
             }
             _ => ty,
@@ -5775,7 +5775,6 @@ impl<'p> Checker<'p> {
             }
             // `isFunctionType`: an object type with something to call, whatever else it has.
             let ret = self.sig_return(sig);
-            let ret = self.force(ret);
             if self.is_object_type(ret) && !self.signatures(ret, false).is_empty() {
                 return true;
             }
@@ -5940,7 +5939,6 @@ impl<'p> Checker<'p> {
         let return_mapper = self.without_const_type_parameters(return_mapper);
         let uninstantiated = self.instantiate_with_expected_result(param, return_mapper);
         let uninstantiated = self.without_no_infer(uninstantiated);
-        let uninstantiated = self.force(uninstantiated);
         Some(self.check_expression_with_contextual_type(
             file,
             e,
@@ -5971,7 +5969,6 @@ impl<'p> Checker<'p> {
         construct: bool,
         allow_members: bool,
     ) -> Option<SigId> {
-        let ty = self.force(ty);
         if !self.is_object_type(ty) {
             return None;
         }
@@ -6114,7 +6111,6 @@ impl<'p> Checker<'p> {
     /// `getApparentTypeOfContextualType` with `ContextFlagsNoConstraints`: a type variable that is all that is expected says nothing.
     /// One that is a member of a union, as in the type of an optional parameter, is what it extends.
     fn apparent_contextual_type_without_constraints(&mut self, ty: TypeId) -> Option<TypeId> {
-        let ty = self.force(ty);
         if self.is_type_variable(ty) {
             return None;
         }
@@ -6148,7 +6144,6 @@ impl<'p> Checker<'p> {
         ty: TypeId,
         from_result: MapperId,
     ) -> TypeId {
-        let ty = self.force(ty);
         if from_result == MapperId::IDENTITY || !self.maybe_type_of_kind(ty, Self::is_deferred) {
             return ty;
         }
@@ -6495,7 +6490,7 @@ impl<'p> Checker<'p> {
             return None;
         }
         let ty = self.type_of_expr_uncached(file, e);
-        Some(self.force(ty))
+        Some(ty)
     }
 
     /// Whether the first round of `inferTypeArguments` leaves out `e` or a part of it (`CheckModeSkipContextSensitive`,
@@ -7159,7 +7154,6 @@ impl<'p> Checker<'p> {
         let around = self.inferential.replace((file, e));
         let ty = self.type_of_expr_uncached(file, e);
         self.inferential = around;
-        let ty = self.force(ty);
         self.is_known(ty).then_some(ty)
     }
 
@@ -7443,7 +7437,6 @@ impl<'p> Checker<'p> {
             return;
         };
         let declared = self.sig_return(contextual);
-        let declared = self.force(declared);
         if !self.has_type_variables(declared) {
             return;
         }
@@ -7779,7 +7772,6 @@ impl<'p> Checker<'p> {
                 continue;
             }
             let ty = self.type_of_expr(file, prop.value);
-            let ty = self.force(ty);
             let parts = self.parts(ty);
             let mut is_replaced = !parts.is_empty();
             for &part in parts {
@@ -8027,7 +8019,6 @@ impl<'p> Checker<'p> {
     /// Whether what is in `ty`, or in a member of it, cannot be told before its type parameters are known: a mapped type whose
     /// keys are not known yet, a conditional type that is not decided.
     fn is_inferred_to_as_a_whole(&mut self, ty: TypeId) -> bool {
-        let ty = self.force(ty);
         match self.data(ty) {
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
                 parts.iter().any(|&p| self.is_inferred_to_as_a_whole(p))
@@ -8471,7 +8462,6 @@ impl<'p> Checker<'p> {
         inference: &Inference,
         ty: TypeId,
     ) -> TypeId {
-        let ty = self.force(ty);
         if !self.maybe_type_of_kind(ty, Self::is_deferred) {
             return ty;
         }
@@ -8559,7 +8549,6 @@ impl<'p> Checker<'p> {
         if matches!(hir[e].kind, ExprKind::Array(_) | ExprKind::Object(_))
             && let Some(expected) = self.contextual_type(file, e)
         {
-            let expected = self.force(expected);
             let instantiated = self.instantiate_instantiable_for_signature(inference, expected);
             if instantiated != expected {
                 self.contextual.push((file, e, instantiated));
@@ -8572,7 +8561,6 @@ impl<'p> Checker<'p> {
                     // `instantiateContextualType` with `ContextFlagsSignature` prefers `nonFixingMapper` to `returnMapper` for an
                     // instantiable contextual type. The contextual type of the argument around `e` has `returnMapper` applied, so
                     // the result is recorded for `e` itself.
-                    let param = self.force(param);
                     let is_instantiated =
                         self.instantiate_instantiable_for_signature(inference, param) != param;
                     let context = self.context_for_sensitive_arg(inference, param, Some((file, e)));

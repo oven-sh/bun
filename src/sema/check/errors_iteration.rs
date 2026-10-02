@@ -282,7 +282,6 @@ impl Checker<'_> {
                     decl.default
                 }
             };
-            let given = self.force(given);
             // What has an initializer that cannot be `undefined` is not `undefined`: whether it can has to be known.
             if strict && initializer.is_some() && self.some_type(given, |_, m| m.is_undefined()) {
                 let ty = self.type_of_expr(file, initializer);
@@ -390,7 +389,6 @@ impl Checker<'_> {
     /// Whether `getIterationTypesOfIterable` finds any types for `ty`, going by `[Symbol.iterator]()`, and by
     /// `[Symbol.asyncIterator]()` first where that will do. What cannot be found out counts as found.
     fn is_iterable(&mut self, ty: TypeId, allows_async: bool) -> bool {
-        let ty = self.force(ty);
         // An intersection nothing can be is not there.
         let ty = self.reduced(ty);
         if self.is_any(ty) {
@@ -408,9 +406,7 @@ impl Checker<'_> {
         }
         // `getIterationTypesOfIterableFast`
         let is_ref_to = |c: &Self, names: [Atom; 4]| {
-            names
-                .iter()
-                .any(|&name| c.is_global_ref(ty, name).is_some())
+            names.iter().any(|&name| c.is_reference_to_global(ty, name))
         };
         if is_ref_to(
             self,
@@ -471,7 +467,6 @@ impl Checker<'_> {
             return false;
         }
         let iterator = self.intersection(&iterators);
-        let iterator = self.force(iterator);
         let iterator = self.apparent_type(iterator);
         // What the members of a union have in common is not looked into.
         if !self.is_known(iterator) || self.is_any(iterator) || self.is_union(iterator) {
@@ -589,7 +584,6 @@ impl Checker<'_> {
             return None;
         }
         // `getIterationTypesOfIterable`
-        let given = self.force(given);
         let given = self.reduced(given);
         if !self.is_iterable(given, allows_async) {
             let code = if allows_async { 2504 } else { 2488 };
@@ -654,7 +648,7 @@ impl Checker<'_> {
     ) {
         let hir = self.hir(file);
         let strict = self.p.files.options.strict_null_checks;
-        let mut source = self.force(source);
+        let mut source = source;
         // A default, which is an assignment like any other, sees to it that it is not missing. In parentheses it is no default.
         if let ExprKind::Assign {
             op: None,
@@ -1398,7 +1392,7 @@ fn past_the_end_arguments(
     }
     // `getTypeReferenceArity`
     let length = match c.data(object) {
-        TypeData::Tuple { elems, .. } => elems.len(),
+        TypeData::Tuple { flags, .. } => flags.len(),
         _ => 0,
     };
     vec![printed, length.to_string(), c.atom_text(name)]

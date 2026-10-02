@@ -229,7 +229,7 @@ impl<'p> Checker<'p> {
         if !self.has_type_variables(target) || self.is_no_infer(target) {
             return;
         }
-        let (mut source, mut target) = (self.force(source), self.force(target));
+        let (mut source, mut target) = (source, target);
         // What is expected of the result may have holes where the calls around have nothing to go by yet.
         if source == TypeId::UNRESOLVED && n.priority & PRIORITY_RETURN != 0 {
             return;
@@ -411,33 +411,26 @@ impl<'p> Checker<'p> {
             self.p.types.deferred(source).is_some() && self.p.types.deferred(target).is_some();
         match (self.data(source), self.data(target)) {
             // Two that are both put off go by way of `invokeOnce`, or it might never end.
-            (
-                TypeData::Ref {
-                    target: st,
-                    args: sa,
-                },
-                TypeData::Ref {
-                    target: tt,
-                    args: ta,
-                },
-            ) if (st == tt || self.is_array(source) && self.is_array(target))
-                && !are_both_deferred
-                && !(self.has_lazy_alias(sa) && self.has_lazy_alias(ta)) =>
+            (TypeData::Ref { target: st, .. }, TypeData::Ref { target: tt, .. })
+                if (st == tt || self.is_array(source) && self.is_array(target))
+                    && !are_both_deferred =>
             {
+                let (sa, ta) = (self.type_arguments(source), self.type_arguments(target));
                 self.infer_from_type_arguments_of(n, *st, sa, ta);
             }
             (
                 TypeData::Tuple {
-                    elems: se,
                     flags: sf,
                     readonly: sr,
+                    ..
                 },
                 TypeData::Tuple {
-                    elems: te,
                     flags: tf,
                     readonly: tr,
+                    ..
                 },
-            ) if sf == tf && sr == tr && !(self.has_lazy_alias(se) && self.has_lazy_alias(te)) => {
+            ) if sf == tf && sr == tr && !are_both_deferred => {
+                let (se, te) = (self.type_arguments(source), self.type_arguments(target));
                 self.infer_from_type_arguments(n, se, te, &[]);
             }
             (TypeData::Keyof(s), TypeData::Keyof(t)) => {
@@ -566,16 +559,6 @@ impl<'p> Checker<'p> {
                 ..
             }
         ) && self.is_generic(ty)
-    }
-
-    /// Stands for `TypeReference.node != nil` (`isDeferredTypeReferenceNode`): one of `args` is, or is a choice of, an alias
-    /// that is looked up when it is needed.
-    fn has_lazy_alias(&self, args: &[TypeId]) -> bool {
-        args.iter().any(|&a| match self.data(a) {
-            TypeData::LazyAlias { .. } => true,
-            TypeData::Union(parts) | TypeData::Intersection(parts) => self.has_lazy_alias(parts),
-            _ => false,
-        })
     }
 
     /// What `inferFromTypes` does once it has found the type parameter `target` is.
@@ -1096,37 +1079,31 @@ impl<'p> Checker<'p> {
 
     /// `inferFromObjectTypes`
     fn infer_from_object_types(&mut self, n: &mut Inference, source: TypeId, target: TypeId) {
-        if let (
-            TypeData::Ref {
-                target: st,
-                args: sa,
-            },
-            TypeData::Ref {
-                target: tt,
-                args: ta,
-            },
-        ) = (self.data(source), self.data(target))
+        if let (TypeData::Ref { target: st, .. }, TypeData::Ref { target: tt, .. }) =
+            (self.data(source), self.data(target))
             && (st == tt || self.is_array(source) && self.is_array(target))
         {
+            let (sa, ta) = (self.type_arguments(source), self.type_arguments(target));
             self.infer_from_type_arguments_of(n, *st, sa, ta);
             return;
         }
         // Tuples of one make are references to one generic type as well.
         if let (
             TypeData::Tuple {
-                elems: se,
                 flags: sf,
                 readonly: sr,
+                ..
             },
             TypeData::Tuple {
-                elems: te,
                 flags: tf,
                 readonly: tr,
+                ..
             },
         ) = (self.data(source), self.data(target))
             && sf == tf
             && sr == tr
         {
+            let (se, te) = (self.type_arguments(source), self.type_arguments(target));
             self.infer_from_type_arguments(n, se, te, &[]);
             return;
         }
@@ -1151,7 +1128,8 @@ impl<'p> Checker<'p> {
             return;
         }
         if self.is_array_or_tuple(source) {
-            if let TypeData::Tuple { elems, flags, .. } = self.data(target) {
+            if let TypeData::Tuple { flags, .. } = self.data(target) {
+                let elems = self.type_arguments(target);
                 self.infer_to_tuple(n, source, elems, flags);
                 return;
             }
@@ -1178,7 +1156,7 @@ impl<'p> Checker<'p> {
         let one_element;
         let (source_elems, source_flags, source_is_tuple): (&[TypeId], &[ElemFlags], bool) =
             match self.data(source) {
-                TypeData::Tuple { elems, flags, .. } => (elems, flags, true),
+                TypeData::Tuple { flags, .. } => (self.type_arguments(source), flags, true),
                 _ => {
                     one_element = [self.array_element(source).unwrap_or(TypeId::ANY)];
                     (&one_element, &[ElemFlags::REST], false)
@@ -1908,7 +1886,7 @@ impl<'p> Checker<'p> {
         }
         if let Some(element) = self.array_element(source) {
             let element = self.infer_reverse_mapped_type(element, target, of)?;
-            let readonly = self.is_global_ref(source, known::ReadonlyArray).is_some();
+            let readonly = self.is_reference_to_global(source, known::ReadonlyArray);
             return Some(if readonly {
                 self.readonly_array_of(element)
             } else {
@@ -1916,11 +1894,10 @@ impl<'p> Checker<'p> {
             });
         }
         if let TypeData::Tuple {
-            elems,
-            flags,
-            readonly,
+            flags, readonly, ..
         } = self.data(source)
         {
+            let elems = self.type_arguments(source);
             let mut types = Vec::with_capacity(elems.len());
             for &e in elems.iter() {
                 types.push(self.infer_reverse_mapped_type(e, target, of)?);
@@ -1970,8 +1947,15 @@ impl<'p> Checker<'p> {
                 }),
                 _ => false,
             },
-            TypeData::Tuple { elems: list, .. }
-            | TypeData::Ref { args: list, .. }
+            // `createDeferredTypeReference` sets no propagating flags.
+            TypeData::Tuple {
+                elems: TypeArguments::Given(list),
+                ..
+            }
+            | TypeData::Ref {
+                args: TypeArguments::Given(list),
+                ..
+            }
             | TypeData::Union(list)
             | TypeData::Intersection(list) => {
                 list.iter().any(|&m| self.is_non_inferrable(m, depth + 1))
@@ -2006,7 +1990,10 @@ impl<'p> Checker<'p> {
                 let ty = self.type_of_prop(p, MapperId::IDENTITY);
                 self.is_partially_inferable(ty)
             }),
-            TypeData::Tuple { elems, .. } => elems.iter().any(|&e| self.is_partially_inferable(e)),
+            TypeData::Tuple { .. } => self
+                .type_arguments(ty)
+                .iter()
+                .any(|&e| self.is_partially_inferable(e)),
             _ => false,
         }
     }
@@ -2176,9 +2163,9 @@ impl<'p> Checker<'p> {
                 continue;
             }
             let TypeData::Tuple {
-                elems: te,
                 flags: tf,
                 readonly: tr,
+                ..
             } = self.data(p.ty)
             else {
                 rest = Some(if self.is_any(p.ty) {
@@ -2189,6 +2176,7 @@ impl<'p> Checker<'p> {
                 rest_label = p.label();
                 continue;
             };
+            let te = self.type_arguments(p.ty);
             let fixed = tf
                 .iter()
                 .take_while(|f| !f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
@@ -2199,10 +2187,10 @@ impl<'p> Checker<'p> {
                 rest_label = tf[fixed].label();
                 let tail = self.normalized_tuple(&te[fixed..], &tf[fixed..], *tr);
                 rest = Some(match self.data(tail) {
-                    TypeData::Tuple { elems, flags, .. }
-                        if elems.len() == 1 && flags[0].contains(ElemFlags::REST) =>
+                    TypeData::Tuple { flags, .. }
+                        if flags.len() == 1 && flags[0].contains(ElemFlags::REST) =>
                     {
-                        let element = elems[0];
+                        let element = self.type_arguments(tail)[0];
                         self.array_of(element)
                     }
                     _ => tail,
@@ -2816,15 +2804,14 @@ impl<'p> Checker<'p> {
                 TypeData::Union(types) | TypeData::Intersection(types) => {
                     left.extend_from_slice(types);
                 }
-                TypeData::Ref { args, .. } | TypeData::LazyAlias { args, .. } => {
-                    left.extend_from_slice(args);
-                }
-                TypeData::Tuple { elems, .. } => left.extend_from_slice(elems),
+                TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => match args {
+                    TypeArguments::Given(given) => left.extend_from_slice(given),
+                    TypeArguments::Deferred(deferred) => left.extend(values(deferred.mapper)),
+                },
                 TypeData::Template { types, .. } => left.extend_from_slice(types),
                 TypeData::Anon { mapper, .. }
                 | TypeData::Fns { mapper, .. }
                 | TypeData::Cond { mapper, .. } => left.extend(values(*mapper)),
-                TypeData::Deferred(reference) => left.extend(values(reference.mapper)),
                 TypeData::Synth(shape) => {
                     if !shape.call.is_empty() {
                         return true;

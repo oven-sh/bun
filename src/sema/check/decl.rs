@@ -386,6 +386,20 @@ pub(super) fn is_variadic_tuple_element(hir: &hir::File, elem: &TupleElem) -> bo
     elem.rest && elem.ty.is_some() && array_element_type_node(hir, elem.ty).is_none()
 }
 
+/// `getTupleElementInfo`
+fn tuple_element_info(hir: &hir::File, elem: &TupleElem) -> ElemFlags {
+    let flags = if elem.rest && array_element_type_node(hir, elem.ty).is_none() {
+        ElemFlags::VARIADIC
+    } else if elem.rest {
+        ElemFlags::REST
+    } else if elem.optional {
+        ElemFlags::OPTIONAL
+    } else {
+        ElemFlags::REQUIRED
+    };
+    flags.with_label(elem.name)
+}
+
 /// Every declaration of `sym`, which is canonical: what `Files::decls` lists, one at a time.
 pub(super) fn declarations_of(
     files: &Files,
@@ -1163,8 +1177,8 @@ impl<'p> Checker<'p> {
         {
             // The declared type has them for arguments.
             let declared = self.declared_type(sym);
-            if let TypeData::Ref { args, .. } = self.data(declared) {
-                return List::Kept(&args[..]);
+            if matches!(self.data(declared), TypeData::Ref { .. }) {
+                return List::Kept(self.type_arguments(declared));
             }
         }
         List::Own(self.local_type_params_of_symbol(sym).into_vec())
@@ -1664,19 +1678,7 @@ impl<'p> Checker<'p> {
         if node.is_none() {
             return (None, true);
         }
-        // `getTypeArguments` of a deferred type reference asks for the default when the reference is used. Here it is asked for where
-        // the reference is written, which may be while the default is worked out.
-        let is_under_way = self.stack.contains(&Query::TypeNode(of, node));
-        // What leaves type arguments out needs their defaults, which may be this one.
-        let is_complete = is_under_way
-            && self
-                .deferrable_alias_reference(of, node)
-                .is_none_or(|(alias, args)| self.type_argument_arity(alias).1 == args.len());
-        let default = if is_complete {
-            self.deferred_type_argument(of, node)
-        } else {
-            self.type_from_node(of, node)
-        };
+        let default = self.type_from_node(of, node);
         let is_settled = self.p.type_node_types.get(of, node.idx()).is_some();
         let default = match lists {
             Some((theirs, own)) => {
@@ -1781,12 +1783,17 @@ impl<'p> Checker<'p> {
         // `getDeclaredTypeOfTypeAlias`: `popTypeResolution` fails.
         if self.left_a_circle {
             self.p.circular_aliases.insert(sym, ());
+            if let Some((file, alias)) = self.alias_declaration(sym) {
+                let start = self.hir(file)[alias].name_pos;
+                let at = (file, start, self.end_of_token_at(file, start));
+                let err = self.new_diagnostic(at, 2456, &[Arg::Sym(sym)]);
+                self.commit(err);
+            }
             return self.p.declared_types.insert(sym, TypeId::ERROR);
         }
         if holds {
             self.p.declared_types.insert(sym, ty);
         }
-        self.settle_deferred_references();
         ty
     }
 
@@ -1921,7 +1928,10 @@ impl<'p> Checker<'p> {
                 SmallVec::new()
             };
             let args: Box<[TypeId]> = outer.iter().chain(local.iter()).copied().collect();
-            return self.intern(TypeData::Ref { target: sym, args });
+            return self.intern(TypeData::Ref {
+                target: sym,
+                args: args.into(),
+            });
         }
         if flags.contains(SymFlags::TYPE_ALIAS) {
             for (file, decl) in declarations_of(self.files(), sym) {
@@ -2205,59 +2215,143 @@ impl<'p> Checker<'p> {
         if self.leave() {
             self.p.type_node_types.set(file, node.idx(), ty);
         }
-        self.settle_deferred_references();
         ty
     }
 
-    /// `createDeferredTypeReference(target, node, nil, nil)`
+    /// `getTypeFromArrayOrTupleTypeNode`. `readonly`: `isReadonlyTypeOperator(node.Parent)`.
+    fn array_or_tuple_type_from_node(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        node: TypeNodeId,
+        readonly: bool,
+    ) -> TypeId {
+        let hir = self.hir(file);
+        // A tuple type with a variadic element is never deferred, and `[]` is its target.
+        let may_be_deferred = match hir[node].kind {
+            TypeNodeKind::Tuple(elems) => {
+                !elems.is_empty()
+                    && !elems
+                        .iter()
+                        .any(|e| is_variadic_tuple_element(hir, &hir[e]))
+            }
+            _ => true,
+        };
+        if may_be_deferred && self.is_deferred_type_reference_node(file, scope, node, false) {
+            // `getArrayOrTupleTargetType`
+            let array = if readonly {
+                known::ReadonlyArray
+            } else {
+                known::Array
+            };
+            let arguments = self.deferred_type_arguments_of_node(file, scope, node);
+            let target = match hir[node].kind {
+                TypeNodeKind::Tuple(elems) if array_element_type_node(hir, node).is_none() => {
+                    Some(TypeData::Tuple {
+                        elems: arguments,
+                        flags: elems
+                            .iter()
+                            .map(|e| tuple_element_info(hir, &hir[e]))
+                            .collect(),
+                        readonly,
+                    })
+                }
+                // `target == c.emptyGenericType`: there is no global `Array`.
+                _ => self.global_type_symbol(array).map(|target| TypeData::Ref {
+                    target,
+                    args: arguments,
+                }),
+            };
+            if let Some(target) = target {
+                return self.deferred_type_reference_of_node(file, scope, node, target);
+            }
+        }
+        // `ObjectFlagsFromTypeNode`
+        let made_before = self.p.types.len();
+        let ty = match hir[node].kind {
+            TypeNodeKind::Array(element) => {
+                let element = self.type_from_node(file, element);
+                if readonly {
+                    self.readonly_array_of(element)
+                } else {
+                    self.array_of(element)
+                }
+            }
+            TypeNodeKind::Tuple(elems) => {
+                let mut types = self.tuple_element_types_from_nodes(file, elems);
+                let mut flags: Vec<ElemFlags> = elems
+                    .iter()
+                    .map(|e| tuple_element_info(hir, &hir[e]))
+                    .collect();
+                // What `...X` spreads may be an array for all that is written.
+                for (ty, flag) in types.iter_mut().zip(&mut flags) {
+                    if flag.contains(ElemFlags::VARIADIC)
+                        && let Some(element) = self.array_element(*ty)
+                    {
+                        (*ty, *flag) = (element, ElemFlags::REST.with_label(flag.label()));
+                    }
+                }
+                self.normalized_tuple(&types, &flags, readonly)
+            }
+            _ => TypeId::ERROR,
+        };
+        self.p.types.mark_manifest(ty, made_before);
+        ty
+    }
+
+    /// `node` and `mapper` of `createDeferredTypeReference(target, node, nil, nil)`
+    fn deferred_type_arguments_of_node(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        node: TypeNodeId,
+    ) -> TypeArguments {
+        let mapper = self.identity_mapper_for_node(file, scope, node);
+        TypeArguments::deferred(file, node, mapper)
+    }
+
+    /// `createDeferredTypeReference(target, node, nil, nil)`. `reference`: it, with what `deferred_type_arguments_of_node` gives.
     fn deferred_type_reference_of_node(
         &mut self,
         file: FileId,
         scope: ScopeId,
         node: TypeNodeId,
-        target: DeferredTarget,
+        reference: TypeData,
     ) -> TypeId {
-        let mapper = self.identity_mapper_for_node(file, scope, node);
         let alias = self.alias_for_type_node(file, scope, node);
         let alias = alias
             .as_ref()
             .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
         let made_before = self.p.types.len();
-        let ty = self.deferred_type_reference(file, node, mapper, target, alias);
+        let ty = self.deferred_type_reference(reference, alias);
         self.p.types.mark_manifest(ty, made_before);
-        if matches!(self.data(ty), TypeData::Deferred(_)) {
-            self.unsettled_references.push(ty);
-        }
         ty
     }
 
-    /// Resolves the deferred type references that type nodes have made, ahead of need, so that whoever looks at one finds a
-    /// reference like any other. Not while a type node, a declared type, a conditional type or a list of type arguments is being
-    /// worked out on top of the stack: each member of `type Big = A[] | B[] | ..` would work out `Big` all over.
-    #[inline]
-    pub(super) fn settle_deferred_references(&mut self) {
-        if !self.unsettled_references.is_empty() {
-            self.settle_deferred_references_now();
+    /// `core.Map(node.Elements(), c.getTypeFromTypeNode)`, of a tuple type node.
+    fn tuple_element_types_from_nodes(
+        &mut self,
+        file: FileId,
+        elems: Span<TupleElemId>,
+    ) -> Vec<TypeId> {
+        let hir = self.hir(file);
+        let mut types = Vec::with_capacity(elems.len());
+        for e in elems.iter() {
+            let elem = &hir[e];
+            // `getTypeFromRestTypeNode`: of `...X[]` it is `X` that is resolved.
+            let written = match array_element_type_node(hir, elem.ty) {
+                Some(element) if elem.rest => element,
+                _ => elem.ty,
+            };
+            let ty = self.type_from_node(file, written);
+            // `getTypeFromOptionalTypeNode`, `getTypeFromNamedTupleTypeNode`
+            types.push(if elem.optional && !elem.rest {
+                self.optional_property(ty)
+            } else {
+                ty
+            });
         }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn settle_deferred_references_now(&mut self) {
-        if matches!(
-            self.stack.last(),
-            Some(
-                Query::TypeNode(..)
-                    | Query::Declared(_)
-                    | Query::Cond(..)
-                    | Query::TypeArguments(_)
-            )
-        ) {
-            return;
-        }
-        while let Some(ty) = self.unsettled_references.pop() {
-            self.resolve_type_arguments_ahead(ty);
-        }
+        types
     }
 
     /// `getIntendedTypeFromJSDocTypeReference`, of a name with type arguments, which `checkNoTypeArguments` objects to.
@@ -2322,123 +2416,26 @@ impl<'p> Checker<'p> {
             }
             TypeNodeKind::BoolLit(value) => self.bool_literal(value, false),
             TypeNodeKind::UniqueSymbol => TypeId::SYMBOL,
-            // `getTypeFromArrayOrTupleTypeNode`: an array or a tuple type that is first made here is made from a type node
-            // (`ObjectFlagsFromTypeNode`).
-            TypeNodeKind::Array(element) => {
-                let is_deferred = self.is_deferred_type_reference_node(file, scope, node, false);
-                let element = if is_deferred {
-                    self.deferred_type_argument(file, element)
-                } else {
-                    self.type_from_node(file, element)
-                };
-                let made_before = self.p.types.len();
-                let ty = self.array_of(element);
-                self.p.types.mark_manifest(ty, made_before);
-                if is_deferred && self.has_type_variables(ty) {
-                    self.p.deferred_references.insert(ty, ());
-                }
-                ty
+            TypeNodeKind::Array(_) | TypeNodeKind::Tuple(_) => {
+                self.array_or_tuple_type_from_node(file, scope, node, false)
             }
+            // `getTypeFromTypeOperatorNode`: `c.getTypeFromTypeNode(node.Type())`, which asks `isReadonlyTypeOperator(node.Parent)`.
             TypeNodeKind::Readonly(operand) => {
-                let inner = self.type_from_node(file, operand);
-                // `getArrayOrTupleTargetType`: it says something of an array or a tuple type written after it, of nothing else.
+                // It says something of an array or a tuple type written after it, of nothing else. Not through parentheses or the
+                // `!` of a JSDoc type, of which no node is kept.
                 if operand.is_none()
                     || !matches!(
                         hir[operand].kind,
                         TypeNodeKind::Array(_) | TypeNodeKind::Tuple(_)
                     )
+                    || !hir.text.is_empty()
+                        && self.skip_trivia_from(file, hir[node].pos + b"readonly".len() as u32)
+                            != hir[operand].pos
                 {
-                    return inner;
+                    return self.type_from_node(file, operand);
                 }
-                // `isReadonlyTypeOperator(node.Parent)`: not through parentheses or the `!` of a JSDoc type, of which no node is kept.
-                if !hir.text.is_empty()
-                    && self.skip_trivia_from(file, hir[node].pos + b"readonly".len() as u32)
-                        != hir[operand].pos
-                {
-                    return inner;
-                }
-                let made_before = self.p.types.len();
-                let ty = match self.data(inner) {
-                    TypeData::Tuple { elems, flags, .. } => self.tuple(elems, flags, true),
-                    _ => match self.array_element(inner) {
-                        Some(element) => self.readonly_array_of(element),
-                        None => inner,
-                    },
-                };
-                self.p.types.mark_manifest(ty, made_before);
-                if self.p.deferred_references.get(&inner).is_some() {
-                    self.p.deferred_references.insert(ty, ());
-                }
-                // `getAliasSymbolForTypeNode` goes out through a `readonly` operator.
-                match self.stored_alias(inner) {
-                    Some((alias, type_arguments)) if ty != inner => {
-                        let made_before = self.p.types.len();
-                        let aliased = self.with_alias(ty, *alias, type_arguments);
-                        self.p.types.mark_manifest(aliased, made_before);
-                        aliased
-                    }
-                    _ => ty,
-                }
-            }
-            TypeNodeKind::Tuple(elems) => {
-                let mut types = Vec::with_capacity(elems.len());
-                let mut flags = Vec::with_capacity(elems.len());
-                // A tuple type with a variadic element is never deferred.
-                let is_deferred = !elems
-                    .iter()
-                    .any(|e| is_variadic_tuple_element(hir, &hir[e]))
-                    && self.is_deferred_type_reference_node(file, scope, node, false);
-                for e in elems.iter() {
-                    let elem = &hir[e];
-                    // `getTypeFromRestTypeNode`: of `...X[]` it is `X` that is resolved.
-                    if is_deferred
-                        && elem.rest
-                        && let Some(element) = array_element_type_node(hir, elem.ty)
-                        && let Some(waiting) = self.indexed_access_of_alias_under_way(file, element)
-                    {
-                        types.push(waiting);
-                        flags.push(ElemFlags::REST);
-                        continue;
-                    }
-                    let ty = if is_deferred {
-                        self.deferred_type_argument(file, elem.ty)
-                    } else {
-                        self.type_from_node(file, elem.ty)
-                    };
-                    if elem.rest {
-                        match self.array_element(ty) {
-                            Some(element) => {
-                                types.push(element);
-                                flags.push(ElemFlags::REST);
-                            }
-                            None => {
-                                types.push(ty);
-                                flags.push(ElemFlags::VARIADIC);
-                            }
-                        }
-                    } else {
-                        // `getTypeFromOptionalTypeNode`, `getTypeFromNamedTupleTypeNode`: what may be left out reads as `undefined`
-                        // when it is, as a property does.
-                        types.push(if elem.optional {
-                            self.optional_property(ty)
-                        } else {
-                            ty
-                        });
-                        flags.push(if elem.optional {
-                            ElemFlags::OPTIONAL
-                        } else {
-                            ElemFlags::REQUIRED
-                        });
-                    }
-                }
-                // `getTupleElementInfo`
-                for (flag, e) in flags.iter_mut().zip(elems.iter()) {
-                    *flag = flag.with_label(hir[e].name);
-                }
-                let made_before = self.p.types.len();
-                let ty = self.normalized_tuple(&types, &flags, false);
-                self.p.types.mark_manifest(ty, made_before);
-                ty
+                let scope = self.bound(file).type_scope[operand.idx()];
+                self.array_or_tuple_type_from_node(file, scope, operand, true)
             }
             TypeNodeKind::Union(members) => {
                 let members = self.types_from_nodes(file, members);
@@ -2789,14 +2786,21 @@ impl<'p> Checker<'p> {
                 // arguments. Everywhere else the wrong number gives the error type.
                 let is_js_reference = hir.is_js && is_class_or_interface && most != 0;
                 if !is_js_reference && (args.len() < least || args.len() > most) {
+                    // `getTypeFromTypeAliasReference` asks for the declared type before it counts.
+                    if !is_class_or_interface && flags.contains(SymFlags::TYPE_ALIAS) {
+                        self.declared_type(sym);
+                    }
                     return TypeId::ERROR;
                 }
                 if is_class_or_interface
                     && most != 0
                     && self.is_deferred_type_reference_node(file, scope, node, args.len() != most)
                 {
-                    let target = DeferredTarget::Declared(sym);
-                    return self.deferred_type_reference_of_node(file, scope, node, target);
+                    let reference = TypeData::Ref {
+                        target: sym,
+                        args: self.deferred_type_arguments_of_node(file, scope, node),
+                    };
+                    return self.deferred_type_reference_of_node(file, scope, node, reference);
                 }
                 let mut args = self.types_from_nodes(file, args);
                 if is_js_reference {
@@ -3036,33 +3040,6 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// `isDeferredTypeReferenceNode`, as far as what is written at `node` goes: an array type, a tuple type without a `...T`, or a
-    /// reference to a generic class or interface may leave its type arguments for when somebody wants them. Nothing else does.
-    fn may_put_off_type_arguments(&self, file: FileId, node: TypeNodeId) -> bool {
-        let hir = self.hir(file);
-        match hir[node].kind {
-            TypeNodeKind::Array(_) => true,
-            TypeNodeKind::Tuple(elems) => !elems
-                .iter()
-                .any(|e| is_variadic_tuple_element(hir, &hir[e])),
-            TypeNodeKind::Ref { name, .. } => {
-                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
-                let scope = self.bound(file).type_scope[node.idx()];
-                let found = self
-                    .files()
-                    .resolve_entity(file, scope, &names, SymFlags::TYPE);
-                found
-                    .and_then(|found| self.files().resolve_alias_as(found, SymFlags::TYPE))
-                    .is_some_and(|sym| {
-                        self.type_flags_of_symbol(sym)
-                            .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-                            && self.type_argument_arity(sym).1 != 0
-                    })
-            }
-            _ => false,
-        }
-    }
-
     /// `isDeferredTypeReferenceNode`, for `node` written in `scope`: an array type, a tuple type or a reference to a generic class
     /// or interface.
     fn is_deferred_type_reference_node(
@@ -3145,254 +3122,52 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The type alias whose declaration `scope` is in.
-    fn enclosing_alias(&self, file: FileId, mut scope: ScopeId) -> Option<Sym> {
-        let bound = self.bound(file);
-        while scope.is_some() {
-            let s = &bound.scopes[scope.idx()];
-            if s.kind == ScopeKind::TypeParams
-                && let Some(alias) = bound.alias_scope.iter().position(|&own| own == scope)
-            {
-                return Some(self.files().sym(file, bound.alias_symbol[alias]));
-            }
-            scope = s.parent;
-        }
-        None
-    }
-
-    /// `Alias` or `Alias<Args>` written at `node` with a valid number of type arguments: the alias and its type argument nodes.
-    /// `None` for an alias declared under outer type parameters: a `LazyAlias` holds only the alias's own type arguments.
-    pub(super) fn deferrable_alias_reference(
-        &mut self,
-        file: FileId,
-        node: TypeNodeId,
-    ) -> Option<(Sym, IdList<TypeNodeId>)> {
-        if node.is_none() {
-            return None;
-        }
-        let hir = self.hir(file);
-        let TypeNodeKind::Ref { name, args } = hir[node].kind else {
-            return None;
-        };
-        let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
-        let found = self.files().resolve_entity(
-            file,
-            self.bound(file).type_scope[node.idx()],
-            &names,
-            SymFlags::TYPE,
-        )?;
-        let sym = self.files().resolve_alias_as(found, SymFlags::TYPE)?;
-        let flags = self.type_flags_of_symbol(sym);
-        if !flags.contains(SymFlags::TYPE_ALIAS)
-            || flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-            || self.is_declared_intrinsic(sym)
-        {
-            return None;
-        }
-        let (least, most) = self.type_argument_arity(sym);
-        if args.len() < least || args.len() > most {
-            return None;
-        }
-        let (declared_in, alias) = self.alias_declaration(sym)?;
-        let bound = self.bound(declared_in);
-        let own = bound.alias_scope[alias.idx()];
-        if own.is_none()
-            || !self
-                .type_params_in_scope(declared_in, bound.scopes[own.idx()].parent)
-                .is_empty()
-        {
-            return None;
-        }
-        Some((sym, args))
-    }
-
-    /// `Alias<Args>[K]` written at `node`, in a type argument that a deferred type reference node puts off, where the generic `Alias` is
-    /// not resolved yet. tsgo resolves the node on the first `getTypeArguments`, when it is. The access waits on a reference to the alias.
-    fn indexed_access_of_alias_under_way(
-        &mut self,
-        file: FileId,
-        node: TypeNodeId,
-    ) -> Option<TypeId> {
-        if node.is_none() {
-            return None;
-        }
-        let TypeNodeKind::IndexedAccess { obj, index } = self.hir(file)[node].kind else {
-            return None;
-        };
-        let (sym, args) = self.deferrable_alias_reference(file, obj)?;
-        if args.is_empty() {
-            return None;
-        }
-        let is_under_way = self.stack.contains(&Query::Declared(sym))
-            || self.p.declared_types.get(&sym).is_none()
-                && self.enclosing_alias(file, self.bound(file).type_scope[node.idx()]) == Some(sym);
-        if !is_under_way {
-            return None;
-        }
-        let args = self.types_from_nodes(file, args);
-        let params = self.local_type_params_of_symbol(sym);
-        let args = self.fill_type_args(&params, &args);
-        let obj = self.intern(TypeData::LazyAlias {
-            sym,
-            args: args.into(),
-        });
-        if !self.has_type_variables(obj) {
-            return None;
-        }
-        let index = self.type_from_node(file, index);
-        Some(self.intern(TypeData::IndexedAccess {
-            obj,
-            index,
-            undefined: false,
-        }))
-    }
-
-    /// The type of an element or type argument of a deferred type reference node (`isDeferredTypeReferenceNode`). tsgo resolves it
-    /// on the first `getTypeArguments`. There are no deferred references here: the node is resolved now, and a direct reference to
-    /// an alias stays a `LazyAlias` where resolving it leads back to the reference.
-    fn deferred_type_argument(&mut self, file: FileId, node: TypeNodeId) -> TypeId {
-        // tsgo has not asked for the argument yet, so a cycle through it is not an error.
-        self.eager.push(self.stack.len());
-        let ty = self.deferred_type_argument_worker(file, node);
-        self.eager.pop();
-        ty
-    }
-
-    /// `deferred_type_argument`, inside its `eager` marker.
-    fn deferred_type_argument_worker(&mut self, file: FileId, node: TypeNodeId) -> TypeId {
-        let Some((sym, args)) = self.deferrable_alias_reference(file, node) else {
-            return match self.indexed_access_of_alias_under_way(file, node) {
-                Some(waiting) => waiting,
-                None => self.type_from_node(file, node),
-            };
-        };
-        // Instantiating the deferred reference must not instantiate the alias again, so a generic alias referenced in its own
-        // declaration is never expanded here.
-        let is_self_reference = !args.is_empty()
-            && self.enclosing_alias(file, self.bound(file).type_scope[node.idx()]) == Some(sym);
-        let is_under_way = self.stack.contains(&Query::TypeNode(file, node));
-        if !is_self_reference && !is_under_way {
-            let cycles = self.cycles;
-            let ty = self.type_from_node(file, node);
-            if self.cycles == cycles || self.is_known(ty) {
-                return ty;
-            }
-        }
-        let args = self.types_from_nodes(file, args);
-        let params = self.local_type_params_of_symbol(sym);
-        let args = self.fill_type_args(&params, &args);
-        self.intern(TypeData::LazyAlias {
-            sym,
-            args: args.into(),
-        })
-    }
-
-    /// The conditional type `ty` as an unresolved reference to the generic type alias whose whole body it instantiates. `None` for any
-    /// other type, and for an alias declared under outer type parameters (see `deferrable_alias_reference`).
-    pub(super) fn as_unresolved_alias_reference(&mut self, ty: TypeId) -> Option<TypeId> {
-        let TypeData::Cond { file, node, mapper } = *self.data(ty) else {
-            return None;
-        };
-        let bound = self.bound(file);
-        let scope = bound.type_scope[node.idx()];
-        if scope.is_none() {
-            return None;
-        }
-        let alias = self.alias_with_body(file, scope, node)?;
-        if !self
-            .type_params_in_scope(file, bound.scopes[scope.idx()].parent)
-            .is_empty()
-        {
-            return None;
-        }
-        let sym = self.files().sym(file, bound.alias_symbol[alias.idx()]);
-        let params = self.local_type_params_of_symbol(sym);
-        if params.is_empty() {
-            return None;
-        }
-        let args: Box<[TypeId]> = params
-            .iter()
-            .map(|&param| self.p.types.map(mapper, param).unwrap_or(param))
-            .collect();
-        Some(self.intern(TypeData::LazyAlias { sym, args }))
-    }
-
-    /// `createDeferredTypeReference`
+    /// `createDeferredTypeReference`. `reference`: the target with the node and the mapper.
     pub(super) fn deferred_type_reference(
         &self,
-        file: FileId,
-        node: TypeNodeId,
-        mapper: MapperId,
-        target: DeferredTarget,
+        reference: TypeData,
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
-        let data = TypeData::Deferred(Box::new(DeferredReference::new(file, node, mapper, target)));
         match alias {
             Some((alias, type_arguments)) => self.p.types.intern_with(
-                data,
+                reference,
                 Provenance {
                     alias: Some((alias, type_arguments.into())),
                     origin: UnionOrigin::None,
                 },
             ),
-            None => self.intern(data),
+            None => self.intern(reference),
         }
     }
 
-    /// What `getTypeArguments` makes of `node`, the node of a deferred type reference to `target`, before `d.mapper`: as
-    /// `createTypeReference(target, typeArguments)`.
-    pub(super) fn type_reference_from_node(
+    /// `typeArguments` in `getTypeArguments`: what `node`, the node of the deferred type reference `ty`, says they are, before
+    /// `d.mapper`.
+    pub(super) fn type_arguments_from_node(
         &mut self,
+        ty: TypeId,
         file: FileId,
         node: TypeNodeId,
-        target: DeferredTarget,
-    ) -> TypeId {
+    ) -> Vec<TypeId> {
         let hir = self.hir(file);
-        match (target, hir[node].kind) {
-            // `getEffectiveTypeArguments`
-            (DeferredTarget::Declared(sym), TypeNodeKind::Ref { args, .. }) => {
+        match (self.data(ty), hir[node].kind) {
+            // `append(n.OuterTypeParameters(), c.getEffectiveTypeArguments(node, n.LocalTypeParameters())...)`
+            (&TypeData::Ref { target, .. }, TypeNodeKind::Ref { args, .. }) => {
                 let mut args = self.types_from_nodes(file, args);
                 if hir.is_js {
-                    let params = self.local_type_params_of_symbol(sym);
+                    let params = self.local_type_params_of_symbol(target);
                     args = self.fill_type_args_as(&params, &args, true);
                 }
-                self.type_reference(sym, &args)
+                let reference = self.type_reference(target, &args);
+                self.type_arguments(reference).to_vec()
             }
-            (DeferredTarget::ArrayOrTuple { readonly }, TypeNodeKind::Array(element)) => {
-                let element = self.type_from_node(file, element);
-                if readonly {
-                    self.readonly_array_of(element)
-                } else {
-                    self.array_of(element)
-                }
+            (TypeData::Ref { .. }, _) => match array_element_type_node(hir, node) {
+                Some(element) => vec![self.type_from_node(file, element)],
+                None => Vec::new(),
+            },
+            (TypeData::Tuple { .. }, TypeNodeKind::Tuple(elems)) => {
+                self.tuple_element_types_from_nodes(file, elems)
             }
-            (DeferredTarget::ArrayOrTuple { readonly }, TypeNodeKind::Tuple(elems)) => {
-                let mut types = Vec::with_capacity(elems.len());
-                let mut flags = Vec::with_capacity(elems.len());
-                for e in elems.iter() {
-                    let elem = &hir[e];
-                    // `getTypeFromRestTypeNode`: of `...X[]` it is `X` that is resolved. One with a `...T` is never deferred.
-                    let (written, flag) = if elem.rest {
-                        let element = array_element_type_node(hir, elem.ty).unwrap_or(elem.ty);
-                        (element, ElemFlags::REST)
-                    } else if elem.optional {
-                        (elem.ty, ElemFlags::OPTIONAL)
-                    } else {
-                        (elem.ty, ElemFlags::REQUIRED)
-                    };
-                    let ty = self.type_from_node(file, written);
-                    // `getTypeFromOptionalTypeNode`, `getTypeFromNamedTupleTypeNode`
-                    types.push(if flag == ElemFlags::OPTIONAL {
-                        self.optional_property(ty)
-                    } else {
-                        ty
-                    });
-                    // `getTupleElementInfo`
-                    flags.push(flag.with_label(elem.name));
-                }
-                self.tuple(&types, &flags, readonly)
-            }
-            _ => TypeId::ERROR,
+            _ => Vec::new(),
         }
     }
 
@@ -3417,49 +3192,19 @@ impl<'p> Checker<'p> {
             }
             let filled = self.fill_type_args(&params, args);
             // `getTypeFromClassOrInterfaceReference`: only its own are given. Those around the declaration are passed on as they are.
-            let outer: &[TypeId] = match self.data(declared) {
-                TypeData::Ref { args: all, .. } => &all[..all.len().saturating_sub(params.len())],
-                _ => &[],
-            };
+            let all = self.type_arguments(declared);
+            let outer = &all[..all.len().saturating_sub(params.len())];
             let args: Box<[TypeId]> = if outer.is_empty() {
                 filled.into()
             } else {
                 outer.iter().copied().chain(filled).collect()
             };
-            return self.intern(TypeData::Ref { target: sym, args });
+            return self.intern(TypeData::Ref {
+                target: sym,
+                args: args.into(),
+            });
         }
         if flags.contains(SymFlags::TYPE_ALIAS) {
-            // What `resolution_start` hides is worked out once more.
-            let from = self.resolution_start;
-            let under_way = self.stack[from..]
-                .iter()
-                .rposition(|q| *q == Query::Declared(sym));
-            if let Some(i) = under_way.map(|i| i + from) {
-                // What a heritage clause names puts nothing off.
-                let is_put_off = (i + 1..self.stack.len()).any(|j| {
-                    matches!(self.stack[j], Query::TypeNode(f, n)
-                        if !matches!(self.stack[j - 1], Query::Bases(_)) && self.may_put_off_type_arguments(f, n))
-                });
-                // Inside its own definition, where it can wait, it stays a name, to be looked up when somebody needs to know. So it
-                // does where TypeScript would not have come back to it.
-                if is_put_off || !self.mark_circle_from(i) {
-                    let reference = self.intern(TypeData::LazyAlias {
-                        sym,
-                        args: args.into(),
-                    });
-                    // It is instantiated when it is forced.
-                    return match alias {
-                        Some((alias, type_arguments)) => {
-                            self.with_alias(reference, alias, type_arguments)
-                        }
-                        None => reference,
-                    };
-                }
-                // `getDeclaredTypeOfTypeAlias`, `pushTypeResolution`: it depends on itself, which is an error.
-                self.mark_tainted_from(i + 1);
-                self.cycles += 1;
-                return TypeId::ERROR;
-            }
             let params = self.local_type_params_of_symbol(sym);
             if params.is_empty() {
                 // `getDeclaredTypeOfTypeAlias`: `type BuiltinIteratorReturn = intrinsic`
@@ -4002,8 +3747,8 @@ impl<'p> Checker<'p> {
         }
         let offset = index - (params.len() - 1);
         // `tryGetTypeAtPosition`: past the end of a tuple of fixed length there is no parameter.
-        if let TypeData::Tuple { elems, flags, .. } = self.data(last.ty)
-            && offset >= elems.len()
+        if let TypeData::Tuple { flags, .. } = self.data(last.ty)
+            && offset >= flags.len()
             && !flags
                 .iter()
                 .any(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
@@ -4019,7 +3764,8 @@ impl<'p> Checker<'p> {
             return element;
         }
         match self.data(rest) {
-            TypeData::Tuple { elems, flags, .. } => {
+            TypeData::Tuple { flags, .. } => {
+                let elems = self.type_arguments(rest);
                 if let Some(&e) = elems.get(offset)
                     && !flags[..=offset]
                         .iter()

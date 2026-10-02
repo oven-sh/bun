@@ -1175,7 +1175,6 @@ impl Checker<'_> {
             }
             // `checkTypeReferenceOrImport`
             let referenced = self.type_from_node(file, TypeNodeId(i as u32));
-            let referenced = self.force(referenced);
             if self.is_error_type(referenced) {
                 continue;
             }
@@ -2719,7 +2718,6 @@ impl Checker<'_> {
         if depth > 12 {
             return (s, t);
         }
-        let (s, t) = (self.force(s), self.force(t));
         if self.explaining.contains(&(s, t)) {
             return (s, t);
         }
@@ -2775,18 +2773,11 @@ impl Checker<'_> {
             path.push_str("[]");
             return self.descend_to_the_reason(a, b, path, depth + 1);
         }
-        if let (
-            TypeData::Ref {
-                target: st,
-                args: sa,
-            },
-            TypeData::Ref {
-                target: tt,
-                args: ta,
-            },
-        ) = (self.data(s).clone(), self.data(t).clone())
+        if let (TypeData::Ref { target: st, .. }, TypeData::Ref { target: tt, .. }) =
+            (self.data(s), self.data(t))
             && st == tt
         {
+            let (sa, ta) = (self.type_arguments(s), self.type_arguments(t));
             for (i, (&a, &b)) in sa.iter().zip(ta.iter()).enumerate() {
                 if !self.is_assignable(a, b) && !self.leads_back(a, b) {
                     let _ = write!(path, "<{i}>");

@@ -456,7 +456,7 @@ impl<'p> Checker<'p> {
         target: TypeId,
         head: Option<u32>,
     ) {
-        let (original_source, original_target) = (self.force(source), self.force(target));
+        let (original_source, original_target) = (source, target);
         let source = self.normalized_for_report(original_source, false);
         let target = self.normalized_for_report(original_target, true);
         self.report_error_results(r, original_source, original_target, source, target, head);
@@ -590,7 +590,7 @@ impl<'p> Checker<'p> {
     ) -> String {
         if let Some((rest, fixed)) = params.split_last().filter(|split| split.0.rest)
             && pos >= fixed.len()
-            && let TypeData::Tuple { elems, .. } = self.data(rest.ty)
+            && let TypeData::Tuple { flags, .. } = self.data(rest.ty)
             && let Some((file, func, _)) = self.sig_decl(sig)
         {
             let hir = self.hir(file);
@@ -599,7 +599,7 @@ impl<'p> Checker<'p> {
                 let node = hir[declared.at(fixed.len())].ty;
                 if node.is_some()
                     && let TypeNodeKind::Tuple(written) = hir[node].kind
-                    && written.len() == elems.len()
+                    && written.len() == flags.len()
                     && index < written.len()
                     && hir[written.at(index)].name.is_some()
                 {
@@ -697,9 +697,10 @@ impl<'p> Checker<'p> {
         if !self.has_single_base_for_non_augmenting_subtype(ty) {
             return None;
         }
-        let TypeData::Ref { target, args } = self.data(ty) else {
+        let TypeData::Ref { target, .. } = self.data(ty) else {
             return None;
         };
+        let args = self.type_arguments(ty);
         let mut base = *self.base_types(*target).first()?;
         let params = self.all_type_params_of_symbol(*target);
         if !params.is_empty() && args.len() >= params.len() {
@@ -757,7 +758,7 @@ impl<'p> Checker<'p> {
         let is_jsx = matches!(self.data(source), TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes);
         if self.is_object_type(source) && self.has_primitive_flag(target) {
             self.try_elaborate_errors_for_primitives_and_objects(r, source, target);
-        } else if self.is_global_ref(source, known::Object).is_some() {
+        } else if self.is_reference_to_global(source, known::Object) {
             r.report_error(2696, Vec::new());
         } else if is_jsx && self.is_intersection(target) {
             if let TypeData::Intersection(parts) = self.data(target)
@@ -1030,7 +1031,7 @@ impl<'p> Checker<'p> {
     ) -> bool {
         let is_readonly = match self.data(source) {
             TypeData::Tuple { readonly, .. } => *readonly,
-            _ => self.is_global_ref(source, known::ReadonlyArray).is_some(),
+            _ => self.is_reference_to_global(source, known::ReadonlyArray),
         };
         if is_readonly && self.is_mutable_array_or_tuple(target) {
             if report {
@@ -1062,7 +1063,7 @@ impl<'p> Checker<'p> {
             TypeId::SYMBOL => known::Symbol,
             _ => return,
         };
-        if self.is_global_ref(source, wrapper).is_some() {
+        if self.is_reference_to_global(source, wrapper) {
             let (target, source) = (self.type_to_string(target), self.type_to_string(source));
             r.report_error(2692, vec![target, source]);
         }

@@ -509,7 +509,6 @@ pub(super) fn type_of_property_of_type(
     ty: TypeId,
     name: Atom,
 ) -> Option<TypeId> {
-    let ty = c.force(ty);
     let ty = c.reduced(ty);
     if !c.is_union(ty) {
         return type_of_declared_property(c, ty, name);
@@ -633,7 +632,6 @@ fn note_assignment_pattern(
         target = inner;
         source = c.without_undefined(source);
     }
-    let source = c.force(source);
     if is_parenthesized(hir, target) || !c.is_known(source) || c.is_any(source) {
         return;
     }
@@ -850,7 +848,6 @@ pub(super) fn exact_optional_write_type(
     object: TypeId,
     name: Atom,
 ) -> Option<TypeId> {
-    let object = c.force(object);
     let object = c.reduced(object);
     let mut types = Vec::new();
     // `createUnionOrIntersectionProperty`: a property of a union is optional if it is optional in any member.
@@ -1085,7 +1082,6 @@ impl Awaiting {
 
 /// `getAwaitedTypeNoAliasEx`: whether there is such a thing as what awaiting a `t` gives.
 fn has_awaited_type(c: &mut Checker<'_>, t: TypeId, a: &mut Awaiting) -> bool {
-    let t = c.force(t);
     if a.settled.contains(&t) {
         return true;
     }
@@ -1128,7 +1124,6 @@ fn has_awaited_type_uncached(c: &mut Checker<'_>, t: TypeId, a: &mut Awaiting) -
     }
     a.this_type_for_error = None;
     if let Some(promised) = promised_type_of_promise(c, t, a) {
-        let promised = c.force(promised);
         if t == promised || a.stack.contains(&promised) {
             a.said.push(Diagnostic {
                 start: a.at,
@@ -1501,7 +1496,6 @@ fn check_iterated_type(
         at,
         node,
     } = site;
-    let input = c.force(input);
     let input = c.reduced(input);
     // That there is nothing there at all is said otherwise.
     if !c.is_known(input)
@@ -1611,7 +1605,6 @@ fn iteration_types_of_iterable(
     reports: bool,
     report: &mut IterationReport,
 ) -> Iteration {
-    let t = c.force(t);
     let t = c.reduced(t);
     if !c.is_known(t) {
         return report.give_up();
@@ -1852,7 +1845,6 @@ fn iteration_types_of_iterator(
     reports: bool,
     report: &mut IterationReport,
 ) -> Iteration {
-    let t = c.force(t);
     if !c.is_known(t) {
         return report.give_up();
     }
@@ -2084,7 +2076,6 @@ fn iteration_types_of_iterator_result(
     t: TypeId,
     report: &mut IterationReport,
 ) -> Iteration {
-    let t = c.force(t);
     if !c.is_known(t) {
         return report.give_up();
     }

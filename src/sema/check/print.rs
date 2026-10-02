@@ -1024,18 +1024,6 @@ impl<'p> Printer<'_, 'p> {
     }
 
     fn type_to_node_worker(&mut self, ty: TypeId) -> Node {
-        let ty = match self.c.data(ty) {
-            TypeData::LazyAlias { .. } => match self.c.force(ty) {
-                forced if self.c.is_known(forced) => forced,
-                _ => ty,
-            },
-            // `typeReferenceToTypeNode`: `getTypeArguments(t)`
-            TypeData::Deferred(_) => {
-                self.c.resolve_type_arguments(ty);
-                ty
-            }
-            _ => ty,
-        };
         let ty = if self.flags & NO_TYPE_REDUCTION == 0 {
             self.c.reduced(ty)
         } else {
@@ -1155,30 +1143,29 @@ impl<'p> Printer<'_, 'p> {
             .deferred(ty)
             .map(|reference| Identity::Node(reference.file, reference.node));
         match self.c.data(ty) {
-            // A reference to an alias that cannot be named from here.
-            TypeData::LazyAlias { .. } if self.enclosing_declaration.is_some() => {
-                let forced = self.c.force(ty);
-                if forced == ty {
-                    Node::simple("any")
-                } else {
-                    self.type_to_node(forced)
-                }
-            }
-            // Of an array type the node is not known yet, so its depth is not counted.
-            TypeData::Ref { target, args }
-                if node_of_reference.is_some()
-                    || self.c.p.deferred_references.get(&ty).is_some() =>
-            {
-                self.visit_and_transform_type(ty, node_of_reference, |printer, ty| {
+            TypeData::Ref { target, .. } if node_of_reference.is_some() => self
+                .visit_and_transform_type(ty, node_of_reference, |printer, ty| {
+                    let args = printer.c.type_arguments(ty);
                     printer.type_reference_to_node(ty, *target, args)
+                }),
+            TypeData::Tuple {
+                flags, readonly, ..
+            } if node_of_reference.is_some() => {
+                self.visit_and_transform_type(ty, node_of_reference, |printer, ty| {
+                    let elems = printer.c.type_arguments(ty);
+                    printer.tuple_to_node(elems, flags, *readonly)
                 })
             }
-            TypeData::Ref { target, args } => self.type_reference_to_node(ty, *target, args),
+            TypeData::Ref { target, .. } => {
+                let args = self.c.type_arguments(ty);
+                self.type_reference_to_node(ty, *target, args)
+            }
             TypeData::Tuple {
-                elems,
-                flags,
-                readonly,
-            } => self.tuple_to_node(elems, flags, *readonly),
+                flags, readonly, ..
+            } => {
+                let elems = self.c.type_arguments(ty);
+                self.tuple_to_node(elems, flags, *readonly)
+            }
             TypeData::TypeParam(..) => self.type_parameter_to_node(ty),
             TypeData::Marker(marker) => Node::simple(self.name_of_marker(*marker)),
             TypeData::Union(_) => self.union_to_node(ty),
@@ -4213,9 +4200,10 @@ impl<'p> Printer<'_, 'p> {
         let Some((rest, others)) = parameters.split_last().filter(|split| split.0.rest) else {
             return parameters.to_vec();
         };
-        let TypeData::Tuple { elems, flags, .. } = self.c.data(rest.ty) else {
+        let TypeData::Tuple { flags, .. } = self.c.data(rest.ty) else {
             return parameters.to_vec();
         };
+        let elems = self.c.type_arguments(rest.ty);
         let mut names: Vec<String> = (0..elems.len())
             .map(|i| self.tuple_element_label(rest, i, elems.len(), flags[i]))
             .collect();
@@ -4535,7 +4523,6 @@ impl<'p> Printer<'_, 'p> {
         let needs_modifier_preserving_wrapper =
             generates_names && matches!(over_keyof, Some((_, false))) && {
                 let keys = self.c.mapped_keys(ty);
-                let keys = self.c.force(keys);
                 !(matches!(self.c.data(keys), TypeData::TypeParam(..))
                     && self
                         .c
@@ -4590,18 +4577,6 @@ impl<'p> Printer<'_, 'p> {
                 self.c.instantiate(template, to_new_type_variable)
             }
             _ => self.c.mapped_template(ty),
-        };
-        // The circle may go through a type alias, which is `any` then. That has no alias.
-        let template = match self.c.data(template) {
-            TypeData::LazyAlias { .. } if self.c.p.mapped_types_with_errors.get(&ty).is_some() => {
-                let forced = self.c.force(template);
-                if matches!(self.c.data(forced), TypeData::Intrinsic(_)) {
-                    forced
-                } else {
-                    template
-                }
-            }
-            _ => template,
         };
         let template = self
             .c

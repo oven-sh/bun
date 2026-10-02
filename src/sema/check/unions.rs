@@ -122,7 +122,7 @@ fn some_first<T: Ord>(a: Option<T>, b: Option<T>) -> std::cmp::Ordering {
 }
 
 impl<'p> Checker<'p> {
-    /// `Type.flags`. What an alias that is still being worked out stands for is not known: no flags.
+    /// `Type.flags`
     fn type_flags(&self, ty: TypeId) -> u32 {
         match self.data(ty) {
             TypeData::UnresolvedName { .. } => tf::ANY,
@@ -176,7 +176,6 @@ impl<'p> Checker<'p> {
             }
             TypeData::Union(_) => tf::UNION,
             TypeData::Intersection(_) => tf::INTERSECTION,
-            TypeData::LazyAlias { .. } => 0,
             _ => tf::OBJECT,
         }
     }
@@ -1460,11 +1459,7 @@ impl<'p> Checker<'p> {
         if flags & tf::ENUM_LIKE != 0 && flags & tf::UNION == 0 {
             return tf::ENUM;
         }
-        if matches!(self.data(ty), TypeData::LazyAlias { .. }) {
-            tf::OBJECT
-        } else {
-            flags
-        }
+        flags
     }
 
     /// `getTypeNameSymbol`, its name. `alias`: `t.alias.symbol`.
@@ -1476,7 +1471,6 @@ impl<'p> Checker<'p> {
             (None, &TypeData::Ref { target: sym, .. } | &TypeData::ThisParam(sym)) => {
                 files.symbol(sym).name
             }
-            (None, TypeData::Deferred(_)) => files.symbol(self.symbol_of_reference(ty)?).name,
             (None, &TypeData::TypeParam(file, tp, _)) => self.hir(file)[tp].name,
             (None, &TypeData::StringMapping { kind, .. }) => {
                 return Some(match kind {
@@ -1494,19 +1488,6 @@ impl<'p> Checker<'p> {
         } else {
             files.atoms.bytes(name)
         })
-    }
-
-    /// `t.symbol`, of a reference to a class or an interface, whether or not it has its type arguments: the order of the members
-    /// of a union does not go by that.
-    fn symbol_of_reference(&self, ty: TypeId) -> Option<Sym> {
-        match self.data(ty) {
-            TypeData::Ref { target, .. } => Some(*target),
-            TypeData::Deferred(reference) => match reference.target {
-                DeferredTarget::Declared(sym) => Some(sym),
-                DeferredTarget::ArrayOrTuple { .. } => None,
-            },
-            _ => None,
-        }
     }
 
     /// Where the first declaration of `sym` is. `compareSymbols`
@@ -1531,7 +1512,6 @@ impl<'p> Checker<'p> {
             | TypeData::ThisParam(sym)
             | TypeData::Enum { symbol: sym, .. }
             | TypeData::EnumLit { member: sym, .. } => self.symbol_place(sym),
-            TypeData::Deferred(_) => self.symbol_place(self.symbol_of_reference(ty)?),
             TypeData::Anon { origin, .. } => match origin {
                 Origin::TypeLiteral(file, node) | Origin::Mapped(file, node) => {
                     at(file, self.hir(file)[node].pos)
@@ -1656,15 +1636,11 @@ impl<'p> Checker<'p> {
             _ => None,
         };
         // Of object types with the same symbol, or none, references come first. A tuple is one, and has no symbol.
-        let is_no_reference = |t: TypeId| {
-            !matches!(
-                self.data(t),
-                TypeData::Ref { .. } | TypeData::Tuple { .. } | TypeData::Deferred(_)
-            )
-        };
+        let is_no_reference =
+            |t: TypeId| !matches!(self.data(t), TypeData::Ref { .. } | TypeData::Tuple { .. });
         let are_of_one_symbol = matches!(
-            (self.symbol_of_reference(a), self.symbol_of_reference(b)),
-            (Some(s), Some(t)) if s == t
+            (self.data(a), self.data(b)),
+            (TypeData::Ref { target: s, .. }, TypeData::Ref { target: t, .. }) if s == t
         );
         // The other kinds have no alias, no name and no symbol.
         const NAMED: u32 = tf::OBJECT
@@ -1689,23 +1665,27 @@ impl<'p> Checker<'p> {
                 return by_symbol;
             }
         }
-        // Deferred type references with the same target are ordered by the source location of the reference, and instantiations
-        // of one by their mappers. One that is not deferred has no node and comes last (`compareNodes`).
-        let (x, y) = (self.p.types.deferred(a), self.p.types.deferred(b));
-        if x.is_some() || y.is_some() {
-            let node = |reference: Option<&DeferredReference>| {
-                let reference = reference?;
-                let pos = self.hir(reference.file)[reference.node].pos;
-                Some(self.place_in_program_order(reference.file, pos))
-            };
-            return some_first(node(x), node(y)).then_with(|| match (x, y) {
-                (Some(x), Some(y)) => self.compare_type_mappers(x.mapper, y.mapper),
-                _ => Equal,
-            });
-        }
+        // References that are not deferred go by their type arguments. Deferred ones with the same target are ordered by the source
+        // location of the reference, and instantiations of one by their mappers, never by their arguments, which may be
+        // themselves. One that is not deferred has no node and comes last (`compareNodes`).
+        let arguments = |x: &TypeArguments, y: &TypeArguments| match (x, y) {
+            (TypeArguments::Given(x), TypeArguments::Given(y)) => lists(x, y),
+            _ => {
+                let (x, y) = (x.as_deferred(), y.as_deferred());
+                let node = |deferred: Option<&DeferredTypeArguments>| {
+                    let deferred = deferred?;
+                    let pos = self.hir(deferred.file)[deferred.node].pos;
+                    Some(self.place_in_program_order(deferred.file, pos))
+                };
+                some_first(node(x), node(y)).then_with(|| match (x, y) {
+                    (Some(x), Some(y)) => self.compare_type_mappers(x.mapper, y.mapper),
+                    _ => Equal,
+                })
+            }
+        };
         match (self.data(a), self.data(b)) {
             (TypeData::Ref { target: s, args: x }, TypeData::Ref { target: t, args: y }) => {
-                s.cmp(t).then_with(|| lists(x, y))
+                s.cmp(t).then_with(|| arguments(x, y))
             }
             // `compareTupleTypes`, `compareElementLabels`: what has no label comes first.
             (
@@ -1723,10 +1703,10 @@ impl<'p> Checker<'p> {
                 let bits = |e: &ElemFlags| e.with_label(Atom::NONE).bits();
                 let label = |e: &ElemFlags| e.label().is_some().then(|| atoms.bytes(e.label()));
                 r.cmp(q)
-                    .then_with(|| x.len().cmp(&y.len()))
+                    .then_with(|| f.len().cmp(&g.len()))
                     .then_with(|| f.iter().map(bits).cmp(g.iter().map(bits)))
                     .then_with(|| f.iter().map(label).cmp(g.iter().map(label)))
-                    .then_with(|| lists(x, y))
+                    .then_with(|| arguments(x, y))
             }
             // What has an `origin` comes first, and origins compare as the types they are: a `keyof`, a union, an intersection.
             (TypeData::Union(_), TypeData::Union(_)) => {

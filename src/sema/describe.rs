@@ -175,7 +175,6 @@ impl<'c, 'p> Describer<'c, 'p> {
     }
 
     fn collect(&mut self, ty: TypeId, d: u32, out: &mut Vec<String>) {
-        let ty = self.c.force(ty);
         if !self.c.is_boolean(ty)
             && let TypeData::Union(parts) = self.c.data(ty)
         {
@@ -216,7 +215,6 @@ impl<'c, 'p> Describer<'c, 'p> {
     }
 
     fn desc(&mut self, ty: TypeId, d: u32) -> String {
-        let ty = self.c.force(ty);
         if let Some(p) = self.primitive(ty) {
             return p.to_owned();
         }
@@ -250,7 +248,6 @@ impl<'c, 'p> Describer<'c, 'p> {
             TypeData::Substitution { base: t, .. } => self.desc(t, d),
             TypeData::IndexedAccess { .. } => "tpx".to_owned(),
             TypeData::Cond { .. } => "cond".to_owned(),
-            TypeData::LazyAlias { .. } | TypeData::Deferred(_) => "?".to_owned(),
             TypeData::Intersection(parts) => {
                 for &p in parts.iter() {
                     if let Some(s) = self.primitive(p)
@@ -268,10 +265,11 @@ impl<'c, 'p> Describer<'c, 'p> {
                 }
                 self.structural(ty, d)
             }
-            TypeData::Tuple { elems, flags, .. } => {
+            TypeData::Tuple { flags, .. } => {
                 if d == 0 {
                     return "tuple".to_owned();
                 }
+                let elems = self.c.type_arguments(ty);
                 let list: Vec<String> = elems
                     .iter()
                     .zip(flags.iter())
@@ -294,7 +292,8 @@ impl<'c, 'p> Describer<'c, 'p> {
                     .collect();
                 format!("[{}]", list.join(","))
             }
-            TypeData::Ref { target, args } => {
+            TypeData::Ref { target, .. } => {
+                let args = self.c.type_arguments(ty);
                 if let Some(element) = self.c.array_element(ty) {
                     return if d == 0 {
                         "Array".to_owned()
@@ -315,7 +314,7 @@ impl<'c, 'p> Describer<'c, 'p> {
                 // type parameter.
                 let declared = self.c.declared_type(target);
                 let type_param_count = match self.c.data(declared) {
-                    TypeData::Ref { args: params, .. } => params.len().min(args.len()),
+                    TypeData::Ref { .. } => self.c.type_arguments(declared).len().min(args.len()),
                     _ => args.len(),
                 };
                 format!(

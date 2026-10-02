@@ -204,8 +204,6 @@ pub struct Program {
     declared_types: ByNode<Sym, TypeId>,
     /// The unions that have been seen to have no intersection among their members.
     unions_without_intersections: IdSet<TypeId>,
-    /// The generic references made from a deferred type reference node (`isDeferredTypeReferenceNode`), and their generic instantiations.
-    deferred_references: IdSet<TypeId>,
     shapes: ByIdKept<TypeId, shape::Resolved>,
     /// `intersectionTypes`, for those that have a union among them.
     distributed_intersections: ByKey<(Box<[TypeId]>, bool), (TypeId, bool)>,
@@ -417,7 +415,6 @@ impl Program {
             initializer_is_undefined: ByNode::new(&params),
             declared_types: ByNode::new(&symbols),
             unions_without_intersections: Default::default(),
-            deferred_references: Default::default(),
             shapes: Default::default(),
             distributed_intersections: Default::default(),
             sig_params: Default::default(),
@@ -545,7 +542,6 @@ impl Program {
             inference_contexts: Vec::new(),
             instantiation_depth: 0,
             recent_instantiations: Default::default(),
-            deferring_type_arguments: 0,
             reports_depth: false,
             deep_events: 0,
             unreported_event: 0,
@@ -566,8 +562,6 @@ impl Program {
             reported: Vec::new(),
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
-            unsettled_references: Vec::new(),
-            instantiating_type_arguments_of: Vec::new(),
             recent_members: Box::new([shape::RecentMembers::NONE; shape::RECENT_MEMBERS]),
             recent_signatures: Box::new(
                 [(TypeId(u32::MAX), &[] as &[SigId]); shape::RECENT_SIGNATURES],
@@ -840,8 +834,6 @@ pub struct Checker<'p> {
     instantiation_depth: u32,
     /// What was last read from or put into `Program::instantiations`.
     recent_instantiations: instantiate::Recent,
-    /// How many `instantiate_deferred_type_arguments` are trying an argument: a limit hit meanwhile is not reported.
-    deferring_type_arguments: u32,
     /// Set while `check_excessive_depth` runs: an instantiation limit is reported at `current_node`.
     reports_depth: bool,
     /// How many times an instantiation limit was hit, or a memo entry that depends on one was read. A change across an
@@ -879,10 +871,6 @@ pub struct Checker<'p> {
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
     /// The intersections it is being found out of whether anything can be them.
     pub(super) never_in_progress: Vec<TypeId>,
-    /// The deferred type references that type nodes have made and nobody has resolved. See `settle_deferred_references`.
-    unsettled_references: Vec<TypeId>,
-    /// The nodes of the deferred type references whose type arguments are being instantiated, innermost last.
-    instantiating_type_arguments_of: Vec<(FileId, TypeNodeId)>,
     /// What was last found in `Program::members`, in the tables of signatures and in `intersected_props`, by the low bits of the key.
     recent_members: Box<[shape::RecentMembers<'p>; shape::RECENT_MEMBERS]>,
     recent_signatures: Box<[(TypeId, &'p [SigId]); shape::RECENT_SIGNATURES]>,
@@ -1694,7 +1682,7 @@ impl<'p> Checker<'p> {
                         .p
                         .types
                         .deferred(ty)
-                        .is_some_and(DeferredReference::is_resolved),
+                        .is_some_and(DeferredTypeArguments::is_resolved),
                     _ => false,
                 }
         })
@@ -1771,11 +1759,6 @@ impl<'p> Checker<'p> {
     fn record_excessive_depth(&mut self) -> bool {
         self.deep_events += 1;
         self.p.has_excessive.store(true, Ordering::Relaxed);
-        // tsgo instantiates the type arguments of a deferred type reference later, with another `currentNode`.
-        if self.deferring_type_arguments > 0 {
-            self.unreported_event = self.deep_events;
-            return false;
-        }
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
         if self.reports_depth
             && self.eager.is_empty()
@@ -2094,7 +2077,6 @@ impl<'p> Checker<'p> {
             self.data(ty),
             TypeData::Ref { .. }
                 | TypeData::Tuple { .. }
-                | TypeData::Deferred(_)
                 | TypeData::Anon { .. }
                 | TypeData::Fns { .. }
                 | TypeData::Synth(_)
@@ -2484,32 +2466,35 @@ impl<'p> Checker<'p> {
         self.global_ref(name, &[yielded, returned, next])
     }
 
-    fn is_global_ref(&self, ty: TypeId, name: Atom) -> Option<&'p [TypeId]> {
-        match self.data(ty) {
-            TypeData::Ref { target, args } if self.files().symbol(*target).name == name => {
-                (self.global_type_symbol(name) == Some(*target)).then_some(&**args)
-            }
-            _ => None,
-        }
+    /// Whether `ty` is a reference to the global class or interface `name`.
+    fn is_reference_to_global(&self, ty: TypeId, name: Atom) -> bool {
+        matches!(self.data(ty), TypeData::Ref { target, .. }
+            if self.files().symbol(*target).name == name
+                && self.global_type_symbol(name) == Some(*target))
     }
 
-    /// The element type of `T[]` or `readonly T[]`.
-    pub fn array_element(&self, ty: TypeId) -> Option<TypeId> {
-        let TypeData::Ref { target, args } = self.data(ty) else {
-            return None;
-        };
-        let name = self.files().symbol(*target).name;
-        if (name == known::Array || name == known::ReadonlyArray)
-            && self.global_type_symbol(name) == Some(*target)
-        {
-            args.first().copied()
+    /// The type arguments of `ty`, if it is a reference to the global class or interface `name`.
+    fn is_global_ref(&mut self, ty: TypeId, name: Atom) -> Option<&'p [TypeId]> {
+        if self.is_reference_to_global(ty, name) {
+            Some(self.type_arguments(ty))
         } else {
             None
         }
     }
 
+    /// The element type of `T[]` or `readonly T[]`.
+    pub fn array_element(&mut self, ty: TypeId) -> Option<TypeId> {
+        if self.is_array(ty) {
+            self.type_arguments(ty).first().copied()
+        } else {
+            None
+        }
+    }
+
+    /// `isArrayType`
     pub fn is_array(&self, ty: TypeId) -> bool {
-        self.array_element(ty).is_some()
+        self.is_reference_to_global(ty, known::Array)
+            || self.is_reference_to_global(ty, known::ReadonlyArray)
     }
 
     pub fn is_tuple(&self, ty: TypeId) -> bool {

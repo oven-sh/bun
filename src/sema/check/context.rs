@@ -486,9 +486,12 @@ impl<'p> Checker<'p> {
                 origin: Origin::ObjectLiteral(file, e, ..),
                 ..
             } => self.is_assignment_target(*file, *e),
-            TypeData::Tuple { elems: parts, .. } | TypeData::Union(parts) => {
-                parts.iter().any(|&p| self.has_pattern_mark(p))
+            // What is written as a type has none.
+            TypeData::Tuple {
+                elems: TypeArguments::Given(parts),
+                ..
             }
+            | TypeData::Union(parts) => parts.iter().any(|&p| self.has_pattern_mark(p)),
             _ => false,
         }
     }
@@ -548,7 +551,6 @@ impl<'p> Checker<'p> {
             return Some(ty);
         }
         let ty = self.contextual_type_from_parent(file, e)?;
-        let ty = self.force(ty);
         if ty == TypeId::UNRESOLVED {
             return None;
         }
@@ -781,7 +783,6 @@ impl<'p> Checker<'p> {
     /// `getTypeOfPropertyOfType`: the type of a property that is declared. An index signature does not stand in for one, except
     /// in a member of a union another member of which declares it.
     fn type_of_property_of_type(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
-        let ty = self.force(ty);
         let ty = self.reduced(ty);
         if !self.is_union(ty) {
             let apparent = self.apparent_type(ty);
@@ -835,14 +836,12 @@ impl<'p> Checker<'p> {
 
     /// `getTypeOfPropertyOfContextualType`: what each member of `context` says of the property `name`.
     pub(super) fn contextual_property(&mut self, context: TypeId, name: Atom) -> Option<TypeId> {
-        let context = self.force(context);
         if self.is_any(context) {
             return None;
         }
         let mut types = Parts::new();
         for &written in self.parts(context) {
             // `getApparentTypeOfContextualType`: a mapped type stays as it is.
-            let written = self.force(written);
             let part = if self.mapped_origin(written).is_some() {
                 written
             } else {
@@ -869,7 +868,7 @@ impl<'p> Checker<'p> {
                 }
             };
             if let Some(t) = found {
-                types.push(self.force(t));
+                types.push(t);
             }
         }
         if types.is_empty() {
@@ -1049,7 +1048,7 @@ impl<'p> Checker<'p> {
     /// `getTypeFromIndexInfosOfContextualType`
     fn contextual_type_from_index_infos(&mut self, part: TypeId, name: Atom) -> Option<TypeId> {
         // A place past the fixed start of a tuple is one of those the rest of it stands for.
-        if let TypeData::Tuple { elems, flags, .. } = self.data(part)
+        if let TypeData::Tuple { flags, .. } = self.data(part)
             && self.is_numeric_name(name)
             && self
                 .files()
@@ -1058,6 +1057,7 @@ impl<'p> Checker<'p> {
                 .parse::<f64>()
                 .is_ok_and(|n| n >= 0.0)
         {
+            let elems = self.type_arguments(part);
             let fixed = flags
                 .iter()
                 .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
@@ -1282,7 +1282,6 @@ impl<'p> Checker<'p> {
         element: ExprId,
         props: TypeId,
     ) -> TypeId {
-        let props = self.force(props);
         if !self.is_union(props) {
             return props;
         }
@@ -1854,7 +1853,6 @@ impl<'p> Checker<'p> {
         let mut types = Parts::new();
         for &part in self.parts(context) {
             // `getApparentTypeOfContextualType`: a mapped type stays as it is.
-            let part = self.force(part);
             let part = if self.mapped_origin(part).is_some() {
                 part
             } else {
@@ -1873,13 +1871,14 @@ impl<'p> Checker<'p> {
                 types.push(part);
                 continue;
             }
-            if let TypeData::Tuple { elems, flags, .. } = self.data(part) {
+            if let TypeData::Tuple { flags, .. } = self.data(part) {
+                let elems = self.type_arguments(part);
                 let fixed = flags
                     .iter()
                     .position(|f| f.intersects(variable))
                     .unwrap_or(flags.len());
                 if before_spreads && index < fixed {
-                    let element = self.force(elems[index]);
+                    let element = elems[index];
                     // What may be left out holds `undefined` too, whether or not that is kept with the element.
                     let is_optional = flags[index].contains(ElemFlags::OPTIONAL);
                     let element = if is_optional {
@@ -1905,7 +1904,7 @@ impl<'p> Checker<'p> {
                     0
                 };
                 if offset > 0 && offset <= fixed_end {
-                    types.push(self.force(elems[elems.len() - offset]));
+                    types.push(elems[elems.len() - offset]);
                     continue;
                 }
                 let from = first_spread.map_or(fixed, |s| fixed.min(s));
@@ -1919,7 +1918,7 @@ impl<'p> Checker<'p> {
                 continue;
             }
             if let Some(element) = self.array_element(part) {
-                types.push(self.force(element));
+                types.push(element);
                 continue;
             }
             // `getTypeOfPropertyOfContextualType(t, index)`: a property of that name, or the index signature that takes it.
@@ -1941,7 +1940,7 @@ impl<'p> Checker<'p> {
                 } else if !self.signatures(method, false).is_empty() {
                     let element = self.iterated_type(part, false);
                     if element != TypeId::UNRESOLVED {
-                        types.push(self.force(element));
+                        types.push(element);
                     }
                 }
             }
@@ -1971,7 +1970,7 @@ impl<'p> Checker<'p> {
             let element = if flags[i].contains(ElemFlags::VARIADIC) {
                 self.indexed_access(elems[i], TypeId::NUMBER)
             } else {
-                self.force(elems[i])
+                elems[i]
             };
             slice.push(if flags[i].contains(ElemFlags::OPTIONAL) {
                 self.optional_property(element)
@@ -2383,7 +2382,6 @@ impl<'p> Checker<'p> {
                 // `getContextualTypeForElementExpression`
                 ExprKind::Array(items) => {
                     let (context, outer) = self.pushed_contextual_type(file, parent)?;
-                    let context = self.force(context);
                     if !self.is_object_type(context) {
                         return None;
                     }
@@ -2407,7 +2405,6 @@ impl<'p> Checker<'p> {
                     return None;
                 }
                 let (context, outer) = self.pushed_contextual_type(file, literal)?;
-                let context = self.force(context);
                 if !self.is_object_type(context) {
                     return None;
                 }
@@ -2523,8 +2520,8 @@ impl<'p> Checker<'p> {
         if hir[own].flags.contains(Flags::REST) {
             let rest = self.params_as_tuple(&params, index);
             // `[...T[]]` is `T[]`.
-            if let TypeData::Tuple { elems, flags, .. } = self.data(rest)
-                && let ([e], [f]) = (&**elems, &**flags)
+            if let TypeData::Tuple { flags, .. } = self.data(rest)
+                && let ([e], [f]) = (self.type_arguments(rest), &**flags)
                 && f.contains(ElemFlags::REST)
             {
                 return Some(self.array_of(*e));
@@ -2543,7 +2540,7 @@ impl<'p> Checker<'p> {
             };
         }
         let ty = self.param_type_at(&params, index)?;
-        Some(self.force(ty))
+        Some(ty)
     }
 
     /// `getContextualReturnType`: what `func` says it returns, or is expected to return, as a whole.
@@ -2588,7 +2585,6 @@ impl<'p> Checker<'p> {
                 return Some(expected);
             }
             // Of the alternatives, those that what such a function gives can be. If there is only one, that or nothing.
-            let expected = self.force(expected);
             let fitting = self.filter(expected, |c, t| {
                 if c.is_any(t)
                     || t == TypeId::UNKNOWN

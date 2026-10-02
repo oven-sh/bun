@@ -841,12 +841,8 @@ impl Checker<'_> {
 
     /// `isValidSpreadType`
     pub(super) fn is_valid_spread_type(&mut self, ty: TypeId) -> bool {
-        let ty = self.force(ty);
         // `getBaseConstraintOrType`
-        let ty = self.map_type(ty, |c, m| {
-            let m = c.force(m);
-            c.base_constraint_if_any(m, 0).unwrap_or(m)
-        });
+        let ty = self.map_type(ty, |c, m| c.base_constraint_if_any(m, 0).unwrap_or(m));
         // `removeDefinitelyFalsyTypes`: what is sure to be falsy spreads nothing.
         let ty = self.remove_definitely_falsy(ty);
         match self.data(ty) {
@@ -855,8 +851,6 @@ impl Checker<'_> {
             }
             // `TypeFlagsInstantiableNonPrimitive` has no `keyof T`.
             TypeData::Keyof(_) => false,
-            // An alias that is still being worked out: it is not known what it is.
-            TypeData::LazyAlias { .. } => true,
             _ => {
                 self.is_any(ty)
                     || ty == TypeId::OBJECT
@@ -869,7 +863,6 @@ impl Checker<'_> {
     /// `getBaseConstraintOfType`. `None`: there is none, which is not `unknown`. What extends nothing may turn out to be an object,
     /// what extends `unknown` can be anything at all.
     fn base_constraint_if_any(&mut self, ty: TypeId, depth: u32) -> Option<TypeId> {
-        let ty = self.force(ty);
         match self.data(ty) {
             TypeData::TypeParam(..) => {
                 // Round in circles.

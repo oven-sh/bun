@@ -293,206 +293,99 @@ impl Builder {
 }
 
 impl<'p> Checker<'p> {
-    /// `ty` if it is not a reference to an alias that was still being worked out when it was made. A deferred type reference has
-    /// its type arguments afterwards, unless they are being resolved.
+    /// `getTypeArguments`, of a reference to a class or an interface, an array type or a tuple type.
     #[inline]
-    pub fn force(&mut self, ty: TypeId) -> TypeId {
+    pub fn type_arguments(&mut self, ty: TypeId) -> &'p [TypeId] {
         match self.data(ty) {
-            TypeData::LazyAlias { .. } => self.force_reference(ty),
-            TypeData::Deferred(_) => self.force_deferred_reference(ty),
-            TypeData::Union(_) | TypeData::Intersection(_)
-                if self.p.types.flags(ty).contains(TypeFlags::HAS_LAZY_MEMBER) =>
-            {
-                self.force_members(ty)
-            }
-            _ => ty,
-        }
-    }
-
-    /// `force`, of a union or an intersection with such references among its members. tsgo resolves the type arguments of a
-    /// deferred type reference before it makes anything of them (`getTypeArguments`), so the members of a union that an alias
-    /// stands for are members of the union it is put in. A reference to an array, a tuple, an instance or an indexed access
-    /// stays: these do not say which alias they are the body of, and the reference is what they are named by.
-    #[inline(never)]
-    fn force_members(&mut self, ty: TypeId) -> TypeId {
-        let (parts, is_union) = match self.data(ty) {
-            TypeData::Union(parts) => (parts, true),
-            TypeData::Intersection(parts) => (parts, false),
-            _ => return ty,
-        };
-        let mut forced: SmallVec<[TypeId; 8]> = SmallVec::from_slice(&parts[..]);
-        for part in &mut forced {
-            let resolved = self.force(*part);
-            if self.is_known(resolved)
-                && !matches!(
-                    self.data(resolved),
-                    TypeData::Ref { .. } | TypeData::Tuple { .. } | TypeData::IndexedAccess { .. }
-                )
-            {
-                *part = resolved;
-            }
-        }
-        if forced[..] == parts[..] {
-            return ty;
-        }
-        if is_union {
-            self.union(&forced)
-        } else {
-            self.intersection(&forced)
-        }
-    }
-
-    /// `force`, of a reference to an alias.
-    fn force_reference(&mut self, ty: TypeId) -> TypeId {
-        self.guard("force");
-        match self.data(ty) {
-            TypeData::LazyAlias { sym, args } => {
-                if self.stack.contains(&Query::Declared(*sym)) {
-                    return ty;
+            TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => {
+                match args.resolved() {
+                    Some(resolved) => resolved,
+                    None => self.resolve_type_arguments(ty),
                 }
-                // `instantiate` marks the object of an indexed access that waits on an alias.
-                self.note_depth(Deep::Instantiation(ty, MapperId::IDENTITY), None);
-                let alias = self
-                    .stored_alias(ty)
-                    .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
-                self.type_reference_type(*sym, args, alias)
             }
-            _ => ty,
+            _ => &[],
         }
     }
 
-    /// `force`, of a deferred type reference without type arguments. Whoever only hands it on does not need them: where they are
-    /// being resolved no circle is closed, and what is made of it holds for now only.
+    /// `getTypeArguments`, of a deferred type reference that has none yet.
     #[cold]
     #[inline(never)]
-    fn force_deferred_reference(&mut self, ty: TypeId) -> TypeId {
-        let from = self.resolution_start;
-        let under_way = self.stack[from..]
-            .iter()
-            .rposition(|q| *q == Query::TypeArguments(ty));
-        match under_way {
-            Some(i) => {
-                self.mark_tainted_from(from + i + 1);
-                self.cycles += 1;
-            }
-            None => self.resolve_type_arguments(ty),
-        }
-        ty
-    }
-
-    /// `getTypeArguments`, of a deferred type reference that has none. It is left without if they are being resolved further
-    /// down, which is a circle, or if there is no time or room.
-    #[cold]
-    #[inline(never)]
-    pub(super) fn resolve_type_arguments(&mut self, ty: TypeId) {
-        self.resolve_type_arguments_worker(ty);
-        self.settle_deferred_references();
-    }
-
-    fn resolve_type_arguments_worker(&mut self, ty: TypeId) {
-        let Some(reference) = self.p.types.deferred(ty) else {
-            return;
+    fn resolve_type_arguments(&mut self, ty: TypeId) -> &'p [TypeId] {
+        let Some(deferred) = self.p.types.deferred(ty) else {
+            return &[];
         };
-        let (file, node, mapper, target) = (
-            reference.file,
-            reference.node,
-            reference.mapper,
-            reference.target,
-        );
-        if reference.is_resolved() || !self.enter(Query::TypeArguments(ty)) {
-            return;
+        let (file, node, mapper) = (deferred.file, deferred.node, deferred.mapper);
+        if !self.enter(Query::TypeArguments(ty)) {
+            // `errorType` for all of `n.TypeParameters()`, those around the declaration too.
+            let count = match self.data(ty) {
+                TypeData::Ref { target, .. } => {
+                    let declared = self.declared_type(*target);
+                    self.p
+                        .types
+                        .resolved_type_arguments(declared)
+                        .map_or(0, <[TypeId]>::len)
+                }
+                TypeData::Tuple { flags, .. } => flags.len(),
+                _ => 0,
+            };
+            return self.type_arguments_for_now(ty, vec![TypeId::ERROR; count]);
         }
-        let declared = self.type_reference_from_node(file, node, target);
+        let declared = self.type_arguments_from_node(ty, file, node);
         let holds = self.leave();
         if self.left_a_circle {
-            // `popTypeResolution` fails: `errorType` for all of `n.TypeParameters()`, those around the declaration too.
-            let errors = |count: usize| vec![TypeId::ERROR; count].into_boxed_slice();
-            let resolved = match self.data(declared).clone() {
-                TypeData::Ref { target, args } => TypeData::Ref {
-                    target,
-                    args: errors(args.len()),
-                },
-                TypeData::Tuple {
-                    elems,
-                    flags,
-                    readonly,
-                } => TypeData::Tuple {
-                    elems: errors(elems.len()),
-                    flags,
-                    readonly,
-                },
-                _ => return,
+            // `popTypeResolution` fails.
+            let errors = vec![TypeId::ERROR; declared.len()];
+            let resolved = self.p.types.resolve_deferred(ty, errors.into());
+            let at = (
+                file,
+                self.hir(file)[node].pos,
+                self.end_of_type_node(file, node),
+            );
+            let err = match *self.data(ty) {
+                TypeData::Ref { target, .. } => self.new_diagnostic(at, 4109, &[Arg::Sym(target)]),
+                _ => self.new_diagnostic(at, 4110, &[]),
             };
-            self.p.types.resolve_deferred(ty, resolved);
-            return;
+            self.commit(err);
+            return resolved;
         }
-        if !holds {
-            return;
-        }
-        // `c.instantiateTypes(typeArguments, d.mapper)`
+        // `c.instantiateTypes(typeArguments, d.mapper)`. It may ask for the type arguments of `ty` again, which is no circle. tsgo goes
+        // down until `instantiationDepth == 100`, every level assigns, and the outermost is the last. So no level that met the limit
+        // keeps its own.
         let before = self.what_only_holds_for_now();
-        // The query is left, as in `getTypeArguments`, but the node is still under way for `resolve_type_arguments_ahead`.
-        self.instantiating_type_arguments_of.push((file, node));
-        let resolved = match self.data(declared) {
-            TypeData::Ref { target, args } => Some(TypeData::Ref {
-                target: *target,
-                args: self.instantiate_all(args, mapper).into(),
-            }),
-            TypeData::Tuple {
-                elems,
-                flags,
-                readonly,
-            } => {
-                let elems = self.instantiate_all(elems, mapper);
-                let instantiated = self.tuple(&elems, flags, *readonly);
-                Some(self.data(instantiated).clone())
-            }
-            _ => None,
-        };
-        self.instantiating_type_arguments_of.pop();
-        let Some(resolved) = resolved else {
-            return;
-        };
-        let now = self.what_only_holds_for_now();
-        // A limit that is run into ahead of need is run into again by whoever needs them, and reported there.
-        if now.0 != before.0 || self.deferring_type_arguments > 0 && now.1 != before.1 {
-            return;
+        let instantiated = self.instantiate_all(&declared, mapper);
+        if holds && self.what_only_holds_for_now() == before {
+            self.p.types.resolve_deferred(ty, instantiated.into())
+        } else {
+            self.type_arguments_for_now(ty, instantiated)
         }
-        self.p.types.resolve_deferred(ty, resolved);
     }
 
-    /// `resolve_type_arguments` before anybody needs them, so that whoever looks at `ty` finds a reference like any other. It is a
-    /// question of its own: what is under way does not show, so it closes no circle that need would not close. Where the node is
-    /// being resolved already the type goes on for ever (`type R<T> = Box<R<T[]>>`), and `ty` is left for whoever needs it.
-    pub(super) fn resolve_type_arguments_ahead(&mut self, ty: TypeId) {
-        let Some(reference) = self.p.types.deferred(ty) else {
-            return;
-        };
-        if reference.is_resolved() {
-            return;
+    /// `arguments`, for an answer about `ty` that does not hold whoever asks: kept as those of
+    /// `createTypeReference(ty.Target(), arguments)`.
+    fn type_arguments_for_now(&mut self, ty: TypeId, arguments: Vec<TypeId>) -> &'p [TypeId] {
+        let reference = self.create_type_reference(ty, &arguments);
+        self.p
+            .types
+            .resolved_type_arguments(reference)
+            .unwrap_or(&[])
+    }
+
+    /// `createTypeReference(ty.Target(), arguments)`. What is no reference is left as it is.
+    pub(super) fn create_type_reference(&self, ty: TypeId, arguments: &[TypeId]) -> TypeId {
+        match self.data(ty) {
+            TypeData::Ref { target, .. } => self.intern(TypeData::Ref {
+                target: *target,
+                args: arguments.into(),
+            }),
+            TypeData::Tuple {
+                flags, readonly, ..
+            } => self.intern(TypeData::Tuple {
+                elems: arguments.into(),
+                flags: flags.clone(),
+                readonly: *readonly,
+            }),
+            _ => ty,
         }
-        let at = (reference.file, reference.node);
-        let types = &self.p.types;
-        if self.instantiating_type_arguments_of.contains(&at)
-            || self.stack.iter().any(|q| {
-                matches!(*q, Query::TypeArguments(other)
-                if types.deferred(other).is_some_and(|other| (other.file, other.node) == at))
-            })
-        {
-            return;
-        }
-        let resolution_start = std::mem::replace(&mut self.resolution_start, self.stack.len());
-        let instantiation_depth = std::mem::replace(&mut self.instantiation_depth, 0);
-        let (events, unreported) = (self.deep_events, self.unreported_event);
-        self.deferring_type_arguments += 1;
-        // What it leaves unsettled is for whoever drains the list: a chain of aliases is gone through one after the other, not one
-        // inside the other.
-        self.resolve_type_arguments_worker(ty);
-        self.deferring_type_arguments -= 1;
-        // The memo entries around do not depend on the limit.
-        (self.deep_events, self.unreported_event) = (events, unreported);
-        self.instantiation_depth = instantiation_depth;
-        self.resolution_start = resolution_start;
     }
 
     /// `ty` for whoever is not inferring: `NoInfer<T>`, on its own or in a union, is `T`.
@@ -500,26 +393,25 @@ impl<'p> Checker<'p> {
         if !self.has_type_variables(ty) {
             return ty;
         }
-        self.map_type(ty, |c, m| {
-            let forced = c.force(m);
-            match *c.data(forced) {
-                TypeData::Substitution {
-                    base,
-                    constraint: TypeId::UNKNOWN,
-                } => c.force(base),
-                _ => m,
-            }
+        self.map_type(ty, |c, m| match *c.data(m) {
+            TypeData::Substitution {
+                base,
+                constraint: TypeId::UNKNOWN,
+            } => base,
+            _ => m,
         })
     }
 
     /// `isNoInferType`
     #[inline]
     pub(super) fn is_no_infer(&self, ty: TypeId) -> bool {
-        match self.data(ty) {
-            TypeData::Substitution { constraint, .. } => *constraint == TypeId::UNKNOWN,
-            TypeData::LazyAlias { sym, .. } => self.intrinsic_alias(*sym) == Some(Err(())),
-            _ => false,
-        }
+        matches!(
+            self.data(ty),
+            TypeData::Substitution {
+                constraint: TypeId::UNKNOWN,
+                ..
+            }
+        )
     }
 
     /// `getNoInferType`
@@ -580,7 +472,6 @@ impl<'p> Checker<'p> {
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
                 parts.iter().any(|&part| self.is_no_infer_target_type(part))
             }
-            TypeData::LazyAlias { .. } => !self.is_no_infer(ty),
             &TypeData::Substitution { base, constraint } => {
                 constraint != TypeId::UNKNOWN && self.is_no_infer_target_type(base)
             }
@@ -718,12 +609,14 @@ impl<'p> Checker<'p> {
                     )
                 })
             }
-            TypeData::Ref { target, args } => {
+            TypeData::Ref { target, .. } => {
                 let target = *target;
                 let declared = self.declared_type(target);
-                let TypeData::Ref { args: params, .. } = self.data(declared) else {
+                if !matches!(self.data(declared), TypeData::Ref { .. }) {
                     return None;
-                };
+                }
+                let (params, args) = (self.type_arguments(declared), self.type_arguments(ty));
+                let are_for_now = self.p.types.resolved_type_arguments(ty).is_none();
                 // `resolveTypeReferenceMembers`: the arguments go with the type parameters around the declaration, then its own,
                 // then `this`. Where nothing is given for `this` it is the type the member is looked up in.
                 let this = args.get(params.len()).copied().unwrap_or(ty);
@@ -744,11 +637,20 @@ impl<'p> Checker<'p> {
                 };
                 // `getResolvedMembersOrExportsOfSymbol`: while the names that have to be worked out are, there is what has its name
                 // written out.
-                let resolved = self.shape_memo_or(
+                let mut resolved = self.shape_memo_or(
                     key,
-                    |c| c.build_declared_shape(target, under, false),
+                    |c| {
+                        if are_for_now && key == ty {
+                            c.mark_tainted_from(c.frames.len() - 1);
+                        }
+                        c.build_declared_shape(target, under, false)
+                    },
                     |c| c.build_declared_shape(target, under, true),
                 );
+                // `mapper` is made of them.
+                if are_for_now {
+                    resolved.kept = None;
+                }
                 Some((resolved, mapper))
             }
             TypeData::Anon { origin, mapper } => {
@@ -823,26 +725,21 @@ impl<'p> Checker<'p> {
                 Some((resolved, MapperId::IDENTITY))
             }
             TypeData::Tuple {
-                elems,
-                flags,
-                readonly,
+                flags, readonly, ..
             } => {
-                let readonly = *readonly;
-                let resolved =
-                    self.shape_memo(ty, |c| c.build_tuple_shape(ty, elems, flags, readonly));
+                let (elems, readonly) = (self.type_arguments(ty), *readonly);
+                let are_for_now = self.p.types.resolved_type_arguments(ty).is_none();
+                let resolved = self.shape_memo(ty, |c| {
+                    if are_for_now {
+                        c.mark_tainted_from(c.frames.len() - 1);
+                    }
+                    c.build_tuple_shape(ty, elems, flags, readonly)
+                });
                 Some((resolved, MapperId::IDENTITY))
             }
             TypeData::Intersection(parts) => {
                 let resolved = self.shape_memo(ty, |c| c.build_intersection_shape(ty, parts));
                 Some((resolved, MapperId::IDENTITY))
-            }
-            // `resolveTypeReferenceMembers`
-            TypeData::Deferred(_) => {
-                self.resolve_type_arguments(ty);
-                if matches!(self.data(ty), TypeData::Deferred(_)) {
-                    return None;
-                }
-                self.members_uncached(ty)
             }
             _ => None,
         }
@@ -1042,7 +939,6 @@ impl<'p> Checker<'p> {
                         continue;
                     }
                     let keys = self.type_from_node(file, hir[f.params.at(0)].ty);
-                    let keys = self.force(keys);
                     let value = if member.ty.is_some() {
                         self.type_from_node(file, member.ty)
                     } else {
@@ -1051,9 +947,7 @@ impl<'p> Checker<'p> {
                     let value = self.instantiate(value, mapper);
                     for &key in self.parts(keys) {
                         // What is not known is let through.
-                        let is_known = self.is_known(key)
-                            && !matches!(self.data(key), TypeData::LazyAlias { .. });
-                        if is_known && !self.is_valid_index_key_type(key) {
+                        if self.is_known(key) && !self.is_valid_index_key_type(key) {
                             continue;
                         }
                         let info = IndexInfo {
@@ -1499,17 +1393,18 @@ impl<'p> Checker<'p> {
     /// reference, where `members` finds it. An intersection takes it member by member.
     pub(super) fn type_with_this_argument(&mut self, ty: TypeId, this_argument: TypeId) -> TypeId {
         match self.data(ty) {
-            TypeData::Ref { target, args } => {
+            TypeData::Ref { target, .. } => {
                 let declared = self.declared_type(*target);
-                if !matches!(self.data(declared), TypeData::Ref { args: params, .. } if params.len() == args.len())
+                let args = self.type_arguments(ty);
+                if !matches!(self.data(declared), TypeData::Ref { .. })
+                    || self.type_arguments(declared).len() != args.len()
                 {
                     return ty;
                 }
-                let with_this: Box<[TypeId]> =
-                    args.iter().copied().chain([this_argument]).collect();
+                let with_this: Vec<TypeId> = args.iter().copied().chain([this_argument]).collect();
                 self.intern(TypeData::Ref {
                     target: *target,
-                    args: with_this,
+                    args: with_this.into(),
                 })
             }
             TypeData::Intersection(parts) => {
@@ -1537,9 +1432,7 @@ impl<'p> Checker<'p> {
         this_argument: TypeId,
     ) -> Option<Members<'p>> {
         let TypeData::Tuple {
-            elems,
-            flags,
-            readonly,
+            flags, readonly, ..
         } = self.data(ty)
         else {
             return None;
@@ -1547,6 +1440,7 @@ impl<'p> Checker<'p> {
         if this_argument == ty {
             return self.members(ty);
         }
+        let elems = self.type_arguments(ty);
         let shape = self.build_tuple_shape(this_argument, elems, flags, *readonly);
         Some(Members {
             resolved: self.shape_for_now(shape).resolved,
@@ -1809,7 +1703,6 @@ impl<'p> Checker<'p> {
         }
         let uncertain = self.uncertain;
         let constructor = self.type_of_expr(file, self.hir(file)[c].extends);
-        let constructor = self.force(constructor);
         // `resolveStructuredTypeMembers`: the members of a class take its base constructor type, so a circle shows now.
         let _ = self.members(constructor);
         self.uncertain = uncertain;
@@ -2077,7 +1970,6 @@ impl<'p> Checker<'p> {
         extending: (FileId, Decl),
         report: impl FnOnce(&mut Self, TypeId, TypeId),
     ) -> Option<TypeId> {
-        let base = self.force(base);
         let unreduced = base;
         // `isGenericMappedType`: what a mapped type ranges over has to be known, and `keyof Y` takes the members of `Y`, which
         // take its base types. `getResolvedBaseConstraint`: a circle that comes of it goes through the key.
@@ -2375,13 +2267,12 @@ impl<'p> Checker<'p> {
                 // `getTypeOfPrototypeProperty`: `any` for each type parameter, those of what is around the class too.
                 // It can be assigned to (`isReadonlySymbol`).
                 let declared = self.declared_type(sym);
+                let count = self.type_arguments(declared).len();
                 let instance = match self.data(declared) {
-                    TypeData::Ref { target, args } if !args.is_empty() => {
-                        self.intern(TypeData::Ref {
-                            target: *target,
-                            args: vec![TypeId::ANY; args.len()].into(),
-                        })
-                    }
+                    TypeData::Ref { target, .. } if count != 0 => self.intern(TypeData::Ref {
+                        target: *target,
+                        args: vec![TypeId::ANY; count].into(),
+                    }),
                     _ => declared,
                 };
                 b.add(Prop {
@@ -3077,7 +2968,6 @@ impl<'p> Checker<'p> {
     /// `tryMergeUnionOfObjectTypeAndEmptyObject`: `{ a: T } | {}`, which is what `cond ? { a } : {}` and `cond && { a }` are,
     /// spreads like `{ a?: T }`.
     pub fn merge_object_or_nothing(&mut self, ty: TypeId) -> TypeId {
-        let ty = self.force(ty);
         if !self.is_union(ty) {
             return ty;
         }
@@ -3203,7 +3093,6 @@ impl<'p> Checker<'p> {
 
     /// `getSpreadType`: `{ ...left, ...right }`
     pub fn spread(&mut self, left: TypeId, right: TypeId) -> TypeId {
-        let (left, right) = (self.force(left), self.force(right));
         if self.is_any(left) || self.is_any(right) {
             return if left == TypeId::UNRESOLVED || right == TypeId::UNRESOLVED {
                 TypeId::UNRESOLVED
@@ -3519,7 +3408,6 @@ impl<'p> Checker<'p> {
         } else {
             base
         };
-        let ty = self.force(ty);
         let ty = if prop.flags.contains(PropFlags::WIDEN) {
             self.regular_object(ty)
         } else if prop.flags.contains(PropFlags::REGULAR) {
@@ -4069,7 +3957,7 @@ impl<'p> Checker<'p> {
             let ty = self.type_from_node(file, self.hir(file)[param].ty);
             let ty = self.instantiate(ty, prop.mapper);
             let ty = self.instantiate(ty, outer);
-            return self.force(ty);
+            return ty;
         }
         self.type_of_prop(prop, outer)
     }
@@ -4352,7 +4240,7 @@ impl<'p> Checker<'p> {
                     // `getTypeOfAccessors` calls `getReturnTypeFromBody` directly. The return type of the getter's signature is a
                     // separate resolution (`getReturnTypeOfSignature`), so a cycle through the property does not mark it.
                     let ty = self.return_type_of_fn_uncached(f, func);
-                    return self.force(ty);
+                    return ty;
                 }
                 // What the parameter of a setter starts out as says nothing about the property.
                 let setter = members
@@ -4507,7 +4395,6 @@ impl<'p> Checker<'p> {
     /// `apparent_type`, of what may look like something else.
     fn apparent_type_of_other(&mut self, ty: TypeId) -> TypeId {
         self.guard("apparent_type");
-        let ty = self.force(ty);
         // What extends nothing extends `unknown`.
         let ty = if self.is_deferred(ty) {
             self.base_constraint(ty)
@@ -4748,7 +4635,6 @@ impl<'p> Checker<'p> {
                         let param = self.type_param(file, mapped.param);
                         let name = self.type_from_node(file, mapped.name_ty);
                         let keys = self.mapped_constraint(file, node, mapper);
-                        let keys = self.force(keys);
                         let mut names = Vec::new();
                         for &key in self.parts(keys) {
                             let mut pairs = self.p.types.mapping(mapper).to_vec();
@@ -4780,10 +4666,9 @@ impl<'p> Checker<'p> {
             }
             // A variadic element gives way to what it extends only if that is arrays and tuples with no variadic element of their own.
             TypeData::Tuple {
-                elems,
-                flags,
-                readonly,
+                flags, readonly, ..
             } if flags.iter().any(|f| f.contains(ElemFlags::VARIADIC)) => {
+                let elems = self.type_arguments(t);
                 let mut new_elems = Vec::with_capacity(elems.len());
                 for (&elem, flag) in elems.iter().zip(flags.iter()) {
                     let mut new_elem = elem;
@@ -5041,7 +4926,6 @@ impl<'p> Checker<'p> {
             return self.find_property_in(ty, ty, name, access);
         }
         self.guard("type_of_property");
-        let ty = self.force(ty);
         if self.is_any(ty) {
             return Some((ty, Found::Property));
         }
@@ -5109,7 +4993,7 @@ impl<'p> Checker<'p> {
             });
             let members = self.members(whole)?;
             let value = self.applicable_index_type_for_name(&members, name)?;
-            return Some((self.force(value), Found::ByIndex));
+            return Some((value, Found::ByIndex));
         }
         // `getReducedApparentType`: with what a type parameter extends in its place, an intersection may be one that nothing can be.
         let apparent = self.apparent_type(ty);
@@ -5161,11 +5045,10 @@ impl<'p> Checker<'p> {
                 && name != known::length
                 && !self.is_numeric_name(name)
                 && let TypeData::Tuple {
-                    elems,
-                    flags,
-                    readonly,
+                    flags, readonly, ..
                 } = self.data(apparent)
             {
+                let elems = self.type_arguments(apparent);
                 let array = self.tuple_base_type(elems, flags, *readonly);
                 let array = self.type_with_this_argument(array, ty);
                 if let Some(of_array) = self.prop_ref(array, name) {
@@ -5198,16 +5081,17 @@ impl<'p> Checker<'p> {
             return None;
         }
         let value = self.applicable_index_type_for_name(&members, name)?;
-        Some((self.force(value), Found::ByIndex))
+        Some((value, Found::ByIndex))
     }
 
     /// `getRestTypeOfTupleType` of what `ty` looks like, if that is a tuple: what its elements from the first that is not fixed on
     /// hold, `undefined` if all are fixed.
     fn beyond_fixed_elements(&mut self, ty: TypeId) -> Option<TypeId> {
         let apparent = self.apparent_type(ty);
-        let TypeData::Tuple { elems, flags, .. } = self.data(apparent) else {
+        let TypeData::Tuple { flags, .. } = self.data(apparent) else {
             return None;
         };
+        let elems = self.type_arguments(apparent);
         let fixed = flags
             .iter()
             .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))

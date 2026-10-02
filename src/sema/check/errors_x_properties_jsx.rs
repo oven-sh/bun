@@ -1056,7 +1056,6 @@ impl Checker<'_> {
 
     /// Whether `getTypeOfPropertyOfType(ty, name)` finds nothing. An index signature is no property. `None`: it cannot be told.
     fn instance_lacks_property(&mut self, ty: TypeId, name: Atom) -> Option<bool> {
-        let ty = self.force(ty);
         if !self.is_known(ty) {
             return None;
         }

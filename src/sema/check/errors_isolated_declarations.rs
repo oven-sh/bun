@@ -2038,9 +2038,10 @@ impl<'p> Checker<'p> {
                 self.iso_is_object_equivalent(tx, elements, stripped, reports)
             }
             Pseudo::Tuple(elements) => {
-                let TypeData::Tuple { elems, flags, .. } = self.data(stripped) else {
+                let TypeData::Tuple { flags, .. } = self.data(stripped) else {
                     return false;
                 };
+                let elems = self.type_arguments(stripped);
                 if flags.iter().any(|f| !f.contains(ElemFlags::REQUIRED))
                     || elements.len() != elems.len()
                 {

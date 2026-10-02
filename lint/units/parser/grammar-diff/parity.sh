@@ -18,6 +18,7 @@
 #      EXPECT  zero (default) | differ: the binary under test is known to differ and the run has to see it, in
 #              every seam of the seams corpus and in every pair of MUST_SEE
 #      FINE    1 (default): an error is message, line, column, length, offset, level, notes | 0: message, line, column
+#      RUNTIME_CORPORA, PMDIFF_CORPORA   the corpora of those two steps, default the small ones
 # A binary with debug assertions ends the message of Lexer::expect_contextual_keyword with " (token: T...)": its runs are
 # compared without that text, and the steps runtime and pmdiff are left out for it.
 # The body is functions, so that an edit of this file during a run does not reach the run.
@@ -555,11 +556,11 @@ run_steps() {
       files) files ;;
       runtime)
         [ $STRIP = 0 ] || { echo "skip  runtime: a binary with debug assertions names its cache entries *.debug.pile"; continue; }
-        for r in seams testrows comments targeted small-sub bench; do runtime_one "$r"; done
+        for r in $RUNTIME_CORPORA; do runtime_one "$r"; done
         ;;
       pmdiff)
         [ $STRIP = 0 ] || { echo "skip  pmdiff: left to the release build"; continue; }
-        for r in seams testrows comments targeted; do pmdiff_one "$r"; done
+        for r in $PMDIFF_CORPORA; do pmdiff_one "$r"; done
         ;;
       seams | testrows | comments | targeted | small-sub | check | bench | tscases | repo-ts | repo-js | small)
         pair main "$c"
@@ -601,6 +602,8 @@ parity() {
   FINE=${FINE:-1}
   JOBS=${JOBS:-4}
   MUST_SEE=${MUST_SEE:-main.seams extra.seams main.testrows extra.testrows main.comments extra.comments main.targeted extra.targeted main.small-sub extra.small-sub main.check extra.check main.tscases extra.tscases main.small extra.small files runtime.seams runtime.testrows pmdiff.seams pmdiff.testrows}
+  RUNTIME_CORPORA=${RUNTIME_CORPORA:-seams testrows comments targeted small-sub bench}
+  PMDIFF_CORPORA=${PMDIFF_CORPORA:-seams testrows comments targeted}
   [ $# -ge 2 ] || { echo "usage: parity.sh <tag> <bun under test> [step ...]"; return 2; }
   TAG=$1
   NEXT=$(readlink -f "$2")
@@ -632,7 +635,7 @@ parity() {
   for c in "$@"; do
     case $c in
       bench | tscases | repo-ts | repo-js) made="$made $c" ;;
-      runtime) case " $made " in *" bench "*) ;; *) made="$made bench" ;; esac ;;
+      runtime) case " $RUNTIME_CORPORA " in *" bench "*) case " $made " in *" bench "*) ;; *) made="$made bench" ;; esac ;; esac ;;
     esac
   done
   if [ -n "$made" ]; then

@@ -719,18 +719,18 @@ mod stand_ins {
         pub fn get_contextual_type_for_object_literal_method(&mut self, node: NodeId, context_flags: ContextFlags) -> TypeId {
             loop {}
         }
-
-        pub fn substitute_indexed_mapped_type(&mut self, object_type: TypeId, index: TypeId) -> TypeId {
-            loop {}
-        }
-
-        pub fn get_true_type_from_conditional_type(&mut self, t: TypeId) -> TypeId {
-            loop {}
-        }
-
-        pub fn get_false_type_from_conditional_type(&mut self, t: TypeId) -> TypeId {
-            loop {}
-        }
+// checker/c47_promised_mapped_template.rs
+    pub fn substitute_indexed_mapped_type(&mut self, object_type: TypeId, index: TypeId) -> TypeId {
+        loop {}
+    }
+// checker/c40_type_nodes_conditional_tuples.rs
+    pub fn get_true_type_from_conditional_type(&mut self, t: TypeId) -> TypeId {
+        loop {}
+    }
+// checker/c40_type_nodes_conditional_tuples.rs
+    pub fn get_false_type_from_conditional_type(&mut self, t: TypeId) -> TypeId {
+        loop {}
+    }
     }
 
 // checker/utilities.rs

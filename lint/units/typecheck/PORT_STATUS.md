@@ -658,9 +658,11 @@ tree, and no `.bits()`, `^` or `!` on a flag value in `printer/`.
 
 The 13 files of `printer/` (4,841 lines) came in with `5b2df1d046` (the three writers and the writer interface),
 `2936f8152a` (the emit context, its factory, the flags, the resolver types, `utilities.rs`) and `92805dc7b2` (the
-printer and the name generator); `1eb0da9d53` took two lines out of `printer.rs`. Layer 6 of round 2 declares the directory: the line
-`pub mod printer;` of `lib.rs` is `c73680fe1d`, next to `pub mod nodebuilder;`, whose flag macro four files of
-`printer/` call. The commits of this layer were written by the job that commits the worktree ("typecheck: compile the
+printer and the name generator); `1eb0da9d53` took two lines out of `printer.rs`.
+
+Layer 6 of round 2 declares the directory: the line `pub mod printer;` of `lib.rs` is `c73680fe1d`, next to
+`pub mod nodebuilder;`, whose flag macro four files of `printer/` call. The commits of this layer were written by the
+job that commits the worktree ("typecheck: compile the
 port, work in progress"): `a518aba15d` (`ast/deepclone.rs`), `a8df180054` (`printer/factory.rs`, `printer/printer.rs`,
 `printer/utilities.rs`), `c73680fe1d` (`ast/mod.rs`, `lib.rs`). `src/typecheck/Cargo.toml` did not change: the
 directory names `bun_core` and `bun_collections` only.
@@ -676,10 +678,12 @@ report and not a reading of it), and what answers each point:
   `printer::NodeFactory` (a node through `on_create` and `on_clone`, a list as `Factory` does) in `printer/factory.rs`.
   `ast/factory.rs` did not change.
 - `write` twice in `impl Printer` (`write(text)` of printer.go 304 and `Write(node, sourceFile, writer, ..)` of 5069):
-  the exported one is `write_exported`, as the tree names every such pair (API.md). No file of layers 1 to 6 calls it.
+  the exported one is `write_exported`, as the tree names such pairs (API.md: `get_spelling_suggestion_exported`,
+  `bind_source_file_exported`, `resolve_alias_exported`). No file of layers 1 to 6 calls it.
 - `new_token` not found at `printer.rs` 2793: the file imports the trait `crate::ast::NodeFactory` now.
 - `raw_text` on an `Option` at `utilities.rs` 263: `a.template_literal_like_data(node).unwrap_or_default().raw_text`.
-  Upstream dereferences `node.TemplateLiteralLikeData()`, which is not nil for the four kinds of that arm.
+  Upstream dereferences `node.TemplateLiteralLikeData()`, which is not nil for a node of the four kinds of that arm
+  that its own constructor made; where it would be nil, the zero record is read here and no fault is recorded.
 - 18 borrow errors in `Printer::emit_property_access_expression`: `NodeFactory<'c>` gave the tree and the borrow of the
   emit context one lifetime, and `Ast` is invariant. It is `NodeFactory<'a, 'c>` and
   `new_node_factory<'a, 'c>(a: Ast<'a>, context: &'c mut EmitContext)` now; `printer.rs` did not change for this.
@@ -738,7 +742,7 @@ function of `printer/` has its name, underscores, case and the suffix `_exported
 | --- | --- | --- | --- |
 | `printer/printer.go` (378 functions) | `printer/printer.rs` (3,133 lines) | translated | by name, 180; 198 nowhere in the tree. The head comment of the file names the limit: the printer as far as the type printer of the checker runs it, no source maps. `Printer.Write` is `write_exported` |
 | `printer/emitcontext.go` (87 functions) | `printer/emitcontext.rs` | translated | by name, 24; 55 nowhere in the tree (variable and lexical environments, emit helpers, snippet elements, assigned names, the visitor hooks of a transformation) and 8 whose name only another directory has |
-| `printer/factory.go` 13-27 (`NodeFactory`, `NewNodeFactory`) | `printer/factory.rs` (`NodeFactory<'a, 'c>`, `new_node_factory`, and the three hooks as its impls of `NodeSink`, `NodeUpdate` and `NodeClone`) | translated | 29-1315, 89 functions: generated names, the expressions and helper calls that transformations build |
+| `printer/factory.go` 13-27 (`NodeFactory`, `NewNodeFactory`) | `printer/factory.rs` (`NodeFactory<'a, 'c>`, `new_node_factory`, and the three hooks as its impls of `NodeSink`, `NodeUpdate` and `NodeClone`) | translated | 29-1315, 90 functions (89 have no name in the tree): generated names, the expressions and helper calls that transformations build |
 | `printer/namegenerator.go` (25 functions) | `printer/namegenerator.rs` | translated | by name, 3; 21 nowhere in the tree. The head comment: `GenerateName` returns `None` where upstream calls back into the printer |
 | `printer/generatedidentifierflags.go` (9 functions) | `printer/generatedidentifierflags.rs` | translated | by name, 2; 7 nowhere in the tree |
 | `printer/utilities.go` (51 functions) | `printer/utilities.rs` | translated | by name, 20; 30 nowhere in the tree |

@@ -6732,8 +6732,14 @@ impl<'p> Checker<'p> {
     }
 
     /// `newTypeParameter(newSymbol(SymbolFlagsTypeParameter, name))`. There is no type parameter without a declaration: it is a clone
-    /// of `param`, renamed as `unique_type_params` renames.
-    pub(super) fn renamed_type_param(&self, param: TypeId, name: Atom) -> Option<TypeId> {
+    /// of `param`, renamed as `unique_type_params` renames. `serial` tells it from the others that are made of `param`: an entry of
+    /// the mapper like the one for the name.
+    pub(super) fn renamed_type_param(
+        &self,
+        param: TypeId,
+        name: Atom,
+        serial: usize,
+    ) -> Option<TypeId> {
         let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
             return None;
         };
@@ -6741,6 +6747,8 @@ impl<'p> Checker<'p> {
         let mut pairs = self.p.types.mapping(around).to_vec();
         pairs.retain(|pair| pair.0 != declared);
         pairs.push((declared, self.string_literal(name, false)));
+        let serial = self.number_literal(serial as f64, true);
+        pairs.push((serial, serial));
         Some(self.cloned_type_param(file, tp, self.p.types.mapper(pairs)))
     }
 

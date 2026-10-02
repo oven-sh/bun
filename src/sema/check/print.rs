@@ -2396,6 +2396,13 @@ impl<'p> Printer<'_, 'p> {
         self.symbol_of_type_parameter(found) != self.symbol_of_type_parameter(parameter)
     }
 
+    /// `newTypeParameter(newSymbol(SymbolFlagsTypeParameter, "T"))`: another each time, as long as each is named before the next is made.
+    fn new_type_parameter(&self, like: TypeId) -> Option<TypeId> {
+        let name = self.c.files().atoms.intern(b"T");
+        self.c
+            .renamed_type_param(like, name, self.type_parameter_names.len())
+    }
+
     /// `typeParameterToName`
     fn type_parameter_to_name(&mut self, parameter: TypeId) -> String {
         let raw = self.name_of_type_parameter(parameter);
@@ -4490,8 +4497,7 @@ impl<'p> Printer<'_, 'p> {
             || needs_modifier_preserving_wrapper
         {
             let key = self.c.mapped_type_param(ty);
-            self.c
-                .renamed_type_param(key, self.c.files().atoms.intern(b"T"))
+            self.new_type_parameter(key)
         } else {
             None
         };
@@ -4633,8 +4639,7 @@ impl<'p> Printer<'_, 'p> {
         let new_type_variable = if self.flags & GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS != 0
             && !self.c.is_type_param(check_type)
         {
-            self.c
-                .renamed_type_param(root_check_type, self.c.files().atoms.intern(b"T"))
+            self.new_type_parameter(root_check_type)
         } else {
             None
         };

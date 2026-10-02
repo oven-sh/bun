@@ -5992,47 +5992,52 @@ impl<'p> Checker<'p> {
             ExprKind::Super => Some(self.type_of_expr(file, e)),
             ExprKind::Dot { obj, name, .. } => {
                 let obj = self.explicit_type(file, obj)?;
-                let apparent = self.apparent_type(obj);
-                let (prop, mapper) = self.prop_ref(apparent, name)?;
-                // `getExplicitTypeOfSymbol`: a method, or a property whose first declaration says its type. Not what a getter gives,
-                // whatever it says.
-                if prop.flags.contains(PropFlags::ACCESSOR) {
-                    return None;
-                }
-                match &prop.source {
-                    PropSource::Members(members) => {
-                        let (f, m) = members[0];
-                        let member = &self.hir(f)[m];
-                        if member.kind == MemberKind::Property && member.ty.is_none() {
-                            return None;
-                        }
-                    }
-                    PropSource::Parameter(f, p) => {
-                        if self.hir(*f)[*p].ty.is_none() {
-                            return None;
-                        }
-                    }
-                    PropSource::Literal(..) => return None,
-                    PropSource::Symbol(sym) => {
-                        self.explicit_type_of_symbol(*sym)?;
-                    }
-                    // `isExpandoPropertyFunctionWithReturnTypeAnnotation`
-                    PropSource::Assigned(f, assignments) => {
-                        let h = self.hir(*f);
-                        let says_what_it_returns = assignments.first().is_some_and(|&first| {
-                            matches!(h[first].kind, ExprKind::Assign { value, .. }
-                                if !is_parenthesized(h, value) && matches!(h[value].kind, ExprKind::Fn(func) if h[func].ret.is_some()))
-                        });
-                        if !says_what_it_returns {
-                            return None;
-                        }
-                    }
-                    _ => {}
-                }
-                Some(self.type_of_prop(prop, mapper))
+                self.explicit_type_of_property(obj, name)
             }
             _ => None,
         }
+    }
+
+    /// `getExplicitTypeOfSymbol`, of the property `name` of `obj`.
+    fn explicit_type_of_property(&mut self, obj: TypeId, name: Atom) -> Option<TypeId> {
+        let apparent = self.apparent_type(obj);
+        let (prop, mapper) = self.prop_ref(apparent, name)?;
+        // `getExplicitTypeOfSymbol`: a method, or a property whose first declaration says its type. Not what a getter gives,
+        // whatever it says.
+        if prop.flags.contains(PropFlags::ACCESSOR) {
+            return None;
+        }
+        match &prop.source {
+            PropSource::Members(members) => {
+                let (f, m) = members[0];
+                let member = &self.hir(f)[m];
+                if member.kind == MemberKind::Property && member.ty.is_none() {
+                    return None;
+                }
+            }
+            PropSource::Parameter(f, p) => {
+                if self.hir(*f)[*p].ty.is_none() {
+                    return None;
+                }
+            }
+            PropSource::Literal(..) => return None,
+            PropSource::Symbol(sym) => {
+                self.explicit_type_of_symbol(*sym)?;
+            }
+            // `isExpandoPropertyFunctionWithReturnTypeAnnotation`
+            PropSource::Assigned(f, assignments) => {
+                let h = self.hir(*f);
+                let says_what_it_returns = assignments.first().is_some_and(|&first| {
+                    matches!(h[first].kind, ExprKind::Assign { value, .. }
+                        if !is_parenthesized(h, value) && matches!(h[value].kind, ExprKind::Fn(func) if h[func].ret.is_some()))
+                });
+                if !says_what_it_returns {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        Some(self.type_of_prop(prop, mapper))
     }
 
     /// `getExplicitTypeOfSymbol`, of what a name or an export of a namespace stands for.
@@ -6041,7 +6046,11 @@ impl<'p> Checker<'p> {
         if self.is_stack_low() {
             return None;
         }
-        let sym = self.files().resolve_alias_if_needed(sym)?;
+        let Some(sym) = self.files().resolve_alias_if_needed(sym) else {
+            // `resolveSymbol`: what the tables do not have is a property.
+            let (obj, name) = self.property_access_of_alias(sym)?;
+            return self.explicit_type_of_property(obj, name);
+        };
         let flags = self.files().flags(sym);
         if flags.intersects(SymFlags::FUNCTION | SymFlags::CLASS | SymFlags::VALUE_MODULE) {
             return Some(self.type_of_symbol(sym));

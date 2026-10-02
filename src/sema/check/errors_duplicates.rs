@@ -3,8 +3,8 @@
 //!
 //! In TypeScript 7.0.2 this is spread over `declareSymbolEx` and `declareModuleMember` of binder.go, which refuse a declaration that
 //! what is in the table excludes, `mergeSymbol` of checker.go, which does the same between files,
-//! `checkObjectTypeForDuplicateDeclarations` and `checkTypeParameters`. The binder here says nothing of it, so the declarations are
-//! put in tables again.
+//! `checkObjectTypeForDuplicateDeclarations` and `checkTypeParameters`. What the binder refused is on record
+//! (`Bound::redeclarations`) and is reported here.
 
 use super::errors::Diagnostic;
 use super::*;
@@ -62,9 +62,6 @@ const TYPE: u32 = CLASS | INTERFACE | ENUM | ENUM_MEMBER | TYPE_PARAMETER | TYPE
 /// The local symbol of a name in a module or a namespace also lists what is exported under the name, which goes by another symbol.
 type Declaration = (FileId, Decl, bool);
 
-/// A list of statements, by its file and where it is among the lists of that, and `hasExportDeclarations` of it.
-type BodyExports = ((FileId, u32, u32), bool);
-
 /// What `declareSymbolEx` says of a declaration that would make `includes` of a name that is `flags` already.
 fn code_of_refusal(flags: u32, includes: u32) -> u32 {
     if (flags | includes) & ENUM != 0 {
@@ -97,13 +94,9 @@ fn excluded_by_member_flags(flags: u32) -> u32 {
 impl Checker<'_> {
     pub(super) fn check_duplicates(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let bound = self.bound(file);
-        let mut last_body = None;
         for i in 0..bound.symbols.len() {
             let symbol = &bound.symbols[i];
-            // The locals of a module or a namespace: `check_locals_of_bodies`.
-            if symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED)
-                || symbol.export_symbol.is_some()
-            {
+            if symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED) {
                 continue;
             }
             let sym = self.files().sym(file, SymbolId(i as u32));
@@ -111,9 +104,8 @@ impl Checker<'_> {
             if sym.file == file && sym.id.idx() != i {
                 continue;
             }
-            self.check_declarations_of(file, sym, &mut last_body, out);
+            self.check_declarations_of(file, sym, out);
         }
-        self.check_locals_of_bodies(file, out);
         self.check_refused_merges(file, out);
         self.check_duplicate_umd_globals(file, out);
         self.check_duplicate_members(file, out);
@@ -226,94 +218,6 @@ impl Checker<'_> {
             ),
             _ => return None,
         })
-    }
-
-    /// The modifiers `decl` is written with, or is under.
-    fn modifiers_of_declaration(&self, file: FileId, decl: Decl) -> Flags {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match decl {
-            Decl::Var(pat) => {
-                let mut root = pat;
-                loop {
-                    match bound.pat_parent[root.idx()] {
-                        PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => root = outer,
-                        PatParent::Var(d) => return hir[d].flags,
-                        _ => return Flags::empty(),
-                    }
-                }
-            }
-            Decl::Fn(f) => hir[f].flags,
-            Decl::Class(c) => hir[c].flags,
-            Decl::Interface(i) => hir[i].flags,
-            Decl::Alias(a) => hir[a].flags,
-            Decl::Enum(e) => hir[e].flags,
-            Decl::Module(m) => hir[m].flags,
-            Decl::ImportEquals(i) => hir[i].flags,
-            _ => Flags::empty(),
-        }
-    }
-
-    /// `declareModuleMember`: whether the declaration of `part` whose name is at `pos` is put among the exports of the module, namespace
-    /// or enum it is written in. `None`: it is written where nothing is exported. `last_body`: what was found out about the body that
-    /// was looked at last.
-    fn is_declared_among_exports(
-        &self,
-        part: Sym,
-        includes: u32,
-        pos: u32,
-        modifiers: Flags,
-        last_body: &mut Option<BodyExports>,
-    ) -> Option<bool> {
-        let (hir, bound) = (self.hir(part.file), self.bound(part.file));
-        let container = bound.symbols[part.id.idx()].parent;
-        if container.is_none() {
-            return None;
-        }
-        // Of the imports only `import a = b` can be exported, by saying so.
-        if includes == ALIAS {
-            return Some(modifiers.contains(Flags::EXPORT));
-        }
-        if includes == ENUM_MEMBER || modifiers.contains(Flags::EXPORT) {
-            return Some(true);
-        }
-        // The bodies of a namespace follow one another: it is in the last that starts before it.
-        let mut body: Option<ModuleId> = None;
-        let mut is_in_file = false;
-        for &d in &bound.symbols[container.idx()].decls {
-            match d {
-                Decl::Module(m)
-                    if hir[m].name_pos < pos
-                        && body.is_none_or(|b| hir[b].name_pos < hir[m].name_pos) =>
-                {
-                    body = Some(m)
-                }
-                Decl::File => is_in_file = true,
-                _ => {}
-            }
-        }
-        let in_declaration_file = hir.kind == FileKind::Declaration;
-        let (list, is_ambient) = match body {
-            Some(m) => (
-                hir[m].body,
-                in_declaration_file || hir[m].flags.contains(Flags::AMBIENT),
-            ),
-            None if is_in_file => (hir.body, in_declaration_file),
-            None => return None,
-        };
-        // `setExportContextFlag`
-        if !is_ambient {
-            return Some(false);
-        }
-        let body = (part.file, list.start, list.len);
-        let has_exports = match *last_body {
-            Some((last, has_exports)) if last == body => has_exports,
-            _ => {
-                let has_exports = has_export_declarations(hir, list);
-                *last_body = Some((body, has_exports));
-                has_exports
-            }
-        };
-        Some(!has_exports)
     }
 
     /// `getAdjustedNodeForError`: the start of the name of `decl`, or of `decl` itself if it has no name.
@@ -569,87 +473,42 @@ impl Checker<'_> {
         self.relate_reports_merged(start, code, is_again, related);
     }
 
-    /// The declarations of `sym`: those of each file as `declareSymbolEx` puts them in a table, then the files one after the other as
-    /// `mergeSymbol` puts them together. What is said about `file` is kept.
-    fn check_declarations_of(
-        &mut self,
-        file: FileId,
-        sym: Sym,
-        last_body: &mut Option<BodyExports>,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    /// The declarations of `sym`, the files one after the other as `mergeSymbol` puts them together. What is said about `file` is kept.
+    fn check_declarations_of(&mut self, file: FileId, sym: Sym, out: &mut Vec<Diagnostic>) {
         let files = self.files();
         let parts = files.every_part(sym);
-        if parts.len() == 1 && files.symbol(sym).decls.len() < 2 {
+        // What is exported as the default: `check_redeclared_exports`.
+        if parts.len() == 1 && files.symbol(sym).decls.len() < 2
+            || files.symbol(sym).name == known::default
+        {
             return;
         }
-        // The `declare global` blocks of a file are one namespace to the binder.
-        let is_in_global_block = |part: Sym| {
-            let bound = files.bound(part.file);
-            bound
-                .global_augmentations
-                .contains(&bound.symbols[part.id.idx()].parent)
-        };
         // What the files so far have come to.
         let mut target_flags = 0;
         let mut target: Vec<Declaration> = Vec::new();
         let mut source: Vec<Declaration> = Vec::new();
-        let mut from = 0;
-        while from < parts.len() {
-            let first = parts[from];
-            let more = parts[from + 1..]
-                .iter()
-                .take_while(|&&part| {
-                    part.file == first.file && is_in_global_block(first) && is_in_global_block(part)
-                })
-                .count();
+        for &part in parts.iter() {
             // What the file makes of the name, and `getExcludedSymbolFlags` of that.
             let (mut flags, mut excluded) = (0, 0);
             source.clear();
-            for &part in &parts[from..=from + more] {
-                for &decl in &files.symbol(part).decls {
-                    let (includes, excludes) =
-                        if matches!(decl, Decl::ExportSpec(_) | Decl::ExportStarAs(_)) {
-                            // `declareModuleMember`, `bindExportDeclaration`: an alias that is always declared among the exports.
-                            (ALIAS, ALIAS)
-                        } else {
-                            let Some((includes, excludes, pos)) =
-                                self.declaration_flags(part.file, decl)
-                            else {
-                                continue;
-                            };
-                            // Of a module or a namespace this is the table of exports. Its locals: `check_locals_of_bodies`. What is
-                            // exported as the default goes by that name: `check_redeclared_exports`.
-                            let modifiers = self.modifiers_of_declaration(part.file, decl);
-                            if let Some(is_exported) = self.is_declared_among_exports(
-                                part, includes, pos, modifiers, last_body,
-                            ) && (!is_exported || modifiers.contains(Flags::DEFAULT))
-                            {
-                                continue;
-                            }
-                            (includes, excludes)
-                        };
-                    let this = (part.file, decl, true);
-                    if flags & excludes == 0 {
-                        flags |= includes;
-                        excluded |= excludes;
-                        source.push(this);
-                        continue;
-                    }
-                    // What is refused gets a symbol of its own, which is not in the table.
-                    if part.file == file {
-                        let code = code_of_refusal(flags, includes);
-                        self.relate_export_type_without_braces(file, decl, code, out);
-                    }
-                    self.report_declarations(
-                        file,
-                        source.iter().chain(std::iter::once(&this)),
-                        code_of_refusal(flags, includes),
-                        out,
-                    );
+            for &decl in &files.symbol(part).decls {
+                let (includes, excludes) =
+                    if matches!(decl, Decl::ExportSpec(_) | Decl::ExportStarAs(_)) {
+                        (ALIAS, ALIAS)
+                    } else {
+                        match self.declaration_flags(part.file, decl) {
+                            Some((includes, excludes, _)) => (includes, excludes),
+                            None => continue,
+                        }
+                    };
+                let own = files.bound(part.file).symbol_of_declaration(decl);
+                let is_own = own.is_none() || own == part.id;
+                if is_own {
+                    flags |= includes;
+                    excluded |= excludes;
                 }
+                source.push((part.file, decl, is_own));
             }
-            from += more + 1;
             if source.is_empty() {
                 continue;
             }
@@ -694,95 +553,6 @@ impl Checker<'_> {
         if decls.len() > 1 {
             self.check_what_merges(file, decls, out);
             self.check_merged_members(file, decls, out);
-        }
-    }
-
-    /// `declareModuleMember`: the locals of each body of a module or a namespace. What is exported leaves no more than a mark there, which
-    /// goes with everything, but is itself held against what is there.
-    fn check_locals_of_bodies(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let in_declaration_file = hir.kind == FileKind::Declaration;
-        let whole = self
-            .files()
-            .module(file)
-            .is_module()
-            .then_some((hir.body, in_declaration_file));
-        let bodies = hir
-            .modules
-            .iter()
-            .enumerate()
-            .filter(|&(i, _)| bound.module_symbol[i].is_some())
-            .map(|(_, m)| {
-                (
-                    m.body,
-                    in_declaration_file || m.flags.contains(Flags::AMBIENT),
-                )
-            });
-        let mut declared: Vec<(Atom, Decl, Flags)> = Vec::new();
-        let mut accepted: Vec<Declaration> = Vec::new();
-        for (list, is_ambient) in whole.into_iter().chain(bodies) {
-            declared.clear();
-            declared.reserve(list.len());
-            // `bindEachStatementFunctionsFirst`
-            for functions in [true, false] {
-                for s in hir.ids(list) {
-                    if matches!(hir[s].kind, StmtKind::Fn(_)) == functions {
-                        declared_by_statement(hir, s, false, &mut declared);
-                    }
-                }
-            }
-            // `setExportContextFlag`
-            let is_export_context = is_ambient && !has_export_declarations(hir, list);
-            // Those of one name next to each other, in the order they came.
-            declared.sort_by_key(|d| d.0);
-            let mut from = 0;
-            while from < declared.len() {
-                let to = from
-                    + declared[from..]
-                        .iter()
-                        .take_while(|d| d.0 == declared[from].0)
-                        .count();
-                if to - from > 1 {
-                    let mut flags = 0;
-                    accepted.clear();
-                    for &(_, decl, modifiers) in &declared[from..to] {
-                        // `bindVariableDeclarationOrBindingElement`: a variable initialized to `require(..)` is an alias.
-                        let decl = match decl {
-                            Decl::Var(pat) if bound.required_by(hir, pat).is_some() => {
-                                Decl::Require(pat)
-                            }
-                            _ => decl,
-                        };
-                        let Some((includes, excludes, _)) = self.declaration_flags(file, decl)
-                        else {
-                            continue;
-                        };
-                        let is_exported = includes != ALIAS
-                            && (is_export_context || modifiers.contains(Flags::EXPORT));
-                        // The mark is `SymbolFlagsExportValue` or nothing at all: no declaration excludes either.
-                        let mark = if is_exported { 0 } else { includes };
-                        if flags & excludes == 0 {
-                            flags |= mark;
-                            accepted.push((file, decl, !is_exported));
-                            continue;
-                        }
-                        let code = if modifiers.contains(Flags::DEFAULT) {
-                            2528
-                        } else {
-                            code_of_refusal(flags, mark)
-                        };
-                        self.relate_export_type_without_braces(file, decl, code, out);
-                        self.report_declarations(
-                            file,
-                            accepted.iter().chain(std::iter::once(&(file, decl, true))),
-                            code,
-                            out,
-                        );
-                    }
-                    self.check_declarations_that_merged(file, &accepted, out);
-                }
-                from = to;
-            }
         }
     }
 
@@ -1972,104 +1742,4 @@ fn start_after_tokens(text: &[u8], pos: u32, tokens: &[&[u8]]) -> Option<u32> {
         at += token.len();
     }
     Some(skip_trivia(text, at) as u32)
-}
-
-/// What the statement `s` puts among the locals of the body of a module or a namespace it is in: name, declaration, modifiers.
-/// `is_in_block`: there is a block between the two, out of which only `var` gets.
-fn declared_by_statement(
-    hir: &File,
-    s: StmtId,
-    is_in_block: bool,
-    into: &mut Vec<(Atom, Decl, Flags)>,
-) {
-    if s.is_none() {
-        return;
-    }
-    match hir[s].kind {
-        StmtKind::Var(decls) => {
-            for d in decls.iter() {
-                if !is_in_block || hir[d].kind == VarKind::Var {
-                    let mut names = Vec::new();
-                    names_bound_by(hir, hir[d].pat, &mut names);
-                    into.extend(
-                        names
-                            .iter()
-                            .map(|&(name, pat)| (name, Decl::Var(pat), hir[d].flags)),
-                    );
-                }
-            }
-        }
-        // `GetContainerFlags`: these are no blocks themselves.
-        StmtKind::If { yes, no, .. } => [yes, no]
-            .into_iter()
-            .for_each(|x| declared_by_statement(hir, x, is_in_block, into)),
-        StmtKind::While { body, .. }
-        | StmtKind::DoWhile { body, .. }
-        | StmtKind::Labeled { body, .. } => {
-            declared_by_statement(hir, body, is_in_block, into);
-        }
-        StmtKind::Block(list) => hir
-            .ids(list)
-            .for_each(|x| declared_by_statement(hir, x, true, into)),
-        StmtKind::For { init, body, .. } => [init, body]
-            .into_iter()
-            .for_each(|x| declared_by_statement(hir, x, true, into)),
-        StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. } => {
-            [left, body]
-                .into_iter()
-                .for_each(|x| declared_by_statement(hir, x, true, into));
-        }
-        StmtKind::Switch { cases, .. } => {
-            for case in cases.iter() {
-                hir.ids(hir[case].body)
-                    .for_each(|x| declared_by_statement(hir, x, true, into));
-            }
-        }
-        StmtKind::Try {
-            block,
-            handler,
-            finalizer,
-            ..
-        } => {
-            [block, handler, finalizer]
-                .into_iter()
-                .for_each(|x| declared_by_statement(hir, x, true, into));
-        }
-        _ if is_in_block => {}
-        // An unnamed default has no local symbol.
-        StmtKind::Fn(f) if hir[f].name.is_some() => {
-            into.push((hir[f].name, Decl::Fn(f), hir[f].flags))
-        }
-        StmtKind::Class(c) if hir[c].name.is_some() => {
-            into.push((hir[c].name, Decl::Class(c), hir[c].flags))
-        }
-        StmtKind::Interface(i) => into.push((hir[i].name, Decl::Interface(i), hir[i].flags)),
-        StmtKind::TypeAlias(a) => into.push((hir[a].name, Decl::Alias(a), hir[a].flags)),
-        StmtKind::Enum(e) => into.push((hir[e].name, Decl::Enum(e), hir[e].flags)),
-        StmtKind::Module(m) => {
-            if let ModuleName::Ident(name) = hir[m].name {
-                into.push((name, Decl::Module(m), hir[m].flags));
-            }
-        }
-        StmtKind::Import(i) => {
-            let import = &hir[i];
-            if import.default.is_some() {
-                into.push((import.default, Decl::ImportDefault(i), Flags::empty()));
-            }
-            if import.namespace.is_some() {
-                into.push((import.namespace, Decl::ImportNamespace(i), Flags::empty()));
-            }
-            into.extend(
-                import
-                    .named
-                    .iter()
-                    .map(|spec| (hir[spec].local, Decl::ImportSpec(spec), Flags::empty())),
-            );
-        }
-        // One that is exported goes straight to the exports.
-        StmtKind::ImportEquals(i) if !hir[i].flags.contains(Flags::EXPORT) => {
-            into.push((hir[i].name, Decl::ImportEquals(i), Flags::empty()))
-        }
-        _ => {}
-    }
 }

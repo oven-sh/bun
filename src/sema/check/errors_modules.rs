@@ -132,7 +132,7 @@ impl Checker<'_> {
             let next = next_name(&hir.text, at + text.len() as u32);
             let exported = files.namespace_member(resolved, name);
             // `getSymbol`: an alias goes by what it stands for.
-            let found = exported.filter(|&m| files.means(m, wanted)).or_else(|| {
+            let found = self.get_symbol(exported, wanted).or_else(|| {
                 // The exports of the alias target come second. `resolveAlias` stops at the first symbol with a meaning of its own.
                 if !files.flags(resolved).contains(SymFlags::ALIAS) {
                     return None;

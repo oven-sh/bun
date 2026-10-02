@@ -58,6 +58,8 @@ pub struct Module {
     /// The `package.json` in `PackageJsonDirectory`, if no `PackageJsonType` goes with it. `NONE` otherwise, and unless `module` is
     /// `node16` or `node18`: nothing else asks.
     pub package_json_without_type: Atom,
+    /// `SourceFileMetaData.PackageJsonDirectory`: where the `package.json` nearest to the file is. None: there is none.
+    pub package_json_directory: Atom,
     /// The specifiers that lead to JavaScript nothing declares the types of, and the way they are looked for when they do.
     pub untyped_imports: Few<(Atom, ResolutionMode)>,
     /// For each of `untyped_imports`: the file it leads to, and `PackageId.Name` of the package that file is in.
@@ -353,11 +355,14 @@ pub struct Files {
     /// The aliases `resolveAlias` found to be circular (2303) while `mergeSymbol` resolved the target of a merge. Their `aliasTarget`
     /// stays `unknownSymbol`, even if the merge breaks the cycle.
     pub circular_at_merge: Vec<Sym>,
+    /// The aliases `mergeSymbol` resolved to add to what they stand for, with the links they got then. `aliasTarget` is a part of
+    /// something since (`cloneSymbol`), and `resolveAlias` does not ask `getMergedSymbol`.
+    resolved_at_merge: Vec<(Sym, AliasSymbolLinks)>,
     /// `cloneTypeAsModuleType`: the symbol made for an `import * as ns`, by the alias that declares (`originatingImport`). Whether the
     /// alias stands for it or for what it is a copy of, only types tell.
     module_clones: FxHashMap<Sym, Sym>,
-    /// `exportTypeLinks.target`: what each of them is a copy of.
-    module_clone_targets: FxHashMap<Sym, Sym>,
+    /// `exportTypeLinks.target`, `originatingImport`: what each of them is a copy of, and what for.
+    module_clone_targets: FxHashMap<Sym, (Sym, Sym)>,
     /// Some file says `export type * from`.
     has_type_only_stars: bool,
 
@@ -1919,6 +1924,7 @@ impl Files {
             merged_member: FxHashMap::default(),
             refused_merges: Vec::new(),
             circular_at_merge: Vec::new(),
+            resolved_at_merge: Vec::new(),
             module_clones: FxHashMap::default(),
             module_clone_targets: FxHashMap::default(),
             has_type_only_stars,
@@ -2406,6 +2412,9 @@ impl Files {
             implied_format,
             default_mode,
             package_json_without_type,
+            package_json_directory: resolver
+                .package_json_directory(path)
+                .map_or(Atom::NONE, |directory| atoms.intern(directory.as_bytes())),
             edges: Vec::new(),
             redirected_imports: Few::default(),
             project_reference_imports: project_reference_imports.into(),
@@ -2640,7 +2649,7 @@ impl Files {
             match self.module_of_specifier_as(file, name, self.module(file).default_mode) {
                 // What is added to a module that is `export = ns` is added to `ns`.
                 Some(target) => {
-                    let target = self.module_value(target);
+                    let target = self.external_module_symbol_to_augment(target);
                     // `mergeModuleAugmentation`: what is `export =` something that is no namespace cannot be added to.
                     if !self.flags(target).intersects(SymFlags::NAMESPACE) {
                         continue;
@@ -2712,6 +2721,9 @@ impl Files {
                 is_circular: true,
                 ..AliasSymbolLinks::default()
             };
+            self.alias_symbol_links.insert_ref(alias, links);
+        }
+        for &(alias, links) in &self.resolved_at_merge {
             self.alias_symbol_links.insert_ref(alias, links);
         }
         self.memo = Memo::new(&symbols);
@@ -2910,8 +2922,56 @@ impl Files {
             self.merged_exports.insert(result, exports);
         }
         self.module_clones.insert(originating_import, result);
-        self.module_clone_targets.insert(result, symbol);
+        self.module_clone_targets
+            .insert(result, (symbol, originating_import));
         result
+    }
+
+    /// `resolveExternalModuleSymbol(mainModule)` of `mergeModuleAugmentation`. Where the `export =` of `module` leads through an
+    /// `import * as ns`, `resolveESModuleSymbol` makes the copy now, of what there is now. Whether it does is asked of the tables:
+    /// there are no types yet.
+    fn external_module_symbol_to_augment(&mut self, module: Sym) -> Sym {
+        let value = self.module_value(module);
+        let Some(mut at) = self.export(module, known::export_equals) else {
+            return value;
+        };
+        for _ in 0..32 {
+            if !self.is_non_local_alias(at) {
+                return value;
+            }
+            let import = self.declaration_of_alias_symbol(at);
+            if let Some((file, Decl::ImportNamespace(import))) = import {
+                let import = &self.hir(file)[import];
+                let mode = self.mode_of_import(file, import.mode);
+                let imported = self.module_of_specifier_as(file, import.spec, mode);
+                // `hasSignatures(typ) || getPropertyOfType(typ, "default") != nil || isEsmCjsRef`
+                if !self
+                    .flags(value)
+                    .intersects(SymFlags::FUNCTION | SymFlags::CLASS)
+                    && self.export(value, known::default).is_none()
+                    && !imported.is_some_and(|imported| self.is_commonjs_to_node(file, imported))
+                {
+                    return value;
+                }
+                let originating_import = self.canonical(at);
+                if let Some(&clone) = self.module_clones.get(&originating_import) {
+                    return clone;
+                }
+                let clone = self.clone_type_as_module_type(value, originating_import);
+                // `merge_symbol` adds to a transient symbol as it is.
+                self.symbol_mut(clone).flags |= SymFlags::MERGED;
+                self.merged_parts
+                    .entry(clone)
+                    .or_insert_with(|| vec![value]);
+                self.every_part.entry(clone).or_insert_with(|| vec![value]);
+                return clone;
+            }
+            match self.alias_target(at) {
+                Some(next) if next != at => at = next,
+                _ => return value,
+            }
+        }
+        value
     }
 
     /// One for each `import * as ns`. No symbol can be made once symbols are put together.
@@ -3048,7 +3108,11 @@ impl Files {
                         self.refused_merges.push((target, source));
                         return source;
                     }
-                    Some(found) => resolved = found,
+                    Some(found) => {
+                        self.resolved_at_merge
+                            .push((target, self.alias_links(target)));
+                        resolved = found;
+                    }
                     // It may be a property of what a module `export =`s, which only the type of that tells. The alias goes on standing
                     // for it.
                     None if self.may_be_property_of_export_equals(target) => {}
@@ -3404,24 +3468,10 @@ impl Files {
         flags
     }
 
-    /// `getParentOfSymbol`. `Symbol::parent` is what a declaration is written in, exported or not. `declareSymbolEx` gives a `Parent`
-    /// to what is declared among the exports, be it refused there, and `bindAnonymousDeclaration` to a member of an enum.
+    /// `getParentOfSymbol`
     pub fn parent_of_symbol(&self, sym: Sym) -> Option<Sym> {
-        let declared = self.symbol(sym);
-        if declared.parent.is_none() {
-            return None;
-        }
-        let parent = self.sym(sym.file, declared.parent);
-        let bound = self.bound(sym.file);
-        let has_parent = declared.flags.contains(SymFlags::ENUM_MEMBER)
-            || self.export(parent, declared.name) == Some(sym)
-            || bound
-                .lookup(bound.symbols[declared.parent.idx()].exports, declared.name)
-                .is_some_and(|there| {
-                    let mut refused = bound.redeclarations.iter();
-                    refused.any(|it| it.symbol == there && declared.decls.contains(&it.decl))
-                });
-        has_parent.then_some(parent)
+        let parent = self.symbol(sym).parent;
+        parent.is_some().then(|| self.sym(sym.file, parent))
     }
 
     /// `getExportSymbolOfValueSymbolIfExported`
@@ -4282,7 +4332,15 @@ impl Files {
         if !self.flags(symbol).contains(SymFlags::TRANSIENT) {
             return None;
         }
-        self.module_clone_targets.get(&symbol).copied()
+        Some(self.module_clone_targets.get(&symbol)?.0)
+    }
+
+    /// `exportTypeLinks.originatingImport`
+    pub fn originating_import_of_module_clone(&self, symbol: Sym) -> Option<Sym> {
+        if !self.flags(symbol).contains(SymFlags::TRANSIENT) {
+            return None;
+        }
+        Some(self.module_clone_targets.get(&symbol)?.1)
     }
 
     /// `IsNonLocalAlias`: an alias and nothing else.

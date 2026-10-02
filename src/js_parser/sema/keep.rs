@@ -437,7 +437,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             (true, Some(args)) => args,
             (true, None) => return self.clear_last_type(),
         };
-        self.emit_type(TypeData::Typeof { name, args }, pos);
+        let data = TypeData::Typeof {
+            name,
+            args,
+            has_type_arguments: has_arguments,
+        };
+        self.emit_type(data, pos);
     }
 
     // ───────────────────────────── other types ─────────────────────────────

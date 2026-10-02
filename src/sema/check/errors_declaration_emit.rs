@@ -18,8 +18,8 @@ use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::json::Json;
 use crate::resolve::{
-    JsxEmit, is_declaration_file_name, is_relative, join, known_extension, node_module_path_parts,
-    parent_dir,
+    JsxEmit, contains_path, is_declaration_file_name, is_relative, join, known_extension,
+    node_module_path_parts, parent_dir,
 };
 use crate::util::FxHashSet;
 use std::rc::Rc;
@@ -688,52 +688,31 @@ impl<'p> Checker<'p> {
         if symbol == self.files().global_this_symbol {
             return None;
         }
-        let files = self.files();
-        for part in files.parts(self.target_of_module_clone(symbol)) {
-            let (hir, bound) = (self.hir(part.file), self.bound(part.file));
-            let mut at = part.id;
-            loop {
-                let declared = &bound.symbols[at.idx()];
-                // `hasExternalModuleSymbol`
-                let is_module = declared.decls.iter().any(|&decl| match decl {
-                    Decl::File => files.module(part.file).is_module(),
-                    Decl::Module(m) => !matches!(hir[m].name, ModuleName::Ident(_)),
-                    _ => false,
-                });
-                if is_module {
-                    return Some(files.sym(part.file, at));
-                }
-                if declared.parent.is_none() {
-                    break;
-                }
-                at = declared.parent;
-            }
-            if files.module(part.file).is_module() {
-                return Some(files.file_symbol(part.file));
-            }
-        }
-        None
+        let declarations = self.files().decls_of(self.target_of_module_clone(symbol));
+        declarations.iter().find_map(|&(file, decl)| {
+            let scope = self.bound(file).scope_of_declaration(self.hir(file), decl);
+            self.external_module_container(file, scope)
+        })
     }
 
-    /// `c.getExternalModuleContainer(enclosingDeclaration)`
-    fn external_module_container_of_scope(&self, at: Enclosing) -> Option<Sym> {
+    /// `getExternalModuleContainer`
+    fn external_module_container(&self, file: FileId, mut scope: ScopeId) -> Option<Sym> {
         let files = self.files();
-        let (hir, bound) = (self.hir(at.file), self.bound(at.file));
-        let mut scope = at.scope;
+        let (hir, bound) = (self.hir(file), self.bound(file));
         while scope.is_some() {
             let s = &bound.scopes[scope.idx()];
             if let ScopeKind::Module(m) = s.kind
                 && !matches!(hir[m].name, ModuleName::Ident(_))
                 && s.symbol.is_some()
             {
-                return Some(files.sym(at.file, s.symbol));
+                return Some(files.sym(file, s.symbol));
             }
             scope = s.parent;
         }
         files
-            .module(at.file)
+            .module(file)
             .is_module()
-            .then(|| files.file_symbol(at.file))
+            .then(|| files.file_symbol(file))
     }
 
     /// `resolveSymbol`
@@ -1193,6 +1172,10 @@ impl<'p> EmitResolver<'_, 'p> {
                 ScopeKind::Class(class) => {
                     let symbol = bound.class_symbol[class.idx()];
                     tables.push(Table::TypeMembers(files.sym(at.file, symbol)));
+                    // `getClassExpressionNameTable`: the binder has the name of a class expression among the locals of its scope.
+                    if matches!(bound.class_owner[class.idx()], ClassOwner::Expr(_)) {
+                        tables.push(Table::Locals(at.file, scope));
+                    }
                 }
                 ScopeKind::Interface(interface) => {
                     let symbol = bound.interface_symbol[interface.idx()];
@@ -2004,7 +1987,7 @@ impl<'p> EmitResolver<'_, 'p> {
             error_node: None,
         };
         if let Some(module) = self.c.external_module_container_of_symbol(symbol)
-            && Some(module) != self.c.external_module_container_of_scope(at)
+            && Some(module) != self.c.external_module_container(at.file, at.scope)
         {
             result.accessibility = Accessibility::CannotBeNamed;
             result.module_name = self.c.symbol_text(module);
@@ -3816,6 +3799,25 @@ fn path_is_relative(path: &str) -> bool {
     path == "." || path == ".." || path.starts_with("./") || path.starts_with("../")
 }
 
+/// `PathIsBareSpecifier`
+fn path_is_bare_specifier(path: &str) -> bool {
+    !path.starts_with('/') && !path_is_relative(path)
+}
+
+/// `ensurePathIsNonModuleName`
+fn ensure_path_is_non_module_name(path: String) -> String {
+    if path_is_bare_specifier(&path) {
+        format!("./{path}")
+    } else {
+        path
+    }
+}
+
+/// `CountPathComponents`
+fn count_path_components(path: &str) -> usize {
+    path.strip_prefix("./").unwrap_or(path).matches('/').count()
+}
+
 /// `RemoveFileExtension`
 fn remove_file_extension(path: &str) -> &str {
     &path[..path.len() - known_extension(path).len()]
@@ -4229,7 +4231,7 @@ impl<'p> EmitResolver<'_, 'p> {
 
     /// `tryGetModuleNameAsNodeModule`: what the file at `path`, which is in `node_modules`, is called by `importing`. Empty: it cannot
     /// be named through `node_modules`.
-    fn module_name_as_node_module(
+    fn try_get_module_name_as_node_module(
         &self,
         path: &str,
         importing: FileId,
@@ -4325,8 +4327,33 @@ impl<'p> EmitResolver<'_, 'p> {
         package_name_from_types_package_name(&module_specifier[top_level_package_name + 1..])
     }
 
-    /// `GetEachFileNameOfModule`: the paths that lead to the file at `real` by a link to a directory it is in.
-    fn paths_through_links(&self, real: &str, importing: &str) -> Vec<String> {
+    /// `GetProjectReferenceFromSource(path).OutputDts`: the declaration file a referenced project emits for its source file at `path`.
+    fn output_dts_of_project_reference_source(&self, path: &str) -> Option<String> {
+        let extension = match known_extension(path) {
+            ".ts" | ".tsx" => ".d.ts",
+            ".mts" => ".d.mts",
+            ".cts" => ".d.cts",
+            _ => return None,
+        };
+        for (output_dir, root_dir) in &self.c.files().options.referenced_outputs {
+            if let Some(relative) = path.strip_prefix(root_dir.as_str())
+                && relative.starts_with('/')
+            {
+                let relative = remove_file_extension(relative);
+                return Some([output_dir.as_str(), relative, extension].concat());
+            }
+        }
+        None
+    }
+
+    /// `GetEachFileNameOfModule`: the paths that lead to one of `targets` by a link to a directory the file at `real` is in. With each
+    /// path, here and from here on, whether it `IsRedirect`.
+    fn paths_through_links(
+        &self,
+        real: &str,
+        targets: &[(String, bool)],
+        importing: &str,
+    ) -> Vec<(String, bool)> {
         let links = &self.c.files().linked_directories;
         let mut paths = Vec::new();
         let mut directory = parent_dir(real);
@@ -4340,8 +4367,14 @@ impl<'p> EmitResolver<'_, 'p> {
                 {
                     break;
                 }
-                for link in to_here {
-                    paths.push([link.1.as_str(), &real[directory.len()..]].concat());
+                let to_here: Vec<&(String, String)> = to_here.collect();
+                for (target, is_redirect) in targets {
+                    let Some(rest) = target.strip_prefix(directory) else {
+                        continue;
+                    };
+                    for link in to_here.iter().filter(|_| rest.starts_with('/')) {
+                        paths.push(([link.1.as_str(), rest].concat(), *is_redirect));
+                    }
                 }
             }
             directory = parent_dir(directory);
@@ -4349,10 +4382,12 @@ impl<'p> EmitResolver<'_, 'p> {
         paths
     }
 
-    /// `getAllModulePathsWorker`, `computeModuleSpecifiers`, the first of them: what `importing` calls a file that all of `paths` lead to.
-    fn module_specifier_among(
+    /// `getAllModulePathsWorker`, `computeModuleSpecifiers`, the first of them: what `importing` calls `target`, which all of `paths`
+    /// lead to.
+    fn compute_module_specifiers(
         &self,
-        mut paths: Vec<String>,
+        target: FileId,
+        mut paths: Vec<(String, bool)>,
         importing: FileId,
         mode: ResolutionMode,
         target_mode: ResolutionMode,
@@ -4372,45 +4407,225 @@ impl<'p> EmitResolver<'_, 'p> {
             }
             up
         };
+        // `comparePathsByRedirect`
         paths.sort_by(|a, b| {
-            distance(a)
-                .cmp(&distance(b))
-                .then(a.matches('/').count().cmp(&b.matches('/').count()))
-                .then(a.cmp(b))
+            distance(&a.0)
+                .cmp(&distance(&b.0))
+                .then(b.1.cmp(&a.1))
+                .then(a.0.matches('/').count().cmp(&b.0.matches('/').count()))
+                .then(a.0.cmp(&b.0))
         });
         paths.dedup();
         let prefers_js =
             self.resolution_mode_for_specifier(importing, mode) == ResolutionMode::Import;
-        let is_in_node_modules = paths.iter().any(|path| path.contains("/node_modules/"));
-        let mut relative_specifier = None;
-        for path in &paths {
-            let is_through_node_modules = path.contains("/node_modules/");
-            if is_through_node_modules {
-                let name = self.module_name_as_node_module(path, importing, mode, prefers_js);
-                if !name.is_empty() {
-                    return name;
+        let allowed_endings = self.allowed_endings(importing, prefers_js, target_mode);
+        let imported_file_is_in_node_modules =
+            paths.iter().any(|path| path.0.contains("/node_modules/"));
+        // The first of `pathsSpecifiers`, `redirectPathsSpecifiers`, `nodeModulesSpecifiers`, `relativeSpecifiers`.
+        let (mut from_paths, mut from_redirect_paths) = (None, None);
+        let (mut from_node_modules, mut relative) = (None, None);
+        for (path, is_redirect) in &paths {
+            let is_redirect = *is_redirect;
+            let is_in_node_modules = path.contains("/node_modules/");
+            let mut specifier = String::new();
+            if is_in_node_modules {
+                specifier =
+                    self.try_get_module_name_as_node_module(path, importing, mode, prefers_js);
+            }
+            let paths_only = is_redirect || !specifier.is_empty();
+            if !specifier.is_empty() {
+                let first = from_node_modules.get_or_insert(specifier);
+                // "it was a bare package specifier .. No other specifier will be this good, so stop looking."
+                if is_redirect {
+                    return std::mem::take(first);
                 }
             }
-            // A relative path to another package is not portable: the one through `node_modules` is taken, which is reported.
-            if relative_specifier.is_none() && (is_through_node_modules || !is_in_node_modules) {
-                let relative = relative_path_from_directory(from, path);
-                let relative = if path_is_relative(&relative) {
-                    relative
+            let local = self.get_local_module_specifier(
+                path,
+                target,
+                importing,
+                &allowed_endings,
+                paths_only,
+            );
+            if local.is_empty() {
+                continue;
+            }
+            if is_redirect {
+                from_redirect_paths.get_or_insert(local);
+            } else if path_is_bare_specifier(&local) {
+                if local.contains("/node_modules/") {
+                    relative.get_or_insert(local);
                 } else {
-                    format!("./{relative}")
-                };
-                relative_specifier = Some(self.process_ending(
-                    &relative,
-                    &self.allowed_endings(importing, prefers_js, target_mode),
-                ));
+                    from_paths.get_or_insert(local);
+                }
+            } else if !imported_file_is_in_node_modules || is_in_node_modules {
+                // A relative path to another package is not portable: the one through `node_modules` is taken, which is reported.
+                relative.get_or_insert(local);
             }
         }
-        relative_specifier.unwrap_or_default()
+        from_paths
+            .or(from_redirect_paths)
+            .or(from_node_modules)
+            .or(relative)
+            .unwrap_or_default()
     }
 
-    /// `GetModuleSpecifiers`, the first of them: what `importing` calls the file `target`. Empty: it is not worked out, which `paths`,
-    /// `rootDirs` and links in the file system would have a say in.
-    fn module_specifier(&self, target: FileId, importing: FileId, mode: ResolutionMode) -> String {
+    /// `getLocalModuleSpecifier`, for `RelativePreferenceExternalNonRelative`: `getSpecifierForModuleSymbol` asks for
+    /// `ImportModuleSpecifierPreferenceProjectRelative`. `module_file_name` leads to `target`.
+    fn get_local_module_specifier(
+        &self,
+        module_file_name: &str,
+        target: FileId,
+        importing: FileId,
+        allowed_endings: &[Ending],
+        paths_only: bool,
+    ) -> String {
+        let files = self.c.files();
+        let options = &files.options;
+        if paths_only && options.paths.is_empty() {
+            return String::new();
+        }
+        let source_directory = parent_dir(&files.module(importing).path);
+        let mut relative_path = self.try_get_module_name_from_root_dirs(
+            module_file_name,
+            source_directory,
+            allowed_endings,
+        );
+        if relative_path.is_empty() {
+            let relative = relative_path_from_directory(source_directory, module_file_name);
+            relative_path =
+                self.process_ending(&ensure_path_is_non_module_name(relative), allowed_endings);
+        }
+        // `GetPathsBasePath`
+        let base_directory = match options.paths_base_dir.as_str() {
+            "" => options.base_dir.as_str(),
+            said => said,
+        };
+        // `tryGetModuleNameFromPackageJsonImports` is not ported: nothing is called by a `#name` yet.
+        let maybe_non_relative = self.try_get_module_name_from_paths(
+            &relative_path_from_directory(base_directory, module_file_name),
+            allowed_endings,
+            base_directory,
+        );
+        if paths_only {
+            return maybe_non_relative;
+        }
+        if maybe_non_relative.is_empty() {
+            return relative_path;
+        }
+        if !path_is_relative(&maybe_non_relative) {
+            let project_directory = match options.config_path.as_str() {
+                "" => options.base_dir.as_str(),
+                config_path => parent_dir(config_path),
+            };
+            let is_internal = |path: &str| contains_path(project_directory, path, true);
+            // The import crosses the directory of the configuration file, or goes from one package to another.
+            return if is_internal(source_directory) != is_internal(module_file_name)
+                || files.module(importing).package_json_directory
+                    != files.module(target).package_json_directory
+            {
+                maybe_non_relative
+            } else {
+                relative_path
+            };
+        }
+        // `isPathRelativeToParent`
+        if maybe_non_relative.starts_with("..")
+            || count_path_components(&relative_path) < count_path_components(&maybe_non_relative)
+        {
+            relative_path
+        } else {
+            maybe_non_relative
+        }
+    }
+
+    /// `tryGetModuleNameFromRootDirs`
+    fn try_get_module_name_from_root_dirs(
+        &self,
+        module_file_name: &str,
+        source_directory: &str,
+        allowed_endings: &[Ending],
+    ) -> String {
+        let root_dirs = &self.c.files().options.root_dirs;
+        // `getPathsRelativeToRootDirs`
+        let relative_to_root_dirs = |path: &str| -> Vec<String> {
+            root_dirs
+                .iter()
+                .map(|root_dir| relative_path_from_directory(root_dir, path))
+                .filter(|relative| !relative.starts_with(".."))
+                .collect()
+        };
+        let target_paths = relative_to_root_dirs(module_file_name);
+        let mut shortest: Option<String> = None;
+        for source_path in relative_to_root_dirs(source_directory) {
+            for target_path in &target_paths {
+                let candidate = ensure_path_is_non_module_name(relative_path_from_directory(
+                    &source_path,
+                    target_path,
+                ));
+                let separators = candidate.matches('/').count();
+                if shortest
+                    .as_ref()
+                    .is_none_or(|shortest| separators < shortest.matches('/').count())
+                {
+                    shortest = Some(candidate);
+                }
+            }
+        }
+        match shortest {
+            Some(shortest) => self.process_ending(&shortest, allowed_endings),
+            None => String::new(),
+        }
+    }
+
+    /// `tryGetModuleNameFromPaths`. `validateEnding` holds for every candidate: it runs `processEnding` again, with the same host.
+    fn try_get_module_name_from_paths(
+        &self,
+        relative_to_base_url: &str,
+        allowed_endings: &[Ending],
+        base_directory: &str,
+    ) -> String {
+        for (key, values) in &self.c.files().options.paths {
+            for pattern_text in values {
+                let normalized = join(base_directory, pattern_text);
+                let pattern = relative_path_from_directory(base_directory, &normalized);
+                let mut candidates: Vec<String> = allowed_endings
+                    .iter()
+                    .map(|&ending| self.process_ending(relative_to_base_url, &[ending]))
+                    .collect();
+                // The extension is in the mapping, so the file itself is what the mapping leads to.
+                if !known_extension(&pattern).is_empty() {
+                    candidates.push(relative_to_base_url.to_owned());
+                }
+                let Some((prefix, suffix)) = pattern.split_once('*') else {
+                    if candidates.contains(&pattern) {
+                        return key.clone();
+                    }
+                    continue;
+                };
+                for value in &candidates {
+                    if value.len() >= prefix.len() + suffix.len()
+                        && value.starts_with(prefix)
+                        && value.ends_with(suffix)
+                    {
+                        let matched_star = &value[prefix.len()..value.len() - suffix.len()];
+                        if !path_is_relative(matched_star) {
+                            return key.replacen('*', matched_star, 1);
+                        }
+                    }
+                }
+            }
+        }
+        String::new()
+    }
+
+    /// `GetModuleSpecifiers`, the first of them: what `importing` calls the file `target`.
+    fn get_module_specifiers(
+        &self,
+        target: FileId,
+        importing: FileId,
+        mode: ResolutionMode,
+    ) -> String {
         let files = self.c.files();
         let from = files.module(importing);
         let target_mode = if mode == ResolutionMode::None {
@@ -4438,40 +4653,24 @@ impl<'p> EmitResolver<'_, 'p> {
                 break 'existing;
             }
         }
-        if !files.options.paths.is_empty() || !files.options.root_dirs.is_empty() {
-            return String::new();
-        }
-        let prefers_js =
-            self.resolution_mode_for_specifier(importing, mode) == ResolutionMode::Import;
+        // `GetEachFileNameOfModule`
         let path = files.module(target).path.as_str();
-        let mut paths = self.paths_through_links(path, &from.path);
-        if !paths.is_empty() {
-            // `containsIgnoredPath`
-            if !["/node_modules/.", "/.git", ".#"]
+        // What a referenced project emits for the file comes first: that is what the `exports` of its package lead to.
+        let reference_redirect = self.output_dts_of_project_reference_source(path);
+        let mut targets: Vec<(String, bool)> = Vec::with_capacity(2);
+        targets.extend(reference_redirect.map(|output| (output, true)));
+        targets.push((path.to_owned(), false));
+        let mut paths = self.paths_through_links(path, &targets, &from.path);
+        // `containsIgnoredPath`, `shouldFilterIgnoredPaths`
+        let contains_ignored_path = |path: &str| {
+            ["/node_modules/.", "/.git", ".#"]
                 .iter()
                 .any(|ignored| path.contains(ignored))
-            {
-                paths.push(path.to_owned());
-            }
-            return self.module_specifier_among(paths, importing, mode, target_mode);
-        }
-        if path.contains("/node_modules/") {
-            let name = self.module_name_as_node_module(path, importing, mode, prefers_js);
-            if !name.is_empty() {
-                return name;
-            }
-        }
-        // `getLocalModuleSpecifier`
-        let relative = relative_path_from_directory(parent_dir(&from.path), path);
-        let relative = if path_is_relative(&relative) {
-            relative
-        } else {
-            format!("./{relative}")
         };
-        self.process_ending(
-            &relative,
-            &self.allowed_endings(importing, prefers_js, target_mode),
-        )
+        let filters = !paths.is_empty() || !targets.iter().all(|it| contains_ignored_path(&it.0));
+        targets.retain(|it| !(filters && contains_ignored_path(&it.0)));
+        paths.append(&mut targets);
+        self.compute_module_specifiers(target, paths, importing, mode, target_mode)
     }
 
     /// `getSpecifierForModuleSymbol`
@@ -4520,7 +4719,7 @@ impl<'p> EmitResolver<'_, 'p> {
             (Some(name), _, None) => self.c.atom_text(name),
             (_, Some(name), _) => name,
             (_, None, target) => match target.or_else(|| self.c.source_file_of_module(symbol)) {
-                Some(target) => self.module_specifier(target, importing, mode),
+                Some(target) => self.get_module_specifiers(target, importing, mode),
                 None => String::new(),
             },
         };
@@ -4535,12 +4734,10 @@ impl<'p> EmitResolver<'_, 'p> {
         if a.1.is_empty() || b.1.is_empty() {
             return self.c.compare_symbols_of_chain(a.0, b.0);
         }
-        // `CountPathComponents`
-        let components = |path: &str| path.strip_prefix("./").unwrap_or(path).matches('/').count();
         match (path_is_relative(&a.1), path_is_relative(&b.1)) {
             (false, true) => std::cmp::Ordering::Less,
             (true, false) => std::cmp::Ordering::Greater,
-            _ => components(&a.1).cmp(&components(&b.1)),
+            _ => count_path_components(&a.1).cmp(&count_path_components(&b.1)),
         }
     }
 

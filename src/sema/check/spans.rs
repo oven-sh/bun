@@ -1457,7 +1457,9 @@ impl<'a> Spans<'a> {
             TypeNodeKind::IndexedAccess { index, .. } => self.close(self.ty_in(index, pos), b']'),
             // `unique symbol`
             TypeNodeKind::UniqueSymbol => self.eat_name(self.token(pos)),
-            TypeNodeKind::Typeof { name, args, expr } => {
+            TypeNodeKind::Typeof {
+                name, args, expr, ..
+            } => {
                 let name_end = if expr.is_some() {
                     self.expr(expr)
                 } else {

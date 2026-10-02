@@ -271,6 +271,8 @@ pub enum TypeData {
     Typeof {
         name: Span<Name>,
         args: IdList<Type>,
+        /// `<` and `>` are written, with or without types between them.
+        has_type_arguments: bool,
     },
     /// `import("specifier").A.B<Args>`, `typeof import("specifier")`
     Import(ImportTypeId),

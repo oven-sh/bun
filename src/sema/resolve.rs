@@ -1435,6 +1435,11 @@ impl<'h> Resolver<'h> {
         }
     }
 
+    /// `loadSourceFileMetaData`, `PackageJsonDirectory`: where the `package.json` nearest to the file at `path` is.
+    pub fn package_json_directory<'d>(&self, path: &'d str) -> Option<&'d str> {
+        Some(self.package_scope(parent_dir(path))?.0)
+    }
+
     /// `loadSourceFileMetaData`: the `package.json` nearest to the file at `path` (`PackageJsonDirectory`), if there is one and no
     /// `PackageJsonType` comes of it.
     pub fn package_json_without_type(&self, path: &str) -> Option<String> {
@@ -2403,7 +2408,7 @@ impl<'h> Resolver<'h> {
 }
 
 /// `ContainsPath`, of two paths that are absolute and normalized: `child` is `parent`, or is in it.
-fn contains_path(parent: &str, child: &str, is_case_sensitive: bool) -> bool {
+pub(crate) fn contains_path(parent: &str, child: &str, is_case_sensitive: bool) -> bool {
     let Some(start) = child.get(..parent.len()) else {
         return false;
     };

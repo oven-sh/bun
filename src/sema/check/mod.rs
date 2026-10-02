@@ -602,6 +602,7 @@ impl Program {
             recent_sig_type_params: Box::new([(SigId(u32::MAX), &[] as &[TypeId]); RECENT_SIGS]),
             awaiting: Vec::new(),
             last_flow_node: (FileId(u32::MAX), crate::bind::FlowId::NONE, false),
+            undefined_properties: FxHashMap::default(),
             iife_resolving: Vec::new(),
             inferential: None,
             flow_loops: Vec::new(),
@@ -937,6 +938,8 @@ pub struct Checker<'p> {
     awaiting: Vec<TypeId>,
     /// `lastFlowNode`, `lastFlowNodeReachable`
     last_flow_node: (FileId, crate::bind::FlowId, bool),
+    /// `undefinedProperties`. There it lasts as long as a checker, which checks many files. Here a checker checks one.
+    undefined_properties: FxHashMap<Atom, Prop>,
     /// The calls of functions written on the spot whose arguments are being looked at to type the parameters.
     iife_resolving: Vec<(FileId, ExprId)>,
     /// The argument whose type is asked for in order to infer from it: its type variables stay (`CheckModeInferential`).

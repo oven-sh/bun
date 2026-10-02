@@ -1266,6 +1266,8 @@ pub enum TypeNodeKind {
     Typeof {
         name: IdList<Atom>,
         args: IdList<TypeNodeId>,
+        /// `TypeArguments != nil`: `typeof f<>` has a list, which is empty.
+        has_type_arguments: bool,
         expr: ExprId,
     },
     /// `import("spec").A.B<Args>`, `typeof import("spec")`

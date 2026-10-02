@@ -978,7 +978,9 @@ impl<'p> Printer<'_, 'p> {
                 let query = if is_typeof { "typeof " } else { "" };
                 // Not `IsLiteralImportTypeNode`: `VisitEachChild`. The argument is the one type in `args`.
                 if spec.is_none() {
-                    let argument = self.visit_existing_type_node(file, hir.ids(args).next()?, 0)?;
+                    let argument = hir.ids(args).next()?;
+                    let argument =
+                        self.visit_existing_type_node(file, argument, hir[argument].pos)?;
                     let mut text = format!("{query}import({})", argument.text);
                     for part in hir.ids(name) {
                         text.push('.');
@@ -1659,7 +1661,7 @@ impl<'p> Printer<'_, 'p> {
                 if there == here
                     || files.export_symbol_of_value_symbol_if_exported(there)
                         == files.export_symbol_of_value_symbol_if_exported(here)
-                    || files.resolve_alias(there) == files.resolve_alias(here) =>
+                    || self.c.resolve_alias(there) == self.c.resolve_alias(here) =>
             {
                 there
             }

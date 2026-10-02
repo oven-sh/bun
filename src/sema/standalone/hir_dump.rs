@@ -1378,8 +1378,24 @@ impl Dump<'_> {
                 self.ty(d, "obj", obj);
                 self.ty(d, "index", index);
             }
-            TypeNodeKind::Typeof { name, args, expr } => {
-                put!(self, depth, label, "{head} name={}", self.names(name));
+            TypeNodeKind::Typeof {
+                name,
+                args,
+                has_type_arguments,
+                expr,
+            } => {
+                let empty_list = if has_type_arguments && args.is_empty() {
+                    " <>"
+                } else {
+                    ""
+                };
+                put!(
+                    self,
+                    depth,
+                    label,
+                    "{head} name={}{empty_list}",
+                    self.names(name)
+                );
                 self.list(d, "args", args, Self::ty);
                 self.expr(d, "expr", expr);
             }

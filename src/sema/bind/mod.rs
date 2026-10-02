@@ -287,7 +287,8 @@ pub struct Symbol {
     pub flags: SymFlags,
     /// `Declarations`, in the order they are bound.
     pub decls: Decls,
-    /// The module, namespace or enum it is a member of.
+    /// `Parent`, as `declareSymbolEx` sets it: the module, namespace or enum among whose exports it is declared, be it refused there.
+    /// `NONE` for a local.
     pub parent: SymbolId,
     /// What a module, namespace or enum exports.
     pub exports: TableId,
@@ -1272,6 +1273,57 @@ impl Bound {
             Decl::TypeParam(it) => self.type_param_symbol[it.idx()],
             Decl::Expando(it) | Decl::ObjectLiteral(it) => self.expr_symbol[it.idx()],
             _ => SymbolId::NONE,
+        }
+    }
+
+    /// Where `FindAncestor` from `decl` starts, as far as scopes go: the scope a file, a module or a namespace makes, and the one any
+    /// other declaration is written in. `NONE`: the binder did not come to it, or it is an assignment.
+    pub fn scope_of_declaration(&self, hir: &File, decl: Decl) -> ScopeId {
+        let around = |made: ScopeId| {
+            let made = self.scopes.get(made.idx());
+            made.map_or(ScopeId::NONE, |scope| scope.parent)
+        };
+        let of_statement = |it: StmtId| {
+            self.stmt_scope
+                .get(it.idx())
+                .map_or(ScopeId::NONE, |&it| it)
+        };
+        match decl {
+            Decl::File | Decl::CommonJsVariable => ScopeId(0),
+            Decl::Module(it) => self.module_scope[it.idx()],
+            Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => {
+                let mut root = pat;
+                loop {
+                    match self.pat_parent[root.idx()] {
+                        PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => root = outer,
+                        PatParent::Var(it) => return of_statement(self.var_stmt[it.idx()]),
+                        PatParent::Param(it) => {
+                            let function = self.fns.get(self.param_fn[it.idx()].idx());
+                            return function.map_or(ScopeId::NONE, |function| function.scope);
+                        }
+                        PatParent::None => return ScopeId::NONE,
+                    }
+                }
+            }
+            Decl::Fn(it) => around(self.fns[it.idx()].scope),
+            Decl::Class(it) => around(self.class_scope[it.idx()]),
+            Decl::Interface(it) => around(self.interface_scope[it.idx()]),
+            Decl::Alias(it) => around(self.alias_scope[it.idx()]),
+            Decl::Enum(it) => around(self.enum_scope[it.idx()]),
+            Decl::EnumMember(it) => {
+                let owner = self.enum_scope.get(self.enum_member_owner[it.idx()].idx());
+                owner.map_or(ScopeId::NONE, |&it| it)
+            }
+            Decl::TypeParam(it) => self.type_param_scope[it.idx()],
+            Decl::ImportDefault(it) | Decl::ImportNamespace(it) => self.import_scope[it.idx()],
+            Decl::ImportSpec(it) => self.import_scope[hir[it].import.idx()],
+            Decl::ImportEquals(it) => self.import_equals_scope[it.idx()],
+            Decl::ExportSpec(it) => self.export_scope[hir[it].export.idx()],
+            Decl::ExportStarAs(it) | Decl::ExportExpr(it) | Decl::UmdGlobal(it) => of_statement(it),
+            Decl::ModuleExports(_)
+            | Decl::ExportsProperty(_)
+            | Decl::Expando(_)
+            | Decl::ObjectLiteral(_) => ScopeId::NONE,
         }
     }
 

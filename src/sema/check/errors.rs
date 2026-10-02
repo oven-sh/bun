@@ -1674,7 +1674,8 @@ impl Checker<'_> {
         let parent = bound.expr_parent[e.idx()];
         if hir.kind == FileKind::Declaration
             || matches!(parent, Parent::None)
-            || !is_automatic && bound.is_in_type_query(e)
+            || !is_automatic
+                && (bound.is_in_type_query(e) || self.is_in_ambient_or_type_node(file, parent))
         {
             return true;
         }
@@ -1828,50 +1829,21 @@ impl Checker<'_> {
 
     /// `getControlFlowContainer`, of what is directly in `parent`.
     pub(super) fn get_control_flow_container(&self, file: FileId, mut parent: Parent) -> Container {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        let bound = self.bound(file);
         loop {
             let func = match parent {
                 Parent::FnBody(f) => f,
-                Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
-                    bound.param_fn[p.idx()]
-                }
-                // Its name and its decorators are inside of a member.
-                Parent::MethodKey(p) => match hir[hir[p].value].kind {
-                    ExprKind::Fn(f) => f,
-                    _ => return Container::Other,
-                },
-                Parent::MemberKey(m)
-                | Parent::MemberInit(m)
-                | Parent::Decorator(_, DecoratorOwner::Member(m)) => {
-                    match bound.member_owner[m.idx()] {
-                        _ if hir[m].func.is_some() => hir[m].func,
-                        MemberOwner::Class(_) => return Container::Member(m),
-                        // A property signature is none.
-                        MemberOwner::Interface(i) => {
-                            parent = Parent::Stmt(hir[i].stmt);
-                            continue;
-                        }
-                        MemberOwner::TypeLiteral(_) | MemberOwner::None => return Container::Other,
-                    }
+                Parent::ParamDefault(p) => bound.param_fn[p.idx()],
+                Parent::MemberInit(m)
+                    if matches!(bound.member_owner[m.idx()], MemberOwner::Class(_)) =>
+                {
+                    return Container::Member(m);
                 }
                 Parent::Module(m) => return Container::Module(m),
                 Parent::File => return Container::File,
                 Parent::None => return Container::Other,
-                Parent::Expr(x) if x.is_none() => return Container::Other,
-                Parent::PropKey(_, p) => {
-                    parent = Parent::Expr(bound.prop_owner[p.idx()]);
-                    continue;
-                }
-                Parent::PatKey(p) => {
-                    parent = self.outward(file, Parent::PatPropDefault(p));
-                    continue;
-                }
-                Parent::EnumInit(m) => {
-                    parent = Parent::Stmt(hir[bound.enum_member_owner[m.idx()]].stmt);
-                    continue;
-                }
                 _ => {
-                    parent = self.outward(file, parent);
+                    parent = self.parent_of_node(file, parent);
                     continue;
                 }
             };
@@ -1879,6 +1851,76 @@ impl Checker<'_> {
                 Some(it) => parent = it,
                 None => return Container::Fn(func),
             }
+        }
+    }
+
+    /// `isInAmbientOrTypeNode`, of what is directly in `parent`.
+    fn is_in_ambient_or_type_node(&self, file: FileId, mut parent: Parent) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // `IsInterfaceDeclaration`, `IsTypeLiteralNode`
+        let is_in_type =
+            |m: MemberId| !matches!(bound.member_owner[m.idx()], MemberOwner::Class(_));
+        loop {
+            // `NodeFlagsAmbient`: what is in something ambient says so itself.
+            let flags = match parent {
+                Parent::None => return false,
+                Parent::File => return hir.kind == FileKind::Declaration,
+                Parent::MemberInit(m) if is_in_type(m) => return true,
+                Parent::MemberInit(m) => hir[m].flags,
+                Parent::FnBody(_) | Parent::ParamDefault(_) => {
+                    let f = match parent {
+                        Parent::ParamDefault(p) => bound.param_fn[p.idx()],
+                        Parent::FnBody(f) => f,
+                        _ => unreachable!(),
+                    };
+                    match bound.fns[f.idx()].owner {
+                        FnOwner::Member(m) if is_in_type(m) => return true,
+                        _ => hir[f].flags,
+                    }
+                }
+                Parent::VarInit(d) => hir[d].flags,
+                Parent::Module(m) => hir[m].flags,
+                Parent::Stmt(s) if s.is_some() => match hir[s].kind {
+                    StmtKind::Class(class) => hir[class].flags,
+                    StmtKind::Enum(enumeration) => hir[enumeration].flags,
+                    _ => Flags::empty(),
+                },
+                _ => Flags::empty(),
+            };
+            if flags.contains(Flags::AMBIENT) {
+                return true;
+            }
+            parent = self.parent_of_node(file, parent);
+        }
+    }
+
+    /// `node.Parent`, of what `parent` stands for. `None`: of a member of a type literal, whose parent is not kept.
+    fn parent_of_node(&self, file: FileId, parent: Parent) -> Parent {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        match parent {
+            Parent::Expr(x) if x.is_none() => Parent::None,
+            // Its name and its decorators are inside of a member or a parameter.
+            Parent::MethodKey(p) => match hir[hir[p].value].kind {
+                ExprKind::Fn(f) => Parent::FnBody(f),
+                _ => Parent::None,
+            },
+            Parent::MemberKey(m) | Parent::Decorator(_, DecoratorOwner::Member(m)) => {
+                if hir[m].func.is_some() {
+                    Parent::FnBody(hir[m].func)
+                } else {
+                    Parent::MemberInit(m)
+                }
+            }
+            Parent::Decorator(_, DecoratorOwner::Param(p)) => Parent::ParamDefault(p),
+            Parent::MemberInit(m) => match bound.member_owner[m.idx()] {
+                MemberOwner::Interface(i) => Parent::Stmt(hir[i].stmt),
+                _ => self.outward(file, parent),
+            },
+            Parent::PropKey(_, p) => Parent::Expr(bound.prop_owner[p.idx()]),
+            Parent::PatKey(p) => Parent::PatPropDefault(p),
+            Parent::EnumInit(m) => Parent::Stmt(hir[bound.enum_member_owner[m.idx()]].stmt),
+            Parent::Module(m) => Parent::Stmt(hir[m].stmt),
+            _ => self.outward(file, parent),
         }
     }
 
@@ -2319,8 +2361,11 @@ impl Checker<'_> {
             return;
         };
         let mut sym = self.files().module_value(module);
-        // What `export =` gives could not be found; what a JSON file has is up to what is in it.
-        if self.files().flags(sym).contains(SymFlags::ALIAS)
+        // What `export =` gives could not be found; what a JSON file has is up to what is in it. `resolveSymbol`: an `export =` that
+        // is a namespace too (`bindCommonJSTypeExports`) is `currentNamespace` itself.
+        let meanings = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
+        let flags = self.files().flags(sym);
+        if flags.contains(SymFlags::ALIAS) && !flags.intersects(meanings)
             || self.files().hir(module.file).kind == FileKind::Json
         {
             return;
@@ -2389,8 +2434,11 @@ impl Checker<'_> {
                         .flags(target)
                         .intersects(wanted)
                         .then_some(target),
-                    // What it stands for cannot be told.
-                    None => return,
+                    // What it stands for cannot be told, unless it is a property.
+                    None => match self.get_symbol_flags(member) {
+                        flags if flags == SymFlags::all() => return,
+                        flags => flags.intersects(wanted).then_some(member),
+                    },
                 },
                 None => None,
             };

@@ -396,16 +396,18 @@ impl<'f> Binder<'f> {
         let exports = self.b.symbols[container.idx()].exports;
         if flags.contains(SymFlags::ALIAS) {
             // Of the imports only `export import a = b` is exported, and it is among the exports alone.
-            let table = match decl {
-                Decl::ImportEquals(_) if exported => exports,
-                _ => locals,
+            return match decl {
+                Decl::ImportEquals(_) if exported => {
+                    self.declare_in(exports, name, flags, decl, container)
+                }
+                _ => self.declare_in(locals, name, flags, decl, SymbolId::NONE),
             };
-            return self.declare_in(table, name, flags, decl, container);
         }
         if !exported {
-            return self.declare_in(locals, name, flags, decl, container);
+            return self.declare_in(locals, name, flags, decl, SymbolId::NONE);
         }
-        let local = self.declare_symbol(locals, name, export_kind(flags), flags, decl, container);
+        let none = SymbolId::NONE;
+        let local = self.declare_symbol(locals, name, export_kind(flags), flags, decl, none);
         let symbol = self.declare_in(exports, name, flags, decl, container);
         self.b.symbols[local.idx()].export_symbol = symbol;
         symbol
@@ -443,9 +445,10 @@ impl<'f> Binder<'f> {
         }
         let exports = self.b.symbols[container.idx()].exports;
         // "No local symbol for an unnamed default!"
+        let none = SymbolId::NONE;
         let local = name
             .is_some()
-            .then(|| self.declare_symbol(locals, name, export_kind(flags), flags, decl, container));
+            .then(|| self.declare_symbol(locals, name, export_kind(flags), flags, decl, none));
         let symbol = self.declare_in(exports, known::default, flags, decl, container);
         if let Some(local) = local {
             self.b.symbols[local.idx()].export_symbol = symbol;

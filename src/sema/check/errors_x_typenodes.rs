@@ -2035,7 +2035,10 @@ impl Checker<'_> {
     fn check_instantiated_type_queries(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for t in 0..hir.types.len() {
-            let TypeNodeKind::Typeof { name, args, expr } = hir.types[t].kind else {
+            let TypeNodeKind::Typeof {
+                name, args, expr, ..
+            } = hir.types[t].kind
+            else {
                 continue;
             };
             let scope = bound.type_scope[t];

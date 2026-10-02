@@ -226,11 +226,16 @@ impl Builder<'_> {
             ts::TypeData::UniqueSymbol => TypeNodeKind::UniqueSymbol,
             // `getTypeFromTypeOperatorNode`: the error type. The parser has reported it (1005). The operand is not kept.
             ts::TypeData::UniqueOperator(_) => TypeNodeKind::Keyword(Keyword::Any),
-            ts::TypeData::Typeof { name, args } => {
+            ts::TypeData::Typeof {
+                name,
+                args,
+                has_type_arguments,
+            } => {
                 let expr = self.clone_entity_name_expression(name);
                 TypeNodeKind::Typeof {
                     name: self.clone_names(name),
                     args: self.clone_type_list(args),
+                    has_type_arguments,
                     expr,
                 }
             }

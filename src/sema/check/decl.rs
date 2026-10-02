@@ -2508,7 +2508,12 @@ impl<'p> Checker<'p> {
                     TypeId::BOOLEAN
                 }
             }
-            TypeNodeKind::Typeof { name, args, expr } => {
+            TypeNodeKind::Typeof {
+                name,
+                args,
+                has_type_arguments,
+                expr,
+            } => {
                 let narrowed = self.type_of_expr(file, expr);
                 // `getTypeFromTypeQueryNode`, `getWidenedType`: the value `undefined` says nothing without strictNullChecks. What is
                 // declared `undefined` stays so.
@@ -2541,7 +2546,8 @@ impl<'p> Checker<'p> {
                 } else {
                     self.regular(narrowed)
                 };
-                if args.is_empty() {
+                // `getInstantiationExpressionType`: `typeArguments == nil`
+                if !has_type_arguments {
                     return ty;
                 }
                 let args = self.types_from_nodes(file, args);
@@ -2970,7 +2976,7 @@ impl<'p> Checker<'p> {
             // "refers to an alias import/export/reexport"
             _ => self
                 .resolve_type_reference_name_as_alias(file, scope, node)
-                .and_then(|alias| self.files().resolve_alias(alias))
+                .and_then(|alias| self.resolve_alias(alias))
                 .filter(|&resolved| self.files().flags(resolved).contains(SymFlags::TYPE_ALIAS))
                 .map(|resolved| (resolved, SmallVec::from_slice(args))),
         };

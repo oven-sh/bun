@@ -199,6 +199,12 @@ impl<'p> Checker<'p> {
         if sym == self.files().undefined_symbol {
             return TypeId::UNDEFINED;
         }
+        // `cloneTypeAsModuleType` gives the symbol it makes its type.
+        if let Some(originating_import) = self.files().originating_import_of_module_clone(sym)
+            && let Some(ty) = self.type_of_namespace_import(originating_import)
+        {
+            return ty;
+        }
         let mut flags = self.files().flags(sym);
         // `mergeSymbol` keeps a declaration from another file out of the symbol when the flags conflict. `Files::merge_symbols`
         // merges it anyway, so drop the value kinds that lost the name.
@@ -529,6 +535,18 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `resolveAlias`, with what only types tell: whether an `import * as ns` on the way stands for a copy of the module
+    /// (`resolveESModuleSymbol`).
+    pub(super) fn resolve_alias(&mut self, alias: Sym) -> Option<Sym> {
+        if !self.files().flags(alias).contains(SymFlags::ALIAS) {
+            return Some(alias);
+        }
+        match self.originating_import_of_alias(alias) {
+            Some(originating_import) => self.files().module_clone(originating_import),
+            None => self.files().resolve_alias(alias),
+        }
+    }
+
     /// Whether the alias `sym` ends at a property.
     fn is_alias_of_property(&mut self, sym: Sym) -> bool {
         self.property_access_of_alias(sym).is_some()
@@ -545,7 +563,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getSymbol`
-    fn get_symbol(&mut self, held: Option<Sym>, meaning: SymFlags) -> Option<Sym> {
+    pub(super) fn get_symbol(&mut self, held: Option<Sym>, meaning: SymFlags) -> Option<Sym> {
         let files = self.files();
         let symbol = held.filter(|&symbol| files.means(symbol, meaning))?;
         // On the tables it ends nowhere, which passes for everything. It is a property.
@@ -602,7 +620,7 @@ impl<'p> Checker<'p> {
     /// Where the alias `sym` ends at a property: the type that has it, and its name. The symbol tables alone lead nowhere then. It is
     /// a property of the `export =` value of a module (`getExternalModuleMember`), or the `resolvedSymbol` of `a.b` in
     /// `exports.x = a.b` and the like (`getTargetOfAliasLikeExpression`).
-    fn property_access_of_alias(&mut self, sym: Sym) -> Option<(TypeId, Atom)> {
+    pub(super) fn property_access_of_alias(&mut self, sym: Sym) -> Option<(TypeId, Atom)> {
         let files = self.files();
         if !files.flags(sym).contains(SymFlags::ALIAS)
             || files.resolve_alias_as(sym, SymFlags::TYPE).is_some()
@@ -1249,6 +1267,28 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `getUndefinedProperty`. It is made once for a name, after the first property it is asked for, whose declarations it keeps.
+    fn get_undefined_property(&mut self, prop: &Prop) -> Prop {
+        if let Some(cached) = self.undefined_properties.get(&prop.name) {
+            return cached.clone();
+        }
+        // `undefinedOrMissingType`, which is not widened again wherever it is copied to.
+        let missing = if self.p.files.options.exact_optional_property_types {
+            TypeId::MISSING
+        } else {
+            self.undefined_as_declared()
+        };
+        let result = Prop {
+            name: prop.name,
+            // `createSymbolWithType`
+            flags: PropFlags::OPTIONAL | (prop.flags & PropFlags::READONLY),
+            source: Self::copy_of(missing, &[prop], true),
+            mapper: MapperId::IDENTITY,
+        };
+        self.undefined_properties.insert(prop.name, result.clone());
+        result
+    }
+
     /// `getWidenedTypeOfObjectLiteral`: every property is widened, and so is what is found under any key.
     fn widen_object_literal(&mut self, ty: TypeId, siblings: Option<&[TypeId]>) -> TypeId {
         let others: SmallVec<[TypeId; 8]> = siblings
@@ -1316,12 +1356,8 @@ impl<'p> Checker<'p> {
                 mapper: MapperId::IDENTITY,
             });
         }
-        // `getUndefinedProperty`: `undefinedOrMissingType`, which is not widened again wherever it is copied to.
-        let missing = if self.p.files.options.exact_optional_property_types {
-            TypeId::MISSING
-        } else {
-            self.undefined_as_declared()
-        };
+        // `getPropertiesOfContext`, less what `ty` has: the names in the order they are met, and the last there is of each.
+        let mut of_context: Vec<&Prop> = Vec::new();
         for &other in &others {
             if !self.is_closed_object_literal_type(other) {
                 continue;
@@ -1330,21 +1366,18 @@ impl<'p> Checker<'p> {
                 continue;
             };
             for prop in &theirs.shape().props {
-                match shape.props.iter().position(|p| p.name == prop.name) {
-                    None => shape.props.push(Prop {
-                        name: prop.name,
-                        // `createSymbolWithType`
-                        flags: PropFlags::OPTIONAL | (prop.flags & PropFlags::READONLY),
-                        source: Self::copy_of(missing, &[prop], true),
-                        mapper: MapperId::IDENTITY,
-                    }),
-                    // `getPropertiesOfContext`: it is made after the last there is of the name.
-                    Some(made) if made >= members.shape().props.len() => {
-                        shape.props[made].source = Self::copy_of(missing, &[prop], true);
-                    }
-                    Some(_) => {}
+                if shape.props.iter().any(|p| p.name == prop.name) {
+                    continue;
+                }
+                match of_context.iter().position(|p| p.name == prop.name) {
+                    None => of_context.push(prop),
+                    Some(met) => of_context[met] = prop,
                 }
             }
+        }
+        for prop in of_context {
+            let undefined = self.get_undefined_property(prop);
+            shape.props.push(undefined);
         }
         self.get_named_members(&mut shape.props, |_| true, &[]);
         for info in &members.shape().index {

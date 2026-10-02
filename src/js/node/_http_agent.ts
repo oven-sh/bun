@@ -347,11 +347,7 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
     // scope so retaining this arrow past its call cannot retain req.
     const done = cb;
     cb = undefined;
-    // Pass the socket along with the error: proxy-tunnel failures with a
-    // statusCode deliberately skip destroy in cleanupAndPropagate so
-    // req.onSocket can destroy the connection - dropping it here would leak
-    // a proxy socket that holds its end open after a non-200 CONNECT.
-    if (err) return done(err, s);
+    if (err) return done(err);
     this.sockets[name] ||= [];
     this.sockets[name].push(s);
     this.totalSocketCount++;
@@ -525,9 +521,7 @@ function onSocketCreatedForPending(this: any, req, queueName, err, socket) {
     }
     dropEmptySocketsEntry(this, queueName);
     handleSocketAfterProxy(err, req);
-    // Forward the socket (when the creation error left one behind) so
-    // onSocketNT can destroy it, like the non-pending path.
-    req.onSocket(socket ?? null, err);
+    req.onSocket(null, err);
     return;
   }
 

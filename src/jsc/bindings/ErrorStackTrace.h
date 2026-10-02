@@ -63,6 +63,7 @@ private:
 
     bool m_isFunctionOrEval = false;
     bool m_isAsync = false;
+    bool m_isCompiledAheadOfTime = false; // Then there is no m_codeBlock, and m_stackFrame answers.
 
     enum class SourcePositionsState {
         NotCalculated,
@@ -129,6 +130,8 @@ public:
     }
     bool isConstructor() const
     {
+        if (m_isCompiledAheadOfTime)
+            return m_stackFrame->isConstructor();
         return m_codeBlock && (JSC::CodeSpecializationKind::CodeForConstruct == m_codeBlock->specializationKind());
     }
 

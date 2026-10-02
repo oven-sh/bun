@@ -118,6 +118,16 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
     ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
 {
+#if ENABLE(AOT)
+    // Code that was compiled ahead of time says where it is in the sources that the executable was made from. It has no CodeBlock
+    // (asking for one would make one), and there are no lines to show.
+    if (auto reported = stackFrame.reportedPosition(JSC::AOT::FunctionRef::OfConstruction::WhereItStarts)) {
+        position.line_zero_based = OrdinalNumber::fromOneBasedInt(reported->lineColumn.line).zeroBasedInt();
+        position.column_zero_based = OrdinalNumber::fromOneBasedInt(reported->lineColumn.column).zeroBasedInt();
+        position.byte_position = -1;
+        return;
+    }
+#endif
     auto code = stackFrame.codeBlock();
     if (!code)
         return;

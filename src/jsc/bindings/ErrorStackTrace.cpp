@@ -217,6 +217,14 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     if (frame.isWasmFrame()) {
         m_wasmFunctionIndexOrName = frame.wasmFunctionIndexOrName();
         m_isWasmFrame = true;
+#if ENABLE(AOT)
+    } else if (auto reported = frame.reportedPosition(JSC::AOT::FunctionRef::OfConstruction::WhereItStarts)) {
+        // Code that was compiled ahead of time. It has no CodeBlock, and asking for one would make one.
+        m_isCompiledAheadOfTime = true;
+        m_sourcePositions = { OrdinalNumber::fromOneBasedInt(reported->lineColumn.line), OrdinalNumber::fromOneBasedInt(reported->lineColumn.column) };
+        m_sourcePositionsState = SourcePositionsState::Calculated;
+        m_isFunctionOrEval = frame.codeType() == JSC::FunctionCode;
+#endif
     } else if (auto* codeBlock = frame.codeBlock()) {
         auto* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
         if (!unlinkedCodeBlock->isBuiltinFunction() || isVisibleBuiltinFunction(codeBlock)) {
@@ -230,11 +238,11 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
         }
     }
 
-    if (!m_codeBlock && frame.hasLineAndColumnInfo()) {
+    if (!m_codeBlock && !m_isCompiledAheadOfTime && frame.hasLineAndColumnInfo()) {
         auto lineColumn = frame.computeLineAndColumn();
         m_sourcePositions = { OrdinalNumber::fromOneBasedInt(lineColumn.line), OrdinalNumber::fromOneBasedInt(lineColumn.column) };
         m_sourcePositionsState = SourcePositionsState::Calculated;
-        auto codeType = frame.codeBlock()->codeType();
+        auto codeType = frame.codeType();
         if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
             m_isFunctionOrEval = true;
         }
@@ -243,6 +251,8 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
 
 intptr_t JSCStackFrame::sourceID() const
 {
+    if (m_isCompiledAheadOfTime)
+        return m_stackFrame->ownerExecutable()->sourceID();
     return m_codeBlock ? m_codeBlock->ownerExecutable()->sourceID() : JSC::noSourceID;
 }
 
@@ -281,16 +291,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
         return String(sourceURLWasmString);
     }
 
-#if ENABLE(AOT)
-    if (m_codeBlock && hasBytecodeIndex()) {
-        if (auto function = JSC::AOT::FunctionRef::of(m_codeBlock)) {
-            if (auto position = function.reportedPositionFor(m_bytecodeIndex); position && position->source)
-                return JSC::AOT::ProgramData::get()->nameOfSource(position->source);
-        }
-    }
-#endif
-
-    auto url = Zig::sourceURL(m_codeBlock);
+    auto url = m_isCompiledAheadOfTime && (!m_stackFrame->isBuiltinFunction() || !Zig::sourceURL(m_stackFrame->ownerExecutable()->source()).isEmpty()) ? Zig::sourceURL(m_vm, *m_stackFrame) : Zig::sourceURL(m_codeBlock);
     if (!url.isEmpty()) {
         return url;
     }
@@ -342,6 +343,9 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
             return functionName;
         }
     }
+
+    if (m_isCompiledAheadOfTime)
+        return Zig::functionName(m_vm, *m_stackFrame, nullptr);
 
     return emptyString();
 }

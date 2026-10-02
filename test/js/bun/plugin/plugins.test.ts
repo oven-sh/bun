@@ -1114,6 +1114,56 @@ it.concurrent("build.module() of a module whose import() is still loading its de
   });
 });
 
+// As in the example of onResolve in the documentation, which answers "./public/images/...".
+describe.concurrent("what onResolve answers without a namespace is resolved from the importer", () => {
+  const specifiers = ["relative", "extension", "directory", "package"].map(name => `answer/${name}.img`);
+  it.each([
+    [
+      "an import statement",
+      "entry.mjs",
+      specifiers.map((s, i) => `import v${i} from "${s}";`).join("\n") + "\nconsole.log([v0, v1, v2, v3].join());",
+    ],
+    ["import()", "entry.mjs", `console.log((await Promise.all(S.map(s => import(s)))).map(m => m.default).join());`],
+    ["require()", "entry.cjs", `console.log(S.map(s => require(s).default).join());`],
+    ["import.meta.require()", "entry.mjs", `console.log(S.map(s => import.meta.require(s).default).join());`],
+    [
+      "Bun.resolveSync()",
+      "entry.mjs",
+      `console.log(S.map(s => require("node:path").basename(Bun.resolveSync(s, import.meta.dir))).join());`,
+      "a.mjs,a.mjs,index.mjs,main.mjs",
+    ],
+  ])("%s", async (_, name, source, expected = "a.mjs,a.mjs,index.mjs,dep") => {
+    using dir = tempDir("plugin-onresolve-answer", {
+      // Not these: they are where the answers lead from the working directory.
+      "public/a.mjs": `export default "from the working directory";`,
+      "public/index.mjs": `export default "from the working directory";`,
+      "src/public/a.mjs": `export default "a.mjs";`,
+      "src/public/index.mjs": `export default "index.mjs";`,
+      "src/node_modules/dep/package.json": `{ "name": "dep", "main": "main.mjs" }`,
+      "src/node_modules/dep/main.mjs": `export default "dep";`,
+      "plugin.ts": `
+        const answers = { relative: "./public/a.mjs", extension: "./public/a", directory: "./public", package: "dep" };
+        Bun.plugin({
+          name: "answers",
+          setup(build) {
+            build.onResolve({ filter: /^answer\\/.*\\.img$/ }, ({ path }) => ({ path: answers[path.slice(7, -4)] }));
+          },
+        });
+      `,
+      ["src/" + name]: `const S = ${JSON.stringify(specifiers)};\n${source}`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./plugin.ts", "src/" + name],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
+  });
+});
+
 // The loader asked for a path that these had resolved to be resolved again, so onResolve was fed its own results.
 describe.concurrent("onResolve is asked once about", () => {
   it.each([

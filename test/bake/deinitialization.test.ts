@@ -74,14 +74,14 @@ test.skipIf(!isLinux)("dev server releases its file watcher on stop()", async ()
 
   const before = inotifyInstances();
   for (let i = 0; i < 2; i++) {
-    const server = Bun.serve({ port: 0, development: true, routes: { "/": html }, fetch: () => new Response("") });
+    using server = Bun.serve({ port: 0, development: true, routes: { "/": html }, fetch: () => new Response("") });
     await (await fetch(server.url)).text();
-    server.stop(true);
   }
 
   // The watcher thread closes its inotify fd once stop() wakes it. Without the
-  // fix the thread never wakes and this never ends.
-  while (inotifyInstances() > before) {
+  // fix the thread never wakes and every instance stays open.
+  const deadline = Date.now() + 3000;
+  while (inotifyInstances() > before && Date.now() < deadline) {
     await Bun.sleep(10);
   }
   expect(inotifyInstances()).toBe(before);

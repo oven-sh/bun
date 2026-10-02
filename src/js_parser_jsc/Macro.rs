@@ -421,7 +421,19 @@ impl Macro {
         hash: i32,
     ) -> crate::Result<Macro> {
         let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
-            (VirtualMachine::get_mut_ptr(), false)
+            let vm = VirtualMachine::get_mut_ptr();
+            // A pool thread's VM outlives the build that created it. Each later
+            // build gives it that build's env. On the main thread and in a
+            // Worker the VM's own loader is `env`, so there is nothing to copy.
+            // SAFETY: `vm` is the per-thread VM, uniquely accessed here; `env`
+            // is the build's loader, live for the whole build.
+            unsafe {
+                if let Some(env) = NonNull::new(env).filter(|e| e.as_ptr() != (*vm).transpiler.env)
+                {
+                    *(*vm).transpiler.env_mut() = bun_core::handle_oom(env.as_ref().clone());
+                }
+            }
+            (vm, false)
         } else {
             let mut transform_options = transform_options.clone();
             // Build-only flags about the output bundle. The macro module's own
@@ -432,10 +444,9 @@ impl Macro {
             // JSC needs to be initialized if building from CLI
             jsc::initialize(jsc::InitializeOptions::default());
 
-            // The VM outlives this build (later builds' macros reuse it; it is
-            // never destroyed) and `env` does not, so the VM gets its own copy.
+            // The VM outlives this build and `env` does not, so the VM gets a copy.
             let env_loader = NonNull::new(env).map(|env| {
-                // SAFETY: the caller's loader, live and unwritten during this build.
+                // SAFETY: `env` is the build's loader, live for the whole build.
                 let copy = bun_core::handle_oom(unsafe { env.as_ref() }.clone());
                 bun_core::heap::into_raw_nn(Box::new(copy))
             });

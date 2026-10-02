@@ -556,9 +556,7 @@ impl Loader {
         })
     }
 
-    /// Copies the variables and the loaded-files bookkeeping (so `load_process`
-    /// / `load` on the copy are the same no-ops as on `self`); the lazily
-    /// derived caches are rebuilt from the copied map on demand.
+    /// Copies the map and the load state. The derived caches start empty.
     pub fn clone(&self) -> Result<Loader, AllocError> {
         Ok(Loader {
             map: self.map.clone_with_allocator()?,

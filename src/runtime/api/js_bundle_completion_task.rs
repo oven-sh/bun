@@ -66,9 +66,7 @@ pub(crate) struct JSBundleCompletionTask {
     pub(crate) context: jsc::ContextId,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
-    /// This build's copy of the calling VM's env, read on the bundle thread
-    /// while the VM's own loader keeps changing on the JS thread
-    /// (`Bun__setEnvValue`). Boxed: the build's transpiler holds a pointer to it.
+    /// The build's own copy of the VM's env. Boxed: the transpiler points at it.
     pub(crate) env: Box<bun_dotenv::Loader>,
     pub(crate) log: bun_ast::Log,
     /// Set by the owner giving up on the result (HTMLBundle route torn down)
@@ -181,8 +179,7 @@ impl JSBundleCompletionTask {
             context,
             promise: jsc::JSPromiseStrong::default(),
             poll_ref: KeepAlive::init(),
-            // Same thread as `Bun__setEnvValue`, so no `proxy_env_storage` lock (unlike
-            // web_worker.rs).
+            // Copied on the JS thread, the only writer of the VM's loader.
             env: Box::new(bun_core::handle_oom(
                 global_this.bun_vm().env_loader().clone(),
             )),
@@ -1279,8 +1276,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
 
         let log: *mut bun_ast::Log = &raw mut self.log;
-        // Freed with `self`: read only until `complete_on_bundle_thread`, except
-        // by the per-thread macro VM, which copies it (`Macro::init`).
+        // Outlives every reader: the macro VM copies it (`Macro::init`).
         let env: *mut bun_dotenv::Loader = &raw mut *self.env;
         let t = Transpiler::init(bump, log, opts, Some(env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);

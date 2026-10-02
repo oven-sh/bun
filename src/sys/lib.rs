@@ -7357,8 +7357,7 @@ pub fn kevent(
 }
 
 /// `kevent64()` — slice-wrapped Maybe form of [`kevent`]. Retries on EINTR.
-/// XNU rejects `kevent()` on a kqueue that `kevent64()` has touched (EINVAL),
-/// so a kqueue that carries an `EVFILT_MACHPORT` wakeup uses this everywhere.
+/// XNU allows one kevent flavor per kqueue, so a kqueue that saw `kevent64()` once uses this for every call.
 #[cfg(target_os = "macos")]
 pub fn kevent64(
     fd: Fd,

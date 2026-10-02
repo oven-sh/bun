@@ -109,8 +109,7 @@ pub struct Watcher {
     // Storing the `top_level_dir` slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
     // allocator field dropped — global mimalloc (see §Allocators)
-    /// The watcher thread owns the allocation: set by `start()`, cleared
-    /// under `mutex` by `thread_body` when it hands the allocation back.
+    /// The thread owns the allocation: set by `start()`, cleared under `mutex` on hand-back.
     pub(crate) watchloop_handle: bun_core::AtomicCell<bool>,
     pub(crate) cwd: &'static [u8],
     /// Main thread clears this in `shutdown`; watcher thread polls it in
@@ -259,8 +258,7 @@ impl Watcher {
             std::thread::sleep(std::time::Duration::from_millis(10));
             spawn().map_err(|_| first)
         });
-        // The thread frees the Watcher itself and is never joined, so the
-        // handle is dropped (detached).
+        // Never joined: the thread frees the Watcher itself.
         handle.map_err(|e| {
             self.watchloop_handle.store(false);
             // Windows: raw_os_error() is a Win32 GetLastError() code, so
@@ -354,8 +352,7 @@ impl Watcher {
         Ok(())
     }
 
-    /// Returns `true` when ownership went back to the owner, which may free
-    /// `self` once the mutex is released.
+    /// Returns `true` when the owner got the allocation back and may free it once unlocked.
     fn thread_body(&mut self) -> bool {
         self.thread_lock.lock();
         Output::Source::configure_named_thread(zstr!("File Watcher"));

@@ -17,8 +17,7 @@ unsafe extern "C" {
     safe fn io_darwin_close_machport(port: libc::mach_port_t);
 }
 
-/// `io_darwin_create_machport` uses `kevent64()`, and XNU rejects a plain
-/// `kevent()` on that kqueue afterwards (EINVAL).
+/// XNU allows one kevent flavor per kqueue, and the mach port is registered with `kevent64()`.
 #[cfg(target_os = "macos")]
 pub(crate) type KEvent = libc::kevent64_s;
 #[cfg(target_os = "macos")]
@@ -32,8 +31,7 @@ pub struct KEventWatcher {
     pub(crate) fd: Fd,
     #[cfg(target_os = "macos")]
     machport: libc::mach_port_t,
-    /// Receive buffer handed to `EVFILT_MACHPORT` via `kevent64_s.ext[0]`;
-    /// must outlive the registration (i.e. until `stop()`).
+    /// Receive buffer of the `EVFILT_MACHPORT` registration; lives until `stop()`.
     #[cfg(target_os = "macos")]
     _machport_buf: Box<[u8]>,
 }
@@ -107,8 +105,7 @@ impl KEventWatcher {
         }
     }
 
-    /// Unblock the watcher thread's kqueue wait so it re-checks `running`.
-    /// Runs under `Watcher.mutex`, like `stop()` on the hand-back path.
+    /// Unblocks the kqueue wait so the thread re-checks `running`. Runs under `Watcher.mutex`.
     pub(crate) fn wake(&self) {
         #[cfg(target_os = "macos")]
         if self.machport != 0 {

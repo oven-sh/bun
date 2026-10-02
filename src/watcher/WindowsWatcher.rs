@@ -389,8 +389,7 @@ impl WindowsWatcher {
         }
     }
 
-    /// Takes the buffer back from the kernel: cancels the outstanding read and
-    /// dequeues its packet. A cancelled or completed read always posts one.
+    /// Cancels the outstanding read and dequeues its packet, which a cancelled read always posts.
     fn cancel_read(&mut self) {
         // SAFETY: dir_handle is the open directory handle from init() and
         // `overlapped` is the OVERLAPPED of the outstanding read.
@@ -422,7 +421,7 @@ impl WindowsWatcher {
         }
     }
 
-    /// Runs under `Watcher.mutex`, like `stop()` on the hand-back path.
+    /// Runs under `Watcher.mutex`, so `stop()` cannot close `iocp` underneath it.
     pub(crate) fn wake(&self) {
         if self.iocp == w::INVALID_HANDLE_VALUE {
             return;

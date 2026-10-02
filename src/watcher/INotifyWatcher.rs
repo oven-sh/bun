@@ -39,8 +39,7 @@ pub(crate) type Platform = INotifyWatcher;
 
 pub struct INotifyWatcher {
     pub(crate) fd: Fd,
-    /// eventfd written by `wake()`; `read()` ppolls on `[fd, wake_fd]` so
-    /// `Watcher::shutdown` can unpark the thread.
+    /// eventfd that `wake()` writes; `read()` polls it next to `fd`.
     pub(crate) wake_fd: Fd,
     pub(crate) loaded: bool,
 
@@ -410,8 +409,7 @@ impl INotifyWatcher {
         }
     }
 
-    /// Unblock the watcher thread's `ppoll()` so it re-checks `running`.
-    /// Called from `Watcher::shutdown` under `Watcher.mutex`.
+    /// Unblocks the `ppoll()` so the thread re-checks `running`. Runs under `Watcher.mutex`.
     pub(crate) fn wake(&self) {
         if self.wake_fd == Fd::INVALID {
             return;

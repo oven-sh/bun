@@ -498,11 +498,12 @@ impl<'p> Checker<'p> {
             let at = self.skip_trivia_from(file, self.end_of_expr(file, before));
             (at, at + 2)
         };
+        // Worked out only for what is reported: it reads the text.
+        let whole = |node: ExprId| (self.start_of(file, node), self.end_of_expr(file, node));
         let (mut node, mut can_have_call, mut found) = (e, true, None);
         loop {
-            let whole = (self.start_of(file, node), self.end_of_expr(file, node));
             if node != e && is_parenthesized(hir, node) {
-                return Some(whole);
+                return Some(whole(node));
             }
             match hir[node].kind {
                 ExprKind::Instantiation { expr: inner, .. } | ExprKind::NonNull(inner) => {
@@ -510,7 +511,7 @@ impl<'p> Checker<'p> {
                 }
                 ExprKind::Call(c) => {
                     if !can_have_call {
-                        found = Some(whole);
+                        found = Some(whole(node));
                     }
                     if hir[c].chain == Chain::Start {
                         found = Some(question_dot_after(hir[c].callee));
@@ -524,7 +525,7 @@ impl<'p> Checker<'p> {
                     (node, can_have_call) = (obj, false);
                 }
                 ExprKind::Ident(_) => return found,
-                _ => return Some(whole),
+                _ => return Some(whole(node)),
             }
         }
     }

@@ -202,6 +202,7 @@ pub struct Program {
     initializer_is_undefined: ByNode<(FileId, ParamId), bool>,
     declared_types: ByNode<Sym, TypeId>,
     /// The unions that have been seen to have no intersection among their members.
+    unions_without_intersections: IdSet<TypeId>,
     shapes: ByIdKept<TypeId, shape::Resolved>,
     /// `intersectionTypes`, for those that have a union among them.
     distributed_intersections: ByKey<(Box<[TypeId]>, bool), (TypeId, bool)>,
@@ -339,6 +340,7 @@ impl Program {
             circular_through_call: NodeSet::new(&pats),
             initializer_is_undefined: ByNode::new(&params),
             declared_types: ByNode::new(&symbols),
+            unions_without_intersections: Default::default(),
             shapes: Default::default(),
             distributed_intersections: Default::default(),
             sig_params: Default::default(),

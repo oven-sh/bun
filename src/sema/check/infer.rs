@@ -241,8 +241,7 @@ impl<'p> Checker<'p> {
         // Two instantiations of one alias: infer between the type arguments only. Without type arguments there is nothing to infer.
         if let Some((alias, sources, targets, _)) = self.same_alias(source, target) {
             if !sources.is_empty() {
-                let variances = self.variances_of(alias);
-                self.infer_from_type_arguments(n, &sources, &targets, &variances);
+                self.infer_from_type_arguments_of(n, alias, &sources, &targets);
             }
             return;
         }
@@ -417,8 +416,7 @@ impl<'p> Checker<'p> {
                     && !are_both_deferred =>
             {
                 let (sa, ta) = (self.type_arguments(source), self.type_arguments(target));
-                let variances = self.variances_of(*st);
-                self.infer_from_type_arguments(n, sa, ta, &variances);
+                self.infer_from_type_arguments_of(n, *st, sa, ta);
             }
             (
                 TypeData::Tuple {
@@ -616,6 +614,22 @@ impl<'p> Checker<'p> {
             parts.sort_by(|&a, &b| self.compare_types(a, b));
         }
         parts
+    }
+
+    /// `inferFromTypeArguments`, between two instantiations of `of`. Variances that are kept are read where they are: all threads share
+    /// them, and a count that goes up and down for every pair of references is paid for by all.
+    fn infer_from_type_arguments_of(
+        &mut self,
+        n: &mut Inference,
+        of: Sym,
+        sources: &[TypeId],
+        targets: &[TypeId],
+    ) {
+        if let Some(known) = self.p.variances.get_ref(&of) {
+            return self.infer_from_type_arguments(n, sources, targets, known);
+        }
+        let variances = self.variances_of(of);
+        self.infer_from_type_arguments(n, sources, targets, &variances);
     }
 
     /// `inferFromTypeArguments`
@@ -1042,8 +1056,7 @@ impl<'p> Checker<'p> {
             && (st == tt || self.is_array(source) && self.is_array(target))
         {
             let (sa, ta) = (self.type_arguments(source), self.type_arguments(target));
-            let variances = self.variances_of(*st);
-            self.infer_from_type_arguments(n, sa, ta, &variances);
+            self.infer_from_type_arguments_of(n, *st, sa, ta);
             return;
         }
         // Tuples of one make are references to one generic type as well.

@@ -586,6 +586,40 @@ for (const { name, connect } of tests) {
   });
 }
 
+// BoringSSL's SSL_set_session may only be called before the handshake starts;
+// upstream aborts the process otherwise. Bun patches it to return 0, so a late
+// offer is ignored and the connection keeps working. Every door below killed
+// the process with SIGABRT before that patch.
+//
+// Node returns `undefined` from the same late call. OpenSSL accepts it there,
+// and the connection can then fail with ERR_SSL_UNEXPECTED_MESSAGE. Bun keeps
+// the connection instead. `reused` is isSessionReused(): the refused offer
+// must not have reached the wire.
+it("setSession() after the handshake started is ignored on every node:tls door", async () => {
+  const client = { threw: null, echo: "ping", reused: false };
+  const server = { threw: null, side: "server" };
+  const expected = {
+    "node-client": client,
+    // TLS over a Duplex: a second SSL owner, not the uSockets socket.
+    "node-duplex": client,
+    // tls.connect({ socket }) over a connected net.Socket: the adopt-TLS path.
+    "node-wrap": client,
+    "node-server": server,
+    // new TLSSocket(socket, { isServer: true }): the adopt-TLS path as a server.
+    "node-server-wrap": server,
+  };
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dirname, "node-tls-set-session-after-start.fixture.ts"), ...Object.keys(expected)],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(expected);
+  expect(exitCode).toBe(0);
+});
+
 it("setSession() should not leak the SSL_SESSION returned by d2i_SSL_SESSION", async () => {
   // d2i_SSL_SESSION returns an owned SSL_SESSION; SSL_set_session takes its own
   // reference ("the caller retains ownership"), so the caller's reference must

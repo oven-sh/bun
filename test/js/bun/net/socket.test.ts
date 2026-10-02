@@ -5027,3 +5027,49 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
 });
+
+// BoringSSL's SSL_set_session may only be called before the handshake starts;
+// upstream aborts the process otherwise. Bun patches it to return 0, so a late
+// offer is ignored. Every door below killed the process with SIGABRT before
+// the patch.
+//
+// `finished` is what setServername() reports (it throws once the handshake has
+// finished), so it separates the two states BoringSSL refuses: a finished
+// handshake, and one still in flight. `reused` is isSessionReused(): only an
+// offer that reached the wire makes it true, so the legal door can fail.
+it("setSession() after the handshake started is ignored on every Bun socket door", async () => {
+  const expected = {
+    // A finished handshake: BoringSSL's initial_handshake_complete.
+    "bun-connect-handshake": { threw: null, finished: true, reused: false },
+    // No handshake handler, so open() runs after the handshake. The default
+    // timing of this API needs no unusual setup to reach.
+    "bun-connect-open-late": { threw: null, finished: true, reused: false },
+    "bun-listen-handshake": { threw: null, finished: true },
+    "bun-upgrade-tls-half": { threw: null, finished: true },
+    "bun-upgrade-raw-half": { threw: null, finished: true },
+    // A handshake in flight, never finished: BoringSSL's hs->state != 0. The
+    // chain is refused here, so the handshake fails after it started.
+    "bun-connect-failed-handshake": { threw: null, finished: false, success: false },
+    // A write in open() starts the handshake without finishing it, so the
+    // call after it is late even though open() is otherwise the legal window.
+    "bun-connect-open-after-write": { threw: null, finished: false },
+    // The legal window, which must keep working: open() before any write, on
+    // a socket that also has a handshake handler. The session is offered, so
+    // the handshake resumes.
+    "bun-connect-open-legal": { threw: null, finished: false, reused: true },
+  };
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      join(import.meta.dirname, "../../node/tls/node-tls-set-session-after-start.fixture.ts"),
+      ...Object.keys(expected),
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(expected);
+  expect(exitCode).toBe(0);
+});

@@ -340,14 +340,13 @@ pub mod lib {
                 }
             }
 
-            // On ARCHIVE_EOF the offset is the entry's real size, past any
-            // trailing sparse hole.
+            // On ARCHIVE_EOF the offset is the entry's real size.
             final_offset = final_offset.max(target_offset);
 
             // Handle trailing sparse hole by truncating file to final size.
             // This extends the file to include any trailing zeros without actually writing them.
-            if final_offset > actual_offset {
-                let _ = bun_sys::ftruncate(fd, final_offset);
+            if final_offset > actual_offset && bun_sys::ftruncate(fd, final_offset).is_err() {
+                return Result::Failed;
             }
 
             Result::Ok

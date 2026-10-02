@@ -49,6 +49,15 @@ impl<'p> Checker<'p> {
 
     /// `ty` with `alias` and `type_arguments` for `Type.alias`.
     pub(super) fn with_alias(&self, ty: TypeId, alias: Sym, type_arguments: &[TypeId]) -> TypeId {
+        if let Some(reference) = self.p.types.deferred(ty) {
+            return self.deferred_type_reference(
+                reference.file,
+                reference.node,
+                reference.mapper,
+                reference.target,
+                Some((alias, type_arguments)),
+            );
+        }
         let origin = match self.p.types.provenance(ty) {
             Some(provenance) => provenance.origin.clone(),
             None => UnionOrigin::None,
@@ -162,7 +171,7 @@ impl<'p> Checker<'p> {
         node: TypeNodeId,
         ty: TypeId,
     ) -> TypeId {
-        if !self.bound(file).type_by_alias[node.idx()] {
+        if !self.bound(file).type_by_alias[node.idx()] || self.p.types.deferred(ty).is_some() {
             return ty;
         }
         let hir = self.hir(file);
@@ -202,6 +211,9 @@ impl<'p> Checker<'p> {
         mapper: MapperId,
         alias: (Sym, &[TypeId]),
     ) -> TypeId {
+        if self.p.types.deferred(ty).is_some() {
+            return self.instantiate_deferred_type_reference(ty, mapper, Some(alias));
+        }
         match self.data(ty) {
             TypeData::Union(_) | TypeData::Intersection(_) => {
                 self.instantiate_union_or_intersection(ty, mapper, Some(alias))
@@ -248,7 +260,7 @@ impl<'p> Checker<'p> {
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
         let kept = self.stored_alias(ty);
-        if alias.is_none() && kept.is_none() {
+        if alias.is_none() && kept.is_none() || self.p.types.deferred(result).is_some() {
             return result;
         }
         // `createDeferredTypeReference`, `instantiateAnonymousType`
@@ -375,7 +387,7 @@ impl<'p> Checker<'p> {
     pub(super) fn without_alias_of_reference(&self, ty: TypeId) -> TypeId {
         match self.data(ty) {
             data @ (TypeData::Ref { .. } | TypeData::Tuple { .. })
-                if self.stored_alias(ty).is_some() =>
+                if self.stored_alias(ty).is_some() || self.p.types.deferred(ty).is_some() =>
             {
                 self.intern(data.clone())
             }

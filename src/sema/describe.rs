@@ -250,7 +250,7 @@ impl<'c, 'p> Describer<'c, 'p> {
             TypeData::Substitution { base: t, .. } => self.desc(t, d),
             TypeData::IndexedAccess { .. } => "tpx".to_owned(),
             TypeData::Cond { .. } => "cond".to_owned(),
-            TypeData::LazyAlias { .. } => "?".to_owned(),
+            TypeData::LazyAlias { .. } | TypeData::Deferred(_) => "?".to_owned(),
             TypeData::Intersection(parts) => {
                 for &p in parts.iter() {
                     if let Some(s) = self.primitive(p)

@@ -566,6 +566,8 @@ impl Program {
             reported: Vec::new(),
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
+            unsettled_references: Vec::new(),
+            instantiating_type_arguments_of: Vec::new(),
             recent_members: Box::new([shape::RecentMembers::NONE; shape::RECENT_MEMBERS]),
             recent_signatures: Box::new(
                 [(TypeId(u32::MAX), &[] as &[SigId]); shape::RECENT_SIGNATURES],
@@ -697,6 +699,8 @@ enum Query {
     Cond(FileId, TypeNodeId, MapperId),
     /// Whether the initializer of a parameter can be `undefined`.
     InitializerIsUndefined(FileId, ParamId),
+    /// `TypeSystemPropertyNameResolvedTypeArguments`
+    TypeArguments(TypeId),
 }
 
 bitflags::bitflags! {
@@ -875,6 +879,10 @@ pub struct Checker<'p> {
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
     /// The intersections it is being found out of whether anything can be them.
     pub(super) never_in_progress: Vec<TypeId>,
+    /// The deferred type references that type nodes have made and nobody has resolved. See `settle_deferred_references`.
+    unsettled_references: Vec<TypeId>,
+    /// The nodes of the deferred type references whose type arguments are being instantiated, innermost last.
+    instantiating_type_arguments_of: Vec<(FileId, TypeNodeId)>,
     /// What was last found in `Program::members`, in the tables of signatures and in `intersected_props`, by the low bits of the key.
     recent_members: Box<[shape::RecentMembers<'p>; shape::RECENT_MEMBERS]>,
     recent_signatures: Box<[(TypeId, &'p [SigId]); shape::RECENT_SIGNATURES]>,
@@ -1629,7 +1637,8 @@ impl<'p> Checker<'p> {
             | Query::Bases(_)
             | Query::BaseConstructor(_)
             | Query::Constraint(_)
-            | Query::InitializerIsUndefined(..) => true,
+            | Query::InitializerIsUndefined(..)
+            | Query::TypeArguments(_) => true,
             // `getTypeOfSymbol` tests for a variable or a property first. `getTypeOfFuncClassEnumModule` and `getTypeOfEnumMember`
             // push no resolution.
             Query::Symbol(sym) => {
@@ -1681,6 +1690,11 @@ impl<'p> Checker<'p> {
                         .initializer_is_undefined
                         .get(&(file, param))
                         .is_some(),
+                    Query::TypeArguments(ty) => self
+                        .p
+                        .types
+                        .deferred(ty)
+                        .is_some_and(DeferredReference::is_resolved),
                     _ => false,
                 }
         })
@@ -2080,6 +2094,7 @@ impl<'p> Checker<'p> {
             self.data(ty),
             TypeData::Ref { .. }
                 | TypeData::Tuple { .. }
+                | TypeData::Deferred(_)
                 | TypeData::Anon { .. }
                 | TypeData::Fns { .. }
                 | TypeData::Synth(_)

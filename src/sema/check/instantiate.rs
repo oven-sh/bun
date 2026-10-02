@@ -222,7 +222,36 @@ impl<'p> Checker<'p> {
         true
     }
 
+    /// `getObjectTypeInstantiation`, of a deferred type reference: only what the type parameters around the node stand for changes.
+    /// `alias`: what it is handed, or else `instantiateTypeAlias(t.alias, m)`.
+    pub(super) fn instantiate_deferred_type_reference(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+        alias: Option<(Sym, &[TypeId])>,
+    ) -> TypeId {
+        let Some(reference) = self.p.types.deferred(ty) else {
+            return ty;
+        };
+        let (file, node, target) = (reference.file, reference.node, reference.target);
+        let new = self.map_mapper(reference.mapper, mapper);
+        let instantiated;
+        let alias = match (alias, self.stored_alias(ty)) {
+            (None, Some((symbol, type_arguments))) => {
+                instantiated = self.instantiate_all(type_arguments, mapper);
+                Some((*symbol, &instantiated[..]))
+            }
+            _ => alias,
+        };
+        let made = self.deferred_type_reference(file, node, new, target, alias);
+        self.resolve_type_arguments_ahead(made);
+        made
+    }
+
     fn instantiate_uncached(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
+        if self.p.types.deferred(ty).is_some() {
+            return self.instantiate_deferred_type_reference(ty, mapper, None);
+        }
         match self.data(ty) {
             // `instantiateTypeWorker`: what does not change stays as it is, unreduced if it was.
             TypeData::Union(_) | TypeData::Intersection(_) => {

@@ -292,11 +292,13 @@ impl Builder {
 }
 
 impl<'p> Checker<'p> {
-    /// `ty` if it is not a reference to an alias that was still being worked out when it was made.
+    /// `ty` if it is not a reference to an alias that was still being worked out when it was made. A deferred type reference has
+    /// its type arguments afterwards, unless they are being resolved.
     #[inline]
     pub fn force(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
             TypeData::LazyAlias { .. } => self.force_reference(ty),
+            TypeData::Deferred(_) => self.force_deferred_reference(ty),
             TypeData::Union(_) | TypeData::Intersection(_)
                 if self.p.types.flags(ty).contains(TypeFlags::HAS_LAZY_MEMBER) =>
             {
@@ -356,6 +358,140 @@ impl<'p> Checker<'p> {
             }
             _ => ty,
         }
+    }
+
+    /// `force`, of a deferred type reference without type arguments. Whoever only hands it on does not need them: where they are
+    /// being resolved no circle is closed, and what is made of it holds for now only.
+    #[cold]
+    #[inline(never)]
+    fn force_deferred_reference(&mut self, ty: TypeId) -> TypeId {
+        let from = self.resolution_start;
+        let under_way = self.stack[from..]
+            .iter()
+            .rposition(|q| *q == Query::TypeArguments(ty));
+        match under_way {
+            Some(i) => {
+                self.mark_tainted_from(from + i + 1);
+                self.cycles += 1;
+            }
+            None => self.resolve_type_arguments(ty),
+        }
+        ty
+    }
+
+    /// `getTypeArguments`, of a deferred type reference that has none. It is left without if they are being resolved further
+    /// down, which is a circle, or if there is no time or room.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn resolve_type_arguments(&mut self, ty: TypeId) {
+        self.resolve_type_arguments_worker(ty);
+        self.settle_deferred_references();
+    }
+
+    fn resolve_type_arguments_worker(&mut self, ty: TypeId) {
+        let Some(reference) = self.p.types.deferred(ty) else {
+            return;
+        };
+        let (file, node, mapper, target) = (
+            reference.file,
+            reference.node,
+            reference.mapper,
+            reference.target,
+        );
+        if reference.is_resolved() || !self.enter(Query::TypeArguments(ty)) {
+            return;
+        }
+        let declared = self.type_reference_from_node(file, node, target);
+        let holds = self.leave();
+        if self.left_a_circle {
+            // `popTypeResolution` fails: `errorType` for all of `n.TypeParameters()`, those around the declaration too.
+            let errors = |count: usize| vec![TypeId::ERROR; count].into_boxed_slice();
+            let resolved = match self.data(declared).clone() {
+                TypeData::Ref { target, args } => TypeData::Ref {
+                    target,
+                    args: errors(args.len()),
+                },
+                TypeData::Tuple {
+                    elems,
+                    flags,
+                    readonly,
+                } => TypeData::Tuple {
+                    elems: errors(elems.len()),
+                    flags,
+                    readonly,
+                },
+                _ => return,
+            };
+            self.p.types.resolve_deferred(ty, resolved);
+            return;
+        }
+        if !holds {
+            return;
+        }
+        // `c.instantiateTypes(typeArguments, d.mapper)`
+        let before = self.what_only_holds_for_now();
+        // The query is left, as in `getTypeArguments`, but the node is still under way for `resolve_type_arguments_ahead`.
+        self.instantiating_type_arguments_of.push((file, node));
+        let resolved = match self.data(declared) {
+            TypeData::Ref { target, args } => Some(TypeData::Ref {
+                target: *target,
+                args: self.instantiate_all(args, mapper).into(),
+            }),
+            TypeData::Tuple {
+                elems,
+                flags,
+                readonly,
+            } => {
+                let elems = self.instantiate_all(elems, mapper);
+                let instantiated = self.tuple(&elems, flags, *readonly);
+                Some(self.data(instantiated).clone())
+            }
+            _ => None,
+        };
+        self.instantiating_type_arguments_of.pop();
+        let Some(resolved) = resolved else {
+            return;
+        };
+        let now = self.what_only_holds_for_now();
+        // A limit that is run into ahead of need is run into again by whoever needs them, and reported there.
+        if now.0 != before.0 || self.deferring_type_arguments > 0 && now.1 != before.1 {
+            return;
+        }
+        self.p.types.resolve_deferred(ty, resolved);
+    }
+
+    /// `resolve_type_arguments` before anybody needs them, so that whoever looks at `ty` finds a reference like any other. It is a
+    /// question of its own: what is under way does not show, so it closes no circle that need would not close. Where the node is
+    /// being resolved already the type goes on for ever (`type R<T> = Box<R<T[]>>`), and `ty` is left for whoever needs it.
+    pub(super) fn resolve_type_arguments_ahead(&mut self, ty: TypeId) {
+        let Some(reference) = self.p.types.deferred(ty) else {
+            return;
+        };
+        if reference.is_resolved() {
+            return;
+        }
+        let at = (reference.file, reference.node);
+        let types = &self.p.types;
+        if self.instantiating_type_arguments_of.contains(&at)
+            || self.stack.iter().any(|q| {
+                matches!(*q, Query::TypeArguments(other)
+                if types.deferred(other).is_some_and(|other| (other.file, other.node) == at))
+            })
+        {
+            return;
+        }
+        let resolution_start = std::mem::replace(&mut self.resolution_start, self.stack.len());
+        let instantiation_depth = std::mem::replace(&mut self.instantiation_depth, 0);
+        let (events, unreported) = (self.deep_events, self.unreported_event);
+        self.deferring_type_arguments += 1;
+        // What it leaves unsettled is for whoever drains the list: a chain of aliases is gone through one after the other, not one
+        // inside the other.
+        self.resolve_type_arguments_worker(ty);
+        self.deferring_type_arguments -= 1;
+        // The memo entries around do not depend on the limit.
+        (self.deep_events, self.unreported_event) = (events, unreported);
+        self.instantiation_depth = instantiation_depth;
+        self.resolution_start = resolution_start;
     }
 
     /// `ty` for whoever is not inferring: `NoInfer<T>`, on its own or in a union, is `T`.
@@ -699,6 +835,14 @@ impl<'p> Checker<'p> {
             TypeData::Intersection(parts) => {
                 let resolved = self.shape_memo(ty, |c| c.build_intersection_shape(ty, parts));
                 Some((resolved, MapperId::IDENTITY))
+            }
+            // `resolveTypeReferenceMembers`
+            TypeData::Deferred(_) => {
+                self.resolve_type_arguments(ty);
+                if matches!(self.data(ty), TypeData::Deferred(_)) {
+                    return None;
+                }
+                self.members_uncached(ty)
             }
             _ => None,
         }

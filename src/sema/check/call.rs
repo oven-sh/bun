@@ -4399,7 +4399,10 @@ impl<'p> Checker<'p> {
                 let keyed = vanishing(self, *of);
                 if keyed == *of { ty } else { self.keyof(keyed) }
             }
-            TypeData::Ref { target, args } if self.p.deferred_references.get(&ty).is_none() => {
+            TypeData::Ref { target, args }
+                if self.p.deferred_references.get(&ty).is_none()
+                    && self.p.types.deferred(ty).is_none() =>
+            {
                 let mut new: Vec<TypeId> = Vec::with_capacity(args.len());
                 for &arg in args.iter() {
                     new.push(self.without_holes_that_vanish(arg, so_far, depth + 1));

@@ -1476,6 +1476,7 @@ impl<'p> Checker<'p> {
             (None, &TypeData::Ref { target: sym, .. } | &TypeData::ThisParam(sym)) => {
                 files.symbol(sym).name
             }
+            (None, TypeData::Deferred(_)) => files.symbol(self.symbol_of_reference(ty)?).name,
             (None, &TypeData::TypeParam(file, tp, _)) => self.hir(file)[tp].name,
             (None, &TypeData::StringMapping { kind, .. }) => {
                 return Some(match kind {
@@ -1493,6 +1494,19 @@ impl<'p> Checker<'p> {
         } else {
             files.atoms.bytes(name)
         })
+    }
+
+    /// `t.symbol`, of a reference to a class or an interface, whether or not it has its type arguments: the order of the members
+    /// of a union does not go by that.
+    fn symbol_of_reference(&self, ty: TypeId) -> Option<Sym> {
+        match self.data(ty) {
+            TypeData::Ref { target, .. } => Some(*target),
+            TypeData::Deferred(reference) => match reference.target {
+                DeferredTarget::Declared(sym) => Some(sym),
+                DeferredTarget::ArrayOrTuple { .. } => None,
+            },
+            _ => None,
+        }
     }
 
     /// Where the first declaration of `sym` is. `compareSymbols`
@@ -1517,6 +1531,7 @@ impl<'p> Checker<'p> {
             | TypeData::ThisParam(sym)
             | TypeData::Enum { symbol: sym, .. }
             | TypeData::EnumLit { member: sym, .. } => self.symbol_place(sym),
+            TypeData::Deferred(_) => self.symbol_place(self.symbol_of_reference(ty)?),
             TypeData::Anon { origin, .. } => match origin {
                 Origin::TypeLiteral(file, node) | Origin::Mapped(file, node) => {
                     at(file, self.hir(file)[node].pos)
@@ -1610,8 +1625,7 @@ impl<'p> Checker<'p> {
         self.compare_type_lists(&targets(x), &targets(y))
     }
 
-    /// `CompareTypes` without its last resort, the ids, which depend on which thread came first here. Not compared either: where a
-    /// deferred reference is written.
+    /// `CompareTypes` without its last resort, the ids, which depend on which thread came first here.
     fn compare_types_without_ids(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         use std::cmp::Ordering::Equal;
         if a == b {
@@ -1642,11 +1656,15 @@ impl<'p> Checker<'p> {
             _ => None,
         };
         // Of object types with the same symbol, or none, references come first. A tuple is one, and has no symbol.
-        let is_no_reference =
-            |t: TypeId| !matches!(self.data(t), TypeData::Ref { .. } | TypeData::Tuple { .. });
+        let is_no_reference = |t: TypeId| {
+            !matches!(
+                self.data(t),
+                TypeData::Ref { .. } | TypeData::Tuple { .. } | TypeData::Deferred(_)
+            )
+        };
         let are_of_one_symbol = matches!(
-            (self.data(a), self.data(b)),
-            (TypeData::Ref { target: s, .. }, TypeData::Ref { target: t, .. }) if s == t
+            (self.symbol_of_reference(a), self.symbol_of_reference(b)),
+            (Some(s), Some(t)) if s == t
         );
         // The other kinds have no alias, no name and no symbol.
         const NAMED: u32 = tf::OBJECT
@@ -1670,6 +1688,20 @@ impl<'p> Checker<'p> {
             if by_symbol.is_ne() {
                 return by_symbol;
             }
+        }
+        // Deferred type references with the same target are ordered by the source location of the reference, and instantiations
+        // of one by their mappers. One that is not deferred has no node and comes last (`compareNodes`).
+        let (x, y) = (self.p.types.deferred(a), self.p.types.deferred(b));
+        if x.is_some() || y.is_some() {
+            let node = |reference: Option<&DeferredReference>| {
+                let reference = reference?;
+                let pos = self.hir(reference.file)[reference.node].pos;
+                Some(self.place_in_program_order(reference.file, pos))
+            };
+            return some_first(node(x), node(y)).then_with(|| match (x, y) {
+                (Some(x), Some(y)) => self.compare_type_mappers(x.mapper, y.mapper),
+                _ => Equal,
+            });
         }
         match (self.data(a), self.data(b)) {
             (TypeData::Ref { target: s, args: x }, TypeData::Ref { target: t, args: y }) => {

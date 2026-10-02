@@ -268,6 +268,7 @@ fn is_object_kind(data: &TypeData) -> bool {
         data,
         TypeData::Ref { .. }
             | TypeData::Tuple { .. }
+            | TypeData::Deferred(_)
             | TypeData::Anon { .. }
             | TypeData::Fns { .. }
             | TypeData::Synth(_)
@@ -406,6 +407,7 @@ fn is_normalized_kind(data: &TypeData) -> bool {
         | TypeData::IndexedAccess { .. }
         | TypeData::Cond { .. }
         | TypeData::LazyAlias { .. }
+        | TypeData::Deferred(_)
         | TypeData::Substitution { .. } => false,
         TypeData::Tuple { .. } => !is_generic_tuple_kind(data),
         _ => !is_fresh_literal_kind(data),
@@ -496,7 +498,7 @@ impl<'p> Checker<'p> {
     #[inline]
     fn forced_as(&mut self, ty: TypeId) -> (TypeId, &'p TypeData) {
         let data = self.data(ty);
-        if matches!(data, TypeData::LazyAlias { .. }) {
+        if matches!(data, TypeData::LazyAlias { .. } | TypeData::Deferred(_)) {
             let ty = self.force(ty);
             return (ty, self.data(ty));
         }
@@ -1437,6 +1439,14 @@ impl<'p> Checker<'p> {
                     }
                 }
                 TypeData::LazyAlias { .. } => self.force(t),
+                // `getTypeArguments(t)`
+                TypeData::Deferred(_) => {
+                    self.resolve_type_arguments(t);
+                    if matches!(self.data(t), TypeData::Deferred(_)) {
+                        return t;
+                    }
+                    continue;
+                }
                 &TypeData::Substitution { base, .. } if writing => base,
                 &TypeData::Substitution { base, constraint } => {
                     self.substitution_intersection(base, constraint)
@@ -3564,6 +3574,10 @@ impl<'p> Checker<'p> {
     }
 
     fn has_generic_arguments(&self, t: TypeId) -> bool {
+        // `isNonDeferredTypeReference`
+        if self.p.types.deferred(t).is_some() {
+            return false;
+        }
         let args: &[TypeId] = match self.data(t) {
             TypeData::Ref { args, .. } => args,
             TypeData::Tuple { elems, .. } => elems,

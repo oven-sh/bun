@@ -1786,6 +1786,7 @@ impl<'p> Checker<'p> {
         if holds {
             self.p.declared_types.insert(sym, ty);
         }
+        self.settle_deferred_references();
         ty
     }
 
@@ -2204,7 +2205,59 @@ impl<'p> Checker<'p> {
         if self.leave() {
             self.p.type_node_types.set(file, node.idx(), ty);
         }
+        self.settle_deferred_references();
         ty
+    }
+
+    /// `createDeferredTypeReference(target, node, nil, nil)`
+    fn deferred_type_reference_of_node(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        node: TypeNodeId,
+        target: DeferredTarget,
+    ) -> TypeId {
+        let mapper = self.identity_mapper_for_node(file, scope, node);
+        let alias = self.alias_for_type_node(file, scope, node);
+        let alias = alias
+            .as_ref()
+            .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
+        let made_before = self.p.types.len();
+        let ty = self.deferred_type_reference(file, node, mapper, target, alias);
+        self.p.types.mark_manifest(ty, made_before);
+        if matches!(self.data(ty), TypeData::Deferred(_)) {
+            self.unsettled_references.push(ty);
+        }
+        ty
+    }
+
+    /// Resolves the deferred type references that type nodes have made, ahead of need, so that whoever looks at one finds a
+    /// reference like any other. Not while a type node, a declared type, a conditional type or a list of type arguments is being
+    /// worked out on top of the stack: each member of `type Big = A[] | B[] | ..` would work out `Big` all over.
+    #[inline]
+    pub(super) fn settle_deferred_references(&mut self) {
+        if !self.unsettled_references.is_empty() {
+            self.settle_deferred_references_now();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn settle_deferred_references_now(&mut self) {
+        if matches!(
+            self.stack.last(),
+            Some(
+                Query::TypeNode(..)
+                    | Query::Declared(_)
+                    | Query::Cond(..)
+                    | Query::TypeArguments(_)
+            )
+        ) {
+            return;
+        }
+        while let Some(ty) = self.unsettled_references.pop() {
+            self.resolve_type_arguments_ahead(ty);
+        }
     }
 
     /// `getIntendedTypeFromJSDocTypeReference`, of a name with type arguments, which `checkNoTypeArguments` objects to.
@@ -2738,21 +2791,19 @@ impl<'p> Checker<'p> {
                 if !is_js_reference && (args.len() < least || args.len() > most) {
                     return TypeId::ERROR;
                 }
-                let is_deferred = is_class_or_interface
+                if is_class_or_interface
                     && most != 0
-                    && self.is_deferred_type_reference_node(file, scope, node, args.len() != most);
-                let mut args = if is_deferred {
-                    hir.ids(args)
-                        .map(|arg| self.deferred_type_argument(file, arg))
-                        .collect::<Vec<_>>()
-                } else {
-                    self.types_from_nodes(file, args)
-                };
+                    && self.is_deferred_type_reference_node(file, scope, node, args.len() != most)
+                {
+                    let target = DeferredTarget::Declared(sym);
+                    return self.deferred_type_reference_of_node(file, scope, node, target);
+                }
+                let mut args = self.types_from_nodes(file, args);
                 if is_js_reference {
                     let params = self.local_type_params_of_symbol(sym);
                     args = self.fill_type_args_as(&params, &args, true);
                 }
-                let mut ty = if most != 0
+                let ty = if most != 0
                     && !is_class_or_interface
                     && flags.contains(SymFlags::TYPE_ALIAS)
                     // `getIntendedTypeFromJSDocTypeReference` instantiates `Record` for `Object<K, V>` under no alias.
@@ -2762,19 +2813,6 @@ impl<'p> Checker<'p> {
                 } else {
                     self.written_type_reference(sym, &args)
                 };
-                if is_deferred && self.has_type_variables(ty) {
-                    self.p.deferred_references.insert(ty, ());
-                }
-                // `createDeferredTypeReference`
-                if is_deferred
-                    && matches!(self.data(ty), TypeData::Ref { .. } | TypeData::Tuple { .. })
-                    && let Some((alias, type_arguments)) =
-                        self.alias_for_type_node(file, scope, node)
-                {
-                    let made_before = self.p.types.len();
-                    ty = self.with_alias(ty, alias, &type_arguments);
-                    self.p.types.mark_manifest(ty, made_before);
-                }
                 ty
             }
         }
@@ -3279,6 +3317,85 @@ impl<'p> Checker<'p> {
         Some(self.intern(TypeData::LazyAlias { sym, args }))
     }
 
+    /// `createDeferredTypeReference`
+    pub(super) fn deferred_type_reference(
+        &self,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+        target: DeferredTarget,
+        alias: Option<(Sym, &[TypeId])>,
+    ) -> TypeId {
+        let data = TypeData::Deferred(Box::new(DeferredReference::new(file, node, mapper, target)));
+        match alias {
+            Some((alias, type_arguments)) => self.p.types.intern_with(
+                data,
+                Provenance {
+                    alias: Some((alias, type_arguments.into())),
+                    origin: UnionOrigin::None,
+                },
+            ),
+            None => self.intern(data),
+        }
+    }
+
+    /// What `getTypeArguments` makes of `node`, the node of a deferred type reference to `target`, before `d.mapper`: as
+    /// `createTypeReference(target, typeArguments)`.
+    pub(super) fn type_reference_from_node(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        target: DeferredTarget,
+    ) -> TypeId {
+        let hir = self.hir(file);
+        match (target, hir[node].kind) {
+            // `getEffectiveTypeArguments`
+            (DeferredTarget::Declared(sym), TypeNodeKind::Ref { args, .. }) => {
+                let mut args = self.types_from_nodes(file, args);
+                if hir.is_js {
+                    let params = self.local_type_params_of_symbol(sym);
+                    args = self.fill_type_args_as(&params, &args, true);
+                }
+                self.type_reference(sym, &args)
+            }
+            (DeferredTarget::ArrayOrTuple { readonly }, TypeNodeKind::Array(element)) => {
+                let element = self.type_from_node(file, element);
+                if readonly {
+                    self.readonly_array_of(element)
+                } else {
+                    self.array_of(element)
+                }
+            }
+            (DeferredTarget::ArrayOrTuple { readonly }, TypeNodeKind::Tuple(elems)) => {
+                let mut types = Vec::with_capacity(elems.len());
+                let mut flags = Vec::with_capacity(elems.len());
+                for e in elems.iter() {
+                    let elem = &hir[e];
+                    // `getTypeFromRestTypeNode`: of `...X[]` it is `X` that is resolved. One with a `...T` is never deferred.
+                    let (written, flag) = if elem.rest {
+                        let element = array_element_type_node(hir, elem.ty).unwrap_or(elem.ty);
+                        (element, ElemFlags::REST)
+                    } else if elem.optional {
+                        (elem.ty, ElemFlags::OPTIONAL)
+                    } else {
+                        (elem.ty, ElemFlags::REQUIRED)
+                    };
+                    let ty = self.type_from_node(file, written);
+                    // `getTypeFromOptionalTypeNode`, `getTypeFromNamedTupleTypeNode`
+                    types.push(if flag == ElemFlags::OPTIONAL {
+                        self.optional_property(ty)
+                    } else {
+                        ty
+                    });
+                    // `getTupleElementInfo`
+                    flags.push(flag.with_label(elem.name));
+                }
+                self.tuple(&types, &flags, readonly)
+            }
+            _ => TypeId::ERROR,
+        }
+    }
+
     /// `sym<args>`, where `sym` is not an alias for something imported.
     pub fn type_reference(&mut self, sym: Sym, args: &[TypeId]) -> TypeId {
         self.type_reference_type(sym, args, None)
@@ -3312,7 +3429,12 @@ impl<'p> Checker<'p> {
             return self.intern(TypeData::Ref { target: sym, args });
         }
         if flags.contains(SymFlags::TYPE_ALIAS) {
-            if let Some(i) = self.stack.iter().rposition(|q| *q == Query::Declared(sym)) {
+            // What `resolution_start` hides is worked out once more.
+            let from = self.resolution_start;
+            let under_way = self.stack[from..]
+                .iter()
+                .rposition(|q| *q == Query::Declared(sym));
+            if let Some(i) = under_way.map(|i| i + from) {
                 // What a heritage clause names puts nothing off.
                 let is_put_off = (i + 1..self.stack.len()).any(|j| {
                     matches!(self.stack[j], Query::TypeNode(f, n)

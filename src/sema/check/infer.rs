@@ -406,6 +406,9 @@ impl<'p> Checker<'p> {
         if n.stand_ins.is_some() && self.is_type_param(target) {
             return;
         }
+        // `source.AsTypeReference().node != nil && target.AsTypeReference().node != nil`
+        let are_both_deferred =
+            self.p.types.deferred(source).is_some() && self.p.types.deferred(target).is_some();
         match (self.data(source), self.data(target)) {
             // Two that are both put off go by way of `invokeOnce`, or it might never end.
             (
@@ -418,6 +421,7 @@ impl<'p> Checker<'p> {
                     args: ta,
                 },
             ) if (st == tt || self.is_array(source) && self.is_array(target))
+                && !are_both_deferred
                 && !(self.has_lazy_alias(sa) && self.has_lazy_alias(ta)) =>
             {
                 self.infer_from_type_arguments_of(n, *st, sa, ta);
@@ -2820,6 +2824,7 @@ impl<'p> Checker<'p> {
                 TypeData::Anon { mapper, .. }
                 | TypeData::Fns { mapper, .. }
                 | TypeData::Cond { mapper, .. } => left.extend(values(*mapper)),
+                TypeData::Deferred(reference) => left.extend(values(reference.mapper)),
                 TypeData::Synth(shape) => {
                     if !shape.call.is_empty() {
                         return true;

@@ -9,6 +9,7 @@ use crate::local::{self, Chunked, Found, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
 use crate::table::{ById, Id};
 use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -164,6 +165,82 @@ impl UniqueSymbolDeclaration {
     }
 }
 
+/// `TypeReference.target`, of a deferred type reference.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum DeferredTarget {
+    /// A generic class or interface.
+    Declared(Sym),
+    /// `getArrayOrTupleTargetType`. `readonly`: `isReadonlyTypeOperator(node.Parent)`.
+    ArrayOrTuple { readonly: bool },
+}
+
+/// `createDeferredTypeReference`: a reference to a generic class or interface, an array type or a tuple type, written at `node` in
+/// the declaration of a type alias. Its type arguments are resolved when they are first asked for (`getTypeArguments`).
+/// `mapper`: what the type parameters around the node stand for. It is interned by all but `resolved`.
+pub struct DeferredReference {
+    pub file: FileId,
+    pub node: TypeNodeId,
+    pub mapper: MapperId,
+    pub target: DeferredTarget,
+    /// `resolvedTypeArguments`, as the `TypeData::Ref` or `TypeData::Tuple` that has them. `TypeStore::get` gives this once it is
+    /// there, so a reference that is resolved is one like any other, with a number of its own.
+    resolved: OnceLock<TypeData>,
+}
+
+impl DeferredReference {
+    pub fn new(file: FileId, node: TypeNodeId, mapper: MapperId, target: DeferredTarget) -> Self {
+        DeferredReference {
+            file,
+            node,
+            mapper,
+            target,
+            resolved: OnceLock::new(),
+        }
+    }
+
+    #[inline]
+    pub fn is_resolved(&self) -> bool {
+        self.resolved.get().is_some()
+    }
+
+    #[inline]
+    fn key(&self) -> (FileId, TypeNodeId, MapperId, DeferredTarget) {
+        (self.file, self.node, self.mapper, self.target)
+    }
+}
+
+impl Clone for DeferredReference {
+    fn clone(&self) -> Self {
+        DeferredReference {
+            file: self.file,
+            node: self.node,
+            mapper: self.mapper,
+            target: self.target,
+            resolved: self.resolved.clone(),
+        }
+    }
+}
+
+impl PartialEq for DeferredReference {
+    fn eq(&self, other: &Self) -> bool {
+        self.key() == other.key()
+    }
+}
+
+impl Eq for DeferredReference {}
+
+impl std::hash::Hash for DeferredReference {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.key(), state);
+    }
+}
+
+impl std::fmt::Debug for DeferredReference {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.key(), f)
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TypeData {
     Intrinsic(Intrinsic),
@@ -236,6 +313,8 @@ pub enum TypeData {
         sym: Sym,
         args: Box<[TypeId]>,
     },
+    /// A deferred type reference whose type arguments have not been resolved. See `DeferredReference`.
+    Deferred(Box<DeferredReference>),
     Anon {
         origin: Origin,
         mapper: MapperId,
@@ -835,6 +914,11 @@ fn is_type_local(data: &TypeData, file: FileId) -> bool {
             sym.file == file || any(args)
         }
         TypeData::Tuple { elems, .. } => any(elems),
+        TypeData::Deferred(reference) => {
+            reference.file == file
+                || reference.mapper.is_local()
+                || matches!(reference.target, DeferredTarget::Declared(sym) if sym.file == file)
+        }
         TypeData::Anon { origin, mapper } => {
             mapper.is_local()
                 || match origin {
@@ -1261,6 +1345,9 @@ impl TypeStore {
                 TypeData::Intersection(t) => ("type: intersection", t.len() * 4),
                 TypeData::Ref { args, .. } => ("type: reference", args.len() * 4),
                 TypeData::LazyAlias { args, .. } => ("type: lazy alias", args.len() * 4),
+                TypeData::Deferred(_) => {
+                    ("type: deferred reference", size_of::<DeferredReference>())
+                }
                 TypeData::Tuple { elems, flags, .. } => (
                     "type: tuple",
                     elems.len() * 4 + flags.len() * size_of::<ElemFlags>(),
@@ -1316,7 +1403,32 @@ impl TypeStore {
 
     #[inline]
     pub fn get(&self, id: TypeId) -> &TypeData {
-        &self.record(id).made.0
+        Self::resolved_data(&self.record(id).made.0)
+    }
+
+    /// `data`, or what a deferred type reference has been resolved to.
+    #[inline(always)]
+    fn resolved_data(data: &TypeData) -> &TypeData {
+        match data {
+            TypeData::Deferred(reference) => reference.resolved.get().unwrap_or(data),
+            _ => data,
+        }
+    }
+
+    /// `t.AsTypeReference().node != nil`: the deferred type reference that `id` is, resolved or not.
+    #[inline]
+    pub fn deferred(&self, id: TypeId) -> Option<&DeferredReference> {
+        match &self.record(id).made.0 {
+            TypeData::Deferred(reference) => Some(&**reference),
+            _ => None,
+        }
+    }
+
+    /// `d.resolvedTypeArguments = ..`, unless it has them.
+    pub fn resolve_deferred(&self, id: TypeId, resolved: TypeData) {
+        if let Some(reference) = self.deferred(id) {
+            let _ = reference.resolved.set(resolved);
+        }
     }
 
     /// The members of a union, nothing for `never`, and any other type on its own.
@@ -1340,7 +1452,7 @@ impl TypeStore {
     #[inline]
     pub fn get_with_flags(&self, id: TypeId) -> (&TypeData, TypeFlags) {
         let record = self.record(id);
-        (&record.made.0, record.flags)
+        (Self::resolved_data(&record.made.0), record.flags)
     }
 
     pub fn len(&self) -> u32 {
@@ -1375,6 +1487,11 @@ impl TypeStore {
             TypeData::Anon { mapper, .. }
             | TypeData::Fns { mapper, .. }
             | TypeData::Cond { mapper, .. } => self.mapper_record(*mapper).1,
+            // `couldContainTypeVariables`: `t.AsTypeReference().node != nil`. `createDeferredTypeReference` sets no propagating flags.
+            TypeData::Deferred(reference) => self
+                .mapper_record(reference.mapper)
+                .1
+                .difference(TypeFlags::HAS_OBJECT_LITERAL),
             TypeData::Synth(shape) => {
                 let is_plain = matches!(
                     shape.literal,

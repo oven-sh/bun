@@ -525,7 +525,8 @@ enum Identity {
     Origin(Origin),
     Instance(Sym),
     Function(FileId, FnId),
-    Conditional(FileId, TypeNodeId),
+    /// A conditional type, or a deferred type reference.
+    Node(FileId, TypeNodeId),
     Type(TypeId),
 }
 
@@ -1028,6 +1029,11 @@ impl<'p> Printer<'_, 'p> {
                 forced if self.c.is_known(forced) => forced,
                 _ => ty,
             },
+            // `typeReferenceToTypeNode`: `getTypeArguments(t)`
+            TypeData::Deferred(_) => {
+                self.c.resolve_type_arguments(ty);
+                ty
+            }
             _ => ty,
         };
         let ty = if self.flags & NO_TYPE_REDUCTION == 0 {
@@ -1141,6 +1147,13 @@ impl<'p> Printer<'_, 'p> {
             let arguments = self.map_to_type_nodes(&arguments, false);
             return self.symbol_to_type_node(alias, false, arguments);
         }
+        // `t.AsTypeReference().node != nil`
+        let node_of_reference = self
+            .c
+            .p
+            .types
+            .deferred(ty)
+            .map(|reference| Identity::Node(reference.file, reference.node));
         match self.c.data(ty) {
             // A reference to an alias that cannot be named from here.
             TypeData::LazyAlias { .. } if self.enclosing_declaration.is_some() => {
@@ -1151,9 +1164,12 @@ impl<'p> Printer<'_, 'p> {
                     self.type_to_node(forced)
                 }
             }
-            // `t.AsTypeReference().node != nil`. Which node is not known, so its depth is not counted.
-            TypeData::Ref { target, args } if self.c.p.deferred_references.get(&ty).is_some() => {
-                self.visit_and_transform_type(ty, None, |printer, ty| {
+            // Of an array type the node is not known yet, so its depth is not counted.
+            TypeData::Ref { target, args }
+                if node_of_reference.is_some()
+                    || self.c.p.deferred_references.get(&ty).is_some() =>
+            {
+                self.visit_and_transform_type(ty, node_of_reference, |printer, ty| {
                     printer.type_reference_to_node(ty, *target, args)
                 })
             }
@@ -1205,7 +1221,7 @@ impl<'p> Printer<'_, 'p> {
             }
             TypeData::Cond { file, node, .. } => {
                 let (file, node) = (*file, *node);
-                let identity = Some(Identity::Conditional(file, node));
+                let identity = Some(Identity::Node(file, node));
                 self.visit_and_transform_type(ty, identity, |printer, ty| {
                     printer.conditional_type_to_node(ty, file, node)
                 })

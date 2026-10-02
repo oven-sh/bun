@@ -1434,18 +1434,7 @@ impl Checker<'_> {
         // `isArrayOrTupleLikeType`
         let arrays = self.filter(target, |c, m| c.is_array_like(m) || c.is_tuple_like(m));
         let iterables = self.filter(target, |c, m| !(c.is_array_like(m) || c.is_tuple_like(m)));
-        let yielded = if !iterables.is_never() {
-            // A reference to an alias that was under way where it is written is what the alias stands for.
-            let yielded = self.iterated_type(iterables, false);
-            let members: Vec<TypeId> = self
-                .parts(yielded)
-                .iter()
-                .map(|&member| self.force(member))
-                .collect();
-            Some(self.union(&members))
-        } else {
-            None
-        };
+        let yielded = (!iterables.is_never()).then(|| self.iterated_type(iterables, false));
         let types: Vec<TypeId> = children.iter().map(|c| c.1).collect();
         let source = self.tuple(&types, &vec![ElemFlags::REQUIRED; types.len()], false);
         let mut said = Vec::new();

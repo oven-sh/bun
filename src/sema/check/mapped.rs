@@ -1051,6 +1051,7 @@ impl<'p> Checker<'p> {
             self.note_depth(key, Some(events));
             self.p.conditionals.insert((file, node, mapper), ty);
         }
+        self.settle_deferred_references();
         ty
     }
 

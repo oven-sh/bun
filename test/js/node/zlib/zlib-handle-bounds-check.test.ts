@@ -531,3 +531,118 @@ describe.concurrent("zlib native handle argument validation", () => {
     ).toEqual({ stdout: "ok hello world", exitCode: 0 });
   });
 });
+
+// A zstd compressor with ZSTD_c_nbWorkers >= 1 compresses on zstd's own threads: a write posts a
+// job and returns, so the job still runs after the write callback. The first job of a frame reads
+// the dictionary of the stream, and zstd freed that dictionary before it joined its workers
+// (https://github.com/oven-sh/bun/issues/44201). Each case leaves that job running and then takes
+// one way out of the stream, in a subprocess. ASAN reports the read of freed memory in every run.
+// Not concurrent: on a busy machine five cases at once passed the 5 s limit on a debug build
+// (a case runs zstd at level 19 for most of its time). In sequence a case took 1.5 to 3.5 s.
+describe("zstd: a compressor with workers and a dictionary", () => {
+  const prelude = /* js */ `
+    const zlib = require("node:zlib");
+    const { pbkdf2Sync } = require("node:crypto");
+    const { finished } = require("node:stream/promises");
+    const { ZSTD_c_compressionLevel, ZSTD_c_jobSize, ZSTD_c_nbWorkers, ZSTD_c_overlapLog, ZSTD_e_continue, ZSTD_e_end } =
+      zlib.constants;
+
+    // The hex digits of a fixed pseudo-random sequence.
+    const hex = (seed, length) => Buffer.from(pbkdf2Sync(seed, "", 1, length / 2, "sha256").toString("hex"));
+    // A small dictionary makes only a sanitizer see the wrong free. With 192 KiB a release build
+    // of the unfixed code usually crashes too: the allocator gives the freed tables of the
+    // dictionary back to the operating system while the job still searches them.
+    const dictionary = hex("dictionary", 192 * 1024);
+    // One job of the smallest size (512 KiB). At level 19 a worker needs far longer for it than
+    // the calls after the write need.
+    const input = hex("input", 512 * 1024);
+    // With its default overlap, level 19 makes a job as long as its window (8 MiB).
+    const params = {
+      [ZSTD_c_nbWorkers]: 2,
+      [ZSTD_c_jobSize]: input.length,
+      [ZSTD_c_overlapLog]: 1,
+      [ZSTD_c_compressionLevel]: 19,
+    };
+
+    const open = () => zlib.createZstdCompress({ dictionary, params }).on("data", () => {});
+    const write = (stream, chunk) => new Promise(done => stream.write(chunk, done));
+    // A stream whose first job runs on a worker.
+    async function busy() {
+      const stream = open();
+      await write(stream, input);
+      return stream;
+    }
+  `;
+
+  async function run(body: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + body],
+      // The finalizer of every handle runs at exit, as on the ASAN CI lanes.
+      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+      stderr: "pipe",
+    });
+    // stderr is drained and not compared: a debug build writes to it.
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), exitCode };
+  }
+
+  const cases: [name: string, body: string, expected: string][] = [
+    ["destroy()", `(await busy()).destroy(); console.log("destroyed");`, "destroyed"],
+    ["close()", `(await busy()).close(() => console.log("closed"));`, "closed"],
+    // The native close waits for the write and runs when it completes.
+    [
+      "destroy() while the write is in flight",
+      `const stream = open();
+       stream.on("close", () => console.log("closed"));
+       stream.write(input);
+       stream.destroy();`,
+      "closed",
+    ],
+    [
+      "a second _handle.init()",
+      `const stream = await busy();
+       stream._handle.init(new Uint32Array(0), undefined, stream._writeState, () => {}, dictionary);
+       console.log("initialized");`,
+      "initialized",
+    ],
+    [
+      "reset() and the next frame",
+      `const stream = await busy();
+       stream.reset();
+       stream.end("x");
+       await finished(stream);
+       console.log("finished");`,
+      "finished",
+    ],
+    // The second call posts a job of zero bytes. zstd's own wait for the jobs of a frame skips it.
+    // Only a sanitizer sees this one.
+    [
+      "close() while a job of zero bytes runs",
+      `const handle = open()._handle;
+       const out = Buffer.alloc(64);
+       handle.writeSync(ZSTD_e_continue, null, 0, 0, out, 0, out.length);
+       handle.writeSync(ZSTD_e_end, null, 0, 0, out, 0, 0);
+       handle.close();
+       console.log("closed");`,
+      "closed",
+    ],
+    // The stream still works to its end with the frees in the new order.
+    [
+      "a frame that ends decompresses to the input",
+      `const stream = zlib.createZstdCompress({ dictionary, params });
+       const chunks = [];
+       stream.on("data", chunk => chunks.push(chunk));
+       await write(stream, input);
+       stream.end();
+       await finished(stream);
+       console.log(zlib.zstdDecompressSync(Buffer.concat(chunks), { dictionary }).equals(input));`,
+      "true",
+    ],
+  ];
+
+  for (const [name, body, expected] of cases) {
+    test(name, async () => {
+      expect(await run(body)).toEqual({ stdout: expected, exitCode: 0 });
+    });
+  }
+});

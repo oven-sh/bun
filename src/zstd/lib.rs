@@ -168,7 +168,6 @@ pub mod c {
             param: ZSTD_dParameter,
             value: c_int,
         ) -> usize;
-        pub fn ZSTD_CCtx_reset(cctx: *mut ZSTD_CCtx, reset: ZSTD_ResetDirective) -> usize;
         pub fn ZSTD_DCtx_reset(dctx: *mut ZSTD_DCtx, reset: ZSTD_ResetDirective) -> usize;
         pub fn ZSTD_compressStream2(
             cctx: *mut ZSTD_CCtx,

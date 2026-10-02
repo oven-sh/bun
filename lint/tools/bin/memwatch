@@ -1,16 +1,25 @@
 #!/bin/sh
-# The container has a hard limit of 32 GB and is removed when it is reached. This loop ends the largest
-# compiler, linker or test process before that happens, and logs it.
+# The container has a hard limit of 32 GB. This loop ends the largest compiler, linker or test process before
+# the limit, and writes a reading every 30 s so that the last minutes before a loss of the machine can be read.
 LIMIT_KB=$((25 * 1024 * 1024))
+LOG=/workspace/notes/lint/machine/mem.log
+mkdir -p /workspace/notes/lint/machine
+n=0
 while true; do
   anon=$(awk '$1=="anon"{a=$2} $1=="shmem"{s=$2} END{printf "%d", (a+s)/1024}' /sys/fs/cgroup/memory.stat 2>/dev/null)
   if [ -n "$anon" ] && [ "$anon" -gt "$LIMIT_KB" ]; then
-    victim=$(ps -eo pid,rss,comm --sort=-rss | awk '$3 ~ /^(rustc|clang|clang\+\+|ld\.lld|lld|cargo|bun-debug|bun|node|ninja|cc1plus)/ {print $1" "$2" "$3; exit}')
+    victim=$(ps -eo pid,rss,comm --sort=-rss | awk '$3 ~ /^(rustc|clang|clang\+\+|ld\.lld|lld|cargo|bun-debug|ninja|cc1plus)/ {print $1" "$2" "$3; exit}')
     if [ -n "$victim" ]; then
-      echo "$(date +%m-%d_%H:%M:%S) anon=${anon}kB kill $victim" >> /workspace/tools/memwatch.log
+      echo "$(date +%m-%d_%H:%M:%S) anon=${anon}kB KILL $victim" >> "$LOG"
       kill -9 "${victim%% *}" 2>/dev/null
     fi
     sleep 5
+  fi
+  n=$((n + 1))
+  if [ $((n % 15)) -eq 0 ]; then
+    top=$(ps -eo rss,comm --sort=-rss | awk 'NR==2{printf "%s:%dMB", $2, $1/1024}')
+    echo "$(date +%m-%d_%H:%M:%S) anon=$((anon / 1024))MB pids=$(cat /sys/fs/cgroup/pids.current 2>/dev/null) load=$(cut -d' ' -f1 /proc/loadavg) top=$top" >> "$LOG"
+    tail -n 400 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
   fi
   sleep 2
 done

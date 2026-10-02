@@ -121,7 +121,7 @@ describe("hash", () => {
               algorithm: "argon2id",
               memoryCost: invalid,
             }),
-          ).toThrow("Memory cost must be at least 8");
+          ).toThrow("Memory cost must be an integer between 8 and 4194304");
         }
 
         expect(() =>
@@ -137,6 +137,19 @@ describe("hash", () => {
             cost: -999,
           }),
         ).toThrow();
+      });
+
+      // hash() must enforce the same upper bounds that verify() applies to
+      // PHC params, so Bun never produces a hash it cannot verify.
+      test("argon2 cost upper bounds match verify", () => {
+        for (const algorithm of ["argon2id", "argon2d", "argon2i"] as const) {
+          expect(() => hash(placeholder, { algorithm, memoryCost: 8, timeCost: 65537 })).toThrow(
+            "Time cost must be an integer between 1 and 65536",
+          );
+          expect(() => hash(placeholder, { algorithm, memoryCost: 4194305, timeCost: 1 })).toThrow(
+            "Memory cost must be an integer between 8 and 4194304",
+          );
+        }
       });
 
       test("cost values are range-checked before ToInt32 narrowing", () => {
@@ -161,47 +174,46 @@ describe("hash", () => {
             algorithm: "argon2id",
             timeCost: 2 ** 32 + 2,
           }),
-        ).toThrow("Time cost must be an integer between 1 and 4294967295");
+        ).toThrow("Time cost must be an integer between 1 and 65536");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            timeCost: 2 ** 31,
+          }),
+        ).toThrow("Time cost must be an integer between 1 and 65536");
 
         expect(() =>
           hash(placeholder, {
             algorithm: "argon2id",
             timeCost: 1.5,
           }),
-        ).toThrow("Time cost must be an integer between 1 and 4294967295");
+        ).toThrow("Time cost must be an integer between 1 and 65536");
 
         expect(() =>
           hash(placeholder, {
             algorithm: "argon2id",
             memoryCost: 2 ** 32 + 4608,
           }),
-        ).toThrow("Memory cost must be an integer between 8 and 4294967295");
+        ).toThrow("Memory cost must be an integer between 8 and 4194304");
 
         expect(() =>
           hash(placeholder, {
             algorithm: "argon2id",
             memoryCost: 8.5,
           }),
-        ).toThrow("Memory cost must be an integer between 8 and 4294967295");
+        ).toThrow("Memory cost must be an integer between 8 and 4194304");
 
-        // Non-finite values: NaN and -Infinity fail the lower-bound check,
-        // +Infinity fails the integer/upper-bound check.
-        for (const timeCost of [NaN, -Infinity]) {
+        for (const timeCost of [NaN, -Infinity, Infinity]) {
           expect(() => hash(placeholder, { algorithm: "argon2id", timeCost })).toThrow(
-            "Time cost must be greater than 0",
+            "Time cost must be an integer between 1 and 65536",
           );
         }
-        expect(() => hash(placeholder, { algorithm: "argon2id", timeCost: Infinity })).toThrow(
-          "Time cost must be an integer between 1 and 4294967295",
-        );
-        for (const memoryCost of [NaN, -Infinity]) {
+        for (const memoryCost of [NaN, -Infinity, Infinity]) {
           expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost })).toThrow(
-            "Memory cost must be at least 8",
+            "Memory cost must be an integer between 8 and 4194304",
           );
         }
-        expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost: Infinity })).toThrow(
-          "Memory cost must be an integer between 8 and 4294967295",
-        );
       });
 
       test("coercion throwing doesn't crash", () => {
@@ -369,7 +381,7 @@ describe.concurrent("argon2 hashes with memoryCost below 8 from earlier Bun vers
 
   test("hashing with memoryCost below 8 is still rejected", () => {
     expect(() => password.hashSync("hello", { algorithm: "argon2id", memoryCost: 4 })).toThrow(
-      "Memory cost must be at least 8",
+      "Memory cost must be an integer between 8 and 4194304",
     );
   });
 });
@@ -487,6 +499,16 @@ for (let algorithmValue of algorithms) {
     }
   });
 }
+
+// argon2 at t=65536 is too slow under debug/ASAN to finish in the default
+// timeout; release CI exercises the boundary.
+test.skipIf(isDebug)("argon2 cost options at the verify ceilings round-trip through hash and verify", async () => {
+  // Use the timeCost ceiling with the memoryCost floor; the memoryCost
+  // ceiling would allocate 4 GiB.
+  const hashed = await password.hash("p", { algorithm: "argon2id", memoryCost: 8, timeCost: 65536 });
+  expect(hashed).toContain("$m=8,t=65536,p=1$");
+  expect(await password.verify("p", hashed)).toBeTrue();
+});
 
 test("verify rejects encoded argon2 hashes with cost parameters above the supported maximums", async () => {
   // Hash with small, fast parameters so this test stays cheap on debug builds.

@@ -1608,6 +1608,9 @@ impl<'a> Transpiler<'a> {
                 // JavaScriptCore implements `using` / `await using` natively, so
                 // when targeting Bun there is no need to lower them.
                 opts.features.lower_using = !target.is_bun();
+                // Same condition as the printer's `var {require}=import.meta;` hoist.
+                opts.features.typeof_require_is_function =
+                    target == crate::options_impl::Target::Bun;
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = self.options.minify_syntax;

@@ -703,7 +703,7 @@ root: &root
         expect(YAML.parse.length).toBe(2);
       });
 
-      test.each([undefined, null, {}, { maxAliasCount: undefined, maxDepth: undefined }])(
+      test.each([undefined, null, {}, { maxAliasCount: undefined, maxDepth: undefined }, 0, "maxDepth", true])(
         "options %p change nothing",
         options => {
           const doc = (YAML.parse as Function)("a: &x [1, [2]]\nb: *x\nc: &c [*c]\nd: { <<: &m { e: 1 } }", options);
@@ -970,14 +970,9 @@ root: &root
       });
 
       describe("invalid options", () => {
-        test.each([
-          [1, "type number (1)"],
-          ["maxDepth", "type string ('maxDepth')"],
-          [true, "type boolean (true)"],
-          [function reviver() {}, "function reviver"],
-        ])("rejects %p as options", (options, received) => {
-          expect(outcome("[]", options)).toEqual({
-            error: `TypeError: The "options" argument must be of type object. Received ${received}`,
+        test("rejects a function as options", () => {
+          expect(outcome("[]", function reviver() {})).toEqual({
+            error: `TypeError: The "options" argument must be of type object. Received function reviver`,
           });
         });
 

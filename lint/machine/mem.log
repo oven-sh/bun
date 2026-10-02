@@ -148,3 +148,12 @@
 10-02_14:14:15 anon=20MB pids=30 load=684.75 top=mariadbd:10MB
 10-02_14:14:45 anon=23MB pids=34 load=706.20 top=mariadbd:10MB
 10-02_14:15:17 anon=20MB pids=29 load=687.71 top=git:18MB
+10-02_14:15:47 anon=16MB pids=27 load=642.01 top=mariadbd:10MB
+10-02_14:16:18 anon=16MB pids=27 load=655.67 top=mariadbd:10MB
+10-02_14:16:49 anon=36MB pids=39 load=668.42 top=mariadbd:10MB
+10-02_14:17:20 anon=528MB pids=84 load=632.30 top=rustc:296MB
+10-02_14:17:50 anon=309MB pids=96 load=619.07 top=rustc:175MB
+10-02_14:18:21 anon=278MB pids=44 load=569.74 top=rustc:356MB
+10-02_14:18:53 anon=82MB pids=44 load=606.37 top=rustc:106MB
+10-02_14:19:25 anon=324MB pids=38 load=618.60 top=rustc:384MB
+10-02_14:19:56 anon=13MB pids=27 load=608.97 top=mariadbd:7MB

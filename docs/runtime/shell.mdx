@@ -176,7 +176,10 @@ You can redirect from these JavaScript objects:
 
 - `Buffer`, `Uint8Array`, `Uint16Array`, `Uint32Array`, `Int8Array`, `Int16Array`, `Int32Array`, `Float32Array`, `Float64Array`, `ArrayBuffer`, `SharedArrayBuffer` (reads from the underlying buffer)
 - `Bun.file(path)`, `Bun.file(fd)` (reads from the file)
-- `Response` (reads from the body)
+- `Response`, `Request` (reads from the body)
+- `ReadableStream`
+
+A `ReadableStream`, and a body that has not arrived yet such as the one `fetch()` returns, streams into the command as it runs. If the command exits before it reads all of the stream, the stream is cancelled. If the stream fails, the shell promise rejects with the stream's error.
 
 ### Example: Redirect stdin -> file
 

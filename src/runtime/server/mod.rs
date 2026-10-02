@@ -905,8 +905,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             on_readable_stream_available: Some(
                                 ServerRequestContext::<SSL, DEBUG>::on_request_body_readable_stream_available,
                             ),
-                            producer: crate::webcore::streams::SourceHandle::ServerRequestBody(
-                                AnyRequestContext::init(ctx),
+                            producer: crate::webcore::body::PendingProducer::new(
+                                crate::webcore::streams::SourceHandle::ServerRequestBody(
+                                    AnyRequestContext::init(ctx),
+                                ),
                             ),
                             ..Default::default()
                         });

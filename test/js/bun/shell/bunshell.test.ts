@@ -505,6 +505,307 @@ describe("bunshell", () => {
     expect(await file.text()).toEqual(thisFileText);
   });
 
+  describe("redirect stdin from a stream", () => {
+    const html = Buffer.alloc(1024 * 1024, "<p>a</p>");
+    const serveHTML = () => Bun.serve({ port: 0, fetch: () => new Response(html) });
+    const streamOf = (...chunks: string[]) =>
+      new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk));
+          controller.close();
+        },
+      });
+    // A ShellPromise starts on `.then()`, which `.rejects` does not call.
+    const run = async (shell: Bun.$.ShellPromise) => await shell.quiet();
+    // Sends one chunk and stays open. `aborted` settles when the client closes the request.
+    function serveEndlessBody() {
+      const aborted = Promise.withResolvers<void>();
+      const server = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        fetch(request) {
+          request.signal.addEventListener("abort", () => aborted.resolve());
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("0123456789"));
+              },
+            }),
+          );
+        },
+      });
+      return { server, aborted: aborted.promise };
+    }
+
+    test("a fetch() Response with a pending body", async () => {
+      await using server = serveHTML();
+      const stdout = await $`cat < ${await fetch(server.url)}`.arrayBuffer();
+      expect(Buffer.from(stdout).equals(html)).toBe(true);
+    });
+
+    test("HTMLRewriter.transform(await fetch())", async () => {
+      await using server = serveHTML();
+      const response = new HTMLRewriter().transform(await fetch(server.url));
+      const stdout = await $`cat < ${response}`.arrayBuffer();
+      expect(Buffer.from(stdout).equals(html)).toBe(true);
+    });
+
+    test("more than one in a script", async () => {
+      await using server = serveHTML();
+      const [first, second] = [await fetch(server.url), await fetch(server.url)];
+      const stdout = await $`cat < ${first}; cat < ${second}`.arrayBuffer();
+      expect(Buffer.from(stdout).equals(Buffer.concat([html, html]))).toBe(true);
+    });
+
+    test("a Response with a ReadableStream body", async () => {
+      expect(await $`cat < ${new Response(streamOf("a", "b", "c"))}`.text()).toBe("abc");
+    });
+
+    test("a ReadableStream", async () => {
+      expect(await $`cat < ${streamOf("a", "b", "c")}`.text()).toBe("abc");
+    });
+
+    test("the body of a fetch() Response", async () => {
+      await using server = serveHTML();
+      const stdout = await $`cat < ${(await fetch(server.url)).body!}`.arrayBuffer();
+      expect(Buffer.from(stdout).equals(html)).toBe(true);
+    });
+
+    test("a command that does not run does not wait for the body or read it", async () => {
+      const { server, aborted } = serveEndlessBody();
+      await using _ = server;
+      const response = await fetch(server.url);
+      const { exitCode } = await $`false && cat < ${response}`.nothrow().quiet();
+      expect(response.bodyUsed).toBe(false);
+      expect(exitCode).toBe(1);
+      await response.body!.cancel();
+      await aborted;
+    });
+
+    test("the commands before it do not wait for the body", async () => {
+      using dir = tempDir("shell-stream-stdin", {});
+      const marker = join(String(dir), "marker");
+      const rest = Promise.withResolvers<void>();
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(new TextEncoder().encode("first;"));
+                await rest.promise;
+                controller.enqueue(new TextEncoder().encode("second"));
+                controller.close();
+              },
+            }),
+          ),
+      });
+      const stdout = $`touch ${marker}; cat < ${await fetch(server.url)}`.text();
+      while (!(await Bun.file(marker).exists())) await Bun.sleep(1);
+      rest.resolve();
+      expect(await stdout).toBe("first;second");
+    });
+
+    test.skipIf(isWindows)("a command that exits early closes the request", async () => {
+      const { server, aborted } = serveEndlessBody();
+      await using _ = server;
+      const response = await fetch(server.url);
+      expect(await $`head -c 5 < ${response}`.text()).toBe("01234");
+      await aborted;
+      // Also keeps `response` alive until here, so a collected Response is not what closed the request.
+      expect(response.bodyUsed).toBe(true);
+    });
+
+    test.skipIf(isWindows)("a command that exits early cancels a stream that never ends", async () => {
+      const cancelled = Promise.withResolvers<void>();
+      const stream = new ReadableStream({
+        pull(controller) {
+          controller.enqueue(new TextEncoder().encode("0123456789"));
+        },
+        cancel() {
+          cancelled.resolve();
+        },
+      });
+      expect(await $`head -c 5 < ${stream}`.text()).toBe("01234");
+      await cancelled.promise;
+    });
+
+    test.skipIf(isWindows)("a command that exits early ends a direct stream that never ends", async () => {
+      const stream = new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          for (;;) {
+            controller.write("0123456789");
+            await controller.flush();
+          }
+        },
+      });
+      expect(await $`head -c 5 < ${stream}`.text()).toBe("01234");
+    });
+
+    test("a builtin that does not read stdin closes the request", async () => {
+      const { server, aborted } = serveEndlessBody();
+      await using _ = server;
+      const response = await fetch(server.url);
+      expect(await $`echo hi < ${response}`.text()).toBe("hi\n");
+      await aborted;
+      // Also keeps `response` alive until here, so a collected Response is not what closed the request.
+      expect(response.bodyUsed).toBe(true);
+    });
+
+    test.skipIf(isWindows)("a command that fails to start leaves the body unread", async () => {
+      using dir = tempDir("shell-stream-stdin", { "not-a-program": "\0" });
+      const program = join(String(dir), "not-a-program");
+      chmodSync(program, 0o755);
+      const { server, aborted } = serveEndlessBody();
+      await using _ = server;
+      const response = await fetch(server.url);
+      const { exitCode } = await $`${program} < ${response}`.nothrow().quiet();
+      expect(response.bodyUsed).toBe(false);
+      expect(exitCode).toBe(1);
+      await response.body!.cancel();
+      await aborted;
+    });
+
+    // `cat` is a builtin on Windows, so no other test here feeds a subprocess there.
+    test("into a subprocess", async () => {
+      const stdout = await $`${BUN} -e ${"process.stdin.pipe(process.stdout)"} < ${streamOf("a", "b", "c")}`.text();
+      expect(stdout).toBe("abc");
+    });
+
+    test("a Request", async () => {
+      const request = new Request("http://localhost/", { method: "POST", body: "abc" });
+      expect(await $`cat < ${request}`.text()).toBe("abc");
+    });
+
+    test("the Request of a Bun.serve() handler", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch: async request => new Response(await $`cat < ${request}`.arrayBuffer()),
+      });
+      const response = await fetch(server.url, { method: "POST", body: html });
+      expect(Buffer.from(await response.bytes()).equals(html)).toBe(true);
+    });
+
+    test("rejects when the stream fails", async () => {
+      const connected = Promise.withResolvers<Bun.Socket>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket) {
+            socket.write("HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\npartial");
+            connected.resolve(socket);
+          },
+        },
+      });
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const failure = $`cat < ${response}`.quiet().then(
+        () => undefined,
+        error => error,
+      );
+      (await connected.promise).end();
+      expect(await failure).toMatchObject({ code: "ECONNRESET" });
+    });
+
+    test("throws when the body was already read", async () => {
+      const response = new Response("a");
+      await response.text();
+      await expect(run($`cat < ${response}`)).rejects.toThrow("Body already used");
+    });
+
+    describe("as stdout or stderr", () => {
+      test("a builtin fails at once and leaves a pending body unread", async () => {
+        const { server, aborted } = serveEndlessBody();
+        await using _ = server;
+        const response = await fetch(server.url);
+        await expect(run($`echo hi > ${response}`)).rejects.toThrow(
+          "Cannot redirect stdout/stderr to an immutable blob. Expected a file",
+        );
+        expect(response.bodyUsed).toBe(false);
+        await response.body!.cancel();
+        await aborted;
+      });
+
+      test("a subprocess fails at once and closes the request of a pending body", async () => {
+        const { server, aborted } = serveEndlessBody();
+        await using _ = server;
+        await expect(run($`${BUN} --version > ${await fetch(server.url)}`)).rejects.toThrow(
+          "Blobs are immutable, and cannot be used for stdout/stderr",
+        );
+        await aborted;
+      });
+
+      test("a ReadableStream throws", async () => {
+        const message = "Cannot redirect stdout/stderr to a ReadableStream";
+        await expect(run($`echo hi > ${streamOf("a")}`)).rejects.toThrow(message);
+        await expect(run($`${BUN} --version > ${streamOf("a")}`)).rejects.toThrow(message);
+        await expect(run($`${BUN} --version 2> ${streamOf("a")}`)).rejects.toThrow(message);
+      });
+    });
+
+    // `cat` is a builtin on Windows only, so the tests above do not reach it elsewhere.
+    test.skipIf(isWindows)("into the cat builtin", async () => {
+      using dir = tempDir("shell-stream-stdin", { "file.txt": "file" });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            import { $ } from "bun";
+            const body = Buffer.alloc(1024 * 1024, "x");
+            using server = Bun.serve({ port: 0, fetch: () => new Response(body) });
+            const stream = new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("js"));
+                controller.close();
+              },
+            });
+            const failing = new ReadableStream({
+              pull(controller) {
+                controller.error(new Error("stream failed"));
+              },
+            });
+            const used = new Response("used");
+            await used.text();
+            const closed = new ReadableStream({
+              start(controller) {
+                controller.close();
+              },
+            });
+            console.log(JSON.stringify({
+              fetch: Buffer.from(await $\`cat < \${await fetch(server.url)}\`.arrayBuffer()).equals(body),
+              stream: await $\`cat < \${stream}\`.text(),
+              failing: await $\`cat < \${failing}\`.quiet().then(() => "resolved", error => error.message),
+              used: await $\`cat < \${used}\`.quiet().then(() => "resolved", error => error.message),
+              blob: await $\`cat < \${new Blob(["blob"]).stream()}\`.text(),
+              body: await $\`cat < \${new Response("body").body}\`.text(),
+              file: await $\`cat < \${Bun.file("file.txt").stream()}\`.text(),
+              closed: await $\`cat < \${closed}\`.text(),
+              request: await $\`cat < \${new Request(server.url, { method: "POST", body: "request" })}\`.text(),
+            }));
+          `,
+        ],
+        env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+        cwd: String(dir),
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual({
+        fetch: true,
+        stream: "js",
+        failing: "stream failed",
+        used: "Body already used",
+        blob: "blob",
+        body: "body",
+        file: "file",
+        closed: "",
+        request: "request",
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   // TODO This sometimes fails
   test("redirect stderr", async () => {
     const buffer = Buffer.alloc(128, 0);

@@ -1858,7 +1858,9 @@ impl FetchTasklet {
                 Some(FetchTasklet::on_start_streaming_http_response_body_callback);
             pending.on_readable_stream_available = Some(FetchTasklet::on_readable_stream_available);
             pending.on_start_buffering = Some(FetchTasklet::on_start_buffering_callback);
-            pending.producer = SourceHandle::FetchResponseBody(bun_ptr::BackRef::new_mut(self));
+            pending.producer = body::PendingProducer::new(SourceHandle::FetchResponseBody(
+                bun_ptr::BackRef::new_mut(self),
+            ));
             return BodyValue::Locked(pending);
         }
 

@@ -6343,7 +6343,6 @@ impl NodeFS {
     fn readdir_with_entries<T: ReaddirEntry>(
         args: &args::Readdir,
         fd: FD,
-        basename: &ZStr,
         entries: &mut Vec<T>,
     ) -> Maybe<()> {
         // On Windows, String/Dirent results read native UTF-16 entry names via the
@@ -6351,7 +6350,7 @@ impl NodeFS {
         // use the u8 iterator.
         #[cfg(windows)]
         if T::IS_U16 {
-            return Self::readdir_with_entries_u16::<T>(args, fd, basename, entries);
+            return Self::readdir_with_entries_u16::<T>(args, fd, entries);
         }
 
         let mut dirent_path = BunString::DEAD;
@@ -6365,8 +6364,10 @@ impl NodeFS {
             };
 
             if T::IS_DIRENT && dirent_path.is_empty() {
+                // Node keeps `parentPath` as the caller spelled it, not the
+                // syscall form.
                 dirent_path = webcore::encoding::to_bun_string(
-                    without_nt_prefix::<u8>(basename.as_bytes()),
+                    args.path.slice(),
                     encoding_to_node(args.encoding),
                 );
             }
@@ -6394,7 +6395,6 @@ impl NodeFS {
     fn readdir_with_entries_u16<T: ReaddirEntry>(
         args: &args::Readdir,
         fd: FD,
-        basename: &ZStr,
         entries: &mut Vec<T>,
     ) -> Maybe<()> {
         let mut dirent_path = BunString::DEAD;
@@ -6419,7 +6419,7 @@ impl NodeFS {
 
             if T::IS_DIRENT && dirent_path.is_empty() {
                 dirent_path = webcore::encoding::to_bun_string(
-                    without_nt_prefix::<u8>(basename.as_bytes()),
+                    args.path.slice(),
                     encoding_to_node(args.encoding),
                 );
             }
@@ -6879,8 +6879,7 @@ impl NodeFS {
         let _close = scopeguard::guard(fd, |fd| fd.close());
 
         let mut entries: Vec<T> = Vec::new();
-        Self::readdir_with_entries::<T>(args, fd, path, &mut entries)
-            .map(|()| T::into_readdir(entries))
+        Self::readdir_with_entries::<T>(args, fd, &mut entries).map(|()| T::into_readdir(entries))
     }
 
     /// Caller has already checked `is_bun_standalone_file_path(path)`.

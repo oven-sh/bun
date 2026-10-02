@@ -348,16 +348,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useAOT() = useAOT;
             if (const char* value = getenv("BUN_AOT"); value && !strcmp(value, "0"))
                 JSC::Options::useAOT() = false;
-            // Ahead-of-time compiled code runs without the JIT: code that the build could not see (eval, new Function)
-            // is interpreted. With JIT compiler threads, only the first VM can use the static heap
-            // (StaticHeap::install()), which the code of a Worker relies on. BUN_JSC_useJIT=1 (applied below) overrides
-            // this.
-            // (Regular expressions that are built at run time are still compiled: Options::notifyOptionsChanged().)
-            // The code was also compiled on the assumption that built-in objects are immutable.
-            if (JSC::Options::useAOT()) {
-                JSC::Options::useJIT() = false;
-                JSC::Options::useImmutableIntrinsics() = true;
-            }
             // An executable that is built without its source text keeps the excerpts that its error messages quote.
             if (const char* value = getenv("BUN_COMPILE_OMIT_SOURCE_TEXT"); value && !strcmp(value, "1"))
                 JSC::Options::useAOTSourceQuotes() = true;

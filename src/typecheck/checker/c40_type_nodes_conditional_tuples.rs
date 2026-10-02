@@ -1,17 +1,23 @@
-// checker.go:24225-25124 (layers T-TYPENODE, T-INSTANTIATE, T-TUPLE, K-GENERIC, K-SUBST): the functions of 24225-24390, 24602-24660, 24690-24696, 24791-24803 and 24820-25124: types of the remaining type nodes, permissive and restrictive instantiations, array and tuple type construction, generic type predicates and the conditional flow type of a type node.
+// checker.go:24225-25124 (layers T-TYPENODE, K-COND, T-INSTANTIATE, K-IMPORTTYPE, T-TUPLE, K-GENERIC, K-SUBST): types of the remaining type nodes, conditional types with their resolution, tail recursion and branch types, permissive and restrictive instantiations, the type of an import type node, array and tuple type construction, generic type predicates and the conditional flow type of a type node.
 use crate::ast::{
-    Ast, CheckFlags, Kind, NodeId, SymbolFlags, SymbolId, is_conditional_type_node,
-    is_mapped_type_node, is_named_tuple_member, is_parameter_declaration, is_statement,
-    is_tuple_type_node, is_type_operator_node,
+    Arg, Ast, CheckFlags, JSDeclarationKind, Kind, NodeId, SymbolFlags, SymbolId,
+    get_assignment_declaration_kind, is_conditional_type_node, is_identifier,
+    is_literal_import_type_node, is_mapped_type_node, is_named_tuple_member, is_optional_type_node,
+    is_parameter_declaration, is_qualified_name, is_rest_type_node, is_statement,
+    is_tuple_type_node, is_type_operator_node, node_is_missing, skip_type_parentheses,
 };
 use crate::checker::{
-    CachedTypeKey, CachedTypeKind, Checker, ElementFlags, IntersectionFlags, ObjectFlags,
-    TupleElementInfo, TypeAliasId, TypeFlags, TypeId, TypeMapperId, UnionReduction, every_type,
-    get_total_fixed_element_count, get_tuple_key, get_type_list_key, is_tuple_type,
-    new_simple_type_mapper,
+    CachedTypeKey, CachedTypeKind, Checker, ConditionalRoot, ConditionalRootId, ElementFlags,
+    InferenceFlags, InferencePriority, IntersectionFlags, ObjectFlags, SignatureId,
+    TupleElementInfo, TypeAliasId, TypeComparer, TypeFlags, TypeId, TypeMapperId, UnionReduction,
+    create_symbol_table, every_type, get_conditional_type_key, get_total_fixed_element_count,
+    get_tuple_key, get_type_list_key, is_tuple_type, new_simple_type_mapper, new_type_mapper,
+    some_type,
 };
-use crate::core::{List, Map};
+use crate::core::{List, Map, or_else};
+use crate::diagnostics;
 use crate::jsnum::Number;
+use crate::scanner::declaration_name_to_string;
 
 // `s[i]` as a guarded read: the zero value when the index is outside the slice.
 fn at<T: Copy + Default>(items: &[T], index: usize) -> T {
@@ -265,6 +271,309 @@ impl<'a> Checker<'a> {
             self.get_constraint_type_from_mapped_type(t);
         }
         self.type_node_links[links].resolved_type
+    }
+
+    pub fn get_type_from_conditional_type_node(&mut self, node: NodeId) -> TypeId {
+        let a = self.ast;
+        let links = self.type_node_links.get(node);
+        if self.type_node_links[links].resolved_type.is_nil() {
+            let data = a.as_conditional_type_node(node);
+            let check_type = self.get_type_from_type_node(data.check_type);
+            let alias = self.get_alias_for_type_node(node);
+            let all_outer_type_parameters = self.get_outer_type_parameters(node, true);
+            let outer_type_parameters = if !alias.is_nil()
+                && self.type_aliases[alias].type_arguments.len() != 0
+            {
+                all_outer_type_parameters
+            } else {
+                self.filter(all_outer_type_parameters, |c, tp| {
+                    c.is_type_parameter_possibly_referenced(tp, node)
+                })
+            };
+            let extends_type = self.get_type_from_type_node(data.extends_type);
+            let is_distributive = self.types[check_type]
+                .flags
+                .intersects(TypeFlags::TYPE_PARAMETER);
+            let infer_type_parameters = self.get_infer_type_parameters(node);
+            let root = self.conditional_roots.alloc(ConditionalRoot {
+                node,
+                check_type,
+                extends_type,
+                is_distributive,
+                infer_type_parameters,
+                outer_type_parameters,
+                instantiations: Map::default(),
+                alias,
+            });
+            let resolved =
+                self.get_conditional_type(root, TypeMapperId::NIL, false, TypeAliasId::NIL);
+            self.type_node_links[links].resolved_type = resolved;
+            if !outer_type_parameters.is_nil() {
+                self.conditional_roots[root].instantiations = Map::make();
+                let key =
+                    get_conditional_type_key(self, outer_type_parameters, TypeAliasId::NIL, false);
+                let ok = self.conditional_roots[root]
+                    .instantiations
+                    .set(key, resolved);
+                self.map_set(ok);
+            }
+        }
+        self.type_node_links[links].resolved_type
+    }
+
+    pub fn get_conditional_type(
+        &mut self,
+        mut root: ConditionalRootId,
+        mut mapper: TypeMapperId,
+        for_constraint: bool,
+        mut alias: TypeAliasId,
+    ) -> TypeId {
+        let a = self.ast;
+        let mut extra_types: Vec<TypeId> = Vec::new();
+        let mut tail_count = 0;
+        // We loop here for an immediately nested conditional type in the false position, effectively treating types of the form 'A extends B ? X : C extends D ? Y : E extends F ? Z : ...' as a single construct for purposes of resolution. We also loop here when resolution of a conditional type ends in resolution of another (or, through recursion, possibly the same) conditional type. In the potentially tail-recursive cases we increment the tail recursion counter and stop after 1000 iterations.
+        let result = loop {
+            if tail_count == 1000 {
+                self.error(
+                    self.current_node,
+                    diagnostics::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                    &[],
+                );
+                return self.error_type;
+            }
+            let root_node = self.conditional_roots[root].node;
+            let root_check_type = self.conditional_roots[root].check_type;
+            let root_extends_type = self.conditional_roots[root].extends_type;
+            let actual_check_type = self.get_actual_type_variable(root_check_type);
+            let check_type = self.instantiate_type(actual_check_type, mapper);
+            let extends_type = self.instantiate_type(root_extends_type, mapper);
+            if check_type == self.error_type || extends_type == self.error_type {
+                return self.error_type;
+            }
+            if check_type == self.wildcard_type || extends_type == self.wildcard_type {
+                return self.wildcard_type;
+            }
+            let node_data = a.as_conditional_type_node(root_node);
+            let check_type_node = skip_type_parentheses(a, node_data.check_type);
+            let extends_type_node = skip_type_parentheses(a, node_data.extends_type);
+            // When the check and extends types are simple tuple types of the same arity, we defer resolution of the conditional type when any tuple elements are generic. This is such that non-distributable conditional types can be written `[X] extends [Y] ? ...` and be deferred similarly to `X extends Y ? ...`.
+            let check_tuples = self.is_simple_tuple_type(check_type_node)
+                && self.is_simple_tuple_type(extends_type_node)
+                && a.elements(check_type_node).len() == a.elements(extends_type_node).len();
+            let check_type_deferred = self.is_deferred_type(check_type, check_tuples);
+            let mut combined_mapper = TypeMapperId::NIL;
+            let infer_type_parameters = self.conditional_roots[root].infer_type_parameters;
+            if infer_type_parameters.len() != 0 {
+                // When we're looking at making an inference for an infer type, when we get its constraint, it'll automagically be instantiated with the context, so it doesn't need the mapper for the inference context - however the constraint may refer to another _root_, _uncloned_ `infer` type parameter [1], or to something mapped by `mapper` [2]. [1] Eg, if we have `Foo<T, U extends T>` and `Foo<number, infer B>` - `B` is constrained to `T`, which, in turn, has been instantiated as `number`. Conversely, if we have `Foo<infer A, infer B>`, `B` is still constrained to `T` and `T` is instantiated as `A`. [2] Eg, if we have `Foo<T, U extends T>` and `Foo<Q, infer B>` where `Q` is mapped by `mapper` into `number` - `B` is constrained to `T` which is in turn instantiated as `Q`, which is in turn instantiated as `number`. So we need to combine `context.nonFixingMapper` with `mapper` so their constraints can be instantiated in the context of `mapper` (otherwise they'd only get inference context information), and incorporate all of the component mappers into the combined mapper for the true and false members. This means we have two mappers that need applying: the original `mapper` used to create this conditional, and the mapper that maps the infer type parameter to its inference result (`context.mapper`).
+                let context = self.new_inference_context(
+                    infer_type_parameters,
+                    SignatureId::NIL,
+                    InferenceFlags::NONE,
+                    TypeComparer::Nil,
+                );
+                if !mapper.is_nil() {
+                    let non_fixing_mapper = self.inference_contexts[context].non_fixing_mapper;
+                    let combined = self.combine_type_mappers(non_fixing_mapper, mapper);
+                    self.inference_contexts[context].non_fixing_mapper = combined;
+                }
+                if !check_type_deferred {
+                    // We don't want inferences from constraints as they may cause us to eagerly resolve the conditional type instead of deferring resolution. Also, we always want strict function types rules (i.e. proper contravariance) for inferences.
+                    let inferences = self.inference_contexts[context].inferences;
+                    self.infer_types(
+                        inferences,
+                        check_type,
+                        extends_type,
+                        InferencePriority::NO_CONSTRAINTS | InferencePriority::ALWAYS_STRICT,
+                        false,
+                    );
+                }
+                // It's possible for 'infer T' type parameters to be given uninstantiated constraints when the those type parameters are used in type references (see getInferredTypeParameterConstraint). For that reason we need context.mapper to be first in the combined mapper.
+                let context_mapper = self.inference_contexts[context].mapper;
+                combined_mapper = if !mapper.is_nil() {
+                    self.combine_type_mappers(context_mapper, mapper)
+                } else {
+                    context_mapper
+                };
+            }
+            // Instantiate the extends type including inferences for 'infer T' type parameters
+            let inferred_extends_type = if !combined_mapper.is_nil() {
+                self.instantiate_type(root_extends_type, combined_mapper)
+            } else {
+                extends_type
+            };
+            // We attempt to resolve the conditional type only when the check and extends types are non-generic
+            if !check_type_deferred && !self.is_deferred_type(inferred_extends_type, check_tuples) {
+                let inferred_extends_flags = self.types[inferred_extends_type].flags;
+                let check_type_is_any = self.types[check_type].flags.intersects(TypeFlags::ANY);
+                // Return falseType for a definitely false extends check. We check an instantiations of the two types with type parameters mapped to the wildcard type, the most permissive instantiations possible (the wildcard type is assignable to and from all types). If those are not related, then no instantiations will be and we can just return the false branch type.
+                let mut definitely_false = false;
+                if !inferred_extends_flags.intersects(TypeFlags::ANY_OR_UNKNOWN) {
+                    definitely_false = check_type_is_any;
+                    if !definitely_false {
+                        let permissive_check_type = self.get_permissive_instantiation(check_type);
+                        let permissive_extends_type =
+                            self.get_permissive_instantiation(inferred_extends_type);
+                        definitely_false = !self
+                            .is_type_assignable_to(permissive_check_type, permissive_extends_type);
+                    }
+                }
+                if definitely_false {
+                    // Return union of trueType and falseType for 'any' since it matches anything. Furthermore, for a distributive conditional type applied to the constraint of a type variable, include trueType if there are possible values of the check type that are also possible values of the extends type. We use a reverse assignability check as it is less expensive than the comparable relationship and avoids false positives of a non-empty intersection check.
+                    let mut include_true_type = check_type_is_any;
+                    if !include_true_type
+                        && for_constraint
+                        && !inferred_extends_flags.intersects(TypeFlags::NEVER)
+                    {
+                        let permissive_extends_type =
+                            self.get_permissive_instantiation(inferred_extends_type);
+                        include_true_type =
+                            some_type(self, permissive_extends_type, &mut |c, t| {
+                                let permissive_check_type =
+                                    c.get_permissive_instantiation(check_type);
+                                c.is_type_assignable_to(t, permissive_check_type)
+                            });
+                    }
+                    if include_true_type {
+                        let true_type = self.get_type_from_type_node(node_data.true_type);
+                        let extra_type =
+                            self.instantiate_type(true_type, or_else(combined_mapper, mapper));
+                        extra_types.push(extra_type);
+                    }
+                    // If falseType is an immediately nested conditional type that isn't distributive or has an identical checkType, switch to that type and loop.
+                    let false_type = self.get_type_from_type_node(node_data.false_type);
+                    if self.types[false_type]
+                        .flags
+                        .intersects(TypeFlags::CONDITIONAL)
+                    {
+                        let new_root = self.as_conditional_type(false_type).root;
+                        if a.parent(self.conditional_roots[new_root].node) == root_node
+                            && (!self.conditional_roots[new_root].is_distributive
+                                || self.conditional_roots[new_root].check_type == root_check_type)
+                        {
+                            root = new_root;
+                            continue;
+                        }
+                        let (new_root, new_root_mapper) =
+                            self.get_tail_recursion_root(false_type, mapper);
+                        if !new_root.is_nil() {
+                            root = new_root;
+                            mapper = new_root_mapper;
+                            alias = TypeAliasId::NIL;
+                            if !self.conditional_roots[new_root].alias.is_nil() {
+                                tail_count += 1;
+                            }
+                            continue;
+                        }
+                    }
+                    break self.instantiate_type(false_type, mapper);
+                }
+                // Return trueType for a definitely true extends check. We check instantiations of the two types with type parameters mapped to their restrictive form, i.e. a form of the type parameter that has no constraint. This ensures that, for example, the type `type Foo<T extends { x: any }> = T extends { x: string } ? string : number` doesn't immediately resolve to 'string' instead of being deferred.
+                let mut definitely_true =
+                    inferred_extends_flags.intersects(TypeFlags::ANY_OR_UNKNOWN);
+                if !definitely_true {
+                    let restrictive_check_type = self.get_restrictive_instantiation(check_type);
+                    let restrictive_extends_type =
+                        self.get_restrictive_instantiation(inferred_extends_type);
+                    definitely_true = self
+                        .is_type_assignable_to(restrictive_check_type, restrictive_extends_type);
+                }
+                if definitely_true {
+                    let true_type = self.get_type_from_type_node(node_data.true_type);
+                    let true_mapper = or_else(combined_mapper, mapper);
+                    let (new_root, new_root_mapper) =
+                        self.get_tail_recursion_root(true_type, true_mapper);
+                    if !new_root.is_nil() {
+                        root = new_root;
+                        mapper = new_root_mapper;
+                        alias = TypeAliasId::NIL;
+                        if !self.conditional_roots[new_root].alias.is_nil() {
+                            tail_count += 1;
+                        }
+                        continue;
+                    }
+                    break self.instantiate_type(true_type, true_mapper);
+                }
+            }
+            // Return a deferred type for a check that is neither definitely true nor definitely false
+            let deferred = self.new_conditional_type(root, mapper, combined_mapper);
+            let deferred_alias = if !alias.is_nil() {
+                alias
+            } else {
+                let root_alias = self.conditional_roots[root].alias;
+                self.instantiate_type_alias(root_alias, mapper)
+            };
+            self.types[deferred].alias = deferred_alias;
+            break deferred;
+        };
+        if !extra_types.is_empty() {
+            extra_types.push(result);
+            return self.get_union_type(List::from_slice(&extra_types));
+        }
+        result
+    }
+
+    // We tail-recurse for generic conditional types that (a) have not already been evaluated and cached, and (b) are non distributive, have a check type that is unaffected by instantiation, or have a non-union check type. Note that recursion is possible only through aliased conditional types, so we only increment the tail recursion counter for those.
+    pub fn get_tail_recursion_root(
+        &mut self,
+        new_type: TypeId,
+        new_mapper: TypeMapperId,
+    ) -> (ConditionalRootId, TypeMapperId) {
+        if self.types[new_type]
+            .flags
+            .intersects(TypeFlags::CONDITIONAL)
+            && !new_mapper.is_nil()
+        {
+            let new_root = self.as_conditional_type(new_type).root;
+            let outer_type_parameters = self.conditional_roots[new_root].outer_type_parameters;
+            if outer_type_parameters.len() != 0 {
+                let type_mapper = self.as_conditional_type(new_type).mapper;
+                let type_param_mapper = self.combine_type_mappers(type_mapper, new_mapper);
+                let type_arguments =
+                    self.map_list(outer_type_parameters, |c, t| c.map(type_param_mapper, t));
+                let new_root_mapper = new_type_mapper(self, outer_type_parameters, type_arguments);
+                let root_check_type = self.conditional_roots[new_root].check_type;
+                let mut new_check_type = TypeId::NIL;
+                if self.conditional_roots[new_root].is_distributive {
+                    new_check_type = self.map(new_root_mapper, root_check_type);
+                }
+                if new_check_type.is_nil()
+                    || new_check_type == root_check_type
+                    || !self.types[new_check_type]
+                        .flags
+                        .intersects(TypeFlags::UNION | TypeFlags::NEVER)
+                {
+                    return (new_root, new_root_mapper);
+                }
+            }
+        }
+        (ConditionalRootId::NIL, TypeMapperId::NIL)
+    }
+
+    pub fn is_simple_tuple_type(&self, node: NodeId) -> bool {
+        let a = self.ast;
+        is_tuple_type_node(a, node)
+            && !a.elements(node).as_slice().is_empty()
+            && !a.elements(node).as_slice().iter().any(|&e| {
+                is_optional_type_node(a, e)
+                    || is_rest_type_node(a, e)
+                    || is_named_tuple_member(a, e)
+                        && (!a.question_token(e).is_nil()
+                            || !a.as_named_tuple_member(e).dot_dot_dot_token.is_nil())
+            })
+    }
+
+    pub fn is_deferred_type(&mut self, t: TypeId, check_tuples: bool) -> bool {
+        if self.is_generic_type(t) {
+            return true;
+        }
+        if check_tuples && is_tuple_type(self, t) {
+            let element_types = self.get_element_types(t);
+            return element_types
+                .as_slice()
+                .iter()
+                .any(|&element_type| self.is_generic_type(element_type));
+        }
+        false
     }
 
     pub fn get_permissive_instantiation(&mut self, t: TypeId) -> TypeId {

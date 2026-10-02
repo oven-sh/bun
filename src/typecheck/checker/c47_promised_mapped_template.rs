@@ -150,6 +150,89 @@ impl<'a> Checker<'a> {
         }
         fallback_type
     }
+}
+
+pub fn get_mapped_type_modifiers(c: &Checker<'_>, t: TypeId) -> MappedTypeModifiers {
+    let a = c.ast;
+    let declaration = a.as_mapped_type_node(c.as_mapped_type(t).declaration);
+    let mut modifiers = MappedTypeModifiers::NONE;
+    if !declaration.readonly_token.is_nil() {
+        modifiers |= if_else(
+            a.kind(declaration.readonly_token) == Kind::MinusToken,
+            MappedTypeModifiers::EXCLUDE_READONLY,
+            MappedTypeModifiers::INCLUDE_READONLY,
+        );
+    }
+    if !declaration.question_token.is_nil() {
+        modifiers |= if_else(
+            a.kind(declaration.question_token) == Kind::MinusToken,
+            MappedTypeModifiers::EXCLUDE_OPTIONAL,
+            MappedTypeModifiers::INCLUDE_OPTIONAL,
+        );
+    }
+    modifiers
+}
+
+// Return -1, 0, or 1, where -1 means optionality is stripped (i.e. -?), 0 means optionality is unchanged, and 1 means optionality is added (i.e. +?).
+pub fn get_mapped_type_optionality(c: &Checker<'_>, t: TypeId) -> isize {
+    let modifiers = get_mapped_type_modifiers(c, t);
+    if modifiers.intersects(MappedTypeModifiers::EXCLUDE_OPTIONAL) {
+        return -1;
+    }
+    if modifiers.intersects(MappedTypeModifiers::INCLUDE_OPTIONAL) {
+        return 1;
+    }
+    0
+}
+
+impl<'a> Checker<'a> {
+    // Return -1, 0, or 1, for stripped, unchanged, or added optionality respectively. When a homomorphic mapped type doesn't modify optionality, recursively consult the optionality of the type being mapped over to see if it strips or adds optionality. For intersections, return -1 or 1 when all constituents strip or add optionality, otherwise return 0.
+    pub fn get_combined_mapped_type_optionality(&mut self, t: TypeId) -> isize {
+        if !self.stack_check.is_safe_to_recurse() {
+            return self.stack_limit();
+        }
+        if self.types[t].object_flags.intersects(ObjectFlags::MAPPED) {
+            let optionality = get_mapped_type_optionality(self, t);
+            if optionality != 0 {
+                return optionality;
+            }
+            let modifiers_type = self.get_modifiers_type_from_mapped_type(t);
+            return self.get_combined_mapped_type_optionality(modifiers_type);
+        }
+        if self.types[t].flags.intersects(TypeFlags::INTERSECTION) {
+            let types = self.type_types(t);
+            let optionality = self.get_combined_mapped_type_optionality(types.at(0usize));
+            for &t in types.as_slice().iter().skip(1) {
+                if self.get_combined_mapped_type_optionality(t) != optionality {
+                    return 0;
+                }
+            }
+            return optionality;
+        }
+        0
+    }
+}
+
+pub fn is_partial_mapped_type(c: &Checker<'_>, t: TypeId) -> bool {
+    c.types[t].object_flags.intersects(ObjectFlags::MAPPED)
+        && get_mapped_type_modifiers(c, t).intersects(MappedTypeModifiers::INCLUDE_OPTIONAL)
+}
+
+impl<'a> Checker<'a> {
+    pub fn get_optional_expression_type(
+        &mut self,
+        expr_type: TypeId,
+        expression: NodeId,
+    ) -> TypeId {
+        let a = self.ast;
+        if is_expression_of_optional_chain_root(a, expression) {
+            return self.get_non_nullable_type(expr_type);
+        }
+        if is_optional_chain(a, expression) {
+            return self.remove_optional_type_marker(expr_type);
+        }
+        expr_type
+    }
 
     pub fn remove_optional_type_marker(&mut self, t: TypeId) -> TypeId {
         if self.strict_null_checks {
@@ -185,6 +268,44 @@ impl<'a> Checker<'a> {
             return self.remove_type(t, self.missing_type);
         }
         self.get_type_with_facts(t, TypeFacts::NE_UNDEFINED)
+    }
+
+    pub fn remove_definitely_falsy_types(&mut self, t: TypeId) -> TypeId {
+        self.filter_type(t, &mut |c, t| c.has_type_facts(t, TypeFacts::TRUTHY))
+    }
+
+    pub fn extract_definitely_falsy_types(&mut self, t: TypeId) -> TypeId {
+        self.map_type(t, &mut |c, t| c.get_definitely_falsy_part_of_type(t))
+    }
+
+    pub fn get_definitely_falsy_part_of_type(&self, t: TypeId) -> TypeId {
+        let flags = self.types[t].flags;
+        if flags.intersects(TypeFlags::STRING) {
+            return self.empty_string_type;
+        }
+        if flags.intersects(TypeFlags::NUMBER) {
+            return self.zero_type;
+        }
+        if flags.intersects(TypeFlags::BIG_INT) {
+            return self.zero_big_int_type;
+        }
+        if t == self.regular_false_type
+            || t == self.false_type
+            || flags.intersects(
+                TypeFlags::VOID
+                    | TypeFlags::UNDEFINED
+                    | TypeFlags::NULL
+                    | TypeFlags::ANY_OR_UNKNOWN,
+            )
+            || flags.intersects(TypeFlags::STRING_LITERAL)
+                && get_string_literal_value(self, t).is_empty()
+            || flags.intersects(TypeFlags::NUMBER_LITERAL)
+                && get_number_literal_value(self, t) == Number(0.0)
+            || flags.intersects(TypeFlags::BIG_INT_LITERAL) && is_zero_big_int(self, t)
+        {
+            return t;
+        }
+        self.never_type
     }
 
     pub fn get_constraint_declaration(&self, t: TypeId) -> NodeId {

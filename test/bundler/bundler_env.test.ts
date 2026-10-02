@@ -186,35 +186,37 @@ describe.concurrent("env is copied when the build is scheduled", () => {
     };
   `;
 
-  test.each(["inline", "HTTPS_*"] as const)("Bun.build({ env: %j })", async env => {
-    using dir = tempDir("bun-build-env-copy", {
-      "entry.ts": "export {};",
-      "plugin.ts": pluginSource("/entry\\.ts$/"),
-      "build-fixture.ts": /* ts */ `
-        import plugin from "./plugin.ts";
-        process.env.HTTPS_PROXY = ${JSON.stringify(atCall)};
-        const result = await Bun.build({
-          entrypoints: ["./entry.ts"],
-          env: ${JSON.stringify(env)},
-          plugins: [plugin],
-        });
-        process.stdout.write(await result.outputs[0].text());
-      `,
-    });
+  describe.each(["inline", "HTTPS_*"] as const)("Bun.build({ env: %j })", env => {
+    test("inlines the env as of the call", async () => {
+      using dir = tempDir("bun-build-env-copy", {
+        "entry.ts": "export {};",
+        "plugin.ts": pluginSource("/entry\\.ts$/"),
+        "build-fixture.ts": /* ts */ `
+          import plugin from "./plugin.ts";
+          process.env.HTTPS_PROXY = ${JSON.stringify(atCall)};
+          const result = await Bun.build({
+            entrypoints: ["./entry.ts"],
+            env: ${JSON.stringify(env)},
+            plugins: [plugin],
+          });
+          process.stdout.write(await result.outputs[0].text());
+        `,
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build-fixture.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build-fixture.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toContain(`console.log(${JSON.stringify(atCall)})`);
-    expect(stdout).not.toContain(duringBuild);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+      expect(stdout).toContain(`console.log(${JSON.stringify(atCall)})`);
+      expect(stdout).not.toContain(duringBuild);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   // Bun.serve's HTML routes (without HMR) are built through the same bundler

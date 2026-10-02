@@ -1,0 +1,7 @@
+offset of the option in P: 0x900
+  1  <P<true, false>>::init                                                 movq:1
+  1  <P<true, false>>::parse_arrow_body                                     cmpq:1
+  2  <P<true, false>>::parse_async_prefix_expr                              cmpq:1 leaq:1
+  1  <P<true, false>>::parse_class                                          cmpq:1
+  1  <scopeguard::ScopeGuard<core::mem::maybe_uninit::MaybeUninit<P<true, f movq:1
+6 reads of the field in 5 functions matching /P<true, false>/

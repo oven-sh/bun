@@ -1,0 +1,59 @@
+offset of the option in P: 0xce0
+  1  <P<true, false>>::code_syntax_error                                    movq:1
+  1  <P<true, false>>::init                                                 movdqu:1
+  1  <P<true, false>>::lexer_backtracker_bool::<<P<true, false>>::skip_type movq:1
+  1  <P<true, false>>::lexer_backtracker_bool::<<P<true, false>>::skip_type movq:1
+  1  <P<true, false>>::lexer_backtracker_result::<<P<true, false>>::skip_ty movq:1
+  3  <P<true, false>>::lint_arrow_return_type                               movq:3
+  1  <P<true, false>>::lint_arrow_type_parameters                           movq:1
+  1  <P<true, false>>::lint_async_type_lists                                movq:1
+  1  <P<true, false>>::lint_class_extends                                   movq:1
+  2  <P<true, false>>::lint_class_implements                                movq:2
+  1  <P<true, false>>::lint_declaration_type_parameters                     movq:1
+  1  <P<true, false>>::lint_jsx_type_arguments                              movq:1
+  1  <P<true, false>>::lint_return_type                                     movq:1
+  1  <P<true, false>>::lint_this_parameter                                  movq:1
+  1  <P<true, false>>::lint_type_annotation                                 movq:1
+  1  <P<true, false>>::lint_type_arguments_after                            movq:1
+  1  <P<true, false>>::lint_type_arguments_before_paren                     movq:1
+  1  <P<true, false>>::lint_type_arguments_in_expression                    movq:1
+  1  <P<true, false>>::lint_type_parameters                                 movq:1
+  1  <P<true, false>>::lint_type_parameters_before_paren                    movq:1
+  1  <P<true, false>>::parse_and_declare_decls                              cmpq:1
+  1  <P<true, false>>::parse_arrow_body_with_flags                          movq:1
+  4  <P<true, false>>::parse_async_prefix_expr                              cmpq:3 movq:1
+  5  <P<true, false>>::parse_class                                          cmpq:3 movq:2
+  3  <P<true, false>>::parse_class_stmt                                     cmpq:2 movq:1
+  4  <P<true, false>>::parse_fn                                             cmpq:2 movq:2
+  1  <P<true, false>>::parse_fn_expr                                        cmpq:1
+  2  <P<true, false>>::parse_fn_stmt                                        cmpq:1 movq:1
+  1  <P<true, false>>::parse_jsx_element                                    cmpq:1
+  1  <P<true, false>>::parse_paren_expr                                     movq:1
+  1  <P<true, false>>::parse_path                                           movq:1
+  7  <P<true, false>>::parse_prefix                                         cmpq:6 movq:1
+  8  <P<true, false>>::parse_property                                       cmpq:3 movq:5
+ 10  <P<true, false>>::parse_stmt_fallthrough_ts_keyword                    cmpq:3 movq:7
+  1  <P<true, false>>::parse_stmt_named_like_cast                           movq:1
+  1  <P<true, false>>::parse_stmts_up_to                                    movq:1
+  5  <P<true, false>>::parse_suffix                                         cmpq:4 movq:1
+  3  <P<true, false>>::parse_type_script_decorators                         cmpq:1 movq:2
+  2  <P<true, false>>::parse_type_script_import_equals_stmt                 cmpq:1 movq:1
+  2  <P<true, false>>::parse_type_script_namespace_stmt                     movq:2
+  2  <P<true, false>>::parse_typescript_enum_stmt                           cmpq:1 movq:1
+  1  <P<true, false>>::parser_snapshot                                      movq:1
+  2  <P<true, false>>::pfx_t_less_than_for_lint                             movq:2
+  2  <P<true, false>>::pfx_t_open_paren_for_lint                            movq:2
+  1  <P<true, false>>::rewind_sidecar                                       movq:1
+  1  <P<true, false>>::sfx_typescript_as_for_lint                           movq:1
+  1  <P<true, false>>::skip_type_script_interface_stmt                      cmpq:1
+  4  <P<true, false>>::skip_type_script_type_stmt                           cmpq:2 movq:2
+  1  <P<true, false>>::statement_expected                                   movq:1
+  8  <P<true, false>>::t_export                                             cmpq:2 movq:6
+  7  <P<true, false>>::t_import                                             cmpq:2 movq:5
+  1  <P<true, false>>::t_try                                                cmpq:1
+  1  <P<true, false>>::try_build_type_script_type_arguments_with_backtracki movq:1
+  1  <P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_b movq:1
+  1  <P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_b movq:1
+  1  <P<true, false>>::type_expected                                        movq:1
+  1  <scopeguard::ScopeGuard<core::mem::maybe_uninit::MaybeUninit<P<true, f cmpq:1
+122 reads of the field in 57 functions matching /P<true, false>/

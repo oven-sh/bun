@@ -1,4 +1,4 @@
-IDENT 0  OFFSETS 0  DIFF 16  ONLY-A 16  ONLY-B 28
+IDENT 0  OFFSETS 0  CONSTS 0  DIFF 16  ONLY-A 16  ONLY-B 28
 DIFF    bytes    162   1309 (+1147)  insns    55   318 ( +263)  jcc    7   49 ( +42)  <P<true, false>>::skip_type_script_paren_or_fn_type::<SINK discard>
 DIFF    bytes    162   1309 (+1147)  insns    55   318 ( +263)  jcc    7   49 ( +42)  <P<true, true>>::skip_type_script_paren_or_fn_type::<SINK discard>
 DIFF    bytes    569   1341 ( +772)  insns   150   303 ( +153)  jcc   25   39 ( +14)  <P<true, false>>::skip_type_script_type_stmt

@@ -1,4 +1,4 @@
-IDENT 115  OFFSETS 193  DIFF 63  ONLY-A 2  ONLY-B 13
+IDENT 115  OFFSETS 179  CONSTS 14  DIFF 63  ONLY-A 2  ONLY-B 13
 DIFF    bytes   6401   5046 (-1355)  insns  1503  1157 ( -346)  jcc  128  132 (  +4)  <P<false, false>>::emit_decorator_metadata_for_prop
 DIFF    bytes   1542   3189 (+1647)  insns   371   608 ( +237)  jcc   57   75 ( +18)  <P<false, false>>::parse_path
 DIFF    bytes   1542   3189 (+1647)  insns   371   608 ( +237)  jcc   57   75 ( +18)  <P<false, true>>::parse_path
@@ -77,6 +77,20 @@ ONLY-B  bytes      0    254 ( +254)  insns     0    48 (  +48)  jcc    0    2 ( 
 ONLY-B  bytes      0    254 ( +254)  insns     0    48 (  +48)  jcc    0    2 (  +2)  <P<false, true>>::code_syntax_error
 ONLY-B  bytes      0    131 ( +131)  insns     0    32 (  +32)  jcc    0    1 (  +1)  <P<false, false>>::unexpected_as
 ONLY-B  bytes      0    131 ( +131)  insns     0    32 (  +32)  jcc    0    1 (  +1)  <P<false, true>>::unexpected_as
+CONSTS  bytes   1686   1686 (   +0)  insns   386   386 (   +0)  jcc   17   17 (  +0)  <P<false, false>>::call_runtime
+CONSTS  bytes    383    383 (   +0)  insns   109   109 (   +0)  jcc   19   19 (  +0)  <P<false, false>>::class_can_be_removed_if_unused
+CONSTS  bytes   2137   2137 (   +0)  insns   490   490 (   +0)  jcc   33   33 (  +0)  <P<false, false>>::convert_expr_to_binding
+CONSTS  bytes    838    838 (   +0)  insns   205   205 (   +0)  jcc   35   35 (  +0)  <P<false, false>>::e_object
+CONSTS  bytes   1524   1524 (   +0)  insns   378   378 (   +0)  jcc   64   64 (  +0)  <P<false, false>>::expr_can_be_removed_if_unused_without_dce_check
+CONSTS  bytes   1037   1037 (   +0)  insns   248   248 (   +0)  jcc   29   29 (  +0)  <P<false, false>>::find_label_symbol
+CONSTS  bytes   6447   6447 (   +0)  insns  1409  1409 (   +0)  jcc  224  224 (  +0)  <P<false, false>>::maybe_rewrite_property_access
+CONSTS  bytes    544    544 (   +0)  insns   145   145 (   +0)  jcc   27   27 (  +0)  <P<false, false>>::pattern_can_be_removed_if_unused_without_dce_check
+CONSTS  bytes    658    658 (   +0)  insns   159   159 (   +0)  jcc   16   16 (  +0)  <P<false, false>>::s_import
+CONSTS  bytes   1080   1080 (   +0)  insns   252   252 (   +0)  jcc   21   21 (  +0)  <P<false, false>>::s_namespace
+CONSTS  bytes    193    193 (   +0)  insns    61    61 (   +0)  jcc    7    7 (  +0)  <P<false, false>>::s_return
+CONSTS  bytes   3018   3018 (   +0)  insns   716   716 (   +0)  jcc   76   76 (  +0)  <P<false, false>>::substitute_single_use_symbol_in_expr
+CONSTS  bytes   3233   3233 (   +0)  insns   686   686 (   +0)  jcc   68   68 (  +0)  <P<false, false>>::visit_class
+CONSTS  bytes   2137   2137 (   +0)  insns   490   490 (   +0)  jcc   33   33 (  +0)  <P<false, true>>::convert_expr_to_binding
 OFFSETS bytes    225    225 (   +0)  insns    61    61 (   +0)  jcc    4    4 (  +0)  <<P<false, false>>::prepare_for_visit_pass::{closure#1} as core::ops::function::FnOnce<(*mut core::ffi::c_void, bun_ast::Loc, bun_
 OFFSETS bytes    802    802 (   +0)  insns   210   210 (   +0)  jcc   34   34 (  +0)  <bun_ast::expr::Data>::eql::<P<false, false>, bun_ast::expr::LooseEql>
 OFFSETS bytes    594    594 (   +0)  insns   153   153 (   +0)  jcc   29   29 (  +0)  <bun_ast::expr::Data>::eql::<P<false, false>, bun_ast::expr::StrictEql>
@@ -86,13 +100,10 @@ OFFSETS bytes   1248   1248 (   +0)  insns   314   314 (   +0)  jcc   23   23 ( 
 OFFSETS bytes   4444   4444 (   +0)  insns   880   880 (   +0)  jcc   97   97 (  +0)  <P<false, false>>::append_part
 OFFSETS bytes    266    266 (   +0)  insns    74    74 (   +0)  jcc    6    6 (  +0)  <P<false, false>>::assign_to
 OFFSETS bytes    350    350 (   +0)  insns    95    95 (   +0)  jcc    8    8 (  +0)  <P<false, false>>::call_rt
-OFFSETS bytes   1686   1686 (   +0)  insns   386   386 (   +0)  jcc   17   17 (  +0)  <P<false, false>>::call_runtime
 OFFSETS bytes   1781   1781 (   +0)  insns   423   423 (   +0)  jcc   70   70 (  +0)  <P<false, false>>::check_dynamic_specifier
-OFFSETS bytes    383    383 (   +0)  insns   109   109 (   +0)  jcc   19   19 (  +0)  <P<false, false>>::class_can_be_removed_if_unused
 OFFSETS bytes    562    562 (   +0)  insns   131   131 (   +0)  jcc   12   12 (  +0)  <P<false, false>>::compute_character_frequency
 OFFSETS bytes    901    901 (   +0)  insns   193   193 (   +0)  jcc   19   19 (  +0)  <P<false, false>>::compute_ts_enums_map
 OFFSETS bytes    313    313 (   +0)  insns    90    90 (   +0)  jcc    9    9 (  +0)  <P<false, false>>::conditional_namespace_records
-OFFSETS bytes   2137   2137 (   +0)  insns   490   490 (   +0)  jcc   33   33 (  +0)  <P<false, false>>::convert_expr_to_binding
 OFFSETS bytes    229    229 (   +0)  insns    67    67 (   +0)  jcc    3    3 (  +0)  <P<false, false>>::convert_expr_to_binding_and_initializer
 OFFSETS bytes    542    542 (   +0)  insns   121   121 (   +0)  jcc    6    6 (  +0)  <P<false, false>>::create_default_name
 OFFSETS bytes    266    266 (   +0)  insns    78    78 (   +0)  jcc    3    3 (  +0)  <P<false, false>>::declare_capture_temps_in_fn_body
@@ -108,12 +119,9 @@ OFFSETS bytes   1475   1475 (   +0)  insns   331   331 (   +0)  jcc   29   29 ( 
 OFFSETS bytes    711    711 (   +0)  insns   161   161 (   +0)  jcc   18   18 (  +0)  <P<false, false>>::e_class
 OFFSETS bytes    302    302 (   +0)  insns    81    81 (   +0)  jcc    5    5 (  +0)  <P<false, false>>::e_import
 OFFSETS bytes    214    214 (   +0)  insns    58    58 (   +0)  jcc    5    5 (  +0)  <P<false, false>>::e_new
-OFFSETS bytes    838    838 (   +0)  insns   205   205 (   +0)  jcc   35   35 (  +0)  <P<false, false>>::e_object
 OFFSETS bytes   1313   1313 (   +0)  insns   290   290 (   +0)  jcc   33   33 (  +0)  <P<false, false>>::e_template
 OFFSETS bytes   1110   1110 (   +0)  insns   262   262 (   +0)  jcc   27   27 (  +0)  <P<false, false>>::emit_react_refresh_register
 OFFSETS bytes     92     92 (   +0)  insns    24    24 (   +0)  jcc    3    3 (  +0)  <P<false, false>>::existing_part_use
-OFFSETS bytes   1524   1524 (   +0)  insns   378   378 (   +0)  jcc   64   64 (  +0)  <P<false, false>>::expr_can_be_removed_if_unused_without_dce_check
-OFFSETS bytes   1037   1037 (   +0)  insns   248   248 (   +0)  jcc   29   29 (  +0)  <P<false, false>>::find_label_symbol
 OFFSETS bytes   1518   1518 (   +0)  insns   375   375 (   +0)  jcc   36   36 (  +0)  <P<false, false>>::find_symbol_with_record_usage::<true>
 OFFSETS bytes    211    211 (   +0)  insns    60    60 (   +0)  jcc    5    5 (  +0)  <P<false, false>>::forbid_initializers
 OFFSETS bytes     66     66 (   +0)  insns    15    15 (   +0)  jcc    0    0 (  +0)  <P<false, false>>::forbid_lexical_decl
@@ -138,7 +146,6 @@ OFFSETS bytes    200    200 (   +0)  insns    49    49 (   +0)  jcc    3    3 ( 
 OFFSETS bytes    264    264 (   +0)  insns    79    79 (   +0)  jcc    5    5 (  +0)  <P<false, false>>::log_expr_errors
 OFFSETS bytes    195    195 (   +0)  insns    51    51 (   +0)  jcc   10   10 (  +0)  <P<false, false>>::mark_commonjs_exports_that_ignore_this
 OFFSETS bytes    967    967 (   +0)  insns   242   242 (   +0)  jcc   25   25 (  +0)  <P<false, false>>::maybe_relocate_vars_to_top_level
-OFFSETS bytes   6447   6447 (   +0)  insns  1409  1409 (   +0)  jcc  224  224 (  +0)  <P<false, false>>::maybe_rewrite_property_access
 OFFSETS bytes    491    491 (   +0)  insns   129   129 (   +0)  jcc    9    9 (  +0)  <P<false, false>>::maybe_rewrite_property_access_for_namespace
 OFFSETS bytes   1909   1909 (   +0)  insns   402   402 (   +0)  jcc   31   31 (  +0)  <P<false, false>>::maybe_transpose_if_import
 OFFSETS bytes    759    759 (   +0)  insns   185   185 (   +0)  jcc   16   16 (  +0)  <P<false, false>>::maybe_transpose_if_require_resolve
@@ -161,7 +168,6 @@ OFFSETS bytes   1789   1789 (   +0)  insns   401   401 (   +0)  jcc   39   39 ( 
 OFFSETS bytes  17332  17332 (   +0)  insns  4092  4092 (   +0)  jcc  412  412 (  +0)  <P<false, false>>::parse_suffix
 OFFSETS bytes    962    962 (   +0)  insns   211   211 (   +0)  jcc   13   13 (  +0)  <P<false, false>>::parse_template_parts
 OFFSETS bytes    454    454 (   +0)  insns   116   116 (   +0)  jcc    8    8 (  +0)  <P<false, false>>::part_use
-OFFSETS bytes    544    544 (   +0)  insns   145   145 (   +0)  jcc   27   27 (  +0)  <P<false, false>>::pattern_can_be_removed_if_unused_without_dce_check
 OFFSETS bytes    429    429 (   +0)  insns   105   105 (   +0)  jcc   14   14 (  +0)  <P<false, false>>::pop_scope
 OFFSETS bytes   3103   3103 (   +0)  insns   698   698 (   +0)  jcc   71   71 (  +0)  <P<false, false>>::prepare_for_visit_pass
 OFFSETS bytes   1095   1095 (   +0)  insns   266   266 (   +0)  jcc   24   24 (  +0)  <P<false, false>>::private_get_expr
@@ -199,17 +205,13 @@ OFFSETS bytes    441    441 (   +0)  insns   126   126 (   +0)  jcc   11   11 ( 
 OFFSETS bytes    427    427 (   +0)  insns   117   117 (   +0)  jcc    8    8 (  +0)  <P<false, false>>::s_for_in
 OFFSETS bytes   1465   1465 (   +0)  insns   335   335 (   +0)  jcc   27   27 (  +0)  <P<false, false>>::s_for_of
 OFFSETS bytes   1398   1398 (   +0)  insns   345   345 (   +0)  jcc   47   47 (  +0)  <P<false, false>>::s_if
-OFFSETS bytes    658    658 (   +0)  insns   159   159 (   +0)  jcc   16   16 (  +0)  <P<false, false>>::s_import
 OFFSETS bytes    374    374 (   +0)  insns    95    95 (   +0)  jcc    4    4 (  +0)  <P<false, false>>::s_label
-OFFSETS bytes   1080   1080 (   +0)  insns   252   252 (   +0)  jcc   21   21 (  +0)  <P<false, false>>::s_namespace
-OFFSETS bytes    193    193 (   +0)  insns    61    61 (   +0)  jcc    7    7 (  +0)  <P<false, false>>::s_return
 OFFSETS bytes    993    993 (   +0)  insns   258   258 (   +0)  jcc   22   22 (  +0)  <P<false, false>>::s_switch
 OFFSETS bytes   1101   1101 (   +0)  insns   288   288 (   +0)  jcc   28   28 (  +0)  <P<false, false>>::s_try
 OFFSETS bytes    247    247 (   +0)  insns    72    72 (   +0)  jcc    2    2 (  +0)  <P<false, false>>::s_while
 OFFSETS bytes    326    326 (   +0)  insns    85    85 (   +0)  jcc    5    5 (  +0)  <P<false, false>>::sfx_t_template_head
 OFFSETS bytes    634    634 (   +0)  insns   158   158 (   +0)  jcc   12   12 (  +0)  <P<false, false>>::storage_init_effects
 OFFSETS bytes    206    206 (   +0)  insns    57    57 (   +0)  jcc    3    3 (  +0)  <P<false, false>>::store_name_in_ref
-OFFSETS bytes   3018   3018 (   +0)  insns   716   716 (   +0)  jcc   76   76 (  +0)  <P<false, false>>::substitute_single_use_symbol_in_expr
 OFFSETS bytes    340    340 (   +0)  insns    95    95 (   +0)  jcc    7    7 (  +0)  <P<false, false>>::t_at
 OFFSETS bytes   1147   1147 (   +0)  insns   240   240 (   +0)  jcc   23   23 (  +0)  <P<false, false>>::t_class
 OFFSETS bytes   3504   3504 (   +0)  insns   743   743 (   +0)  jcc   75   75 (  +0)  <P<false, false>>::t_for
@@ -225,7 +227,6 @@ OFFSETS bytes    137    137 (   +0)  insns    42    42 (   +0)  jcc    3    3 ( 
 OFFSETS bytes    510    510 (   +0)  insns   122   122 (   +0)  jcc   19   19 (  +0)  <P<false, false>>::validate_and_set_import_type
 OFFSETS bytes    637    637 (   +0)  insns   160   160 (   +0)  jcc    5    5 (  +0)  <P<false, false>>::visit_and_append_stmt
 OFFSETS bytes   1423   1423 (   +0)  insns   334   334 (   +0)  jcc   41   41 (  +0)  <P<false, false>>::visit_binding
-OFFSETS bytes   3233   3233 (   +0)  insns   686   686 (   +0)  jcc   68   68 (  +0)  <P<false, false>>::visit_class
 OFFSETS bytes    242    242 (   +0)  insns    73    73 (   +0)  jcc   10   10 (  +0)  <P<false, false>>::visit_decl
 OFFSETS bytes    317    317 (   +0)  insns    94    94 (   +0)  jcc   10   10 (  +0)  <P<false, false>>::visit_for_loop_init
 OFFSETS bytes    569    569 (   +0)  insns   155   155 (   +0)  jcc   12   12 (  +0)  <P<false, false>>::visit_single_stmt
@@ -233,7 +234,6 @@ OFFSETS bytes    370    370 (   +0)  insns    92    92 (   +0)  jcc    8    8 ( 
 OFFSETS bytes    762    762 (   +0)  insns   174   174 (   +0)  jcc   18   18 (  +0)  <P<false, false>>::wrap_value_for_server_component_reference
 OFFSETS bytes    111    111 (   +0)  insns    34    34 (   +0)  jcc    0    0 (  +0)  <P<false, true>>::add_import_record
 OFFSETS bytes    493    493 (   +0)  insns   116   116 (   +0)  jcc    4    4 (  +0)  <P<false, true>>::add_import_record_by_range_and_path
-OFFSETS bytes   2137   2137 (   +0)  insns   490   490 (   +0)  jcc   33   33 (  +0)  <P<false, true>>::convert_expr_to_binding
 OFFSETS bytes    229    229 (   +0)  insns    67    67 (   +0)  jcc    3    3 (  +0)  <P<false, true>>::convert_expr_to_binding_and_initializer
 OFFSETS bytes    542    542 (   +0)  insns   121   121 (   +0)  jcc    6    6 (  +0)  <P<false, true>>::create_default_name
 OFFSETS bytes    211    211 (   +0)  insns    60    60 (   +0)  jcc    5    5 (  +0)  <P<false, true>>::forbid_initializers

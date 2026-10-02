@@ -1,0 +1,16 @@
+offset of the option in P: 0xce0
+  1  <P<false, false>>::code_syntax_error                                   movq:1
+  1  <P<false, false>>::init                                                movdqu:1
+  1  <P<false, false>>::parse_arrow_body_with_flags                         movq:1
+  1  <P<false, false>>::parse_async_prefix_expr                             movq:1
+  2  <P<false, false>>::parse_class                                         cmpq:1 movq:1
+  1  <P<false, false>>::parse_path                                          movq:1
+  1  <P<false, false>>::parse_prefix                                        movq:1
+  1  <P<false, false>>::parse_property                                      movq:1
+  1  <P<false, false>>::parse_type_script_decorators                        movq:1
+  2  <P<false, false>>::pfx_t_open_paren_for_lint                           movq:2
+  1  <P<false, false>>::statement_expected                                  movq:1
+  1  <P<false, false>>::t_export                                            movq:1
+  1  <scopeguard::ScopeGuard<core::mem::maybe_uninit::MaybeUninit<P<false,  cmpq:1
+  1  core::ptr::drop_glue::<P<false, false>>                                movq:1
+16 reads of the field in 14 functions matching /P<false, false>/

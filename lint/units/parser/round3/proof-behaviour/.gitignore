@@ -1,0 +1,6 @@
+# run files of the harness belong in the scratch directory of run-proof.sh, never here
+*.jsonl
+*.jsonl.gz
+*.part*
+*.mark
+corpus.*.json

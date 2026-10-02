@@ -1,0 +1,17 @@
+<P<false, false>>::code_syntax_error
+       1 x <parse::syntax_errors::SyntaxErrors>::record
+       1 x core::ptr::drop_glue::<parse::syntax_errors::SyntaxErrors>
+<P<false, false>>::parse_prefix
+       1 x <P>::pfx_t_open_paren_for_lint
+<P<false, false>>::parse_property
+       1 x <parse::erased::ErasedTables>::member_property
+<P<false, false>>::parse_type_script_decorators
+       1 x <parse::wrappers::Wrappers>::parenthesized
+<P<false, false>>::pfx_t_open_paren_for_lint
+       1 x <parse::wrappers::Wrappers>::parenthesized
+       1 x <parse::wrappers::Wrappers>::parenthesized_before
+<P<false, false>>::statement_expected
+       1 x <parse::syntax_errors::SyntaxErrors>::refine
+<P<false, false>>::t_export
+       1 x <parse::erased::ErasedTables>::exported_by_default
+9 calls into lint code from functions matching /P<false, false>/

@@ -1,4 +1,4 @@
-IDENT 44  OFFSETS 40  DIFF 37  ONLY-A 10  ONLY-B 149
+IDENT 44  OFFSETS 39  CONSTS 1  DIFF 37  ONLY-A 10  ONLY-B 149
 DIFF    bytes   2319   5489 (+3170)  insns   551  1079 ( +528)  jcc   73   91 ( +18)  <P<true, true>>::parse_stmt_fallthrough_ts_keyword
 DIFF    bytes    162   1309 (+1147)  insns    55   318 ( +263)  jcc    7   49 ( +42)  <P<true, true>>::skip_type_script_paren_or_fn_type::<SINK discard>
 DIFF    bytes   1542   3189 (+1647)  insns   371   608 ( +237)  jcc   57   75 ( +18)  <P<true, true>>::parse_path
@@ -195,4 +195,5 @@ ONLY-B  bytes      0     71 (  +71)  insns     0    20 (  +20)  jcc    0    0 ( 
 ONLY-B  bytes      0     64 (  +64)  insns     0    19 (  +19)  jcc    0    0 (  +0)  <P<true, true>>::rewind_class_implements_entry
 ONLY-B  bytes      0     57 (  +57)  insns     0    18 (  +18)  jcc    0    0 (  +0)  <P<true, true>>::rewind_lint_attempt
 ONLY-B  bytes      0     24 (  +24)  insns     0     9 (   +9)  jcc    0    1 (  +1)  <P<true, true>>::rewind_sidecar
+CONSTS  bytes   2137   2137 (   +0)  insns   490   490 (   +0)  jcc   33   33 (  +0)  <P<true, true>>::convert_expr_to_binding
 FAIL: 37 DIFF, 10 only in base, 149 only in head

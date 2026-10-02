@@ -1,0 +1,47 @@
+== 04:38:26 start tag=self expect=zero jobs=4 corpora=testrows comments targeted small small-sub check
+base e9cfacdf4af2477170858e2d713791ef310d90a6e21a5b05dfb0e78be0d9bfe0 /workspace/base/bun.f4d755a9c 1.4.3-canary.1+f4d755a9c
+next e9cfacdf4af2477170858e2d713791ef310d90a6e21a5b05dfb0e78be0d9bfe0 /workspace/base/bun.f4d755a9c 1.4.3-canary.1+f4d755a9c
+tree 23a20afa7ee95996f0d044f5df67bbca179d7667 changed-files-under-src=0 main-commits-after-f4d755a9cf=0 next-mtime=2026-10-01 22:36:05
+harnesses main extra
+tools 136692ee9fd8d306 eb7426e155d7e1fc 7594403b9718820d 
+judge /usr/local/bin/bun 1.4.2+744846f84
+causes /workspace/notes/lint/units/parser/grammar-diff/causes.mjs: 0 entries
+ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0 BUN_DEBUG_QUIET_LOGS=1 BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1 BUN_GARBAGE_COLLECTOR_LEVEL=0 BUN_NO_CORE_DUMP=1 
+PASS main testrows: 4515 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS extra testrows: 2107 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS main comments: 1830 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS extra comments: 854 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS main targeted: 59280 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS extra targeted: 27664 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS main small: 3144420 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS extra small: 1467396 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS main small-sub: 106335 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS extra small-sub: 49623 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS main check: 275850 records compared, 0 differ, in 0 sources (diff rc=0) 
+PASS extra check: 128730 records compared, 0 differ, in 0 sources (diff rc=0) 
+run files:
+b1063d35ccad2a0b8569cbaaefc078542d1de5a3a0470a95c4711f87ee2e9c2f  base.e9cfacdf4af2/main.testrows.7188b5c7.jsonl.gz
+b1063d35ccad2a0b8569cbaaefc078542d1de5a3a0470a95c4711f87ee2e9c2f  self/main.testrows.jsonl.gz
+5b5804209b19a1dff3fb84f8c1236000621153a7519e92b2196becdf93d571c3  base.e9cfacdf4af2/extra.testrows.7188b5c7.jsonl.gz
+5b5804209b19a1dff3fb84f8c1236000621153a7519e92b2196becdf93d571c3  self/extra.testrows.jsonl.gz
+81e913ae78d61956d15b3e3a5e1f08111b23f146d556d3cd4a00c32d4e6ba3c6  base.e9cfacdf4af2/main.comments.71d0420c.jsonl.gz
+81e913ae78d61956d15b3e3a5e1f08111b23f146d556d3cd4a00c32d4e6ba3c6  self/main.comments.jsonl.gz
+230f39d6f837ec3dcfdadd18ea99846c098ea1e9b858ee0af3f7b4260e560d32  base.e9cfacdf4af2/extra.comments.71d0420c.jsonl.gz
+230f39d6f837ec3dcfdadd18ea99846c098ea1e9b858ee0af3f7b4260e560d32  self/extra.comments.jsonl.gz
+10ea2eb155f52af2b4f108da4f194678d7e421ab2ccc622eaf51b770ae4c401f  base.e9cfacdf4af2/main.targeted.68d65cd9.jsonl.gz
+10ea2eb155f52af2b4f108da4f194678d7e421ab2ccc622eaf51b770ae4c401f  self/main.targeted.jsonl.gz
+73bc7a082b77cce7ffadb8c85d1684ef7bee0b9fd6adcc107de1a5b05e3309ed  base.e9cfacdf4af2/extra.targeted.68d65cd9.jsonl.gz
+73bc7a082b77cce7ffadb8c85d1684ef7bee0b9fd6adcc107de1a5b05e3309ed  self/extra.targeted.jsonl.gz
+1bd1e7d6273af78dff4c966656b88bb2fe4d5287a9c3f3e4de8f207e6cf5f766  base.e9cfacdf4af2/main.small.19d140cd.jsonl.gz
+1bd1e7d6273af78dff4c966656b88bb2fe4d5287a9c3f3e4de8f207e6cf5f766  self/main.small.jsonl.gz
+280188dff47c18bb24ae6f91b90a61684c8b03491ca52f1cb34ef5bead0a6d04  base.e9cfacdf4af2/extra.small.19d140cd.jsonl.gz
+280188dff47c18bb24ae6f91b90a61684c8b03491ca52f1cb34ef5bead0a6d04  self/extra.small.jsonl.gz
+2236663eb2267ef3150ad9e515b38ba9069da2f678ff37a873c71f59ef308e48  base.e9cfacdf4af2/main.small-sub.edb744ab.jsonl.gz
+2236663eb2267ef3150ad9e515b38ba9069da2f678ff37a873c71f59ef308e48  self/main.small-sub.jsonl.gz
+86f3966ebd70f73c18abe8b6b7adf81c200158171003ef85c9c026a906ccb4c2  base.e9cfacdf4af2/extra.small-sub.edb744ab.jsonl.gz
+86f3966ebd70f73c18abe8b6b7adf81c200158171003ef85c9c026a906ccb4c2  self/extra.small-sub.jsonl.gz
+d2c9ee9f4b0ace33b7088f883c0a0cfc82a879344cc375abe7e20a59e46e2706  base.e9cfacdf4af2/main.check.15d1162d.jsonl.gz
+d2c9ee9f4b0ace33b7088f883c0a0cfc82a879344cc375abe7e20a59e46e2706  self/main.check.jsonl.gz
+4a9b46959930ce18ada53438656a5c4ec76abf38218a9ce80b756d70703d1e44  base.e9cfacdf4af2/extra.check.15d1162d.jsonl.gz
+4a9b46959930ce18ada53438656a5c4ec76abf38218a9ce80b756d70703d1e44  self/extra.check.jsonl.gz
+RESULT self: OK (expect=zero)

@@ -1,0 +1,176 @@
+#### Lexer::next by ir (typescript-lib)
+functions a: Ir 704,249,251 Bc 98,829,196 Bi 9,543,573   b: Ir 729,270,311 Bc 103,284,676 Bi 9,683,553   delta Ir +25,021,060 Bc +4,455,480 Bi +139,980
+52 lines differ in ir; sum +25,021,060
+      delta           a           b         dIr  file:line(a|b)  text
+ +9,728,400 147,674,552 157,402,952  +9,728,400  lexer.rs:3446|3446  b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' => {}
+ +2,573,500  40,921,775  43,495,275  +2,573,500  lexer.rs:3445|3445  match c {
+ +1,600,340  36,772,172  38,372,512  +1,600,340  lexer.rs:0|0  <line 0>
+ +1,253,700  19,481,507  20,735,207  +1,253,700  std:core/src/ptr/non_null.rs:1663|1663  self.as_ptr() == other.as_ptr()
+ +1,185,000  17,559,326  18,744,326  +1,185,000  lexer.rs:3444|3444  for (i, &c) in name.iter().enumerate() {
+ +1,185,000  17,726,066  18,911,066  +1,185,000  std:core/src/slice/iter/macros.rs:180|180  if ptr == crate::intrinsics::transmute::<$ptr, NonNull<T>>(end_or_len) {
+   +841,160  61,398,242  62,239,402    +841,160  lexer.rs:1275|1275  match self.code_point {
+   +628,960  42,922,877  43,551,837    +628,960  lexer.rs:949|949  self.approximate_newline_count += (self.code_point == 0x0A) as usize;
+   +573,920  35,050,568  35,624,488    +573,920  lexer.rs:1259|1259  pub fn next(&mut self) -> Result<(), Error> {
+   +573,920  35,050,568  35,624,488    +573,920  lexer.rs:1819|1819  }
+   +351,460  23,732,107  24,083,567    +351,460  lexer.rs:931|931  self.current += 1;
+   +351,240  27,574,298  27,925,538    +351,240  lexer.rs:919|919  if self.current >= len {
+   +343,500   9,920,205  10,263,705    +343,500  lexer.rs:1736|1736  0x5F | 0x24 | 0x61..=0x7A | 0x41..=0x5A => {
+   +343,500   9,581,185   9,924,685    +343,500  std:core/src/num/uint_macros.rs:1122|1122  if self < rhs {
+   +286,960  17,525,284  17,812,244    +286,960  lexer.rs:1260|1260  self.has_newline_before = self.end == 0;
+   +279,960  19,651,946  19,931,906    +279,960  lexer.rs:924|924  let first = unsafe { *contents.get_unchecked(self.current) };
+   +276,460  20,082,849  20,359,309    +276,460  lexer.rs:1272|1272  self.start = self.end;
+   +275,140   7,834,005   8,109,145    +275,140  src/ast/lexer_tables.rs:163|163  bun_core::comptime_string_map! {
+   +215,220  13,143,963  13,359,183    +215,220  lexer.rs:1269|1269  let contents: &[u8] = self.contents;
+   +206,100   5,720,283   5,926,383    +206,100  lexer.rs:1753|1753  self.identifier = self.raw();
+   +206,100   5,781,963   5,988,063    +206,100  lexer.rs:1855|1855  &self.contents[self.start..self.end]
+   +139,980   9,481,633   9,621,613    +139,980  lexer.rs:1273|1273  self.token = T::TEndOfFile;
+   +139,980   9,831,473   9,971,453    +139,980  lexer.rs:941|941  self.code_point = self.next_codepoint_with(contents);
+   +139,980   9,825,973   9,965,953    +139,980  lexer.rs:930|930  if first < 0x80 {
+   +137,400   3,813,522   3,950,922    +137,400  lexer.rs:1739|1739  self.end = self.current + advance;
+   +137,400   3,813,522   3,950,922    +137,400  std:core/src/slice/index.rs:184|184  if self < slice.len() {
+   +137,400   3,813,522   3,950,922    +137,400  lexer.rs:1754|1754  self.token = tables::keyword(self.identifier).unwrap_or(T::TIdentifier);
+   +137,400   3,814,082   3,951,482    +137,400  std:core/src/slice/index.rs:90|90  let ptr = unsafe { crate::intrinsics::offset(ptr, offset) };
+   +137,400   3,813,522   3,950,922    +137,400  std:core/src/slice/index.rs:544|544  if self.start > slice.len() {
+   +137,400   3,813,522   3,950,922    +137,400  lexer.rs:1750|1750  if self.code_point != 0x5C {
+   +137,400   3,813,522   3,950,922    +137,400  lexer.rs:1744|1744  if self.code_point >= 0x80 {
+    +71,740   4,381,321   4,453,061     +71,740  lexer.rs:1262|1262  self.prev_token_was_await_keyword = false;
+    +71,740   4,381,321   4,453,061     +71,740  lexer.rs:1261|1261  self.has_pure_comment_before = false;
+    +71,280   7,919,212   7,990,492     +71,280  lexer.rs:926|926  self.end = self.current;
+    +68,700   1,906,761   1,975,461     +68,700  lexer.rs:1740|1740  self.current = self.end;
+    +68,700   1,906,761   1,975,461     +68,700  lexer.rs:1737|1737  let advance = latin1_identifier_continue_length(&contents[self.current..]);
+     +1,280     175,740     177,020      +1,280  lexer.rs:1359|1359  0x2C => {
+     +1,280     175,740     177,020      +1,280  lexer.rs:1361|1361  self.token = T::TComma;
+     +1,200      32,780      33,980      +1,200  lexer.rs:1347|1347  0x5D => {
+     +1,200      32,780      33,980      +1,200  lexer.rs:1349|1349  self.token = T::TCloseBracket;
+#### Lexer::next by ir (bun-types)
+functions a: Ir 163,080,751 Bc 21,552,976 Bi 2,627,433   b: Ir 167,993,805 Bc 22,359,301 Bi 2,663,480   delta Ir +4,913,054 Bc +806,325 Bi +36,047
+128 lines differ in ir; sum +4,913,054
+      delta           a           b         dIr  file:line(a|b)  text
+ +1,627,840  27,745,092  29,372,932  +1,627,840  lexer.rs:3446|3446  b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' => {}
+   +437,638   7,843,515   8,281,153    +437,638  lexer.rs:3445|3445  match c {
+   +313,739   7,773,412   8,087,151    +313,739  lexer.rs:0|0  <line 0>
+   +218,199  16,646,282  16,864,481    +218,199  lexer.rs:1275|1275  match self.code_point {
+   +211,292   3,708,287   3,919,579    +211,292  std:core/src/ptr/non_null.rs:1663|1663  self.as_ptr() == other.as_ptr()
+   +196,311   3,302,366   3,498,677    +196,311  std:core/src/slice/iter/macros.rs:180|180  if ptr == crate::intrinsics::transmute::<$ptr, NonNull<T>>(end_or_len) {
+   +196,043   3,256,686   3,452,729    +196,043  lexer.rs:3444|3444  for (i, &c) in name.iter().enumerate() {
+   +168,713   8,740,008   8,908,721    +168,713  lexer.rs:1819|1814  }
+   +168,712   8,740,008   8,908,720    +168,712  lexer.rs:1259|1259  pub fn next(&mut self) -> Result<(), Error> {
+   +161,026  11,527,357  11,688,383    +161,026  lexer.rs:949|949  self.approximate_newline_count += (self.code_point == 0x0A) as usize;
+    +93,059   7,486,498   7,579,557     +93,059  lexer.rs:919|919  if self.current >= len {
+    +92,976   6,260,707   6,353,683     +92,976  lexer.rs:931|931  self.current += 1;
+    +84,356   4,370,004   4,454,360     +84,356  lexer.rs:1260|1260  self.has_newline_before = self.end == 0;
+    +76,229   2,252,285   2,328,514     +76,229  std:core/src/num/uint_macros.rs:1122|1122  if self < rhs {
+    +75,345   2,246,705   2,322,050     +75,345  lexer.rs:1736|1736  0x5F | 0x24 | 0x61..=0x7A | 0x41..=0x5A => {
+    +72,190   5,295,026   5,367,216     +72,190  lexer.rs:924|924  let first = unsafe { *contents.get_unchecked(self.current) };
+    +65,979   5,814,869   5,880,848     +65,979  lexer.rs:1272|1272  self.start = self.end;
+    +63,267   3,277,503   3,340,770     +63,267  lexer.rs:1269|1269  let contents: &[u8] = self.contents;
+    +61,637   1,843,405   1,905,042     +61,637  src/ast/lexer_tables.rs:163|163  bun_core::comptime_string_map! {
+    +45,772   1,358,903   1,404,675     +45,772  lexer.rs:1855|1855  &self.contents[self.start..self.end]
+    +45,672   1,342,503   1,388,175     +45,672  lexer.rs:1753|1753  self.identifier = self.raw();
+    +36,101   2,658,373   2,694,474     +36,101  lexer.rs:941|941  self.code_point = self.next_codepoint_with(contents);
+    +36,095   2,647,513   2,683,608     +36,095  lexer.rs:930|930  if first < 0x80 {
+    +36,047   2,627,413   2,663,460     +36,047  lexer.rs:1273|1273  self.token = T::TEndOfFile;
+    +30,465     896,242     926,707     +30,465  std:core/src/slice/index.rs:90|90  let ptr = unsafe { crate::intrinsics::offset(ptr, offset) };
+    +30,448     895,002     925,450     +30,448  lexer.rs:1754|1754  self.token = tables::keyword(self.identifier).unwrap_or(T::TIdentifier);
+    +30,448     895,002     925,450     +30,448  std:core/src/slice/index.rs:184|184  if self < slice.len() {
+    +30,448     895,002     925,450     +30,448  lexer.rs:1750|1750  if self.code_point != 0x5C {
+    +30,448     895,002     925,450     +30,448  lexer.rs:1744|1744  if self.code_point >= 0x80 {
+    +30,448     895,002     925,450     +30,448  std:core/src/slice/index.rs:544|544  if self.start > slice.len() {
+    +30,448     895,002     925,450     +30,448  lexer.rs:1739|1739  self.end = self.current + advance;
+    +21,089   1,092,501   1,113,590     +21,089  lexer.rs:1262|1262  self.prev_token_was_await_keyword = false;
+    +21,089   1,092,501   1,113,590     +21,089  lexer.rs:1261|1261  self.has_pure_comment_before = false;
+    +20,871   2,200,012   2,220,883     +20,871  lexer.rs:926|926  self.end = self.current;
+    +15,224     447,501     462,725     +15,224  lexer.rs:1737|1737  let advance = latin1_identifier_continue_length(&contents[self.current..]);
+    +15,224     447,501     462,725     +15,224  lexer.rs:1740|1740  self.current = self.end;
+     +2,109      88,380      90,489      +2,109  lexer.rs:870|870  let string_literal_details = self.parse_string_literal_inner::<QUOTE>(contents)?;
+     +1,785     220,640     222,425      +1,785  lexer.rs:3035|3035  if (self.code_point == 0x2E && self.current < contents.len())
+     +1,589      16,140      17,729      +1,589  lexer.rs:1349|1349  self.token = T::TCloseBracket;
+     +1,589      16,140      17,729      +1,589  lexer.rs:1347|1347  0x5D => {
+#### Lexer::next by ir (src-js)
+functions a: Ir 1,443,890,791 Bc 189,570,336 Bi 22,377,933   b: Ir 1,446,575,891 Bc 189,993,296 Bi 22,399,913   delta Ir +2,685,100 Bc +422,960 Bi +21,980
+60 lines differ in ir; sum +2,685,100
+      delta           a           b         dIr  file:line(a|b)  text
+   +834,600 238,188,492 239,023,092    +834,600  lexer.rs:3446|3446  b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' => {}
+   +223,340  67,663,435  67,886,775    +223,340  lexer.rs:3445|3445  match c {
+   +156,460  67,625,352  67,781,812    +156,460  lexer.rs:0|0  <line 0>
+   +134,080 138,784,342 138,918,422    +134,080  lexer.rs:1275|1275  match self.code_point {
+   +116,320  78,987,808  79,104,128    +116,320  lexer.rs:936|936  }
+   +116,320  78,985,768  79,102,088    +116,320  lexer.rs:1259|1259  pub fn next(&mut self) -> Result<(), Error> {
+   +108,160  31,880,367  31,988,527    +108,160  std:core/src/ptr/non_null.rs:1663|1663  self.as_ptr() == other.as_ptr()
+   +100,740  27,888,646  27,989,386    +100,740  lexer.rs:3444|3444  for (i, &c) in name.iter().enumerate() {
+   +100,740  29,462,846  29,563,586    +100,740  std:core/src/slice/iter/macros.rs:180|180  if ptr == crate::intrinsics::transmute::<$ptr, NonNull<T>>(end_or_len) {
+    +96,540 102,660,217 102,756,757     +96,540  lexer.rs:949|949  self.approximate_newline_count += (self.code_point == 0x0A) as usize;
+    +58,520  66,739,278  66,797,798     +58,520  lexer.rs:919|919  if self.current >= len {
+    +58,160  39,492,884  39,551,044     +58,160  lexer.rs:1260|1260  self.has_newline_before = self.end == 0;
+    +58,020  57,170,307  57,228,327     +58,020  lexer.rs:931|931  self.current += 1;
+    +43,960  47,054,226  47,098,186     +43,960  lexer.rs:924|924  let first = unsafe { *contents.get_unchecked(self.current) };
+    +43,620  29,619,663  29,663,283     +43,620  lexer.rs:1269|1269  let contents: &[u8] = self.contents;
+    +37,100  20,102,885  20,139,985     +37,100  std:core/src/num/uint_macros.rs:1122|1122  if self < rhs {
+    +36,860  47,784,409  47,821,269     +36,860  lexer.rs:1272|1272  self.start = self.end;
+    +36,700  19,374,505  19,411,205     +36,700  lexer.rs:1736|1736  0x5F | 0x24 | 0x61..=0x7A | 0x41..=0x5A => {
+    +29,780  16,380,285  16,410,065     +29,780  src/ast/lexer_tables.rs:163|163  bun_core::comptime_string_map! {
+    +22,260  11,525,943  11,548,203     +22,260  lexer.rs:1753|1753  self.identifier = self.raw();
+    +22,260  12,351,043  12,373,303     +22,260  lexer.rs:1855|1855  &self.contents[self.start..self.end]
+    +21,980  23,563,113  23,585,093     +21,980  lexer.rs:941|941  self.code_point = self.next_codepoint_with(contents);
+    +21,980  22,367,193  22,389,173     +21,980  lexer.rs:1273|1273  self.token = T::TEndOfFile;
+    +21,980  23,568,073  23,590,053     +21,980  lexer.rs:930|930  if first < 0x80 {
+    +14,840   7,683,962   7,698,802     +14,840  lexer.rs:1750|1750  if self.code_point != 0x5C {
+    +14,840   7,683,962   7,698,802     +14,840  std:core/src/slice/index.rs:184|184  if self < slice.len() {
+    +14,840   7,792,282   7,807,122     +14,840  std:core/src/slice/index.rs:90|90  let ptr = unsafe { crate::intrinsics::offset(ptr, offset) };
+    +14,840   7,683,962   7,698,802     +14,840  std:core/src/slice/index.rs:544|544  if self.start > slice.len() {
+    +14,840   7,683,962   7,698,802     +14,840  lexer.rs:1744|1744  if self.code_point >= 0x80 {
+    +14,840   7,683,962   7,698,802     +14,840  lexer.rs:1754|1754  self.token = tables::keyword(self.identifier).unwrap_or(T::TIdentifier);
+    +14,840   7,683,962   7,698,802     +14,840  lexer.rs:1739|1739  self.end = self.current + advance;
+    +14,560  19,705,612  19,720,172     +14,560  lexer.rs:926|926  self.end = self.current;
+    +14,540   9,873,221   9,887,761     +14,540  lexer.rs:1261|1261  self.has_pure_comment_before = false;
+    +14,540   9,873,221   9,887,761     +14,540  lexer.rs:1262|1262  self.prev_token_was_await_keyword = false;
+     +7,420   3,841,981   3,849,401      +7,420  lexer.rs:1737|1737  let advance = latin1_identifier_continue_length(&contents[self.current..]);
+     +7,420   3,841,981   3,849,401      +7,420  lexer.rs:1740|1740  self.current = self.end;
+     +4,200   3,783,080   3,787,280      +4,200  lexer.rs:3035|3035  if (self.code_point == 0x2E && self.current < contents.len())
+     +3,800     132,140     135,940      +3,800  lexer.rs:1349|1349  self.token = T::TCloseBracket;
+     +3,800     132,140     135,940      +3,800  lexer.rs:1347|1347  0x5D => {
+     +3,000   3,160,180   3,163,180      +3,000  lexer.rs:3033|3033  if first == 0x2E && (self.code_point < 0x30 || self.code_point > 0x39) {
+#### Lexer::next by ir (tsx)
+functions a: Ir 394,911,485 Bc 49,196,901 Bi 5,839,880   b: Ir 399,491,485 Bc 49,856,901 Bi 5,887,880   delta Ir +4,580,000 Bc +660,000 Bi +48,000
+41 lines differ in ir; sum +4,580,000
+      delta           a           b         dIr  file:line(a|b)  text
+ +1,008,000  58,504,252  59,512,252  +1,008,000  lexer.rs:3446|3446  b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' => {}
+   +304,000  17,354,793  17,658,793    +304,000  lexer.rs:3445|3445  match c {
+   +288,000  37,293,701  37,581,701    +288,000  lexer.rs:1275|1275  match self.code_point {
+   +262,000  18,674,531  18,936,531    +262,000  lexer.rs:0|0  <line 0>
+   +218,000  26,066,463  26,284,463    +218,000  lexer.rs:949|949  self.approximate_newline_count += (self.code_point == 0x0A) as usize;
+   +208,000  26,072,241  26,280,241    +208,000  lexer.rs:1814|1814  }
+   +208,000  26,072,240  26,280,240    +208,000  lexer.rs:1259|1259  pub fn next(&mut self) -> Result<(), Error> {
+   +138,000   8,012,239   8,150,239    +138,000  std:core/src/ptr/non_null.rs:1663|1663  self.as_ptr() == other.as_ptr()
+   +122,000  14,812,863  14,934,863    +122,000  lexer.rs:931|931  self.current += 1;
+   +120,000  16,495,417  16,615,417    +120,000  lexer.rs:919|919  if self.current >= len {
+   +120,000   6,897,934   7,017,934    +120,000  std:core/src/num/uint_macros.rs:1122|1122  if self < rhs {
+   +114,000   6,812,117   6,926,117    +114,000  std:core/src/slice/iter/macros.rs:180|180  if ptr == crate::intrinsics::transmute::<$ptr, NonNull<T>>(end_or_len) {
+   +114,000   6,631,849   6,745,849    +114,000  lexer.rs:3444|3444  for (i, &c) in name.iter().enumerate() {
+   +110,000   6,891,950   7,001,950    +110,000  lexer.rs:1736|1736  0x5F | 0x24 | 0x61..=0x7A | 0x41..=0x5A => {
+   +104,000  13,036,120  13,140,120    +104,000  lexer.rs:1260|1260  self.has_newline_before = self.end == 0;
+    +98,000   5,613,522   5,711,522     +98,000  src/ast/lexer_tables.rs:163|163  bun_core::comptime_string_map! {
+    +96,000  11,907,856  12,003,856     +96,000  lexer.rs:924|924  let first = unsafe { *contents.get_unchecked(self.current) };
+    +92,000  11,021,628  11,113,628     +92,000  lexer.rs:1272|1272  self.start = self.end;
+    +78,000   9,777,090   9,855,090     +78,000  lexer.rs:1269|1269  let contents: &[u8] = self.contents;
+    +72,000   4,159,195   4,231,195     +72,000  lexer.rs:1855|1855  &self.contents[self.start..self.end]
+    +72,000   4,087,095   4,159,095     +72,000  lexer.rs:1753|1753  self.identifier = self.raw();
+    +48,000   5,839,880   5,887,880     +48,000  lexer.rs:1273|1273  self.token = T::TEndOfFile;
+    +48,000   2,724,730   2,772,730     +48,000  lexer.rs:1744|1744  if self.code_point >= 0x80 {
+    +48,000   2,724,730   2,772,730     +48,000  lexer.rs:1754|1754  self.token = tables::keyword(self.identifier).unwrap_or(T::TIdentifier);
+    +48,000   2,724,730   2,772,730     +48,000  lexer.rs:1750|1750  if self.code_point != 0x5C {
+    +48,000   2,724,730   2,772,730     +48,000  lexer.rs:1739|1739  self.end = self.current + advance;
+    +48,000   2,724,730   2,772,730     +48,000  std:core/src/slice/index.rs:184|184  if self < slice.len() {
+    +48,000   5,969,928   6,017,928     +48,000  lexer.rs:930|930  if first < 0x80 {
+    +48,000   2,740,747   2,788,747     +48,000  std:core/src/slice/index.rs:90|90  let ptr = unsafe { crate::intrinsics::offset(ptr, offset) };
+    +48,000   2,724,730   2,772,730     +48,000  std:core/src/slice/index.rs:544|544  if self.start > slice.len() {
+    +48,000   5,973,934   6,021,934     +48,000  lexer.rs:941|941  self.code_point = self.next_codepoint_with(contents);
+    +26,000   3,259,030   3,285,030     +26,000  lexer.rs:1261|1261  self.has_pure_comment_before = false;
+    +26,000   3,259,030   3,285,030     +26,000  lexer.rs:1262|1262  self.prev_token_was_await_keyword = false;
+    +24,000   1,362,365   1,386,365     +24,000  lexer.rs:1737|1737  let advance = latin1_identifier_continue_length(&contents[self.current..]);
+    +24,000   1,362,365   1,386,365     +24,000  lexer.rs:1740|1740  self.current = self.end;
+    +24,000   4,599,563   4,623,563     +24,000  lexer.rs:926|926  self.end = self.current;
+    +14,000     854,525     868,525     +14,000  lexer.rs:3035|3035  if (self.code_point == 0x2E && self.current < contents.len())
+    +10,000     664,450     674,450     +10,000  lexer.rs:3033|3033  if first == 0x2E && (self.code_point < 0x30 || self.code_point > 0x39) {
+     +2,000     112,070     114,070      +2,000  lexer.rs:3045|3045  self.token = T::TDot;
+     +2,000     164,062     166,062      +2,000  std:core/src/option.rs:2142|2142  Some(&v) => Some(v),

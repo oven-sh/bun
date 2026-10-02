@@ -1,0 +1,277 @@
+#### P<false, false>::parse_prefix  by bc
+functions a: Ir 147,062,920 Bc 13,964,440 Bi 3,302,040   b: Ir 145,908,540 Bc 14,156,800 Bi 3,302,040   delta Ir -1,154,380 Bc +192,360 Bi +0
+1 lines differ in bc; sum +192,360
+      delta           a           b         dIr  file:line(a|b)  text
+   +192,360           0     192,360    +384,720  p.rs:-|5559  matches!(&self.starts_for_parse_only, Some(starts) if starts.is_lint)
+#### P<false, false>::parse_prefix  by ir
+functions a: Ir 147,062,920 Bc 13,964,440 Bi 3,302,040   b: Ir 145,908,540 Bc 14,156,800 Bi 3,302,040   delta Ir -1,154,380 Bc +192,360 Bi +0
+31 lines differ in ir; sum -1,154,380
+      delta           a           b         dIr  file:line(a|b)  text
+ -1,247,460   1,247,460           0  -1,247,460  parse/parse_prefix.rs:1014|-  T::TIdentifier => Self::pfx_t_identifier(p, level, flags),
+ -1,247,460   9,986,320   8,738,860  -1,247,460  std:core/src/ptr/non_null.rs:0|0  <line 0>
+ +1,229,600   1,943,900   3,173,500  +1,229,600  parse/parse_prefix.rs:47|47  let loc = p.lexer.loc();
+   +384,720           0     384,720    +384,720  p.rs:-|5559  matches!(&self.starts_for_parse_only, Some(starts) if starts.is_lint)
+   +370,120  18,682,360  19,052,480    +370,120  parse/parse_prefix.rs:107|1261  }
+   +240,940   4,079,780   4,320,720    +240,940  parse/parse_prefix.rs:0|0  <line 0>
+   -228,520     228,520           0    -228,520  parse/parse_prefix.rs:1017|-  T::TNull => Self::pfx_t_null(p),
+   +192,360           0     192,360    +192,360  parse/parse_prefix.rs:-|50  if !SCAN_ONLY && p.is_lint_parse() {
+   -180,800   1,588,220   1,407,420    -180,800  std:core/src/ptr/mod.rs:1966|1966  intrinsics::write_via_move(dst, src)
+   -180,600   1,753,240   1,572,640    -180,600  std:core/src/result.rs:2177|2177  Ok(v) => ControlFlow::Continue(v),
+   -107,160     107,160           0    -107,160  src/ast/e.rs:1279|-  Self {
+    -92,720   1,790,180   1,697,460     -92,720  src/ast/new_store.rs:0|0  <line 0>
+    -81,820   3,632,380   3,550,560     -81,820  parse/parse_prefix.rs:48|48  p.lexer.next()?;
+    -74,580      74,580           0     -74,580  parse/parse_prefix.rs:1030|-  T::TExclamation => Self::pfx_t_exclamation(p),
+    -73,040     182,600     109,560     -73,040  parse/parse_prefix.rs:61|65  return Ok(value);
+    -36,200     182,300     146,100     -36,200  parse/parse_prefix.rs:337|387  Ok(p.new_expr(
+#### P<false, false>::parse_fn_stmt  by bc
+functions a: Ir 10,698,400 Bc 845,920 Bi 0   b: Ir 9,703,200 Bc 845,920 Bi 0   delta Ir -995,200 Bc +0 Bi +0
+0 lines differ in bc; sum +0
+      delta           a           b         dIr  file:line(a|b)  text
+#### P<false, false>::parse_fn_stmt  by ir
+functions a: Ir 10,698,400 Bc 845,920 Bi 0   b: Ir 9,703,200 Bc 845,920 Bi 0   delta Ir -995,200 Bc +0 Bi +0
+7 lines differ in ir; sum -995,200
+      delta           a           b         dIr  file:line(a|b)  text
+   -298,560     398,080      99,520    -298,560  parse/parse_fn.rs:81|89  let mut func = p.parse_fn(
+   -248,800   1,343,520   1,094,720    -248,800  parse/parse_fn.rs:0|0  <line 0>
+   -248,800   1,044,960     796,160    -248,800  std:core/src/result.rs:2177|2177  Ok(v) => ControlFlow::Continue(v),
+   -149,280     149,280           0    -149,280  std:core/src/result.rs:0|-  <line 0>
+    +49,760     199,040     248,800     +49,760  parse/parse_fn.rs:160|188  Ok(p.s(S::Function { func }, loc))
+    -49,760     447,840     398,080     -49,760  std:core/src/result.rs:2176|2176  match self {
+    -49,760     149,280      99,520     -49,760  parse/parse_fn.rs:128|156  p.pop_scope();
+#### P<false, false>::e_function  by bc
+functions a: Ir 1,432,020 Bc 98,760 Bi 0   b: Ir 1,234,500 Bc 82,300 Bi 0   delta Ir -197,520 Bc -16,460 Bi +0
+1 lines differ in bc; sum -16,460
+      delta           a           b         dIr  file:line(a|b)  text
+    -16,460      16,460           0     -16,460  std:alloc/src/raw_vec/mod.rs:647|-  if elem_layout.size() == 0 || self.cap.as_inner() == 0 {
+#### P<false, false>::e_function  by ir
+functions a: Ir 1,432,020 Bc 98,760 Bi 0   b: Ir 1,234,500 Bc 82,300 Bi 0   delta Ir -197,520 Bc -16,460 Bi +0
+12 lines differ in ir; sum -197,520
+      delta           a           b         dIr  file:line(a|b)  text
+    -65,840      65,840           0     -65,840  std:core/src/ptr/mod.rs:848|-  pub(crate) const unsafe fn drop_glue<T: PointeeSized>(_: &mut T)
+    -32,920     197,520     164,600     -32,920  std:core/src/mem/mod.rs:975|975  let result = crate::intrinsics::read_via_copy(dest);
+    -32,920     246,900     213,980     -32,920  visit/visit_expr.rs:2721|2721  e_.func = p.visit_func(core::mem::take(&mut e_.func), expr.loc, true);
+    -32,920      98,760      65,840     -32,920  visit/visit_expr.rs:0|0  <line 0>
+    -16,460     148,140     131,680     -16,460  visit/visit_expr.rs:2773|2773  }
+    +16,460      16,460      32,920     +16,460  /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enumset-1.1.10/src/repr/primitive.rs:38|38  (self & (1 << bit as $name)) != 0
+    -16,460     131,680     115,220     -16,460  visit/visit_expr.rs:2697|2697  fn e_function(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    +16,460     181,060     197,520     +16,460  std:core/src/mem/mod.rs:976|976  crate::intrinsics::write_via_move(dest, src);
+    -16,460      32,920      16,460     -16,460  visit/visit_expr.rs:2705|2705  let mut react_hook_data: Option<crate::parser::HookContext> = None;
+    -16,460      16,460           0     -16,460  std:alloc/src/raw_vec/mod.rs:647|-  if elem_layout.size() == 0 || self.cap.as_inner() == 0 {
+    +16,460      16,460      32,920     +16,460  visit/visit_expr.rs:2706|2706  let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
+    -16,460      16,460           0     -16,460  std:core/src/ptr/mod.rs:0|-  <line 0>
+#### P<false, false>::parse_stmt  by bc
+functions a: Ir 32,547,880 Bc 3,459,960 Bi 465,560   b: Ir 32,367,680 Bc 3,349,340 Bi 465,560   delta Ir -180,200 Bc -110,620 Bi +0
+6 lines differ in bc; sum -110,620
+      delta           a           b         dIr  file:line(a|b)  text
+   -109,380     850,600     741,220    -328,140  std:core/src/result.rs:2176|2176  match self {
+   +109,380           0     109,380    +437,520  parse/parse_stmt.rs:-|1870  let expr_or_let = match p.parse_expr_or_let_stmt(opts) {
+   -109,360     109,360           0    -109,360  parse/parse_stmt.rs:1739|-  if is_identifier {
+    +86,600           0      86,600    +606,200  parse/parse_stmt.rs:-|1889  if let js_ast::ExprData::EIdentifier(ident) = &expr.data {
+    -86,600     116,420      29,820    -106,980  parse/parse_stmt.rs:0|0  <line 0>
+     -1,260       2,520       1,260      -1,260  parse/parse_stmt.rs:1741|1890  if p.lexer.token == T::TColon && !opts.has_decorators() {
+#### P<false, false>::parse_stmt  by ir
+functions a: Ir 32,547,880 Bc 3,459,960 Bi 465,560   b: Ir 32,367,680 Bc 3,349,340 Bi 465,560   delta Ir -180,200 Bc -110,620 Bi +0
+13 lines differ in ir; sum -180,200
+      delta           a           b         dIr  file:line(a|b)  text
+   +606,200           0     606,200    +606,200  parse/parse_stmt.rs:-|1889  if let js_ast::ExprData::EIdentifier(ident) = &expr.data {
+   -437,520   1,166,260     728,740    -437,520  std:core/src/result.rs:2177|2177  Ok(v) => ControlFlow::Continue(v),
+   +437,520           0     437,520    +437,520  parse/parse_stmt.rs:-|1870  let expr_or_let = match p.parse_expr_or_let_stmt(opts) {
+   -328,140   2,034,600   1,706,460    -328,140  std:core/src/result.rs:2176|2176  match self {
+   -283,820     862,740     578,920    -283,820  src/ast/lexer_tables.rs:5|5  #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Enum, strum::IntoStaticStr)]
+   +218,760           0     218,760    +218,760  parse/parse_stmt.rs:-|1871  Ok(expr_or_let) => expr_or_let,
+   -218,720     218,720           0    -218,720  parse/parse_stmt.rs:1734|-  js_ast::StmtOrExpr::Expr(_expr) => {
+   +218,720           0     218,720    +218,720  parse/parse_stmt.rs:-|1884  expr = _expr;
+   -109,380     109,380           0    -109,380  parse/parse_stmt.rs:1728|-  let expr_or_let = p.parse_expr_or_let_stmt(opts)?;
+   -109,360     109,360           0    -109,360  parse/parse_stmt.rs:1739|-  if is_identifier {
+   -106,980   2,077,640   1,970,660    -106,980  parse/parse_stmt.rs:0|0  <line 0>
+    -66,220     814,540     748,320     -66,220  std:core/src/result.rs:0|0  <line 0>
+     -1,260       2,520       1,260      -1,260  parse/parse_stmt.rs:1741|1890  if p.lexer.token == T::TColon && !opts.has_decorators() {
+#### P<false, false>::hoist_symbols  by bc
+functions a: Ir 24,745,460 Bc 2,646,220 Bi 137,000   b: Ir 24,609,040 Bc 2,646,220 Bi 137,000   delta Ir -136,420 Bc +0 Bi +0
+0 lines differ in bc; sum +0
+      delta           a           b         dIr  file:line(a|b)  text
+#### P<false, false>::hoist_symbols  by ir
+functions a: Ir 24,745,460 Bc 2,646,220 Bi 137,000   b: Ir 24,609,040 Bc 2,646,220 Bi 137,000   delta Ir -136,420 Bc +0 Bi +0
+1 lines differ in ir; sum -136,420
+      delta           a           b         dIr  file:line(a|b)  text
+   -136,420     682,100     545,680    -136,420  std:core/src/slice/iter/macros.rs:0|0  <line 0>
+#### P<false, false>::visit_func  by bc
+functions a: Ir 11,768,260 Bc 977,260 Bi 66,220   b: Ir 11,635,820 Bc 977,260 Bi 66,220   delta Ir -132,440 Bc +0 Bi +0
+0 lines differ in bc; sum +0
+      delta           a           b         dIr  file:line(a|b)  text
+#### P<false, false>::visit_func  by ir
+functions a: Ir 11,768,260 Bc 977,260 Bi 66,220   b: Ir 11,635,820 Bc 977,260 Bi 66,220   delta Ir -132,440 Bc +0 Bi +0
+1 lines differ in ir; sum -132,440
+      delta           a           b         dIr  file:line(a|b)  text
+   -132,440     860,860     728,420    -132,440  visit/mod.rs:218|218  func
+#### P<false, false>::visit_args  by bc
+functions a: Ir 7,117,569 Bc 1,372,101 Bi 66,620   b: Ir 7,228,729 Bc 1,372,101 Bi 66,620   delta Ir +111,160 Bc +0 Bi +0
+0 lines differ in bc; sum +0
+      delta           a           b         dIr  file:line(a|b)  text
+#### P<false, false>::visit_args  by ir
+functions a: Ir 7,117,569 Bc 1,372,101 Bi 66,620   b: Ir 7,228,729 Bc 1,372,101 Bi 66,620   delta Ir +111,160 Bc +0 Bi +0
+3 lines differ in ir; sum +111,160
+      delta           a           b         dIr  file:line(a|b)  text
+   +111,160   1,167,080   1,278,240    +111,160  std:core/src/slice/iter/macros.rs:0|0  <line 0>
+         -2           2           0          -2  src/mimalloc_sys/mimalloc.rs:184|-  <line 184>
+         +2           0           2          +2  src/mimalloc_sys/mimalloc.rs:-|184  mi_malloc(size)
+#### P<false, false>::s_function  by bc
+functions a: Ir 6,355,360 Bc 694,900 Bi 0   b: Ir 6,255,840 Bc 694,900 Bi 0   delta Ir -99,520 Bc +0 Bi +0
+0 lines differ in bc; sum +0
+      delta           a           b         dIr  file:line(a|b)  text
+#### P<false, false>::s_function  by ir
+functions a: Ir 6,355,360 Bc 694,900 Bi 0   b: Ir 6,255,840 Bc 694,900 Bi 0   delta Ir -99,520 Bc +0 Bi +0
+6 lines differ in ir; sum -99,520
+      delta           a           b         dIr  file:line(a|b)  text
+    -99,520     746,400     646,880     -99,520  visit/visit_stmt.rs:912|912  data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc, false);
+    -99,520     696,640     597,120     -99,520  std:core/src/mem/mod.rs:975|975  let result = crate::intrinsics::read_via_copy(dest);
+    +49,760           0      49,760     +49,760  p.rs:-|0  <line 0>
+    -49,760     298,560     248,800     -49,760  visit/visit_stmt.rs:0|0  <line 0>
+    +49,760     149,280     199,040     +49,760  visit/visit_stmt.rs:925|925  if data.func.flags.contains(flags::Function::IsExport)
+    +49,760     149,280     199,040     +49,760  src/bun_alloc/baby_vec.rs:121|121  if self.len == self.cap {
+#### P<false, false>::parse_fn  by bc
+functions a: Ir 21,454,220 Bc 2,123,380 Bi 0   b: Ir 21,542,720 Bc 2,134,360 Bi 0   delta Ir +88,500 Bc +10,980 Bi +0
+5 lines differ in bc; sum +10,980
+      delta           a           b         dIr  file:line(a|b)  text
+    -66,220      66,220           0    -132,440  src/bun_alloc/baby_vec.rs:76|76  self.len == 0
+    +66,220           0      66,220    +132,440  parse/parse_fn.rs:-|463  if rest_comma.len > 0 {
+    -66,220      66,220           0          +0  parse/parse_fn.rs:346|401  if !args.is_empty() {
+    +66,220           0      66,220     +44,260  parse/parse_fn.rs:413|482  }
+    +10,980           0      10,980     +21,960  src/bun_alloc/baby_vec.rs:-|330  if !Self::T_IS_ZST && self.cap != 0 {
+#### P<false, false>::parse_fn  by ir
+functions a: Ir 21,454,220 Bc 2,123,380 Bi 0   b: Ir 21,542,720 Bc 2,134,360 Bi 0   delta Ir +88,500 Bc +10,980 Bi +0
+26 lines differ in ir; sum +88,500
+      delta           a           b         dIr  file:line(a|b)  text
+   +463,880     993,600   1,457,480    +463,880  parse/parse_fn.rs:0|0  <line 0>
+   -463,880     463,880           0    -463,880  lexer.rs:0|-  <line 0>
+   +353,400     298,160     651,560    +353,400  /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enumset-1.1.10/src/repr/primitive.rs:38|38  (self & (1 << bit as $name)) != 0
+   -264,880   1,324,400   1,059,520    -264,880  parse/parse_fn.rs:412|481  Ok(func)
+   +132,440           0     132,440    +132,440  parse/parse_fn.rs:-|199  if opts.allow_await == AwaitOrYield::AllowExpr {
+   -132,440     331,100     198,660    -132,440  std:core/src/convert/num.rs:0|0  <line 0>
+   -132,440     264,880     132,440    -132,440  lexer.rs:963|963  self.next()
+   +132,440           0     132,440    +132,440  parse/parse_fn.rs:-|463  if rest_comma.len > 0 {
+   -132,440     264,880     132,440    -132,440  src/bun_alloc/baby_vec.rs:76|76  self.len == 0
+   -132,440     132,440           0    -132,440  parse/parse_fn.rs:178|-  let mut func = G::Fn {
+   -117,800     117,800           0    -117,800  /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enumset-1.1.10/src/repr/primitive.rs:0|-  <line 0>
+   -117,800   2,002,600   1,884,800    -117,800  std:core/src/ptr/mod.rs:1966|1966  intrinsics::write_via_move(dst, src)
+   +117,800     235,600     353,400    +117,800  std:core/src/ptr/mut_ptr.rs:971|971  unsafe { intrinsics::offset(self, count) }
+   +117,800     589,000     706,800    +117,800  parse/parse_fn.rs:311|362  if !func.flags.contains(Flags::Function::HasRestArg) && p.lexer.token == T::TEquals {
+    +66,220     132,440     198,660     +66,220  parse/parse_fn.rs:402|471  func.body = p.parse_fn_body(&mut temp_opts)?;
+    +66,220           0      66,220     +66,220  lib.rs:-|0  <line 0>
+#### P<false, false>::parse_fn_expr  by bc
+functions a: Ir 2,129,400 Bc 131,040 Bi 0   b: Ir 2,080,260 Bc 131,040 Bi 0   delta Ir -49,140 Bc +0 Bi +0
+0 lines differ in bc; sum +0
+      delta           a           b         dIr  file:line(a|b)  text
+#### P<false, false>::parse_fn_expr  by ir
+functions a: Ir 2,129,400 Bc 131,040 Bi 0   b: Ir 2,080,260 Bc 131,040 Bi 0   delta Ir -49,140 Bc +0 Bi +0
+2 lines differ in ir; sum -49,140
+      delta           a           b         dIr  file:line(a|b)  text
+    -32,760     409,500     376,740     -32,760  src/ast/new_store.rs:0|0  <line 0>
+    -16,380      32,760      16,380     -16,380  parse/parse_fn.rs:477|595  p.fn_or_arrow_data_parse.has_argument_decorators = false;
+#### P<false, false>::parse_property  by bc
+functions a: Ir 19,173,700 Bc 2,286,560 Bi 10,140   b: Ir 19,179,760 Bc 2,286,560 Bi 10,140   delta Ir +6,060 Bc +0 Bi +0
+0 lines differ in bc; sum +0
+      delta           a           b         dIr  file:line(a|b)  text
+#### P<false, false>::parse_property  by ir
+functions a: Ir 19,173,700 Bc 2,286,560 Bi 10,140   b: Ir 19,179,760 Bc 2,286,560 Bi 10,140   delta Ir +6,060 Bc +0 Bi +0
+19 lines differ in ir; sum +6,060
+      delta           a           b         dIr  file:line(a|b)  text
+   +491,100     160,320     651,420    +491,100  lib.rs:0|0  <line 0>
+   -278,080     413,420     135,340    -278,080  std:core/src/result.rs:0|0  <line 0>
+   -160,320   2,002,980   1,842,660    -160,320  parse/parse_property.rs:0|0  <line 0>
+    -90,220   1,443,520   1,353,300     -90,220  parse/parse_property.rs:799|967  return Ok(Some(property));
+    -80,160     571,180     491,020     -80,160  src/ast/lexer_tables.rs:5|5  #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Enum, strum::IntoStaticStr)]
+    +80,160     240,480     320,640     +80,160  parse/parse_property.rs:549|706  && p.lexer.token != T::TColon
+    +52,200      43,500      95,700     +52,200  parse/parse_property.rs:268|393  key = p.parse_string_literal()?;
+     -8,700      17,400       8,700      -8,700  std:core/src/ptr/non_null.rs:0|0  <line 0>
+       +240         560         800        +240  parse/parse_property.rs:230|256  Ok(Some(G::Property {
+       -160         240          80        -160  src/bun_alloc/ast_alloc.rs:0|0  <line 0>
+       +160         640         800        +160  parse/parse_property.rs:47|48  if opts.is_class && !is_computed {
+       -160         240          80        -160  parse/parse_property.rs:90|91  let func = p.parse_fn(
+       -160         720         560        -160  parse/parse_property.rs:136|162  match kind {
+        +80         240         320         +80  parse/parse_property.rs:180|206  match &mut key.data {
+        +80         320         400         +80  std:core/src/ptr/mod.rs:0|0  <line 0>
+        -80   2,257,660   2,257,580         -80  std:core/src/convert/num.rs:0|0  <line 0>
+#### P<false, false>::s_local  by bc
+functions a: Ir 21,731,620 Bc 2,961,980 Bi 0   b: Ir 21,728,700 Bc 3,089,000 Bi 0   delta Ir -2,920 Bc +127,020 Bi +0
+1 lines differ in bc; sum +127,020
+      delta           a           b         dIr  file:line(a|b)  text
+   +127,020     257,040     384,060      -2,920  src/ast/expr.rs:45|45  match self.data {
+#### P<false, false>::s_local  by ir
+functions a: Ir 21,731,620 Bc 2,961,980 Bi 0   b: Ir 21,728,700 Bc 3,089,000 Bi 0   delta Ir -2,920 Bc +127,020 Bi +0
+3 lines differ in ir; sum -2,920
+      delta           a           b         dIr  file:line(a|b)  text
+     -2,920     899,600     896,680      -2,920  src/ast/expr.rs:45|45  match self.data {
+     +1,460           0       1,460      +1,460  src/ast/expr.rs:-|47  Data::EFunction(func) => func.func.name.is_none(),
+     -1,460       1,460           0      -1,460  src/ast/expr.rs:0|-  <line 0>
+#### P<false, false>::parse_and_declare_decls  by bc
+functions a: Ir 20,657,220 Bc 2,215,140 Bi 85,900   b: Ir 20,657,100 Bc 2,215,100 Bi 85,900   delta Ir -120 Bc -40 Bi +0
+2 lines differ in bc; sum -40
+      delta           a           b         dIr  file:line(a|b)  text
+        -20      85,400      85,380         -40  src/bun_alloc/ast_alloc.rs:143|143  if !self.spill.is_null() {
+        -20      85,400      85,380         -60  std:alloc/src/raw_vec/mod.rs:481|481  let ptr = match result {
+#### P<false, false>::parse_and_declare_decls  by ir
+functions a: Ir 20,657,220 Bc 2,215,140 Bi 85,900   b: Ir 20,657,100 Bc 2,215,100 Bi 85,900   delta Ir -120 Bc -40 Bi +0
+9 lines differ in ir; sum -120
+      delta           a           b         dIr  file:line(a|b)  text
+   -256,200     256,200           0    -256,200  src/mimalloc_sys/mimalloc.rs:209|-  <line 209>
+   +256,140           0     256,140    +256,140  src/mimalloc_sys/mimalloc.rs:-|209  mi_heap_malloc(heap, size)
+        +80       2,000       2,080         +80  src/bun_alloc/ast_alloc.rs:130|130  self.bump_cursor += pad + size;
+        -60     256,200     256,140         -60  std:alloc/src/raw_vec/mod.rs:481|481  let ptr = match result {
+        -40     170,800     170,760         -40  src/bun_alloc/ast_alloc.rs:143|143  if !self.spill.is_null() {
+        -20     171,300     171,280         -20  std:alloc/src/raw_vec/mod.rs:0|0  <line 0>
+        -20      85,400      85,380         -20  std:core/src/ptr/const_ptr.rs:38|38  ptr.addr() == 0
+        +20     318,680     318,700         +20  std:core/src/ptr/mut_ptr.rs:971|971  unsafe { intrinsics::offset(self, count) }
+        -20      85,400      85,380         -20  src/bun_alloc/ast_alloc.rs:0|0  <line 0>
+#### P<false, false>::init  by bc
+functions a: Ir 10,143 Bc 189 Bi 63   b: Ir 10,164 Bc 189 Bi 63   delta Ir +21 Bc +0 Bi +0
+0 lines differ in bc; sum +0
+      delta           a           b         dIr  file:line(a|b)  text
+#### P<false, false>::init  by ir
+functions a: Ir 10,143 Bc 189 Bi 63   b: Ir 10,164 Bc 189 Bi 63   delta Ir +21 Bc +0 Bi +0
+1 lines differ in ir; sum +21
+      delta           a           b         dIr  file:line(a|b)  text
+        +21         168         189         +21  p.rs:9966|10051  }
+#### P<false, false>::to_ast  by bc
+functions a: Ir 36,100 Bc 4,140 Bi 620   b: Ir 36,120 Bc 4,140 Bi 620   delta Ir +20 Bc +0 Bi +0
+0 lines differ in bc; sum +0
+      delta           a           b         dIr  file:line(a|b)  text
+#### P<false, false>::to_ast  by ir
+functions a: Ir 36,100 Bc 4,140 Bi 620   b: Ir 36,120 Bc 4,140 Bi 620   delta Ir +20 Bc +0 Bi +0
+1 lines differ in ir; sum +20
+      delta           a           b         dIr  file:line(a|b)  text
+        +20         100         120         +20  std:alloc/src/boxed.rs:292|292  let ptr = box_new_uninit(<T as SizedTypeProperties>::LAYOUT) as *mut T;
+#### visit_right_and_finish by ir
+functions a: Ir 104,758,500 Bc 12,001,300 Bi 1,385,700   b: Ir 105,354,680 Bc 12,001,400 Bi 1,385,700   delta Ir +596,180 Bc +100 Bi +0
+14 lines differ in ir; sum +596,180
+      delta           a           b         dIr  file:line(a|b)  text
+   +501,520  14,854,960  15,356,480    +501,520  visit/visit_binary.rs:135|135  match e_.op {
+    +74,480     854,240     928,720     +74,480  visit/visit_binary.rs:377|377  if let Some(side_effects) = SideEffects::to_boolean(p, &e_.left.data) {
+    -74,380      74,680         300     -74,380  scan/scan_side_effects.rs:10|10  #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+    +74,060     296,240     370,300     +74,060  visit/visit_binary.rs:185|185  } else if matches!(e_.left.data, ExprData::ENull(_) | ExprData::EUndefined(_)) {
+    -63,360   2,993,080   2,929,720     -63,360  visit/visit_binary.rs:0|0  <line 0>
+    +53,640     520,680     574,320     +53,640  p.rs:1298|1357  if let js_ast::ExprData::EIdentifier(id) = expr.data
+    +50,840     101,680     152,520     +50,840  p.rs:1299|1358  && self.dynamic_import_namespace_locals.contains_key(&id.ref_)
+    +50,840           0      50,840     +50,840  p.rs:-|0  <line 0>
+    -50,840     101,680      50,840     -50,840  std:core/src/macros/mod.rs:434|434  match $expression {
+    -30,440     152,200     121,760     -30,440  visit/visit_binary.rs:88|88  ExprData::eql::<_, LooseEql>(left, right, p)
+     +9,720           0       9,720      +9,720  src/ast/expr.rs:-|47  Data::EFunction(func) => func.func.name.is_none(),
+       -200     383,700     383,500        -200  scan/scan_side_effects.rs:0|0  <line 0>
+       +200       1,600       1,800        +200  visit/visit_binary.rs:354|354  if let Some(null_or_undefined) = SideEffects::to_null_or_undefined(p, &e_.left.data)
+       +100           0         100        +100  visit/visit_binary.rs:-|402  } else if side_effects.side_effects == SideEffects::NoSideEffects {
+#### parse_arrow_body(_with_flags) by ir
+functions a: Ir 50,460 Bc 5,580 Bi 0   b: Ir 51,580 Bc 5,580 Bi 0   delta Ir +1,120 Bc +0 Bi +0
+12 lines differ in ir; sum +1,120
+      delta           a           b         dIr  file:line(a|b)  text
+     +3,600           0       3,600      +3,600  parse/parse_fn.rs:-|647  pub(crate) fn parse_arrow_body_with_flags(
+     -3,600       3,600           0      -3,600  parse/parse_fn.rs:520|-  pub(crate) fn parse_arrow_body(
+     +1,020       1,360       2,380      +1,020  std:core/src/slice/iter/macros.rs:0|0  <line 0>
+       -600       4,080       3,480        -600  std:core/src/result.rs:2176|2176  match self {
+       +600         600       1,200        +600  parse/parse_fn.rs:555|683  let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before
+       +500           0         500        +500  parse/mod.rs:-|82  self.parse_expr_common(level, None, flags, &mut expr)?;
+       -500         500           0        -500  parse/mod.rs:52|-  self.parse_expr_common(level, None, EFlags::None, &mut expr)?;
+       -200         200           0        -200  parse/parse_fn.rs:579|-  let expr = match p.parse_expr(Level::Comma) {
+       +200           0         200        +200  parse/parse_fn.rs:-|707  let expr = match p.parse_expr_flagged(Level::Comma, flags) {
+       +100         300         400        +100  parse/parse_fn.rs:568|696  if let Some(starts) = &mut p.starts_for_parse_only {
+       -100       1,000         900        -100  parse/parse_fn.rs:557|685  if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
+       +100         400         500        +100  parse/parse_fn.rs:595|723  p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression;

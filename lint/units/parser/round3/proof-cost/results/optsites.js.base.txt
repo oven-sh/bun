@@ -1,0 +1,7 @@
+offset of the option in P: 0x900
+  1  <P<false, false>>::init                                                movq:1
+  1  <P<false, false>>::parse_arrow_body                                    cmpq:1
+  2  <P<false, false>>::parse_async_prefix_expr                             cmpq:1 leaq:1
+  1  <P<false, false>>::parse_class                                         cmpq:1
+  1  core::ptr::drop_glue::<P<false, false>>                                leaq:1
+6 reads of the field in 5 functions matching /P<false, false>/

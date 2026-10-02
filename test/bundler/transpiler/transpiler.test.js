@@ -5412,6 +5412,189 @@ it("deeply nested expressions error instead of crashing the process", () => {
   expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
 }, 60_000);
 
+// After a stack overflow the visit pass skips each expression that it did not visit yet. The code
+// that runs after a skipped visit must not read that expression.
+describe.concurrent("a stack overflow in the visit pass", () => {
+  const prelude = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const overflow = "Maximum call stack size exceeded";
+    // The visit pass overflows the stack in this member chain, and skips what comes after it.
+    const chain = "a" + repeat(".b", 100000);
+    // The visit pass gives a skipped identifier no symbol. The length of this name is greater
+    // than the number of symbols in each module below.
+    const name = repeat("L", 2000);
+    // The message of the error that the call throws.
+    const outcome = async call => {
+      try {
+        await call();
+        return "no error";
+      } catch (e) {
+        return e.message;
+      }
+    };
+    // The smallest number of levels at which the visit of build(levels) overflows.
+    const firstOverflow = async (transpiler, build) => {
+      let below = 1;
+      let first = 2;
+      while ((await outcome(() => transpiler.transformSync(build(first)))) !== overflow) {
+        below = first;
+        first *= 2;
+      }
+      while (first - below > 1) {
+        const middle = (below + first) >> 1;
+        if ((await outcome(() => transpiler.transformSync(build(middle)))) === overflow) first = middle;
+        else below = middle;
+      }
+      return first;
+    };
+  `;
+  const ok = { stdout: "ok\n", stderr: "", exitCode: 0, signalCode: null };
+
+  async function run(script) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  it.each(["js", "ts"])("is the one error for a skipped default value or typeof operand, %s", async loader => {
+    const result = await run(`
+      const cases = [
+        ["[" + chain + ", " + name + " = 1] = y;", "transformSync", "transform", "scan"],
+        ["({ a: " + chain + ", " + name + " = 1 } = y);", "transformSync"],
+        ["x = typeof (false ? " + chain + " : " + name + ");", "transformSync"],
+      ];
+      for (const [source, ...methods] of cases) {
+        for (const method of methods) {
+          const transpiler = new Bun.Transpiler({ loader: "${loader}" });
+          const message = await outcome(() => transpiler[method](source));
+          if (message !== overflow) throw new Error(method + " of " + source.slice(-32) + ": " + message);
+          if (transpiler.transformSync("f(1);") !== "f(1);\\n") throw new Error("the instance does not work");
+        }
+      }
+      console.log("ok");
+    `);
+    expect(result).toEqual(ok);
+  });
+
+  it("is the one error for a TypeScript class with a method after it", async () => {
+    const result = await run(`
+      const legacyDecorators = { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } };
+      const cases = [
+        ["class A { a = " + chain + "; m() {} }"],
+        ["export default class { a = " + chain + "; get g() { return 1; } }"],
+        ["class A { a = " + chain + "; @dec m(@dec x: number): void {} }", legacyDecorators],
+      ];
+      for (const [source, tsconfig] of cases) {
+        const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig });
+        const message = await outcome(() => transpiler.transformSync(source));
+        if (message !== overflow) throw new Error(source.slice(-40) + ": " + message);
+      }
+      console.log("ok");
+    `);
+    expect(result).toEqual(ok);
+  });
+
+  it("is the one error at the depth where it starts", async () => {
+    const result = await run(`
+      // The identifier is the deepest expression of a member chain. At the first number of
+      // levels that overflows, the visit of the identifier is the first visit that is skipped.
+      const shapes = [
+        [{}, levels => name + "()" + repeat(".b", levels)],
+        [{}, levels => "(" + name + " = 1)" + repeat(".b", levels)],
+        [{ minify: true }, levels => "new " + name + "()" + repeat(".b", levels)],
+      ];
+      for (const [options, build] of shapes) {
+        const transpiler = new Bun.Transpiler({ loader: "js", ...options });
+        const first = await firstOverflow(transpiler, build);
+        let overflows = 0;
+        for (let levels = first - 12; overflows < 4; levels++) {
+          if (levels > first + 64) throw new Error("no overflow up to " + levels);
+          const message = await outcome(() => transpiler.transformSync(build(levels)));
+          if (message === overflow) overflows++;
+          // A smaller number of levels can overflow the printer.
+          else if (message !== "no error" && !message.includes("StackOverflow")) throw new Error(levels + ": " + message);
+        }
+      }
+      console.log("ok");
+    `);
+    expect(result).toEqual(ok);
+  });
+
+  it("does not change a define value that the minifier visits again", async () => {
+    const result = await run(`
+      // A define value lives as long as the instance. The minifier puts "y" in the place of "x"
+      // and visits the statement again. Only that second visit goes into the value of X.
+      const depth = 200;
+      const transpiler = new Bun.Transpiler({
+        loader: "js",
+        define: { X: repeat('{"a":', depth) + "[1,2,3]" + repeat("}", depth) },
+        minify: { syntax: true },
+        deadCodeElimination: true,
+      });
+      const printed = () => transpiler.transformSync("export default X;");
+      const before = printed();
+      const first = await firstOverflow(new Bun.Transpiler({ loader: "js" }), levels => "a" + repeat(".b", levels));
+      let overflowsInValue = 0;
+      for (let levels = first - depth - 40; levels < first - 16; levels += 4) {
+        const source = "function f() { let x = y; return x + X" + repeat(".b", levels) + "; }";
+        if ((await outcome(() => transpiler.transformSync(source))) === overflow) overflowsInValue++;
+        if (printed() !== before) throw new Error("the define value changed at " + levels);
+      }
+      if (overflowsInValue === 0) throw new Error("no overflow in the define value");
+      console.log("ok");
+    `);
+    expect(result).toEqual(ok);
+  });
+
+  it.each([
+    ["a hook argument after it", chain => `useReducer(${chain}, [${Buffer.alloc(2000, "L").toString()}])`],
+    ["a hook argument that has it", chain => `useState(${chain})`],
+  ])("is the one error for a React Fast Refresh signature, %s", async (_, hook) => {
+    const chain = "a" + Buffer.alloc(2 * 100000, ".b").toString();
+    using dir = tempDir("visit-overflow-refresh", {
+      "component.jsx": `
+        import { useReducer, useState } from "react";
+        export function Component() {
+          const [state] = ${hook(chain)};
+          return state;
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-fast-refresh", "--external", "react", "component.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: Maximum call stack size exceeded");
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({ stdout: "", exitCode: 1, signalCode: null });
+  });
+
+  it("is the one error of a file that runs", async () => {
+    const chain = "a" + Buffer.alloc(2 * 100000, ".b").toString();
+    using dir = tempDir("visit-overflow-run", {
+      "index.js": `[${chain}, ${Buffer.alloc(2000, "L").toString()} = 1] = globalThis.y;`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: Maximum call stack size exceeded");
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({ stdout: "", exitCode: 1, signalCode: null });
+  });
+});
+
 it("deeply nested TypeScript types error instead of crashing the process", () => {
   const script = `
     const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();

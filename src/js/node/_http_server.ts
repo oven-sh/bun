@@ -3924,8 +3924,8 @@ const kSnapshotStatusMessage = Symbol("kSnapshotStatusMessage");
 // Set by writeHead() when it froze the framing with no length/encoding of its
 // own — the state Node's _storeHeader resolves to chunked.
 const kFramingFrozenChunked = Symbol("kFramingFrozenChunked");
-// Set while end() drives an observable writeHead. Node knows the body length there: that call
-// does not freeze the framing, and a flushHeaders() in it leaves the head to end().
+// Set while end() drives an observable writeHead: Node already knows the body
+// length there, so that call must not freeze the framing.
 const kImplicitHeaderFromEnd = Symbol("kImplicitHeaderFromEnd");
 ServerResponse.prototype.writeHead = function (statusCode, statusMessage, headers) {
   if (this.headersSent) {

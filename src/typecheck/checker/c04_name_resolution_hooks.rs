@@ -24,7 +24,7 @@ use crate::core::{
     Tristate, concatenate_seq, every, filter, find, get_spelling_suggestion_exported, if_else,
 };
 use crate::diagnostics::{self, MessageId};
-use crate::internal::LoopGuard;
+use crate::internal::{FaultKind, LoopGuard};
 use crate::scanner::declaration_name_to_string;
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -604,7 +604,8 @@ impl<'a> Checker<'a> {
         meaning: SymbolFlags,
     ) -> SymbolId {
         let a = self.ast;
-        // The two callbacks of upstream close over the checker: each takes it for the time of its call, in upstream's order of calls.
+        // The two callbacks of upstream close over the checker: each takes it for the time of its call, in upstream's order of calls. A callback that finds it taken records a fault.
+        const BUSY: &str = "getSpellingSuggestionForName";
         let this = RefCell::new(self);
         let get_candidate_name = |candidate: SymbolId| -> &'a [u8] {
             let candidate_name = symbol_name(a, candidate);
@@ -620,7 +621,10 @@ impl<'a> Checker<'a> {
             if a.sym(candidate).flags.intersects(SymbolFlags::ALIAS) {
                 let alias = match this.try_borrow_mut() {
                     Ok(mut c) => c.try_resolve_alias(candidate),
-                    Err(_) => SymbolId::NIL,
+                    Err(_) => {
+                        a.fault(FaultKind::StoreBusy, BUSY, 0, candidate.0);
+                        SymbolId::NIL
+                    }
                 };
                 if !alias.is_nil() && a.sym(alias).flags.intersects(meaning) {
                     return candidate_name;
@@ -634,7 +638,10 @@ impl<'a> Checker<'a> {
             get_candidate_name,
             |s1, s2| match this.try_borrow() {
                 Ok(c) => c.compare_symbols(s1, s2),
-                Err(_) => 0,
+                Err(_) => {
+                    a.fault(FaultKind::StoreBusy, BUSY, 0, s1.0);
+                    0
+                }
             },
         )
     }

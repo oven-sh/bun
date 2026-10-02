@@ -5,7 +5,11 @@ description: Contributing to Bun
 
 Configuring a development environment for Bun can take 10-30 minutes depending on your internet connection and computer speed. You will need ~10GB of free disk space for the repository and build artifacts.
 
-If you are using Windows, see [Building Windows](/project/building-windows).
+If you are using Windows, see [Building Windows](/project/building-windows). For an overview of how the codebase fits together — JavaScriptCore, bindings, code generation, and system dependencies — see [Architecture](/project/architecture).
+
+<Note>
+  New contributors: start with the [Architecture](/project/architecture) page to see what connects to what before choosing your first issue. It covers bindings, headers, and why each layer exists.
+</Note>
 
 ## Using Nix (Alternative)
 
@@ -202,11 +206,19 @@ A full debug build can take a few minutes when Rust or C++ has changed; cargo's 
 
 Bun's build process runs several code generation scripts automatically when certain files change:
 
-- `./src/codegen/generate-jssink.ts` -- Generates `build/debug/codegen/JSSink.cpp`, `build/debug/codegen/JSSink.h` which implement various classes for interfacing with `ReadableStream`. This is internally how `FileSink`, `ArrayBufferSink`, `"type": "direct"` streams and other code related to streams work.
-- `./src/codegen/generate-classes.ts` -- Generates Rust & C++ bindings for JavaScriptCore classes implemented in Rust. `**/*.classes.ts` files define the interfaces for classes, methods, prototypes, and getters/setters; the code generator reads them to generate the boilerplate that implements the JavaScript objects in C++ and wires them up to Rust.
-- `./src/codegen/cppbind.ts` -- Scans the C++ bindings for functions marked with an export attribute and generates automatic Rust FFI wrappers (`cpp.rs`) for them.
-- `./src/codegen/bundle-modules.ts` -- Bundles built-in modules like `node:fs`, `bun:ffi` into files included in the final binary. In development, these can be reloaded without rebuilding native code (you still need to run `bun run build`, but it re-reads the transpiled files from disk afterwards). In release builds, these are embedded into the binary.
-- `./src/codegen/bundle-functions.ts` -- Bundles globally-accessible functions implemented in JavaScript/TypeScript like `ReadableStream` and `WritableStream`. These are used similarly to the builtin modules, but the output more closely aligns with what WebKit/Safari does for Safari's built-in functions, so implementations can be copy-pasted from WebKit as a starting point.
+- `./src/codegen/generate-jssink.ts` — Generates `build/debug/codegen/JSSink.cpp`, `build/debug/codegen/JSSink.h` which implement various classes for interfacing with `ReadableStream`. This is internally how `FileSink`, `ArrayBufferSink`, `"type": "direct"` streams and other code related to streams work.
+- `./src/codegen/generate-classes.ts` — Generates Rust & C++ bindings for JavaScriptCore classes implemented in Rust. `**/*.classes.ts` files define the interfaces for classes, methods, prototypes, and getters/setters; the code generator reads them to generate the boilerplate that implements the JavaScript objects in C++ and wires them up to Rust.
+- `./src/codegen/cppbind.ts` — Scans the C++ bindings for functions marked with an export attribute and generates automatic Rust FFI wrappers (`cpp.rs`) for them.
+- `./src/codegen/bundle-modules.ts` — Bundles built-in modules like `node:fs`, `bun:ffi` into files included in the final binary. In development, these can be reloaded without rebuilding native code (you still need to run `bun run build`, but it re-reads the transpiled files from disk afterward). In release builds, these are embedded into the binary.
+- `./src/codegen/bundle-functions.ts` — Bundles globally-accessible functions implemented in JavaScript/TypeScript like `ReadableStream` and `WritableStream`. These are used similarly to the built-in modules, but the output more closely aligns with what WebKit/Safari does for Safari's built-in functions, so implementations can be copy-pasted from WebKit as a starting point.
+
+For new JS-exposed functions, prefer [Bindgen](/project/bindgen) (`*.bind.ts`) over the legacy `*.classes.ts` / `JS2Native` systems. See [Architecture](/project/architecture) for how bindings and headers fit together.
+
+### Bindings and headers at a glance
+
+- **JS → native**: `.bind.ts` declares the JS signature; the generator emits a C++ thunk that validates/coerces arguments from JavaScriptCore and calls your Rust function. `src/runtime/hw_exports.rs` and `src/jsc/bindings/GeneratedBindings.rs` wire the `JSFunction` you expose to JS via `$bindgenFn` in `src/js/`.
+- **C++ → Rust**: `cppbind.ts` generates `cpp.rs` wrappers for C++ exports marked for FFI, so Rust can call C++ without hand-written shims.
+- **Headers**: JSC headers come from the pinned WebKit (`WEBKIT_VERSION` in `scripts/build/deps/webkit.ts`). If you cloned `vendor/WebKit` manually, run `bun sync-webkit-source` to match the pin. Systems headers (libarchive, boringssl, mimalloc, etc.) are fetched at configure time — missing `pkg-config` or an old GCC libstdc++ (the `span` error below) surfaces here.
 
 ## Modifying ESM modules
 

@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import { join } from "path";
 
 test("reportError", () => {
@@ -121,4 +121,39 @@ test("native error printer handles lone surrogates in message and stack frame na
   // Printer must not have crashed: normal uncaught-error exit (1), no signal.
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
+});
+
+// The error printer formats this value. Its toString throws, which must not leave an exception pending.
+const hostile = `Object.assign(new String("q"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } })`;
+
+test.concurrent.each([
+  {
+    name: "reportError(value)",
+    script: `reportError(${hostile}); console.log("after");`,
+    expected: { stdout: "after\n", stderr: "error\n\nBun v<bun-version>", exitCode: 1 },
+  },
+  {
+    name: "unhandled rejection",
+    script: `Promise.reject(${hostile});`,
+    expected: { stdout: "", stderr: "error\n\nBun v<bun-version>", exitCode: 1 },
+  },
+  {
+    name: "AggregateError member",
+    script: `console.log(Bun.inspect(new AggregateError([${hostile}, new Error("second member")], "agg")).includes("second member"));`,
+    expected: { stdout: "true\n", stderr: "", exitCode: 0 },
+  },
+])("error printer clears an exception thrown while formatting the value: $name", async ({ script, expected }) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr: normalizeBunSnapshot(stderr), exitCode, signalCode: proc.signalCode }).toEqual({
+    ...expected,
+    signalCode: null,
+  });
 });

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 test("Bun.version", () => {
   expect(process.versions.bun).toBe(Bun.version);
@@ -82,4 +82,118 @@ test("toBeWithin() with missing or non-number arguments fails the test without c
   expect(stderr).toContain("toBeWithin() requires the second argument to be a number");
   expect(stderr).toContain("4 fail");
   expect(exitCode).toBe(1);
+});
+
+// Printing a failure formats the rejection value. A toString that throws must not leave an exception pending.
+test.concurrent("a rejection whose toString/Symbol.toPrimitive throws does not break later tests", async () => {
+  using dir = tempDir("test-hostile-rejection", {
+    "hostile.test.js": `
+      import { test, describe, afterEach } from "bun:test";
+
+      const hooks = { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } };
+      class Sub extends String {}
+
+      for (const [name, make] of [
+        ["String", () => new String("q")],
+        ["Number", () => new Number(1)],
+        ["Boolean", () => new Boolean(true)],
+        ["RegExp", () => /re/],
+        ["String subclass", () => new Sub("q")],
+      ]) {
+        test(name, async () => {
+          throw Object.assign(make(), hooks);
+        });
+      }
+
+      describe("hook", () => {
+        afterEach(async () => {
+          throw Object.assign(new String("q"), hooks);
+        });
+        test("afterEach rejects", () => {});
+      });
+
+      test("runs after the rejections", () => {
+        console.log("last test body ran");
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "hostile.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    last test body ran"
+  `);
+  expect(normalizeBunSnapshot(stderr, dir)).toMatchInlineSnapshot(`
+    "hostile.test.js:
+    error
+    (fail) String
+    error
+    (fail) Number
+    error
+    (fail) Boolean
+    error
+    (fail) RegExp
+    error
+    (fail) String subclass
+    error
+    (fail) hook > afterEach rejects
+    (pass) runs after the rejections
+
+     1 pass
+     6 fail
+    Ran 7 tests across 1 file."
+  `);
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(1);
+});
+
+// The same for the failure of a retried attempt, where the value holds an object whose [inspect.custom] throws.
+test.concurrent("a retried rejection with a value whose inspection throws does not skip the next test", async () => {
+  using dir = tempDir("test-hostile-retry", {
+    "retry.test.js": `
+      import { test, expect } from "bun:test";
+      import { inspect } from "node:util";
+
+      const doc = { [inspect.custom]() { throw new Error("inspect"); } };
+      let attempts = 0;
+
+      test("flaky", async () => {
+        if (attempts++ === 0) throw { status: 400, doc };
+      }, { retry: 2 });
+
+      test("must fail", () => {
+        console.log("must fail body ran");
+        expect(1).toBe(2);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "retry.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({
+    stdout: normalizeBunSnapshot(stdout, dir),
+    summary: stderr.match(/^ *\d+ (?:pass|fail)$/gm)?.map(line => line.trim()),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({
+    stdout: "bun test <version> (<revision>)\nmust fail body ran",
+    summary: ["1 pass", "1 fail"],
+    exitCode: 1,
+    signalCode: null,
+  });
 });

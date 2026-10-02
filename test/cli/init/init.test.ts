@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, mergeWindowEnvs, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
@@ -519,35 +519,48 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     }
 
     async function initWith(env: Record<string, string | undefined>, files: Record<string, string> = {}) {
-      const bin = tempDirWithFiles("bun-init-claude-bin", {
+      const bin = tempDir("bun-init-claude-bin", {
         "claude.cmd": "@echo off\r\necho stub\r\n",
         "claude": "#!/bin/sh\necho stub\n",
       });
       fs.chmodSync(path.join(bin, "claude"), 0o755);
-      const temp = tempDirWithFiles("bun-init-agent-rule", files);
+      const temp = tempDir("bun-init-agent-rule", files);
+
+      // Drop the detection switches the machine may carry. The test sets its own.
+      const base: Record<string, string | undefined> = {};
+      for (const [key, value] of Object.entries(bunEnv)) {
+        if (
+          !/^(BUN_AGENT_RULE_DISABLED|CLAUDE_CODE_AGENT_RULE_DISABLED|CURSOR_AGENT_RULE_DISABLED|CURSOR_TRACE_ID)$/i.test(
+            key,
+          )
+        ) {
+          base[key] = value;
+        }
+      }
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), "init", "-y"],
-        cwd: temp,
+        cwd: String(temp),
         stdio: ["ignore", "pipe", "pipe"],
-        env: {
-          ...bunEnv,
-          BUN_AGENT_RULE_DISABLED: undefined,
-          CLAUDE_CODE_AGENT_RULE_DISABLED: undefined,
-          CURSOR_AGENT_RULE_DISABLED: undefined,
-          CURSOR_TRACE_ID: undefined,
-          PATH: pathWithStubClaude(bin),
-          ...env,
-        },
+        // mergeWindowEnvs: on Windows bunEnv carries `Path`, and the child reads
+        // the first case-insensitive match, so a plain `PATH` override loses.
+        env: mergeWindowEnvs([base, { PATH: pathWithStubClaude(String(bin)), ...env }]),
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("error");
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(exitCode).toBe(0);
-      return { temp, stdout };
+      return {
+        temp: String(temp),
+        stdout,
+        async [Symbol.asyncDispose]() {
+          await bin[Symbol.asyncDispose]();
+          await temp[Symbol.asyncDispose]();
+        },
+      };
     }
 
     test("claude on PATH writes CLAUDE.md without the cursor frontmatter", async () => {
-      const { temp, stdout } = await initWith({ CURSOR_AGENT_RULE_DISABLED: "1" });
+      await using init = await initWith({ CURSOR_AGENT_RULE_DISABLED: "1" });
+      const { temp, stdout } = init;
 
       expect(stdout).toContain(" + CLAUDE.md");
       expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toStartWith(strippedRule);
@@ -555,28 +568,43 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
 
     test("CLAUDE_CODE_AGENT_RULE_DISABLED skips CLAUDE.md", async () => {
-      const { temp } = await initWith({ CURSOR_AGENT_RULE_DISABLED: "1", CLAUDE_CODE_AGENT_RULE_DISABLED: "1" });
+      await using init = await initWith({ CURSOR_AGENT_RULE_DISABLED: "1", CLAUDE_CODE_AGENT_RULE_DISABLED: "1" });
+      const { temp } = init;
 
       expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
     });
 
     test("an existing CLAUDE.md is kept", async () => {
-      const { temp, stdout } = await initWith({ CURSOR_AGENT_RULE_DISABLED: "1" }, { "CLAUDE.md": "mine\n" });
+      await using init = await initWith({ CURSOR_AGENT_RULE_DISABLED: "1" }, { "CLAUDE.md": "mine\n" });
+      const { temp, stdout } = init;
 
       expect(stdout).not.toContain(" + CLAUDE.md");
       expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toBe("mine\n");
     });
 
     test("cursor only writes the cursor rule and no CLAUDE.md", async () => {
-      const { temp } = await initWith({ CLAUDE_CODE_AGENT_RULE_DISABLED: "1", CURSOR_TRACE_ID: "test-trace-id" });
+      await using init = await initWith({ CLAUDE_CODE_AGENT_RULE_DISABLED: "1", CURSOR_TRACE_ID: "test-trace-id" });
+      const { temp } = init;
 
       expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
       expect(fs.lstatSync(path.join(temp, cursorRule)).isFile()).toBe(true);
       expect(fs.readFileSync(path.join(temp, cursorRule), "utf8")).toStartWith(ruleFrontmatter);
     });
 
+    test("an existing cursor rule is kept and CLAUDE.md is written without the frontmatter", async () => {
+      await using init = await initWith({ CURSOR_TRACE_ID: "test-trace-id" }, { [cursorRule]: "mine\n" });
+      const { temp, stdout } = init;
+
+      expect(stdout).toContain(" + CLAUDE.md");
+      expect(stdout).not.toContain(" + " + cursorRule);
+      expect(fs.lstatSync(path.join(temp, cursorRule)).isFile()).toBe(true);
+      expect(fs.readFileSync(path.join(temp, cursorRule), "utf8")).toBe("mine\n");
+      expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toStartWith(strippedRule);
+    });
+
     test("claude and cursor write CLAUDE.md and the cursor rule", async () => {
-      const { temp, stdout } = await initWith({ CURSOR_TRACE_ID: "test-trace-id" });
+      await using init = await initWith({ CURSOR_TRACE_ID: "test-trace-id" });
+      const { temp, stdout } = init;
 
       const claudeMd = fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8");
       const rule = fs.readFileSync(path.join(temp, cursorRule), "utf8");

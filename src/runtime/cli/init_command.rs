@@ -1462,59 +1462,50 @@ impl Template {
             && !exists(b"CLAUDE.md");
 
         if let Some(template_file) = Self::get_cursor_rule() {
+            let mut dest_z = template_file.path.to_vec();
+            dest_z.push(0);
+            // SAFETY: NUL-terminated above.
+            let dest_zstr = ZStr::from_slice_with_nul(&dest_z[..]);
+
             // If both Cursor & Claude are installed, write the rule to CLAUDE.md
             // and make the cursor rule a symlink to ../../CLAUDE.md so it's easier
             // to keep them in sync if you change it locally. We use a symlink for
             // the cursor rule in this case so that the github UI for CLAUDE.md
             // (which may appear prominently in repos) doesn't show a file path.
             //
-            // A symlink on Windows needs Developer Mode or an elevated process, so
-            // there both rules are regular files.
-            let link_cursor_rule = create_claude_md && cfg!(not(windows));
-            let asset_path: &[u8] = if link_cursor_rule {
-                b"CLAUDE.md"
-            } else {
-                template_file.path
-            };
-            let asset_path_z = {
-                let mut v = asset_path.to_vec();
-                v.push(0);
-                v
-            };
-            let result = Assets::create_new(
-                ZStr::from_slice_with_nul(&asset_path_z[..]),
-                // SAFETY: asset_path_z[len-1] == 0 written above
-                template_file.contents,
-            );
-
-            if link_cursor_rule {
-                create_claude_md = false;
-                let mut dest_z = template_file.path.to_vec();
-                dest_z.push(0);
+            // The symlink goes first, so the layout is known before CLAUDE.md is
+            // written: with the link, CLAUDE.md keeps the frontmatter the cursor
+            // rule needs. Without it, both are regular files and CLAUDE.md is
+            // written below without the frontmatter. A symlink on Windows needs
+            // Developer Mode or an elevated process, so Windows never tries one.
+            let mut linked = create_claude_md && cfg!(not(windows)) && {
+                let _ = bun_sys::Dir::cwd().make_path(b".cursor/rules");
+                let mut target_z = Self::CURSOR_RULE_PATH_TO_CLAUDE_MD.to_vec();
+                target_z.push(0);
                 // SAFETY: NUL-terminated above.
-                let dest_zstr = ZStr::from_slice_with_nul(&dest_z[..]);
+                let target_zstr = ZStr::from_slice_with_nul(&target_z[..]);
+                bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_ok()
+            };
 
-                let linked = result.is_ok() && {
-                    let _ = bun_sys::Dir::cwd().make_path(b".cursor/rules");
-                    let mut target_z = Self::CURSOR_RULE_PATH_TO_CLAUDE_MD.to_vec();
-                    target_z.push(0);
-                    // SAFETY: NUL-terminated above.
-                    let target_zstr = ZStr::from_slice_with_nul(&target_z[..]);
-                    bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_ok()
-                };
-
-                if linked {
+            if linked {
+                if Assets::create_new(ZStr::from_static(b"CLAUDE.md\0"), template_file.contents)
+                    .is_ok()
+                {
+                    create_claude_md = false;
                     bun_core::prettyln!(
-                        " + <r><d>{} -\\> {}<r>",
+                        " + <r><d>{} -\\> CLAUDE.md<r>",
                         bstr::BStr::new(template_file.path),
-                        bstr::BStr::new(asset_path),
                     );
                     Output::flush();
                 } else {
-                    // If installing the CLAUDE.md or the symlink fails for some
-                    // reason, fall back to installing the cursor rule as a file.
-                    let _ = Assets::create_new(dest_zstr, template_file.contents);
+                    // Do not leave a dangling link. Fall back to a regular file.
+                    let _ = bun_sys::unlinkat(Fd::cwd(), dest_zstr);
+                    linked = false;
                 }
+            }
+
+            if !linked {
+                let _ = Assets::create_new(dest_zstr, template_file.contents);
             }
         }
 

@@ -83,7 +83,10 @@ describe("the 'upgrade' event of a request with a body", () => {
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
     const address = { port: (server.address() as AddressInfo).port, host: "127.0.0.1" };
-    const client = secure ? tls.connect({ ...address, rejectUnauthorized: false }) : net.connect(address);
+    // Half-open: the end of the server's side does not end the client's side.
+    const client = secure
+      ? tls.connect({ ...address, rejectUnauthorized: false })
+      : net.connect({ ...address, allowHalfOpen: true });
     client.on("error", reject);
     client.resume();
     try {

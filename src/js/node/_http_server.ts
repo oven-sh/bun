@@ -1048,7 +1048,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           const emitWhenReadParsed = socketHandle.upgradeToTunnel(
             hasBody,
             handle,
-            connectHead !== undefined &&
+            (dispatchBits & DISPATCH_READ_HAS_MORE) !== 0 &&
               !socket.destroyed &&
               http_req.readableFlowing !== true &&
               http_req.listenerCount("readable") === 0,
@@ -3154,6 +3154,7 @@ const DISPATCH_HAS_EXPECT = 1 << 4;
 const DISPATCH_EXPECT_CONTINUE = 1 << 5;
 const DISPATCH_HAS_CONTENT_LENGTH = 1 << 6;
 const DISPATCH_HAS_TRANSFER_ENCODING = 1 << 7;
+const DISPATCH_READ_HAS_MORE = 1 << 8;
 
 // Whether the response should advertise a persistent connection.
 // `connection` is the request's Connection header value (or undefined).

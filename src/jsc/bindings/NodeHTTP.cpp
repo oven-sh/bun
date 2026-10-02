@@ -44,6 +44,8 @@ static constexpr uint32_t kDispatchHasExpect = 1 << 4;
 static constexpr uint32_t kDispatchExpectContinue = 1 << 5;
 static constexpr uint32_t kDispatchHasContentLength = 1 << 6;
 static constexpr uint32_t kDispatchHasTransferEncoding = 1 << 7;
+// Bytes follow the request head in the read that carried it.
+static constexpr uint32_t kDispatchReadHasMore = 1 << 8;
 
 static bool svEqualsIgnoreCase(std::string_view a, std::string_view lower)
 {
@@ -100,7 +102,7 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         args.append(methodString);
     }
 
-    uint32_t bits = 0;
+    uint32_t bits = request->head.empty() ? 0 : kDispatchReadHasMore;
     // llhttp's F_CONNECTION_CLOSE / F_CONNECTION_UPGRADE: a whole list item.
     if (request->hasConnectionClose(true))
         bits |= kDispatchConnClose;

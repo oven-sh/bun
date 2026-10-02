@@ -3768,6 +3768,169 @@ Reo=
       server.close();
     }
 
+    // The peer closes the connection while the handshake is still in progress.
+    // No `handshake` call comes before `close` when the peer resets the
+    // connection, and when the peer ends the connection of a socket that sent
+    // its FIN first. A handshake that the peer fails first is reported.
+    describe("the peer closes the connection before the handshake completes", () => {
+      const failed = "handshake success=false code=ECONNRESET";
+      const refused = "handshake success=false code=EPROTO";
+      const reset = "close ECONNRESET";
+      // A fatal alert: handshake_failure.
+      const ALERT = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]);
+
+      // step() rejects when a socket of the test reports a failure.
+      function failures() {
+        const failure = Promise.withResolvers<never>();
+        // A failure after the last step is not an unhandled rejection.
+        failure.promise.catch(() => {});
+        return {
+          fail: failure.reject,
+          step: <T>(promise: Promise<T>) => Promise.race([promise, failure.promise]),
+        };
+      }
+      const leave = (how: string, socket: net.Socket) => {
+        if (how === "resets") socket.resetAndDestroy();
+        else socket.end(how === "refuses" ? ALERT : undefined);
+      };
+      const closeCall = (error?: Error) => (error ? `close ${(error as NodeJS.ErrnoException).code}` : "close");
+
+      for (const { how, shutDown, handshakeHandler, calls } of [
+        { how: "ends", shutDown: false, handshakeHandler: true, calls: ["open", failed, "close"] },
+        { how: "ends", shutDown: true, handshakeHandler: true, calls: ["open", "close"] },
+        // With no `handshake` handler, `open` takes its place.
+        { how: "ends", shutDown: false, handshakeHandler: false, calls: ["open", "close"] },
+        { how: "ends", shutDown: true, handshakeHandler: false, calls: ["close"] },
+        { how: "resets", shutDown: false, handshakeHandler: true, calls: ["open", reset] },
+        { how: "resets", shutDown: true, handshakeHandler: true, calls: ["open", reset] },
+        { how: "resets", shutDown: false, handshakeHandler: false, calls: [reset] },
+        { how: "resets", shutDown: true, handshakeHandler: false, calls: [reset] },
+        // The peer sends an alert, then ends the connection.
+        { how: "refuses", shutDown: false, handshakeHandler: true, calls: ["open", refused, "close"] },
+        { how: "refuses", shutDown: true, handshakeHandler: true, calls: ["open", refused, "close"] },
+      ]) {
+        const state = shutDown ? "shut down" : "did not shut down";
+        const handler = handshakeHandler ? "a handshake handler" : "no handshake handler";
+        it(`the peer ${how} the connection of a client that ${state}, with ${handler}: ${calls.join(", ")}`, async () => {
+          const events: string[] = [];
+          const { fail, step } = failures();
+          const closed = Promise.withResolvers<void>();
+          const sawClientHello = Promise.withResolvers<void>();
+          // Leaves after the ClientHello, or after the client's FIN.
+          const peer = net.createServer({ allowHalfOpen: true }, socket => {
+            socket.on("error", fail);
+            socket.once("data", () => sawClientHello.resolve());
+            socket.once(shutDown ? "end" : "data", () => leave(how, socket));
+          });
+          await once(peer.listen(0, "127.0.0.1"), "listening");
+          try {
+            using client = await Bun.connect({
+              hostname: "127.0.0.1",
+              port: (peer.address() as net.AddressInfo).port,
+              tls: { rejectUnauthorized: false },
+              socket: {
+                open() {
+                  events.push("open");
+                },
+                ...(handshakeHandler && {
+                  handshake(_socket: Socket, success: boolean, error: NodeJS.ErrnoException | null) {
+                    events.push(`handshake success=${success} code=${error?.code ?? null}`);
+                  },
+                }),
+                data() {},
+                close(_socket, error) {
+                  events.push(closeCall(error));
+                  closed.resolve();
+                },
+                error(_socket, error) {
+                  fail(error);
+                },
+                connectError(_socket, error) {
+                  fail(error);
+                },
+              },
+            });
+            await step(sawClientHello.promise);
+            if (shutDown) client.shutdown();
+            await step(closed.promise);
+            expect(events).toEqual(calls);
+          } finally {
+            peer.close();
+          }
+        });
+      }
+
+      for (const { how, shutDown, calls } of [
+        { how: "ends", shutDown: false, calls: ["open", failed, "close"] },
+        { how: "ends", shutDown: true, calls: ["open", "close"] },
+        { how: "resets", shutDown: false, calls: ["open", reset] },
+        { how: "resets", shutDown: true, calls: ["open", reset] },
+      ]) {
+        const state = shutDown ? "shut down" : "did not shut down";
+        it(`the peer ${how} the connection of an accepted socket that ${state}: ${calls.join(", ")}`, async () => {
+          const events: string[] = [];
+          const { fail, step } = failures();
+          const closed = Promise.withResolvers<void>();
+          const accepted = Promise.withResolvers<Socket>();
+          using server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            tls: { key: SERVER_KEY, cert: SERVER_CRT },
+            socket: {
+              open(socket) {
+                events.push("open");
+                accepted.resolve(socket);
+              },
+              handshake(_socket, success, error) {
+                events.push(
+                  `handshake success=${success} code=${(error as NodeJS.ErrnoException | null)?.code ?? null}`,
+                );
+              },
+              data() {},
+              close(_socket, error) {
+                events.push(closeCall(error));
+                closed.resolve();
+              },
+              error(_socket, error) {
+                fail(error);
+              },
+            },
+          });
+          // The peer is a TLS client. Only its ClientHello reaches the server.
+          const raw = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
+          raw.on("error", fail);
+          const sawServerFlight = Promise.withResolvers<void>();
+          const sawServerFin = Promise.withResolvers<void>();
+          raw.once("data", () => sawServerFlight.resolve());
+          raw.on("end", () => sawServerFin.resolve());
+          let sentClientHello = false;
+          const transport = new Duplex({
+            read() {},
+            write(chunk, _encoding, callback) {
+              if (!sentClientHello) raw.write(chunk);
+              sentClientHello = true;
+              callback();
+            },
+          });
+          const client = tlsConnect({ socket: transport, rejectUnauthorized: false });
+          client.on("error", fail);
+          try {
+            await step(sawServerFlight.promise);
+            if (shutDown) {
+              (await step(accepted.promise)).shutdown();
+              await step(sawServerFin.promise);
+            }
+            leave(how, raw);
+            await step(closed.promise);
+            expect(events).toEqual(calls);
+          } finally {
+            client.destroy();
+            raw.destroy();
+          }
+        });
+      }
+    });
+
     for (const trusted of [false, true]) {
       it(`a client reads the check of ${trusted ? "a trusted" : "an untrusted"} server certificate`, async () => {
         const handshake = Promise.withResolvers<{
@@ -4069,6 +4232,140 @@ Reo=
       }
     });
   });
+});
+
+// shutdown(true) shuts down the read side. On Linux and macOS the socket then
+// sees the end of the stream: a socket with allowHalfOpen stays open for
+// writes, and a socket without it closes. A TLS socket does the same when its
+// handshake is complete, and fails its handshake when it is not. On Windows a
+// TCP socket sees nothing and stays open. What a TLS socket does on Windows is
+// not measured.
+describe("shutdown(true)", () => {
+  // A connection that the peer answers: the events that were due before it
+  // have run by the time it resolves.
+  async function pendingEventsDone() {
+    const server = net.createServer(socket => socket.end("x"));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    await once(socket, "data");
+    socket.destroy();
+    server.close();
+  }
+
+  type Role = "connected" | "accepted";
+  type Subject = { role: Role; allowHalfOpen: boolean; secure: boolean; handshakeDone: boolean };
+
+  // The subject calls shutdown(true), then writes "W1" and later "W2".
+  async function callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone }: Subject) {
+    const calls: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const shutDown = Promise.withResolvers<Socket>();
+    let peerGot = "";
+    const peerGotAll = { W1: Promise.withResolvers<void>(), W1W2: Promise.withResolvers<void>() };
+    const fail = (error: unknown) => {
+      shutDown.reject(error);
+      closed.reject(error);
+      peerGotAll.W1.reject(error);
+      peerGotAll.W1W2.reject(error);
+    };
+    const shutdownAndWrite = (socket: Socket) => {
+      socket.shutdown(true);
+      calls.push(`write ${socket.write("W1")}`);
+      shutDown.resolve(socket);
+    };
+    const subject = {
+      open(socket: Socket) {
+        if (!secure || !handshakeDone) shutdownAndWrite(socket);
+      },
+      handshake(socket: Socket, success: boolean, error: NodeJS.ErrnoException | null) {
+        if (!handshakeDone) calls.push(`handshake ${success} ${error?.code}`);
+        else if (success) shutdownAndWrite(socket);
+        else fail(error ?? new Error("the handshake failed"));
+      },
+      data() {
+        calls.push("data");
+      },
+      end() {
+        calls.push("end");
+      },
+      close() {
+        calls.push("close");
+        closed.resolve();
+      },
+      error(_socket: Socket, error: Error) {
+        fail(error);
+      },
+    };
+    const peer = {
+      data(_socket: Socket, data: Buffer) {
+        peerGot += data;
+        if (peerGot === "W1") peerGotAll.W1.resolve();
+        if (peerGot === "W1W2") peerGotAll.W1W2.resolve();
+      },
+      error(_socket: Socket, error: Error) {
+        fail(error);
+      },
+    };
+    const accepts = role === "accepted";
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: accepts ? allowHalfOpen : true,
+      ...(secure ? { tls } : {}),
+      socket: accepts ? subject : peer,
+    });
+    using _client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: accepts ? true : allowHalfOpen,
+      ...(secure ? { tls: { rejectUnauthorized: false } } : {}),
+      socket: { ...(accepts ? peer : subject), connectError: (_socket, error) => fail(error) },
+    });
+    const socket = await shutDown.promise;
+    if (!handshakeDone) {
+      await closed.promise;
+      return { calls, peerGot };
+    }
+    await peerGotAll.W1.promise;
+    await pendingEventsDone();
+    const stayedOpen = !calls.includes("close");
+    calls.push(`write ${socket.write("W2")}`);
+    if (stayedOpen) {
+      await peerGotAll.W1W2.promise;
+      socket.end();
+      await closed.promise;
+    }
+    return { calls, peerGot };
+  }
+
+  for (const secure of [false, true]) {
+    for (const role of ["connected", "accepted"] as const) {
+      for (const allowHalfOpen of [false, true]) {
+        const socket = `${role === "accepted" ? "an accepted" : "a connected"}${secure ? " TLS" : ""} socket`;
+
+        it.skipIf(secure && isWindows)(`${socket} with allowHalfOpen: ${allowHalfOpen}`, async () => {
+          expect(await callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone: true })).toEqual(
+            isWindows
+              ? { calls: ["write 2", "write 2", "close"], peerGot: "W1W2" }
+              : allowHalfOpen
+                ? { calls: ["write 2", "end", "write 2", "close"], peerGot: "W1W2" }
+                : { calls: ["write 2", "end", "close", "write -1"], peerGot: "W1" },
+          );
+        });
+
+        if (!secure) continue;
+        it.skipIf(isWindows)(
+          `${socket} with allowHalfOpen: ${allowHalfOpen}, before its handshake completes`,
+          async () => {
+            expect(await callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone: false })).toEqual({
+              calls: ["write 0", "handshake false ECONNRESET", "close"],
+              peerGot: "",
+            });
+          },
+        );
+      }
+    }
+  }
 });
 
 // Linux-only: uses /proc/self/fd to find and close the connected socket's fd

@@ -6776,20 +6776,27 @@ declare module "bun" {
     terminate(): void;
 
     /**
-     * Shuts down the write-half or both halves of the connection.
-     * This allows the socket to enter a half-closed state where it can still receive data
-     * but can no longer send data (`halfClose = true`), or close both read and write
-     * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
+     * Shuts down one half of the connection.
+     * With no argument, the socket sends a FIN and enters a half-closed state where it can
+     * still receive data but can no longer send data. With `true`, the socket stops
+     * receiving data:
+     * - On Linux and macOS its `end` handler is then called. A socket with
+     *   `allowHalfOpen: true` can still send data after that. A socket without it (the
+     *   default) closes. If its TLS handshake is still in progress, the handshake fails:
+     *   `handshake` is called in place of `end`, and the socket closes.
+     * - On Windows the `end` handler of a TCP socket is not called, and the socket can
+     *   still send data.
+     *
      * Calls the `shutdown(2)` syscall internally.
      *
-     * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
+     * @param halfClose If `true`, shuts down the read side. If `false` or omitted, shuts down the write side. Defaults to `false`.
      * @example
      * ```ts
      * // Stop sending data, but allow receiving
-     * socket.shutdown(true);
-     *
-     * // Shutdown both reading and writing
      * socket.shutdown();
+     *
+     * // Stop receiving data, but allow sending. On Linux and macOS the socket needs `allowHalfOpen: true`.
+     * socket.shutdown(true);
      * ```
      */
     shutdown(halfClose?: boolean): void;
@@ -7201,7 +7208,9 @@ declare module "bun" {
   interface SocketHandler<Data = unknown, DataBinaryType extends BinaryType = "buffer"> {
     /**
      * Called when the socket connects. For TLS sockets with no `handshake`
-     * handler, this is called only after the handshake completes.
+     * handler, this is called when `handshake` would be: after the handshake
+     * completes or fails. If `handshake` would not be called, `open` is not
+     * called either. Only a `handshake` handler gets the result.
      */
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
@@ -7210,9 +7219,18 @@ declare module "bun" {
     drain?(socket: Socket<Data>): void | Promise<void>;
 
     /**
-     * Called when the TLS handshake completes.
-     * @param success Whether the server authorized the connection despite `authorizationError`
-     * @param authorizationError The certificate authorization error, or `null` if there was none
+     * Called when the TLS handshake completes or fails.
+     *
+     * It is not called for a connection that closes while its handshake is
+     * still in progress, when:
+     * - the peer resets the connection
+     * - the peer ends the connection after this socket called `shutdown()`
+     *
+     * A handshake that fails before that, for example on an alert from the
+     * peer, is reported.
+     *
+     * @param success Whether the server authorized the connection despite `authorizationError`. `false` when the handshake failed.
+     * @param authorizationError The certificate authorization error or the reason the handshake failed, or `null` if there was none
      */
     handshake?(socket: Socket<Data>, success: boolean, authorizationError: Error | null): void;
 

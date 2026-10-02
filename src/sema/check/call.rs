@@ -40,7 +40,7 @@ impl crate::table::Packed for ResolvedCall {
 pub(super) enum Arg {
     Expr(ExprId),
     /// `createSyntheticExpression`: a type, and its label (`tupleNameSource`) or `NONE`. The last is the node it is at: the
-    /// argument whose tuple it is an element of, the tagged template whose pieces of text it is, the expression of the decorator.
+    /// argument whose tuple it is an element of, the template whose pieces of text it is, the expression of the decorator.
     Type(TypeId, Atom, ExprId),
     /// `...list`: any number of the first. The second is the list that is spread. The third is the label of the element of a
     /// spread tuple that it stands for (`tupleNameSource`), or `NONE`. The last is the argument that spreads it.
@@ -1669,7 +1669,7 @@ impl<'p> Checker<'p> {
                 let mut args = self.effective_args(file, hir[id].args);
                 if matches!(hir[call].kind, ExprKind::TaggedTemplate(_)) {
                     let strings = self.global_ref(known::TemplateStringsArray, &[]);
-                    args.insert(0, Arg::Type(strings, Atom::NONE, call));
+                    args.insert(0, Arg::Type(strings, Atom::NONE, hir[id].template));
                 }
                 args
             }

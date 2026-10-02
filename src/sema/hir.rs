@@ -56,6 +56,7 @@ define_id!(
     TupleElemId,
     MappedId,
     ImportEqualsId,
+    ModifierId,
 );
 
 impl From<Atom> for u32 {
@@ -689,12 +690,28 @@ pub struct VarDecl {
     pub flags: Flags,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ModifierKind {
+    /// Exactly one flag (`ModifierToFlag`).
+    Keyword(Flags),
+    Decorator(ExprId),
+}
+
+/// One of a `ModifierList`, which is in source order.
+#[derive(Copy, Clone, Debug)]
+pub struct Modifier {
+    pub kind: ModifierKind,
+    pub pos: u32,
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct Stmt {
     pub kind: StmtKind,
     pub pos: u32,
     /// Where its first token is, decorators and modifiers included.
     pub start: u32,
+    /// `node.Modifiers()`
+    pub modifiers: Span<ModifierId>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1418,6 +1435,7 @@ pub struct File {
     pub export_specs: Vec<ExportSpec>,
     pub tuple_elems: Few<TupleElem>,
     pub mapped: Few<Mapped>,
+    pub modifiers: Vec<Modifier>,
 }
 
 macro_rules! arenas {
@@ -1486,6 +1504,7 @@ arenas! {
     export_specs: ExportSpec => ExportSpecId, add_export_spec, add_export_specs;
     tuple_elems: TupleElem => TupleElemId, add_tuple_elem, add_tuple_elems;
     mapped: Mapped => MappedId, add_mapped, add_mappeds;
+    modifiers: Modifier => ModifierId, add_modifier, add_modifiers;
 }
 
 impl File {
@@ -1499,7 +1518,19 @@ impl File {
             kind,
             pos,
             start: pos,
+            modifiers: Span::EMPTY,
         })
+    }
+    #[inline]
+    pub fn modifier_list(&self, list: Span<ModifierId>) -> &[Modifier] {
+        &self.modifiers[list.range()]
+    }
+    /// Where the first `flag` of `list` is written.
+    pub fn find_modifier(&self, list: Span<ModifierId>, flag: Flags) -> Option<u32> {
+        self.modifier_list(list)
+            .iter()
+            .find(|modifier| modifier.kind == ModifierKind::Keyword(flag))
+            .map(|modifier| modifier.pos)
     }
     #[inline]
     pub fn ty(&mut self, kind: TypeNodeKind, pos: u32) -> TypeNodeId {
@@ -1598,7 +1629,8 @@ impl File {
             exports,
             export_specs,
             tuple_elems,
-            mapped
+            mapped,
+            modifiers
         )
     }
 
@@ -1676,7 +1708,8 @@ impl File {
             exports,
             export_specs,
             specifier_uses,
-            parens
+            parens,
+            modifiers
         );
     }
 }

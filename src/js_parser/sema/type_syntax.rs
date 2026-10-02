@@ -32,6 +32,8 @@ pub(crate) struct Builder<'a> {
     pub(crate) in_abstract_class: bool,
     /// Those `member_header_at` found.
     pub(crate) header_modifiers: Vec<(Flags, u32)>,
+    /// The modifiers of the statements being parsed, those of the innermost last.
+    pub(crate) statement_modifiers: Vec<Modifier>,
     /// Where the statement being parsed has said `declare`, the first time.
     said_declare: Option<u32>,
     /// Directly in the block of a namespace or a module that is ambient.
@@ -313,6 +315,7 @@ impl<'a> Builder<'a> {
             modifiers: Vec::new(),
             in_abstract_class: false,
             header_modifiers: Vec::new(),
+            statement_modifiers: Vec::new(),
             said_declare: None,
             in_ambient_block: false,
             modifiers_in_error: false,
@@ -702,9 +705,47 @@ impl<'a> Builder<'a> {
     pub(crate) fn statement_at(&mut self, offset: u32, flags: Flags) -> Option<StmtId> {
         self.depth = 0;
         self.start_statement(false);
-        self.seek(offset)
+        self.statement_modifiers.clear();
+        let statement = self
+            .seek(offset)
             .and_then(|()| self.parse_statement(flags))
-            .ok()
+            .ok()?;
+        self.take_statement_modifiers(statement, 0);
+        Some(statement)
+    }
+
+    /// The word the lexer is at is a modifier of the statement being parsed, or the `export` of an export declaration or assignment,
+    /// or the `default` after it.
+    fn push_statement_modifier(&mut self, flag: Flags) {
+        let pos = self.pos();
+        self.statement_modifiers.push(Modifier {
+            kind: ModifierKind::Keyword(flag),
+            pos,
+        });
+    }
+
+    /// `statement` has the modifiers that were come upon since there were `base` of them. Its own `export` and `default` are none.
+    pub(crate) fn take_statement_modifiers(&mut self, statement: StmtId, base: usize) {
+        let own_keywords = match self.file[statement].kind {
+            StmtKind::ExportDefault(_) => 2,
+            StmtKind::ExportNamed(_)
+            | StmtKind::ExportStar { .. }
+            | StmtKind::ExportAssign(_)
+            | StmtKind::ExportAsNamespace(_) => 1,
+            _ => 0,
+        };
+        let end = self
+            .statement_modifiers
+            .len()
+            .saturating_sub(own_keywords)
+            .max(base);
+        if end > base {
+            let list = self
+                .file
+                .add_modifiers(&self.statement_modifiers[base..end]);
+            self.file[statement].modifiers = list;
+        }
+        self.statement_modifiers.truncate(base);
     }
 
     /// The `B` of `namespace A.B { }`, from the dot at `offset` (`parseModuleOrNamespaceDeclaration`).
@@ -767,6 +808,7 @@ impl<'a> Builder<'a> {
                 self.statement_start = start;
                 let statement = self.parse_statement(Flags::AMBIENT)?;
                 self.file[statement].start = start;
+                self.take_statement_modifiers(statement, 0);
                 stmts.push(statement);
                 if self.pos() == start {
                     return Err(Error::SyntaxError);
@@ -792,6 +834,7 @@ impl<'a> Builder<'a> {
         self.pending_statements.clear();
         self.pending_initializers.clear();
         self.modifiers.clear();
+        self.statement_modifiers.clear();
         self.header_modifiers.clear();
         self.member_decorators.clear();
         self.in_abstract_class = false;
@@ -2589,8 +2632,10 @@ impl<'a> Builder<'a> {
             self.start_statement(flags.contains(Flags::AMBIENT));
             let start = self.pos();
             self.statement_start = start;
+            let base = self.statement_modifiers.len();
             let statement = self.parse_statement(flags)?;
             self.file[statement].start = start;
+            self.take_statement_modifiers(statement, base);
             stmts.push(statement);
         }
         (
@@ -2667,6 +2712,7 @@ impl<'a> Builder<'a> {
                 self.file.has_module_syntax |= self.depth == 0;
                 let declare = self.said_declare.take();
                 let is_modifier = declare.is_some() && self.is_export_modifier();
+                self.push_statement_modifier(Flags::EXPORT);
                 self.next()?;
                 if is_modifier {
                     // `checkGrammarModifiers`: `export` comes first.
@@ -2709,6 +2755,7 @@ impl<'a> Builder<'a> {
             T::TVar => self.parse_var(pos, VarKind::Var, flags),
             T::TConst => {
                 if self.look_ahead(|p| p.next().map(|()| p.tok() == T::TEnum)) == Some(true) {
+                    self.push_statement_modifier(Flags::CONST);
                     self.next()?;
                     return self.parse_enum(pos, flags | Flags::CONST);
                 }
@@ -2733,6 +2780,7 @@ impl<'a> Builder<'a> {
                             }
                             self.said_declare = Some(pos);
                         }
+                        self.push_statement_modifier(Flags::AMBIENT);
                         self.next()?;
                         flags |= Flags::AMBIENT;
                         let statement = self.parse_statement(flags);
@@ -2742,10 +2790,19 @@ impl<'a> Builder<'a> {
                     // `parseDeclaration` takes any modifiers. The checker objects to those that do not fit the declaration.
                     b"public" | b"private" | b"protected" | b"static" | b"readonly"
                     | b"accessor" => {
+                        self.push_statement_modifier(match word {
+                            b"public" => Flags::PUBLIC,
+                            b"private" => Flags::PRIVATE,
+                            b"protected" => Flags::PROTECTED,
+                            b"static" => Flags::STATIC,
+                            b"readonly" => Flags::READONLY,
+                            _ => Flags::ACCESSOR,
+                        });
                         self.next()?;
                         self.parse_statement(flags)
                     }
                     b"abstract" => {
+                        self.push_statement_modifier(Flags::ABSTRACT);
                         self.next()?;
                         if self.tok() != T::TClass {
                             return self.parse_statement(flags);
@@ -2756,6 +2813,7 @@ impl<'a> Builder<'a> {
                         if flags.contains(Flags::AMBIENT) {
                             self.statement_modifier_error(pos, 1040);
                         }
+                        self.push_statement_modifier(Flags::ASYNC);
                         self.next()?;
                         if self.tok() != T::TFunction {
                             return self.parse_statement(flags);
@@ -4007,6 +4065,7 @@ impl<'a> Builder<'a> {
     fn parse_export(&mut self, pos: u32, flags: Flags) -> R<StmtId> {
         match self.tok() {
             T::TDefault => {
+                self.push_statement_modifier(Flags::DEFAULT);
                 self.next()?;
                 let flags = flags | Flags::EXPORT | Flags::DEFAULT;
                 match self.tok() {
@@ -4017,6 +4076,7 @@ impl<'a> Builder<'a> {
                             if self.look_ahead(|p| p.next().map(|()| p.tok() == T::TClass))
                                 == Some(true) =>
                         {
+                            self.push_statement_modifier(Flags::ABSTRACT);
                             self.next()?;
                             return self.parse_class(pos, flags | Flags::ABSTRACT);
                         }
@@ -4024,6 +4084,7 @@ impl<'a> Builder<'a> {
                             if self.look_ahead(|p| p.next().map(|()| p.tok() == T::TFunction))
                                 == Some(true) =>
                         {
+                            self.push_statement_modifier(Flags::ASYNC);
                             self.next()?;
                             return self.parse_function(pos, flags | Flags::ASYNC);
                         }

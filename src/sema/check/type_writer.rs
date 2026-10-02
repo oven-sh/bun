@@ -27,6 +27,7 @@ struct TypeWalk {
 impl Checker<'_> {
     /// `typeWriterWalker.getTypes`, in no particular order. The file must have been checked, as in the harness.
     pub fn types_at_locations(&mut self, file: FileId) -> Vec<TypeAtLocation> {
+        self.flow_analysis_disabled_in = self.is_flow_analysis_left_disabled(file).then_some(file);
         let hir = self.hir(file);
         let mut walk = TypeWalk {
             text_of_expr: vec![None; hir.exprs.len()],

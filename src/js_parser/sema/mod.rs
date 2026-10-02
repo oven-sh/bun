@@ -562,10 +562,12 @@ pub(crate) struct TypeSyntax {
     pub(crate) last_object_type: Option<keep::ObjectTypeBody>,
     /// The TypeScript-only statement emitted while parsing the current statement. `NONE` if there is none.
     pub(crate) last_statement: ts::StatementId,
-    /// `export`, `default` and `declare` consumed so far, for the current statement and the statements around it.
+    /// The modifiers consumed so far, for the current statement and the statements around it.
     pub(crate) statement_modifiers: Vec<ts::Modifier>,
     /// Where the modifiers of the current statement start in `statement_modifiers`.
     pub(crate) statement_modifiers_base: usize,
+    /// `node.Modifiers()` of each statement that has any: where the statement is said to be, and the list.
+    pub(crate) modifier_lists: Vec<(i32, ts::Span<ts::Modifier>)>,
     /// Statements other than declarations that were parsed in an ambient context: (start, start of the next token, statement).
     pub(crate) ambient_statements: Vec<(i32, i32, bun_ast::Stmt)>,
     /// Initializers of variables declared in an ambient context: (start of the binding, initializer).
@@ -598,6 +600,7 @@ impl TypeSyntax {
             last_statement: ts::StatementId::NONE,
             statement_modifiers: Vec::new(),
             statement_modifiers_base: 0,
+            modifier_lists: Vec::new(),
             ambient_statements: Vec::new(),
             ambient_initializers: Vec::new(),
         }

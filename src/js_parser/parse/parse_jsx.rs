@@ -111,25 +111,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.new_expr(E::EString::init(prop_name_literal), key_range.loc);
 
                         // Parse the value
-                        let value: Expr = if p.lexer.token != T::TEquals {
-                            // Implicitly true value
-                            // <button selected>
-                            p.new_expr(
-                                E::Boolean { value: true },
-                                bun_ast::Loc {
-                                    start: key_range.loc.start + key_range.len,
-                                },
-                            )
-                        } else {
+                        let value: Option<Expr> = if p.lexer.token == T::TEquals {
                             can_be_inlined = false;
                             p.parse_jsx_prop_value_identifier(
                                 &mut previous_string_with_backslash_loc,
                             )?
+                        } else if p.lexer.tolerant {
+                            // `parseJsxAttribute`: no `Initializer`.
+                            None
+                        } else {
+                            // Implicitly true value
+                            // <button selected>
+                            Some(p.new_expr(
+                                E::Boolean { value: true },
+                                bun_ast::Loc {
+                                    start: key_range.loc.start + key_range.len,
+                                },
+                            ))
                         };
 
                         props.push(G::Property {
                             key: Some(prop_name),
-                            value: Some(value),
+                            value,
                             ..Default::default()
                         });
                         i += 1;

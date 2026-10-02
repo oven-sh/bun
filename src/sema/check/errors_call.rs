@@ -939,30 +939,6 @@ impl Checker<'_> {
             .is_some()
     }
 
-    /// Whether `sig` is `candidate`, or `candidate` with something for its type parameters.
-    fn is_declared_where(&self, sig: SigId, candidate: SigId) -> bool {
-        sig == candidate
-            || match (self.p.types.sig(sig), self.p.types.sig(candidate)) {
-                (
-                    SigData::Decl { file, func, .. },
-                    SigData::Decl {
-                        file: other_file,
-                        func: other,
-                        ..
-                    },
-                ) => (file, func) == (other_file, other),
-                (
-                    SigData::Construct { class, func, .. },
-                    SigData::Construct {
-                        class: other_class,
-                        func: other,
-                        ..
-                    },
-                ) => (class, func) == (other_class, other),
-                _ => false,
-            }
-    }
-
     /// `chooseOverload`, by assignability. `None`: a candidate applies, or it cannot be told.
     fn failed_candidates(
         &mut self,
@@ -1000,24 +976,6 @@ impl Checker<'_> {
             args: &args,
             this_arg,
         };
-        // All that is asked is whether any of them applies, and the call has been resolved to one that most likely does. The ones before it do
-        // not, which takes inferring their type arguments to find out.
-        if candidates.len() > 1
-            && type_args.is_empty()
-            && !is_under_way
-            && let Some(sig) = resolved.sig
-            // Not what is made up of all of them when none applies.
-            && candidates
-                .iter()
-                .any(|&candidate| self.is_declared_where(sig, candidate))
-            && {
-                let params = self.sig_params(sig);
-                self.has_correct_arity(s, &params)
-            }
-            && self.is_signature_applicable(s, sig, None) == Applicable::Yes
-        {
-            return None;
-        }
         let mut for_argument_error: Vec<SigId> = Vec::new();
         let mut for_arity_error = None;
         let mut for_type_argument_error = None;
@@ -1062,38 +1020,6 @@ impl Checker<'_> {
             match self.is_signature_applicable(s, check, None) {
                 Applicable::Yes | Applicable::Unknown => return None,
                 Applicable::No => for_argument_error.push(check),
-            }
-        }
-        // `chooseOverload`: the first candidate that is applicable without the context sensitive arguments sets `argCheckMode` to
-        // `CheckModeNormal` for good and assigns the parameter types of those arguments (`NodeCheckFlagsContextChecked`). Every later
-        // attempt infers from them as from any other argument. `resolve_among` made those attempts, so `resolved.sig` is accepted
-        // if it is the result of such an attempt.
-        if !is_under_way
-            && candidates.len() > 1
-            && type_args.is_empty()
-            && !for_argument_error.is_empty()
-            && let Some(accepted) = resolved.sig
-            && !for_argument_error.contains(&accepted)
-            && args
-                .iter()
-                .any(|a| matches!(a, Arg::Expr(x) if self.is_context_sensitive(file, *x)))
-        {
-            for &candidate in &candidates {
-                let params = self.sig_params(candidate);
-                if self.sig_type_params(candidate).is_empty() || !self.has_correct_arity(s, &params)
-                {
-                    continue;
-                }
-                let outer = std::mem::replace(&mut self.keeps_arg_contexts, true);
-                let attempt = self.instantiate_for_call_as(s, candidate, false, true);
-                self.keeps_arg_contexts = outer;
-                if attempt != accepted {
-                    continue;
-                }
-                if self.is_signature_applicable(s, accepted, None) != Applicable::No {
-                    return None;
-                }
-                break;
             }
         }
         Some(Failed {
@@ -1657,10 +1583,7 @@ impl Checker<'_> {
             } else {
                 ExprId::NONE
             };
-            // The pieces of text of a tagged template: where the template starts is not kept.
-            if let Some(out) = report.as_deref_mut()
-                && (node != e || decorator.is_some())
-            {
+            if let Some(out) = report.as_deref_mut() {
                 let jsdoc_type_assertion = self.start_of_jsdoc_type_assertion(file, check_node);
                 let (at, end) = match (decorator, jsdoc_type_assertion) {
                     (Some(written), _) => (written.start, written.end),
@@ -1711,10 +1634,7 @@ impl Checker<'_> {
                 return Applicable::Unknown;
             }
             if !self.related(given, rest, relation) {
-                if let Some(out) = report
-                    && (decorator.is_some()
-                        || args.get(count).is_none_or(|first| first.node() != e))
-                {
+                if let Some(out) = report {
                     let (at, end) = match decorator {
                         Some(written) if count == args.len() => (written.at_sign, written.end),
                         Some(written) => (written.start, written.end),
@@ -1992,13 +1912,10 @@ impl Checker<'_> {
             (error_range, code, vec![expected, given])
         } else if let Some(written) = decorator {
             ((written.start, written.end), code, vec![expected, given])
-        } else if args[most].node() != e {
+        } else {
             let start = self.start_of(file, args[most].node());
             let end = self.end_of_expr(file, args[args.len() - 1].node());
             ((start, end), code, vec![expected, given])
-        } else {
-            // It is at the template of a tagged template, and where that starts is not kept.
-            return;
         };
         self.note(start, end, code, counted);
         let top = head.unwrap_or(code);

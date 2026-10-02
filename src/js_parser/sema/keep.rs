@@ -1162,7 +1162,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ───────────────────────────── statements ─────────────────────────────
 
-    /// Called before each statement of a list. Pass the result to `end_statement`.
+    /// Called before each statement. Pass the result to `end_statement`.
     #[inline]
     pub(crate) fn begin_statement(&mut self) -> usize {
         if !self.should_keep_types() {
@@ -1176,21 +1176,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// Called after each statement of a list. Returns the TypeScript-only statement that was emitted for it, if any.
+    /// Called after each statement, which is said to be at `loc`. Returns the TypeScript-only statement that was emitted for it, if
+    /// any.
     #[inline]
-    pub(crate) fn end_statement(&mut self, outer_modifiers_base: usize) -> StatementId {
+    pub(crate) fn end_statement(&mut self, outer_modifiers_base: usize, loc: Loc) -> StatementId {
         if !self.should_keep_types() {
             return StatementId::NONE;
         }
         let syntax = self.type_syntax_mut();
-        syntax
-            .statement_modifiers
-            .truncate(syntax.statement_modifiers_base);
+        let base = syntax.statement_modifiers_base;
+        if syntax.statement_modifiers.len() > base {
+            let list = syntax
+                .ast
+                .add_modifiers(&syntax.statement_modifiers[base..]);
+            syntax.modifier_lists.push((loc.start, list));
+            syntax.statement_modifiers.truncate(base);
+        }
         syntax.statement_modifiers_base = outer_modifiers_base;
         std::mem::replace(&mut syntax.last_statement, StatementId::NONE)
     }
 
-    /// Called when `export`, `default` or `declare` at `loc` has been recognized as part of the current statement.
+    /// Called when the modifier at `loc` has been recognized as part of the current statement. So is the `export` of an export
+    /// declaration or assignment, and the `default` after it.
     #[inline]
     pub(crate) fn push_statement_modifier(&mut self, flag: Flags, loc: Loc) {
         if self.should_keep_types() {

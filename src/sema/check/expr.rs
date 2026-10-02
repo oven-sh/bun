@@ -3754,24 +3754,13 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         let prop = &hir[p];
         if prop.value.is_none() {
-            // `<a b />` is `<a b={true} />`.
+            // `checkJsxAttribute`: `trueType` for an attribute without an initializer, whatever is expected of it.
             let owner = self.bound(file).prop_owner[p.idx()];
             return if owner.is_some() && matches!(hir[owner].kind, ExprKind::Jsx(_)) {
-                TypeId::TRUE
+                TypeId::FRESH_TRUE
             } else {
                 TypeId::UNRESOLVED
             };
-        }
-        // `checkJsxAttribute`: an attribute without an initializer is `true` whatever is expected of it. The parser puts a `true`
-        // where its name ends.
-        if matches!(hir[prop.value].kind, ExprKind::True) {
-            let owner = self.bound(file).prop_owner[p.idx()];
-            if owner.is_some()
-                && matches!(hir[owner].kind, ExprKind::Jsx(_))
-                && self.end_of_jsx_attr(file, p) == self.end_of_jsx_attr_name(file, p)
-            {
-                return TypeId::FRESH_TRUE;
-            }
         }
         match prop.kind {
             PropKind::Getter => {

@@ -22,6 +22,9 @@ pub(crate) struct Lower<'p, 'a> {
     marks: Vec<(i32, Mark, i32)>,
     /// A bit for each place in the source, set where something in `marks` is noted from. At hardly any place something is.
     mark_starts: Vec<u64>,
+    /// `TypeSyntax::modifier_lists`, sorted by where the statement is. Of a statement that was parsed more than once, the last attempt
+    /// comes last.
+    modifier_lists: Vec<(i32, ts::Span<ts::Modifier>)>,
     /// What the lists being lowered have so far, the innermost list last: ids, variables, parameters, properties.
     list_ids: Vec<u32>,
     list_decls: Vec<VarDecl>,
@@ -134,6 +137,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 *word |= 1 << (from as u32 % 64);
             }
         }
+        let mut modifier_lists = syntax.modifier_lists;
+        modifier_lists.sort_by_key(|list| list.0);
         let mut casts: HashMap<ExprKey, SmallVec<[(CastKind, i32); 2]>> = HashMap::default();
         let mut cast_starts = vec![0u64; p.source.contents().len() / 64 + 1];
         for (key, kind, ty) in syntax.casts {
@@ -165,6 +170,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             p,
             marks,
             mark_starts,
+            modifier_lists,
             list_ids: Vec::new(),
             list_decls: Vec::new(),
             list_params: Vec::new(),
@@ -672,12 +678,33 @@ impl<'p, 'a> Lower<'p, 'a> {
         if let Some(id) = id {
             let start = self.declaration_start(stmt.loc);
             self.b.file[id].start = start;
+            self.statement_modifiers(stmt.loc, id);
         }
         // `S::Comment`, a comment kept for the printer, is no node. The parser puts it where the next statement starts.
         if !self.jsdoc.list.is_empty() && !matches!(stmt.data, StmtData::SComment(_)) {
             self.statement_jsdoc(stmt, id);
         }
         id
+    }
+
+    /// Gives the statement `id`, which the parser says is at `loc`, the modifiers the parser took for it.
+    fn statement_modifiers(&mut self, loc: ast::Loc, id: StmtId) {
+        let after = self
+            .modifier_lists
+            .partition_point(|list| list.0 <= loc.start);
+        let list = match after.checked_sub(1).map(|last| self.modifier_lists[last]) {
+            Some((at, list)) if at == loc.start => list,
+            _ => return,
+        };
+        self.b.statement_modifiers.clear();
+        for modifier in list.iter() {
+            let ts::Modifier { flag, loc } = self.b.ts[modifier];
+            self.b.statement_modifiers.push(Modifier {
+                kind: ModifierKind::Keyword(Flags::from_bits_retain(flag.bits())),
+                pos: pos_of(loc),
+            });
+        }
+        self.b.take_statement_modifiers(id, 0);
     }
 
     /// `withJSDoc`, of the statement `stmt`, which was lowered to `id`.

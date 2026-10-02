@@ -4108,6 +4108,31 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// Whether `flowAnalysisDisabled` is still set when `file` has been checked. `checkBlock` puts it back at the end of a function
+    /// or module block, so it stays set for a reference that is in none.
+    pub(super) fn is_flow_analysis_left_disabled(&self, file: FileId) -> bool {
+        // A walk nests at most once per flow node.
+        if self.bound(file).flow_places <= MAX_FLOW_DEPTH || self.p.flows_too_deep.len() == 0 {
+            return false;
+        }
+        (0..self.hir(file).exprs.len() as u32).map(ExprId).any(|e| {
+            self.p.flows_too_deep.get(&(file, e)).is_some()
+                && self.function_or_module_block_of(file, e) == Parent::File
+        })
+    }
+
+    /// `if c.flowAnalysisDisabled { return c.errorType }`, for the writer alone: in the check the answer would depend on evaluation order.
+    fn is_flow_analysis_disabled(&self, file: FileId) -> bool {
+        self.flow_analysis_disabled_in == Some(file) && self.is_rechecking()
+    }
+
+    /// `c.flowAnalysisDisabled = true`. No `checkBlock` is under way to put it back while a node is checked again.
+    fn disable_flow_analysis(&mut self, file: FileId) {
+        if self.is_rechecking() {
+            self.flow_analysis_disabled_in = Some(file);
+        }
+    }
+
     /// `is_variable`: `e` reads a variable, which starts out the way `assumes_initialized` has it.
     fn flow_type_of(
         &mut self,
@@ -4118,6 +4143,9 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         // It is said of this reference alone, not of what has to be asked about on the way.
         let starts_unassigned = std::mem::take(&mut self.starts_unassigned);
+        if self.is_flow_analysis_disabled(file) {
+            return TypeId::ERROR;
+        }
         let bound = self.bound(file);
         let flow = bound.expr_flow[e.idx()];
         if flow == UNREACHABLE {
@@ -4142,6 +4170,7 @@ impl<'p> Checker<'p> {
             && self.is_evolving_array_operation_target(file, e)
         {
             if self.is_flow_too_deep(&reference, flow) {
+                self.disable_flow_analysis(file);
                 // `reportFlowControlError`
                 self.p.flows_too_deep.insert((file, e), ());
                 return TypeId::ERROR;
@@ -4221,6 +4250,7 @@ impl<'p> Checker<'p> {
         self.flow_depth -= 1;
         // errorType, and `reportFlowControlError`
         if walk.too_deep {
+            self.disable_flow_analysis(file);
             self.p.flows_too_deep.insert((file, e), ());
             return TypeId::ERROR;
         }
@@ -4521,6 +4551,9 @@ impl<'p> Checker<'p> {
         e: ExprId,
         initial: TypeId,
     ) -> TypeId {
+        if self.is_flow_analysis_disabled(file) {
+            return TypeId::ERROR;
+        }
         let flow = self.bound(file).expr_flow[e.idx()];
         // `getTypeAtFlowNode`: an unreachable flow node has `convertAutoToAny(declaredType)`.
         if flow == UNREACHABLE || self.flow_depth > 12 {
@@ -4537,6 +4570,7 @@ impl<'p> Checker<'p> {
         self.flow_depth -= 1;
         // errorType, and `reportFlowControlError`
         if walk.too_deep {
+            self.disable_flow_analysis(file);
             self.p.flows_too_deep.insert((file, e), ());
             return TypeId::ERROR;
         }

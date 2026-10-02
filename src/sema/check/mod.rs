@@ -595,6 +595,7 @@ impl Program {
             timed_out: false,
             ticks: 0,
             flow_depth: 0,
+            flow_analysis_disabled_in: None,
             inline_level: 0,
             walk_declared: TypeId::NEVER,
             constant_depth: 0,
@@ -881,6 +882,8 @@ pub struct Checker<'p> {
     timed_out: bool,
     ticks: u32,
     flow_depth: u32,
+    /// `flowAnalysisDisabled`: the file whose nodes the writer of `.types` checks again with the flag set.
+    flow_analysis_disabled_in: Option<FileId>,
     /// How many `const ok = test` are being looked through.
     inline_level: u32,
     /// The declared type of what the flow walk under way narrows.

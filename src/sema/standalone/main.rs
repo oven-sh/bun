@@ -120,6 +120,7 @@ fn print_loaded_sizes(program: &bun_sema::check::Program) {
         add(&mut rows, "hir.export_specs", &m.hir.export_specs);
         add(&mut rows, "hir.tuple_elems", &m.hir.tuple_elems);
         add(&mut rows, "hir.mapped", &m.hir.mapped);
+        add(&mut rows, "hir.modifiers", &m.hir.modifiers);
         add(&mut rows, "bound.symbols", &m.bound.symbols);
         add(&mut rows, "bound.scopes", &m.bound.scopes);
         add(&mut rows, "bound.tables", &m.bound.tables);

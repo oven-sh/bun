@@ -3396,8 +3396,17 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── signatures ─────────────────────────────
 
-    /// The signature `func` declares.
+    /// `getSignatureFromDeclaration`
     pub fn sig_of_fn(&mut self, file: FileId, func: FnId) -> SigId {
+        use crate::bind::{FnOwner, MemberOwner};
+        let bound = self.bound(file);
+        if self.hir(file)[func].kind == FnKind::Constructor
+            && let FnOwner::Member(member) = bound.fns[func.idx()].owner
+            && let MemberOwner::Class(class) = bound.member_owner[member.idx()]
+        {
+            let sym = self.files().sym(file, bound.class_symbol[class.idx()]);
+            return self.sig_of_constructor(sym, file, class, func);
+        }
         let scope = self.bound(file).fns[func.idx()].scope;
         let parent = if scope.is_some() {
             self.bound(file).scopes[scope.idx()].parent
@@ -3408,6 +3417,41 @@ impl<'p> Checker<'p> {
         self.p
             .types
             .intern_sig(SigData::Decl { file, func, mapper })
+    }
+
+    /// `getSignatureFromDeclaration`, of the constructor `func` in the declaration `class` of `sym`: its type parameters are those
+    /// of the class, and it returns the class.
+    pub(super) fn sig_of_constructor(
+        &mut self,
+        sym: Sym,
+        file: FileId,
+        class: ClassId,
+        func: FnId,
+    ) -> SigId {
+        // `resolveAnonymousTypeMembers` instantiates the signatures with what the type parameters around the class stand for too,
+        // and `instantiate_sig` only carries on what the mapper of a signature is about.
+        let scope = self.bound(file).class_scope[class.idx()];
+        let outer = if scope.is_some() {
+            let parent = self.bound(file).scopes[scope.idx()].parent;
+            self.identity_mapper(file, parent)
+        } else {
+            MapperId::IDENTITY
+        };
+        // Where an interface of the same name declares the type parameters the symbol goes by, those of the class stand for them.
+        let own = self.decl_params_mapper(sym, file, self.hir(file)[class].type_params);
+        let mapper = if own == MapperId::IDENTITY {
+            outer
+        } else {
+            let mut pairs = self.p.types.mapping(outer).to_vec();
+            pairs.extend_from_slice(self.p.types.mapping(own));
+            self.p.types.mapper(pairs)
+        };
+        self.p.types.intern_sig(SigData::Construct {
+            class: sym,
+            file,
+            func,
+            mapper,
+        })
     }
 
     /// `getSignatureOfFullSignatureType`: the signature a JSDoc `@type` tag gives `func` as a whole.

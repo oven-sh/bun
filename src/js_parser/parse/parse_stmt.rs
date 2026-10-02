@@ -164,6 +164,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             })
         {
             let default_range = p.lexer.range();
+            p.push_statement_modifier(bun_ast::ts_syntax::Flags::DEFAULT, default_range.loc);
             p.lexer.next()?;
             opts.is_name_optional = true;
             if p.lexer.token == T::TClass || p.lexer.is_contextual_keyword(b"abstract") {
@@ -330,6 +331,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
 
         if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TEnum {
+            p.push_statement_modifier(bun_ast::ts_syntax::Flags::CONST, loc);
             return p.parse_typescript_enum_stmt(loc, opts);
         }
 
@@ -371,7 +373,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 lexical_decl: LexicalDecl::AllowFnInsideIf,
                 ..Default::default()
             };
-            let yes = p.parse_stmt(&mut stmt_opts)?;
+            let yes = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
 
             // Create the if node
             let if_stmt = p.s(
@@ -414,7 +416,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ..Default::default()
                 };
                 // current_if was set just above in this iteration; `StoreRef` `DerefMut`.
-                let no = p.parse_stmt(&mut stmt_opts)?;
+                let no = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
                 let mut cur = current_if.unwrap();
                 cur.no = Some(no);
                 return Ok(root_if.unwrap());
@@ -430,7 +432,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn t_do(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         let mut stmt_opts = ParseStatementOptions::default();
-        let body = p.parse_stmt(&mut stmt_opts)?;
+        let body = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
         p.lexer.expect(T::TWhile)?;
         let open_paren = p.lexer.loc();
         p.lexer.expect(T::TOpenParen)?;
@@ -455,7 +457,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect_closing(T::TCloseParen, open_paren)?;
 
         let mut stmt_opts = ParseStatementOptions::default();
-        let body = p.parse_stmt(&mut stmt_opts)?;
+        let body = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
 
         Ok(p.s(S::While { body, test }, loc))
     }
@@ -475,7 +477,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // semantics of the code.
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::With, body_loc)?;
         let mut stmt_opts = ParseStatementOptions::default();
-        let body = p.parse_stmt(&mut stmt_opts)?;
+        let body = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
         p.pop_scope();
         p.mark_type_syntax(loc, crate::sema::Mark::WithEnd, p.lexer.loc());
 
@@ -620,7 +622,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 lexical_decl: LexicalDecl::AllowAll,
                                 ..Default::default()
                             };
-                            body.push(p.parse_stmt(&mut stmt_opts)?);
+                            body.push(Self::parse_embedded_stmt(p, &mut stmt_opts)?);
                         }
                     }
                 }
@@ -1042,7 +1044,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let value = p.parse_expr(Level::Comma)?;
                 p.lexer.expect(T::TCloseParen)?;
                 let mut stmt_opts = ParseStatementOptions::default();
-                let body = p.parse_stmt(&mut stmt_opts)?;
+                let body = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
                 return Ok(p.s(
                     S::ForOf {
                         is_await: is_for_await,
@@ -1061,7 +1063,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let value = p.parse_expr(Level::Lowest)?;
                 p.lexer.expect(T::TCloseParen)?;
                 let mut stmt_opts = ParseStatementOptions::default();
-                let body = p.parse_stmt(&mut stmt_opts)?;
+                let body = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
                 return Ok(p.s(
                     S::ForIn {
                         init: init_.unwrap(),
@@ -1100,7 +1102,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.lexer.expect(T::TCloseParen)?;
             let mut stmt_opts = ParseStatementOptions::default();
-            let body = p.parse_stmt(&mut stmt_opts)?;
+            let body = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
             Ok(p.s(
                 S::For {
                     init: init_,
@@ -1333,6 +1335,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if p.lexer.is_contextual_keyword(b"async") {
                     let async_range = p.lexer.range();
+                    p.push_statement_modifier(bun_ast::ts_syntax::Flags::ASYNC, async_range.loc);
                     p.lexer.next()?;
                     if p.lexer.has_newline_before {
                         p.log().add_range_error(
@@ -1437,6 +1440,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let async_range = p.lexer.range();
                     p.lexer.next()?;
                     if p.lexer.token == T::TFunction && !p.lexer.has_newline_before {
+                        p.push_statement_modifier(
+                            bun_ast::ts_syntax::Flags::ASYNC,
+                            async_range.loc,
+                        );
                         p.lexer.next()?;
                         let mut stmt_opts = ParseStatementOptions {
                             is_name_optional: true,
@@ -1569,6 +1576,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && !p.lexer.has_newline_before
                     && matches!(expr.data, js_ast::ExprData::EIdentifier(_))
                 {
+                    p.push_statement_modifier(bun_ast::ts_syntax::Flags::ABSTRACT, expr.loc);
                     let mut stmt_opts = ParseStatementOptions {
                         ts_decorators: opts.ts_decorators.take(),
                         is_name_optional: true,
@@ -2413,10 +2421,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {}
         }
-        let stmt_result = p.parse_stmt(&mut nested_opts);
+        let stmt_result = Self::parse_embedded_stmt(p, &mut nested_opts);
         p.pop_scope();
         let stmt = stmt_result?;
         Ok(p.s(S::Label { name: _name, stmt }, loc))
+    }
+
+    /// `parseStatement`, of a statement that is in no list: the body of an `if`, a loop or a label, what follows a `case`. Its
+    /// modifiers are its own.
+    #[inline]
+    fn parse_embedded_stmt(p: &mut Self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
+        let outer_modifiers_base = p.begin_statement();
+        let stmt = p.parse_stmt(opts)?;
+        p.end_statement(outer_modifiers_base, stmt.loc);
+        Ok(stmt)
     }
 
     fn parse_stmt_fallthrough(
@@ -2438,6 +2456,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let async_range = p.lexer.range();
             p.lexer.next()?;
             if p.lexer.token == T::TFunction && !p.lexer.has_newline_before {
+                p.push_statement_modifier(bun_ast::ts_syntax::Flags::ASYNC, async_range.loc);
                 p.lexer.next()?;
 
                 return p.parse_fn_stmt(async_range.loc, opts, Some(async_range));
@@ -2542,19 +2561,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut modifiers: Vec<(u8, bun_ast::Range)> = Vec::new();
         let mut dropped = 0;
         while p.lexer.token == T::TIdentifier {
-            let (flag, taken_by) = match p.lexer.raw() {
-                b"public" | b"private" | b"protected" => (ACCESSIBILITY, T::TEndOfFile),
-                b"static" => (STATIC, T::TEndOfFile),
-                b"accessor" => (ACCESSOR, T::TEndOfFile),
-                b"readonly" => (READONLY, T::TEndOfFile),
-                b"async" => (ASYNC, T::TFunction),
-                b"abstract" => (ABSTRACT, T::TClass),
+            use bun_ast::ts_syntax::Flags as Modifier;
+            let (flag, taken_by, modifier) = match p.lexer.raw() {
+                b"public" => (ACCESSIBILITY, T::TEndOfFile, Modifier::PUBLIC),
+                b"private" => (ACCESSIBILITY, T::TEndOfFile, Modifier::PRIVATE),
+                b"protected" => (ACCESSIBILITY, T::TEndOfFile, Modifier::PROTECTED),
+                b"static" => (STATIC, T::TEndOfFile, Modifier::STATIC),
+                b"accessor" => (ACCESSOR, T::TEndOfFile, Modifier::ACCESSOR),
+                b"readonly" => (READONLY, T::TEndOfFile, Modifier::READONLY),
+                b"async" => (ASYNC, T::TFunction, Modifier::ASYNC),
+                b"abstract" => (ABSTRACT, T::TClass, Modifier::ABSTRACT),
                 _ => break,
             };
             modifiers.push((flag, p.lexer.range()));
             if p.next_token_matches(|p| p.lexer.token == taken_by && !p.lexer.has_newline_before) {
                 break;
             }
+            let loc = p.lexer.loc();
+            p.push_statement_modifier(modifier, loc);
             p.lexer.next()?;
             dropped += 1;
         }
@@ -2855,6 +2879,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                 {
+                    p.push_statement_modifier(bun_ast::ts_syntax::Flags::ABSTRACT, loc);
                     return Ok(Some(p.parse_class_stmt(loc, opts)?));
                 }
                 if opts.ts_decorators.is_some() {

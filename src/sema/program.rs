@@ -719,9 +719,9 @@ fn unsupported_extension_error(options: &Options, path: &str) -> Option<u32> {
     Some(if is_javascript(path) { 6504 } else { 6054 })
 }
 
-/// What `unsupported_extension_error` found of the file at `path`, in full.
-fn unsupported_extension_problem(options: &Options, code: u32, path: &str) -> Problem {
-    if code == 6504 {
+/// What `referenced_file` says of the file at `path`, which is `code`, in full.
+fn reference_problem(options: &Options, code: u32, path: &str) -> Problem {
+    if code == 6504 || code == 6053 {
         return Problem::new(code, &[path], Place::Nowhere);
     }
     // `GetSupportedExtensions`, flattened.
@@ -1589,28 +1589,22 @@ impl Files {
         }
         let mut program_errors = Vec::new();
         for root in roots {
-            // `addRootFileTask`, `getSourceFileFromReference`: a name without an extension stands for the file that has one.
-            let with_extension = if has_extension(root) {
-                None
-            } else {
-                referenced_file(host, &options, root, "").ok()
-            };
-            let root = with_extension.as_ref().unwrap_or(root);
-            // `parseTask.load`: a root file with an unsupported extension is reported and not loaded.
-            match unsupported_extension_error(&options, root) {
-                Some(code) => program_errors.push(
-                    unsupported_extension_problem(&options, code, root)
-                        .with(1, 1430, &[])
-                        .with(2, 1427, &[]),
-                ),
-                None => starts.push(add(
-                    root.clone(),
+            // `addRootFileTask`
+            match referenced_file(host, &options, root, "") {
+                Ok(found) => starts.push(add(
+                    found,
                     false,
                     0,
                     &mut modules,
                     &mut depths,
                     &mut frontier,
                 )),
+                Err(code) => {
+                    let (reason, args) = root_file_reason(&options, root, host.is_case_sensitive());
+                    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                    let problem = reference_problem(&options, code, root);
+                    program_errors.push(problem.with(1, 1430, &[]).with(2, reason, &args));
+                }
             }
         }
         for name in &automatic_type_directives(host, &options) {

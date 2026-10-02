@@ -632,7 +632,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn parse_jsx_prop_value_identifier(
         &mut self,
         previous_string_with_backslash_loc: &mut bun_ast::Loc,
-    ) -> Result<Expr, Error> {
+    ) -> Result<Option<Expr>, Error> {
         let p = self;
         // Use NextInsideJSXElement() not Next() so we can parse a JSX-style string literal
         p.lexer.next_inside_jsx_element()?;
@@ -646,7 +646,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let expr = p.new_expr(estr, *previous_string_with_backslash_loc);
 
             p.lexer.next_inside_jsx_element()?;
-            Ok(expr)
+            Ok(Some(expr))
         } else {
             if p.lexer.token != T::TOpenBrace && p.lexer.tolerant {
                 return p.parse_jsx_attribute_value_without_braces();
@@ -657,28 +657,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == T::TCloseBrace && p.lexer.tolerant {
                 // `parseJsxExpression`: there may be nothing between the braces. What is missing is put where they open.
                 p.lexer.next_inside_jsx_element()?;
-                return Ok(p.new_expr(E::Missing {}, open_brace));
+                return Ok(Some(p.new_expr(E::Missing {}, open_brace)));
             }
             let value = p.parse_expr(Level::Lowest)?;
 
             if p.lexer.token != T::TCloseBrace && p.lexer.tolerant {
                 // `parseExpected`: it is missed, and nothing is consumed.
                 p.lexer.expect(T::TCloseBrace)?;
-                return Ok(value);
+                return Ok(Some(value));
             }
             p.lexer.expect_inside_jsx_element(T::TCloseBrace)?;
-            Ok(value)
+            Ok(Some(value))
         }
     }
 
     /// `parseJsxAttributeValue`, when what follows the "=" is neither a string nor a "{": an element, or nothing at all.
     #[cold]
     #[inline(never)]
-    fn parse_jsx_attribute_value_without_braces(&mut self) -> Result<Expr, Error> {
+    fn parse_jsx_attribute_value_without_braces(&mut self) -> Result<Option<Expr>, Error> {
         let p = self;
         if p.is_at_less_than_token() {
             let first = p.lexer.loc();
-            return p.parse_jsx_elements_in_attribute_value(first);
+            return p.parse_jsx_elements_in_attribute_value(first).map(Some);
         }
         if p.lexer.is_log_disabled {
             return Err(Error::Backtrack);
@@ -686,7 +686,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Nothing is consumed, and the attribute is one without a value.
         let range = p.lexer.range();
         p.lexer.ts_error(range, 1145);
-        Ok(p.new_expr(E::Boolean { value: true }, range.loc))
+        Ok(None)
     }
 
     /// Whether the "<" the lexer gave inside a JSX tag is one for TypeScript's scanner too, which makes tokens of their own of
@@ -2670,7 +2670,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let stmt_start = p.lexer.loc();
             let outer_modifiers_base = p.begin_statement();
             let mut stmt = p.parse_stmt(&mut current_opts)?;
-            let syntax = p.end_statement(outer_modifiers_base);
+            let is_typescript_only = matches!(stmt.data, js_ast::stmt::Data::STypeScript(_));
+            let syntax = p.end_statement(
+                outer_modifiers_base,
+                if is_typescript_only {
+                    stmt_start
+                } else {
+                    stmt.loc
+                },
+            );
             if Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare {
                 p.note_ambient_statement(stmt_start, &stmt);
             }

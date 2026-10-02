@@ -134,6 +134,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         export_specs: _,
         tuple_elems: _,
         mapped: _,
+        modifiers: _,
     } = file;
     let mut d = Dump {
         file,
@@ -739,8 +740,16 @@ impl Dump<'_> {
     }
 
     fn stmt(&mut self, depth: usize, label: &str, id: StmtId) {
-        let Stmt { kind, pos, start } = node!(self, depth, label, stmts, id);
-        let head = format!("Stmt {} pos={pos} start={start}", stmt_kind_name(kind));
+        let Stmt {
+            kind,
+            pos,
+            start,
+            modifiers,
+        } = node!(self, depth, label, stmts, id);
+        let mut head = format!("Stmt {} pos={pos} start={start}", stmt_kind_name(kind));
+        for modifier in self.file.modifier_list(modifiers) {
+            head += &format!(" {:?}@{}", modifier.kind, modifier.pos);
+        }
         let d = depth + 1;
         match kind {
             StmtKind::Empty => self.line(depth, label, &head),

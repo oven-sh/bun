@@ -1136,12 +1136,7 @@ impl<'a> Spans<'a> {
             ExprKind::Ident(_) | ExprKind::This | ExprKind::Super | ExprKind::Null => {
                 self.token(pos)
             }
-            // The value of a JSX attribute that has none is a `true` that is not written.
-            ExprKind::True => match self.word_at(pos) {
-                b"true" => pos + 4,
-                _ => pos,
-            },
-            ExprKind::False => self.token(pos),
+            ExprKind::True | ExprKind::False => self.token(pos),
             ExprKind::Number(_) | ExprKind::BigInt(_) => number_end(self.text, pos),
             ExprKind::String(_) => match self.byte(pos) {
                 b'"' | b'\'' | b'`' => self.quoted(pos),

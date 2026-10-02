@@ -2682,3 +2682,118 @@ At `a582ea9efb`, called by their upstream names with upstream's parameter order:
   the file had.
 - `crate::core::Map` as the contract has it (`make`, `get`, `set` with its `bool`, and `Default` for the nil map),
   for `cached_types`, `tuple_types` and the instantiations of a conditional root and of a tuple target.
+
+## Checker: name resolution hooks (`checker/c04_name_resolution_hooks.rs`)
+
+Commit `cad7795f23` (written by the job that commits the worktree). The file holds checker.go 1505-2200 whole and in
+upstream order: the 30 functions of the layer N-DIAG (`symbolReferenced` 1505 to `addTypeOnlyDeclarationRelatedInfo`
+2174) before `get_symbol` (2182, layer N-RESOLVE), which was there and did not change. PORT_STATUS.md has the rows.
+
+NOT compiled by cargo: `checker/mod.rs` still names modules without a file (`c16`, `c18`, `c19`, `emitresolver` at
+`ed705371ac`). "Verified" below says what was checked instead.
+
+### How a caller writes the calls
+
+- The eight functions that `createNameResolver` and `createNameResolverForSuggestion` hand to the name resolver are
+  methods on `&mut self` with the parameters of the fields of `binder/nameresolver.rs` 14-27, so `Checker::name`
+  coerces to the function pointer: `get_symbol` and `get_suggestion_for_symbol_name_lookup(symbols: SymbolTableId,
+  name: &[u8], meaning) -> SymbolId`, `symbol_referenced(symbol, meaning)`, `get_requires_scope_change_cache(node) ->
+  Tristate`, `set_requires_scope_change_cache(node, value)`,
+  `check_and_report_error_for_invalid_initializer(error_location, name: &[u8], property_with_invalid_initializer,
+  result: SymbolId) -> bool`, `on_failed_to_resolve_symbol(error_location, name: &[u8], meaning,
+  name_not_found_message: MessageId)` and `on_successfully_resolved_symbol(error_location, result, meaning,
+  last_location, associated_declaration_for_containing_initializer_or_binding_name, within_deferred_context)`.
+- `get_spelling_suggestion_for_name(name: &[u8], symbols: &[SymbolId], meaning) -> SymbolId`: the candidates are a
+  slice where upstream takes a sequence, so `properties.as_slice()` and `&symbols` of a `Vec` fit. The nil symbol is
+  "no suggestion".
+- `get_type_only_alias_declaration(symbol) -> NodeId` and `get_type_only_alias_declaration_ex(symbol, meaning) ->
+  NodeId` (nil for none); the second has the shape of the hook `get_type_only_alias_declaration` of
+  `binder/referenceresolver.rs` 24. `get_immediate_aliased_symbol(symbol) -> SymbolId`.
+- `add_type_only_declaration_related_info(diagnostic: DiagnosticId, type_only_declaration: NodeId, name: &[u8]) ->
+  DiagnosticId`: the diagnostic it was given, with the related information when the declaration is not nil.
+- `is_block_scoped_name_declared_before_use(declaration, usage) -> bool`,
+  `is_used_in_function_or_instance_property(usage, declaration, decl_container) -> bool`,
+  `check_resolved_block_scoped_variable(result, error_location)`, `maybe_mapped_type(node, symbol) -> bool`,
+  `get_suggested_symbol_for_nonexistent_symbol(location, outer_name: &[u8], meaning) -> SymbolId` and the six other
+  `check_and_report_error_for_*` with upstream's parameters and a name as `&[u8]`: all on `&mut self`.
+- `get_suggested_lib_for_non_existent_name(name) -> &'static [u8]` on `&self`: the empty text for no lib.
+- Free functions, `pub fn` at column 0: `is_primitive_type_name(s)`, `is_es2015_or_later_constructor_name(s)`,
+  `get_primitive_type_alias_suggestions(a, symbols) -> Vec<SymbolId>`,
+  `is_immediately_used_in_initializer_of_block_scoped_variable(a, declaration, usage, decl_container)`,
+  `is_same_scope_descendent_of(a, initial, parent, stop_at)` and
+  `is_property_immediately_referenced_within_declaration(a, declaration, usage, stop_at_any_property_declaration)`.
+  `checker/mod.rs` has no glob for the file, so the six are `crate::checker::c04_name_resolution_hooks::name`:
+  upstream names them in this range only, and this file is their one caller.
+
+### Differences from upstream
+
+- `primitiveTypeAliasSuggestions` (1751) is a map of the process that holds six symbols. A symbol lives in the store
+  of one checker here, and the checker has no field for them: `PRIMITIVE_TYPE_ALIAS_SUGGESTIONS` is the table of the
+  six pairs of names, and `get_primitive_type_alias_suggestions` makes a transient symbol (`TypeAlias | Transient`,
+  by `Ast::new_symbol`, which `symbolCount` does not count, as upstream's `&ast.Symbol{}`) for each global type that
+  the table of the request has. So two requests answer two symbols of one name where upstream answers one symbol
+  twice. A suggestion is read for its name, its flags and its declarations (it has none) by
+  `onFailedToResolveSymbol`, the one caller of `getSuggestedSymbolForNonexistentSymbol`, and nothing keeps it.
+- `getSpellingSuggestionForName` (1806): upstream's two callbacks close over the checker, one to resolve an alias
+  and one to compare two symbols. Here both borrow it from one `RefCell` for the time of their call
+  (`try_borrow_mut`, `try_borrow`), so `core::get_spelling_suggestion_exported` runs them in upstream's order: the
+  name of a candidate is asked before the candidate is compared, and `ast.GetSymbolId` gives its ids in that order.
+- `getSuggestionForSymbolNameLookup` (1781): `maps.Values(symbols)` is the table in its own order, and the
+  suggestions of the primitive types follow in the order of the table of names, where the order of both Go maps is
+  random. The candidates are collected before the first is looked at, where upstream's sequences are lazy.
+- `getTypeOnlyAliasDeclarationEx` (2149): the loop has a budget (`LoopGuard`, `loop_limit`), as the alias loop of
+  `resolve_entity_name` has. Its end depends on checker state: two aliases that each have another meaning and
+  resolve to each other would never get the meaning that is asked for (read in the code, not seen in a run).
+- `isUsedInFunctionOrInstanceProperty` (2017) calls itself for the decorator of a method or of a parameter: the
+  entry tests the stack, records `StackLimit` and answers false. `isBlockScopedNameDeclaredBeforeUse` calls itself
+  once at most (a binding element, then its variable declaration) and has no test.
+- Panics and asserts are faults with a fallback: 1905 (`checkResolvedBlockScopedVariable` without a block-scoped
+  declaration) reports nothing; 2167 (`getImmediateAliasedSymbol` without a declaration) answers the nil symbol and
+  leaves the links; the asserts of 1620, 1895, 1917 and 2162 record and go on. `typeFeatures[0]` of 1742 answers
+  the empty text for an empty list, which no entry of the feature map is.
+- A node or a symbol that is nil reads as the zero value where upstream dereferences nil: `errorLocation.Flags` of
+  1847, `errorLocation.Parent` of 1576, 1636 and 1671, and the declaration that 1950 passes on when a binding
+  element has no variable declaration above it (the two files then differ and the answer is true).
+  `suggestion.ValueDeclaration` of 1598 is read before the test for nil, through the nil symbol.
+- The comment of upstream that names work to do (1559) is not carried over.
+
+### Verified
+
+Cargo built nothing and no test ran a function of the file. What was checked:
+
+- `sh round2-layer7-checker/c04-probe.sh`, with `rustc` and `clippy-driver` alone (no cargo), on the working tree
+  when its last commit was `ed705371ac`: no error, no warning, no finding. One crate of 1,065 lines compiles the
+  real file by `#[path]` beside the real `diagnostics/`, `internal.rs`,
+  `core/{arena,golang,linkstore,text,tristate}.rs`, `collections/{set,ordered_map,ordered_set}.rs`,
+  `ast/{flags,ids,checkflags,symbolflags,nodeflags,kind_generated,diagnostic}.rs` and
+  `checker/{types,c01_data}.rs`, with `#![deny(warnings)]` and the deny set of the workspace, then the clippy table
+  of the workspace with `clippy.toml`. Every other name is a stand-in whose signature `c04-probe-gen.py` reads from
+  the file of the tree that defines it, and whose body never returns: the 29 methods of the checker that the file
+  calls, 45 free functions of `ast/`, 7 of `checker/utilities.rs`, 23 accessors of `Ast`,
+  `get_spelling_suggestion_exported` and `declaration_name_to_string`. `every`, `filter`, `find`, `if_else` and
+  `concatenate_seq` are the text of `core/core.rs`. Written by hand: `Map` and `LiveList` (as the contract has
+  them), the view of a source file with its one field `global_exports`, and the three methods of `c18` below.
+- The same crate holds the consumers: `create_name_resolver` and `create_name_resolver_for_suggestion` as
+  `c03_init.rs` has them, against the struct `NameResolver` as `binder/nameresolver.rs` has it (the eight
+  functions coerce to its fields), the hook of `binder/referenceresolver.rs` 24, and the calls of `c44` 1056, `c09`
+  1082, `jsx.rs` 946, `c25` 352, `c46` 495-503 and 978, `c27` 121 and 164, `c23` 177, `c52` 61, `c10` 927 and 987,
+  `c13` 161-221, `flow.rs` 2826 and `c39` 512 and 584, written in their shape.
+- A type error and a `clone` of an id, each put into a copy of the file, are reported by the two steps of the probe.
+- `python3 round2-layer7-checker/c04-callseq.py`: the 31 functions have upstream's names in upstream's order, and
+  each calls the same methods of the checker as upstream's body, the same number of times; the one difference is
+  `compare_symbols`, which upstream passes as a value.
+- `rustfmt --check --edition 2024`; no two comment lines are adjacent; no `unwrap`, `expect`, `panic`, `todo`,
+  `unimplemented`, `unreachable`, `unsafe` or `allow(`; the 31 messages are constants of
+  `diagnostics/diagnostics_generated.rs`.
+- Read against upstream statement by statement, and each callee at its definition in the tree.
+- Not checked: any result against upstream's baselines or a run of tsgo; the bodies of the stand-ins; what cargo
+  and clippy say of the file in the real crate.
+
+### What this file expects and the tree does not have
+
+At `ed705371ac`: three methods of the checker of the range of `c18` (no file), called by their upstream names with
+upstream's parameter order: `get_this_container(node, include_arrow_functions: bool,
+include_class_computed_property_name: bool) -> NodeId` (12279; `c52_symbol_at_location.rs` calls it the same way),
+`check_and_report_error_for_extending_interface(error_location) -> bool` (11756) and
+`is_in_ambient_or_type_node(node) -> bool` (11328, the method that 1937 calls: `utilities.rs` has the free function
+of `utilities.go` 1058, which 5947 calls). The receiver can be `&self` or `&mut self`.

@@ -683,3 +683,41 @@ describe("TextEncoder UTF-16 exact-size path", () => {
     }
   });
 });
+
+describe("TextEncoder encodeInto detached destination", () => {
+  const encoder = new TextEncoder();
+
+  // `structuredClone(ab, { transfer: [ab] })` detaches the ArrayBuffer, so the
+  // view reports byteLength 0 and a null backing pointer. Both encodeInto arms
+  // (Latin-1 for "x", UTF-16 for the others) must report { read: 0, written: 0 }
+  // like Node instead of constructing a slice from a null pointer.
+  it.each([
+    ["x"], // Latin-1
+    ["Ā"], // UTF-16
+    ["💕"], // astral
+  ])("returns { read: 0, written: 0 } for a detached Uint8Array with input %j", input => {
+    const ab = new ArrayBuffer(1);
+    const dest = new Uint8Array(ab);
+    structuredClone(ab, { transfer: [ab] });
+
+    expect(dest.byteLength).toBe(0);
+    expect(encoder.encodeInto(input, dest)).toEqual({ read: 0, written: 0 });
+  });
+
+  it("returns { read: 0, written: 0 } for a non-detached zero-length destination", () => {
+    expect(encoder.encodeInto("x", new Uint8Array(0))).toEqual({ read: 0, written: 0 });
+  });
+
+  it("returns { read: 0, written: 0 } when source toString() detaches the destination", () => {
+    const ab = new ArrayBuffer(16);
+    const dest = new Uint8Array(ab);
+    const src = {
+      toString() {
+        structuredClone(ab, { transfer: [ab] });
+        return "hello";
+      },
+    };
+    expect(encoder.encodeInto(src, dest)).toEqual({ read: 0, written: 0 });
+    expect(dest.byteLength).toBe(0);
+  });
+});

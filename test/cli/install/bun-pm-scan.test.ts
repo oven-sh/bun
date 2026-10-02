@@ -733,8 +733,10 @@ describe("bun pm scan", () => {
         }),
       );
 
+      // Both linkers install the same tarball. A cache that they share gives them one inode for its bin.
+      const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
       async function run(cmd: string[]) {
-        await using proc = Bun.spawn({ cmd, cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        await using proc = Bun.spawn({ cmd, cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         return { output: stdout + stderr, exitCode };
       }

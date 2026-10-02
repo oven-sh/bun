@@ -547,13 +547,11 @@ impl Subcommand {
     }
 
     /// Whether the command can link a bin and so needs `bin::init_exec_mode`.
-    /// `Pm` is here for `bun pm scan`, which can install the security scanner.
     #[cfg(not(windows))]
     pub(crate) fn links_bins(self) -> bool {
         match self {
             Self::Install
             | Self::Update
-            | Self::Pm
             | Self::Add
             | Self::Remove
             | Self::Link
@@ -561,6 +559,8 @@ impl Subcommand {
             | Self::PatchCommit
             | Self::Audit
             | Self::Dedupe => true,
+            // `bun pm scan` can install the security scanner.
+            Self::Pm => true,
             Self::Unlink
             | Self::Outdated
             | Self::Pack

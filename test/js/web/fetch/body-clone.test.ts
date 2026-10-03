@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDirWithFiles } from "harness";
+import { unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -1182,6 +1183,109 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     });
     expect(await cloneInChild("Bun.file(process.argv.at(-1)).stream()", [fifo])).toEqual(bothBodiesReadStdin);
     expect(await writer.exited).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a body over a FIFO given by path as the Blob itself is teed, not duped", async () => {
+    const fifo = join(tempDirWithFiles("body-clone-fifo-blob", {}), "body.fifo");
+    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+    await using writer = Bun.spawn({
+      cmd: ["sh", "-c", `printf 'hello world' > "$1"`, "sh", fifo],
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await cloneInChild("Bun.file(process.argv.at(-1))", [fifo])).toEqual(bothBodiesReadStdin);
+    expect(await writer.exited).toBe(0);
+  });
+
+  // The body shares its store with the Bun.file() it was made from. A stat cached
+  // there is what `size`, `lastModified`, `exists()` and a later `.body` answer from.
+  describe("clone() of a Bun.file() body does not change what the Bun.file() answers", () => {
+    const post = (body: Bun.BunFile) => new Request("http://example.com/", { method: "POST", body });
+    const cloners: Array<[string, (file: Bun.BunFile) => unknown]> = [
+      ["Response.clone()", file => new Response(file).clone()],
+      ["Request.clone()", file => post(file).clone()],
+      ["new Request(request)", file => new Request(post(file))],
+      ["new Request(request, init)", file => new Request(post(file), { headers: { "x-test": "1" } })],
+      // @ts-expect-error Bun takes a Response as init and clones its body.
+      ["new Request(url, response)", file => new Request("http://example.com/", new Response(file))],
+    ];
+
+    async function afterClone<T>(
+      clone: (file: Bun.BunFile) => unknown,
+      change: (path: string) => void,
+      read: (file: Bun.BunFile) => T | Promise<T>,
+    ) {
+      const path = join(tempDirWithFiles("body-clone-answers", { "log.txt": "12345" }), "log.txt");
+      const file = Bun.file(path);
+      clone(file);
+      change(path);
+      return await read(file);
+    }
+    const grow = (path: string) => writeFileSync(path, "123456789");
+
+    test.each(cloners)("%s: size and a later body see a file that grew", async (_, clone) => {
+      expect({
+        size: await afterClone(clone, grow, file => file.size),
+        body: await afterClone(clone, grow, file => Bun.readableStreamToText(new Response(file).body!)),
+      }).toEqual({ size: 9, body: "123456789" });
+    });
+
+    test("lastModified and exists() see a file that changed", async () => {
+      const clone = cloners[0][1];
+      const mtime = new Date("2033-05-18T03:33:20.000Z");
+      expect({
+        lastModified: await afterClone(
+          clone,
+          path => utimesSync(path, mtime, mtime),
+          file => file.lastModified,
+        ),
+        exists: await afterClone(clone, unlinkSync, file => file.exists()),
+      }).toEqual({ lastModified: mtime.getTime(), exists: false });
+    });
+
+    test("both bodies see a file that grew", async () => {
+      const path = join(tempDirWithFiles("body-clone-grew", { "log.txt": "12345" }), "log.txt");
+      const original = new Response(Bun.file(path));
+      const clone = original.clone();
+      grow(path);
+      expect(await Promise.all([original.body, clone.body].map(body => Bun.readableStreamToText(body!)))).toEqual([
+        "123456789",
+        "123456789",
+      ]);
+    });
+
+    // procfs reports `st_size == 0` for a file that has content, so with that stat cached all three read "".
+    test.skipIf(!isLinux)("a procfs file is read whole", async () => {
+      const file = Bun.file("/proc/sys/kernel/ostype");
+      const original = new Response(file);
+      const clone = original.clone();
+      expect({
+        original: await original.text(),
+        clone: await clone.text(),
+        file: await file.text(),
+      }).toEqual({ original: "Linux\n", clone: "Linux\n", file: "Linux\n" });
+    });
+  });
+
+  // No bytes to compete for: it is duped like a regular file, and each body fails when it is read.
+  test.each([
+    ["a fresh Bun.file()", (path: string) => Bun.file(path)],
+    [
+      "a Bun.file() whose size was read",
+      (path: string) => {
+        const file = Bun.file(path);
+        file.size;
+        return file;
+      },
+    ],
+  ])("clone() of a body over a directory does not throw, %s", async (_, open) => {
+    const original = new Response(open(tempDirWithFiles("body-clone-dir", {})));
+    const clone = original.clone();
+    const results = await Promise.allSettled([original.text(), clone.text()]);
+    expect(results.map(result => (result.status === "rejected" ? result.reason?.code : result.status))).toEqual([
+      "EISDIR",
+      "EISDIR",
+    ]);
   });
 });
 

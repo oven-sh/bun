@@ -5836,6 +5836,29 @@ pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
     }
 }
 
+/// Whether two Blobs over `store` would compete for its bytes (an fd, a pipe, a terminal). A directory has none: each Blob fails with `EISDIR` when read.
+pub(crate) fn store_yields_bytes_once(store: &RefPtr<Store>) -> bool {
+    let store::Data::File(file) = Store::data_mut(store) else {
+        return false;
+    };
+    let PathOrFileDescriptor::Path(path) = &file.pathlike else {
+        return true;
+    };
+    let mode = if file.seekable.is_some() {
+        Some(file.mode)
+    } else {
+        // Not `resolve_file_stat`: the `Bun.file()` sharing `store` answers from what that caches.
+        if file.mode_seen_by_clone.is_none() {
+            let mut buffer = bun_paths::path_buffer_pool::get();
+            if let bun_sys::Result::Ok(stat) = bun_sys::stat(path.slice_z(&mut buffer)) {
+                file.mode_seen_by_clone = Some(stat.st_mode as bun_sys::Mode);
+            }
+        }
+        file.mode_seen_by_clone
+    };
+    mode.is_some_and(|mode| !bun_sys::S::ISREG(mode) && !bun_sys::S::ISDIR(mode))
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // toStringWithBytes / toString / toJSON / toFormData / toArrayBuffer{View}
 // ──────────────────────────────────────────────────────────────────────────

@@ -1571,9 +1571,7 @@ impl Value {
         }
 
         if let Value::Blob(b) = self {
-            if b.store()
-                .is_some_and(|store| !blob::store_reads_repeatably(store))
-            {
+            if b.store().is_some_and(blob::store_yields_bytes_once) {
                 // A pipe or other fd yields its bytes once: read it as one
                 // stream and tee that.
                 self.to_readable_stream(cx)?;

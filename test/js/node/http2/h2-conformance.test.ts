@@ -1803,6 +1803,21 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
     return Buffer.concat([promised, requestHeaderBlock("GET")]);
   }
 
+  /** `once(emitter, event)` that rejects when `emitter` closes before the event. */
+  async function onceOpen(emitter: http2.Http2Session | http2.Http2Stream, event: string): Promise<any[]> {
+    const ac = new AbortController();
+    try {
+      return await Promise.race([
+        once(emitter, event, { signal: ac.signal }),
+        once(emitter, "close", { signal: ac.signal }).then(() => {
+          throw new Error(`closed before '${event}'`);
+        }),
+      ]);
+    } finally {
+      ac.abort();
+    }
+  }
+
   test("a client's connection-error GOAWAY does not name its own request stream", async () => {
     const raw = await RawH2Server.listen();
     try {
@@ -1810,7 +1825,7 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
       const [req] = requests;
       expect(req.id).toBe(1);
       raw.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 1, STATUS_200);
-      await once(req, "response");
+      await onceOpen(req, "response");
       expect(client.state.lastProcStreamID).toBe(0);
       raw.sendFrame(FrameType.PING, 0, 0, BAD_PING);
       const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
@@ -1831,9 +1846,9 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
       // stream 1. The promise must still become the mark.
       raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, STATUS_200);
       raw.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 3, STATUS_200);
-      await Promise.all(requests.map(req => once(req, "response")));
+      await Promise.all(requests.map(req => onceOpen(req, "response")));
       expect(client.state.lastProcStreamID).toBe(0);
-      const pushed = once(client, "stream");
+      const pushed = onceOpen(client, "stream");
       raw.sendFrame(FrameType.PUSH_PROMISE, 0x4, 1, pushPromise(2));
       expect((await pushed)[0].id).toBe(2);
       expect(client.state.lastProcStreamID).toBe(2);
@@ -1850,13 +1865,14 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
     const raw = await RawH2Server.listen();
     try {
       const { client, requests } = await connectClient(raw, 1);
-      const pushed = once(client, "stream");
+      const pushed = onceOpen(client, "stream");
+      const response = onceOpen(requests[0], "response");
       raw.sendFrame(FrameType.PUSH_PROMISE, 0x4, 1, pushPromise(2));
       raw.sendFrame(FrameType.HEADERS, 0x5, 2, STATUS_200);
       raw.sendFrame(FrameType.HEADERS, 0x5, 1, STATUS_200);
       const [pushedStream] = await pushed;
       expect(pushedStream.id).toBe(2);
-      await once(requests[0], "response");
+      await response;
       client.close();
       const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
       expect(goawayFields(goaway)).toEqual({ lastStreamId: 2, errorCode: ErrorCode.NO_ERROR });
@@ -1868,15 +1884,11 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
   test("no GOAWAY a client sends after a refused response names its own request", async () => {
     const raw = await RawH2Server.listen();
     try {
-      const { client } = await connectClient(raw, 1, {
-        maxSessionRejectedStreams: 1,
-        settings: { maxHeaderListSize: 100 },
-      });
-      // Three :status fields are 3 * (7 + 3 + 32) = 126 octets of header list (§10.5.1), over
-      // the 100 the client advertised, so the response is refused. On bun that also uses up
-      // the rejection budget of 1 and the session writes an ENHANCE_YOUR_CALM GOAWAY of its
-      // own; node only resets the stream. The run asserts every GOAWAY that reaches the wire,
-      // so both shutdowns are covered: the client received no push, so each one names 0.
+      const { client } = await connectClient(raw, 1, { maxSessionRejectedStreams: 1 });
+      // A response block with a repeated :status is malformed (§8.3), so the client resets the
+      // stream. On bun that also uses up the rejection budget of 1 and the session writes an
+      // ENHANCE_YOUR_CALM GOAWAY of its own. node only resets the stream. The test asserts every
+      // GOAWAY that reaches the wire: the client received no push, so each one names 0.
       raw.sendFrame(FrameType.HEADERS, 0x5, 1, Buffer.concat([STATUS_200, STATUS_200, STATUS_200]));
       await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
       client.close();
@@ -1897,7 +1909,7 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
       client.on("error", () => {});
       const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
       req.on("error", () => {});
-      const frameError = once(req, "frameError");
+      const frameError = onceOpen(req, "frameError");
       req.on("wantTrailers", () => {
         // A single field above the HPACK encoder's 64 KiB limit cannot be put on the wire; the
         // stream is reset and the session shuts down with a graceful GOAWAY (node also ends up
@@ -1922,7 +1934,7 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
     try {
       const { client, requests } = await connectClient(raw, 1, { maxOutstandingSettings: 0 });
       raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, STATUS_200);
-      await once(requests[0], "response");
+      await onceOpen(requests[0], "response");
       // The first SETTINGS frame gets no ACK, so the second one is over the limit and the session
       // ends with ERR_HTTP2_MAX_PENDING_SETTINGS_ACK. node writes one GOAWAY, bun writes two.
       client.settings({ initialWindowSize: 70000 });
@@ -1949,6 +1961,40 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
       expect(goawayFields(goaway)).toEqual({ lastStreamId: 3, errorCode: ErrorCode.FRAME_SIZE_ERROR });
     } finally {
       c.destroy();
+    }
+  });
+
+  // bun serves a new stream whose id is below an earlier one. node ignores it. The id of the
+  // GOAWAY stays at 3 in both.
+  test("a new request with a lower id does not lower the last-stream-id", async () => {
+    const server = http2.createServer();
+    server.on("session", s => s.on("error", () => {}));
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const sessionEvent = once(server, "session");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      const [session] = (await sessionEvent) as [http2.ServerHttp2Session];
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
+      expect(session.state.lastProcStreamID).toBe(3);
+      // The PING ACK is behind the server's handling of the request on 1.
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 0x70));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 1);
+      expect(session.state.lastProcStreamID).toBe(3);
+      session.close();
+      expect(goawayFields(await c.waitForGoaway())).toEqual({ lastStreamId: 3, errorCode: ErrorCode.NO_ERROR });
+    } finally {
+      c.destroy();
+      server.close();
     }
   });
 
@@ -2078,18 +2124,17 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
       c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
       await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1);
       session.goaway();
-      expect(goawayFields(await c.waitForGoaway())).toEqual({ lastStreamId: 1, errorCode: ErrorCode.NO_ERROR });
+      const first = await c.waitForGoaway();
+      expect(goawayFields(first)).toEqual({ lastStreamId: 1, errorCode: ErrorCode.NO_ERROR });
       // The PING ACK is behind the server's handling of the request on 3.
       c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
       c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 0x70));
       await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 1);
       expect({ seen, lastProcStreamID: session.state.lastProcStreamID }).toEqual({ seen: [1], lastProcStreamID: 1 });
-      session.close();
-      const cancel = Buffer.alloc(4);
-      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
-      c.sendFrame(FrameType.RST_STREAM, 0, 1, cancel);
-      await c.waitClosed();
-      expect(goawayLastStreamIds(c.frames).filter(id => id !== 1)).toEqual([]);
+      // A connection error makes the server write one more GOAWAY.
+      c.sendFrame(FrameType.PING, 0, 0, BAD_PING);
+      const second = await c.waitFor(f => f.type === FrameType.GOAWAY && f !== first);
+      expect(goawayFields(second)).toEqual({ lastStreamId: 1, errorCode: ErrorCode.FRAME_SIZE_ERROR });
     } finally {
       c.destroy();
       server.close();
@@ -2162,15 +2207,20 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
 
     // nghttp2 keeps the id of the last GOAWAY it sent and lowers the id of each later GOAWAY to
     // it. node also closes the streams above that id (REFUSED_STREAM). bun leaves them open.
-    test("the GOAWAY of a server's destroy() does not name a stream above an earlier id", async () => {
+    test("each later GOAWAY of a server keeps the lowest id that it sent", async () => {
       const { server, session, c } = await serverWithTwoRequests();
       try {
         session.goaway(ErrorCode.NO_ERROR, 1);
-        expect(goawayFields(await c.waitForGoaway())).toEqual({ lastStreamId: 1, errorCode: ErrorCode.NO_ERROR });
+        const first = await c.waitForGoaway();
+        expect(goawayFields(first)).toEqual({ lastStreamId: 1, errorCode: ErrorCode.NO_ERROR });
+        // The second GOAWAY asks for 3 and gets 1. The third one must still carry 1.
+        session.goaway(ErrorCode.NO_ERROR, 3);
+        const second = await c.waitFor(f => f.type === FrameType.GOAWAY && f !== first);
+        expect(goawayFields(second)).toEqual({ lastStreamId: 1, errorCode: ErrorCode.NO_ERROR });
         session.destroy();
         await c.waitClosed();
         const lastStreamIds = goawayLastStreamIds(c.frames);
-        expect(lastStreamIds.length).toBeGreaterThan(1);
+        expect(lastStreamIds.length).toBeGreaterThan(2);
         expect(lastStreamIds.filter(id => id !== 1)).toEqual([]);
       } finally {
         c.destroy();
@@ -2194,7 +2244,7 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
       }
     });
 
-    test("the GOAWAY of a client's close() does not name a pushed stream above an earlier id", async () => {
+    test("each later GOAWAY of a client keeps the lowest id that it sent", async () => {
       const raw = await RawH2Server.listen();
       try {
         const client = await clientWithTwoPushes(raw);
@@ -2204,7 +2254,11 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
         client.close();
         const second = await raw.waitFor(f => f.type === FrameType.GOAWAY && f !== first);
         expect(goawayFields(second)).toEqual({ lastStreamId: 2, errorCode: ErrorCode.NO_ERROR });
-        client.destroy();
+        client.destroy(new Error("boom"));
+        await raw.waitClosed();
+        const lastStreamIds = goawayLastStreamIds(raw.frames);
+        expect(lastStreamIds.length).toBeGreaterThan(2);
+        expect(lastStreamIds.filter(id => id !== 2)).toEqual([]);
       } finally {
         raw.close();
       }
@@ -2241,6 +2295,38 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
         await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 1 && f.payload[0] === 0x71);
         expect(goawayLastStreamIds(raw.frames)).toEqual([]);
         client.close();
+        const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
+        expect(goawayFields(goaway)).toEqual({ lastStreamId: 4, errorCode: ErrorCode.NO_ERROR });
+        client.destroy();
+      } finally {
+        raw.close();
+      }
+    });
+
+    // node reads lastStreamID with ToInt32. 2 ** 32 + 2 is the id 2. 2 ** 31 is negative, which
+    // means the last processed stream.
+    test("a server reads lastStreamID as an int32", async () => {
+      const { server, session, c } = await serverWithTwoRequests();
+      try {
+        session.goaway(ErrorCode.NO_ERROR, 2 ** 32 + 2);
+        // The PING ACK is behind the GOAWAY, if there is one.
+        c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 0x70));
+        await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 1);
+        expect(goawayLastStreamIds(c.frames)).toEqual([]);
+        session.goaway(ErrorCode.NO_ERROR, 2 ** 31);
+        expect(goawayFields(await c.waitForGoaway())).toEqual({ lastStreamId: 3, errorCode: ErrorCode.NO_ERROR });
+      } finally {
+        session.destroy();
+        c.destroy();
+        server.close();
+      }
+    });
+
+    test("a client reads lastStreamID as an int32", async () => {
+      const raw = await RawH2Server.listen();
+      try {
+        const client = await clientWithTwoPushes(raw);
+        client.goaway(ErrorCode.NO_ERROR, 2 ** 31);
         const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
         expect(goawayFields(goaway)).toEqual({ lastStreamId: 4, errorCode: ErrorCode.NO_ERROR });
         client.destroy();

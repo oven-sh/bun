@@ -1127,8 +1127,8 @@ pub(crate) struct H2FrameParser {
     last_stream_id: Cell<u32>,
     /// Copy of `Connection::last_proc_stream_id` (GOAWAY last-stream-id, state.lastProcStreamID).
     last_proc_stream_id: Cell<u32>,
-    /// nghttp2's local_last_stream_id: the id of the last GOAWAY written, else `MAX_STREAM_ID`.
-    sent_goaway_last_stream_id: Cell<u32>,
+    /// nghttp2's local_last_stream_id: the id of the last GOAWAY written, if any.
+    sent_goaway_last_stream_id: Cell<Option<u32>>,
     is_server: Cell<bool>,
     /// A frame callback left an exception pending in this batch (`Sink::should_stop`).
     left_exception: Cell<bool>,
@@ -2192,8 +2192,9 @@ impl H2FrameParser {
 
     /// §6.8: the id must not increase, so every GOAWAY writer takes its id from here.
     fn next_goaway_last_stream_id(&self, wanted: u32) -> u32 {
-        let id = wanted.min(self.sent_goaway_last_stream_id.get());
-        self.sent_goaway_last_stream_id.set(id);
+        let sent = self.sent_goaway_last_stream_id.get();
+        let id = sent.map_or(wanted, |sent| sent.min(wanted));
+        self.sent_goaway_last_stream_id.set(Some(id));
         id
     }
 
@@ -4731,7 +4732,8 @@ impl H2FrameParser {
                         global_object.throw(format_args!("Expected lastStreamId to be a number"))
                     );
                 }
-                let id = last_stream_arg.to_int32();
+                // ToInt32, as node reads it: 2**31 and Infinity are not positive ids.
+                let id = last_stream_arg.coerce_to_i32(global_object)?;
                 // node: a lastStreamID of 0 or less (the JS wrapper's default) means "use the
                 // last processed stream id"; only an explicit positive id overrides it
                 // (validateNumber imposes no range, so negative values reach this path too).
@@ -7493,7 +7495,7 @@ impl H2FrameParser {
             strict_single_value_fields: Cell::new(true),
             last_stream_id: Cell::new(0),
             last_proc_stream_id: Cell::new(0),
-            sent_goaway_last_stream_id: Cell::new(MAX_STREAM_ID),
+            sent_goaway_last_stream_id: Cell::new(None),
             is_server: Cell::new(false),
             left_exception: Cell::new(false),
             write_buffer: JsCell::new(Vec::<u8>::default()),

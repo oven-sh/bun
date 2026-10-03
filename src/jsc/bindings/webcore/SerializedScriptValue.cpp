@@ -2162,14 +2162,12 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             JSValue key, value;
             if (!iterator->nextKeyValue(m_lexicalGlobalObject, key, value)) {
                 mapIteratorStack.removeLast();
-                JSObject* object = inputObjectStack.last();
-                ASSERT(dynamicDowncast<JSMap>(object));
-                propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
-                object->methodTable()->getOwnPropertyNames(object, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                // Keep the legacy property-section markers, but clone only Map entries.
                 write(NonMapPropertiesTag);
-                indexStack.append(0);
-                goto objectStartVisitMember;
+                endObject();
+                inputObjectStack.removeLast();
+                break;
             }
             inValue = key;
             m_gcBuffer.appendWithCrashOnOverflow(value);
@@ -2211,14 +2209,11 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
             if (!hasNext) {
                 setIteratorStack.removeLast();
-                JSObject* object = inputObjectStack.last();
-                ASSERT(dynamicDowncast<JSSet>(object));
-                propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
-                object->methodTable()->getOwnPropertyNames(object, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
-                RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                // Older readers still expect an empty own-property section after Set entries.
                 write(NonSetPropertiesTag);
-                indexStack.append(0);
-                goto objectStartVisitMember;
+                endObject();
+                inputObjectStack.removeLast();
+                break;
             }
             inValue = key;
             stateStack.append(SetDataEndVisitKey);

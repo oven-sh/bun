@@ -71,7 +71,7 @@ describe("serialize & deserialize", () => {
   for (const testType of testTypes) {
     test(`${testType.name}`, async () => {
       const original = testType.createValue();
-      const serialized = serialize(original);
+      const serialized = serialize(original, { binaryType: "nodebuffer" });
 
       const result = Bun.spawnSync({
         cmd: [
@@ -80,7 +80,7 @@ describe("serialize & deserialize", () => {
           `
         import {deserialize, serialize} from "bun:jsc";
         const serialized = deserialize(await Bun.stdin.bytes());
-        const cloned = serialize(serialized);
+        const cloned = serialize(serialized, { binaryType: "nodebuffer" });
         process.stdout.write(cloned);
         `,
         ],
@@ -89,6 +89,7 @@ describe("serialize & deserialize", () => {
         stdout: "pipe",
         stderr: "inherit",
       });
+      expect(result.exitCode).toBe(0);
       const cloned = deserialize(result.stdout);
       testType.expectedAfterClone(original, cloned, TransferMode.no, true);
     });

@@ -10,7 +10,7 @@ Configuration is loaded in this order, with later sources overriding earlier one
 1. `~/.npmrc` (or `$XDG_CONFIG_HOME/.npmrc`)
 2. `./.npmrc`
 3. `bunfig.toml` (global, then project)
-4. `BUN_CONFIG_REGISTRY` / `NPM_CONFIG_REGISTRY` and `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` environment variables
+4. `BUN_CONFIG_REGISTRY` / `NPM_CONFIG_REGISTRY`, `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` and `NPM_CONFIG_IGNORE_SCRIPTS` / `npm_config_ignore_scripts` environment variables
 5. Command-line flags such as `--registry`
 
 Bun matches credentials in `.npmrc` (`//<registry>/:_authToken`, etc.) to registries by host and path, even if you set the registry URL itself in `bunfig.toml`.
@@ -133,6 +133,8 @@ ignore-scripts=true
 ```
 
 This is equivalent to using the `--ignore-scripts` flag with `bun install`.
+
+Bun also reads this option from the `NPM_CONFIG_IGNORE_SCRIPTS` or `npm_config_ignore_scripts` environment variable. The variable overrides `.npmrc` and `bunfig.toml`. See [Configuring with environment variables](/pm/cli/install#configuring-with-environment-variables).
 
 ### `dry-run`: Preview changes without installing
 

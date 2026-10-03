@@ -710,6 +710,28 @@ describe("bundler", () => {
     format: "esm",
     run: { file: "/out/index.js", stdout: "index app 1\nsettings app" },
   });
+  // The namespace of a.js names x.js, which a.js imports behind store.js.
+  itBundled("splitting/FileThatEntryReexportsBehindSharedCodeStaysBehindIt", {
+    files: {
+      "/index.js": /* js */ `
+        import "./setup.js";
+        import * as a from "./a.js";
+        console.log("index", Object.keys(a).join());
+        import("./settings.js");
+      `,
+      "/setup.js": `console.log("setup");`,
+      "/a.js": `import "./store.js"; export { x } from "./x.js";`,
+      "/x.js": `console.log("x", globalThis.APP); export const x = 1;`,
+      "/store.js": `globalThis.APP = 1; console.log("store");`,
+      "/settings.js": `import "./store.js"; console.log("settings");`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "setup\nstore\nx 1\nindex x\nsettings" },
+  });
   itBundled("splitting/EntrySetupImportThatThrowsLeavesSharedCodeToLazyChunk", {
     files: {
       ...setupBeforeShared,

@@ -977,6 +977,43 @@ pub(crate) struct CommandLineReporter {
     pub(crate) timings: Option<Timings>,
 }
 
+/// `Bun__Process__exit` on the main thread: a failed run with exit code 0 gets exit code 1 and its report.
+pub(crate) fn on_process_exit(vm: &mut VirtualMachine) {
+    let Some(runner) = jest::Jest::runner_ptr() else {
+        return;
+    };
+    // SAFETY: `RUNNER` is only accessed on this thread, and no borrow of the runner is held across a call.
+    let request = unsafe { (*runner.as_ptr()).exit_request.take() };
+    let overruled = match vm.exit_handler.exit_code {
+        // SAFETY: see above.
+        0 => unsafe { (*runner.as_ptr()).has_observed_failure() },
+        // The 1 that `note_process_exit` stored in place of a 0.
+        1 => request.is_some(),
+        _ => false,
+    };
+    if !overruled {
+        return;
+    }
+    vm.exit_handler.exit_code = 1;
+    let error = match &request {
+        Some(error) => error.get(),
+        // `process.reallyExit(0)`, or an 'exit' listener that stored 0 after a `process.exit()` with another code.
+        None => vm.global().create_error_instance(format_args!(
+            "The process was told to exit with code 0{}, but this test run has failed. The exit code is 1.",
+            // SAFETY: see above.
+            unsafe { (*runner.as_ptr()).exit_caller() }
+        )),
+    };
+    // SAFETY: `exec` publishes `RUNNER` as `&raw mut reporter.jest`, so the pointer is valid for the whole reporter.
+    unsafe {
+        CommandLineReporter::report_exit(
+            bun_core::from_field_ptr!(CommandLineReporter, jest, runner.as_ptr()),
+            vm,
+            error,
+        );
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct ReportersConfig {
     pub(crate) dots: bool,
@@ -1384,6 +1421,12 @@ impl CommandLineReporter {
             }
         }
 
+        // Before the `--bail` exit below, which prints the counts.
+        this.summary().expectations = this
+            .summary()
+            .expectations
+            .saturating_add(sequence.expect_call_count);
+
         use bun_test::Execution::Result as R;
         match sequence.result {
             R::Pending => {}
@@ -1404,23 +1447,182 @@ impl CommandLineReporter {
                 this.summary().fail += 1;
 
                 if this.summary().fail == this.jest.bail {
-                    this.print_summary();
-                    pretty_error!(
-                        "\nBailed out after {} failure{}<r>\n",
-                        this.jest.bail,
-                        if this.jest.bail == 1 { "" } else { "s" }
-                    );
-                    Output::flush();
-                    this.write_junit_report_if_needed();
-                    this.write_timings_if_needed();
+                    this.write_early_end_report(true);
                     Global::exit(1);
                 }
             }
         }
-        this.summary().expectations = this
-            .summary()
-            .expectations
-            .saturating_add(sequence.expect_call_count);
+    }
+
+    /// The count lines before `print_summary()`. A run that ends early writes no `.snap` file: `snapshots_written` is false.
+    pub(crate) fn print_counts(&self, snapshots_written: bool) {
+        let summary = self.jest.summary;
+        struct DotIndenter {
+            indent: bool,
+        }
+
+        impl core::fmt::Display for DotIndenter {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                if self.indent {
+                    f.write_str(" ")?;
+                }
+                Ok(())
+            }
+        }
+
+        let indenter = DotIndenter {
+            indent: !self.reporters.dots,
+        };
+        if !indenter.indent {
+            pretty_error!("\n");
+        }
+
+        // Display the random seed if tests were randomized
+        if let Some(seed) = self.jest.randomize_seed {
+            pretty_error!("{}<r>--seed={}<r>\n", &indenter, seed);
+        }
+
+        if summary.pass > 0 {
+            pretty_error!("<r><green>");
+        }
+
+        pretty_error!("{}{:5>} pass<r>\n", &indenter, summary.pass);
+
+        if summary.skip > 0 {
+            pretty_error!("{}<r><yellow>{:5>} skip<r>\n", &indenter, summary.skip);
+        } else if summary.skipped_because_label > 0 {
+            pretty_error!(
+                "{}<r><d>{:5>} filtered out<r>\n",
+                &indenter,
+                summary.skipped_because_label
+            );
+        }
+
+        if summary.todo > 0 {
+            pretty_error!("{}<r><magenta>{:5>} todo<r>\n", &indenter, summary.todo);
+        }
+
+        if summary.fail > 0 {
+            pretty_error!("<r><red>");
+        } else {
+            pretty_error!("<r><d>");
+        }
+
+        pretty_error!("{}{:5>} fail<r>\n", &indenter, summary.fail);
+        if self.jest.unhandled_errors_between_tests > 0 {
+            pretty_error!(
+                "{}<r><red>{:5>} error{}<r>\n",
+                &indenter,
+                self.jest.unhandled_errors_between_tests,
+                if self.jest.unhandled_errors_between_tests > 1 {
+                    "s"
+                } else {
+                    ""
+                }
+            );
+        }
+
+        let mut print_expect_calls = summary.expectations > 0;
+        let added = if snapshots_written {
+            self.jest.snapshots.added
+        } else {
+            0
+        };
+        let total = self
+            .jest
+            .snapshots
+            .total
+            .saturating_sub(self.jest.snapshots.added - added);
+        if total > 0 {
+            let passed = self.jest.snapshots.passed;
+            let failed = self.jest.snapshots.failed;
+
+            let mut first = true;
+            if print_expect_calls && added == 0 && failed == 0 {
+                print_expect_calls = false;
+                pretty_error!(
+                    "{}{:5>} snapshots, {:5>} expect() calls",
+                    &indenter,
+                    total,
+                    summary.expectations
+                );
+            } else {
+                pretty_error!("<d>snapshots:<r> ");
+
+                if passed > 0 {
+                    pretty_error!("<d>{} passed<r>", passed);
+                    first = false;
+                }
+
+                if added > 0 {
+                    if first {
+                        first = false;
+                        pretty_error!("<b>+{} added<r>", added);
+                    } else {
+                        pretty_error!("<b>, {} added<r>", added);
+                    }
+                }
+
+                if failed > 0 {
+                    if first {
+                        pretty_error!("<red>{} failed<r>", failed);
+                    } else {
+                        pretty_error!(", <red>{} failed<r>", failed);
+                    }
+                }
+            }
+
+            pretty_error!("\n");
+        }
+
+        if print_expect_calls {
+            pretty_error!("{}{:5>} expect() calls\n", &indenter, summary.expectations);
+        }
+    }
+
+    /// Prints `error` and the early-end report, once per process. `this` is the live reporter.
+    unsafe fn report_exit(
+        this: *mut CommandLineReporter,
+        vm: &mut VirtualMachine,
+        error: jsc::JSValue,
+    ) {
+        // SAFETY: no borrow of `*this` is held across `end_failed_sequences_in_flight`, which reaches the reporter too.
+        unsafe {
+            if core::mem::replace(&mut (*this).jest.report_written, true) {
+                return;
+            }
+            let active_file = (*this).jest.bun_test_root.clone_active_file();
+            (*this).jest.bun_test_root.on_before_print();
+            if active_file.is_some() && Output::is_github_action() {
+                pretty_errorln!("<r>\n::endgroup::\n");
+            }
+            vm.run_error_handler(error, None);
+            if let Some(file) = &active_file {
+                bun_test::Execution::Execution::end_failed_sequences_in_flight(
+                    core::ptr::NonNull::new_unchecked(file.as_ptr()),
+                );
+            }
+            (*this).write_early_end_report(false);
+        }
+    }
+
+    /// The counts, the summary line and the report files of a run that ends before the tail of `exec`.
+    fn write_early_end_report(&mut self, bailed: bool) {
+        pretty_error!("\n");
+        self.print_counts(false);
+        self.print_summary();
+        if bailed {
+            pretty_error!(
+                "\nBailed out after {} failure{}<r>\n",
+                self.jest.bail,
+                if self.jest.bail == 1 { "" } else { "s" }
+            );
+        } else {
+            pretty_error!("\n");
+        }
+        Output::flush();
+        self.write_junit_report_if_needed();
+        self.write_timings_if_needed();
     }
 
     pub(crate) fn print_summary(&mut self) {
@@ -1872,6 +2074,9 @@ impl TestCommand {
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
                 node_test_used: false,
+                exit_request: None,
+                report_written: false,
+                run_failed: false,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
@@ -1892,8 +2097,9 @@ impl TestCommand {
         // SAFETY: single-threaded CLI startup; `reporter` is a `Box` that lives
         // until `exec()` exits the process, so `&mut reporter.jest` remains
         // valid for the process lifetime.
+        // `&raw mut`, so `on_process_exit` can recover the reporter from this pointer.
         unsafe {
-            jest::Jest::RUNNER.write(Some(core::ptr::NonNull::from(&mut reporter.jest)));
+            jest::Jest::RUNNER.write(core::ptr::NonNull::new(&raw mut reporter.jest));
         }
         // `reporter.jest.test_options` is initialised in the struct
         // literal above (lifetime-erased); the post-init assignment is dropped.
@@ -2514,119 +2720,7 @@ impl TestCommand {
                 && reporter.jest.unhandled_errors_between_tests == 0;
 
             if !did_label_filter_out_all_tests {
-                struct DotIndenter {
-                    indent: bool,
-                }
-
-                impl core::fmt::Display for DotIndenter {
-                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                        if self.indent {
-                            f.write_str(" ")?;
-                        }
-                        Ok(())
-                    }
-                }
-
-                let indenter = DotIndenter {
-                    indent: !ctx.test_options.reporters.dots,
-                };
-                if !indenter.indent {
-                    pretty_error!("\n");
-                }
-
-                // Display the random seed if tests were randomized
-                if random_instance.is_some() {
-                    pretty_error!("{}<r>--seed={}<r>\n", &indenter, seed);
-                }
-
-                if summary.pass > 0 {
-                    pretty_error!("<r><green>");
-                }
-
-                pretty_error!("{}{:5>} pass<r>\n", &indenter, summary.pass);
-
-                if summary.skip > 0 {
-                    pretty_error!("{}<r><yellow>{:5>} skip<r>\n", &indenter, summary.skip);
-                } else if summary.skipped_because_label > 0 {
-                    pretty_error!(
-                        "{}<r><d>{:5>} filtered out<r>\n",
-                        &indenter,
-                        summary.skipped_because_label
-                    );
-                }
-
-                if summary.todo > 0 {
-                    pretty_error!("{}<r><magenta>{:5>} todo<r>\n", &indenter, summary.todo);
-                }
-
-                if summary.fail > 0 {
-                    pretty_error!("<r><red>");
-                } else {
-                    pretty_error!("<r><d>");
-                }
-
-                pretty_error!("{}{:5>} fail<r>\n", &indenter, summary.fail);
-                if reporter.jest.unhandled_errors_between_tests > 0 {
-                    pretty_error!(
-                        "{}<r><red>{:5>} error{}<r>\n",
-                        &indenter,
-                        reporter.jest.unhandled_errors_between_tests,
-                        if reporter.jest.unhandled_errors_between_tests > 1 {
-                            "s"
-                        } else {
-                            ""
-                        }
-                    );
-                }
-
-                let mut print_expect_calls = summary.expectations > 0;
-                if reporter.jest.snapshots.total > 0 {
-                    let passed = reporter.jest.snapshots.passed;
-                    let failed = reporter.jest.snapshots.failed;
-                    let added = reporter.jest.snapshots.added;
-
-                    let mut first = true;
-                    if print_expect_calls && added == 0 && failed == 0 {
-                        print_expect_calls = false;
-                        pretty_error!(
-                            "{}{:5>} snapshots, {:5>} expect() calls",
-                            &indenter,
-                            reporter.jest.snapshots.total,
-                            summary.expectations
-                        );
-                    } else {
-                        pretty_error!("<d>snapshots:<r> ");
-
-                        if passed > 0 {
-                            pretty_error!("<d>{} passed<r>", passed);
-                            first = false;
-                        }
-
-                        if added > 0 {
-                            if first {
-                                first = false;
-                                pretty_error!("<b>+{} added<r>", added);
-                            } else {
-                                pretty_error!("<b>, {} added<r>", added);
-                            }
-                        }
-
-                        if failed > 0 {
-                            if first {
-                                pretty_error!("<red>{} failed<r>", failed);
-                            } else {
-                                pretty_error!(", <red>{} failed<r>", failed);
-                            }
-                        }
-                    }
-
-                    pretty_error!("\n");
-                }
-
-                if print_expect_calls {
-                    pretty_error!("{}{:5>} expect() calls\n", &indenter, summary.expectations);
-                }
-
+                reporter.print_counts(true);
                 reporter.print_summary();
             } else {
                 pretty_error!(
@@ -2652,6 +2746,7 @@ impl TestCommand {
         if !test_files.is_empty() || ctx.test_options.shard.is_some() {
             reporter.write_timings_if_needed();
         }
+        reporter.jest.report_written = true;
 
         if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
             let vm_ptr: *mut VirtualMachine = vm;
@@ -2673,6 +2768,7 @@ impl TestCommand {
             || reporter.jest.unhandled_errors_between_tests > 0
         {
             vm.exit_handler.exit_code = 1;
+            reporter.jest.run_failed = true;
         }
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
         vm.exit_handler.requested = exit_is_requested();
@@ -2683,6 +2779,10 @@ impl TestCommand {
             // `run_with_api_lock` takes `&self` only, so the closure holds the
             // unique mutable access on this single-threaded path.
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+        }
+        // An 'exit' listener can store exit code 0 with `process.exitCode`. The verdict of the run stands.
+        if reporter.jest.run_failed && vm.exit_handler.exit_code == 0 {
+            vm.exit_handler.exit_code = 1;
         }
         // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
@@ -2920,11 +3020,19 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
-            // Only count the file once, not once per repeat
+            // Only count the file once, not once per repeat. Before the load, so a summary printed during it has the file.
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }
+            let promise = match vm.load_entry_point_for_test_runner(file_path) {
+                Ok(promise) => promise,
+                Err(err) => {
+                    if repeat_index == 0 {
+                        reporter.summary().files -= 1;
+                    }
+                    return Err(err.into());
+                }
+            };
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
             match jsc::JSInternalPromise::opaque_mut(promise).status() {
@@ -2938,14 +3046,7 @@ impl TestCommand {
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {
-                        reporter.print_summary();
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            reporter.jest.bail,
-                            if reporter.jest.bail == 1 { "" } else { "s" }
-                        );
-                        reporter.write_junit_report_if_needed();
-                        reporter.write_timings_if_needed();
+                        reporter.write_early_end_report(true);
 
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;

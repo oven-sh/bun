@@ -185,6 +185,8 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" void Bun__setExitCode(void*, uint8_t);
+extern "C" bool Bun__TestRunner__noteProcessExit(JSC::JSGlobalObject*, bool argless);
+extern "C" void Bun__TestRunner__cancelProcessExit(JSC::JSGlobalObject*);
 extern "C" void Bun__closeChildIPC(JSGlobalObject*);
 
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
@@ -901,6 +903,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
 
     setProcessExitCodeInner(globalObject, process, code);
     RETURN_IF_EXCEPTION(throwScope, {});
+
+    // A `bun test` run that has failed exits 1 where node exits 0, and the 'exit' listeners are told so.
+    bool wasExitCodeObservable = process->m_isExitCodeObservable;
+    bool noted = isBunTest && !Bun__getExitCode(bunVM(zigGlobal)) && Bun__TestRunner__noteProcessExit(zigGlobal, code.isUndefinedOrNull());
+    auto undoNote = WTF::makeScopeExit([&] {
+        if (noted) {
+            process->m_isExitCodeObservable = wasExitCodeObservable;
+            Bun__TestRunner__cancelProcessExit(zigGlobal);
+        }
+    });
+    if (noted)
+        process->m_isExitCodeObservable = true;
 
     Process__dispatchOnExit(zigGlobal, Bun__getExitCode(bunVM(zigGlobal)));
     RETURN_IF_EXCEPTION(throwScope, {});

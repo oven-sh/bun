@@ -148,10 +148,83 @@ pub(crate) struct TestRunner<'a> {
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
     pub(crate) node_test_used: bool,
 
+    /// The `Error` of a `process.exit()` that `note_process_exit` overruled. Its stack is the call site.
+    pub(crate) exit_request: Option<jsc::Strong>,
+    /// The counts, the JUnit file and the timings file are written: at the end of the run, or before a `process.exit()`.
+    pub(crate) report_written: bool,
+    /// The end of the run stored exit code 1. It holds the reasons that `summary` does not: coverage, snapshots, no tests.
+    pub(crate) run_failed: bool,
+
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
 
+/// See [`TestRunner::exit_caller`]. Displays as a phrase that follows "was called".
+pub(crate) enum ExitCaller<'a> {
+    Test(&'a [u8]),
+    HookOfTest(&'a [u8]),
+    Hook,
+    Unknown,
+}
+
+impl core::fmt::Display for ExitCaller<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ExitCaller::Test(name) => write!(f, " by the test \"{}\"", bstr::BStr::new(name)),
+            ExitCaller::HookOfTest(name) => {
+                write!(f, " by a hook of the test \"{}\"", bstr::BStr::new(name))
+            }
+            ExitCaller::Hook => f.write_str(" by a hook"),
+            ExitCaller::Unknown => Ok(()),
+        }
+    }
+}
+
 impl<'a> TestRunner<'a> {
+    /// Whether the run in this process has failed. Counts a failed sequence that still runs its hooks.
+    pub(crate) fn has_observed_failure(&self) -> bool {
+        // The coordinator reports the exit of a `--parallel` worker.
+        if self.test_options.test_worker {
+            return false;
+        }
+        if self.summary.fail > 0 || self.unhandled_errors_between_tests > 0 || self.run_failed {
+            return true;
+        }
+        let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
+            return false;
+        };
+        active_file.phase == bun_test::Phase::Execution
+            && active_file.execution.active_group_ref().is_some_and(|group| {
+                group
+                    .sequences_const(&active_file.execution)
+                    .iter()
+                    .any(|sequence| sequence.result.is_fail())
+            })
+    }
+
+    /// The test or hook on the stack, for a message about a call in tail position: it has no stack frame of its caller.
+    pub(crate) fn exit_caller(&self) -> ExitCaller<'_> {
+        let Some(file) = self.bun_test_root.active_file.as_deref() else {
+            return ExitCaller::Unknown;
+        };
+        let execution = &file.execution;
+        let (Some(data), Some(group)) = (execution.on_stack_entry_data.get(), execution.active_group_ref()) else {
+            return ExitCaller::Unknown;
+        };
+        let Some(sequence) = group.sequences_const(execution).get(data.sequence_index) else {
+            return ExitCaller::Unknown;
+        };
+        let Some(test) = sequence.test_entry else {
+            return ExitCaller::Hook;
+        };
+        // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+        let name = unsafe { test.as_ref() }.base.name.as_deref().unwrap_or(b"(unnamed)");
+        if core::ptr::eq(test.as_ptr().cast_const().cast::<()>(), data.entry) {
+            ExitCaller::Test(name)
+        } else {
+            ExitCaller::HookOfTest(name)
+        }
+    }
+
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;
@@ -318,6 +391,51 @@ pub(crate) mod Jest {
     pub(crate) fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
         // SAFETY: RUNNER is only ever accessed from the single JS VM thread.
         unsafe { RUNNER.read() }
+    }
+
+    /// Before `process.exit()` emits 'exit' with code 0: a failed run gets code 1, and the call site is kept.
+    #[unsafe(export_name = "Bun__TestRunner__noteProcessExit")]
+    extern "C" fn note_process_exit(global: &JSGlobalObject, argless: bool) -> bool {
+        let vm = global.bun_vm().as_mut();
+        // The field: the method is also true on the debugger thread, and `RUNNER` belongs to the main thread.
+        if !vm.is_main_thread {
+            return false;
+        }
+        let Some(runner) = runner_ptr() else {
+            return false;
+        };
+        // SAFETY: `RUNNER` is only accessed on this thread, and no `&mut TestRunner` is formed.
+        unsafe {
+            if !(*runner.as_ptr()).has_observed_failure() {
+                return false;
+            }
+            let request = &mut (*runner.as_ptr()).exit_request;
+            // An 'exit' listener that exits again keeps the first call site.
+            if request.is_none() {
+                let call = if argless { "process.exit()" } else { "process.exit(0)" };
+                let error = global.create_error_instance(format_args!(
+                    "{call} was called{}, but this test run has failed. The exit code is 1.",
+                    (*runner.as_ptr()).exit_caller()
+                ));
+                *request = Some(jsc::Strong::create(error, global));
+            }
+        }
+        vm.exit_handler.exit_code = 1;
+        true
+    }
+
+    /// `process.exit()` returned to JS after `note_process_exit`, so the run continues with its 0.
+    #[unsafe(export_name = "Bun__TestRunner__cancelProcessExit")]
+    extern "C" fn cancel_process_exit(global: &JSGlobalObject) {
+        if let Some(runner) = runner_ptr() {
+            // SAFETY: as in `note_process_exit`.
+            unsafe { (*runner.as_ptr()).exit_request = None };
+        }
+        let exit_code = &mut global.bun_vm().as_mut().exit_handler.exit_code;
+        // Another code is one that an 'exit' listener stored.
+        if *exit_code == 1 {
+            *exit_code = 0;
+        }
     }
 
     #[unsafe(no_mangle)]

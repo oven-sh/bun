@@ -225,6 +225,7 @@ struct WalkPlan {
     slot_of_chunk: Vec<u32>,
     /// With code splitting: the entry point id of each entry point's file, `u32::MAX` for the others.
     entry_id_of_file: Vec<u32>,
+    reached_by_import_statements: Vec<bool>,
 }
 
 impl WalkPlan {
@@ -237,6 +238,7 @@ impl WalkPlan {
             owner_of_chunk: vec![u32::MAX; chunks.len()],
             slot_of_chunk: vec![0; chunks.len()],
             entry_id_of_file: Vec::new(),
+            reached_by_import_statements: files_reached_by_import_statements(c),
         };
 
         if code_splitting {
@@ -329,9 +331,28 @@ enum Edge {
     LoadLater(IndexInt),
 }
 
+/// The files that a chain of `import` statements from an entry point gets to. Where in the order they go is up to those
+/// statements alone: in an import cycle, one that is not evaluated yet when a part mentions it is not evaluated for that.
+fn files_reached_by_import_statements(c: &LinkerContext) -> Vec<bool> {
+    let mut reached = vec![false; c.graph.files.len()];
+    let mut stack: Vec<IndexInt> = c.graph.entry_points.items_source_index().to_vec();
+    while let Some(source_index) = stack.pop() {
+        if core::mem::replace(&mut reached[source_index as usize], true) {
+            continue;
+        }
+        for record in c.graph.ast.items_import_records()[source_index as usize].as_slice() {
+            if record.source_index.is_valid() && record.kind == ImportKind::Stmt {
+                stack.push(record.source_index.get());
+            }
+        }
+    }
+    reached
+}
+
 /// The files that a file leads to, in evaluation order, with the part that leads there. `runs`: the load evaluates the file.
 fn for_each_edge(
     c: &LinkerContext,
+    reached_by_import_statements: &[bool],
     source_index: IndexInt,
     runs: bool,
     mut each: impl FnMut(u32, Edge),
@@ -374,7 +395,9 @@ fn for_each_edge(
         // A file that the `import` statements did not reach: ahead of the part that uses it.
         if runs_here && part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX {
             for dependency in part.dependencies.iter() {
-                each(part_index, Edge::Import(dependency.source_index.get()));
+                if !reached_by_import_statements[dependency.source_index.get() as usize] {
+                    each(part_index, Edge::Import(dependency.source_index.get()));
+                }
             }
         }
     }
@@ -407,6 +430,7 @@ enum LoadFrame {
 /// Per entry point id: when it loads. The user's first, then the on-demand ones as evaluation meets them, then the rest.
 fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
     const QUEUED: u32 = u32::MAX - 1;
+    let reached_by_import_statements = files_reached_by_import_statements(c);
     let files_len = c.graph.files.len();
     let entry_points = c.graph.entry_points.items_source_index();
     let entry_point_kinds = c.graph.files.items_entry_point_kind();
@@ -479,7 +503,7 @@ fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
             }
 
             let mark = stack.len();
-            for_each_edge(c, source_index, evaluates, |_, edge| {
+            for_each_edge(c, &reached_by_import_statements, source_index, evaluates, |_, edge| {
                 stack.push(match edge {
                     Edge::Import(source_index) => LoadFrame::Enter {
                         source_index,
@@ -673,7 +697,7 @@ impl EntryWalk {
                 });
             };
 
-            for_each_edge(c, source_index, runs, |part_index, edge| match edge {
+            for_each_edge(c, &plan.reached_by_import_statements, source_index, runs, |part_index, edge| match edge {
                 Edge::Import(other) => import(part_index, other, loader),
                 Edge::LoadNow(other) => {
                     import(part_index, other, plan.entry_id_of_file[other as usize])

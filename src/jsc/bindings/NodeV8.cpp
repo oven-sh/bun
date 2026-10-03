@@ -3,6 +3,7 @@
 #include "root.h"
 
 #include "ErrorCode.h"
+#include "BunClientData.h"
 #include "NodeV8.h"
 #include "ZigGlobalObject.h"
 
@@ -16,6 +17,19 @@
 namespace Bun {
 
 using namespace JSC;
+
+JSC_DEFINE_HOST_FUNCTION(functionGetHeapUsage, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    size_t used = WebCore::clientData(vm)->heapUsage();
+    size_t capacity = std::max(vm.heap.capacity(), used);
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "heapSize"_s), jsNumber(used));
+    result->putDirect(vm, Identifier::fromString(vm, "heapCapacity"_s), jsNumber(capacity));
+    result->putDirect(vm, Identifier::fromString(vm, "extraMemorySize"_s), jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+}
 
 // v8.isStringOneByteRepresentation() asks whether the engine is storing the
 // string with one byte per character. JSC's JSString::is8Bit() answers exactly
@@ -98,6 +112,7 @@ JSC::JSObject* createNodeV8Binding(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSObject* object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getHeapUsage"_s), 0, functionGetHeapUsage, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "isStringOneByteRepresentation"_s), 1, functionIsStringOneByteRepresentation, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "startGCProfiler"_s), 0, functionStartGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "stopGCProfiler"_s), 1, functionStopGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);

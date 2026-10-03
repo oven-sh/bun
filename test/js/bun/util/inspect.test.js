@@ -141,6 +141,21 @@ it("Blob inspect", () => {
 }`);
 });
 
+it("Response and Request print no size for a Bun.file() body whose size is unknown", () => {
+  using dir = tempDir("inspect-unknown-size", {});
+  const firstLines = file => [
+    Bun.inspect(new Response(file)).split("\n")[0],
+    Bun.inspect(new Request("http://example.com/", { method: "POST", body: file })).split("\n")[0],
+  ];
+  expect({
+    missing: firstLines(Bun.file(join(String(dir), "missing.txt"))),
+    directory: firstLines(Bun.file(String(dir))),
+  }).toEqual({
+    missing: ["Response {", "Request {"],
+    directory: ["Response {", "Request {"],
+  });
+});
+
 it("utf16 property name", () => {
   var { Database } = require("bun:sqlite");
   const db = Database.open(":memory:");

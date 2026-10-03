@@ -1266,6 +1266,41 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
       ]);
     });
 
+    test("exists() sees a file that was created before the clone", async () => {
+      const path = join(tempDirWithFiles("body-clone-created", {}), "later.txt");
+      const file = Bun.file(path);
+      expect(await file.exists()).toBe(false);
+      writeFileSync(path, "12345");
+      new Response(file).clone();
+      expect(await file.exists()).toBe(true);
+    });
+
+    test("the size console.log prints for the clone", () => {
+      const sizeOf = (change: (path: string) => void, body: (file: Bun.BunFile) => Blob) => {
+        const path = join(tempDirWithFiles("body-clone-label", { "log.txt": "12345" }), "log.txt");
+        const clone = new Response(body(Bun.file(path))).clone();
+        change(path);
+        return Bun.inspect(clone).split("\n")[0];
+      };
+      expect({
+        whole: sizeOf(
+          () => {},
+          file => file,
+        ),
+        slice: sizeOf(
+          () => {},
+          file => file.slice(1, 4),
+        ),
+        grew: sizeOf(grow, file => file),
+        deleted: sizeOf(unlinkSync, file => file),
+      }).toEqual({
+        whole: "Response (5 bytes) {",
+        slice: "Response (3 bytes) {",
+        grew: "Response (9 bytes) {",
+        deleted: "Response {",
+      });
+    });
+
     // procfs reports `st_size == 0` for a file that has content, so with that stat cached all three read "".
     test.skipIf(!isLinux)("a procfs file is read whole", async () => {
       const file = Bun.file("/proc/sys/kernel/ostype");

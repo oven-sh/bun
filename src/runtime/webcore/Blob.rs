@@ -1254,8 +1254,13 @@ impl BlobExt for Blob {
     }
 
     fn get_exists_sync(&self) -> JSValue {
-        if self.size.get() == MAX_SIZE {
-            self.resolve_size();
+        match self.store.get() {
+            _ if self.size.get() == MAX_SIZE => self.resolve_size(),
+            // A failed stat is not an answer to keep: the file may exist by now.
+            Some(store) if matches!(&store.data, store::Data::File(file) if file.seekable.is_none()) => {
+                resolve_file_stat(store)
+            }
+            _ => {}
         }
 
         // If there's no store that means it's empty and we just return true
@@ -1996,7 +2001,8 @@ impl BlobExt for Blob {
     }
 
     fn get_size_for_bindings(&self) -> u64 {
-        if self.size.get() == MAX_SIZE {
+        let has_size = self.size.get() != MAX_SIZE;
+        if !has_size {
             self.resolve_size();
         }
 
@@ -2004,7 +2010,13 @@ impl BlobExt for Blob {
         // signal that the size is unknown.
         if let Some(store) = self.store.get() {
             if let store::Data::File(file) = &store.data {
-                if !file.seekable.unwrap_or(false) {
+                // A slice has its size without a stat, and `clone()` learns the mode without filling `seekable`.
+                let mode_seen_by_clone = file.mode_seen_by_clone.filter(|_| has_size);
+                if !file
+                    .seekable
+                    .or(mode_seen_by_clone.map(bun_sys::S::ISREG))
+                    .unwrap_or(false)
+                {
                     return u64::MAX;
                 }
             }

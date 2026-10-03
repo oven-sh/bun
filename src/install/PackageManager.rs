@@ -205,7 +205,8 @@ pub use super::package_installer::PackageInstaller;
 pub use self::package_manager_directories as directories;
 use directories::attempt_to_create_package_json_and_open;
 pub use directories::{
-    attempt_to_create_package_json, cached_git_folder_name, cached_git_folder_name_print,
+    GIT_CLONE_FOLDER_NAME_BUF_LEN, attempt_to_create_package_json,
+    cached_git_clone_folder_name_print, cached_git_folder_name, cached_git_folder_name_print,
     cached_git_folder_name_print_auto, cached_github_folder_name, cached_github_folder_name_print,
     cached_github_folder_name_print_auto, cached_npm_package_folder_name,
     cached_npm_package_folder_name_print, cached_npm_package_folder_print_basename,

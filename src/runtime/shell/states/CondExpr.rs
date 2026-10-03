@@ -167,8 +167,7 @@ impl CondExpr {
     ) -> Yield {
         let parent = interp.as_condexpr(this).base.parent;
         if let Some(e) = err {
-            // Recover the positive errno (`to_shell_system_error` negated it).
-            let exit_code: ExitCode = e.errno.unsigned_abs() as ExitCode;
+            let exit_code: ExitCode = e.get_errno() as ExitCode;
             return interp.child_done(parent, this, exit_code);
         }
         if matches!(

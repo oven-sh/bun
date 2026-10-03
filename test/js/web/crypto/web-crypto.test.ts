@@ -402,6 +402,39 @@ describe("RSA-PSS saltLength", () => {
   });
 });
 
+describe("RsaKeyAlgorithm.modulusLength of an imported key", () => {
+  // A 2048-bit modulus. The cases below rewrite its leading byte, so the imported public
+  // keys are not usable, but import does not check that and modulusLength only reads n.
+  const n2048 = Buffer.from(
+    "tlDxtZRH4vbofKSZ8LrdGT3fCcx9t5bKCC6ereq1LV7El_sfVG3fw4c7DzSopwskZpTIO6OwzlejIGW3P_1dSGDUCokiXkeXXo74ioOwzPfJ8jkGCgRVNC3Ivbk_317MtPXt2f9hKOB9c4WAZlNYCubeDJdjkd7vXvAlcxvzM51hTa1-vFk3H27F3tdthu3alRKorOWW_O9XHQNv8mcx-5kILj-t_YbSQayRujvZA8Lq26O09uHg83R8STuouQeC0FuDWqrwyKsJ5k20VPxu--RxUossFzf2SK3iHdURG0lNEOQuLFyZpZJLTIhJAe3mw7n2N4Q9p--N4TdL0K9EeQ",
+    "base64url",
+  );
+  const withLeadingByte = (byte: number) => {
+    const n = Uint8Array.from(n2048);
+    n[0] = byte;
+    return n;
+  };
+  const modulusLength = (n: Uint8Array) =>
+    crypto.subtle
+      .importKey(
+        "jwk",
+        { kty: "RSA", n: Buffer.from(n).toString("base64url"), e: "AQAB" },
+        { name: "RSA-OAEP", hash: "SHA-256" },
+        true,
+        ["encrypt"],
+      )
+      .then(k => (k.algorithm as RsaKeyAlgorithm).modulusLength);
+
+  it("is the bit length of n, not its byte length times 8", async () => {
+    expect({
+      2048: await modulusLength(n2048),
+      2047: await modulusLength(withLeadingByte(0x40 | (n2048[0] & 0x3f))),
+      2041: await modulusLength(withLeadingByte(1)),
+      2049: await modulusLength(new Uint8Array([1, ...n2048])),
+    }).toEqual({ 2048: 2048, 2047: 2047, 2041: 2041, 2049: 2049 });
+  });
+});
+
 describe("Ed25519", () => {
   describe("generateKey", () => {
     it("should return CryptoKeys without namedCurve in algorithm field", async () => {

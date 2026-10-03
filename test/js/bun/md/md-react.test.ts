@@ -79,6 +79,18 @@ describe("Bun.markdown.react", () => {
     expect(link.props.children).toEqual(["click"]);
   });
 
+  test("email autolink with underscore in the local part is one link element", () => {
+    const p = children("mail first_last@company.com now\n", undefined, { autolinks: true })[0];
+    expect(p.props.children).toHaveLength(3);
+    const [before, link, after] = p.props.children;
+    expect({ before, type: link.type, children: link.props.children, after }).toEqual({
+      before: "mail ",
+      type: "a",
+      children: ["first_last@company.com"],
+      after: " now",
+    });
+  });
+
   test("image has src and alt in props", () => {
     const img = children("![alt](img.png)\n")[0].props.children[0];
     expect(img.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);

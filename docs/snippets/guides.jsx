@@ -153,6 +153,10 @@ export const GuidesList = () => {
           { title: "Build an HTTP server using Elysia and Bun", href: "/guides/ecosystem/elysia" },
           { title: "Containerize a Bun application with Docker", href: "/guides/ecosystem/docker" },
           {
+            title: "Containerize a Next.js app with Bun and Docker",
+            href: "/guides/ecosystem/nextjs-docker",
+          },
+          {
             title: "Build an HTTP server using Express and Bun",
             href: "/guides/ecosystem/express",
           },

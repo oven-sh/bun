@@ -1079,8 +1079,8 @@ class BunWebSocketMocked extends EventEmitter {
     while ((chunk = this.#enquedMessages[0]) && this.#state === 1) {
       const [data, compress, cb] = chunk;
       const written = ws.send(data, compress);
-      if (written < 1) {
-        // backpressure wait until next drain event
+      if (written === 0) {
+        // dropped again: wait for the next drain event. -1 is not a drop, uws buffered the message.
         return;
       }
 

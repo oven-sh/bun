@@ -998,7 +998,7 @@ describe("bun test", () => {
         input: `
           import { test, expect } from "bun:test";
 
-          test.each(${JSON.stringify(input)})("with an object: %o", (o) => {
+          test.each(${JSON.stringify(input)})("with an object: %j", (o) => {
             expect(o).toBe(o);
           });
         `,
@@ -1027,7 +1027,7 @@ describe("bun test", () => {
           });
         `,
       });
-      expect(stderr).toContain(`with an object: ${JSON.stringify(input[0])}`);
+      expect(stderr).toContain(`with an object: { foo: "bar", nested: { again: { a: 2 } } }`);
     });
     test("check formatting for %#", () => {
       const numbers = [
@@ -1070,6 +1070,65 @@ describe("bun test", () => {
       expect(stderr).toContain(`%`);
     });
     test.todo("check formatting for %p", () => {});
+    test("formats titles with Jest's printf coercions, escapes and index placeholders", () => {
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test } from "bun:test";
+          test.each([[1, 2, 3]])("%s + %s = %s", () => {});
+          test.each([["3.9"], [2 ** 53], [1e21], ["0x1f"], ["  -42abc"], ["abc"]])("i=%i", () => {});
+          test.each([["3.9e2"], ["-Infinity"], ["abc"]])("f=%f", () => {});
+          test.each([["3"], [true], [null], [{}], [10n], [Symbol("s")], [-0]])("d=%d", () => {});
+          test.each([[{ a: 1 }], [[1, 2]], [null], [undefined], [10n], [Symbol("s")], [-0]])("s=%s", () => {});
+          test.each([[7]])("%i then %# (%$ of %%)", () => {});
+          test.each([[1]])("%d is 100%%", () => {});
+          test.each([[1]])("odd %z num=%$", () => {});
+          test.each([[1]])("trailing %", () => {});
+          test.each([[1]])("%s %s %d", () => {});
+          test.each([[]])("empty %s %% %#", () => {});
+          test.each([[1, "x%sy", 3]])("%s %s %s", () => {});
+          test.each([["x", { a: "y" }]])("p=%p O=%O", () => {});
+        `,
+      });
+      const titles = stderr
+        .split("\n")
+        .filter(line => line.startsWith("(pass) "))
+        .map(line => line.slice("(pass) ".length).replace(/ \[[\d.]+ms\]$/, ""));
+      expect(titles).toEqual([
+        "1 + 2 = 3",
+        "i=3",
+        "i=9007199254740992",
+        "i=1",
+        "i=31",
+        "i=-42",
+        "i=NaN",
+        "f=390",
+        "f=-Infinity",
+        "f=NaN",
+        "d=3",
+        "d=1",
+        "d=0",
+        "d=NaN",
+        "d=10n",
+        "d=NaN",
+        "d=-0",
+        "s={ a: 1 }",
+        "s=[ 1, 2 ]",
+        "s=null",
+        "s=undefined",
+        "s=10n",
+        "s=Symbol(s)",
+        "s=-0",
+        "7 then 0 (1 of %)",
+        "1 is 100%",
+        "odd %z num=1",
+        "trailing %",
+        "1 %s %d",
+        "empty %s % 0",
+        "1 x%sy 3",
+        'p="x" O={ a: "y" }',
+      ]);
+    });
 
     describe("$variable syntax", () => {
       test("should replace $variables with object properties in test names", () => {
@@ -1272,12 +1331,7 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain("underscore");
-        expect(stderr).toContain("dollar");
-        expect(stderr).toContain("mix");
-        expect(stderr).toContain("$123invalid");
-        expect(stderr).toContain("$hasdash");
-        expect(stderr).toContain("$hasspace");
+        expect(stderr).toContain("Edge: underscore | dollar | mix | $123invalid | $has-dash | $has space");
       });
 
       test("handles deeply nested properties with arrays", () => {
@@ -1373,7 +1427,76 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain("1 | $missing| $a.b.c| 1");
+        expect(stderr).toContain("1 | $missing | $a.b.c | 1");
+      });
+
+      test("renders null and undefined values, $# and a literal $ without eating the next character", () => {
+        const stderr = runTest({
+          args: [],
+          input: `
+            import { test } from "bun:test";
+            test.each([{ a: null, b: 5 }])("a=$a|b=$b|", () => {});
+            test.each([{ a: undefined, b: 5 }])("a=$a|b=$b|", () => {});
+            test.each([{ a: 1 }, { a: 2 }])("idx=$# end", () => {});
+            test.each([{ a: 1 }])("\${a} braces", () => {});
+            test.each([{ a: 1 }])("$5 USD $a", () => {});
+            test.each([{ a: 1 }])("100%% $a", () => {});
+          `,
+        });
+        const titles = stderr
+          .split("\n")
+          .filter(line => line.startsWith("(pass) "))
+          .map(line => line.slice("(pass) ".length).replace(/ \[[\d.]+ms\]$/, ""));
+        expect(titles).toEqual([
+          "a=null|b=5|",
+          "a=undefined|b=5|",
+          "idx=0 end",
+          "idx=1 end",
+          "${a} braces",
+          "$5 USD 1",
+          "100% 1",
+        ]);
+      });
+
+      test("reads a $name by code point, so a non-ASCII key resolves", () => {
+        const stderr = runTest({
+          args: [],
+          input: `
+            import { test } from "bun:test";
+            test.each([{ café: "one", 名前: "Alice", 값: 42 }])("unicode $café $名前 $값", () => {});
+            test.each([{ ê: "E-CIRC", é: "E-ACUTE", µ: "MICRO", 𝒳: "ASTRAL" }])("[$ê] [$é] [$µ] [$𝒳]", () => {});
+            test.each([{ temp: 21, a: "x", b: "y" }])("$temp°C $a→$b", () => {});
+            test.each([{ a: { é: 1 }, é: { b: 2 } }])("$a.é $é.b $a.é→", () => {});
+            test.each([{ "caf\\uFFFD": "wrong", café: "right" }])("$café", () => {});
+            test.each([{ a: 1 }])("missing $café and $名前 stay whole, $a", () => {});
+          `,
+        });
+        const titles = stderr
+          .split("\n")
+          .filter(line => line.startsWith("(pass) "))
+          .map(line => line.slice("(pass) ".length).replace(/ \[[\d.]+ms\]$/, ""));
+        expect(titles).toEqual([
+          "unicode one Alice 42",
+          "[E-CIRC] [E-ACUTE] [MICRO] [ASTRAL]",
+          "21°C x→y",
+          "1 2 1→",
+          "right",
+          "missing $café and $名前 stay whole, 1",
+        ]);
+      });
+
+      test("a $name is an identifier path: other keys and longer names stay literal", () => {
+        const stderr = runTest({
+          args: [],
+          input: `
+            import { test } from "bun:test";
+            test.each([{ a: 1, n: 3, name: "x", "÷": "div", "·": "dot", "😀": "emoji" }])(
+              "[$aש] [$n個] [$name을] [$÷] [$·] [$😀]",
+              () => {},
+            );
+          `,
+        });
+        expect(stderr).toContain("(pass) [$aש] [$n個] [$name을] [$÷] [$·] [$😀]");
       });
     });
   });

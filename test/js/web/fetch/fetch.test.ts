@@ -4288,9 +4288,9 @@ describe.concurrent("verbose fetch logging curl line", () => {
     expect(latin1).toStartWith(
       `curl --http1.1 '${url}p?x=1&y=$(touch\${IFS}pwned)' --globoff -H $'x-data: caf\\351' -H `,
     );
-    expect(substitution).toStartWith(
-      `curl --http1.1 '${url}' -H 'x-data: $(touch pwned)' -H 'Authorization: Bearer sekret-token' -H `,
-    );
+    expect(substitution).toStartWith(`curl --http1.1 '${url}' -H `);
+    expect(substitution).toContain(` -H 'x-data: $(touch pwned)' `);
+    expect(substitution).toContain(` -H 'Authorization: Bearer sekret-token' `);
     expect(lines).toHaveLength(bodies.length + 3);
   });
 

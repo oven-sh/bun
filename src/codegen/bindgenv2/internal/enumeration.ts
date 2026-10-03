@@ -1,12 +1,13 @@
 import assert from "node:assert";
 import util from "node:util";
 import {
-  type CodeStyle,
   joinIndented,
   NamedType,
   reindent,
+  rustVariants,
   toASCIILiteral,
   toQuotedLiteral,
+  trivialRust,
 } from "./base.ts";
 
 abstract class EnumType extends NamedType {}
@@ -61,11 +62,23 @@ export function enumeration(
     get idlType() {
       return `::Bun::Bindgen::Generated::IDL${name}`;
     }
-    get bindgenType() {
-      return `bindgen_generated.internal.${name}`;
+    get rust() {
+      return trivialRust(name, 4);
     }
-    zigType(style?: CodeStyle) {
-      return `bindgen_generated.${name}`;
+    get rustSource() {
+      return reindent(`
+        #[repr(u32)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum ${name} {
+          ${joinIndented(
+            10,
+            rustVariants(
+              name,
+              cppMembers.map(member => member.slice(1)),
+            ).map((variant, i) => `${variant} = ${i},`),
+          )}
+        }
+      `);
     }
     toCpp(value: string): string {
       const index = valueMap.get(value);

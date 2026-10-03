@@ -83,30 +83,27 @@ class GlobalObject;
 namespace Bun {
 class StrongRootBlock;
 
-// JSC measures the live size of the heap at the end of each collection, but only
-// publishes it per scope: an eden collection updates
-// Heap::sizeAfterLastEdenCollection() and a full collection updates
-// Heap::sizeAfterLastFullCollection(), so one of the two is always stale. The
-// combined counter (Heap::m_sizeAfterLastCollect) has no accessor. Attached to
-// the heap for the life of the VM, this copies the counter of whichever scope
-// just finished. Unlike Heap::size(), reading it does not walk the heap.
-class HeapSizeAfterLastCollection final : public JSC::HeapObserver {
-    WTF_MAKE_NONCOPYABLE(HeapSizeAfterLastCollection);
+// Add allocations since the last collection to its survivor size. Heap::size()
+// counts mark bits and misses newly allocated cells and array backing storage.
+class HeapUsage final : public JSC::HeapObserver {
+    WTF_MAKE_NONCOPYABLE(HeapUsage);
 
 public:
-    explicit HeapSizeAfterLastCollection(JSC::Heap& heap)
+    explicit HeapUsage(JSC::Heap& heap)
         : m_heap(heap)
     {
         m_heap.addObserver(this);
     }
 
-    ~HeapSizeAfterLastCollection() final
+    ~HeapUsage() final
     {
         m_heap.removeObserver(this);
     }
 
-    // 0 until the first collection of this heap finishes.
-    size_t get() const { return m_sizeAfterLastCollection; }
+    size_t get() const
+    {
+        return m_sizeAfterLastCollection + (m_heap.totalBytesAllocated() - m_allocatedAtLastCollection);
+    }
 
 private:
     void willGarbageCollect() final {}
@@ -120,10 +117,12 @@ private:
         m_sizeAfterLastCollection = scope == JSC::CollectionScope::Full
             ? m_heap.sizeAfterLastFullCollection()
             : m_heap.sizeAfterLastEdenCollection();
+        m_allocatedAtLastCollection = m_heap.totalBytesAllocated();
     }
 
     JSC::Heap& m_heap;
     size_t m_sizeAfterLastCollection { 0 };
+    uint64_t m_allocatedAtLastCollection { 0 };
 };
 }
 
@@ -249,8 +248,8 @@ public:
     Bun::NodeVMOptionNames& nodeVMOptionNames() { return m_nodeVMOptionNames; }
     Bun::NodeVMSourceOriginCache& nodeVMSourceOriginCache() { return m_nodeVMSourceOriginCache; }
 
-    // Live size of the heap as measured by the most recent collection, eden or full.
-    size_t heapSizeAfterLastCollection() const { return m_heapSizeAfterLastCollection.get(); }
+    // Survivor size plus allocations since the last collection; mutator thread only.
+    size_t heapUsage() const { return m_heapUsage.get(); }
 
     // The VM's default (first) Zig::GlobalObject: what defaultGlobalObject(JSC::VM&) returns on threads whose thread-local
     // default is not this VM's, e.g. the collector thread running a collection's end phase. gcProtect'ed for the VM's life.
@@ -347,7 +346,7 @@ private:
     Bun::NodeVMOptionNames m_nodeVMOptionNames;
     Bun::NodeVMSourceOriginCache m_nodeVMSourceOriginCache;
 
-    Bun::HeapSizeAfterLastCollection m_heapSizeAfterLastCollection;
+    Bun::HeapUsage m_heapUsage;
 
     SentinelLinkedList<JSVMClientDataClient, BasicRawSentinelNode<JSVMClientDataClient>> m_clients;
     bool m_isWorkerVM { false };

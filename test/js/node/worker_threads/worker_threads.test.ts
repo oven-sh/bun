@@ -3087,3 +3087,40 @@ describe("no JS entry after a worker's termination has been thrown", () => {
     });
   }
 });
+
+test("getHeapStatistics reports allocated capacity separately from used heap", async () => {
+  const worker = new Worker("require('node:worker_threads').parentPort.on('message', () => {})", { eval: true });
+  try {
+    await once(worker, "online");
+    const stats = await worker.getHeapStatistics();
+    expect(stats.used_heap_size).toBeGreaterThan(0);
+    expect(stats.total_heap_size).toBeGreaterThan(stats.used_heap_size);
+  } finally {
+    await worker.terminate();
+  }
+});
+
+test("getHeapStatistics includes array storage allocated since the last collection", async () => {
+  const worker = new Worker(
+    `
+    const { parentPort } = require("node:worker_threads");
+    const { getHeapStatistics } = require("node:v8");
+    Bun.gc(true);
+    const before = getHeapStatistics().used_heap_size;
+    globalThis.retained = Array.from({ length: 16 * 1024 * 1024 }, () => 37);
+    parentPort.postMessage({ before, allocated: getHeapStatistics().used_heap_size, process: process.memoryUsage().heapUsed });
+    parentPort.on("message", () => {});
+  `,
+    { eval: true },
+  );
+  try {
+    const [inside] = await once(worker, "message");
+    const parent = await worker.getHeapStatistics();
+    expect(inside.allocated).toBeGreaterThan(inside.before + 100 * 1024 * 1024);
+    expect(inside.process).toBeGreaterThan(inside.before + 100 * 1024 * 1024);
+    expect(parent.used_heap_size).toBeGreaterThan(inside.before + 100 * 1024 * 1024);
+    expect(parent.total_heap_size).toBeGreaterThanOrEqual(parent.used_heap_size);
+  } finally {
+    await worker.terminate();
+  }
+});

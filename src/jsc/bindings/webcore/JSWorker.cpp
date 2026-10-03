@@ -24,6 +24,7 @@
 
 #include "ActiveDOMObject.h"
 #include "BunCPUProfiler.h"
+#include "BunClientData.h"
 #if OS(WINDOWS)
 #include <uv.h>
 #else
@@ -801,15 +802,15 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBod
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
     bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
         auto& wvm = workerCtx.vm();
-        double heapSize = static_cast<double>(wvm.heap.size());
-        double capacity = static_cast<double>(wvm.heap.capacity());
-        double extra = static_cast<double>(wvm.heap.extraMemorySize());
+        double heapSize = static_cast<double>(WebCore::clientData(wvm)->heapUsage());
+        double capacity = std::max(static_cast<double>(wvm.heap.capacity()), heapSize);
+        double extra = static_cast<double>(wvm.heap.extraMemorySize() + wvm.heap.externalMemorySize());
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), heapSize, capacity, extra](ScriptExecutionContext& parentCtx) {
             resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& pvm, JSGlobalObject* go) -> JSValue {
                 JSObject* o = constructEmptyObject(go);
                 auto set = [&](ASCIILiteral k, double v) { o->putDirect(pvm, Identifier::fromString(pvm, k), jsNumber(v)); };
                 double avail = capacity > heapSize ? capacity - heapSize : 0;
-                set("total_heap_size"_s, heapSize);
+                set("total_heap_size"_s, capacity);
                 set("total_heap_size_executable"_s, heapSize / 2.0);
                 set("total_physical_size"_s, capacity);
                 set("total_available_size"_s, avail);

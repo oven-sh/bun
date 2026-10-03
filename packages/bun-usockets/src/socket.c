@@ -688,7 +688,8 @@ __attribute__((always_inline)) void *us_connecting_socket_ext(struct us_connecti
 
 __attribute__((always_inline)) int us_socket_is_shut_down(struct us_socket_t *s) {
     if (s->ssl) {
-        return us_internal_ssl_is_shut_down(s);
+        /* Only for the owner: the handshake step that the held FIN waits for would take it for a FIN that ended the handshake. */
+        return us_internal_ssl_is_shut_down(s) || s->ssl_shutdown_after_first_flight;
     }
     return us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN;
 }

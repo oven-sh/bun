@@ -2097,6 +2097,8 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     return us_internal_socket_close_raw(s, code, reason);
   }
   ssl_set_loop_data(s);
+  /* The flight and its FIN leave first: the handshake of a half-closed socket is reported with no error, not as ECONNRESET. */
+  if (s->ssl_shutdown_after_first_flight) ssl_update_handshake(s, 1);
   ssl_update_handshake(s, 1);
   if (ssl_gone(s)) return s;
 
@@ -2138,7 +2140,7 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
  * re-enters while a handshake is in progress: the socket keeps reading after
  * our FIN or close_notify, and the peer's next flight can still complete that
  * handshake. For every other caller a half-closed socket's handshake is over. */
-static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake) {
+static void ssl_handshake_step(struct us_socket_t *s, int fin_ends_handshake) {
   /* The OpenSSL error queue is per-thread and another socket's failure (a
    * server and a client commonly share this thread) may have left entries on
    * it; clear it before this socket's handshake step so any reason captured
@@ -2224,17 +2226,21 @@ static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake) 
   s->ssl_write_wants_read = 1;
 }
 
-/* ── Event hooks (called from loop.c / socket.c when s->ssl != NULL) ────── */
-
-/* The first handshake step ran: send the FIN that us_internal_ssl_shutdown held back for it. */
-static void ssl_first_flight_sent(struct us_socket_t *s) {
+/* A handshake step, then the FIN that us_internal_ssl_shutdown held back for the first one. */
+static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake) {
+  ssl_handshake_step(s, fin_ends_handshake);
   if (ssl_gone(s)) return;
   s->ssl_first_flight_before_fin = 0;
   if (s->ssl_shutdown_after_first_flight) {
     s->ssl_shutdown_after_first_flight = 0;
+    /* Nothing of ours leaves after this FIN, so the chain's verdict can wait for the end of the handshake:
+     * https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1661 */
+    s->ssl_inline_reject = 0;
     us_internal_ssl_shutdown(s);
   }
 }
+
+/* ── Event hooks (called from loop.c / socket.c when s->ssl != NULL) ────── */
 
 struct us_socket_t *us_internal_ssl_on_open(struct us_socket_t *s, int is_client,
                                             char *ip, int ip_length) {
@@ -2244,7 +2250,6 @@ struct us_socket_t *us_internal_ssl_on_open(struct us_socket_t *s, int is_client
   /* Kick the handshake immediately — some peers stall waiting for ClientHello. */
   ssl_set_loop_data(result);
   ssl_update_handshake(result, 1);
-  ssl_first_flight_sent(result);
   return result;
 }
 
@@ -2413,7 +2418,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
 }
 
 struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, int length) {
-  /* See ssl_update_handshake: start this socket's SSL processing with a clean
+  /* See ssl_handshake_step: start this socket's SSL processing with a clean
    * per-thread error queue so a captured reason cannot belong to another
    * socket on the same thread. */
   ERR_clear_error();
@@ -2732,7 +2737,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
 /* The records of every part share one batch, so they reach the kernel in one write. Returns the plaintext bytes taken, in order. */
 int us_internal_ssl_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
   while (count && iov->iov_len == 0) iov++, count--;
-  if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || s->ssl_shutdown_after_first_flight || count == 0) return 0;
+  if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || count == 0) return 0;
 
   /* Fast-path connect attaches SSL eagerly on a SEMI_SOCKET (see
    * us_socket_group_connect_resolved_dns); on_open hasn't fired yet so
@@ -2986,7 +2991,6 @@ void us_socket_start_tls_handshake(struct us_socket_t *s) {
   if (!s->ssl || us_socket_is_closed(s)) return;
   ssl_set_loop_data(s);
   ssl_update_handshake(s, 1);
-  ssl_first_flight_sent(s);
 }
 
 /* ── SNI on listen sockets ───────────────────────────────────────────────── */

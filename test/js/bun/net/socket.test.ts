@@ -4327,43 +4327,47 @@ Reo=
       }
     });
 
-    // node:tls sends its ClientHello before such a FIN. Bun.connect does not.
-    it("shutdown() in open sends the FIN with no ClientHello before it", async () => {
-      const received = Promise.withResolvers<number>();
-      const peer = net.createServer({ allowHalfOpen: true }, socket => {
-        let bytes = 0;
-        socket.on("error", () => {});
-        socket.on("data", chunk => (bytes += chunk.length));
-        socket.on("end", () => {
-          received.resolve(bytes);
-          socket.end();
+    // node:tls sends its ClientHello before such a FIN. These do not.
+    it.each(["Bun.connect", "upgradeTLS"])(
+      "%s: shutdown() in open sends the FIN with no ClientHello before it",
+      async how => {
+        const received = Promise.withResolvers<number>();
+        const peer = net.createServer({ allowHalfOpen: true }, socket => {
+          let bytes = 0;
+          socket.on("error", received.reject);
+          socket.on("data", chunk => (bytes += chunk.length));
+          socket.on("end", () => {
+            received.resolve(bytes);
+            socket.end();
+          });
         });
-      });
-      await once(peer.listen(0, "127.0.0.1"), "listening");
-      try {
-        using _client = await Bun.connect({
-          hostname: "127.0.0.1",
-          port: (peer.address() as net.AddressInfo).port,
-          tls: { rejectUnauthorized: false },
-          socket: {
-            open(socket) {
-              socket.shutdown();
-            },
-            // Without this handler `open` runs when the handshake reports, not when the socket opens.
-            handshake() {},
-            data() {},
-            close() {},
-            error() {},
-            connectError(_socket, err) {
-              received.reject(err);
-            },
+        await once(peer.listen(0, "127.0.0.1"), "listening");
+        const tls = { rejectUnauthorized: false };
+        const secure = {
+          open(socket) {
+            socket.shutdown();
           },
-        });
-        expect(await received.promise).toBe(0);
-      } finally {
-        peer.close();
-      }
-    });
+          // Without this handler `open` runs when the handshake reports, not when the socket opens.
+          handshake() {},
+          data() {},
+          close() {},
+          error() {},
+        };
+        const connectError = (_socket, err) => received.reject(err);
+        try {
+          using _client = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: (peer.address() as net.AddressInfo).port,
+            ...(how === "Bun.connect"
+              ? { tls, socket: { ...secure, connectError } }
+              : { socket: { open: raw => void raw.upgradeTLS({ tls, socket: secure }), data() {}, connectError } }),
+          });
+          expect(await received.promise).toBe(0);
+        } finally {
+          peer.close();
+        }
+      },
+    );
 
     // The SSL has no certificate to judge when the peer never sent one. That
     // must not replace the reason the handshake reported.

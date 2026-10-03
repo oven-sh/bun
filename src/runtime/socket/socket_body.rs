@@ -1561,12 +1561,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                     {
                         this.socket.get().set_inline_reject();
                     }
-                    // node sends the ClientHello before a 'connect' listener can call end().
-                    if !this.acts_as_tls_server()
-                        && this.flags.get().contains(Flags::DEFERS_SERVER_IDENTITY)
-                    {
-                        this.socket.get().set_first_flight_before_fin();
-                    }
                     if let Some(protos) = this.protos.get() {
                         if this.acts_as_tls_server() {
                             // Registered above (selector + ex_data); nothing
@@ -4660,6 +4654,20 @@ pub(crate) fn js_upgrade_tls_deferred(
         return NewSocket::<true>::upgrade_tls_impl(this, global, opts, true);
     }
     Err(global.throw(format_args!("Expected a socket instance")))
+}
+
+/// `tls.connect()`'s first 'connect' listener, where node sends the ClientHello.
+#[bun_jsc::host_fn]
+pub(crate) fn js_first_flight_before_fin(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+    let [socket] = callframe.arguments_as_array::<1>();
+    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+        this.socket.get().set_first_flight_before_fin();
+    }
+    Ok(JSValue::UNDEFINED)
 }
 
 #[bun_jsc::host_fn]

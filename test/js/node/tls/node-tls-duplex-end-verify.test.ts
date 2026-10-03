@@ -6,6 +6,7 @@ import net from "node:net";
 import { Duplex, duplexPair } from "node:stream";
 import { test } from "node:test";
 import tls from "node:tls";
+import { Worker } from "node:worker_threads";
 
 const key = fs.readFileSync(new URL("./fixtures/agent1-key.pem", import.meta.url));
 const cert = fs.readFileSync(new URL("./fixtures/agent1-cert.pem", import.meta.url));
@@ -1043,15 +1044,17 @@ for (const when of ["in the same tick", "in the next tick", "inside 'connect'"])
     ]);
   });
 
-  test(`TLSv1.2: end() ${when} reports the handshake that the server cannot complete`, async () => {
-    // The client cannot send its second flight after the FIN, so the handshake ends when the server closes.
-    assert.deepStrictEqual(await endBeforeClientHello(when, "TLSv1.2", false), [
-      "finish",
-      "end",
-      "error ECONNRESET",
-      "close",
-    ]);
-  });
+  for (const rejectUnauthorized of [false, true]) {
+    test(`TLSv1.2, rejectUnauthorized ${rejectUnauthorized}: end() ${when} reports the handshake that the server cannot complete`, async () => {
+      // The client cannot send its second flight after the FIN, so the handshake ends when the server closes.
+      assert.deepStrictEqual(await endBeforeClientHello(when, "TLSv1.2", rejectUnauthorized), [
+        "finish",
+        "end",
+        "error ECONNRESET",
+        "close",
+      ]);
+    });
+  }
 }
 
 test("end() inside 'connect' still reports a ClientHello that the client cannot build", async () => {
@@ -1081,88 +1084,172 @@ test("end() inside 'connect' still reports a ClientHello that the client cannot 
   assert.match(events.join(", "), /^error ERR_SSL_NO_(PROTOCOLS_AVAILABLE|SUPPORTED_VERSIONS_ENABLED), close$/);
 });
 
-test("end() inside 'connect' sends the FIN when setImmediate was replaced after node:tls loaded", async () => {
-  const sawFin = Promise.withResolvers();
-  let accepted;
-  const server = net.createServer({ allowHalfOpen: true }, socket => {
-    accepted = socket;
-    socket.on("error", () => {});
-    socket.on("end", () => sawFin.resolve(true));
-    socket.resume();
+for (const method of ["end", "destroySoon"]) {
+  test(`${method}() inside 'connect' sends the ClientHello before the FIN`, async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    let accepted;
+    const server = net.createServer({ allowHalfOpen: true }, socket => {
+      accepted = socket;
+      const received = [];
+      socket.on("error", reject);
+      socket.on("data", chunk => received.push(chunk));
+      socket.on("end", () => resolve(Buffer.concat(received)));
+    });
+    await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+    const client = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+    client.on("error", () => {});
+    client.on("connect", () => client[method]());
+    const beforeFin = await promise;
+    client.destroy();
+    accepted.destroy();
+    server.close();
+    // One complete handshake record: the ClientHello.
+    assert.deepStrictEqual(
+      { type: beforeFin[0], complete: beforeFin.length >= 5 && beforeFin.length === 5 + beforeFin.readUInt16BE(3) },
+      { type: 22, complete: true },
+    );
   });
-  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
-  const realSetImmediate = globalThis.setImmediate;
-  const client = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
-  client.on("error", () => {});
-  const ended = new Promise(done =>
-    client.on("connect", () => {
-      // What fake timers do: the callback is kept and never runs.
-      globalThis.setImmediate = () => ({ ref() {}, unref() {}, hasRef: () => false });
-      client.end();
-      done();
-    }),
+}
+
+test(
+  "the handle refuses a write after shutdown() inside 'connect'",
+  { skip: !isBun && "Node's handle has another interface" },
+  async () => {
+    const server = net.createServer(socket => socket.on("error", () => {}).resume());
+    await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+    const client = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+    const written = await new Promise((resolve, reject) => {
+      client.on("error", reject);
+      client.on("connect", () => {
+        client._handle.shutdown();
+        resolve(client._handle.write("x"));
+      });
+    });
+    client.destroy();
+    server.close();
+    assert.strictEqual(written, -1);
+  },
+);
+
+test("TLSv1.3: twelve clients that end() in the same tick all complete the handshake", async () => {
+  // One turn of the event loop takes a few handshakes and the others wait for the next. This thread blocks until the
+  // server has answered and closed every connection, so they wait with the server's FIN already here.
+  const total = 12;
+  const closed = new Int32Array(new SharedArrayBuffer(4));
+  const worker = new Worker(
+    `const { parentPort, workerData } = require("node:worker_threads");
+    const { key, cert, closed } = workerData;
+    const server = require("node:tls").createServer({ key, cert }, socket => socket.on("error", () => {}));
+    server.on("tlsClientError", () => {});
+    server.on("connection", socket =>
+      socket.on("close", () => {
+        Atomics.add(closed, 0, 1);
+        Atomics.notify(closed, 0);
+      }),
+    );
+    server.listen(0, "127.0.0.1", () => parentPort.postMessage(server.address().port));`,
+    { eval: true, workerData: { key, cert, closed } },
   );
   try {
-    await ended;
-    assert.strictEqual(await sawFin.promise, true, "the peer got no FIN");
+    const port = await new Promise((resolve, reject) => {
+      worker.once("error", reject);
+      worker.once("message", resolve);
+    });
+    let finished = 0;
+    const clients = await Promise.all(
+      Array.from({ length: total }, () => {
+        const events = [];
+        const { promise, resolve } = Promise.withResolvers();
+        const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+        client.end();
+        for (const event of ["secureConnect", "end"]) client.on(event, () => events.push(event));
+        client.on("error", err => events.push(`error ${err.code}`));
+        client.on("close", () => resolve(events.join(", ")));
+        client.on("finish", () => {
+          if (++finished < total) return;
+          // The last FIN leaves when this turn's callbacks have run.
+          setImmediate(() => {
+            for (let count; (count = Atomics.load(closed, 0)) < total; ) Atomics.wait(closed, 0, count);
+          });
+        });
+        return promise;
+      }),
+    );
+    assert.deepStrictEqual([...new Set(clients)], ["secureConnect, end"]);
   } finally {
-    globalThis.setImmediate = realSetImmediate;
+    await worker.terminate();
+  }
+});
+
+test(
+  "TLSv1.2: end() in the same tick does not accept the stored certificate of a resumed session for another name",
+  { skip: !isBun && "Node does not check the name of a resumed session" },
+  async () => {
+    const server = tls.createServer({ key, cert, maxVersion: "TLSv1.2" }, socket => socket.on("error", () => {}));
+    server.on("tlsClientError", () => {});
+    await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+    const where = { port: server.address().port, host: "127.0.0.1", ca: serverCA };
+    const first = tls.connect({ ...where, servername: "agent1" });
+    await new Promise((connected, failed) => first.once("secureConnect", connected).once("error", failed));
+    const session = first.getSession();
+    first.destroy();
+    // The client's part of a resumed handshake comes last, so the handshake completes after the FIN.
+    const events = [];
+    const client = tls.connect({ ...where, servername: "another.name", session });
+    client.end();
+    client.on("secureConnect", () => events.push("secureConnect"));
+    client.on("error", err => events.push(`error ${err.code}`));
+    await new Promise(closed => client.once("close", closed));
+    server.close();
+    assert.deepStrictEqual(events, ["error ERR_TLS_CERT_ALTNAME_INVALID"]);
+  },
+);
+
+test("end() after a second connect() of the same socket sends no ClientHello", async () => {
+  // Only tls.connect() starts a handshake: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1795
+  const received = [];
+  const second = Promise.withResolvers();
+  const server = net.createServer(socket => {
+    let bytes = 0;
+    socket.on("error", second.reject);
+    socket.on("data", chunk => (bytes += chunk.length));
+    socket.on("end", () => received.push(bytes) === 2 && second.resolve());
+  });
+  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+  const where = { port: server.address().port, host: "127.0.0.1" };
+  const client = tls.connect({ ...where, rejectUnauthorized: false });
+  client.on("error", () => {});
+  client.end();
+  await new Promise(closed => client.once("close", closed));
+  client.connect(where);
+  client.end();
+  try {
+    await second.promise;
+    assert.strictEqual(received[1], 0);
+  } finally {
     client.destroy();
-    accepted?.destroy();
     server.close();
   }
 });
 
-test("end() inside 'connect' sends the ClientHello before the FIN", async () => {
-  const { promise, resolve } = Promise.withResolvers();
-  let accepted;
-  const server = net.createServer({ allowHalfOpen: true }, socket => {
-    accepted = socket;
-    const received = [];
-    socket.on("error", () => {});
-    socket.on("data", chunk => received.push(chunk));
-    socket.on("end", () => resolve(Buffer.concat(received)));
-  });
-  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
-  const client = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
-  client.on("error", () => {});
-  client.on("connect", () => client.end());
-  const beforeFin = await promise;
-  client.destroy();
-  accepted.destroy();
-  server.close();
-  // One complete handshake record: the ClientHello.
-  assert.deepStrictEqual(
-    { type: beforeFin[0], complete: beforeFin.length >= 5 && beforeFin.length === 5 + beforeFin.readUInt16BE(3) },
-    { type: 22, complete: true },
-  );
-});
-
-test("a server that end()s at accept still reports the client that gives up", async () => {
-  // A server has no flight to send before it reads one, so its FIN leaves at once.
-  const { promise, resolve } = Promise.withResolvers();
-  const server = tls.createServer({ key, cert }, socket => socket.on("error", () => {}));
-  server.on("connection", socket => {
-    socket.on("error", () => {});
-    socket.end();
-  });
-  server.on("tlsClientError", err => resolve(err.code));
-  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
-
-  const events = [];
-  const closed = Promise.withResolvers();
-  const client = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
-  // 'end' is not recorded: whether the client reports it ahead of the error depends on the platform.
-  client.on("secureConnect", () => events.push("secureConnect"));
-  client.on("error", err => events.push(`error ${err.code}`));
-  client.on("close", () => {
-    events.push("close");
-    closed.resolve();
-  });
-  const [tlsClientError] = await Promise.all([promise, closed.promise]);
-  server.close();
-  assert.deepStrictEqual(
-    { tlsClientError, client: events },
-    { tlsClientError: "ECONNRESET", client: ["error ECONNRESET", "close"] },
-  );
-});
+test(
+  "resetAndDestroy() behind an end() in the same tick still resets the connection",
+  { skip: !isBun && "Node does not reset a TLS socket" },
+  async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      // A connection that was reset refuses the write. One that was only closed takes it.
+      socket.on("end", () => socket.write("x", resolve));
+      socket.resume();
+    });
+    await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+    const client = tls.connect({ port: server.address().port, host: "127.0.0.1" });
+    client.on("error", () => {});
+    client.on("finish", () => client.resetAndDestroy());
+    client.end();
+    const refused = await promise;
+    server.close();
+    assert.ok(refused, "the peer's write went through");
+  },
+);

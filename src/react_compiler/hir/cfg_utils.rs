@@ -109,13 +109,13 @@ pub fn get_reverse_postordered_blocks(
                 BasicBlock {
                     kind: block.kind,
                     id: block_id,
-                    instructions: super::AstAlloc::vec(),
+                    instructions: Vec::new(),
                     terminal: Terminal::Unreachable {
                         id: block.terminal.evaluation_order(),
                         loc: block.terminal.loc().copied(),
                     },
                     preds: block.preds.clone(),
-                    phis: super::AstAlloc::vec(),
+                    phis: Vec::new(),
                 },
             );
         }

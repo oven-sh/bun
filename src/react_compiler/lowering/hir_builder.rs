@@ -257,7 +257,7 @@ fn new_block(id: BlockId, kind: BlockKind) -> WipBlock {
     WipBlock {
         id,
         kind,
-        instructions: AstAlloc::vec(),
+        instructions: Vec::new(),
     }
 }
 
@@ -339,7 +339,7 @@ impl<'h> HirBuilder<'h> {
             env,
             host,
             exception_handler_stack: Vec::new(),
-            instruction_table: AstAlloc::vec(),
+            instruction_table: Vec::new(),
             function_scope,
             component_scope,
             scope_stack: vec![function_scope],
@@ -497,7 +497,7 @@ impl<'h> HirBuilder<'h> {
                 instructions: wip.instructions,
                 terminal,
                 preds: IndexSet::new(),
-                phis: AstAlloc::vec(),
+                phis: Vec::new(),
             },
         );
 
@@ -523,7 +523,7 @@ impl<'h> HirBuilder<'h> {
                 instructions: wip.instructions,
                 terminal,
                 preds: IndexSet::new(),
-                phis: AstAlloc::vec(),
+                phis: Vec::new(),
             },
         );
     }
@@ -549,7 +549,7 @@ impl<'h> HirBuilder<'h> {
                 instructions: completed_wip.instructions,
                 terminal,
                 preds: IndexSet::new(),
-                phis: AstAlloc::vec(),
+                phis: Vec::new(),
             },
         );
         Ok(())
@@ -775,7 +775,7 @@ impl<'h> HirBuilder<'h> {
             entry: self.entry,
         };
 
-        let mut instructions = AstAlloc::take(&mut self.instruction_table);
+        let mut instructions = std::mem::take(&mut self.instruction_table);
 
         let rpo_blocks = get_reverse_postordered_blocks(&hir, &instructions);
 
@@ -1147,13 +1147,13 @@ fn get_reverse_postordered_blocks(
                 BasicBlock {
                     kind: block.kind,
                     id: block_id,
-                    instructions: AstAlloc::vec(),
+                    instructions: Vec::new(),
                     terminal: Terminal::Unreachable {
                         id: block.terminal.evaluation_order(),
                         loc: block.terminal.loc().copied(),
                     },
                     preds: block.preds.clone(),
-                    phis: AstAlloc::vec(),
+                    phis: Vec::new(),
                 },
             );
         }

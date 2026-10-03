@@ -3161,6 +3161,79 @@ test("react-compiler keeps one copy of each dependency of a phi", async () => {
   expect(ladder.peakMB - empty.peakMB).toBeLessThan(100);
 });
 
+// The working memory of a compiled function (its HIR, its reactive function,
+// the tables of each pass) was allocated in the AST arena. That arena frees
+// nothing before the AST itself goes, and in a bundle that is the end of the
+// build. So a build kept about 100 KB for each small component it had compiled,
+// and 200 KB when the component has an arrow function in it, as below.
+test("react-compiler frees the working memory of a function once it is compiled", async () => {
+  // A debug build compiles a component about 50 times slower.
+  const small = isDebug || isASAN;
+  const componentsPerFile = small ? 20 : 125;
+  const source = Array.from(
+    { length: componentsPerFile },
+    (_, i) => `
+      export function C${i}(props) {
+        const a = props.a, b = props.b;
+        return <ul title={a + b}>{props.items.map(x => <li>{x}</li>)}</ul>;
+      }
+    `,
+  ).join("");
+  const entrypoints = Array.from({ length: 16 }, (_, i) => `c${i}.jsx`);
+  using dir = tempDir("react-compiler-function-memory", {
+    ...Object.fromEntries(entrypoints.map(entry => [entry, source])),
+    // Builds the files without the compiler and then with it, and prints the
+    // peak RSS of the process after each build.
+    "build.js": `
+      import { readFileSync } from "node:fs";
+      const peakMB = () => {
+        if (process.platform !== "linux") return process.resourceUsage().maxRSS / 1024;
+        // On Linux ru_maxrss starts at the peak of the process that spawned
+        // this one. VmHWM does not.
+        return Number(/VmHWM:\\s+(\\d+) kB/.exec(readFileSync("/proc/self/status", "utf8"))[1]) / 1024;
+      };
+      const build = async reactCompiler => {
+        const result = await Bun.build({
+          entrypoints: ${JSON.stringify(entrypoints)},
+          reactCompiler,
+          target: "browser",
+          external: ["*"],
+        });
+        return { memoized: /\\b_c\\(\\d+\\)/.test(await result.outputs[0].text()), peakMB: peakMB() };
+      };
+      const plain = await build(false);
+      const compiled = await build(true);
+      console.log(JSON.stringify({ plain, compiled }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build.js"],
+    env: {
+      ...bunEnv,
+      // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { plain, compiled } = JSON.parse(stdout);
+  expect({ plain: plain.memoized, compiled: compiled.memoized }).toEqual({ plain: false, compiled: true });
+  // The second build raises the peak, or the two numbers are not a peak.
+  expect(compiled.peakMB).toBeGreaterThan(plain.peakMB);
+  // The compiler raises the peak by 80 MB without the fix and by 18 MB with it
+  // for the 320 components of a debug build, and by 390 MB and 19 MB for the
+  // 2000 components of a release build. The 18 MB are the ASAN allocator, and
+  // do not grow with the number of components.
+  expect(compiled.peakMB - plain.peakMB).toBeLessThan(small ? 45 : 100);
+  expect(exitCode).toBe(0);
+});
+
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)
 // records the locals a component's closures capture while walking the
 // component body, and reports a nested function that assigns to one of them,

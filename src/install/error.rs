@@ -206,6 +206,8 @@ pub enum Error {
     InvalidBinCount,
     #[error("InvalidBinContent")]
     InvalidBinContent,
+    #[error("CouldntReadCurrentDirectory")]
+    CouldntReadCurrentDirectory,
 
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
@@ -366,6 +368,7 @@ impl Error {
             Self::FailedToCopyFile => "FailedToCopyFile",
             Self::InvalidBinCount => "InvalidBinCount",
             Self::InvalidBinContent => "InvalidBinContent",
+            Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),

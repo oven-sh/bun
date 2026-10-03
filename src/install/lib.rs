@@ -755,12 +755,14 @@ impl RunCommand {
     }
 }
 
-/// Process-lifetime arena for the install-tier `Transpiler` constructed in
-/// `RunCommand::configure_env_for_run`. Mirrors `runner_arena()` in
-/// `runtime/cli/run_command.rs` — `bun_alloc::Arena` is `!Sync`, so guard a
-/// a raw `MaybeUninit` global with `Once` (PORTING.md §Forbidden bars
+/// Process-lifetime arena for the `Transpiler` that
+/// `PackageManager::configure_env_for_scripts` builds through
+/// [`RunCommand::configure_env_for_run_without_linker`]. The runtime CLI
+/// passes its own arena instead (`runner_arena()` in
+/// `runtime/cli/run_command.rs`). `bun_alloc::Arena` is `!Sync`, so guard a
+/// raw `MaybeUninit` global with `Once` (PORTING.md §Forbidden bars
 /// `Box::leak`).
-fn install_runner_arena() -> &'static bun_alloc::Arena {
+pub(crate) fn install_runner_arena() -> &'static bun_alloc::Arena {
     static ONCE: std::sync::Once = std::sync::Once::new();
     // PORTING.md §Global mutable state: `Once`-guarded init; RacyCell because
     // `Bump` is `!Sync` so `OnceLock<Arena>` can't be used.
@@ -770,61 +772,206 @@ fn install_runner_arena() -> &'static bun_alloc::Arena {
         // SAFETY: one-time init under `Once`; no concurrent writer.
         unsafe { (*ARENA.get()).write(bun_alloc::Arena::new()) };
     });
-    // SAFETY: initialized exactly once above. `configure_env_for_run` is only
-    // ever called from the single CLI dispatch thread, so the `!Sync` Bump is
-    // never observed concurrently.
+    // SAFETY: initialized exactly once above. `configure_env_for_scripts` is
+    // only ever called from the main thread, so the `!Sync` Bump is never
+    // observed concurrently.
     unsafe { (*ARENA.get()).assume_init_ref() }
 }
 
+/// Per-caller knobs for [`RunCommand::configure_env_for_run`] and
+/// [`RunCommand::configure_env_for_run_without_linker`].
+#[derive(Clone, Copy)]
+pub struct ConfigureEnvOptions {
+    /// Report a current directory that cannot be read on stderr. When `false`
+    /// it is only returned, as [`Error::CouldntReadCurrentDirectory`].
+    pub log_errors: bool,
+    /// Keep the current directory's fd open on the returned `DirInfo` (only
+    /// that one: the resolver's `store_fd` is turned back off right after),
+    /// for callers that go on to read files through it, like `bunx` resolving
+    /// a package's `bin`.
+    pub store_root_fd: bool,
+}
+
+struct NpmArgs;
+impl NpmArgs {
+    // https://github.com/npm/rfcs/blob/main/implemented/0021-reduce-lifecycle-script-environment.md#detailed-explanation
+    const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
+    const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
+}
+
 impl RunCommand {
-    /// DEP-CYCLE NOTE: the full implementation walks `bun_resolver::DirInfo`
-    /// and reads `package.json` via the resolver — T6 work that lives in
-    /// `bun_runtime::cli::RunCommand::configure_env_for_run`. The install
-    /// tier needs the *Transpiler-initialisation* half of that contract
-    /// because callers (`configure_env_for_scripts_run`) `assume_init()` the
-    /// out-param. This shim performs the init + the env-var seeding that has
-    /// no T6 dependency; the `*mut ()` return stands in for `*mut DirInfo`
-    /// (opaque to install — every caller discards it).
-    pub(crate) fn configure_env_for_run(
+    /// Builds the `Transpiler` every script runner shares (`bun run`, `bunx`,
+    /// `bun pm pack`, and the package manager's lifecycle scripts): primes its
+    /// resolver and env loader, reads the top-level `DirInfo`, configures the
+    /// bundler linker / JSX runtime, and seeds the `npm_*` env vars from the
+    /// enclosing `package.json`.
+    ///
+    /// `arena` backs the `Transpiler` for the rest of the process. Each caller
+    /// passes its own process-lifetime arena.
+    ///
+    /// Returns the `DirInfo` of the top-level directory, borrowed from the
+    /// resolver's directory cache (process-lifetime).
+    ///
+    /// Hot-path note: a caller that never transpiles through this
+    /// `Transpiler` (it shells out, or boots a fresh VM with its own
+    /// transpiler) should call
+    /// [`Self::configure_env_for_run_without_linker`] instead. That skips the
+    /// `configure_linker()` + `load_tsconfig_json` work, which is the single
+    /// largest block of bundler/linker code otherwise faulted in by `bun run`.
+    pub fn configure_env_for_run(
+        arena: &'static bun_alloc::Arena,
         ctx: &mut bun_options_types::context::ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<bun_transpiler::Transpiler<'static>>,
         env: Option<*mut bun_dotenv::Loader>,
-        _log_errors: bool,
-        store_root_fd: bool,
-    ) -> Result<*mut (), crate::Error> {
-        use bun_core::Global;
+        opts: ConfigureEnvOptions,
+    ) -> Result<bun_resolver::DirInfoRef, crate::Error> {
+        Self::configure_env_for_run_impl(arena, ctx, this_transpiler, env, opts, true)
+    }
+
+    /// Like [`Self::configure_env_for_run`] but does **not** construct the
+    /// bundler linker or enable `load_tsconfig_json` — for callers that only
+    /// use the returned `Transpiler` for module resolution / env / `$PATH`
+    /// lookup, never for transpiling.
+    pub fn configure_env_for_run_without_linker(
+        arena: &'static bun_alloc::Arena,
+        ctx: &mut bun_options_types::context::ContextData,
+        this_transpiler: &mut ::core::mem::MaybeUninit<bun_transpiler::Transpiler<'static>>,
+        env: Option<*mut bun_dotenv::Loader>,
+        opts: ConfigureEnvOptions,
+    ) -> Result<bun_resolver::DirInfoRef, crate::Error> {
+        Self::configure_env_for_run_impl(arena, ctx, this_transpiler, env, opts, false)
+    }
+
+    /// `configure_linker()` + `load_tsconfig_json` setup, factored into a
+    /// `#[cold]` callee so the bundler-linker/JSX-runtime code it pulls in does
+    /// not share `.text` pages with the hot `bun run <script>` dispatch path.
+    #[cold]
+    #[inline(never)]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
+    fn configure_run_transpiler_linker(this_transpiler: &mut bun_transpiler::Transpiler<'static>) {
+        this_transpiler.resolver.opts.load_tsconfig_json = true;
+        this_transpiler.options.load_tsconfig_json = true;
+        this_transpiler.configure_linker();
+    }
+
+    fn configure_env_for_run_impl(
+        arena: &'static bun_alloc::Arena,
+        ctx: &mut bun_options_types::context::ContextData,
+        this_transpiler: &mut ::core::mem::MaybeUninit<bun_transpiler::Transpiler<'static>>,
+        env: Option<*mut bun_dotenv::Loader>,
+        opts: ConfigureEnvOptions,
+        with_linker: bool,
+    ) -> Result<bun_resolver::DirInfoRef, crate::Error> {
+        use bun_core::{Global, Output};
 
         let args = ctx.args.clone();
-        this_transpiler.write(bun_transpiler::Transpiler::init(
-            install_runner_arena(),
-            ctx.log,
-            args,
-            env,
-        )?);
+        let env_is_none = env.is_none();
+        // Out-param constructor — `Transpiler` holds `&Arena`/`Box`/enum
+        // fields (non-null invariants), so callers MUST pass a `MaybeUninit`
+        // slot and this function writes the whole struct.
+        this_transpiler.write(bun_transpiler::Transpiler::init(arena, ctx.log, args, env)?);
         // SAFETY: fully written on the line above.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
         this_transpiler.options.env.behavior =
             bun_options_types::schema::api::DotEnvBehavior::load_all;
+        let env_loader = this_transpiler.env_mut();
+        env_loader.quiet = true;
+        this_transpiler.options.env.prefix = Box::default();
+
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.resolver.store_fd = store_root_fd;
+        this_transpiler.resolver.store_fd = opts.store_root_fd;
 
-        // Re-derive per-use rather than holding a long-lived `&mut` (avoids
-        // Stacked-Borrows overlap with `run_env_loader`).
+        // Bundler-linker + JSX-runtime config: only callers that actually
+        // transpile through this `Transpiler` need it. `configure_linker`'s
+        // auto-JSX step reads the cwd `DirInfo` (and, with `load_tsconfig_json`
+        // on, its `tsconfig.json`) — keep it ahead of the `read_dir_info` below
+        // so that read populates/uses the same cache entry.
+        if with_linker {
+            Self::configure_run_transpiler_linker(this_transpiler);
+        }
+
+        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let root_dir_info: bun_resolver::DirInfoRef =
+            match this_transpiler.resolver.read_dir_info(top_level_dir) {
+                Err(err) => {
+                    if !opts.log_errors {
+                        return Err(crate::Error::CouldntReadCurrentDirectory);
+                    }
+                    // SAFETY: `ctx.log` is set in `create_context_data`
+                    // (single-threaded CLI startup), process-lifetime.
+                    let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                        Output::error_writer(),
+                    ));
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
+                        bstr::BStr::new(err.name()),
+                        bun_core::fmt::QuotedFormatter {
+                            text: top_level_dir
+                        },
+                    );
+                    Output::flush();
+                    return Err(err.into());
+                }
+                Ok(None) => {
+                    // SAFETY: see `Err` arm above.
+                    let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                        Output::error_writer(),
+                    ));
+                    bun_core::pretty_errorln!("error loading current directory");
+                    Output::flush();
+                    return Err(crate::Error::CouldntReadCurrentDirectory);
+                }
+                Ok(Some(info)) => info,
+            };
+
+        this_transpiler.resolver.store_fd = false;
+
+        if env_is_none {
+            // Re-derive — borrowck won't let `env_loader` straddle the
+            // `&mut this_transpiler.resolver` above. Scoped to this block so it
+            // does NOT straddle `run_env_loader` below (which itself derives
+            // `env_mut()`, popping any outstanding `&mut Loader` tag).
+            let env_loader = this_transpiler.env_mut();
+            env_loader.load_process()?;
+
+            if let Some(node_env) = env_loader.get(b"NODE_ENV") {
+                if node_env == b"production" {
+                    this_transpiler.options.production = true;
+                }
+            }
+
+            // Always skip default .env files for package.json script runner
+            // (the script's own bun instance loads .env)
+            let _ = this_transpiler.run_env_loader(true);
+        }
+
+        // Re-derive after `run_env_loader` — that call creates its own
+        // `env_mut()` borrow, which under Stacked Borrows invalidates any
+        // `&mut Loader` derived before it. Take a fresh borrow here for the
+        // remaining env-var seeding.
         let env_loader = this_transpiler.env_mut();
+
+        env_loader
+            .map
+            .put_default(b"npm_config_local_prefix", top_level_dir)?;
 
         // Propagate --no-orphans / [run] noOrphans to the script's env so any
         // Bun process the script spawns enables its own watchdog. The env
         // loader snapshots `environ` before flag parsing runs, so the
         // `setenv()` in `enable()` isn't reflected here.
-        if bun_io::parent_death_watchdog::is_enabled() {
-            let _ = env_loader.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
+        if bun_io::ParentDeathWatchdog::is_enabled() {
+            env_loader.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")?;
         }
 
         // we have no way of knowing what version they're expecting without
         // running the node executable; running the node executable is too
         // slow, so we will just hardcode it to LTS
-        let _ = env_loader.map.put_default(
+        env_loader.map.put_default(
             b"npm_config_user_agent",
             // the use of npm/? is copying yarn
             // e.g.
@@ -840,21 +987,48 @@ impl RunCommand {
                 Global::arch_name,
             )
             .as_bytes(),
-        );
+        )?;
 
         if env_loader.get(b"npm_execpath").is_none() {
             // we don't care if this fails
-            if let Ok(self_exe) = bun_core::self_exe_path() {
-                let _ = env_loader
+            if let Ok(self_exe_path) = bun_core::self_exe_path() {
+                env_loader
                     .map
-                    .put_default(b"npm_execpath", self_exe.as_bytes());
+                    .put_default(b"npm_execpath", self_exe_path.as_bytes())?;
             }
         }
 
-        // DirInfo walk / npm_package_* seeding is performed by the T6 impl
-        // (`bun_runtime::cli::RunCommand::configure_env_for_run`); install
-        // callers discard the return value.
-        Ok(core::ptr::null_mut())
+        if let Some(package_json) = root_dir_info.enclosing_package_json {
+            if !package_json.name.is_empty() {
+                if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
+                    env_loader
+                        .map
+                        .put(NpmArgs::PACKAGE_NAME, &package_json.name)?;
+                }
+            }
+
+            env_loader
+                .map
+                .put_default(b"npm_package_json", package_json.source.path.text)?;
+
+            if !package_json.version.is_empty() {
+                if env_loader.map.get(NpmArgs::PACKAGE_VERSION).is_none() {
+                    env_loader
+                        .map
+                        .put(NpmArgs::PACKAGE_VERSION, &package_json.version)?;
+                }
+            }
+
+            if let Some(config) = package_json.config.as_deref() {
+                env_loader.map.ensure_unused_capacity(config.count())?;
+                for (k, v) in config.keys().iter().zip(config.values().iter()) {
+                    let key = bun_core::strings::concat(&[b"npm_package_config_", &k[..]]);
+                    env_loader.map.put_assume_capacity(&key, *v);
+                }
+            }
+        }
+
+        Ok(root_dir_info)
     }
 }
 

@@ -61,13 +61,17 @@ const relayPort = await listen(relay);
 
 const control = http.createServer((req, res) => {
   switch (req.url) {
-    case "/renegotiate":
+    case "/renegotiate": {
       // Answers once the relay holds the client's ClientHello. From then on
       // the client's SSL is mid-handshake, until "/release".
       holding = true;
       onHeld = recordType => res.end(String(recordType));
-      lastSecure.renegotiate({}, () => {});
+      // A renegotiation that does not start must not leave the client waiting.
+      const fail = reason => void (res.writableEnded || res.end("no renegotiation: " + reason));
+      lastSecure.once("close", () => fail("the connection closed"));
+      if (!lastSecure.renegotiate({}, error => error && fail(error.code))) fail("refused");
       return;
+    }
     case "/release":
       holding = false;
       for (const release of releases) release();

@@ -1959,7 +1959,10 @@ impl<'a> HTTPClient<'a> {
         }
 
         self.on_open::<IS_SSL>(socket)?;
-        self.configure_tls::<IS_SSL>(socket);
+        // `on_open` starts the request on a plain socket, which can free `self`.
+        if IS_SSL {
+            self.configure_tls::<IS_SSL>(socket);
+        }
         Ok(())
     }
 

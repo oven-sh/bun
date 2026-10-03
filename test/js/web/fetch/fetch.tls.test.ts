@@ -563,8 +563,14 @@ describe.concurrent("fetch-tls", () => {
         stdout: "pipe",
         stderr: "inherit",
       });
-      const { value } = await peer.stdout.getReader().read();
-      const ports = new TextDecoder().decode(value).trim().split(" ");
+      // The peer prints "<relayPort> <controlPort>" when its servers listen.
+      let line = "";
+      for await (const chunk of peer.stdout) {
+        line += new TextDecoder().decode(chunk);
+        if (line.includes("\n")) break;
+      }
+      const ports = line.trim().split(" ");
+      expect(ports).toHaveLength(2);
 
       await using client = Bun.spawn({
         cmd: [bunExe(), join(import.meta.dir, "fetch.tls.renegotiation-client-fixture.ts"), ...ports, ...mode],
@@ -601,8 +607,9 @@ describe.concurrent("fetch-tls", () => {
       timeout,
     );
 
-    // The write of that request parks while the renegotiation runs, and
-    // uSockets does not retry it when the renegotiation ends.
+    // Observed: the request gets no answer, and the test times out. Its write
+    // parks while the renegotiation runs, and uSockets does not retry it when
+    // the renegotiation ends.
     it.todo(
       "a request that reuses a pooled socket mid-renegotiation gets its answer",
       async () => {

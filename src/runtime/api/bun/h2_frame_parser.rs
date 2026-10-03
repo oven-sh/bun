@@ -1123,13 +1123,12 @@ pub(crate) struct H2FrameParser {
     /// node strictSingleValueFields session option (default true): when false, duplicate
     /// single-value headers and array values for them are encoded as-is instead of rejected.
     strict_single_value_fields: Cell<bool>,
+    /// Highest stream id registered in either direction; a GOAWAY carries `last_proc_stream_id`.
     last_stream_id: Cell<u32>,
-    /// Highest PEER-initiated stream id processed (odd ids for a server, even for a
-    /// client). This — not `last_stream_id` — is what an auto-filled GOAWAY must carry:
-    /// RFC 9113 §6.8 last_stream_id refers to streams the RECEIVER initiated, and
-    /// nghttp2 servers reject a GOAWAY naming a client-initiated id with a connection
-    /// PROTOCOL_ERROR (node's last_proc_stream_id semantics).
-    last_peer_stream_id: Cell<u32>,
+    /// Copy of `Connection::last_proc_stream_id` (GOAWAY last-stream-id, state.lastProcStreamID).
+    last_proc_stream_id: Cell<u32>,
+    /// nghttp2's local_last_stream_id: the id of the last GOAWAY written, if any.
+    sent_goaway_last_stream_id: Cell<Option<u32>>,
     is_server: Cell<bool>,
     /// A frame callback left an exception pending in this batch (`Sink::should_stop`).
     left_exception: Cell<bool>,
@@ -2074,7 +2073,7 @@ impl H2FrameParser {
                 0,
                 ErrorCode::MAX_PENDING_SETTINGS_ACK,
                 b"Maximum number of pending settings acknowledgements",
-                self.last_stream_id.get(),
+                None,
                 true,
             );
             return false;
@@ -2191,14 +2190,26 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
+    /// §6.8: the id must not increase, so every GOAWAY writer takes its id from here.
+    fn next_goaway_last_stream_id(&self, wanted: u32) -> u32 {
+        let sent = self.sent_goaway_last_stream_id.get();
+        let id = sent.map_or(wanted, |sent| sent.min(wanted));
+        self.sent_goaway_last_stream_id.set(Some(id));
+        id
+    }
+
+    /// `last_stream_id`: `None` names the last processed peer stream (§6.8).
     pub(crate) fn send_go_away(
         &self,
         triggering_stream_id: u32,
         rst_code: ErrorCode,
         debug_data: &[u8],
-        last_stream_id: u32,
+        last_stream_id: Option<u32>,
         emit_error: bool,
     ) {
+        let last_stream_id = self.next_goaway_last_stream_id(
+            last_stream_id.unwrap_or_else(|| self.last_proc_stream_id.get()),
+        );
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_GOAWAY {} code {} debug_data {} emitError {}",
@@ -2250,13 +2261,13 @@ impl H2FrameParser {
                 self.dispatch_with_2_extra(
                     JSH2FrameParser::Gc::onError,
                     JSValue::js_number(rst_code.0 as f64),
-                    JSValue::js_number(self.last_stream_id.get() as f64),
+                    JSValue::js_number(last_stream_id as f64),
                     chunk,
                 );
             }
             self.dispatch_with_extra(
                 JSH2FrameParser::Gc::onEnd,
-                JSValue::js_number(self.last_stream_id.get() as f64),
+                JSValue::js_number(last_stream_id as f64),
                 chunk,
             );
         }
@@ -3376,12 +3387,6 @@ impl H2FrameParser {
         if stream_identifier > self.last_stream_id.get() {
             self.last_stream_id.set(stream_identifier);
         }
-        let peer_parity: u32 = if self.is_server.get() { 1 } else { 0 };
-        if stream_identifier % 2 == peer_parity
-            && stream_identifier > self.last_peer_stream_id.get()
-        {
-            self.last_peer_stream_id.set(stream_identifier);
-        }
 
         // new stream open
         let local_window_size = if self.outstanding_settings.get() > 0 {
@@ -3720,6 +3725,14 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.engine_frames_sent.set(sent);
     }
 
+    fn on_last_proc_stream_id(&self, stream_id: u32) {
+        self.last_proc_stream_id.set(stream_id);
+    }
+
+    fn clamp_goaway_last_stream_id(&self, wanted: u32) -> u32 {
+        self.next_goaway_last_stream_id(wanted)
+    }
+
     fn write(&self, bytes: &[u8]) -> crate::api::h2::connection::WriteResult {
         if self.write(bytes) {
             crate::api::h2::connection::WriteResult::Sent
@@ -3728,7 +3741,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         }
     }
 
-    fn on_error(&self, lib_error_code: i32, _last: u32, debug: &[u8]) {
+    fn on_error(&self, lib_error_code: i32, last_stream_id: u32, debug: &[u8]) {
         // The engine detected a connection error and already wrote the GOAWAY: surface it to JS
         // as the negative nghttp2-style library error code (the JS handler builds node's
         // NghttpError from it: code ERR_HTTP2_ERROR, message nghttp2_strerror), then the end
@@ -3741,13 +3754,13 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             self.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onError,
                 JSValue::js_number(lib_error_code as f64),
-                JSValue::js_number(self.last_stream_id.get() as f64),
+                JSValue::js_number(last_stream_id as f64),
                 chunk,
             );
         }
         self.dispatch_with_extra(
             JSH2FrameParser::Gc::onEnd,
-            JSValue::js_number(self.last_stream_id.get() as f64),
+            JSValue::js_number(last_stream_id as f64),
             chunk,
         );
     }
@@ -4171,7 +4184,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 stream_id,
                 ErrorCode::ENHANCE_YOUR_CALM,
                 b"ENHANCE_YOUR_CALM",
-                self.last_stream_id.get(),
+                None,
                 true,
             );
         }
@@ -4657,7 +4670,7 @@ impl H2FrameParser {
         result.put(
             global_object,
             b"lastProcStreamID",
-            JSValue::js_number(this.last_stream_id.get() as f64),
+            JSValue::js_number(this.last_proc_stream_id.get() as f64),
         );
 
         let settings = this.remote_settings.get().unwrap_or_default();
@@ -4709,7 +4722,7 @@ impl H2FrameParser {
         }
         let error_code = error_code_arg.to_int32();
 
-        let mut last_stream_id = this.last_peer_stream_id.get();
+        let mut last_stream_id = None;
         if callframe.arguments_count() >= 2 {
             if !last_stream_arg.is_empty_or_undefined_or_null() {
                 if !last_stream_arg.is_number() {
@@ -4717,14 +4730,20 @@ impl H2FrameParser {
                         global_object.throw(format_args!("Expected lastStreamId to be a number"))
                     );
                 }
-                let id = last_stream_arg.to_int32();
+                // ToInt32, as node reads it: 2**31 and Infinity are not positive ids.
+                let id = last_stream_arg.coerce_to_i32(global_object)?;
                 // node: a lastStreamID of 0 or less (the JS wrapper's default) means "use the
                 // last processed stream id"; only an explicit positive id overrides it
                 // (validateNumber imposes no range, so negative values reach this path too).
                 // Without this, graceful close puts Last-Stream-ID=0 on the wire, telling the
                 // peer that every in-flight stream is safe to retry.
                 if id > 0 {
-                    last_stream_id = u32::try_from(id).expect("int cast");
+                    let id = u32::try_from(id).expect("int cast");
+                    // node sends nothing for an id that only this side can open.
+                    if id.is_multiple_of(2) == this.is_server.get() {
+                        return Ok(JSValue::UNDEFINED);
+                    }
+                    last_stream_id = Some(id);
                 }
             }
             if callframe.arguments_count() >= 3 {
@@ -5054,7 +5073,7 @@ impl H2FrameParser {
                     stream_id,
                     ErrorCode::ENHANCE_YOUR_CALM,
                     b"ENHANCE_YOUR_CALM",
-                    this.last_stream_id.get(),
+                    None,
                     true,
                 );
                 return Ok(JSValue::UNDEFINED);
@@ -5679,13 +5698,7 @@ impl H2FrameParser {
                         );
                         let triggering_id = stream.id;
                         this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
-                        this.send_go_away(
-                            triggering_id,
-                            ErrorCode::NO_ERROR,
-                            b"",
-                            this.last_stream_id.get(),
-                            true,
-                        );
+                        this.send_go_away(triggering_id, ErrorCode::NO_ERROR, b"", None, true);
                         Ok(Some(JSValue::UNDEFINED))
                     }
                 }
@@ -7479,7 +7492,8 @@ impl H2FrameParser {
             max_send_header_block_length: Cell::new(0),
             strict_single_value_fields: Cell::new(true),
             last_stream_id: Cell::new(0),
-            last_peer_stream_id: Cell::new(0),
+            last_proc_stream_id: Cell::new(0),
+            sent_goaway_last_stream_id: Cell::new(None),
             is_server: Cell::new(false),
             left_exception: Cell::new(false),
             write_buffer: JsCell::new(Vec::<u8>::default()),

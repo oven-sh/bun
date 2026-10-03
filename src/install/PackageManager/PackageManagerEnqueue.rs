@@ -758,6 +758,30 @@ fn resolve_from_appended_task(
     Some(pkg_id)
 }
 
+/// Whether a plain dependency follows the `npm:` alias that the install knows under its name.
+/// A direct dependency of the root package follows only an alias that the root package.json
+/// declares. The alias of any other manifest, or of a lockfile row, does not re-target it.
+fn follows_npm_alias(
+    lockfile: &Lockfile::Lockfile,
+    id: DependencyID,
+    name_hash: PackageNameHash,
+) -> bool {
+    let Some(root_dependencies) = lockfile.packages.items_dependencies().first() else {
+        return true;
+    };
+    if !root_dependencies.contains(id) {
+        return true;
+    }
+    root_dependencies
+        .get(lockfile.buffers.dependencies.as_slice())
+        .iter()
+        .any(|dep| {
+            dep.name_hash == name_hash
+                && dep.version.tag == dependency::version::Tag::Npm
+                && dep.version.npm().is_alias
+        })
+}
+
 /// Q: "What do we do with a dependency in a package.json?"
 /// A: "We enqueue it!"
 pub fn enqueue_dependency_with_main_and_success_fn(
@@ -800,7 +824,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         if dependency.version.tag == dependency::version::Tag::Npm
             && !dependency.version.npm().is_alias
         {
-            if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
+            if let Some(aliased) = this
+                .known_npm_aliases
+                .get(&name_hash)
+                .filter(|_| follows_npm_alias(&this.lockfile, id, name_hash))
+            {
                 let group = &dependency.version.npm().version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
                 // SAFETY: `aliased` is always tag == Npm (known_npm_aliases only stores npm versions).
@@ -2380,17 +2408,20 @@ fn get_or_put_resolved_package_with_find_result(
     }
 
     // appendPackage sets the PackageID on the package
-    let log = this.log_mut();
-    let new_package = Package::from_npm(
-        &mut this.lockfile,
-        log,
+    // reshaped for borrowck — `from_npm` takes both `&mut PackageManager`
+    // and `&mut Lockfile`, which alias through `this.lockfile`. Split via raw root.
+    let this_ptr: *mut PackageManager = this;
+    // SAFETY: `from_npm` reads `pm` fields disjoint from `pm.lockfile` (options /
+    // updating_packages), so the raw-pointer split does not alias.
+    let package = unsafe { &mut *(*this_ptr).lockfile }.append_package(&Package::from_npm(
+        unsafe { &mut *this_ptr },
+        unsafe { &mut *(*this_ptr).lockfile },
+        this.log_mut(),
         manifest,
         find_result.version,
         find_result.package,
         Features::NPM,
-    )?;
-    let package = this.lockfile.append_package(&new_package)?;
-    let this_ptr: *mut PackageManager = this;
+    )?)?;
 
     debug_assert!(package.meta.id != invalid_package_id);
     // Record exact-version pins so `Lockfile::get_package_id`'s
@@ -2536,71 +2567,107 @@ fn get_or_put_resolved_package(
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
     if install_peer && behavior.is_peer() {
-        let lockfile: &Lockfile::Lockfile = &this.lockfile;
-        let resolutions = lockfile.packages.items_resolution();
-        let same_named: &[PackageID] = lockfile
-            .package_index
-            .get(&name_hash)
-            .map(|index| index.as_slice())
-            .unwrap_or_default();
-        let in_range = same_named.iter().copied().find(|&existing_id| {
-            (existing_id as usize) < resolutions.len()
-                && resolution_satisfies_dependency(
-                    this,
-                    &resolutions[existing_id as usize],
-                    version,
-                )
-        });
-        let provided = in_range.or_else(|| {
-            if version_was_replaced {
-                return None;
-            }
-            package_aliased_by_dependent(lockfile, dependency_id, dependency.name_hash, version)
-        });
-        // (package, whether it is out of the peer's range)
-        let bound = match provided {
-            Some(existing_id) => Some((existing_id, false)),
-            None => same_named
-                .first()
-                .copied()
-                .filter(|&existing_id| {
-                    (existing_id as usize) < resolutions.len() && {
+        if let Some(index) = this.lockfile.package_index.get(&name_hash) {
+            let resolutions = this.lockfile.packages.items_resolution();
+            match index {
+                PackageIndexEntry::Id(existing_id) => {
+                    let existing_id = *existing_id;
+                    if (existing_id as usize) < resolutions.len() {
+                        let existing_resolution = resolutions[existing_id as usize];
+                        if resolution_satisfies_dependency(this, &existing_resolution, version) {
+                            success_fn(this, dependency_id, existing_id);
+                            return Ok(Some(ResolvedPackageResult {
+                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                                package: *this.lockfile.packages.get(existing_id as usize),
+                                ..Default::default()
+                            }));
+                        }
+
                         let res_tag = resolutions[existing_id as usize].tag;
                         let ver_tag = version.tag;
-                        (res_tag == ResolutionTag::Npm && ver_tag == dependency::version::Tag::Npm)
+                        if (res_tag == ResolutionTag::Npm
+                            && ver_tag == dependency::version::Tag::Npm)
                             || (res_tag == ResolutionTag::Git
                                 && ver_tag == dependency::version::Tag::Git)
                             || (res_tag == ResolutionTag::Github
                                 && ver_tag == dependency::version::Tag::Github)
+                        {
+                            let existing_package = this.lockfile.packages.get(existing_id as usize);
+                            this.log_mut().add_warning_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "incorrect peer dependency \"{}@{}\"",
+                                    existing_package
+                                        .name
+                                        .fmt(this.lockfile.buffers.string_bytes.as_slice()),
+                                    existing_package.resolution.fmt(
+                                        this.lockfile.buffers.string_bytes.as_slice(),
+                                        bun_fmt::PathSep::Auto
+                                    ),
+                                ),
+                            );
+                            success_fn(this, dependency_id, existing_id);
+                            return Ok(Some(ResolvedPackageResult {
+                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                                package: *this.lockfile.packages.get(existing_id as usize),
+                                ..Default::default()
+                            }));
+                        }
                     }
-                })
-                .map(|existing_id| (existing_id, true)),
-        };
+                }
+                PackageIndexEntry::Ids(list) => {
+                    for &existing_id in list.iter() {
+                        if (existing_id as usize) < resolutions.len() {
+                            let existing_resolution = resolutions[existing_id as usize];
+                            if resolution_satisfies_dependency(this, &existing_resolution, version)
+                            {
+                                success_fn(this, dependency_id, existing_id);
+                                return Ok(Some(ResolvedPackageResult {
+                                    package: *this.lockfile.packages.get(existing_id as usize),
+                                    ..Default::default()
+                                }));
+                            }
+                        }
+                    }
 
-        if let Some((existing_id, out_of_range)) = bound {
-            if out_of_range {
-                let existing_package = this.lockfile.packages.get(existing_id as usize);
-                this.log_mut().add_warning_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "incorrect peer dependency \"{}@{}\"",
-                        existing_package
-                            .name
-                            .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                        existing_package.resolution.fmt(
-                            this.lockfile.buffers.string_bytes.as_slice(),
-                            bun_fmt::PathSep::Auto
-                        ),
-                    ),
-                );
+                    if (list[0] as usize) < resolutions.len() {
+                        let res_tag = resolutions[list[0] as usize].tag;
+                        let ver_tag = version.tag;
+                        if (res_tag == ResolutionTag::Npm
+                            && ver_tag == dependency::version::Tag::Npm)
+                            || (res_tag == ResolutionTag::Git
+                                && ver_tag == dependency::version::Tag::Git)
+                            || (res_tag == ResolutionTag::Github
+                                && ver_tag == dependency::version::Tag::Github)
+                        {
+                            let existing_package_id = list[0];
+                            let existing_package =
+                                this.lockfile.packages.get(existing_package_id as usize);
+                            this.log_mut().add_warning_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "incorrect peer dependency \"{}@{}\"",
+                                    existing_package
+                                        .name
+                                        .fmt(this.lockfile.buffers.string_bytes.as_slice()),
+                                    existing_package.resolution.fmt(
+                                        this.lockfile.buffers.string_bytes.as_slice(),
+                                        bun_fmt::PathSep::Auto
+                                    ),
+                                ),
+                            );
+                            success_fn(this, dependency_id, list[0]);
+                            return Ok(Some(ResolvedPackageResult {
+                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                                package: *this.lockfile.packages.get(existing_package_id as usize),
+                                ..Default::default()
+                            }));
+                        }
+                    }
+                }
             }
-            success_fn(this, dependency_id, existing_id);
-            return Ok(Some(ResolvedPackageResult {
-                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                package: *this.lockfile.packages.get(existing_id as usize),
-                ..Default::default()
-            }));
         }
     }
 
@@ -3114,90 +3181,6 @@ fn resolution_satisfies_dependency(
 ) -> bool {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     resolution.satisfies_dependency_version(dependency, buf, buf)
-}
-
-/// The package that a dependent of the peer's declarer, at any depth, installs under the peer's
-/// name through an `npm:` alias, when that package is in the peer's range. Both linkers give the
-/// peer that folder, so nothing is fetched under the peer's own name.
-fn package_aliased_by_dependent(
-    lockfile: &Lockfile::Lockfile,
-    peer_id: DependencyID,
-    name_hash: PackageNameHash,
-    version: &dependency::Version,
-) -> Option<PackageID> {
-    if version.tag != dependency::version::Tag::Npm || version.npm().is_alias {
-        return None;
-    }
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    let names = lockfile.packages.items_name();
-    let pkg_res = lockfile.packages.items_resolution();
-    let mut declarer: Option<PackageID> = None;
-    let mut found: Option<PackageID> = None;
-    for (row, (dep, &id)) in lockfile
-        .buffers
-        .dependencies
-        .iter()
-        .zip(lockfile.buffers.resolutions.iter())
-        .enumerate()
-    {
-        if dep.name_hash != name_hash
-            || dep.version.tag != dependency::version::Tag::Npm
-            || !dep.version.npm().is_alias
-            || (id as usize) >= pkg_res.len()
-            || found == Some(id)
-            || !pkg_res[id as usize].satisfies_dependency_version(version, buf, buf)
-        {
-            continue;
-        }
-        let declarer = match declarer {
-            Some(declarer) => declarer,
-            None => *declarer.insert(lockfile.get_parent_pkg_of_dependency(peer_id)?),
-        };
-        let Some(owner) = lockfile.get_parent_pkg_of_dependency(row as DependencyID) else {
-            continue;
-        };
-        if owner != declarer && !installs(lockfile, owner, declarer) {
-            continue;
-        }
-        // Two dependents can alias the name to different packages: take the same one in every order of arrival.
-        let replaces = found.is_none_or(|prev| {
-            names[id as usize]
-                .order(names[prev as usize], buf, buf)
-                .then_with(|| pkg_res[prev as usize].order(&pkg_res[id as usize], buf, buf))
-                .is_lt()
-        });
-        if replaces {
-            found = Some(id);
-        }
-    }
-    found
-}
-
-/// Whether `from` installs `to` below itself: reachable over resolved dependencies, not over peers.
-fn installs(lockfile: &Lockfile::Lockfile, from: PackageID, to: PackageID) -> bool {
-    let dependency_lists = lockfile.packages.items_dependencies();
-    let resolution_lists = lockfile.packages.items_resolutions();
-    let mut visited = vec![false; dependency_lists.len()];
-    let mut stack = vec![from];
-    visited[from as usize] = true;
-    while let Some(pkg) = stack.pop() {
-        let dependencies =
-            dependency_lists[pkg as usize].get(lockfile.buffers.dependencies.as_slice());
-        let resolutions =
-            resolution_lists[pkg as usize].get(lockfile.buffers.resolutions.as_slice());
-        for (dep, &child) in dependencies.iter().zip(resolutions) {
-            if dep.behavior.is_peer() || (child as usize) >= visited.len() {
-                continue;
-            }
-            if child == to {
-                return true;
-            }
-            if !core::mem::replace(&mut visited[child as usize], true) {
-                stack.push(child);
-            }
-        }
-    }
-    false
 }
 
 fn patched_package_satisfying(

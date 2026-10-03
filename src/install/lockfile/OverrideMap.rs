@@ -8,7 +8,7 @@ use crate::resolution::Tag as ResolutionTag;
 use crate::{PackageID, invalid_package_id};
 use bun_collections::{ArrayHashMap, index_sort};
 use bun_install::dependency::{
-    self, Behavior, Dependency, DependencyExt as _, NoAliases, NpmAliasRegistry, Tag as VersionTag,
+    self, Behavior, Dependency, DependencyExt as _, NpmAliasRegistry, Tag as VersionTag,
     VersionExt as _,
 };
 use bun_install::{PackageManager, PackageNameHash};
@@ -114,6 +114,14 @@ impl Field {
 }
 
 struct Ambiguous;
+
+/// Scoped rules must not redirect every edge of the target name, so their `npm:` values are never registered as known aliases.
+struct NoAliases;
+
+impl NpmAliasRegistry for NoAliases {
+    #[inline]
+    fn record_npm_alias(&mut self, _hash: PackageNameHash, _version: &dependency::Version) {}
+}
 
 #[inline]
 fn is_comment_key(key: &[u8]) -> bool {

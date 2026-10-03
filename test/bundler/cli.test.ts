@@ -443,6 +443,26 @@ test("--outdir build succeeds when the output directory already exists with prio
   expect(out).not.toContain("stale");
 });
 
+// mkdir on a dangling symlink reports EEXIST, mkdir below it reports ENOENT.
+// The recursive mkdir behind --outdir used to retry that pair forever.
+test("--outdir fails with ENOENT when a parent of the output directory is a dangling symlink", async () => {
+  using dir = tempDir("build-outdir-dangling-symlink", {
+    "entry.ts": `console.log("built");`,
+  });
+  fs.symlinkSync(path.join(String(dir), "does-not-exist"), path.join(String(dir), "dangling"));
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.ts", "--outdir", path.join("dangling", "out")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("Failed to create output directory ENOENT");
+  expect(exitCode).toBe(1);
+});
+
 test("multi-entry build writes each entry point into the output directory", async () => {
   using dir = tempDir("build-multi-entry-outdir", {
     "a.ts": `export const a: number = 1;\nconsole.log("A" + a);`,

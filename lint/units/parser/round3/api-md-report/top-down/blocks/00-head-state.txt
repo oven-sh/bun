@@ -1,0 +1,74 @@
+# API of the parser unit
+
+What other units call: the lint parse, its side table and the type nodes. Other units read only this file. Every
+section describes the commit that "State of this file" names. A sentence about a run names the command that ran.
+
+## State of this file
+
+Describes `[[FILL head: git -C /workspace/wt/parser rev-parse --short=10 HEAD, the last commit of round 3]]` on
+`robobun/abbc0c92/lint-parser`. The branch holds main up to
+`[[FILL base: the commit that /workspace/base/bun.f4d755a9c --revision prints (fa467dcae2 on 2026-10-03); git merge-base --is-ancestor <it> HEAD must succeed]]`,
+and the base binaries of the two proofs are the release build of that commit of main (`/workspace/base/README.txt`:
+the names `bun.f4d755a9c` and `bun-profile.f4d755a9c` are links to it).
+
+What ran in the worktree at that commit, each through `/workspace/tools/lk` with a timeout of 3600000 ms:
+
+| command | result |
+| --- | --- |
+| `cargo check -p bun_ast -p bun_js_parser --message-format=short`, and the same with `--all-targets` | [[FILL gate-check: "clean", or every finding]] |
+| `cargo clippy -p bun_ast -p bun_js_parser --no-deps --keep-going --message-format=short`, and the same with `--all-targets` | [[FILL gate-clippy: "clean". At b882bfc32f it was not: needless_pass_by_value at p.rs:7996 (serialize_metadata), and with --all-targets parse/erased_tests.rs:147 and parse/generics.rs:719]] |
+| `cargo fmt -p bun_ast -p bun_js_parser -- --check` | [[FILL gate-fmt]] |
+| `cargo test -p bun_js_parser --lib` | [[FILL gate-cargotest: "<n> passed; 0 failed". 70 at the start of round 3; 75 with the five tests of parse::grammar_rows_tests]] |
+| `bun run rust:miri -p bun_ast` | [[FILL gate-miri: the seven tests of ts_nodes.rs and the three of msg_code_tests]] |
+| `bash /workspace/notes/lint/units/parser/round3/proof-behaviour/older-tests.sh plain` | [[FILL gate-older-plain: its RESULT line and the eight counts]] |
+| `bash /workspace/notes/lint/units/parser/round3/proof-behaviour/older-tests.sh leak` | [[FILL gate-older-leak]] |
+| `bun bd test test/bundler/transpiler/lint-parse*.test.ts` | [[FILL gate-lint-parse-tests: the counts, or "no such file: NEEDS.md N3"]] |
+| `python3 /workspace/notes/lint/tools/commentcop.py <base>...HEAD --all` | [[FILL gate-commentcop: "0 in 0 files"]] |
+| `bun test test/internal/source-lints/` (reads sources, starts no build) | [[FILL gate-source-lints]] |
+| the behaviour proof, "Proofs of round 3" | [[FILL gate-r2: the RESULT line of parity.sh]] |
+| the cost proof, "Proofs of round 3" | [[FILL gate-r3: js-control +0 Ir, +0 Bc; the tests per KB of the four TypeScript groups]] |
+
+The eight older files are those of parser.md P1.6 without `typescript-grammar.test.ts`:
+`test/bundler/transpiler/decorator-metadata.test.ts`, `test/bundler/bundler_decorator_metadata.test.ts`,
+`test/bundler/transpiler/transpiler.test.js`, `test/bundler/esbuild/ts.test.ts`,
+`test/bundler/transpiler/decorators.test.ts`, `test/js/bun/typescript/type-export.test.ts`,
+`test/bundler/transpiler/transpiler-stack-overflow.test.ts`, `test/cli/run/transpiler-cache.test.ts`. Each is
+byte-identical to main (`git diff --quiet <base> HEAD -- <file>`).
+
+What waits on another unit (`NEEDS.md`):
+
+| | what | state |
+| --- | --- | --- |
+| N1 | a diagnostic code on `bun_ast::Msg` | landed in `4d9b8e5139`: `Metadata::Code(u32)`, `Msg::code()`, `Log::add_range_error_with_code`. [[CHECK n1-used: after R5 (B2) the parser writes the code on the message of a failed lint parse; say "the parser writes it since <commit>" or "the parser does not write it yet: the codes are in SyntaxErrors"]] |
+| N2 | a caller of the public items in another crate | [[CHECK n2: open at b882bfc32f: nothing outside src/js_parser calls parse_for_lint; src/runtime/cli/lint_command.rs:241 calls parse_only for JavaScript and Parser::parse for TypeScript. Re-read the line at the final commit]] |
+| N3 | JavaScript that reaches a lint parse | open for the same reason: no `lint-parse*.test.ts` can exist yet |
+| N4 | a CI job that runs `cargo test -p bun_js_parser --lib` | open. `bun_ast` is in `MIRI_CRATES` (`scripts/rust-miri.ts`), so the tests of `ts_nodes.rs` run in CI |
+
+## What changed for a caller in round 3
+
+Round 3 put a parse without lint back to the parser of main and gave the lint parse its own grammar. The shape of
+`ParsedForLint`, of the four tables of the side table and of the type nodes is the one of round 1, with these
+differences. Each is described in its section.
+
+- A parse without lint is main again, byte for byte: what it accepts, what it rejects, every error text, every
+  `emitDecoratorMetadata` value. The 366 cases that round 1 asserted for it are tests of the lint parse now, and what
+  main does with them is listed in "Known differences of a parse without lint".
+- `EXPECTED_VERSION` of the runtime transpiler cache is 33 again: the output of the transpiler does not change.
+- `TypeSink::STRICT` is gone, with `BUILDS`, `Sub` and `K`. A site asks the side table, not the sink ("How a site
+  knows which parse it is").
+- [[PICK parens: the decision on parentheses records. Check: the case of a `.js` source in wrappers::tests::records_are_those_of_the_known_sources, and `grep -n "starts_for_parse_only\|fn lint" src/js_parser/parse/parse_prefix.rs` around pfx_t_open_paren]]
+  Parentheses: a lint parse of TypeScript records every pair of parentheses around an expression, as before. A lint
+  parse of JavaScript records none: `wrappers.records` is empty for a `.js`, `.jsx`, `.mjs` or `.cjs` file. A pass
+  that needs the parentheses of a JavaScript file reads the tokens between two nodes.
+  [[OR]]
+  Parentheses: no parse records them. `WrapperData::Parenthesized` is never made, in TypeScript and in JavaScript: the
+  site is the `(` that starts any expression, which every parse runs. A pass that needs parentheses reads the tokens
+  between two nodes.
+  [[END]]
+- A lint parse of JavaScript fills none of the four tables ("What a lint parse of JavaScript records").
+- [[CHECK rows-as-main: the sources that a lint parse reads as main reads them are the table KNOWN_DIFFERENCES of src/js_parser/parse/grammar_rows_tests.rs; when it is empty delete this item and the section "Known differences of the lint grammar"]]
+  Some valid TypeScript that round 1 read is read by a lint parse as main reads it, because its site is one that
+  JavaScript reaches: "Known differences of the lint grammar" lists the sources.
+- [[CHECK comments-shape: after R5 (B1). New and additive: `StartsForParseOnly::comments` (module `bun_js_parser::parse::comments`), the comment directives and the pragmas. Name each new public field, type and function here, with the commit]]
+- [[CHECK codes-shape: after R5 (B2). Name what changed: the code is read with `Msg::code()`; `SyntaxErrors` keeps the range and the text of the reference; whether `SyntaxError::code` stays; whether `Parser::init_for_lint` and `Parser::init_for_lint_with_codes` were added]]
+- [[CHECK rejects-shape: after R5 (B3, B4). Sources that a lint parse of round 1 accepted and rejects now: name the list of "What a lint parse rejects"]]

@@ -1,10 +1,3 @@
-10-02_16:12:45 anon=817MB pids=56 load=893.29 top=cachegrind-amd6:314MB
-10-02_16:13:25 anon=286MB pids=50 load=890.19 top=cachegrind-amd6:309MB
-10-02_16:14:07 anon=285MB pids=36 load=908.44 top=cachegrind-amd6:309MB
-10-02_16:14:54 anon=811MB pids=60 load=946.52 top=cachegrind-amd6:318MB
-10-02_16:15:35 anon=277MB pids=59 load=931.58 top=cachegrind-amd6:299MB
-10-02_16:16:11 anon=240MB pids=37 load=909.16 top=cachegrind-amd6:266MB
-10-02_16:16:47 anon=262MB pids=37 load=923.38 top=cachegrind-amd6:286MB
 10-02_16:17:30 anon=1072MB pids=59 load=965.61 top=cachegrind-amd6:311MB
 10-02_16:18:09 anon=1054MB pids=61 load=964.76 top=clippy-driver:326MB
 10-02_16:18:43 anon=286MB pids=53 load=809.81 top=cachegrind-amd6:309MB
@@ -398,3 +391,10 @@
 10-03_05:01:55 anon=3MB pids=27 load=1407.01 top=postgres:12MB
 10-03_05:03:57 anon=8MB pids=32 load=1319.69 top=postgres:12MB
 10-03_05:05:49 anon=21MB pids=33 load=1356.45 top=git-remote-http:19MB
+10-03_05:07:10 anon=29MB pids=40 load=1433.42 top=git-remote-http:20MB
+10-03_05:08:10 anon=3MB pids=27 load=1193.20 top=postgres:12MB
+10-03_05:08:45 anon=20MB pids=31 load=1037.68 top=git:104MB
+10-03_05:10:31 anon=3MB pids=32 load=1164.58 top=postgres:12MB
+10-03_05:11:21 anon=3MB pids=27 load=930.67 top=postgres:12MB
+10-03_05:12:25 anon=4MB pids=34 load=942.66 top=postgres:12MB
+10-03_05:13:45 anon=12MB pids=44 load=973.74 top=postgres:12MB

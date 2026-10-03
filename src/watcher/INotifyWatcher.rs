@@ -130,7 +130,7 @@ impl INotifyWatcher {
         use bun_sys::linux::IN;
         debug_assert!(self.loaded);
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
-        // IN_ATTRIB catches the link-count drop when a held-open inode is renamed over.
+        // IN_ATTRIB is how `watched_inode_is_unlinked` learns of a link-count change.
         let watch_file_mask = IN::EXCL_UNLINK
             | IN::MOVE_SELF
             | IN::DELETE_SELF
@@ -456,7 +456,16 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     continue;
                 }
             };
-            this.watch_events[event_id] = watch_event_from_inotify_event(event, idx);
+            let mut watch_event = watch_event_from_inotify_event(event, idx);
+            if (event.mask & bun_sys::linux::IN::ATTRIB) != 0 {
+                if watched_inode_is_unlinked(this, idx, event.watch_descriptor) {
+                    watch_event.op |= Op::DELETE;
+                } else if watch_event.op.is_empty() {
+                    events_processed += 1;
+                    continue;
+                }
+            }
+            this.watch_events[event_id] = watch_event;
 
             // Safely handle event names with bounds checking
             if event.name_len > 0 && (temp_name_off as usize) < temp_name_list.len() {
@@ -529,6 +538,18 @@ fn process_inotify_event_batch(
     Ok(())
 }
 
+/// The kernel holds back IN_DELETE_SELF while the watchlist's fd keeps a replaced or removed inode open.
+fn watched_inode_is_unlinked(this: &Watcher, index: WatchItemIndex, wd: EventListIndex) -> bool {
+    use crate::watcher_impl::WatchItemColumns;
+    let _guard = this.mutex.lock_guard();
+    // `index` is from this cycle's snapshot; an eviction since then can have moved another item there.
+    if this.watchlist.items_eventlist_index().get(usize::from(index)) != Some(&wd) {
+        return false;
+    }
+    let fd = this.watchlist.items_fd()[usize::from(index)];
+    fd.is_valid() && bun_sys::fstat(fd).is_ok_and(|stat| stat.st_nlink == 0)
+}
+
 fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> WatchEvent {
     use bun_sys::linux::IN;
     let mut op = Op::empty();
@@ -543,9 +564,6 @@ fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> Watch
     }
     if (event.mask & IN::MODIFY) > 0 {
         op |= Op::WRITE;
-    }
-    if (event.mask & IN::ATTRIB) > 0 {
-        op |= Op::METADATA;
     }
     if (event.mask & IN::CREATE) > 0 {
         op |= Op::CREATE;

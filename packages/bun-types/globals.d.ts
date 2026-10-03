@@ -142,10 +142,50 @@ declare module "bun" {
     }
 
     type LibEmptyOrBunEventTarget = LibDomIsLoaded extends true ? {} : BunEventTarget;
+
+    /**
+     * Like a `BodyMixin`, but implemented by more types, such as
+     * `Blob`, `ReadableStream`, and `Response`.
+     *
+     * It has no `blob()` method because it's the lowest common
+     * denominator of these objects: a `Blob` in Bun does not have a
+     * `.blob()` method.
+     */
+    interface BunConsumerConvenienceMethods {
+      /**
+       * Consume as text
+       */
+      text(): Promise<string>;
+
+      /**
+       * Consume as a Uint8Array, backed by an ArrayBuffer
+       */
+      bytes(): Promise<Uint8Array<ArrayBuffer>>;
+
+      /**
+       * Consume as JSON
+       */
+      json(): Promise<any>;
+    }
+
+    /**
+     * The methods Bun adds to `ReadableStream`. Both the global `ReadableStream`
+     * interface (whether lib.dom.d.ts declares it or not) and the one exported
+     * by `node:stream/web` (see overrides.d.ts) extend this, so the two stay
+     * assignable to each other.
+     */
+    interface BunReadableStreamConsumerMethods extends BunConsumerConvenienceMethods {
+      /**
+       * Consume as a Blob
+       */
+      blob(): Promise<Blob>;
+    }
   }
 }
 
-interface ReadableStream<R = any> extends Bun.__internal.LibEmptyOrNodeReadableStream<R> {}
+interface ReadableStream<R = any>
+  extends Bun.__internal.LibEmptyOrNodeReadableStream<R>,
+    Bun.__internal.BunReadableStreamConsumerMethods {}
 declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStream",
   {

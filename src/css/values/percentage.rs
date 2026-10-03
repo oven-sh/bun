@@ -47,14 +47,7 @@ impl Percentage {
             if percent.to_css_generic(&mut fbs).is_err() {
                 return Err(dest.add_fmt_error());
             }
-            let buf = fbs.get_written();
-            if self.v < 0.0 {
-                dest.write_char(b'-')?;
-                dest.write_str(bun_core::strings::trim_leading_pattern2(buf, b'-', b'0'))?;
-            } else {
-                dest.write_str(bun_core::trim_leading_char(buf, b'0'))?;
-            }
-            Ok(())
+            css::serializer::write_without_leading_zero(fbs.get_written(), dest)
         } else {
             percent.to_css(dest)
         }

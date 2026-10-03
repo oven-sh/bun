@@ -313,9 +313,9 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                     RETURN_IF_EXCEPTION(throwScope, {});
                     if (proxyHeadersValue && !proxyHeadersValue.isUndefinedOrNull()) {
                         // Check if it's already a Headers instance (like fetch does)
-                        if (auto* jsHeaders = dynamicDowncast<JSFetchHeaders>(proxyHeadersValue)) {
+                        if (auto* wrapped = JSFetchHeaders::toWrappedAsInit(proxyHeadersValue)) {
                             // Convert FetchHeaders to the Init variant
-                            auto& headers = jsHeaders->wrapped();
+                            auto& headers = *wrapped;
                             Vector<KeyValuePair<String, String>> pairs;
                             auto iterator = headers.createIterator(false);
                             while (auto value = iterator.next()) {

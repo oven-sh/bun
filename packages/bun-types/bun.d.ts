@@ -3211,8 +3211,6 @@ declare module "bun" {
      * from it. Requires `splitting: true`. CLI: `--min-chunk-size`. For browser
      * builds, where every chunk is a request, 16384 is a good value.
      * Nothing folds into an entry point without `[hash]` in its name.
-     * Its code and the code it shares with modules it `import()`s go into a
-     * chunk named after it, with a hash (`index-[hash].js` next to `index.js`).
      *
      * @default 0 (disabled)
      */
@@ -3268,10 +3266,6 @@ declare module "bun" {
      * `[target]`, and `[hash]` (8 characters of the content hash, more when
      * two outputs would otherwise share a name) or `[hash9]`…`[hash13]` for a
      * wider minimum.
-     *
-     * With `splitting`, `chunk` does not apply to the chunk that holds the code
-     * of an entry point without `[hash]` in its name. That chunk has the name
-     * of the entry point with `-[hash]` in front of the extension.
      *
      * @default { entry: "[dir]/[name].[ext]", chunk: "./chunk-[hash].[ext]", asset: "./[name]-[hash].[ext]" }
      */

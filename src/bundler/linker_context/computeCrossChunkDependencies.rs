@@ -314,6 +314,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                 }
 
                 if ctx.module_preload()
+                    && chunk.content.javascript().parent_chunk.is_none()
                     && ctx
                         .preload_entries
                         .is_set(chunk.entry_point.source_index() as usize)
@@ -568,7 +569,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         }
     }
 
-    // The chunk that held the entry point's files imported these itself. A browser finds them one round trip later behind the parent chunk.
+    // Else a browser finds what the parent chunk imports one round trip later.
     for chunk_index in 0..chunks.len() {
         let chunk::Content::Javascript(js) = &chunks[chunk_index].content else {
             continue;

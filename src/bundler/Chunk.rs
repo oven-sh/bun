@@ -1318,7 +1318,7 @@ pub struct JavaScriptChunk {
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
     // for code splitting
-    /// Of an entry point's chunk that holds no file: the parent chunk of its class, which runs them (`merge_small_chunks`).
+    /// The chunk that holds this entry point's files, when `merge_small_chunks` moved them out of this chunk.
     pub(crate) parent_chunk: Option<u32>,
     /// The other chunks with top-level side effects that the walk ordering
     /// this chunk reaches, in the order it finishes their first file with

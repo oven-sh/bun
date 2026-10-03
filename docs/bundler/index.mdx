@@ -619,14 +619,16 @@ Code splitting gives each distinct set of importers its own chunk, then folds ch
 
 Nothing folds into the chunk of an entrypoint whose name has no `[hash]`, which is the default `naming`. Whatever loads that file can add a query string to its URL (`index.js?v=123`). An `import "./index.js"` in another chunk would then run the file a second time.
 
-Bun puts the shared code and the entrypoint's own code into one chunk, in import order. Bun names that chunk after the entrypoint, with a hash: `index-[hash].js`, next to `index.js`. `naming.chunk` does not apply to it. Relative paths in the code keep their meaning, because the directory is the same. `index.js` keeps none of the code and imports the chunk.
+The shared code goes into one hashed chunk next to the entrypoint, and that chunk runs before the code in `index.js`.
 
-These entrypoints keep their own code in `index.js`:
+That is too early when `index.js` imports a module of its own ahead of the shared code, such as a setup file that the shared code depends on. Bun then puts the entrypoint's own code into the hashed chunk too, in import order. `index.js` keeps none of the code and imports the chunk.
 
-- an entrypoint with exports, a CommonJS entrypoint, or a build with `compile`
-- an entrypoint that reads `import.meta`, in its own file or in a module that only it imports. `import.meta.main` and `import.meta.url` describe the file that holds them.
+Bun moves the code only when nothing else changes. The entrypoint keeps its own code in `index.js` when:
 
-For these entrypoints, only the shared code goes into a chunk of its own. The shared code runs before the code in `index.js`.
+- the entrypoint has exports, is a CommonJS module, or the build uses `compile`
+- a module that only the entrypoint imports reads `import.meta` or imports an [external](#external) package
+- the entrypoint also loads code that is in neither place, such as a module that another entrypoint shares
+- `naming` puts chunks and the entrypoint into different directories
 
 Entrypoints that an HTML file loads, and entrypoints with `[hash]` in `naming.entry`, fold the shared code into their own chunk.
 

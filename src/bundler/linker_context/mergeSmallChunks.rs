@@ -111,6 +111,14 @@ impl LinkerContext<'_> {
             })
     }
 
+    /// The load of its chunk evaluates code of the file. `loading_file_has_no_side_effects` says what tree shaking
+    /// may drop, and that can still read what another file wrote: `export const has = typeof X !== "undefined"`.
+    fn order_can_matter(&self, source_index: u32) -> bool {
+        source_index != Index::RUNTIME.value()
+            && (self.graph.meta.items_flags()[source_index as usize].wrap == WrapKind::None
+                || !self.loading_file_has_no_side_effects(source_index))
+    }
+
     /// The bundled wrapped modules an unwrapped file initializes at its top
     /// level (`init_x()` / `require_x()` printed for a live static import).
     pub(crate) fn top_level_inits(&self, source_index: u32, inits: &mut Vec<u32>) {
@@ -147,7 +155,7 @@ impl LinkerContext<'_> {
 #[derive(Clone, Copy, PartialEq)]
 enum Pin {
     None,
-    /// No chunk may import it, so it is never merged into. Rule 1 merges it into the parent of its class.
+    /// No chunk may import it, so it is never merged into. Rule 1 merges it into the parent of its class where that only repairs the order.
     Name,
     /// Neither merged nor merged into.
     Files,
@@ -176,6 +184,8 @@ struct Group {
     recheck: bool,
     wants_inits: bool,
     pin: Pin,
+    /// See `LinkerContext::order_can_matter`.
+    order_can_matter: bool,
     /// See `entries_loaded_mid_evaluation`.
     loads_mid_evaluation: Option<AutoBitSet>,
     /// Every live part of every file is side-effect free.
@@ -224,6 +234,7 @@ impl Group {
             recheck: false,
             wants_inits: false,
             pin,
+            order_can_matter: false,
             loads_mid_evaluation: None,
             pure: true,
             deps: Vec::new(),
@@ -713,6 +724,49 @@ fn entries_loaded_mid_evaluation(
     Ok(loads)
 }
 
+/// The load of `entry_file` evaluates a file that only this entry point loads (`is_own`) ahead of a file of the parent chunk (`is_in_parent`). The parent chunk runs first.
+fn runs_a_file_too_late(
+    this: &LinkerContext,
+    entry_file: u32,
+    is_own: impl Fn(u32) -> bool,
+    is_in_parent: impl Fn(u32) -> bool,
+) -> Result<bool, bun_alloc::AllocError> {
+    enum Frame {
+        Enter(u32),
+        Leave(u32),
+    }
+    let flags = this.graph.meta.items_flags();
+    let mut entered = AutoBitSet::init_empty(this.graph.files.len())?;
+    let mut own_file_ran = false;
+    let mut stack = vec![Frame::Enter(entry_file)];
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Enter(file) => {
+                if entered.is_set(file as usize) || !this.graph.files_live.is_set(file as usize) {
+                    continue;
+                }
+                entered.set(file as usize);
+                stack.push(Frame::Leave(file));
+                let mark = stack.len();
+                this.for_each_file_loaded_by(file, |other| stack.push(Frame::Enter(other)));
+                stack[mark..].reverse();
+            }
+            Frame::Leave(file) => {
+                if is_own(file) {
+                    // The file that imports a wrapped file starts it there.
+                    own_file_ran |= file != entry_file
+                        && file != Index::RUNTIME.value()
+                        && (flags[file as usize].wrap != WrapKind::None
+                            || !this.loading_file_has_no_side_effects(file));
+                } else if own_file_ran && is_in_parent(file) && this.order_can_matter(file) {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// Folds code-splitting chunks into other chunks where that is unobservable,
 /// so fewer modules are loaded at runtime.
 ///
@@ -754,10 +808,13 @@ fn entries_loaded_mid_evaluation(
 /// `File.entry_bits` in place so everything downstream (chunk membership,
 /// cross-chunk imports) sees the merged layout. Returns the entry points
 /// (by id) whose own chunk it merged into the parent of their class (`Pin::Name`).
+/// `beside_chunks`: the entry points whose chunk is written into the directory
+/// of the chunks that are no entry point's.
 pub(crate) fn merge_small_chunks(
     this: &mut LinkerContext,
     temp: &Arena,
     min_chunk_size: u64,
+    beside_chunks: &AutoBitSet,
 ) -> crate::Result<AutoBitSet> {
     let _trace = bun_core::perf::trace("Bundler.mergeSmallChunks");
     debug_assert!(this.graph.code_splitting);
@@ -1093,13 +1150,24 @@ pub(crate) fn merge_small_chunks(
         };
         group.size += size;
         group.pure &= pure;
-        // `import.meta` names the chunk that holds it, and `import.meta.main` is only true in the entry point's own.
-        // The runtime makes `require` from it, which depends on the directory alone. The parent chunk is in the same one.
-        if group.pin == Pin::Name
-            && source_index != Index::RUNTIME.value()
-            && ast_flags[source_index as usize].contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
-        {
-            group.pin = Pin::Files;
+        group.order_can_matter |= this.order_can_matter(source_index);
+        if source_index != Index::RUNTIME.value() {
+            // `import.meta` describes the chunk that holds it. An external `import` runs ahead of its whole chunk, so in the parent it would run ahead of the shared code.
+            if group.pin == Pin::Name
+                && (ast_flags[source_index as usize]
+                    .contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
+                    || import_records[source_index as usize].iter().any(|record| {
+                        record.kind == ImportKind::Stmt
+                            && !record.source_index.is_valid()
+                            && !record.path.is_disabled
+                            && !record.flags.intersects(
+                                ImportRecordFlags::IS_UNUSED
+                                    | ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
+                            )
+                    }))
+            {
+                group.pin = Pin::Files;
+            }
         }
         if group.target != Some(target) {
             group.target = None;
@@ -1115,8 +1183,7 @@ pub(crate) fn merge_small_chunks(
 
     // An entry point's JS chunk exists even when no file is keyed by exactly
     // its bit (its own file is also reached from an `import()` target that
-    // imports back from it); give its class that chunk to fold into, or
-    // (`Pin::Name`) to leave without a file.
+    // imports back from it); give its class that chunk to fold into.
     for class_index in 0..classes.count() {
         let key = classes.keys()[class_index];
         let class = &classes.values()[class_index].0;
@@ -1222,11 +1289,41 @@ pub(crate) fn merge_small_chunks(
         let Some(target_platform) = groups.values()[target_index].target else {
             continue;
         };
+        // One chunk runs what it imports first. So the files of the entry point go into the parent only when they
+        // and the parent are all that runs, and only when the parent runs ahead of one of them that it must follow.
+        let mut takes_entry_files = false;
+        if let Some(&own) = members
+            .iter()
+            .find(|&&i| groups.values()[i].pin == Pin::Name)
+        {
+            let groups = groups.values();
+            let entry_id = groups[own].bits.find_first_set().expect("one bit set");
+            let joins_parent = |i: usize| {
+                members.contains(&i)
+                    && groups[i].pin == Pin::None
+                    && groups[i].target == Some(target_platform)
+                    && !groups[i].loads_entry_of(class)
+            };
+            takes_entry_files = beside_chunks.is_set(entry_id)
+                && groups.iter().enumerate().all(|(i, group)| {
+                    i == own
+                        || !group.order_can_matter
+                        || !group.bits.is_set(entry_id)
+                        || joins_parent(i)
+                })
+                && runs_a_file_too_late(
+                    this,
+                    entry_source_indices[entry_id],
+                    |file| group_of_file[file as usize] == own,
+                    |file| joins_parent(group_of_file[file as usize]),
+                )?;
+        }
         for &member in members {
             let group = &groups.values()[member];
             if member == target_index
                 || group.pin == Pin::Files
                 || group.target != Some(target_platform)
+                || (group.pin == Pin::Name && !takes_entry_files)
             {
                 continue;
             }

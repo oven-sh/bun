@@ -834,11 +834,6 @@ fn reached_chunks_in_order(
     // Start where the load enters this chunk.
     let mut roots: Vec<IndexInt> = chunk.files_with_parts_in_chunk.keys().to_vec();
     roots.sort_unstable_by_key(|&source_index| order.entered[source_index as usize]);
-    // The parent chunk runs the entry point's file, after what that file imports.
-    let parent = chunk.content.javascript().parent_chunk;
-    if parent.is_some() {
-        roots.push(chunk.entry_point.source_index());
-    }
 
     let mut reached: Vec<u32> = Vec::new();
     let mut reached_set = AutoBitSet::init_empty(chunks_len)?;
@@ -899,7 +894,5 @@ fn reached_chunks_in_order(
             stack[mark..].reverse();
         }
     }
-    // The last mention ranks a chunk.
-    reached.extend(parent);
     Ok(reached)
 }

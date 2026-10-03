@@ -46,20 +46,34 @@ fn module_preload_registration(
 ) -> Result<Vec<u8>, crate::Error> {
     use std::io::Write as _;
     let mut code = Vec::new();
-    if !c.module_preload()
-        || !chunk.entry_point.is_entry_point()
-        || !c
-            .preload_entries
-            .is_set(chunk.entry_point.source_index() as usize)
-    {
+    if !c.module_preload() {
         return Ok(code);
     }
+    // The parent chunk of an entry point runs its `import()`s, so it registers in place of the entry point's chunk.
+    let entry_chunk_index = if chunk.entry_point.is_entry_point() {
+        chunk
+            .content
+            .javascript()
+            .parent_chunk
+            .is_none()
+            .then_some(chunk_index)
+    } else {
+        chunks.iter().position(|other| {
+            matches!(&other.content, crate::chunk::Content::Javascript(js) if js.parent_chunk == Some(chunk_index as u32))
+        })
+    };
+    let Some(entry_chunk_index) = entry_chunk_index.filter(|&entry_chunk_index| {
+        c.preload_entries
+            .is_set(chunks[entry_chunk_index].entry_point.source_index() as usize)
+    }) else {
+        return Ok(code);
+    };
     let chunks_ref = c.graph.symbols.follow(c.chunks_runtime_ref);
 
     // `reached[i]` gets local index `i`; sites and `seen` use the stable `id()`.
     let reached = Chunk::reachable_chunks(
         chunks,
-        chunk_index as u32,
+        entry_chunk_index as u32,
         &[bun_ast::ImportKind::Stmt, bun_ast::ImportKind::Dynamic],
     )?;
     let mut local = vec![u32::MAX; chunks.len()];

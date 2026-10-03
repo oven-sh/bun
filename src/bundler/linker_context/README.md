@@ -731,7 +731,6 @@ The renamed symbols are then used during final code generation to produce output
 - Handles CSS chunking strategies
 - Manages HTML chunk creation
 - Assigns unique keys and templates to chunks
-- Names the parent chunk that runs an entry point's files (`JavaScriptChunk::parent_chunk`) after the entry point's own chunk, with `-[hash]`, so relative paths in its code keep their meaning
 
 #### `mergeSmallChunks.rs`
 
@@ -744,7 +743,8 @@ The renamed symbols are then used during final code generation to produce output
 - Rewrites the entry bits of files to those of the class's parent chunk (the chunk keyed by the reduced set, else the largest member) before `computeChunks()` groups files
 - Leaves an entry point's own chunk alone when the entry point has exports and with `--compile`
 - Folds nothing into an entry point without `[hash]` in its name: its host can load it as `entry.js?v=1`, so no other chunk may import from it
-- Folds that entry point's own chunk into the parent chunk of the class instead, so its files run in evaluation order with the code they share (`Pin::Name`). The files stay when one of them reads `import.meta`, which names the chunk that holds it, and when the entry point has an `export *`
+- Folds that entry point's own chunk into the parent chunk of the class where the parent runs ahead of a file that it must follow (`Pin::Name`, `runs_a_file_too_late`)
+- Does so only when nothing else changes its place: the two are all that evaluates code when the entry point loads (`order_can_matter`), the files read no `import.meta` and `import` no external module, and both chunks are written into one directory (`entry_points_beside_chunks`)
 - Keeps a chunk out of the fold when it can be in the middle of being evaluated while an entry of its class loads (it, or a file that statically imports its way to it, `require()`s a split ES module): the entry's chunk reads the other members then
 - With `--min-chunk-size`, additionally folds small chunks with no top-level side effects into a chunk loaded by a superset of their entries when every dependency is already loaded wherever the target is, no static import cycle between chunks results, and every CommonJS/ESM wrapper the moved code initializes at the top level is already initialized by a chunk the target imports
 
@@ -769,7 +769,7 @@ The renamed symbols are then used during final code generation to produce output
 - One walk per entry point, in parallel. A chunk has one owner: the entry point that loads first among the chunk's entry points (`load_rank`). `load_rank` and `EntryWalk` read the same edges (`for_each_edge`). The owner's walk places the files of the chunk, so no two walks write the same list. Without code splitting, each chunk is owned by its own entry point
 - Places the parts of a file in runs: a part prints after the files it imports and before the files that the next part imports
 - Collects the live parts of each run into part ranges
-- Records the other chunks in the order a walk from the chunk's files reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements. An entry point's chunk whose files are in the parent chunk walks from the entry point's file, and imports the parent chunk last
+- Records the other chunks in the order a walk from the chunk's files reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
 
 #### `findImportedCSSFilesInJSOrder.rs`
 

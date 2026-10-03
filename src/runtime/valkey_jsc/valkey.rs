@@ -134,6 +134,16 @@ impl TLS {
             _ => false,
         }
     }
+
+    /// `tls.serverName`: replaces the URL host as SNI and as the name the certificate must match.
+    pub(crate) fn server_name(&self) -> Option<&[u8]> {
+        match self {
+            TLS::Custom(ssl_config) => ssl_config
+                .server_name_bytes()
+                .filter(|name| !name.is_empty()),
+            _ => None,
+        }
+    }
 }
 
 // Call sites only ever compare against `TLS::None` / `TLS::Enabled`; `SSLConfig`
@@ -154,6 +164,8 @@ pub(crate) struct Options {
     pub(crate) enable_auto_pipelining: bool,
 
     pub(crate) tls: TLS,
+    /// `tls.checkServerIdentity`, or `undefined`. Stored on the JS wrapper.
+    pub(crate) check_server_identity: JSValue,
 }
 
 impl Default for Options {
@@ -166,6 +178,7 @@ impl Default for Options {
             enable_offline_queue: true,
             enable_auto_pipelining: true,
             tls: TLS::None,
+            check_server_identity: JSValue::UNDEFINED,
         }
     }
 }

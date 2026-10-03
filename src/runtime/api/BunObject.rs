@@ -1804,7 +1804,8 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
         &global_this.js_thread(vm.root_context()),
         &[JSValue::UNDEFINED],
     ) {
-        Ok(p) => p,
+        // No options object, so no `tls.checkServerIdentity` to store.
+        Ok((p, _)) => p,
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,
         Err(err) => {
             let _ =

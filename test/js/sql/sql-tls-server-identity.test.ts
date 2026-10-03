@@ -1,0 +1,422 @@
+// `tls.checkServerIdentity`, `tls.serverName` / `tls.servername` and the
+// built-in hostname check for Bun.SQL over TLS (PostgreSQL and MySQL).
+//
+// These need a server that presents a certificate for a name of the test's
+// choosing, which the shared containers cannot do, so both adapters talk to a
+// minimal mock that upgrades to TLS and accepts the login. All wire-protocol
+// bytes come from test/js/sql/wire-frames.ts.
+
+import { SQL } from "bun";
+import { describe, expect, test } from "bun:test";
+import { tls as localhostTls } from "harness";
+import { X509Certificate } from "node:crypto";
+import { once } from "node:events";
+import fs from "node:fs";
+import type net from "node:net";
+import path from "node:path";
+import tls from "node:tls";
+import { Worker } from "node:worker_threads";
+import {
+  MYSQL_CLIENT_SSL,
+  MYSQL_DEFAULT_CAPABILITIES,
+  listeningServer,
+  mysqlAckSessionSetup,
+  mysqlHandshakeV10,
+  mysqlOkPacket,
+  mysqlReadPackets,
+  pgAuthenticationOk,
+  pgReadyForQuery,
+  pgSSLResponse,
+} from "./wire-frames";
+
+// CN=agent1 (no SAN), signed by ca1: trusted through `ca1` but valid for no
+// host the tests dial, so only `serverName: "agent1"` or a custom
+// `checkServerIdentity` can accept it.
+const fixturesDir = path.join(import.meta.dirname, "..", "node", "tls", "fixtures");
+const agent1 = {
+  key: fs.readFileSync(path.join(fixturesDir, "agent1-key.pem"), "utf8"),
+  cert: fs.readFileSync(path.join(fixturesDir, "agent1-cert.pem"), "utf8"),
+  ca: fs.readFileSync(path.join(fixturesDir, "ca1-cert.pem"), "utf8"),
+};
+// The harness certificate: CN=server-bun, SAN localhost / 127.0.0.1 / ::1, self-signed.
+const localhost = { key: localhostTls.key, cert: localhostTls.cert, ca: localhostTls.cert };
+
+type ServerCert = { key: string; cert: string };
+type MockServer = {
+  url: string;
+  /** SNI of every completed TLS handshake, in order. */
+  servernames: (string | false)[];
+  /** Set by a test that needs them: called with the bytes a connection sent inside TLS, when it closes. */
+  onTlsClose?: (bytesFromClient: number) => void;
+  close(): void;
+};
+
+/**
+ * Wraps `rawSocket` in a server-side TLSSocket once the plaintext prelude is
+ * done. Bytes already buffered past the prelude are TLS records: hand them to
+ * the TLS engine instead of the plaintext parser.
+ */
+function upgrade(rawSocket: net.Socket, cert: ServerCert, leftover: Buffer, mock: MockServer) {
+  rawSocket.pause();
+  if (leftover.length) rawSocket.unshift(leftover);
+  const socket = new tls.TLSSocket(rawSocket, { isServer: true, ...cert });
+  let bytesFromClient = 0;
+  socket.on("secure", () => mock.servernames.push(socket.servername));
+  socket.on("data", (chunk: Buffer) => (bytesFromClient += chunk.length));
+  socket.on("close", () => mock.onTlsClose?.(bytesFromClient));
+  socket.on("error", () => {});
+  return socket;
+}
+
+/** Answers SSLRequest with 'S', upgrades, then accepts any StartupMessage. */
+async function postgresServer(cert: ServerCert): Promise<MockServer> {
+  const mock: MockServer = { url: "", servernames: [], close: () => {} };
+  const { server, port } = await listeningServer(rawSocket => {
+    rawSocket.on("error", () => {});
+    let buffered = Buffer.alloc(0);
+    const onPlainData = (chunk: Buffer) => {
+      // SSLRequest is Int32(8) Int32(80877103). The client sends nothing else
+      // until it has the one-byte answer, then its ClientHello.
+      buffered = Buffer.concat([buffered, chunk]);
+      if (buffered.length < 8) return;
+      rawSocket.removeListener("data", onPlainData);
+      rawSocket.write(pgSSLResponse("S"));
+      const socket = upgrade(rawSocket, cert, buffered.subarray(8), mock);
+      let startup = true;
+      socket.on("data", () => {
+        if (startup) {
+          startup = false;
+          socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+        }
+      });
+    };
+    rawSocket.on("data", onPlainData);
+  });
+  mock.url = `postgres://u@127.0.0.1:${port}/db`;
+  mock.close = () => server.close();
+  return mock;
+}
+
+/** Advertises CLIENT_SSL, upgrades after the SSLRequest packet, then accepts the login. */
+async function mysqlServer(cert: ServerCert): Promise<MockServer> {
+  const mock: MockServer = { url: "", servernames: [], close: () => {} };
+  const { server, port } = await listeningServer(rawSocket => {
+    rawSocket.on("error", () => {});
+    rawSocket.write(mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }));
+    let buffered = Buffer.alloc(0);
+    const onPlainData = (chunk: Buffer) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      if (buffered.length < 4) return;
+      const length = buffered[0] | (buffered[1] << 8) | (buffered[2] << 16);
+      if (buffered.length < 4 + length) return;
+      // The SSLRequest packet; the ClientHello may already follow it.
+      const leftover = buffered.subarray(4 + length);
+      buffered = Buffer.alloc(0);
+      rawSocket.removeListener("data", onPlainData);
+      const socket = upgrade(rawSocket, cert, leftover, mock);
+      let authed = false;
+      socket.on("data", (chunk: Buffer) => {
+        buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+          if (!authed) {
+            authed = true;
+            socket.write(mysqlOkPacket(seq + 1));
+            return;
+          }
+          if (!mysqlAckSessionSetup(socket, payload)) socket.end();
+        });
+      });
+    };
+    rawSocket.on("data", onPlainData);
+  });
+  mock.url = `mysql://u@127.0.0.1:${port}/db`;
+  mock.close = () => server.close();
+  return mock;
+}
+
+async function connect(url: string, tlsOptions: Bun.SQL.Options["tls"], sslmode = "verify-full"): Promise<unknown> {
+  await using sql = new SQL({ url: `${url}?sslmode=${sslmode}`, tls: tlsOptions, max: 1, idleTimeout: 1 });
+  return await sql.connect().then(
+    () => "CONNECTED",
+    e => e,
+  );
+}
+
+describe.each([
+  ["PostgreSQL", "postgres", postgresServer],
+  ["MySQL", "mysql", mysqlServer],
+] as const)("%s TLS server identity", (_, scheme, startServer) => {
+  async function withServer<T>(cert: ServerCert, fn: (server: MockServer) => Promise<T>): Promise<T> {
+    const server = await startServer(cert);
+    try {
+      return await fn(server);
+    } finally {
+      server.close();
+    }
+  }
+
+  test("without tls.checkServerIdentity, verify-full rejects a trusted certificate issued for another host", async () => {
+    await withServer(agent1, async server => {
+      const err: any = await connect(server.url, { ca: agent1.ca });
+      expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+    });
+  });
+
+  // `servername` is the node:tls spelling of the same option.
+  test.each(["serverName", "servername"] as const)(
+    "tls.%s sets the SNI and the name the certificate is verified against",
+    async key => {
+      await withServer(agent1, async server => {
+        expect(await connect(server.url, { ca: agent1.ca, [key]: "agent1" })).toBe("CONNECTED");
+        expect(server.servernames).toEqual(["agent1"]);
+      });
+    },
+  );
+
+  test("tls.checkServerIdentity is called with the hostname and certificate, and the Error it returns fails the connection", async () => {
+    await withServer(localhost, async server => {
+      const calls: [string, string, string][] = [];
+      const pin = new Error("PIN_MISMATCH");
+      const err = await connect(server.url, {
+        ca: localhost.ca,
+        checkServerIdentity: (hostname: string, cert: tls.PeerCertificate) => {
+          calls.push([hostname, cert.subject.CN, cert.fingerprint256]);
+          return pin;
+        },
+      });
+      expect(err).toBe(pin);
+      const fingerprint256 = new X509Certificate(localhost.cert).fingerprint256;
+      expect(calls).toEqual([["127.0.0.1", "server-bun", fingerprint256]]);
+    });
+  });
+
+  test("tls.checkServerIdentity replaces the built-in hostname check when it returns undefined", async () => {
+    await withServer(agent1, async server => {
+      const calls: [string, string][] = [];
+      const result = await connect(server.url, {
+        ca: agent1.ca,
+        checkServerIdentity: (hostname: string, cert: tls.PeerCertificate) => {
+          calls.push([hostname, cert.subject.CN]);
+          return undefined;
+        },
+      });
+      expect(result).toBe("CONNECTED");
+      expect(calls).toEqual([["127.0.0.1", "agent1"]]);
+    });
+  });
+
+  test("tls.checkServerIdentity receives tls.serverName as the hostname", async () => {
+    await withServer(agent1, async server => {
+      const hostnames: string[] = [];
+      const result = await connect(server.url, {
+        ca: agent1.ca,
+        serverName: "agent1",
+        checkServerIdentity: (hostname: string) => {
+          hostnames.push(hostname);
+          return undefined;
+        },
+      });
+      expect(result).toBe("CONNECTED");
+      expect(hostnames).toEqual(["agent1"]);
+    });
+  });
+
+  test("an exception thrown by tls.checkServerIdentity fails the connection", async () => {
+    await withServer(localhost, async server => {
+      const thrown = new TypeError("from checkServerIdentity");
+      const err = await connect(server.url, {
+        ca: localhost.ca,
+        checkServerIdentity: () => {
+          throw thrown;
+        },
+      });
+      expect(err).toBe(thrown);
+    });
+  });
+
+  test("tls.checkServerIdentity that is a method of a class is called", async () => {
+    await withServer(localhost, async server => {
+      const pin = new Error("PIN_MISMATCH");
+      class PinnedTls {
+        ca = localhost.ca;
+        checkServerIdentity() {
+          return pin;
+        }
+      }
+      expect(await connect(server.url, new PinnedTls())).toBe(pin);
+    });
+  });
+
+  test("tls.checkServerIdentity also runs under sslmode=verify-ca", async () => {
+    await withServer(agent1, async server => {
+      const pin = new Error("PIN_MISMATCH");
+      expect(await connect(server.url, { ca: agent1.ca, checkServerIdentity: () => pin }, "verify-ca")).toBe(pin);
+      // Without a callback verify-ca does not check the hostname.
+      expect(await connect(server.url, { ca: agent1.ca }, "verify-ca")).toBe("CONNECTED");
+    });
+  });
+
+  test("tls.checkServerIdentity requests certificate verification like tls.ca does", async () => {
+    // No `ca` and no verify-* sslmode: the callback alone turns verification
+    // on, so the untrusted self-signed chain fails before the callback runs.
+    await withServer(localhost, async server => {
+      let calls = 0;
+      const err: any = await connect(
+        server.url,
+        {
+          checkServerIdentity: () => {
+            calls++;
+            return undefined;
+          },
+        },
+        "prefer",
+      );
+      expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(calls).toBe(0);
+    });
+  });
+
+  test("tls.checkServerIdentity is not called when rejectUnauthorized is false", async () => {
+    await withServer(agent1, async server => {
+      let calls = 0;
+      const result = await connect(
+        server.url,
+        {
+          ca: agent1.ca,
+          rejectUnauthorized: false,
+          checkServerIdentity: () => {
+            calls++;
+            return new Error("unreachable");
+          },
+        },
+        "require",
+      );
+      expect(result).toBe("CONNECTED");
+      expect(calls).toBe(0);
+    });
+  });
+
+  test("a worker terminated inside tls.checkServerIdentity stops, and sends nothing to the server", async () => {
+    await withServer(localhost, async server => {
+      const { promise: tlsClosed, resolve } = Promise.withResolvers<number>();
+      server.onTlsClose = resolve;
+      const counters = new SharedArrayBuffer(12);
+      const count = new Int32Array(counters);
+      const worker = new Worker(new URL("./sql-tls-server-identity-worker-fixture.ts", import.meta.url), {
+        workerData: { url: `${server.url}?sslmode=verify-full`, ca: localhost.ca, counters },
+      });
+      const exited = once(worker, "exit");
+      await Promise.race([
+        Atomics.waitAsync(count, 0, 0).value,
+        once(worker, "error").then(([error]) => Promise.reject(error)),
+        exited.then(([code]) => Promise.reject(new Error(`the worker exited with code ${code} before the callback`))),
+      ]);
+      // The fixture also wakes this wait when connect() settles: then the callback was never called.
+      expect({ callbackEntered: count[0], connectSettled: count[2] }).toEqual({
+        callbackEntered: 1,
+        connectSettled: 0,
+      });
+      await worker.terminate();
+      const [bytesFromClient] = await Promise.all([tlsClosed, exited]);
+      expect({ callbackEntered: count[0], oncloseRan: count[1], connectSettled: count[2], bytesFromClient }).toEqual({
+        callbackEntered: 1,
+        oncloseRan: 0,
+        connectSettled: 0,
+        bytesFromClient: 0,
+      });
+    });
+  });
+
+  test("a tls.checkServerIdentity that closes the client leaves it closed", async () => {
+    await withServer(localhost, async server => {
+      let calls = 0;
+      const sql = new SQL({
+        url: `${server.url}?sslmode=verify-full`,
+        max: 1,
+        idleTimeout: 1,
+        tls: {
+          ca: localhost.ca,
+          checkServerIdentity: () => {
+            calls++;
+            void sql.close();
+            return undefined;
+          },
+        },
+      });
+      // The pool decides how a connect in flight settles; the client must end up closed.
+      await sql.connect().catch(() => {});
+      const err: any = await sql`select 1`.then(
+        () => null,
+        e => e,
+      );
+      expect({ calls, code: err?.code }).toEqual({ calls: 1, code: `ERR_${scheme.toUpperCase()}_CONNECTION_CLOSED` });
+    });
+  });
+
+  // Node refuses the server for every truthy return value, so an `async` callback cannot accept it by accident.
+  test.each([
+    ["a Promise (async callback)", async () => undefined, "an instance of Promise"],
+    ["a string", () => "PIN_MISMATCH", "type string ('PIN_MISMATCH')"],
+    ["true", () => true, "type boolean (true)"],
+  ] as const)("tls.checkServerIdentity that returns %s fails the connection", async (_, callback, received) => {
+    await withServer(localhost, async server => {
+      const err: any = await connect(server.url, { ca: localhost.ca, checkServerIdentity: callback as any });
+      expect({ name: err?.name, code: err?.code, message: err?.message }).toEqual({
+        name: "TypeError",
+        code: "ERR_INVALID_RETURN_VALUE",
+        message: `Expected undefined or an Error to be returned from the "tls.checkServerIdentity" function but got ${received}.`,
+      });
+    });
+  });
+
+  test("an object that tls.checkServerIdentity returns fails the connection", async () => {
+    await withServer(localhost, async server => {
+      // Not an Error instance. The adapter reports every failure as its own Error class and keeps the fields.
+      const err: any = await connect(server.url, {
+        ca: localhost.ca,
+        checkServerIdentity: (() => ({ code: "PIN_MISMATCH" })) as any,
+      });
+      expect({ isError: err instanceof Error, code: err?.code }).toEqual({ isError: true, code: "PIN_MISMATCH" });
+    });
+  });
+
+  test.each([null, false, 0, ""])("tls.checkServerIdentity that returns %p accepts the server", async value => {
+    await withServer(localhost, async server => {
+      expect(await connect(server.url, { ca: localhost.ca, checkServerIdentity: (() => value) as any })).toBe(
+        "CONNECTED",
+      );
+    });
+  });
+
+  test("tls.checkServerIdentity receives the chain of getPeerCertificate(true)", async () => {
+    await withServer(agent1, async server => {
+      const chain: string[] = [];
+      let rootIsItsOwnIssuer = false;
+      const result = await connect(server.url, {
+        ca: agent1.ca,
+        checkServerIdentity: (_hostname: string, cert: tls.PeerCertificate) => {
+          // The walk of Node's certificate pinning example.
+          let current = cert as tls.DetailedPeerCertificate;
+          let last: string;
+          do {
+            chain.push(current.subject.CN);
+            last = current.fingerprint256;
+            current = current.issuerCertificate;
+          } while (current.fingerprint256 !== last);
+          rootIsItsOwnIssuer = current.issuerCertificate === current;
+          return undefined;
+        },
+      });
+      expect({ result, chain, rootIsItsOwnIssuer }).toEqual({
+        result: "CONNECTED",
+        chain: ["agent1", "ca1"],
+        rootIsItsOwnIssuer: true,
+      });
+    });
+  });
+
+  test("tls.checkServerIdentity must be a function", () => {
+    expect(() => new SQL({ url: `${scheme}://u@127.0.0.1:1/db`, tls: { checkServerIdentity: "nope" as any } })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+});

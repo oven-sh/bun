@@ -514,6 +514,12 @@ impl SSL {
         }
     }
 
+    /// Client side: the SNI host name to send. Set it before the handshake; `false` if BoringSSL rejects it.
+    pub fn set_servername(&mut self, hostname: &core::ffi::CStr) -> bool {
+        // SAFETY: `self` is a live SSL; BoringSSL copies `hostname`.
+        unsafe { SSL_set_tlsext_host_name(self, hostname.as_ptr()) == 1 }
+    }
+
     /// The peer's leaf certificate, borrowed from this SSL's cert chain.
     pub fn peer_leaf_certificate(&mut self) -> Option<&mut X509> {
         // SAFETY: the chain and its entries are owned by this SSL and outlive

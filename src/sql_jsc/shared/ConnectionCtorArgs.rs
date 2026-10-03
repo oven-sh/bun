@@ -42,6 +42,8 @@ pub(crate) struct ConnectionCtorArgs<M> {
     pub database_str: bun_core::String,
     pub ssl_mode: M,
     pub tls_config: SSLConfig,
+    /// `tls.checkServerIdentity`, or `undefined`. Kept alive by `arguments`.
+    pub check_server_identity: JSValue,
     /// Moves into the connection.
     pub secure: Option<OwnedSslCtx>,
 }
@@ -68,11 +70,18 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
 
         let tls_object = arguments[6];
         let mut tls_config = SSLConfig::default();
+        let mut check_server_identity = JSValue::UNDEFINED;
         let mut secure: Option<OwnedSslCtx> = None;
         if ssl_mode != modes[0] {
             tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
                 SSLConfig::default()
             } else if tls_object.is_object() {
+                // Validated as a function (or absent) by the JS layer.
+                if let Some(callback) = tls_object.get(global_object, "checkServerIdentity")?
+                    && callback.is_callable()
+                {
+                    check_server_identity = callback;
+                }
                 match SSLConfig::from_js(&mut *vm, global_object, tls_object) {
                     Ok(opt) => opt.unwrap_or_default(),
                     Err(_) => return Ok(None),
@@ -114,6 +123,7 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
             database_str,
             ssl_mode,
             tls_config,
+            check_server_identity,
             secure,
         }))
     }

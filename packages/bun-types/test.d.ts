@@ -1029,11 +1029,16 @@ declare module "bun:test" {
     /**
      * Asserts that a value is deeply equal to what is expected.
      *
+     * Two plain objects are equal when their properties are equal, whatever
+     * their classes are. Any other kind of object, such as a `Promise`, a
+     * `Map` or a `URL`, is only equal to an object of the same kind.
+     *
      * @example
      * expect(100 + 23).toBe(123);
      * expect("d" + "og").toBe("dog");
      * expect([456]).toEqual([456]);
      * expect({ value: 1 }).toEqual({ value: 1 });
+     * expect(Promise.resolve()).not.toEqual({});
      *
      * @param expected the expected value
      */

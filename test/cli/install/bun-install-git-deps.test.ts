@@ -679,64 +679,59 @@ for (const peer of ["required", "optional"] as const) {
       expect(await installed()).toEqual(expected);
       expect(exitCode).toBe(0);
     },
-    30_000,
   );
 }
 
 // One clone serves every package of a repository. Three wait for it here, and
 // the one that a's peer dependency stands for is neither the first nor the last.
-test.concurrent(
-  "checks out every package of a repository when a peer dependency stands for one of them",
-  async () => {
-    using dir = tempDir("git-dep-peer-shared-repo", {});
-    const root = String(dir);
-    const names = ["aa", "b", "c"];
-    const bare = await makeSharedRepo(
-      root,
-      names.map(name => ({ name, branch: name })),
-    );
-    const repoUrl = `git+${pathToFileURL(bare)}`;
-    const commits = branchCommits(bare);
-    await using registry = await serveRegistry({ a: { peerDependencies: { b: "*" } }, b: {} });
-    const env = { BUN_CONFIG_REGISTRY: registry.url.href };
-    const { project, member } = writeWorkspace(root, {
-      a: "1.0.0",
-      ...Object.fromEntries(names.map(name => [name, `${repoUrl}#${name}`])),
-    });
-    const locked = {
-      a: "a@1.0.0",
-      ...Object.fromEntries(names.map(name => [name, `${name}@${repoUrl}#${commits[name]}`])),
-      m: "m@workspace:packages/m",
-      "a/b": "b@1.0.0",
-    };
-    const installed = async () => ({
-      ...(await installedVersions(member, ["a", ...names])),
-      "a > b": await installedVersionOf(storeEntryOf(member, "a"), "b"),
-    });
-    const expected = { a: "a-from-registry", aa: "aa", b: "b", c: "c", "a > b": "b" };
-    const output = [expect.stringContaining("bun install v"), "", "4 packages installed"];
+test.concurrent("checks out every package of a repository when a peer dependency stands for one of them", async () => {
+  using dir = tempDir("git-dep-peer-shared-repo", {});
+  const root = String(dir);
+  const names = ["aa", "b", "c"];
+  const bare = await makeSharedRepo(
+    root,
+    names.map(name => ({ name, branch: name })),
+  );
+  const repoUrl = `git+${pathToFileURL(bare)}`;
+  const commits = branchCommits(bare);
+  await using registry = await serveRegistry({ a: { peerDependencies: { b: "*" } }, b: {} });
+  const env = { BUN_CONFIG_REGISTRY: registry.url.href };
+  const { project, member } = writeWorkspace(root, {
+    a: "1.0.0",
+    ...Object.fromEntries(names.map(name => [name, `${repoUrl}#${name}`])),
+  });
+  const locked = {
+    a: "a@1.0.0",
+    ...Object.fromEntries(names.map(name => [name, `${name}@${repoUrl}#${commits[name]}`])),
+    m: "m@workspace:packages/m",
+    "a/b": "b@1.0.0",
+  };
+  const installed = async () => ({
+    ...(await installedVersions(member, ["a", ...names])),
+    "a > b": await installedVersionOf(storeEntryOf(member, "a"), "b"),
+  });
+  const expected = { a: "a-from-registry", aa: "aa", b: "b", c: "c", "a > b": "b" };
+  const output = [expect.stringContaining("bun install v"), "", "4 packages installed"];
 
-    // fresh install to produce a complete lockfile
-    {
-      const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), env);
-      expect(stderr).toContain("Saved lockfile");
-      expect(installOutput(stdout)).toEqual(output);
-      expect(await installed()).toEqual(expected);
-      expect(await lockedResolutions(project)).toEqual(locked);
-      expect(exitCode).toBe(0);
-    }
-
-    // simulate a fresh machine: keep bun.lock, drop node_modules + cache
-    rmSync(join(project, "node_modules"), { recursive: true });
-    rmSync(join(member, "node_modules"), { recursive: true });
-    const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), env, "--frozen-lockfile");
-    expect(stderr).toBe("");
+  // fresh install to produce a complete lockfile
+  {
+    const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), env);
+    expect(stderr).toContain("Saved lockfile");
     expect(installOutput(stdout)).toEqual(output);
     expect(await installed()).toEqual(expected);
+    expect(await lockedResolutions(project)).toEqual(locked);
     expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  }
+
+  // simulate a fresh machine: keep bun.lock, drop node_modules + cache
+  rmSync(join(project, "node_modules"), { recursive: true });
+  rmSync(join(member, "node_modules"), { recursive: true });
+  const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), env, "--frozen-lockfile");
+  expect(stderr).toBe("");
+  expect(installOutput(stdout)).toEqual(output);
+  expect(await installed()).toEqual(expected);
+  expect(exitCode).toBe(0);
+});
 
 // The repository is gone when the cold install clones it. The failed clone
 // fails every package that waits for it. The one that a's peer dependency
@@ -783,7 +778,6 @@ test.concurrent(
     expect(stdout).toContain("Failed to install 2 packages");
     expect(exitCode).toBe(1);
   },
-  30_000,
 );
 
 // `overrides` puts a git commit in place of a's registry dependency `b`. When
@@ -846,7 +840,6 @@ test.concurrent(
     expect(await installed()).toEqual(expected);
     expect(exitCode).toBe(0);
   },
-  30_000,
 );
 
 // bun.lock can spell a repository's URL differently from the dependency: an
@@ -884,7 +877,6 @@ test.concurrent(
     expect(readdirSync(cache).filter(entry => entry.endsWith(".git"))).toHaveLength(1);
     expect(exitCode).toBe(0);
   },
-  30_000,
 );
 
 // A patch is applied to a git package right after its checkout when the
@@ -945,7 +937,6 @@ index 0000000000000000000000000000000000000000..11111111111111111111111111111111
       expect(await installedVersions(project, ["b-alias", "c"])).toEqual({ "b-alias": "b-patched", c: "c" });
       expect(exitCode).toBe(0);
     },
-    30_000,
   );
 }
 

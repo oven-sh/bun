@@ -1707,7 +1707,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         compress = None;
     }
 
-    if url.is_s3() {
+    let url_is_signed = url.is_s3();
+    if url_is_signed {
         // get ENV config — `Transpiler::env_mut` is the safe accessor for the
         // process-singleton dotenv loader (set during init).
         let env_creds = s3_credentials_from_env(
@@ -1939,7 +1940,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Explicit `&*` first to satisfy `dangerous_implicit_autorefs` — the
     // `Index` call would otherwise create an implicit `&` to `*buf_ptr`.
     let buf: &'static [u8] = unsafe { &*buf_ptr };
-    let url_static: ZigURL<'static> = ZigURL::parse(&buf[..url_len]);
+    let url_static: ZigURL<'static> = if url_is_signed {
+        // The request target must be the path that was signed, a leading `//` included.
+        ZigURL::parse_keeping_leading_slashes(&buf[..url_len])
+    } else {
+        ZigURL::parse(&buf[..url_len])
+    };
     let proxy_static: Option<&'static [u8]> = if has_proxy {
         Some(&buf[url_len..])
     } else {

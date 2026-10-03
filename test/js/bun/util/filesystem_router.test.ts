@@ -465,12 +465,9 @@ it(".query works with dynamic routes, including params", () => {
   }
 });
 
-// Pattern.match_ reuses one scratch param list across every candidate route and
-// used to clear it on only some of its failure paths, so params pushed while
-// probing a route that lost still reached the route that won.
 // https://github.com/oven-sh/bun/issues/12206
 // https://github.com/oven-sh/bun/issues/15554
-describe("nested dynamic routes do not leak params from a probed route", () => {
+describe.concurrent("nested dynamic routes do not leak params from a probed route", () => {
   it.each([
     {
       label: "a losing pattern that ran out with path segments left over",
@@ -538,13 +535,12 @@ describe("nested dynamic routes do not leak params from a probed route", () => {
       params: { a: "1", b: "2" },
     },
   ])("into $name ($label)", ({ files, pathname, name, params }) => {
-    const { dir } = make(files);
-    const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+    using dir = tempDir("fsr-probed-route", Object.fromEntries(files.map(file => [file, "export default 1;"])));
+    const router = new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs" });
 
     const match = router.match(pathname)!;
     expect({ name: match.name, params: match.params }).toEqual({ name, params });
-    // `query` mirrors `params` when there is no query string; it must carry the
-    // same single values, not arrays.
+    // With no query string, `query` holds exactly the route params.
     expect(match.query).toEqual(params);
   });
 
@@ -591,15 +587,14 @@ describe("nested dynamic routes do not leak params from a probed route", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/12206#issuecomment-2228276685
-it("matches a single-character static segment after a dynamic segment", () => {
-  const { dir } = make(["index.tsx", "[test]/a/index.tsx", "[test]/a/[test2]/lala.tsx"]);
+it.concurrent("matches a single-character static segment after a dynamic segment", () => {
+  using dir = tempDir("fsr-single-char-segment", {
+    "index.tsx": "export default 1;",
+    "[test]/a/index.tsx": "export default 1;",
+    "[test]/a/[test2]/lala.tsx": "export default 1;",
+  });
+  const router = new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs" });
 
-  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
-
-  // Before the fix, `[test]/a` was treated as ending right after `[test]` because
-  // `Pattern::is_end` was off by one and `Pattern::init` returned an empty segment
-  // when exactly one character remained. `/value` matched `/[test]/a` and `/value/a`
-  // matched nothing.
   for (const [input, expected] of [
     ["/value/a", { name: "/[test]/a", params: { test: "value" } }],
     ["/value/a/inner/lala", { name: "/[test]/a/[test2]/lala", params: { test: "value", test2: "inner" } }],
@@ -610,6 +605,14 @@ it("matches a single-character static segment after a dynamic segment", () => {
     const match = router.match(input);
     expect({ input, result: match && { name: match.name, params: match.params } }).toEqual({ input, result: expected });
   }
+});
+
+it.concurrent("a route filename with one character after `]` matches like the bare param", () => {
+  using dir = tempDir("fsr-bracket-suffix", { "[id]s.tsx": "export default 1;" });
+  const router = new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs" });
+
+  expect(router.match("/123")).toMatchObject({ name: "/[id]s", params: { id: "123" } });
+  expect(router.match("/123/s")).toBeNull();
 });
 
 it("dir should be validated", async () => {
@@ -761,30 +764,22 @@ it("MatchedRoute.params does not leak", async () => {
   expect(exitCode).toBe(0);
 }, 60_000);
 
-it.each([
+it("throws a clean error for invalid route filenames (no use-after-free)", async () => {
   // The constructor's log is backed by an arena allocator. When route loading
   // produces errors (e.g. a filename like `[foo.tsx` missing its closing bracket),
   // the arena must not be freed before log.toJS() reads the messages.
-  ["[foo.tsx", "Route is missing a closing bracket]"],
-  // A trailing `[` right before the extension used to pass validation and was
-  // only re-parsed at match time, where the unclosed bracket panicked the
-  // pattern parser.
-  ["[x][.tsx", "Invalid dynamic route"],
-  ["[id]/foo[.tsx", "Invalid dynamic route"],
-])("throws a clean error for invalid route filename %j (no crash)", async (file, message) => {
-  // Run in a subprocess so a crash doesn't take down the test runner.
+  // Run in a subprocess so an ASAN crash doesn't take down the test runner.
   using dir = tempDir("fsr-invalid-route", {
-    [`pages/${file}`]: "export default 1;",
+    "pages/[foo.tsx": "export default 1;",
   });
 
   const code = /* ts */ `
     try {
-      const router = new Bun.FileSystemRouter({
+      new Bun.FileSystemRouter({
         style: "nextjs",
         dir: ${JSON.stringify(path.join(String(dir), "pages"))},
         fileExtensions: [".tsx"],
       });
-      router.match("/abc");
       console.log("no-throw");
     } catch (e) {
       console.log("caught:" + (e?.message ?? String(e)));
@@ -799,9 +794,17 @@ it.each([
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout.trim()).toBe(`caught:${message}`);
+  expect(stdout.trim()).toBe("caught:Route is missing a closing bracket]");
   expect(exitCode).toBe(0);
 });
+
+it.concurrent.each(["foo[.tsx", "[id]/foo[.tsx", "[id]/foo/[.tsx"])(
+  "rejects the route filename %j, which ends in an unclosed bracket",
+  file => {
+    using dir = tempDir("fsr-trailing-bracket", { [file]: "export default 1;" });
+    expect(() => new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs" })).toThrow("Invalid dynamic route");
+  },
+);
 
 it("decodes percent-encoded path segments and keeps params and pathname stable after later matches", async () => {
   // The buffer that backs a MatchedRoute's decoded pathname, query string and

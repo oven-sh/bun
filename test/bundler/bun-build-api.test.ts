@@ -1271,6 +1271,137 @@ describe("Bun.build", () => {
       expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
     },
   );
+
+  describe("onLoad contents accepts BufferSource", () => {
+    const source = new TextEncoder().encode("export default 'hello';");
+
+    // `afterOnLoad` runs when Bun.build has read the result of onLoad.
+    const buildWith = async (contents: any, afterOnLoad?: () => void) => {
+      using dir = tempDir("onload-buffer-source", {
+        "entry.ts": `import x from "virtual:m"; console.log(x);`,
+      });
+      return await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        throw: false,
+        plugins: [
+          {
+            name: "buffer-source",
+            setup(b) {
+              b.onResolve({ filter: /^virtual:m$/ }, a => ({ path: a.path, namespace: "v" }));
+              b.onLoad({ filter: /.*/, namespace: "v" }, () => {
+                if (afterOnLoad) queueMicrotask(afterOnLoad);
+                return { contents, loader: "js" };
+              });
+            },
+          },
+        ],
+      });
+    };
+
+    test("accepts ArrayBuffer", async () => {
+      const ab = new ArrayBuffer(source.byteLength);
+      new Uint8Array(ab).set(source);
+      const res = await buildWith(ab);
+      expect(res.logs).toEqual([]);
+      expect(res.success).toBe(true);
+      expect(await res.outputs[0].text()).toContain('"hello"');
+    });
+
+    test("accepts SharedArrayBuffer", async () => {
+      const sab = new SharedArrayBuffer(source.byteLength);
+      new Uint8Array(sab).set(source);
+      const res = await buildWith(sab);
+      expect(res.logs).toEqual([]);
+      expect(res.success).toBe(true);
+      expect(await res.outputs[0].text()).toContain('"hello"');
+    });
+
+    test("accepts Uint8Array backed by SharedArrayBuffer", async () => {
+      const sab = new SharedArrayBuffer(source.byteLength);
+      new Uint8Array(sab).set(source);
+      const res = await buildWith(new Uint8Array(sab));
+      expect(res.logs).toEqual([]);
+      expect(res.success).toBe(true);
+      expect(await res.outputs[0].text()).toContain('"hello"');
+    });
+
+    const rejection =
+      'onLoad plugins must return an object with "contents" as a string, TypedArray, ArrayBuffer, or SharedArrayBuffer';
+
+    test("rejects plain objects", async () => {
+      const res = await buildWith({ byteLength: 3 });
+      expect(res.success).toBe(false);
+      expect(res.logs[0].message).toBe(rejection);
+    });
+
+    // The bundler parses on other threads after onLoad returned. It has its own copy of the bytes by then.
+    const changes: [string, () => ArrayBuffer | SharedArrayBuffer, (buffer: any) => void][] = [
+      ["fills the ArrayBuffer", () => new ArrayBuffer(source.byteLength), buffer => new Uint8Array(buffer).fill(0x20)],
+      ["detaches the ArrayBuffer", () => new ArrayBuffer(source.byteLength), buffer => buffer.transfer()],
+      [
+        "shrinks the resizable ArrayBuffer",
+        () => new ArrayBuffer(source.byteLength, { maxByteLength: source.byteLength }),
+        buffer => buffer.resize(0),
+      ],
+      [
+        "fills the SharedArrayBuffer",
+        () => new SharedArrayBuffer(source.byteLength),
+        buffer => new Uint8Array(buffer).fill(0x20),
+      ],
+    ];
+    test.each(changes)("builds the bytes that onLoad returned when the plugin then %s", async (_, make, change) => {
+      const contents = make();
+      new Uint8Array(contents).set(source);
+      const res = await buildWith(contents, () => change(contents));
+      expect(res.logs).toEqual([]);
+      expect(await res.outputs[0].text()).toContain('"hello"');
+      // The plugin did change the bytes.
+      expect(contents.byteLength === 0 || new Uint8Array(contents).every(byte => byte === 0x20)).toBe(true);
+    });
+
+    // This check is the only thing between a `contents` of any type and the
+    // native side, which expects a string or a buffer.
+    test("does not ask a function that a script can replace whether contents is a buffer", async () => {
+      using dir = tempDir("onload-contents-gate", {
+        "entry.ts": `import x from "virtual:m"; console.log(x);`,
+        "build.ts": `
+          import { join } from "node:path";
+          require("node:util/types").isAnyArrayBuffer = () => true;
+          const messages = [];
+          for (const contents of [{ toString() { throw new Error("toString ran"); } }, { byteLength: 3 }]) {
+            const res = await Bun.build({
+              entrypoints: [join(import.meta.dir, "entry.ts")],
+              throw: false,
+              plugins: [
+                {
+                  name: "contents of another type",
+                  setup(b) {
+                    b.onResolve({ filter: /^virtual:m$/ }, a => ({ path: a.path, namespace: "v" }));
+                    b.onLoad({ filter: /.*/, namespace: "v" }, () => ({ contents, loader: "js" }));
+                  },
+                },
+              ],
+            });
+            messages.push(res.success ? "built" : res.logs[0].message);
+          }
+          console.log(JSON.stringify(messages));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+        stdout: JSON.stringify([rejection, rejection]),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 test.concurrent("macro with nested object", async () => {

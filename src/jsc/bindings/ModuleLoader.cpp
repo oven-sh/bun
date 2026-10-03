@@ -4,6 +4,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ModuleLoader.h"
 #include "CodeGenerationFromStrings.h"
+#include "VectorSizeLimit.h"
 #include "JavaScriptCore/Identifier.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSCInlines.h>
@@ -205,6 +206,39 @@ PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObje
     return virtualModule;
 }
 
+// The bytes of a typed array, a DataView, an ArrayBuffer or a SharedArrayBuffer.
+static std::optional<std::span<const uint8_t>> bufferContentsBytes(JSC::JSValue contents)
+{
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(contents))
+        return view->span();
+    if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(contents)) {
+        if (auto* impl = buffer->impl())
+            return impl->span();
+    }
+    return std::nullopt;
+}
+
+// Points `source` at the text of an onLoad `contents` for one transpile. False: an exception is pending.
+// A string lends its characters. Buffer bytes go into `copy`: macros and onResolve plugins run JS during
+// the transpile and another thread can write a SharedArrayBuffer, so the parser cannot read them in place.
+static bool sourceTextForTranspile(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue contents, WTF::Vector<uint8_t>& copy, EncodedSlice& source)
+{
+    if (contents.isString()) {
+        source = Zig::toEncodedSlice(asString(contents), globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        return true;
+    }
+
+    auto bytes = bufferContentsBytes(contents);
+    ASSERT(bytes);
+    if (bytes->size() > Bun::maxVectorSize<uint8_t>() || !copy.tryAppend(*bytes)) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return false;
+    }
+    source = EncodedSlice { copy.span().data(), copy.size() };
+    return true;
+}
+
 OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, bool wasModuleMock)
 {
     OnLoadResult result = {};
@@ -296,7 +330,6 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
 
     result.value.sourceText.loader = loader;
     result.value.sourceText.value = JSValue {};
-    result.value.sourceText.string = {};
 
     auto contentsValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "contents"_s));
     if (scope.exception()) [[unlikely]] {
@@ -304,23 +337,11 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
         (void)scope.tryClearException();
         return result;
     }
-    if (contentsValue) {
-        if (contentsValue.isString()) {
-            JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject);
-            RETURN_IF_EXCEPTION(scope, result);
-            if (contentsJSString) {
-                result.value.sourceText.string = Zig::toEncodedSlice(contentsJSString, globalObject);
-                RETURN_IF_EXCEPTION(scope, result);
-                result.value.sourceText.value = contentsValue;
-            }
-        } else if (JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(contentsValue)) {
-            result.value.sourceText.string = EncodedSlice { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() };
-            result.value.sourceText.value = contentsValue;
-        }
-    }
+    if (contentsValue && (contentsValue.isString() || bufferContentsBytes(contentsValue)))
+        result.value.sourceText.value = contentsValue;
 
     if (result.value.sourceText.value.isEmpty()) [[unlikely]] {
-        throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string or an ArrayBufferView"_s));
+        throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string, ArrayBufferView, ArrayBuffer, or SharedArrayBuffer"_s));
         result.value.error = scope.exception();
         (void)scope.tryClearException();
         return result;
@@ -399,7 +420,14 @@ static JSValue handleVirtualModuleResult(
 
     switch (onLoadResult.type) {
     case OnLoadResultTypeCode: {
-        Bun__transpileVirtualModule(globalObject, specifier, referrer, &onLoadResult.value.sourceText.string, onLoadResult.value.sourceText.loader, res);
+        JSValue contents = onLoadResult.value.sourceText.value;
+        WTF::Vector<uint8_t> copy;
+        EncodedSlice source {};
+        if (!sourceTextForTranspile(globalObject, scope, contents, copy, source)) [[unlikely]]
+            return rejectOrResolve({});
+        Bun__transpileVirtualModule(globalObject, specifier, referrer, &source, onLoadResult.value.sourceText.loader, res);
+        // `source` can point into the string. The JSString has to stay alive while the transpiler reads it.
+        JSC::ensureStillAliveHere(contents);
         if (!res->success) {
             RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err)));
         }

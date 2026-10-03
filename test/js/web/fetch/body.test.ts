@@ -154,8 +154,7 @@ for (const { body, fn } of bodyTypes) {
           });
         }
       });
-      // Bun also accepts an array of blob parts as a body. A Blob part has to be
-      // shared with the body, not moved out of the caller's Blob.
+      // Bun accepts an array of blob parts as a body. A Blob part is shared with the body, not moved out of the caller's Blob.
       describe("array containing a Blob", () => {
         test("the Blob still reads back its bytes after being used as a body part", async () => {
           const blob = new Blob(["hello world"], { type: "text/plain" });
@@ -178,8 +177,7 @@ for (const { body, fn } of bodyTypes) {
         });
         test("a File keeps its name and bytes", async () => {
           const f = new File(["file bytes"], "part.txt");
-          // f.name is read only after the body was built: a byte-backed File
-          // keeps its name in the store, so losing the store loses the name too.
+          // A File made from bytes keeps its name in the store, so f.name is read after the body was built.
           expect(await fn([f] as any).text()).toBe("file bytes");
           expect({ name: f.name, size: f.size, text: await f.text() }).toEqual({
             name: "part.txt",
@@ -1431,8 +1429,7 @@ describe("constructing a body from an unusable ReadableStream", () => {
   });
 });
 
-// server.fetch() builds the Request body through the same blob-part extraction
-// as the constructors above, without going through new Request().
+// server.fetch() extracts the body's blob parts itself, it does not go through new Request().
 describe("server.fetch() body option", () => {
   test.each([
     ["a Blob", (blob: Blob) => blob],

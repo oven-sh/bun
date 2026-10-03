@@ -93,9 +93,7 @@ for (const info of [
   });
 }
 
-// text()/json() cache whether the bytes they decoded were all ASCII, and Blobs
-// sharing one backing store read each other's cache. The cache must only ever
-// describe bytes the reader is actually going to decode.
+// Blobs that share a store read each other's all-ASCII cache, so it may only describe bytes that the reader decodes.
 describe("Blob text()/json() decoding does not depend on what was read before", () => {
   const utf8 = "héllo wörld ✓";
   const bom = new Uint8Array([0xef, 0xbb, 0xbf]);
@@ -196,10 +194,27 @@ describe("Blob text()/json() decoding does not depend on what was read before", 
     expect(await new Blob(["x", part]).text()).toBe("x\ufeffabc");
     expect(await new Blob([part]).text()).toBe("abc");
   });
+
+  // The per-Blob flag also picks the default Content-Type of a Blob that Bun.serve sends.
+  test("Bun.serve types a Blob that starts with a UTF-8 BOM the same before and after text()", async () => {
+    const make = () => new Blob([new Uint8Array([...bom, 0x61, 0x62, 0x63])]);
+    const bodies: Record<string, Blob> = { read: make(), notRead: make() };
+    expect(await bodies.read.text()).toBe("abc");
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(bodies[new URL(req.url).pathname.slice(1)]),
+    });
+    const types: Record<string, string | null> = {};
+    for (const name of Object.keys(bodies)) {
+      const response = await fetch(new URL(name, server.url));
+      types[name] = response.headers.get("content-type");
+      await response.arrayBuffer();
+    }
+    expect(types).toEqual({ read: "application/octet-stream", notRead: "application/octet-stream" });
+  });
 });
 
-// bytes() rejects a Blob that is larger than one Uint8Array may be. The read
-// that was refused must leave the caller's Blob as it was.
+// A bytes() that was refused for the Blob's size must leave the caller's Blob as it was.
 test("a Blob keeps its bytes after bytes() rejected it for its size", async () => {
   const script = `
     const blob = new Blob([new Uint8Array(500_000).fill(65)]);

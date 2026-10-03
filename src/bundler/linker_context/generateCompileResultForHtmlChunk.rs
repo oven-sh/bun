@@ -87,6 +87,12 @@ struct HTMLLoader<'a> {
     end_tag_indices: EndTagIndices,
     added_head_tags: bool,
     added_body_script: bool,
+    /// The document has a `<meta charset>` or its `http-equiv` form.
+    has_charset: bool,
+    /// Standalone mode: the offset in `output` of the first element past
+    /// `<html>`/`<head>`, else of `</head>`. A `<meta charset>` put there is
+    /// inside the head section, which is as far as browsers look for one.
+    charset_offset: Option<usize>,
 }
 
 /// `Element::set_attribute` takes `&str`, so non-UTF-8 `name`/`value` bytes
@@ -213,6 +219,36 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
     fn on_body_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
         self.register_end_tag_handler(element, Self::end_body_tag_handler)
     }
+
+    fn visits_every_element(&self) -> bool {
+        self.declares_charset()
+    }
+
+    fn on_element(&mut self, element: &mut Element<'_, '_>) {
+        if self.has_charset {
+            return;
+        }
+        let tag = element.tag_name();
+        if tag == "html" || tag == "head" {
+            return;
+        }
+        if self.charset_offset.is_none() {
+            // lol-html has written everything ahead of this tag to `output`.
+            self.charset_offset = Some(self.output.len());
+        }
+        if tag == "meta" {
+            self.has_charset = element.has_attribute("charset")
+                || matches!(
+                    (element.get_attribute("http-equiv"), element.get_attribute("content")),
+                    (Some(http_equiv), Some(content))
+                        if http_equiv.trim_ascii().eq_ignore_ascii_case("content-type")
+                            && strings::contains_case_insensitive_ascii(
+                                content.as_bytes(),
+                                b"charset",
+                            )
+                );
+        }
+    }
 }
 
 /// An `HTMLLoader` end-tag callback. It receives the loader as an erased
@@ -275,6 +311,25 @@ impl<'a> HTMLLoader<'a> {
         ))
     }
 
+    /// Standalone mode inlines the bundle as `<script>`/`<style>` text, which a
+    /// browser decodes with the document's encoding, and that falls back to
+    /// windows-1252 when the document declares none. The external module
+    /// script of the source page was UTF-8 regardless, so the page may well
+    /// lack a declaration. The file written here is UTF-8, so say so.
+    fn declares_charset(&self) -> bool {
+        self.compile_to_standalone_html && self.linker.dev_server.is_none()
+    }
+
+    /// Runs after the rewrite, once the whole document was seen.
+    fn declare_charset(&mut self) {
+        if !self.declares_charset() || self.has_charset {
+            return;
+        }
+        let at = self.charset_offset.unwrap_or(self.output.len());
+        self.output
+            .splice(at..at, b"<meta charset=\"utf-8\">".iter().copied());
+    }
+
     fn get_head_tags(&self) -> Vec<String> {
         let mut array: Vec<String> = Vec::with_capacity(2);
         if self.compile_to_standalone_html {
@@ -321,6 +376,9 @@ impl<'a> HTMLLoader<'a> {
         // SAFETY: `opaque_this` is the erased `&mut HTMLLoader` from `register_end_tag_handler`.
         let this: &mut Self = unsafe { &mut *opaque_this.cast::<Self>() };
         if this.linker.dev_server.is_none() {
+            // An empty `<head>`: the declaration goes ahead of `</head>` and
+            // of the `<style>` added next.
+            this.charset_offset.get_or_insert(this.output.len());
             this.add_head_tags(end);
         } else {
             this.end_tag_indices.head = Some(u32::try_from(this.output.len()).expect("int cast"));
@@ -404,6 +462,8 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
         },
         added_head_tags: false,
         added_body_script: false,
+        has_charset: false,
+        charset_offset: None,
     };
 
     HTMLProcessor::<HTMLLoader, true>::run(&mut html_loader, contents)
@@ -433,6 +493,7 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
         }
     } else {
         'brk: {
+            html_loader.declare_charset();
             if !html_loader.added_head_tags || !html_loader.added_body_script {
                 // Cold path: the document is missing all of the head, body, and html elements.
                 if !html_loader.added_head_tags {

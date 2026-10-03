@@ -93,6 +93,161 @@ for (const info of [
   });
 }
 
+// Blobs that share a store read each other's all-ASCII cache, so it may only describe bytes that the reader decodes.
+describe("Blob text()/json() decoding does not depend on what was read before", () => {
+  const utf8 = "héllo wörld ✓";
+  const bom = new Uint8Array([0xef, 0xbb, 0xbf]);
+
+  test("parent after an ASCII prefix slice", async () => {
+    const blob = new Blob(["abc", utf8]);
+    expect(await blob.slice(0, 3).text()).toBe("abc");
+    expect(await blob.text()).toBe("abc" + utf8);
+  });
+
+  test("sibling slice after an ASCII prefix slice", async () => {
+    const blob = new Blob(["abc", utf8]);
+    const rest = blob.slice(3);
+    expect(await blob.slice(0, 3).text()).toBe("abc");
+    expect(await rest.text()).toBe(utf8);
+  });
+
+  test("Response wrapping the Blob after an ASCII prefix slice", async () => {
+    const blob = new Blob(["abc", utf8]);
+    expect(await blob.slice(0, 3).text()).toBe("abc");
+    expect(await new Response(blob).text()).toBe("abc" + utf8);
+  });
+
+  test("parent after a Response body made from an ASCII prefix slice", async () => {
+    const blob = new Blob(["abc", utf8]);
+    expect(await new Response(blob.slice(0, 3)).text()).toBe("abc");
+    expect(await blob.text()).toBe("abc" + utf8);
+  });
+
+  test("parent after a Response body made from an ASCII prefix slice was read as json()", async () => {
+    const blob = new Blob(["123", utf8]);
+    expect(await new Response(blob.slice(0, 3)).json()).toBe(123);
+    expect(await blob.text()).toBe("123" + utf8);
+  });
+
+  test("parent json() after an ASCII prefix slice text()", async () => {
+    const blob = new Blob(['"', utf8, '"']);
+    expect(await blob.slice(0, 1).text()).toBe('"');
+    expect(await blob.json()).toBe(utf8);
+  });
+
+  test("parent text() after an ASCII prefix slice json()", async () => {
+    const blob = new Blob(["123", utf8]);
+    expect(await blob.slice(0, 3).json()).toBe(123);
+    expect(await blob.text()).toBe("123" + utf8);
+  });
+
+  test("parent after an ASCII prefix slice was read through its stream", async () => {
+    const blob = new Blob(["abc", utf8]);
+    expect(await Bun.readableStreamToText(blob.slice(0, 3).stream())).toBe("abc");
+    expect(await blob.text()).toBe("abc" + utf8);
+  });
+
+  // A Blob made from one string knows its own charset, a stream made from it does not.
+  test("stream of a Blob made from one string after an ASCII prefix slice", async () => {
+    const blob = new Blob(["abc" + utf8]);
+    expect(await blob.slice(0, 3).text()).toBe("abc");
+    expect(await Bun.readableStreamToText(blob.stream())).toBe("abc" + utf8);
+  });
+
+  test("File from a parsed FormData after an ASCII prefix slice", async () => {
+    const form = new FormData();
+    form.append("file", new File([JSON.stringify({ name: utf8 })], "user.json", { type: "application/json" }));
+    const file = (await new Response(form).formData()).get("file") as File;
+    expect(await file.slice(0, 1).text()).toBe("{");
+    expect(await file.json()).toEqual({ name: utf8 });
+  });
+
+  test("slice(0) spans the whole Blob and decodes the same as the parent", async () => {
+    const blob = new Blob(["abc", utf8]);
+    expect(await blob.slice(0).text()).toBe("abc" + utf8);
+    expect(await blob.text()).toBe("abc" + utf8);
+    expect(await blob.slice(0, 3).text()).toBe("abc");
+    expect(await blob.slice(3).text()).toBe(utf8);
+  });
+
+  test("slice into a UTF-8 BOM after the parent's text() stripped it", async () => {
+    const blob = new Blob([bom, "abc"]);
+    const sliceMadeBefore = blob.slice(1);
+    expect(await blob.text()).toBe("abc");
+    expect(await blob.text()).toBe("abc");
+    expect(await sliceMadeBefore.text()).toBe("\ufffd\ufffdabc");
+    expect(await blob.slice(1).text()).toBe("\ufffd\ufffdabc");
+  });
+
+  test("slice into a UTF-8 BOM after the parent's json() stripped it", async () => {
+    const blob = new Blob([bom, '{"a":1}']);
+    const sliceMadeBefore = blob.slice(1);
+    expect(await blob.json()).toEqual({ a: 1 });
+    expect(await sliceMadeBefore.text()).toBe('\ufffd\ufffd{"a":1}');
+    expect(await blob.slice(1).text()).toBe('\ufffd\ufffd{"a":1}');
+  });
+
+  test("Blob built from a BOM-prefixed Blob part that was already read", async () => {
+    const part = new Blob([bom, "abc"]);
+    expect(await part.text()).toBe("abc");
+    // The BOM is no longer at the start, so it decodes as U+FEFF.
+    expect(await new Blob(["x", part]).text()).toBe("x\ufeffabc");
+    expect(await new Blob([part]).text()).toBe("abc");
+  });
+
+  // The per-Blob flag also picks the default Content-Type of a Blob that Bun.serve sends.
+  test("Bun.serve types a Blob that starts with a UTF-8 BOM the same before and after text()", async () => {
+    const make = () => new Blob([new Uint8Array([...bom, 0x61, 0x62, 0x63])]);
+    const bodies: Record<string, Blob> = { read: make(), notRead: make() };
+    expect(await bodies.read.text()).toBe("abc");
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(bodies[new URL(req.url).pathname.slice(1)]),
+    });
+    const types: Record<string, string | null> = {};
+    for (const name of Object.keys(bodies)) {
+      const response = await fetch(new URL(name, server.url));
+      types[name] = response.headers.get("content-type");
+      await response.arrayBuffer();
+    }
+    expect(types).toEqual({ read: "application/octet-stream", notRead: "application/octet-stream" });
+  });
+});
+
+// A bytes() that was refused for the Blob's size must leave the caller's Blob as it was.
+test("a Blob keeps its bytes after bytes() rejected it for its size", async () => {
+  const script = `
+    const blob = new Blob([new Uint8Array(500_000).fill(65)]);
+    const refused = await blob.bytes().then(
+      () => "resolved",
+      e => e.name + ": " + e.message,
+    );
+    console.log(
+      JSON.stringify({
+        refused,
+        size: blob.size,
+        head: await blob.slice(0, 5).text(),
+        arrayBuffer: (await blob.arrayBuffer()).byteLength,
+      }),
+    );
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: "100000" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    refused: "RangeError: Out of memory",
+    size: 500_000,
+    head: "AAAAA",
+    arrayBuffer: 500_000,
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("new Blob", () => {
   var blob = new Blob(["Bun", "Foo"], { type: "text/foo" });
   expect(blob.size).toBe(6);

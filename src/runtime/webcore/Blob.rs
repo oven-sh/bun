@@ -2017,6 +2017,10 @@ impl BlobExt for Blob {
                     .or_else(|| mode_seen_by_clone.map(bun_sys::S::ISREG))
                     .unwrap_or(false)
                 {
+                    // Printing is not to leave the 0 of a failed stat behind: the body would read as empty.
+                    if !has_size && file.seekable.is_none() {
+                        self.size.set(MAX_SIZE);
+                    }
                     return u64::MAX;
                 }
             }

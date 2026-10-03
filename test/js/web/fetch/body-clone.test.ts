@@ -1280,7 +1280,7 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
         const path = join(tempDirWithFiles("body-clone-label", { "log.txt": "12345" }), "log.txt");
         const clone = new Response(body(Bun.file(path))).clone();
         change(path);
-        return Bun.inspect(clone).split("\n")[0];
+        return [Bun.inspect(clone), Bun.inspect(clone)].map(printed => printed.split("\n")[0]).join(" ");
       };
       expect({
         whole: sizeOf(
@@ -1294,10 +1294,10 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
         grew: sizeOf(grow, file => file),
         deleted: sizeOf(unlinkSync, file => file),
       }).toEqual({
-        whole: "Response (5 bytes) {",
-        slice: "Response (3 bytes) {",
-        grew: "Response (9 bytes) {",
-        deleted: "Response {",
+        whole: "Response (5 bytes) { Response (5 bytes) {",
+        slice: "Response (3 bytes) { Response (3 bytes) {",
+        grew: "Response (9 bytes) { Response (9 bytes) {",
+        deleted: "Response { Response {",
       });
     });
 

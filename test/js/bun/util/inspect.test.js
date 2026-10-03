@@ -156,6 +156,19 @@ it("Response and Request print no size for a Bun.file() body whose size is unkno
   });
 });
 
+it("printing a Response over a Bun.file() that does not exist yet leaves its body as it is", async () => {
+  using dir = tempDir("inspect-missing-then-created", {});
+  const path = join(String(dir), "later.txt");
+  const response = new Response(Bun.file(path));
+  const before = Bun.inspect(response).split("\n")[0];
+  await Bun.write(path, "created");
+  expect({ before, after: Bun.inspect(response).split("\n")[0], text: await response.text() }).toEqual({
+    before: "Response {",
+    after: "Response (7 bytes) {",
+    text: "created",
+  });
+});
+
 it("utf16 property name", () => {
   var { Database } = require("bun:sqlite");
   const db = Database.open(":memory:");

@@ -111,7 +111,7 @@
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
-#include "wtf/GregorianDateTime.h"
+#include "wtf/PlainGregorianDateTime.h"
 #include "JavaScriptCore/IntlObject.h"
 #include "JavaScriptCore/ISO8601.h"
 #include "JavaScriptCore/JSCTimeZone.h"
@@ -675,6 +675,11 @@ static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
     return true;
 }
 
+static bool mayBeAsymmetricMatcher(JSValue value)
+{
+    return value.isCell() && !value.isEmpty() && value.asCell()->type() == JSC::JSType(JSDOMWrapperType);
+}
+
 JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, uint64_t i)
 {
     if (obj->canGetIndexQuickly(i)) {
@@ -821,7 +826,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     // need to check this before primitives, asymmetric matchers
     // can match against any type of value.
     if constexpr (enableAsymmetricMatchers) {
-        if (v2.isCell() && !v2.isEmpty() && v2.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+        if (mayBeAsymmetricMatcher(v2)) {
             switch (matchAsymmetricMatcher(globalObject, v2, v1, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
@@ -832,7 +837,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 RETURN_IF_EXCEPTION(scope, false);
                 break;
             }
-        } else if (v1.isCell() && !v1.isEmpty() && v1.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+        } else if (mayBeAsymmetricMatcher(v1)) {
             switch (matchAsymmetricMatcher(globalObject, v1, v2, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
@@ -1004,6 +1009,17 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             if constexpr (!isStrict) {
                 if (((left.isEmpty() || right.isEmpty()) && (left.isUndefined() || right.isUndefined()))) {
                     continue;
+                }
+            }
+
+            if constexpr (enableAsymmetricMatchers) {
+                // A matcher gets what reading the element gives: the value of a getter, undefined for a hole or past the end.
+                if (left.isEmpty() && mayBeAsymmetricMatcher(right)) {
+                    left = o1->getIndex(globalObject, static_cast<unsigned>(i));
+                    RETURN_IF_EXCEPTION(scope, false);
+                } else if (right.isEmpty() && mayBeAsymmetricMatcher(left)) {
+                    right = o2->getIndex(globalObject, static_cast<unsigned>(i));
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
             }
 
@@ -3162,8 +3178,23 @@ void JSC__VM__collectAsync(JSC::VM* vm, bool full)
 void JSC__VM__collectAsyncIdle(JSC::VM* vm)
 {
     JSC::JSLockHolder lock(*vm);
+    if (!JSC::Options::useGC())
+        return;
+    auto* clientData = WebCore::clientData(*vm);
     JSC::GCRequest request(JSC::CollectionScope::Full);
     request.isIdle = true;
+    // See Bun__JSC_onBeforeWait. The end phase may run on the collector thread while the JS thread is parked, and the
+    // epilogue that sweeps what the collection freed runs when the JS thread takes heap access back: wake it for that. A
+    // request with this hook is never coalesced into another, so the count always comes back down.
+    if (!clientData->idleCollectionDidFinish) {
+        clientData->idleCollectionDidFinish = createSharedTask<void()>([vm, clientData] {
+            clientData->idleCollectionsPending.fetch_sub(1);
+            if (!vm->currentThreadIsHoldingAPILock() && clientData->vmHandle)
+                Bun__VmHandle__wake(clientData->vmHandle);
+        });
+    }
+    request.didFinishEndPhase = clientData->idleCollectionDidFinish;
+    clientData->idleCollectionsPending.fetch_add(1);
     vm->heap.collectAsync(request);
 }
 

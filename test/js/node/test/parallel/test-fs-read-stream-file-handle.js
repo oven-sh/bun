@@ -58,7 +58,7 @@ fs.promises.open(file, 'r').then((handle) => {
   }, {
     code: 'ERR_METHOD_NOT_IMPLEMENTED',
     name: 'Error',
-    // message: 'The FileHandle with fs method is not implemented'
+    message: 'The FileHandle with fs method is not implemented'
   });
   return handle.close();
 }).then(common.mustCall());

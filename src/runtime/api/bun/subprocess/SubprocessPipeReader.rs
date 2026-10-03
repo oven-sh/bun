@@ -11,15 +11,14 @@ use bun_io::pipe_reader::PosixFlags;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_ptr::{ParentRef, RefCount, RefPtr};
-use bun_sys;
 
 use super::readable::Readable;
 use super::{StdioKind, StdioResult, Subprocess};
 
-pub type IOReader = BufferedReader;
+pub(crate) type IOReader = BufferedReader;
 
 #[derive(Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Pending,
     Done(Vec<u8>),
@@ -30,7 +29,7 @@ pub enum State {
 // Intrusive, single-thread ref-count; `deinit` runs when the last ref drops.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "PipeReader")]
-pub struct PipeReader {
+pub(crate) struct PipeReader {
     pub(crate) reader: IOReader,
     // Backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError().
     // `ParentRef` encapsulates the single unsafe deref behind a safe `Deref`/`get()`;

@@ -130,6 +130,40 @@ export function bunExe() {
   return process.execPath;
 }
 
+/**
+ * Source for a `bun -e` script: binds `port`, where a dial to 127.0.0.1 sits in
+ * EINPROGRESS for good, and `filler`, to `destroy()` when done. Not on Windows or musl.
+ *
+ * A listener nobody accepts from, with a backlog one filler connection fills, so the
+ * kernel drops every later SYN. Needs listen(2) with the smallest backlog that admits
+ * exactly one connection (macOS treats 0 as unlimited), which Bun's own listeners do
+ * not expose, so the listener is a raw libc socket.
+ */
+export const blackholePortSource = `
+const net = require("node:net");
+const { dlopen, ptr } = require("bun:ffi");
+const darwin = process.platform === "darwin";
+const libc = dlopen(darwin ? "libSystem.B.dylib" : "libc.so.6", {
+  socket:      { args: ["int", "int", "int"],  returns: "int" },
+  bind:        { args: ["int", "ptr", "int"],  returns: "int" },
+  listen:      { args: ["int", "int"],         returns: "int" },
+  getsockname: { args: ["int", "ptr", "ptr"],  returns: "int" },
+});
+const AF_INET = 2, SOCK_STREAM = 1;
+const addr = new Uint8Array(16);
+if (darwin) { addr[0] = 16; addr[1] = AF_INET; } else new DataView(addr.buffer).setUint16(0, AF_INET, true);
+addr.set([127, 0, 0, 1], 4);
+const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
+if (fd < 0 || libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
+const len = new Uint32Array([16]);
+if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) throw new Error("getsockname failed");
+const port = (addr[2] << 8) | addr[3];
+// The error listener outlives the await, so a later error on the filler
+// is swallowed rather than thrown.
+const filler = net.connect(port, "127.0.0.1");
+await new Promise((resolve, reject) => filler.on("connect", resolve).on("error", reject));
+`;
+
 export function nodeExe(): string | null {
   return which("node") || null;
 }
@@ -252,8 +286,8 @@ let canBuildNodeAddonsCached: boolean | undefined;
 export function canBuildNodeAddons(): boolean {
   if (canBuildNodeAddonsCached === undefined) {
     if (!isMacOS) {
-      // Linux and Windows CI toolchains are provisioned by the bootstrap
-      // scripts in lockstep with the reported Node version; only macOS test
+      // Linux and Windows CI toolchains are baked into the images
+      // (scripts/build/ci-images/spec.ts) in lockstep with the reported Node version; only macOS test
       // boxes have independently-managed Xcode installs.
       canBuildNodeAddonsCached = true;
     } else {
@@ -519,7 +553,7 @@ export interface BunRunResult {
   stdout: string;
   stderr: string;
   exitCode: number;
-  signalCode: NodeJS.Signals | null;
+  signalCode: NodeJS.Signals | number | null;
 }
 
 /**
@@ -1207,7 +1241,6 @@ export async function describeWithContainer(
     "mysql:9": 3306, // Map mysql:9 to mysql_native_password
     "redis_plain": 6379,
     "redis_unified": 6379,
-    "minio": 9000,
     "autobahn": 9002,
   };
 

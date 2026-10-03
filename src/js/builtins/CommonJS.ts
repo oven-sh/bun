@@ -1,5 +1,10 @@
 // This file contains functions used for the CommonJS module loader
 
+interface RequiredESMNamespace {
+  __esModule?: unknown;
+  "module.exports"?: unknown;
+}
+
 $getter;
 export function main() {
   return $requireMap.$get(Bun.main);
@@ -79,7 +84,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   const mod = $createCommonJSModule(id, {}, false, this);
   requireMap.$set(id, mod);
 
-  var out: LoaderModule | -1;
+  var out: JSCommonJSModule | RequiredESMNamespace | -1;
 
   // This is where we load the module. We will see if Module._load and
   // Module._compile are actually important for compatibility.
@@ -110,7 +115,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
     try {
-      out = $requireESM(id, this);
+      out = $requireESM(id, this) as RequiredESMNamespace;
     } catch (exception) {
       // Since the ESM code is mostly JS, we need to handle exceptions here.
       requireMap.$delete(id);
@@ -208,14 +213,8 @@ export function requireESM(this, resolved: string, requirer?: JSCommonJSModule) 
 
 export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
   $assert(this);
-  let namespace;
-  try {
-    namespace = $requireESM(id, this);
-  } catch (exception) {
-    // Since the ESM code is mostly JS, we need to handle exceptions here.
-    (this.$requireMap || $requireMap).$delete(id);
-    throw exception;
-  }
+  // Runs inside `$require`, which removes the require map entry if the user's handler lets this throw.
+  const namespace = $requireESM(id, this);
 
   // See `overridableRequire`: TDZ-safe reads for the require-cycle case.
   let esModule, moduleExports;
@@ -324,21 +323,36 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
 type WrapperMutate = (start: string, end: string) => void;
 export function getWrapperArrayProxy(onMutate: WrapperMutate, start: string, end: string) {
   const wrapper = [start, end];
+  // onMutate throws what it refuses (--disallow-code-generation-from-strings=strict), which is then
+  // not left in the array.
+  function didMutate(previousStart: string, previousEnd: string) {
+    try {
+      onMutate(wrapper[0], wrapper[1]);
+    } catch (error) {
+      wrapper[0] = previousStart;
+      wrapper[1] = previousEnd;
+      throw error;
+    }
+    return true;
+  }
   return new Proxy(wrapper, {
     set(_target, prop, value, receiver) {
+      const previousStart = wrapper[0];
+      const previousEnd = wrapper[1];
       Reflect.set(wrapper, prop, value, receiver);
-      onMutate(wrapper[0], wrapper[1]);
-      return true;
+      return didMutate(previousStart, previousEnd);
     },
     defineProperty(_target, prop, descriptor) {
+      const previousStart = wrapper[0];
+      const previousEnd = wrapper[1];
       Reflect.defineProperty(wrapper, prop, descriptor);
-      onMutate(wrapper[0], wrapper[1]);
-      return true;
+      return didMutate(previousStart, previousEnd);
     },
     deleteProperty(_target, prop) {
+      const previousStart = wrapper[0];
+      const previousEnd = wrapper[1];
       Reflect.deleteProperty(wrapper, prop);
-      onMutate(wrapper[0], wrapper[1]);
-      return true;
+      return didMutate(previousStart, previousEnd);
     },
   });
 }

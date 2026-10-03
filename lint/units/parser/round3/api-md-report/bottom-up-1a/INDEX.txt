@@ -1,0 +1,74 @@
+api-md-report, bottom-up, pass 1a. Round 3 (research, 2026-10-03, 04:00 to 06:10 UTC). Nothing here is in the worktree, nothing
+was committed by this pass, no build, no cargo command and no test ran. save-notes was not called (the phase has no git; the
+autosave of /workspace/tools/autopush takes the notes every five minutes).
+Worktree: /workspace/wt/parser -> /workspace/bun, HEAD b882bfc32f (round 1 merged with main fa467dcae2). No code of round 3 exists.
+Base binaries: /workspace/base/bun.f4d755a9c -> bun.fa467dcae, bun-profile.f4d755a9c -> bun-profile.fa467dcae (main at fa467dcae2).
+
+The paste source of API.md, NEEDS.md and the report is the top-down pass of the same unit, ../top-down/: blocks/*.txt, assemble.py
+(writes API.next.txt: 2,744 lines, 12 sections, markers FILL 106, CHECK 51, PICK 9 on 2026-10-03 05:45), NEEDS.next.txt,
+REPORT.outline.txt. This pass read the code first and then checked those files against it. What it adds:
+
+check-api.sh    bash check-api.sh [<API.md>] [<worktree>] [<NEEDS.md>]     reads files and git objects only, no lock
+                The parity check of the finished API.md against the tree. Exit 0 only when every check is "ok":
+                markers (no [[FILL]], [[CHECK]], [[PICK]], [[OR]], [[END]] left), stale (18 sentences of rounds 1 and 2 that
+                round 3 makes false), commits (every `hash` is in the repository, but 6b7ade0f2a, which must not be),
+                files (every named path exists, but the four typescript-grammar test files, which must not),
+                lines (every file.rs:n is inside its file), surface (api_surface.py of round 2: 0 names missing),
+                tests (the number before "passed" is the count of #[test] of the crate), head ("State of this file" names HEAD,
+                nothing under src/ is uncommitted), needs (N1 says that it landed).
+                Run on the API.md of today: 13 stale sentences, 116 names missing, no test row, no state section, N1 not landed.
+                Run on ../top-down/API.next.txt as assembled today: stale none, commits ok, lines ok, surface 0; left are the
+                156 marker lines, five paths that do not exist yet (parse/comment_directives.rs, comments.rs, grammar_rows_tests.rs,
+                lint_types.rs, pragmas.rs), the four test files that still exist, the test row and the head.
+
+Read at b882bfc32f and at main fa467dcae2 (each line is what a command printed in this pass):
+- git diff --stat be1ebe5295 HEAD -- src/js_parser/parse src/ast/ts.rs src/ast/ts_nodes.rs: empty. The blocks of round 2
+  (round2/api-sidecar-contract/block-*.txt) describe the lint interface of HEAD. git diff --stat e1c99be1a4 HEAD -- src/ast/ts_nodes.rs: empty.
+- git diff fa467dcae2 HEAD -- src/js_parser/lexer.rs: empty. Lexer::track_comments and Lexer::all_comments are main's
+  (lexer.rs:241, :245, :1907-1910); only features.minify_identifiers turns them on (parse_entry.rs:433, p.rs:9821).
+- main has no parse/type_sink.rs. Its skipper is skip_type_script_type_with_opts<const GET_METADATA: bool>
+  (parse_skip_typescript.rs:239 of 1,691 lines; HEAD: 3,986 lines). Metadata::MDot is Vec<Ref> on main (src/ast/ts.rs:176)
+  and StoreSlice<Ref> at HEAD (:179). P::starts_for_parse_only is Option<StartsForParseOnly> inline on main (p.rs:385, no
+  assertion on size_of::<P>) and Option<Box<..>> at HEAD (p.rs:438, assertions p.rs:786-789).
+- The commits of this work that a parse without lint keeps and main does not have (git merge-base --is-ancestor <c> fa467dcae2
+  fails for each): 2d28b35c01 the sink form (parser3.md calls it 6b7ade0f2a, which is no object of this repository; f050f6cbb2
+  is a second copy), c5aaa06d78 the boxed side table with the assertions on P, be1ebe5295 MDot in the arena.
+- The sink form (git show 2d28b35c01:src/js_parser/parse/type_sink.rs): trait TypeSink { type Out: Default; const
+  CONDITIONAL_FALSE_LEVEL: Level; 19 methods }. Discard: Out = (), Level::Lowest. DecoratorMetadata: Out = Metadata,
+  Level::BitwiseAnd. The trait of HEAD has beside them NONE, STRICT, BUILDS, Sub, K<V>, six more methods (import_type,
+  unique_type, type_predicate, nested, branch, node) and 29 hooks b_*: 54 methods.
+- main reads the side-table option at three places: parse/mod.rs:224 (parse_class), :1594 (parse_async_prefix_expr),
+  parse_fn.rs:568 (parse_arrow_body). HEAD reads it in 13 files; P::is_lint_parse (p.rs:5558) has four readers:
+  parse_prefix.rs:50, parse_stmt.rs:1951, parse/mod.rs:1993, syntax_errors.rs:386.
+- Nothing outside tests calls Attached::optional, definite, keyword, type_only_specifier, specifiers_belong_to.
+- N1 is in the tree: src/ast/lib.rs:1240 Metadata::Code(u32), :1156 Msg::code, :2106 Log::add_range_error_with_code, and the
+  three arms (src/jsc/VirtualMachine.rs:3617, src/jsc/lib.rs:1379, src/runtime/server/DevErrorPage.rs:159).
+  src/runtime/cli/lint_command.rs:241 calls parse_only; nothing outside src/js_parser calls parse_for_lint.
+  scripts/rust-miri.ts: bun_ast is in MIRI_CRATES, bun_js_parser is not. .github/workflows/rust-lints.yml has no step for the crate.
+- python3 /workspace/notes/lint/tools/symsizes.py /workspace/base/bun-profile.fa467dcae: text 863 symbols 1,400,688;
+  P<false, false> 281 / 412,477; P<true, false> 319 / 475,578; P<false, true> 91 / 133,717; P<true, true> 131 / 191,090;
+  type grammar 21 / 27,401; with_opts discard 3,446; with_opts metadata 7,045; Lexer::next 15,372. bun.fa467dcae: 80,868,992 bytes.
+  The same numbers as for f4d755a9c (measure/a2/base.sym.txt) and bc7a813b1.
+- python3 /workspace/notes/lint/tools/commentcop.py fa467dcae2...HEAD: 0 in 0 files. copy_audit.py: 114 types, 9 not Copy.
+  panic_audit.py: 0 lines. api_surface.py with the API.md of today: 116 names missing.
+- #[test] by file, 70 in all (the count of results/cargo-test.head-b882bfc32f.txt of lint-grammar-tests-r4/bottom-up-1a):
+  native_test_shims 7, type_sink_tests 5, annotation_tests 4, attached 10, erased 11, erased_tests 1, generics 4, parse_entry 5,
+  parse_skip_typescript 7, parse_stmt 2, syntax_errors 9, wrappers 5. native_test_shims.rs has 57 #[unsafe(no_mangle)].
+- No build of HEAD exists on the machine (build/ of /workspace/bun is the image of 2026-09-18): nothing of R2 and R3 can be filled yet.
+
+Corrections to ../top-down, from the code:
+1. blocks/20-two-grammars.txt, "A parse without lint": "with one later change" names MDot only. The text that a parse without
+   lint runs differs from main in three commits: the sink form, the boxed side table (c5aaa06d78: p.rs:438 and the two
+   assertions, parse_entry.rs), MDot in the arena. blocks/70-proofs.txt names the box; the section that says what a parse
+   without lint is has to name it too, because the reference of the cost proof (mkref.sh) is exactly these three.
+2. blocks/00-head-state.txt, "TypeSink::STRICT is gone, with BUILDS, Sub and K": with the sink form restored, NONE, the six
+   methods import_type, unique_type, type_predicate, nested, branch, node and the 29 hooks b_* leave the trait too. Write the
+   sentence from: diff <(git show 2d28b35c01:src/js_parser/parse/type_sink.rs | grep -E '^    (type|const|fn) ') <(grep -E '^    (type|const|fn) ' src/js_parser/parse/type_sink.rs)
+3. blocks/50-side-table.txt: Keyword and TypeOnlySpecifier have no key in the text. attached.rs:122: Keyword::owner is
+   G::Class::class_keyword.loc of the class or S::Enum::name.loc of the enum. attached.rs:153: TypeOnlySpecifier::statement
+   is Stmt::loc of the S::Import, S::ExportClause or S::ExportFrom, or the start of a statement that leaves none.
+4. blocks/60-syntax-errors.txt: SkipTypeOptions::IsTypeArgument is src/js_parser/typescript.rs:317 (316 is its comment).
+   typescript.rs is a shared file that differs from main by these two lines.
+5. blocks/40-lint-parse.txt, "What a lint parse of JavaScript records": "erased, attached and generics are empty" has no test.
+   parse_entry::tests::parses_javascript_typescript_and_jsx counts statements only, and the case `javascript` of
+   wrappers::tests holds two parentheses records today. The sentence needs a test of R1 that reads all four tables of a .js source.

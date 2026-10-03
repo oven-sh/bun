@@ -6,8 +6,8 @@
 # Checks:
 #   markers    no slot of a paste source is left: [[FILL ..]], [[CHECK ..]], [[PICK ..]], [[OR]], [[END]], <<..>>
 #   stale      no sentence of round 1 or 2 that round 3 made false (the list STALE below, each with its reason)
-#   commits    every `<hex of 9 to 12>` in backticks is a commit of the repository of the worktree
-#   files      every path under src/, test/ or scripts/ that has no `*` exists in the worktree
+#   commits    every `<hex of 9 to 12>` in backticks is a commit of the repository of the worktree (but ABSENT, which must not be one)
+#   files      every path under src/, test/ or scripts/ that has no `*` exists in the worktree (but GONE, which must not exist)
 #   lines      every `<file>.rs:<n>` names a line that the file has (files are found by name under src/js_parser, src/ast, src/jsc)
 #   surface    api_surface.py of round 2: the public names of the interface files that API.md does not hold
 #   tests      the number before "passed" in the row of `cargo test -p bun_js_parser --lib` is the number of #[test] in the crate
@@ -17,6 +17,10 @@ API=${1:-/workspace/notes/lint/units/parser/API.md}
 W=${2:-/workspace/wt/parser}
 NEEDS=${3:-$(dirname "$API")/NEEDS.md}
 SURFACE=/workspace/notes/lint/units/parser/round2/api-md-gates-report/bottom-up/api_surface.py
+# A commit that API.md names to say that the repository does not have it (parser3.md names the sink form by it).
+ABSENT=${ABSENT:-6b7ade0f2a}
+# Paths that API.md names as removed in round 3 (R4): they must not be in the worktree.
+GONE=${GONE:-test/bundler/transpiler/typescript-grammar.test.ts test/bundler/transpiler/typescript-grammar-expressions.test.ts test/bundler/transpiler/typescript-grammar-statements.test.ts test/bundler/transpiler/typescript-grammar-decorator-metadata.test.ts}
 bad=0
 say() { echo "!! $*"; bad=1; }
 ok() { echo "ok $*"; }
@@ -62,6 +66,7 @@ EOF
 # commits
 missing=
 for h in $(grep -o -E '`[0-9a-f]{9,12}`' "$API" | tr -d '`' | sort -u); do
+  case " $ABSENT " in *" $h "*) git -C "$W" cat-file -e "$h^{commit}" 2>/dev/null && say "commits: $h is named as absent and the repository has it"; continue ;; esac
   git -C "$W" cat-file -e "$h^{commit}" 2>/dev/null || missing="$missing $h"
 done
 [ -z "$missing" ] && ok "commits: every named commit is in the repository" || say "commits that the repository does not have:$missing"
@@ -69,6 +74,7 @@ done
 # files
 missing=
 for f in $(grep -o -E '`?(src|test|scripts)/[A-Za-z0-9_./-]+\.(rs|ts|tsx|js|mjs|toml|yml)' "$API" | tr -d '`' | sort -u); do
+  case " $GONE " in *" $f "*) [ -e "$W/$f" ] && say "files: API.md names $f as removed and the worktree has it"; continue ;; esac
   [ -e "$W/$f" ] || missing="$missing $f"
 done
 [ -z "$missing" ] && ok "files: every named path exists" || say "paths that the worktree does not have:$(echo "$missing" | tr ' ' '\n' | sed 's/^/\n     /' | tr -d '\n')"

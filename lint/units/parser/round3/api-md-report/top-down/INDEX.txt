@@ -1,0 +1,55 @@
+api-md-report, top-down (pass 1b). Round 3 of the parser unit: the text of API.md, of NEEDS.md and the outline of the final
+report, written BEFORE R1 to R5 were done (research, 2026-10-03). Nothing here is in the worktree, nothing was committed, and
+the notes were not saved with save-notes (the phase had no git).
+Tree read: /workspace/wt/parser (= /workspace/bun) at b882bfc32f, whose src/js_parser and src/ast are those of 23a20afa7e
+(round 1 with the fixes of round 2). Base binary: /workspace/base/bun.f4d755a9c -> bun.fa467dcae (main at fa467dcae2).
+
+assemble.py          python3 assemble.py [--known FILE] [--markers]: writes API.next.txt from blocks/, from the section "Type nodes"
+                     of the API.md of today (three paragraphs replaced) and from the generated section of the known differences.
+                     Prints the markers that are left. Exit 1 when a source paragraph is gone or a PICK has no OR or END.
+API.next.txt         its output: the whole API.md for the end of round 3 (2,744 lines). `cp API.next.txt ../../../API.md` is the
+                     last step, after every marker is resolved.
+blocks/00-head-state.txt       title, "State of this file" (the gates, N1 to N4), "What changed for a caller in round 3"
+blocks/20-two-grammars.txt     "The two grammars": a parse without lint, a lint parse, how a site knows, what a lint parse
+                               reads with which grammar, the cache version
+blocks/40-lint-parse.txt       `Parser::parse_for_lint`, `ParsedForLint`, what the entry does, what a lint parse of JavaScript records
+blocks/50-side-table.txt       `StartsForParseOnly`, the keys of the four tables, `attached`, `wrappers`, `generics`
+blocks/51-side-table-erased.txt  `erased`, the list of typecheck/NEEDS.md L1, what has no record, offsets next to a comment, speculation
+blocks/52-comments.txt         comments, comment directives, pragmas (R5, B1): the plan of round 2, and the text for "not done"
+blocks/60-syntax-errors.txt    the codes: the entry, what a caller reads from where (B2), the table, what a lint parse rejects
+                               (with the eleven inputs of typecheck/NEEDS.md L2, B3), the two lists, the tests
+blocks/70-proofs.txt           R2 (parity.sh: the steps and their record counts) and R3 (the sizes and the counts, base filled in)
+blocks/80-tests.txt            which command runs which test, the 366 cases (R4), the stand-ins
+blocks/90-memory.txt           what an arena holds
+NEEDS.next.txt       the whole NEEDS.md: N1 landed, N2 to N4 as they stand
+REPORT.outline.txt   the final report by the headings of COMMON.md, with what is known today filled in
+surface.next.txt     api_surface.py of round 2 over API.next.txt at b882bfc32f: 0 public names that the draft does not hold
+                     (116 with the API.md of today)
+l2-main.mjs, l2-main.fa467dcae2.txt   the eleven inputs of typecheck/NEEDS.md L2 through the base binary: the parse pass takes all
+                     eleven, the visit pass rejects six with "Invalid assignment target"
+
+Markers in the text (assemble.py --markers lists them: 106 FILL, 51 CHECK, 9 PICK):
+  [[FILL id: how]]    a value that only a run of the final commit gives; "how" names the command or the file
+  [[CHECK id: how]]   a sentence that is true at b882bfc32f or that the plan of round 3 makes true; verify it as "how" says,
+                      then delete the marker or write what the code does
+  [[PICK id: how]] text [[OR]] text [[END]]   two texts for a decision that R1 or R5 takes; keep the one that the code and its
+                      test show, delete the other and the three marker lines
+The nine PICKs: parens, js-parens, wrappers-parens, no-record-parens (ONE decision: whether `(` tests the side table in the
+TypeScript parser), alias-interface (whether the type of a type alias and the members of an interface get a record),
+comments-section and comment-offsets (B1 done or not), codes-on-msg (B2), b3-rejections (B3).
+
+Facts that were measured for this pass (not taken from older notes):
+- base sizes, `python3 /workspace/notes/lint/tools/symsizes.py /workspace/base/bun-profile.f4d755a9c` on 2026-10-03 (main fa467dcae2):
+  bun_js_parser text 863 symbols 1,400,688 bytes; P<false, false> 281 / 412,477; P<true, false> 319 / 475,578; P<false, true> 91 / 133,717;
+  P<true, true> 131 / 191,090; type grammar 21 / 27,401; with_opts discard 3,446; with_opts metadata 7,045; Lexer::next 15,372;
+  stripped binary (bun.fa467dcae) 80,868,992 bytes, sha256 ed0ce7cea92d...
+- fa467dcae2 is an ancestor of HEAD b882bfc32f; `git diff f4d755a9cf fa467dcae2 -- src/js_parser src/ast src/js_printer src/transpiler` is empty.
+- commit 6b7ade0f2a (parser3.md) is not in the clone; "js_parser: make the type grammar generic over a sink" is 2d28b35c01 (ancestor
+  of HEAD) and f050f6cbb2. Its trait: `type Out: Default; const CONDITIONAL_FALSE_LEVEL: Level;` Discard: (), Level::Lowest;
+  DecoratorMetadata: ts::Metadata, Level::BitwiseAnd.
+- EXPECTED_VERSION is 34 at HEAD (src/jsc/RuntimeTranspilerCache.rs:67, with the line "Version 34:" at :66): R2 sets it to 33.
+- the public items of parse_entry.rs, p.rs (StartsForParseOnly), attached.rs, wrappers.rs, generics.rs, erased.rs, syntax_errors.rs
+  and ts_nodes.rs at HEAD are those of round2/api-sidecar-contract/block-*.txt; N1 is in the tree (src/ast/lib.rs:1156, :1236-1240,
+  :2106; the three arms at src/jsc/VirtualMachine.rs:3617, src/jsc/lib.rs:1379, src/runtime/server/DevErrorPage.rs:159);
+  src/runtime/cli/lint_command.rs:241 calls parse_only for JavaScript and Parser::parse for TypeScript.
+- `cargo test -p bun_js_parser --lib` at HEAD: 70 passed (run of ../../lint-grammar-tests-r4/bottom-up-1a, results/cargo-test.head-b882bfc32f.txt).

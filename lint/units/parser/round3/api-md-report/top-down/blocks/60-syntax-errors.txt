@@ -231,7 +231,7 @@ back. [[FILL log-truncation: the attempts of the lint grammar that truncate the 
 
 `probes/diag-codes/`: `run.sh` prints, for each source of `inputs.txt`, the parse diagnostics of typescript-go
 (`/tmp/rr/parsediag`), of tsc 6.0.2 and the errors of the `bun` on PATH. `expected.txt` is its output with
-`bun` 1.4.3-canary.1+367d939d9, a binary of main.
+`bun` 1.4.3-canary.1+367d939d9, the installed release, which has none of this work.
 
 ### Tests
 

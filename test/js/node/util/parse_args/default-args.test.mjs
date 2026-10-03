@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs/promises";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import os from "os";
 import path from "path";
 import { parseArgs } from "util";
@@ -285,120 +285,18 @@ describe.concurrent("parseArgs default args in a Worker", () => {
   });
 });
 
-// Node's tokenizer reads `ArrayPrototypeSlice(args)`, so nothing that runs during the parse can
-// change what it reads. Every expected value is what Node v26.3.0 returns, except where a test
-// says otherwise.
-describe("parseArgs reads a copy of the arguments", () => {
-  const result = (positionals, values = {}) => ({ values: { __proto__: null, ...values }, positionals });
-
-  test("explicit args are copied after the config getters run", () => {
-    const shrunk = ["p1", "p2", "p3"];
-    // prettier-ignore
-    expect(parseArgs({ args: shrunk, get strict() { shrunk.length = 0; return false; } })).toEqual(result([]));
-
-    const grown = [];
-    // prettier-ignore
-    expect(parseArgs({ args: grown, get strict() { grown.push("late"); return false; } })).toEqual(result(["late"]));
-
-    const shrunkByOption = ["--foo", "p2"];
-    // prettier-ignore
-    const options = { foo: { get type() { shrunkByOption.length = 0; return "boolean"; } } };
-    expect(parseArgs({ args: shrunkByOption, strict: false, options })).toEqual(result([]));
-  });
-
-  test("default args are copied before the config getters run", () => {
-    const { argv } = process;
-    try {
-      process.argv = ["exe", "script", "p1", "p2"];
-      // prettier-ignore
-      expect(parseArgs({ get strict() { process.argv.length = 2; return false; } })).toEqual(result(["p1", "p2"]));
-
-      process.argv = ["exe", "script"];
-      // prettier-ignore
-      expect(parseArgs({ get strict() { process.argv.push("late"); return false; } })).toEqual(result([]));
-
-      process.argv = ["exe", "script", "p1"];
-      // prettier-ignore
-      expect(parseArgs({ get strict() { process.argv = ["exe", "script", "other"]; return false; } })).toEqual(result(["p1"]));
-    } finally {
-      process.argv = argv;
+// Node reads its parsed `--eval` option and not `process.execArgv`:
+// https://github.com/nodejs/node/pull/60814
+test("process.execArgv does not choose where the default args start", () => {
+  const { argv, execArgv } = process;
+  try {
+    process.argv = [process.argv0, "script.js", "--foo"];
+    for (const fake of [["-e", "0"], ["--eval", "0"], ["-p", "0"], ["--print", "0"], undefined]) {
+      process.execArgv = fake;
+      expect(parseArgs({ strict: false })).toEqual({ values: { __proto__: null, foo: true }, positionals: [] });
     }
-  });
-
-  test("an argument's toString cannot change the arguments after it", () => {
-    // prettier-ignore
-    const shrunk = [{ toString() { shrunk.length = 1; return "x"; } }, "p2", "p3"];
-    expect(parseArgs({ args: shrunk, strict: false })).toEqual(result([shrunk[0], "p2", "p3"]));
-
-    // prettier-ignore
-    const grown = [{ toString() { grown.push("late"); return "x"; } }, "p2"];
-    expect(parseArgs({ args: grown, strict: false })).toEqual(result([grown[0], "p2"]));
-
-    // prettier-ignore
-    const replaced = [{ toString() { replaced[1] = "--changed"; return "x"; } }, "p2"];
-    expect(parseArgs({ args: replaced, strict: false })).toEqual(result([replaced[0], "p2"]));
-  });
-
-  test("process.execArgv does not choose where the default args start", () => {
-    const { argv, execArgv } = process;
-    try {
-      process.argv = [process.argv0, "script.js", "--foo"];
-      for (const fake of [["-e", "0"], ["--eval", "0"], ["-p", "0"], ["--print", "0"], undefined]) {
-        process.execArgv = fake;
-        expect(parseArgs({ strict: false })).toEqual(result([], { foo: true }));
-      }
-    } finally {
-      process.argv = argv;
-      process.execArgv = execArgv;
-    }
-  });
-
-  // Node has no limit: it copies all 2^32 - 1 holes first, which does not return in 8 seconds.
-  // Each strict call goes first: if the limit is gone, only a strict call returns.
-  describe("an array that is not plain storage", () => {
-    const tooLong = received => ({
-      name: "RangeError",
-      code: "ERR_OUT_OF_RANGE",
-      message: `The value of "args.length" is out of range. It must be <= 1048576. Received ${received}`,
-    });
-    const thrown = fn => {
-      try {
-        fn();
-      } catch (error) {
-        return { name: error.name, code: error.code, message: error.message };
-      }
-    };
-
-    test("is rejected before it is copied when it is longer than the limit", () => {
-      for (const length of [2 ** 32 - 1, 2 ** 20 + 1]) {
-        const args = new Array(length);
-        expect(thrown(() => parseArgs({ args }))).toEqual(tooLong(length));
-        expect(thrown(() => parseArgs({ args, strict: false }))).toEqual(tooLong(length));
-      }
-    });
-
-    test("is rejected as default args too", () => {
-      const { argv } = process;
-      try {
-        process.argv = [];
-        process.argv.length = 2 ** 32 - 1;
-        expect(thrown(() => parseArgs())).toEqual(tooLong(2 ** 32 - 3));
-        expect(thrown(() => parseArgs({ strict: false }))).toEqual(tooLong(2 ** 32 - 3));
-      } finally {
-        process.argv = argv;
-      }
-    });
-
-    // A debug build takes 4 seconds to read 2^20 elements.
-    test.skipIf(isDebug)("is copied when it is as long as the limit", () => {
-      expect(thrown(() => parseArgs({ args: new Array(2 ** 20) }))?.code).toBe("ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL");
-    });
-  });
-
-  // A debug build takes 1.4 seconds to build and copy this array.
-  test.skipIf(isDebug)("a plain array has no length limit", () => {
-    const args = [];
-    for (let i = 0; i <= 2 ** 20; i++) args.push("--nope");
-    expect(() => parseArgs({ args })).toThrow(expect.objectContaining({ code: "ERR_PARSE_ARGS_UNKNOWN_OPTION" }));
-  });
+  } finally {
+    process.argv = argv;
+    process.execArgv = execArgv;
+  }
 });

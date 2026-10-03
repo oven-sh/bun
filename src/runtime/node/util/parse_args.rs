@@ -1,5 +1,4 @@
 use core::fmt;
-use core::ops::Range;
 use std::borrow::Cow;
 
 use bun_core::{String, StringView};
@@ -14,43 +13,52 @@ use super::validators;
 
 bun_output::declare_scope!(parseArgs, hidden);
 
-/// The longest array that `snapshot_args` copies one element at a time. An
-/// array that is not plain contiguous storage can have a length of 2^32 - 1
-/// and own no element.
-const MAX_SLOW_ARGS: u32 = 1 << 20;
+mod args_slice {
+    use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
-/// Appends a copy of `array[start..]` to `roots` and returns where it is in
-/// `roots`. It is the `ArrayPrototypeSlice` that node's tokenizer reads from:
-/// user code that runs during the parse cannot resize it.
-fn snapshot_args(
-    global: &JSGlobalObject,
-    array: JSValue,
-    start: u32,
-    roots: &mut MarkedArgumentBuffer,
-) -> JsResult<Range<usize>> {
-    let mut iter = array.array_iterator(global)?;
-    iter.i = start.min(iter.len);
-    let count = iter.len - iter.i;
-    if count == 0 {
-        return Ok(0..0);
+    /// Represents a slice of a JSValue array. The fields are private to this
+    /// module so that every value has `start <= end`.
+    #[derive(Copy, Clone)]
+    pub(super) struct ArgsSlice {
+        array: JSValue,
+        start: u32,
+        end: u32,
     }
-    if !iter.is_fast() && count > MAX_SLOW_ARGS {
-        return Err(global.throw_range_error(
-            i64::from(count),
-            bun_core::fmt::OutOfRangeOptions {
-                field_name: b"args.length",
-                max: i64::from(MAX_SLOW_ARGS),
-                ..Default::default()
-            },
-        ));
+
+    impl ArgsSlice {
+        pub(super) const EMPTY: ArgsSlice = ArgsSlice {
+            array: JSValue::UNDEFINED,
+            start: 0,
+            end: 0,
+        };
+
+        /// `array[start..]`, which is empty when the array is shorter than
+        /// `start`, like `ArrayPrototypeSlice(array, start)`.
+        pub(super) fn new(
+            global: &JSGlobalObject,
+            array: JSValue,
+            start: u32,
+        ) -> JsResult<ArgsSlice> {
+            let end = u32::try_from(array.get_length(global)?).expect("int cast");
+            Ok(ArgsSlice {
+                array,
+                start: start.min(end),
+                end,
+            })
+        }
+
+        #[inline]
+        pub(super) fn len(&self) -> u32 {
+            self.end - self.start
+        }
+
+        #[inline]
+        pub(super) fn get(&self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
+            self.array.get_index(global, self.start + i)
+        }
     }
-    let first = roots.as_slice().len();
-    iter.append_remaining_to(roots)?;
-    if roots.has_overflowed() {
-        return Err(global.throw_out_of_memory());
-    }
-    Ok(first..first + count as usize)
 }
+use args_slice::ArgsSlice;
 
 /// Helper ref to either a JSValue or a String,
 /// used in order to avoid creating unneeded JSValue as much as possible
@@ -207,13 +215,10 @@ fn find_option_by_long_name(long_name: &String, options: &[OptionDefinition]) ->
 }
 
 /// Gets the default args from the process argv
-fn get_default_args(
-    global: &JSGlobalObject,
-    roots: &mut MarkedArgumentBuffer,
-) -> JsResult<Range<usize>> {
+fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
     let argv = super::process::get_argv(global)?;
     if !argv.is_array() {
-        return Ok(0..0);
+        return Ok(ArgsSlice::EMPTY);
     }
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/parse_args/parse_args.js#L58-L67
     let start = if global.bun_vm().has_eval_string {
@@ -221,7 +226,7 @@ fn get_default_args(
     } else {
         2
     };
-    snapshot_args(global, argv, start, roots)
+    ArgsSlice::new(global, argv, start)
 }
 
 /// In strict mode, throw for possible usage errors like "--foo --bar" where foo was defined as a string-valued arg
@@ -525,13 +530,13 @@ fn parse_option_definitions<'a>(
 fn tokenize_args(
     ctx: &mut ParseArgsState,
     global: &JSGlobalObject,
-    args: &[JSValue],
+    args: ArgsSlice,
     options: &[OptionDefinition],
 ) -> JsResult<()> {
-    let num_args = u32::try_from(args.len()).expect("int cast");
+    let num_args = args.len();
     let mut index: u32 = 0;
     while index < num_args {
-        let arg_ref = ValueRef::Jsvalue(args[index as usize]);
+        let arg_ref = ValueRef::Jsvalue(args.get(global, index)?);
         let arg = arg_ref.as_bun_string(global)?;
 
         let token_rawtype = classify_token(&arg, options);
@@ -554,7 +559,7 @@ fn tokenize_args(
                 while index < num_args {
                     ctx.handle_token(&Token::Positional {
                         index,
-                        value: ValueRef::Jsvalue(args[index as usize]),
+                        value: ValueRef::Jsvalue(args.get(global, index)?),
                     })?;
                     index += 1;
                 }
@@ -572,7 +577,7 @@ fn tokenize_args(
                 let mut has_inline_value = true;
                 if option_type == OptionValueType::String && index + 1 < num_args {
                     // e.g. '-f', "bar"
-                    value = ValueRef::Jsvalue(args[index as usize + 1]);
+                    value = ValueRef::Jsvalue(args.get(global, index + 1)?);
                     has_inline_value = false;
                     bun_output::scoped_log!(
                         parseArgs,
@@ -617,7 +622,7 @@ fn tokenize_args(
                         let mut has_inline_value = true;
                         if option_type == OptionValueType::String && index + 1 < num_args {
                             // e.g. '-f', "bar"
-                            value = ValueRef::Jsvalue(args[index as usize + 1]);
+                            value = ValueRef::Jsvalue(args.get(global, index + 1)?);
                             has_inline_value = false;
                             bun_output::scoped_log!(
                                 parseArgs,
@@ -709,7 +714,7 @@ fn tokenize_args(
                 let mut value: Option<JSValue> = None;
                 if option_type == OptionValueType::String && index + 1 < num_args && !negative {
                     // e.g. '--foo', "bar"
-                    value = Some(args[index as usize + 1]);
+                    value = Some(args.get(global, index + 1)?);
                     bun_output::scoped_log!(parseArgs, "  (consuming next as value)");
                 }
 
@@ -880,13 +885,13 @@ impl<'a> ParseArgsState<'a> {
 
 #[bun_jsc::host_fn(export = "Bun__NodeUtil__jsParseArgs")]
 pub(crate) fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    MarkedArgumentBuffer::new(|roots| parse_args_impl(global, callframe, roots))
+    MarkedArgumentBuffer::new(|default_roots| parse_args_impl(global, callframe, default_roots))
 }
 
 fn parse_args_impl(
     global: &JSGlobalObject,
     callframe: &CallFrame,
-    roots: &mut MarkedArgumentBuffer,
+    default_roots: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {
     // jsc.markBinding(@src()) — debug-only, dropped
     let config_value = callframe.arguments_as_array::<1>()[0];
@@ -907,13 +912,11 @@ fn parse_args_impl(
             .unwrap_or(JSValue::UNDEFINED),
         None => JSValue::UNDEFINED,
     };
-    // Node slices `process.argv` here, before the config getters below run.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/parse_args/parse_args.js#L304
-    let default_args = if config_args.is_undefined_or_null() {
-        Some(get_default_args(global, roots)?)
-    } else {
+    let args: ArgsSlice = if !config_args.is_undefined_or_null() {
         validators::validate_array(global, config_args, "args", None)?;
-        None
+        ArgsSlice::new(global, config_args, 0)?
+    } else {
+        get_default_args(global)?
     };
 
     // Phase 0.B: Parse and validate config
@@ -974,7 +977,7 @@ fn parse_args_impl(
     let mut option_defs: Vec<OptionDefinition> = Vec::new();
 
     if let Some(iter) = &options_iter {
-        parse_option_definitions(global, iter, &mut option_defs, roots)?;
+        parse_option_definitions(global, iter, &mut option_defs, default_roots)?;
     }
 
     //
@@ -982,14 +985,6 @@ fn parse_args_impl(
     //  +
     // Phase 2: process tokens into parsed option values and positionals
     //
-
-    // Node copies explicit `args` here, after the config getters above ran.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/parse_args/parse_args.js#L191
-    let args = match default_args {
-        Some(args) => args,
-        None => snapshot_args(global, config_args, 0, roots)?,
-    };
-    let args = &roots.as_slice()[args];
     bun_output::scoped_log!(
         parseArgs,
         "Phase 1+2: tokenize args (args.len={})",

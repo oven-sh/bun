@@ -10,16 +10,6 @@ bun_opaque::opaque_ffi! {
 
 unsafe extern "C" {
     safe fn MarkedArgumentBuffer__append(args: &MarkedArgumentBuffer, value: JSValue);
-    fn MarkedArgumentBuffer__appendSlice(
-        args: &MarkedArgumentBuffer,
-        values: *const JSValue,
-        count: usize,
-    );
-    safe fn MarkedArgumentBuffer__data(
-        args: &MarkedArgumentBuffer,
-        size: &mut usize,
-    ) -> *const JSValue;
-    safe fn MarkedArgumentBuffer__hasOverflowed(args: &MarkedArgumentBuffer) -> bool;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `f`
     // (never dereferenced as Rust data) — same contract as
     // `JSC__VM__holdAPILock` / `JSC__JSGlobalObject__queueMicrotaskCallback`.
@@ -61,29 +51,6 @@ impl MarkedArgumentBuffer {
 
     pub fn append(&mut self, value: JSValue) {
         MarkedArgumentBuffer__append(self, value)
-    }
-
-    /// Appends `values` in one call. An empty value (an array hole) is
-    /// appended as `undefined`.
-    pub fn append_slice(&mut self, values: &[JSValue]) {
-        // SAFETY: C++ reads `values.len()` elements at `values.as_ptr()`
-        // during the call and keeps neither.
-        unsafe { MarkedArgumentBuffer__appendSlice(self, values.as_ptr(), values.len()) }
-    }
-
-    /// The values appended so far.
-    pub fn as_slice(&self) -> &[JSValue] {
-        let mut size = 0;
-        let data = MarkedArgumentBuffer__data(self, &mut size);
-        // SAFETY: `data` is the buffer's storage and holds `size` values. Only
-        // an append moves it, and an append takes `&mut self`.
-        unsafe { bun_core::ffi::slice(data, size) }
-    }
-
-    /// An append could not grow the buffer. It left its value out, so that
-    /// value is not rooted.
-    pub fn has_overflowed(&mut self) -> bool {
-        MarkedArgumentBuffer__hasOverflowed(self)
     }
 
     pub fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: *mut T, args: *mut MarkedArgumentBuffer)) {

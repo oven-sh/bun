@@ -636,7 +636,7 @@ test.concurrent("a macro VM that moves to another build frees the previous build
       }
       const before = await build(8);
       const after = await build(32);
-      console.log(JSON.stringify({ grewMB: Math.round((after - before) / 1024 / 1024) }));
+      console.log(Math.round((after - before) / 1024 / 1024));
     `,
   });
   await using proc = Bun.spawn({
@@ -652,10 +652,11 @@ test.concurrent("a macro VM that moves to another build frees the previous build
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const { grewMB } = JSON.parse(stdout.trim().split("\n").pop()!);
-  expect(grewMB).toBeLessThan(isASAN || isDebug ? 32 : 16);
-  expect(exitCode).toBe(0);
+  const limitMB = isASAN || isDebug ? 32 : 16;
+  const lastLine = stdout.trim().split("\n").pop()!;
+  // The growth in MiB, or what the child printed in its place.
+  const grew = Number(lastLine || NaN) < limitMB ? "below the limit" : lastLine;
+  expect({ grew, stderr, exitCode }).toEqual({ grew: "below the limit", stderr: "", exitCode: 0 });
 });
 
 // A module the program imports later is transpiled on the same worker pool. Its macro runs with the

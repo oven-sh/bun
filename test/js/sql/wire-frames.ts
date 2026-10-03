@@ -408,6 +408,62 @@ export async function pgMockServer(
   return { port, server, release: () => releases.forEach(release => release()) };
 }
 
+/**
+ * TCP proxy in front of a real PostgreSQL (no TLS). Every byte goes through
+ * unchanged and in order; only the segmentation of the backend stream differs.
+ * After `holdAfterError()`, the proxy forwards the backend stream up to the end
+ * of the next ErrorResponse and keeps back what follows, the ReadyForQuery of
+ * the failed query first, until `release()`.
+ */
+export async function pgHoldingProxy(
+  upstreamHost: string,
+  upstreamPort: number,
+): Promise<{ port: number; server: net.Server; holdAfterError(): void; release(): void }> {
+  let armed = false;
+  const releases = new Set<() => void>();
+  const { port, server } = await listeningServer(client => {
+    const upstream = net.connect(upstreamPort, upstreamHost);
+    let buffered = Buffer.alloc(0);
+    let held: Buffer[] | undefined;
+    const release = () => {
+      if (held?.length) client.write(Buffer.concat(held));
+      held = undefined;
+    };
+    releases.add(release);
+    client.on("data", chunk => upstream.write(chunk));
+    upstream.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      const out: Buffer[] = [];
+      let end = 0;
+      while (buffered.length - end >= 5) {
+        const frameEnd = end + 1 + buffered.readInt32BE(end + 1);
+        if (buffered.length < frameEnd) break;
+        (held ?? out).push(buffered.subarray(end, frameEnd));
+        if (armed && buffered[end] === 0x45 /* 'E' ErrorResponse */) {
+          armed = false;
+          held = [];
+        }
+        end = frameEnd;
+      }
+      buffered = buffered.subarray(end);
+      if (out.length) client.write(Buffer.concat(out));
+    });
+    client.on("close", () => {
+      releases.delete(release);
+      upstream.destroy();
+    });
+    upstream.on("close", () => client.destroy());
+    client.on("error", () => {});
+    upstream.on("error", () => {});
+  });
+  return {
+    port,
+    server,
+    holdAfterError: () => void (armed = true),
+    release: () => releases.forEach(release => release()),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // MySQL client/server protocol — https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_packets.html
 // ---------------------------------------------------------------------------

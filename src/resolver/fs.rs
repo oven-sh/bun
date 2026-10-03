@@ -120,15 +120,11 @@ pub struct EntryCache {
 }
 
 // `is_link` sits in what was padding after `kind`.
-const _: () = {
-    #[allow(dead_code)]
-    struct EntryCacheWithoutLinkBit {
-        symlink: Interned,
-        fd: Fd,
-        kind: EntryKind,
-    }
-    assert!(core::mem::size_of::<EntryCache>() == core::mem::size_of::<EntryCacheWithoutLinkBit>());
-};
+const _: () = assert!(
+    size_of::<EntryCache>()
+        == (size_of::<Interned>() + size_of::<Fd>() + size_of::<EntryKind>())
+            .next_multiple_of(align_of::<EntryCache>())
+);
 
 /// What a directory walker needs to know about an entry, from one read of its stat cache.
 #[derive(Clone, Copy)]

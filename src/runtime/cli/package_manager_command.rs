@@ -461,6 +461,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         Global::crash();
                     }
                 };
+                let has_global_store =
+                    bun_sys::directory_exists_at(rm_dir.fd(), bun_core::zstr!("links"))
+                        .unwrap_or(false);
                 rm_dir.close();
 
                 if let Err(err) = bun_sys::delete_tree_absolute(rm_path) {
@@ -468,6 +471,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     had_err = true;
                 }
                 bun_core::prettyln!("Cleared 'bun install' cache");
+                if has_global_store {
+                    bun_core::note!(
+                        "the global store was removed with it. Run 'bun install' again in each project that uses it."
+                    );
+                }
 
                 'bunx: {
                     let tmp = Fs::RealFS::platform_temp_dir();

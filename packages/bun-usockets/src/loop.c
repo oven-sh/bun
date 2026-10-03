@@ -475,6 +475,57 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #define us_ioctl ioctl
 #endif
 
+#if defined(__linux__)
+/* The reports (one for each ICMP error, with IP_RECVERR) that one event took
+ * off the error queue of a UDP socket, counted by errno. ICMP and ICMPv6 map
+ * to ten errnos. One that finds no slot is counted with the last. */
+struct us_udp_error_reports {
+    int errnos;
+    struct {
+        int err;
+        unsigned int reports;
+    } by_errno[16];
+};
+
+/* Takes every report off the error queue. Returns 0 when there was none. */
+static int us_internal_udp_take_error_reports(LIBUS_SOCKET_DESCRIPTOR fd, struct us_udp_error_reports *taken) {
+    const int slots = sizeof(taken->by_errno) / sizeof(taken->by_errno[0]);
+    struct msghdr eh; char ectrl[512]; char ebuf[1];
+    struct iovec eiov = { ebuf, sizeof(ebuf) };
+    taken->errnos = 0;
+    for (;;) {
+        memset(&eh, 0, sizeof(eh));
+        eh.msg_iov = &eiov; eh.msg_iovlen = 1;
+        eh.msg_control = ectrl; eh.msg_controllen = sizeof(ectrl);
+        if (recvmsg(fd, &eh, MSG_ERRQUEUE) < 0) break;
+        /* The queued ICMP error is in sock_extended_err, not errno. The
+         * kernel writes it last and cuts what does not fit. */
+        int ee = 0;
+        for (struct cmsghdr *cm = CMSG_FIRSTHDR(&eh); cm; cm = CMSG_NXTHDR(&eh, cm)) {
+            if (((cm->cmsg_level == IPPROTO_IP   && cm->cmsg_type == IP_RECVERR) ||
+                 (cm->cmsg_level == IPPROTO_IPV6 && cm->cmsg_type == IPV6_RECVERR)) &&
+                cm->cmsg_len >= CMSG_LEN(sizeof(struct sock_extended_err))) {
+                ee = ((struct sock_extended_err *) CMSG_DATA(cm))->ee_errno;
+                break;
+            }
+        }
+        if (!ee) ee = ECONNREFUSED;
+
+        int slot = 0;
+        while (slot < taken->errnos && taken->by_errno[slot].err != ee) slot++;
+        if (slot == slots) {
+            slot--;
+        } else if (slot == taken->errnos) {
+            taken->by_errno[slot].err = ee;
+            taken->by_errno[slot].reports = 0;
+            taken->errnos++;
+        }
+        taken->by_errno[slot].reports++;
+    }
+    return taken->errnos > 0;
+}
+#endif
+
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
@@ -995,26 +1046,31 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             int recv_error_surfaced = 0;
             int recv_would_block_only = 0;
             if (error) {
-                struct msghdr eh; char ectrl[512]; char ebuf[1];
-                struct iovec eiov = { ebuf, sizeof(ebuf) };
-                while (!u->closed) {
-                    memset(&eh, 0, sizeof(eh));
-                    eh.msg_iov = &eiov; eh.msg_iovlen = 1;
-                    eh.msg_control = ectrl; eh.msg_controllen = sizeof(ectrl);
-                    if (recvmsg(us_poll_fd(p), &eh, MSG_ERRQUEUE) < 0) break;
-                    recv_error_surfaced = 1;
-                    if (u->on_recv_error) {
-                        /* The queued ICMP error is in sock_extended_err,
-                         * not errno. */
-                        int ee = 0;
-                        for (struct cmsghdr *cm = CMSG_FIRSTHDR(&eh); cm; cm = CMSG_NXTHDR(&eh, cm)) {
-                            if ((cm->cmsg_level == IPPROTO_IP   && cm->cmsg_type == IP_RECVERR) ||
-                                (cm->cmsg_level == IPPROTO_IPV6 && cm->cmsg_type == IPV6_RECVERR)) {
-                                ee = ((struct sock_extended_err *) CMSG_DATA(cm))->ee_errno;
-                                break;
-                            }
+                /* One event handles the reports that the queue held when it
+                 * began: they all come off the queue before the first handler
+                 * runs. Over loopback the report of a datagram that a handler
+                 * sends is queued before send() returns. It belongs to the
+                 * next event, after the loop ran its timers and its other
+                 * polls. No handler runs during the take, so this loop queues
+                 * no report while it reads. */
+                struct us_udp_error_reports taken;
+                recv_error_surfaced = us_internal_udp_take_error_reports(us_poll_fd(p), &taken);
+                if (recv_error_surfaced && u->on_recv_error) {
+                    for (int i = 0; i < taken.errnos; i++) {
+                        for (unsigned int n = taken.by_errno[i].reports; n > 0 && !u->closed; n--) {
+                            u->on_recv_error(u, taken.by_errno[i].err, 1);
                         }
-                        u->on_recv_error(u, ee ? ee : ECONNREFUSED, 1);
+                    }
+                    /* The datagram of a handler left its ICMP error as the
+                     * pending error of the socket: the next send and the
+                     * recvmmsg below would fail with it. Its report follows
+                     * in the next event. When no report is queued the kernel
+                     * had no room for one, and the errno exists only here. */
+                    if (!u->closed) {
+                        int pending = bsd_udp_take_pending_error(us_poll_fd(p));
+                        if (pending && !bsd_udp_error_report_is_queued(us_poll_fd(p))) {
+                            u->on_recv_error(u, pending, 0);
+                        }
                     }
                 }
             }

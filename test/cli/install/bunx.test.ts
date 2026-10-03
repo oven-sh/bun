@@ -1203,6 +1203,7 @@ describe("bunx installs with the project's install config", () => {
     const homeDir = tempDir("bunx-home", { ".npmrc": `registry=${registry.url("USER")}\n`, ...home });
     const tmp = tempDir("bunx-tmp", {});
     return {
+      home: String(homeDir),
       tmp: String(tmp),
       env: (extra: Record<string, string | undefined> = {}) => isolatedEnv(String(homeDir), String(tmp), extra),
       [Symbol.dispose]() {
@@ -1531,19 +1532,24 @@ describe("bunx installs with the project's install config", () => {
     });
   });
 
-  // The install root starts as `{}`, so no lockfile can be frozen for it.
+  // A new version changes the lockfile in the bunx cache directory, so a
+  // frozen lockfile cannot hold there.
   it.concurrent.each([
     ["frozenLockfile", "frozenLockfile = true"],
     ["production", "production = true"],
-  ])("installs when the user bunfig.toml sets %s", async (_, setting) => {
-    using registry = prefixRegistry();
-    using bunxUser = user(registry, { ".bunfig.toml": `[install]\n${setting}\n` });
+  ])("installs a new version after the user bunfig.toml sets %s", async (_, setting) => {
+    using registry = prefixRegistry({ cli: (prefix, version) => `console.log("${prefix}@${version}");` });
+    using bunxUser = user(registry);
     using cwd = tempDir("bunx-plain", { "keep": "" });
 
-    const bunx = await run(["x", "px-probe"], String(cwd), bunxUser.env());
+    const first = await run(["x", "px-probe"], String(cwd), bunxUser.env());
+    writeFileSync(join(bunxUser.home, ".bunfig.toml"), `[install]\n${setting}\n`);
+    registry.publish("2.0.0");
+    // An explicit dist-tag installs again.
+    const second = await run(["x", "px-probe@latest"], String(cwd), bunxUser.env());
 
-    expect(bunx.stdout).toBe("SERVED-BY-USER");
-    expect(bunx.exitCode).toBe(0);
+    expect({ first: first.stdout, second: second.stdout }).toEqual({ first: "USER@1.0.0", second: "USER@2.0.0" });
+    expect({ first: first.exitCode, second: second.exitCode }).toEqual({ first: 0, second: 0 });
   });
 
   // The release-age gate covers the command that downloads and runs a package,

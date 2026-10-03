@@ -27,8 +27,8 @@ function binName(pkg: string) {
   return pkg.slice(pkg.lastIndexOf("/") + 1);
 }
 
-function packageTarball(pkg: string, cli: string) {
-  const manifest = { name: pkg, version: "1.0.0", bin: { [binName(pkg)]: "cli.js" } };
+function packageTarball(pkg: string, version: string, cli: string) {
+  const manifest = { name: pkg, version, bin: { [binName(pkg)]: "cli.js" } };
   return gzipSync(
     Buffer.concat([
       tarEntry("package/package.json", Buffer.from(JSON.stringify(manifest))),
@@ -43,21 +43,23 @@ export type RegistryRequest = { prefix: string; authorization: string | null };
 export type PrefixRegistryOptions = {
   /** `time` of the only version, for `minimumReleaseAge`. */
   published?: Date;
-  /** Body of the package's bin. Receives the prefix that served it. */
-  cli?: (prefix: string) => string;
+  /** Body of the package's bin. Receives the prefix and the version that served it. */
+  cli?: (prefix: string, version: string) => string;
   /** Bun.serve TLS options. */
   tls?: { cert: string; key: string };
 };
 
 /**
  * One server that is a registry under every first path segment.
- * `<origin>/<PREFIX>/<pkg>` serves `<pkg>@1.0.0`, and its bin prints
- * `SERVED-BY-<PREFIX>`. So a test names several registries (USER, PROJECT, ...)
- * with one port and reads from `requests` which of them an install used.
+ * `<origin>/<PREFIX>/<pkg>` serves one version of `<pkg>` (`version`, 1.0.0 at
+ * first), and its bin prints `SERVED-BY-<PREFIX>`. So a test names several
+ * registries (USER, PROJECT, ...) with one port and reads from `requests`
+ * which of them an install used.
  */
 export function prefixRegistry(options: PrefixRegistryOptions = {}) {
   const requests: RegistryRequest[] = [];
   const cli = options.cli ?? (prefix => `console.log("SERVED-BY-${prefix}");`);
+  let version = "1.0.0";
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -68,21 +70,21 @@ export function prefixRegistry(options: PrefixRegistryOptions = {}) {
         .filter(Boolean);
       requests.push({ prefix, authorization: req.headers.get("authorization") });
       if (rest.at(-1) === "pkg.tgz") {
-        return new Response(packageTarball(rest.slice(0, -1).join("/"), cli(prefix)));
+        return new Response(packageTarball(rest.slice(0, -1).join("/"), version, cli(prefix, version)));
       }
       const pkg = rest.join("/");
       return Response.json({
         name: pkg,
-        "dist-tags": { latest: "1.0.0" },
+        "dist-tags": { latest: version },
         versions: {
-          "1.0.0": {
+          [version]: {
             name: pkg,
-            version: "1.0.0",
+            version,
             bin: { [binName(pkg)]: "cli.js" },
             dist: { tarball: `${origin}/${prefix}/${pkg}/pkg.tgz` },
           },
         },
-        ...(options.published ? { time: { "1.0.0": options.published.toISOString() } } : {}),
+        ...(options.published ? { time: { [version]: options.published.toISOString() } } : {}),
       });
     },
   });
@@ -90,6 +92,10 @@ export function prefixRegistry(options: PrefixRegistryOptions = {}) {
   return {
     requests,
     port: server.port,
+    /** Publishes `next` as the only version. */
+    publish(next: string) {
+      version = next;
+    },
     /** Registry URL for `prefix`, with the trailing slash. */
     url: (prefix: string) => `${origin}/${prefix}/`,
     /** The distinct registries and credentials that the requests so far used. */

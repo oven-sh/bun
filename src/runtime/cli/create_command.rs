@@ -694,8 +694,7 @@ impl CreateCommand {
                     Global::exit(1);
                 }
 
-                // A template found by name replaces the destination, as documented.
-                // A template given as a folder path never removes a file.
+                // Only a template found by name deletes the destination (documented). A folder path never does.
                 if is_folder_path(positionals[0]) {
                     match destination_is_new_or_empty(destination) {
                         Ok(true) => {}
@@ -704,9 +703,10 @@ impl CreateCommand {
                             progress.refresh();
 
                             pretty_errorln!(
-                                "<r><red>error<r>: the destination <b>{}<r> is not empty. A template folder is copied only into a new or empty destination.",
+                                "<r><red>error<r>: the destination <b>{}<r> is not empty",
                                 bstr::BStr::new(destination),
                             );
+                            bun_core::note!("pass a destination folder that is new or empty");
                             Global::exit(1);
                         }
                         Err(err) => {

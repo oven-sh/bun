@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
-import { createServer, request } from "http";
+import { createServer, request, ServerResponse } from "http";
 import { createServer as createHttpsServer } from "https";
 import { AddressInfo, connect, Server } from "net";
-import type { Duplex } from "stream";
+import { duplexPair, type Duplex } from "stream";
 import { connect as tlsConnect } from "tls";
 // The llhttp binding. It has no type declarations, like in node-http-parser.test.ts.
 const { HTTPParser, calculateLenientFlags } = require("node:_http_common");
@@ -1177,6 +1177,360 @@ test("pipelined chunked request keeps its own trailers when the next one is pars
   const trailers = await done.promise;
   socket.destroy();
   expect(trailers).toEqual({ "x-a": "a" });
+});
+
+// end() calls res.writeHead() for a head that nothing stored yet, so a replaced res.writeHead runs
+// inside end(). Each writeHead here calls the original one and then sends the head itself, with
+// flushHeaders() or write(). The expected bytes of the flushHeaders() rows are what node v26.3.0
+// sends: its end() knows the length of the body before writeHead() stores the head, and it corks
+// the socket, so the head leaves with the body. A write() in the writeHead is different on purpose:
+// node sends `Content-Length: 2` and then the bytes of the write() and of the end(), which is one
+// byte more than the head says. Here that body is chunk-framed.
+describe("res.end() when a replaced res.writeHead sends the head", () => {
+  type Handler = (req: any, res: any) => void;
+  type AfterWriteHead = (res: any) => void;
+  const flushesHeaders: AfterWriteHead = res => res.flushHeaders();
+  const writes: AfterWriteHead = res => res.write("w");
+
+  // The replacement is an own property of the response, as `on-headers` installs it.
+  function wrapWriteHead(res: any, afterWriteHead: AfterWriteHead) {
+    const writeHead = res.writeHead;
+    res.writeHead = function (...args: any[]) {
+      const result = writeHead.apply(this, args);
+      afterWriteHead(this);
+      return result;
+    };
+  }
+
+  // Sends `request` and returns every byte the server sent until it closed the connection, without
+  // the Date lines. The last request in `request` must make the server close the connection. When
+  // the handler throws, the result is the code of that error and no bytes.
+  // `emitted` gives the connection to the server with emit("connection"), so the response writes
+  // through the JS handle of internal/http1_server_fallback and not through the native one.
+  async function respond(
+    handler: Handler,
+    request: string,
+    { options = {}, emitted = false }: { options?: object; emitted?: boolean } = {},
+  ) {
+    const done = Promise.withResolvers<{ thrown: string | null; response: string }>();
+    const server = createServer(options, (req, res) => {
+      try {
+        handler(req, res);
+      } catch (err: any) {
+        done.resolve({ thrown: err.code ?? err.message, response: "" });
+      }
+    });
+    await using listener = emitted ? new Server(socket => void server.emit("connection", socket)) : server;
+    await once(listener.listen(0, "127.0.0.1"), "listening");
+    const { port } = listener.address() as AddressInfo;
+    const socket = connect(port, "127.0.0.1", () => socket.write(request));
+    let raw = "";
+    socket.on("data", (chunk: Buffer) => (raw += chunk.toString("latin1")));
+    socket.on("error", done.reject);
+    socket.on("close", () => done.resolve({ thrown: null, response: raw.replace(/^Date: .*\r\n/gm, "") }));
+    try {
+      return await done.promise;
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  const GET_CLOSE = "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+  const HEAD_CLOSE = "HTTP/1.1 200 OK\r\nConnection: close\r\n";
+  const LENGTH_OK = "Content-Length: 2\r\n\r\nok";
+  const CHUNKED_W_OK = "Transfer-Encoding: chunked\r\n\r\n1\r\nw\r\n2\r\nok\r\n0\r\n\r\n";
+
+  test.concurrent.each([
+    ["flushHeaders(), then end(data)", flushesHeaders, (res: any) => res.end("ok"), GET_CLOSE, HEAD_CLOSE + LENGTH_OK],
+    [
+      "flushHeaders(), then end()",
+      flushesHeaders,
+      (res: any) => res.end(),
+      GET_CLOSE,
+      HEAD_CLOSE + "Content-Length: 0\r\n\r\n",
+    ],
+    [
+      "flushHeaders() with a Content-Length header, then end(data)",
+      flushesHeaders,
+      (res: any) => {
+        res.setHeader("Content-Length", "2");
+        res.end("ok");
+      },
+      GET_CLOSE,
+      "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+    ],
+    [
+      "flushHeaders() on a 204, then end(data)",
+      flushesHeaders,
+      (res: any) => {
+        res.statusCode = 204;
+        res.end("ok");
+      },
+      GET_CLOSE,
+      "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "flushHeaders() for an HTTP/1.0 request, then end(data)",
+      flushesHeaders,
+      (res: any) => res.end("ok"),
+      "GET / HTTP/1.0\r\nHost: x\r\n\r\n",
+      HEAD_CLOSE + "\r\nok",
+    ],
+    ["write(data), then end(data)", writes, (res: any) => res.end("ok"), GET_CLOSE, HEAD_CLOSE + CHUNKED_W_OK],
+    [
+      "write(data), then end()",
+      writes,
+      (res: any) => res.end(),
+      GET_CLOSE,
+      HEAD_CLOSE + "Transfer-Encoding: chunked\r\n\r\n1\r\nw\r\n0\r\n\r\n",
+    ],
+  ])("%s", async (_, afterWriteHead, end, request, response) => {
+    const result = await respond((req, res) => {
+      wrapWriteHead(res, afterWriteHead);
+      end(res);
+    }, request);
+    expect(result).toEqual({ thrown: null, response });
+  });
+
+  test.concurrent.each([
+    ["flushHeaders()", flushesHeaders, LENGTH_OK],
+    ["write(data)", writes, CHUNKED_W_OK],
+  ])("%s in the writeHead() of a ServerResponse subclass, then end(data)", async (_, afterWriteHead, rest) => {
+    class ReplacedWriteHead extends ServerResponse {
+      writeHead(...args: any[]) {
+        super.writeHead(...(args as [number]));
+        afterWriteHead(this);
+        return this;
+      }
+    }
+    const result = await respond((req, res) => res.end("ok"), GET_CLOSE, {
+      options: { ServerResponse: ReplacedWriteHead },
+    });
+    expect(result).toEqual({ thrown: null, response: HEAD_CLOSE + rest });
+  });
+
+  test.concurrent.each([
+    ["flushHeaders()", flushesHeaders, LENGTH_OK],
+    ["write(data)", writes, CHUNKED_W_OK],
+  ])("%s: the response is complete, so the connection serves the next request", async (_, afterWriteHead, rest) => {
+    const result = await respond((req, res) => {
+      if (req.url === "/next") return res.end("next");
+      wrapWriteHead(res, afterWriteHead);
+      res.end("ok");
+    }, "GET / HTTP/1.1\r\nHost: x\r\n\r\nGET /next HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    expect(result).toEqual({
+      thrown: null,
+      response: `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n${rest}${HEAD_CLOSE}Content-Length: 4\r\n\r\nnext`,
+    });
+  });
+
+  // A response that waits for the socket stores its writes, and its flushHeaders() sends nothing.
+  // The response that has the socket sends the same bytes.
+  test.concurrent.each([
+    ["flushHeaders()", flushesHeaders, LENGTH_OK],
+    ["write(data)", writes, CHUNKED_W_OK],
+  ])("%s: a response behind a pipelined one sends the same bytes", async (_, afterWriteHead, rest) => {
+    let first: any;
+    const result = await respond((req, res) => {
+      if (req.url === "/first") {
+        first = res;
+        return;
+      }
+      wrapWriteHead(res, afterWriteHead);
+      res.end("ok");
+      first.end("first");
+    }, "GET /first HTTP/1.1\r\nHost: x\r\n\r\n" + GET_CLOSE);
+    expect(result).toEqual({
+      thrown: null,
+      response: `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 5\r\n\r\nfirst${HEAD_CLOSE}${rest}`,
+    });
+  });
+
+  test.concurrent.each([
+    ["flushHeaders()", flushesHeaders, LENGTH_OK],
+    ["write(data)", writes, CHUNKED_W_OK],
+  ])('%s on a connection from emit("connection")', async (_, afterWriteHead, rest) => {
+    const result = await respond(
+      (req, res) => {
+        wrapWriteHead(res, afterWriteHead);
+        res.end("ok");
+      },
+      GET_CLOSE,
+      { emitted: true },
+    );
+    expect(result).toEqual({ thrown: null, response: HEAD_CLOSE + rest });
+  });
+
+  test.concurrent.each([
+    ["flushHeaders()", flushesHeaders],
+    ["write(data)", writes],
+  ])("%s: 'finish' and the end() callback run", async (_, afterWriteHead) => {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const result = await respond((req, res) => {
+      wrapWriteHead(res, afterWriteHead);
+      res.on("finish", () => events.push("finish"));
+      res.on("close", () => closed.resolve());
+      res.end("ok", () => events.push("end callback"));
+    }, GET_CLOSE);
+    await closed.promise;
+    expect({ thrown: result.thrown, events }).toEqual({ thrown: null, events: ["finish", "end callback"] });
+  });
+
+  test.concurrent("flushHeaders(): strictContentLength still checks the length of end(data)", async () => {
+    const result = await respond((req, res) => {
+      wrapWriteHead(res, flushesHeaders);
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", "5");
+      res.end("ok");
+    }, GET_CLOSE);
+    expect(result.thrown).toBe("ERR_HTTP_CONTENT_LENGTH_MISMATCH");
+  });
+
+  test.concurrent("flushHeaders() and a throw: the next end(data) sends the head with its Content-Length", async () => {
+    let firstEnd = "";
+    const result = await respond((req, res) => {
+      let threw = false;
+      wrapWriteHead(res, res => {
+        res.flushHeaders();
+        if (threw) return;
+        threw = true;
+        throw new Error("from writeHead");
+      });
+      try {
+        res.end("ok");
+        firstEnd = "returned";
+      } catch (err: any) {
+        firstEnd = err.message;
+      }
+      res.end("ok");
+    }, GET_CLOSE);
+    expect({ ...result, firstEnd }).toEqual({
+      thrown: null,
+      response: HEAD_CLOSE + LENGTH_OK,
+      firstEnd: "from writeHead",
+    });
+  });
+
+  // Node's write_() calls writeHead() first and then reads what it decided: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L975-L992
+  test.concurrent("end(data) reads the status that the replaced writeHead set", async () => {
+    const seen: { code?: string; headersSent?: boolean } = {};
+    const result = await respond(
+      (req, res) => {
+        const writeHead = res.writeHead;
+        res.writeHead = function () {
+          return writeHead.call(this, 204);
+        };
+        try {
+          res.end("ok");
+        } catch (err: any) {
+          seen.code = err.code;
+          seen.headersSent = res.headersSent;
+        }
+        res.end();
+      },
+      GET_CLOSE,
+      { options: { rejectNonStandardBodyWrites: true } },
+    );
+    expect({ ...result, ...seen }).toEqual({
+      thrown: null,
+      response: "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n",
+      code: "ERR_HTTP_BODY_NOT_ALLOWED",
+      headersSent: true,
+    });
+  });
+
+  // Node's end() reads the trailers after writeHead() ran: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1126-L1127
+  test.concurrent.each([
+    [
+      "Transfer-Encoding: chunked",
+      (res: any) => res.setHeader("Transfer-Encoding", "chunked"),
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "a Trailer header",
+      (res: any) => res.setHeader("Trailer", "X-T"),
+      "HTTP/1.1 200 OK\r\nTrailer: X-T\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n",
+    ],
+  ])("addTrailers() in the replaced writeHead of a response with %s", async (_, setHeader, head) => {
+    const result = await respond((req, res) => {
+      setHeader(res);
+      wrapWriteHead(res, res => res.addTrailers({ "X-T": "1" }));
+      res.end("ok");
+    }, GET_CLOSE);
+    expect(result).toEqual({ thrown: null, response: head + "2\r\nok\r\n0\r\nX-T: 1\r\n\r\n" });
+  });
+
+  // Node has no answer for this one: it sends the bytes of both calls and then fails an internal assertion.
+  // Here the response is finished when the replaced writeHead returns: the outer end() drops its data and
+  // gives its callback what an end() on a finished response gives it.
+  describe("a replaced writeHead that ends the response", () => {
+    // Ends the response with `body` in the replaced writeHead, and records in `events` what the end() of the handler does.
+    function endInWriteHead(res: any, body: string | Buffer, events: string[]) {
+      wrapWriteHead(res, res => res.end(body));
+      res.on("finish", () => events.push("finish"));
+      res.on("error", (err: any) => events.push(`'error' ${err.code}`));
+      try {
+        res.end("dropped", (err?: any) => events.push(`end callback: ${err?.code ?? "no error"}`));
+        events.push("end() returned");
+      } catch (err: any) {
+        events.push(`end() threw ${err.code}`);
+      }
+    }
+
+    test.concurrent("the response is written: the callback of the outer end() gets the error at once", async () => {
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      const result = await respond((req, res) => {
+        res.on("close", () => closed.resolve());
+        endInWriteHead(res, "inner", events);
+      }, GET_CLOSE);
+      await closed.promise;
+      expect({ ...result, events }).toEqual({
+        thrown: null,
+        response: `${HEAD_CLOSE}Content-Length: 5\r\n\r\ninner`,
+        events: ["end callback: ERR_STREAM_ALREADY_FINISHED", "end() returned", "finish"],
+      });
+    });
+
+    test.concurrent("the response still drains: the callback of the outer end() waits for 'finish'", async () => {
+      const events: string[] = [];
+      const body = Buffer.alloc(1024 * 1024, "x");
+      const handled = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      const server = createServer((req, res) => {
+        res.on("close", () => closed.resolve());
+        endInWriteHead(res, body, events);
+        handled.resolve();
+      });
+      // A duplexPair side completes a write when the other side reads it, so this body drains until the client reads.
+      const [clientSide, serverSide] = duplexPair();
+      try {
+        server.emit("connection", serverSide);
+        clientSide.write(GET_CLOSE);
+        await handled.promise;
+        await new Promise<void>(resolve => setImmediate(resolve));
+        events.push("the client reads");
+        const chunks: Buffer[] = [];
+        clientSide.on("data", (chunk: Buffer) => chunks.push(chunk));
+        await closed.promise;
+        const bytes = Buffer.concat(chunks);
+        const bodyStart = bytes.indexOf("\r\n\r\n") + 4;
+        expect({
+          events,
+          head: bytes.toString("latin1", 0, bodyStart).replace(/^Date: .*\r\n/m, ""),
+          body: bytes.subarray(bodyStart).equals(body),
+        }).toEqual({
+          events: ["end() returned", "the client reads", "finish", "end callback: no error"],
+          head: `${HEAD_CLOSE}Content-Length: ${body.length}\r\n\r\n`,
+          body: true,
+        });
+      } finally {
+        clientSide.destroy();
+        serverSide.destroy();
+      }
+    });
+  });
 });
 
 // Once the header section is on the wire, tearing a response down (res.destroy(),

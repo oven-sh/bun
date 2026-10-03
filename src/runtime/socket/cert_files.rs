@@ -39,8 +39,51 @@ unsafe extern "C" fn Bun__readCertificateFile(
     read_file_for(unsafe { ZStr::from_c_ptr(path) }, ctx, on_file)
 }
 
-/// The file half of OpenSSL's `X509_STORE_set_default_paths`: `$SSL_CERT_FILE`, else `default_path`
-/// (`X509_get_default_cert_file()`). A variable that is set but empty names no file. Failures are silent, as there.
+/// A pipe or FIFO reads only once, so the first loader keeps its bytes for the other. Locked across `open(2)`.
+static STREAMED_DEFAULT_CERT_FILE: bun_threading::Guarded<Option<&'static [u8]>> =
+    bun_threading::Guarded::new(None);
+
+/// Reads `$SSL_CERT_FILE`, else `default_path`, with no file-type check (as Node). Only a regular file has a `stat`.
+pub(crate) fn read_openssl_default_cert_file(
+    default_path: &ZStr,
+    on_file: impl FnOnce(&[u8], Option<&bun_sys::Stat>),
+) {
+    let from_env;
+    let path = match env_var::SSL_CERT_FILE::get() {
+        Some(b"") => return,
+        Some(path) => {
+            from_env = ZBox::from_bytes(path);
+            from_env.as_zstr()
+        }
+        None => default_path,
+    };
+
+    let streamed: &'static [u8] = {
+        let mut kept = STREAMED_DEFAULT_CERT_FILE.lock();
+        if let Some(bytes) = *kept {
+            bytes
+        } else {
+            let Ok(file) = bun_sys::File::open(path, O::RDONLY | O::CLOEXEC, 0) else {
+                return;
+            };
+            let stat = file.stat().ok();
+            let mut bytes = Vec::new();
+            if file.read_to_end_into(&mut bytes).is_err() {
+                return;
+            }
+            if let Some(stat) =
+                stat.filter(|stat| bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode))
+            {
+                drop(kept);
+                return on_file(&bytes, Some(&stat));
+            }
+            *kept.insert(Box::leak(bytes.into_boxed_slice()))
+        }
+    };
+    on_file(streamed, None);
+}
+
+/// The file half of OpenSSL's `X509_STORE_set_default_paths`, for the default store.
 ///
 /// # Safety
 /// `default_path` must be a valid NUL-terminated C string; `ctx` whatever `on_file` expects.
@@ -50,14 +93,10 @@ unsafe extern "C" fn Bun__readOpenSSLDefaultCertFile(
     ctx: *mut c_void,
     on_file: OnFile,
 ) {
-    match env_var::SSL_CERT_FILE::get() {
-        Some(b"") => {}
-        Some(path) => {
-            let _ = read_file_for(ZBox::from_bytes(path).as_zstr(), ctx, on_file);
-        }
-        None => {
-            // SAFETY: caller contract.
-            let _ = read_file_for(unsafe { ZStr::from_c_ptr(default_path) }, ctx, on_file);
-        }
-    }
+    // SAFETY: caller contract.
+    let default_path = unsafe { ZStr::from_c_ptr(default_path) };
+    read_openssl_default_cert_file(default_path, |bytes, _| {
+        // SAFETY: the C++ caller keeps `ctx` valid for the duration of this call.
+        unsafe { on_file(ctx, bytes.as_ptr(), bytes.len()) }
+    });
 }

@@ -30,6 +30,7 @@
 
 #include "CryptoAlgorithmRegistry.h"
 #include "JsonWebKey.h"
+#include "OpenSSLUtilities.h"
 #include <wtf/text/Base64.h>
 
 namespace WebCore {
@@ -59,17 +60,39 @@ CryptoKeyEC::CryptoKeyEC(CryptoAlgorithmIdentifier identifier, NamedCurve curve,
     ASSERT(platformSupportedCurve(curve));
 }
 
-ExceptionOr<CryptoKeyPair> CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier identifier, const String& curve, bool extractable, CryptoKeyUsageBitmap usages)
+void CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier identifier, const String& curve, bool extractable, CryptoKeyUsageBitmap publicKeyUsages, CryptoKeyUsageBitmap privateKeyUsages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context)
 {
     auto namedCurve = toNamedCurve(curve);
-    if (!namedCurve || !platformSupportedCurve(*namedCurve))
-        return Exception { NotSupportedError };
+    if (!namedCurve || !platformSupportedCurve(*namedCurve)) {
+        exceptionCallback(NotSupportedError, ""_s);
+        return;
+    }
 
-    auto result = platformGeneratePair(identifier, *namedCurve, extractable, usages);
-    if (!result)
-        return Exception { OperationError };
+    auto createPair = [identifier, curve = *namedCurve, extractable, publicKeyUsages, privateKeyUsages](EvpKeyPair&& keys) {
+        auto publicKey = CryptoKeyEC::create(identifier, curve, CryptoKeyType::Public, WTF::move(keys.publicKey), true, publicKeyUsages);
+        auto privateKey = CryptoKeyEC::create(identifier, curve, CryptoKeyType::Private, WTF::move(keys.privateKey), extractable, privateKeyUsages);
+        return CryptoKeyPair { WTF::move(publicKey), WTF::move(privateKey) };
+    };
 
-    return WTF::move(*result);
+    if (*namedCurve == NamedCurve::P256) {
+        auto keys = platformGeneratePair(*namedCurve);
+        if (!keys) {
+            exceptionCallback(OperationError, ""_s);
+            return;
+        }
+        callback(createPair(WTF::move(*keys)));
+        return;
+    }
+
+    generateKeyPairInWorkQueue(
+        context,
+        [curve = *namedCurve] { return platformGeneratePair(curve); },
+        [createPair, callback = WTF::move(callback)](EvpKeyPair&& keys) {
+            callback(createPair(WTF::move(keys)));
+        },
+        [exceptionCallback = WTF::move(exceptionCallback)] {
+            exceptionCallback(OperationError, ""_s);
+        });
 }
 
 RefPtr<CryptoKeyEC> CryptoKeyEC::importRaw(CryptoAlgorithmIdentifier identifier, const String& curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)

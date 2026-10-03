@@ -2005,9 +2005,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
         for (unsigned i = 0; i < envNames.size(); i++) {
             JSValue value = envObject->get(globalObject, envNames[i]);
             RETURN_IF_EXCEPTION(scope, {});
-            // The accessor-backed keys (TZ, NODE_TLS_REJECT_UNAUTHORIZED,
-            // BUN_CONFIG_VERBOSE_FETCH) read back undefined for an unset /
-            // empty value; skip rather than rejecting the defaulted env.
+            // process.env reads a `$`-prefixed or non-UTF-8 name as undefined: skip it, do not reject the defaulted env.
             if (value.isUndefined())
                 continue;
             const WTF::String& keyStr = envNames[i].string();

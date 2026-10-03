@@ -248,7 +248,7 @@ public:
                 * one party must tell the other one so.
                 *
                 * This check also serves to limit writing the header only once. */
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
+                if (!httpResponseData->isLastResponse() && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
                     writeHeader("Connection", "close");
                 }
 

@@ -663,12 +663,7 @@ static void startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool
     // Clears the finished response's framing bits and keeps the connection-scoped
     // ones (notably HTTP_NODE_READS_PAUSED, read again below).
     httpResponseData->resetResponseState();
-    if (connectionClose) {
-        httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-    }
-    if (isAncient) {
-        httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST;
-    }
+    httpResponseData->markNodeRequest(isAncient, connectionClose);
     httpResponseData->nodeHttpResponseTrailers.clear();
 
     if (httpResponseData->nodeHttpQueuedPipelinedCount > 0) {
@@ -682,6 +677,12 @@ static void startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool
 bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response, bool isAncient, bool connectionClose)
 {
     if (!socket || upgraded || us_socket_is_closed(socket)) {
+        return false;
+    }
+    // The response that ended was the last one on this connection: the state reset below would drop its close mark.
+    if (is_ssl
+            ? reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(socket))->isDrainingBeforeClose<true>()
+            : reinterpret_cast<uWS::HttpResponseData<false>*>(us_socket_ext(socket))->isDrainingBeforeClose<true>()) {
         return false;
     }
 

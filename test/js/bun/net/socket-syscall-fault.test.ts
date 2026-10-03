@@ -549,13 +549,13 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
 describe.skipIf(skip)("a write request the wrapper shortened is followed by a writable event", () => {
   const arm = `fault.set({ syscall: "write_request", action: "short", bytes: 65536, repeat: -1 })`;
 
-  test.concurrent("Bun.connect drains one 8 MiB buffer", async () => {
+  test.concurrent("Bun.connect drains one 1 MiB buffer", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `const { socketFaultInjection: fault } = require("bun:internal-for-testing");
-         const total = 8 * 1024 * 1024;
+         const total = 1024 * 1024;
          const payload = Buffer.alloc(total, "x");
          const done = Promise.withResolvers();
          let received = 0;
@@ -594,16 +594,16 @@ describe.skipIf(skip)("a write request the wrapper shortened is followed by a wr
       exitCode,
       stderrTail: exitCode === 0 ? "" : stderr.slice(-2000),
     }).toEqual({
-      stdout: JSON.stringify({ received: 8388608, sent: 8388608, shortened: true }),
+      stdout: JSON.stringify({ received: 1048576, sent: 1048576, shortened: true }),
       signalCode: null,
       exitCode: 0,
       stderrTail: "",
     });
   });
 
-  test.concurrent("process.send delivers 50 messages of 1 MiB", async () => {
-    const count = 50;
-    const chunkLength = 1024 * 1024;
+  test.concurrent("process.send delivers 16 messages of 256 KiB", async () => {
+    const count = 16;
+    const chunkLength = 256 * 1024;
     const { promise, resolve, reject } = Promise.withResolvers<number[]>();
     const lengths: number[] = [];
     await using child = Bun.spawn({

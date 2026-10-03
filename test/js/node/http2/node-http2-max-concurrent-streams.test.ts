@@ -2,12 +2,14 @@
 // - bun bd test test/js/node/http2/node-http2-max-concurrent-streams.test.ts
 // - node --test test/js/node/http2/node-http2-max-concurrent-streams.test.ts
 import assert from "node:assert";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
 import path from "node:path";
 import { Duplex } from "node:stream";
+import { text } from "node:stream/consumers";
 import { describe, test } from "node:test";
 import tls from "node:tls";
 import { format } from "node:util";
@@ -444,25 +446,29 @@ describe("the slots of SETTINGS_MAX_CONCURRENT_STREAMS", () => {
 
   describe("a slot is free again", () => {
     test("after both sides ended the stream", async () => {
-      assert.deepStrictEqual(await withLimit(one, finish, (client, served) => oneAtATime(client, served, 5)), 
+      assert.deepStrictEqual(
+        await withLimit(one, finish, (client, served) => oneAtATime(client, served, 5)),
         allServed(odd(5)),
       );
     });
 
     test("after a response that is only HEADERS", async () => {
-      assert.deepStrictEqual(await withLimit(one, headersOnly, (client, served) => oneAtATime(client, served, 4)), 
+      assert.deepStrictEqual(
+        await withLimit(one, headersOnly, (client, served) => oneAtATime(client, served, 4)),
         allServed(odd(4)),
       );
     });
 
     test("after sendTrailers()", async () => {
-      assert.deepStrictEqual(await withLimit(one, respondThenTrailers, (client, served) => oneAtATime(client, served, 4)), 
+      assert.deepStrictEqual(
+        await withLimit(one, respondThenTrailers, (client, served) => oneAtATime(client, served, 4)),
         allServed(odd(4)),
       );
     });
 
     test("after res.end() of the compatibility API", async () => {
-      assert.deepStrictEqual(await withCompat(one, endResponse, (client, served) => oneAtATime(client, served, 4)), 
+      assert.deepStrictEqual(
+        await withCompat(one, endResponse, (client, served) => oneAtATime(client, served, 4)),
         allServed(odd(4)),
       );
     });
@@ -566,24 +572,30 @@ describe("the slots of SETTINGS_MAX_CONCURRENT_STREAMS", () => {
       });
       // The destroy that follows close() can write the RST_STREAM a second time.
       const resets = [...new Set(result.resets.map(([streamId, rstCode]) => `${streamId}:${rstCode}`))];
-      assert.deepStrictEqual({ ...result, resets }, {
-        ...allServed(odd(4)),
-        resets: odd(4).map(streamId => `${streamId}:${code}`),
-      });
+      assert.deepStrictEqual(
+        { ...result, resets },
+        {
+          ...allServed(odd(4)),
+          resets: odd(4).map(streamId => `${streamId}:${code}`),
+        },
+      );
     });
 
     // Bun only: these calls fail in Bun and the stream emits 'error'. Node accepts the first two,
     // throws for the third and resets the stream for the fourth.
-    each([
-      ["a weight out of range", {}, (stream: any) => stream.respond({ ":status": 200 }, { weight: 0 })],
-      ["a parent out of range", {}, (stream: any) => stream.respond({ ":status": 200 }, { parent: -1 })],
-      ["options that are not an object", {}, (stream: any) => stream.respond({ ":status": 200 }, 1)],
+    each(
       [
-        "a header block over maxSendHeaderBlockLength",
-        { maxSendHeaderBlockLength: 100 },
-        (stream: any) => stream.respond({ ":status": 200, "x-large": Buffer.alloc(400, "a").toString() }),
+        ["a weight out of range", {}, (stream: any) => stream.respond({ ":status": 200 }, { weight: 0 })],
+        ["a parent out of range", {}, (stream: any) => stream.respond({ ":status": 200 }, { parent: -1 })],
+        ["options that are not an object", {}, (stream: any) => stream.respond({ ":status": 200 }, 1)],
+        [
+          "a header block over maxSendHeaderBlockLength",
+          { maxSendHeaderBlockLength: 100 },
+          (stream: any) => stream.respond({ ":status": 200, "x-large": Buffer.alloc(400, "a").toString() }),
+        ],
       ],
-    ], bunOnly)("after respond() failed for %s", async (_, options, failingRespond) => {
+      bunOnly,
+    )("after respond() failed for %s", async (_, options, failingRespond) => {
       const failFirst: OnStream = (stream, headers) => {
         if (stream.id === 1) failingRespond(stream);
         else hold(stream, headers);
@@ -744,14 +756,17 @@ describe("the slots of SETTINGS_MAX_CONCURRENT_STREAMS", () => {
       );
       return outcome(client, served);
     });
-    assert.deepStrictEqual({ ...result, fields }, {
-      handlers: [1, 5],
-      answered: [1, 5],
-      resets: refused([3]),
-      goaways: [],
-      sessionError: undefined,
-      fields: [undefined, "1"],
-    });
+    assert.deepStrictEqual(
+      { ...result, fields },
+      {
+        handlers: [1, 5],
+        answered: [1, 5],
+        resets: refused([3]),
+        goaways: [],
+        sessionError: undefined,
+        fields: [undefined, "1"],
+      },
+    );
   });
 
   // A client that has not read the refusal keeps sending on the stream. A refused stream has
@@ -780,5 +795,550 @@ describe("the slots of SETTINGS_MAX_CONCURRENT_STREAMS", () => {
       goaways: [],
       sessionError: undefined,
     });
+  });
+});
+
+/** A request whose block is malformed: it carries a `connection` field (RFC 9113 8.2.2). */
+const malformed = (streamId: number) =>
+  frame(
+    HEADERS,
+    END_STREAM | END_HEADERS,
+    streamId,
+    Buffer.concat([requestBlock("GET"), Buffer.from([0x00]), literal("connection"), literal("close")]),
+  );
+
+const withCode = (resets: Array<[number, number]>, code: number) => resets.filter(reset => reset[1] === code);
+
+// A stream over the limit is refused before it exists. nghttp2 reports its HEADERS frame as an
+// invalid frame, so node charges maxSessionInvalidFrames with `count++ > max`, and
+// maxSessionRejectedStreams plays no part:
+// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L3905-L3908
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1128-L1143
+// Every expectation is what node v26.3.0 does, unless the test says that node differs.
+describe("a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS", () => {
+  const one = { settings: { maxConcurrentStreams: 1 } };
+
+  // A client does not know the limit before the SETTINGS of the server arrive, so it cannot
+  // avoid this.
+  describeEach([
+    ["the default budgets", {}],
+    ["maxSessionRejectedStreams: 3", { maxSessionRejectedStreams: 3 }],
+  ])("a first flight of 150 requests at limit 10, with %s", (_, budgets) => {
+    each(entryPoints)("keeps the session of %s", async (_, secure, listen) => {
+      const served: Served = { handlers: [] };
+      const server = listen({ settings: { maxConcurrentStreams: 10 }, ...budgets }, served);
+      assert.deepStrictEqual(await withClient(server, client => inOneWrite(150)(client, served), secure), {
+        handlers: odd(10),
+        answered: odd(10),
+        resets: refused(odd(140, 21)),
+        goaways: [],
+        sessionError: undefined,
+      });
+    });
+  });
+
+  each([
+    [0, 1],
+    [3, 4],
+  ])("maxSessionInvalidFrames: %d allows %d refused streams", async (maxSessionInvalidFrames, allowed) => {
+    const options = { ...one, maxSessionInvalidFrames, maxSessionRejectedStreams: 1 };
+    await withLimit(options, hold, async (client, served) => {
+      client.send(get(1));
+      await client.waitFor(answered(1));
+      client.send(...odd(allowed, 3).map(get));
+      assert.deepStrictEqual(await outcome(client, served, 1), {
+        handlers: [1],
+        answered: [1],
+        resets: refused(odd(allowed, 3)),
+        goaways: [],
+        sessionError: undefined,
+      });
+      // The next refusal uses up the allowance. It still gets its RST_STREAM, and the session
+      // reads no frame after it.
+      client.send(...odd(3, 3 + 2 * allowed).map(get));
+      const result = await outcome(client, served, 2);
+      const goaway = client.frames.find(f => f.type === GOAWAY);
+      assert.deepStrictEqual(
+        { ...result, lastStreamId: goaway?.payload.readUInt32BE(0) },
+        {
+          handlers: [1],
+          answered: [1],
+          resets: refused(odd(allowed + 1, 3)),
+          goaways: [INTERNAL_ERROR],
+          sessionError: "ERR_HTTP2_TOO_MANY_INVALID_FRAMES",
+          // No refused stream was processed, so a client can send every one of them again.
+          lastStreamId: 1,
+        },
+      );
+    });
+  });
+
+  // nghttp2 closes a stream when it writes the frame that ends it, and it writes after it has read
+  // every frame of the chunk. So the slot of 1 is not free for 3 and 5.
+  describe("a stream that the handler ended keeps its slot until the read ends", () => {
+    const firstOnly = { handlers: [1], answered: [1], resets: refused([3, 5]), goaways: [], sessionError: undefined };
+
+    each([
+      ["respond() and end()", finish],
+      ["respond({ endStream: true })", headersOnly],
+      ["sendTrailers()", respondThenTrailers],
+    ])("with %s", async (_, handler) => {
+      assert.deepStrictEqual(await withLimit(one, handler, inOneWrite(3)), firstOnly);
+    });
+
+    test("with res.end() of the compatibility API", async () => {
+      assert.deepStrictEqual(await withCompat(one, endResponse, inOneWrite(3)), firstOnly);
+    });
+
+    test("when the end of the request body follows in the same write", async () => {
+      const answerAtOnce: OnStream = (stream, headers) => {
+        stream.resume();
+        finish(stream, headers);
+      };
+      const result = await withLimit(one, answerAtOnce, async (client, served) => {
+        client.send(upload(1), endOfBody(1), get(3));
+        return outcome(client, served);
+      });
+      assert.deepStrictEqual(result, {
+        handlers: [1],
+        answered: [1],
+        resets: refused([3]),
+        goaways: [],
+        sessionError: undefined,
+      });
+    });
+
+    // Stream 1 is from an earlier read. The handler ends it at the first DATA frame of this read.
+    test("when a stream from an earlier read ends on both sides in this read", async () => {
+      const answerAtData: OnStream = (stream, headers) => {
+        stream.once("data", () => finish(stream, headers));
+      };
+      const result = await withLimit(one, answerAtData, async (client, served) => {
+        client.send(upload(1));
+        await client.ping(1);
+        client.send(frame(DATA, 0, 1, Buffer.from("body")), endOfBody(1), get(3));
+        return outcome(client, served, 2);
+      });
+      assert.deepStrictEqual(result, {
+        handlers: [1],
+        answered: [1],
+        resets: refused([3]),
+        goaways: [],
+        sessionError: undefined,
+      });
+    });
+
+    // The handler feeds the next requests to the session from inside the read.
+    test("for the bytes that a handler pushes into the Duplex of the session", async () => {
+      const served: Served = { handlers: [] };
+      const server = net.createServer(socket => {
+        const duplex = new Duplex({
+          read() {},
+          write(chunk, _encoding, callback) {
+            socket.write(chunk, callback);
+          },
+        });
+        socket.on("data", chunk => duplex.push(chunk));
+        socket.on("error", () => {});
+        record(http2.performServerHandshake(duplex, one), served, (stream, headers) => {
+          finish(stream, headers);
+          if (stream.id === 1) duplex.push(Buffer.concat([get(3), get(5)]));
+        });
+      });
+      const result = await withClient(server, async client => {
+        client.send(get(1));
+        await client.waitFor(ended(1));
+        await client.waitFor(f => f.type === RST_STREAM && f.streamId === 5);
+        return seen(client, served);
+      });
+      assert.deepStrictEqual(result, {
+        handlers: [1],
+        answered: [1],
+        resets: refused([3, 5]),
+        goaways: [],
+        sessionError: undefined,
+      });
+    });
+
+    // The RST_STREAM of the peer closes the stream when the server reads it.
+    test("but not when the peer resets it in the same write", async () => {
+      const result = await withLimit(one, finish, async (client, served) => {
+        // Node writes no frame for stream 1, so outcome() would not return.
+        client.send(get(1), cancel(1), get(3));
+        await client.waitFor(f => f.streamId === 3 && (f.type === HEADERS || f.type === RST_STREAM));
+        return seen(client, served);
+      });
+      assert.deepStrictEqual(
+        { handlers: result.handlers, refused: withCode(result.resets, REFUSED_STREAM) },
+        {
+          handlers: [1, 3],
+          refused: [],
+        },
+      );
+    });
+  });
+
+  // The same through the public API. `peerMaxConcurrentStreams` lets the client of node send its
+  // whole first flight, as the client of Bun does.
+  test("a first flight through http2.connect() loses only the requests over the limit", async () => {
+    const held: http2.ServerHttp2Stream[] = [];
+    const server = http2.createServer({ settings: { maxConcurrentStreams: 10 } });
+    server.on("session", session => session.on("error", () => {}));
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      held.push(stream);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
+    const client = http2.connect(`http://127.0.0.1:${port}`, { peerMaxConcurrentStreams: 1000 });
+    client.on("error", () => {});
+    try {
+      const allRefused = Promise.withResolvers<void>();
+      let closed = 0;
+      const request = () =>
+        new Promise<number | undefined>(resolve => {
+          const stream = client.request({ ":path": "/" });
+          let status: number | undefined;
+          stream.on("response", headers => (status = headers[":status"]));
+          stream.on("error", () => {});
+          stream.on("close", () => {
+            if (++closed === 110) allRefused.resolve();
+            resolve(status ?? -stream.rstCode);
+          });
+          stream.resume();
+          stream.end();
+        });
+      const requests = Array.from({ length: 120 }, request);
+      await allRefused.promise;
+      for (const stream of held.splice(0)) {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      }
+      const results = await Promise.all(requests);
+      const next = request();
+      const [last] = await Promise.all([next, once(server, "stream").then(([stream]) => finish(stream, {}))]);
+      assert.deepStrictEqual(
+        {
+          served: results.filter(status => status === 200).length,
+          refused: results.filter(status => status === -REFUSED_STREAM).length,
+          last,
+        },
+        { served: 10, refused: 110, last: 200 },
+      );
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  // RFC 9113 5.1.2: the limit that a client advertises is for the streams that the server opens.
+  test("the limit that a client advertises does not apply to its own requests", async () => {
+    const server = http2.createServer();
+    server.on("stream", stream => finish(stream, {}));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
+    const client = http2.connect(`http://127.0.0.1:${port}`, { settings: { maxConcurrentStreams: 0 } });
+    try {
+      const request = () =>
+        new Promise<number | undefined>((resolve, reject) => {
+          const stream = client.request({ ":path": "/" });
+          let status: number | undefined;
+          stream.on("response", headers => (status = headers[":status"]));
+          stream.on("error", reject);
+          stream.on("close", () => resolve(status));
+          stream.resume();
+          stream.end();
+        });
+      assert.deepStrictEqual(await Promise.all([request(), request(), request()]), [200, 200, 200]);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  test("a refused stream and a malformed block use the same allowance", async () => {
+    const options = { settings: { maxConcurrentStreams: 2 }, maxSessionInvalidFrames: 1 };
+    const result = await withLimit(options, hold, async (client, served) => {
+      client.send(get(1), get(3));
+      await client.waitFor(answered(3));
+      // 5 is over the limit. 7 is admitted and its block is malformed. The RST_STREAM of 7 goes
+      // out after the read, so 7 has its slot when 9 arrives.
+      client.send(get(5), cancel(3), malformed(7), malformed(9));
+      return outcome(client, served);
+    });
+    assert.deepStrictEqual(result, {
+      handlers: [1, 3],
+      answered: [1, 3],
+      resets: [
+        [5, REFUSED_STREAM],
+        [7, PROTOCOL_ERROR],
+        [9, REFUSED_STREAM],
+      ],
+      goaways: [INTERNAL_ERROR],
+      sessionError: "ERR_HTTP2_TOO_MANY_INVALID_FRAMES",
+    });
+  });
+
+  test("a refused stream with a malformed block gets one RST_STREAM", async () => {
+    const result = await withLimit(one, hold, async (client, served) => {
+      client.send(get(1));
+      await client.waitFor(answered(1));
+      client.send(malformed(3));
+      return outcome(client, served);
+    });
+    assert.deepStrictEqual(result, {
+      handlers: [1],
+      answered: [1],
+      resets: refused([3]),
+      goaways: [],
+      sessionError: undefined,
+    });
+  });
+
+  test("a refused stream is not the last stream that the session processed", async () => {
+    const served: Served = { handlers: [] };
+    const sessions: http2.ServerHttp2Session[] = [];
+    const server = http2.createServer(one);
+    server.on("session", session => sessions.push(session));
+    record(server, served, hold);
+    const result = await withClient(server, async client => {
+      client.send(get(1));
+      await client.waitFor(answered(1));
+      client.send(get(3), get(5));
+      await client.ping(1);
+      const lastProcStreamID = sessions[0].state.lastProcStreamID;
+      sessions[0].close();
+      const goaway = await client.waitFor(f => f.type === GOAWAY);
+      return {
+        handlers: served.handlers,
+        lastProcStreamID,
+        goaway: [goaway?.payload.readUInt32BE(0), goaway?.payload.readUInt32BE(4)],
+      };
+    });
+    assert.deepStrictEqual(result, { handlers: [1], lastProcStreamID: 1, goaway: [1, NO_ERROR] });
+  });
+
+  // With maxSessionInvalidFrames: 0 a second charge for stream 3 would end the session.
+  test("frames on a refused stream in a later write get no answer and no charge", async () => {
+    const result = await withLimit({ ...one, maxSessionInvalidFrames: 0 }, hold, async (client, served) => {
+      client.send(get(1));
+      await client.waitFor(answered(1));
+      client.send(upload(3));
+      await client.ping(1);
+      client.send(frame(DATA, 0, 3, Buffer.from("hello")), frame(DATA, 0, 3));
+      await client.ping(2);
+      const field = Buffer.concat([Buffer.from([0x00]), literal("x-checksum"), literal("1")]);
+      client.send(frame(HEADERS, END_STREAM | END_HEADERS, 3, field));
+      return outcome(client, served, 3);
+    });
+    assert.deepStrictEqual(result, {
+      handlers: [1],
+      answered: [1],
+      resets: refused([3]),
+      goaways: [],
+      sessionError: undefined,
+    });
+  });
+
+  // Bun only: node accepts this respond(). A respond() that fails gives the slot back. The reset
+  // or the end of that stream must not give a second slot back: 3 holds the one slot when 5 arrives.
+  each(
+    [
+      ["the peer resets", (client: RawClient) => client.send(upload(1)), (client: RawClient) => client.send(cancel(1))],
+      ["the peer has ended", (client: RawClient) => client.send(get(1)), () => {}],
+    ],
+    bunOnly,
+  )("a stream whose respond() failed and that %s gives back one slot", async (_, open, then) => {
+    const failFirst: OnStream = (stream, headers) => {
+      if (stream.id === 1) stream.respond({ ":status": 200 }, { weight: 0 } as http2.ServerStreamResponseOptions);
+      else hold(stream, headers);
+    };
+    const result = await withLimit(one, failFirst, async (client, served) => {
+      open(client);
+      await client.ping(1);
+      then(client);
+      await client.ping(2);
+      client.send(get(3));
+      await client.waitFor(answered(3));
+      // Stream 1 gets no frame from the server, so outcome() would not return.
+      client.send(get(5));
+      await client.waitFor(f => f.streamId === 5 && (f.type === HEADERS || f.type === RST_STREAM));
+      return seen(client, served);
+    });
+    assert.deepStrictEqual(result, {
+      handlers: [1, 3],
+      answered: [3],
+      resets: refused([5]),
+      goaways: [],
+      sessionError: undefined,
+    });
+  });
+
+  // nghttp2 closes stream 1 when it writes the trailers, after it has read every frame of the
+  // chunk. So 5 is over the limit.
+  each([
+    [
+      "a TCP socket",
+      (options: http2.ServerOptions, served: Served, onStream: OnStream) => {
+        const server = http2.createServer(options);
+        record(server, served, onStream);
+        return server;
+      },
+    ],
+    ["a Duplex", duplexFed],
+  ])("sendTrailers() on another stream keeps its slot for the rest of the read, on %s", async (_, listen) => {
+    const served: Served = { handlers: [] };
+    const wantsTrailers = Promise.withResolvers<void>();
+    let first: http2.ServerHttp2Stream | undefined;
+    const endFirst: OnStream = (stream, headers) => {
+      if (stream.id === 1) {
+        first = stream;
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.on("wantTrailers", () => wantsTrailers.resolve());
+        stream.end("hello");
+        return;
+      }
+      if (stream.id === 3) first!.sendTrailers({ "x-checksum": "1" });
+      hold(stream, headers);
+    };
+    const server = listen({ settings: { maxConcurrentStreams: 2 } }, served, endFirst);
+    const result = await withClient(server, async client => {
+      client.send(get(1));
+      await wantsTrailers.promise;
+      client.send(get(3), get(5));
+      return outcome(client, served);
+    });
+    assert.deepStrictEqual(result, {
+      handlers: [1, 3],
+      answered: [1, 3],
+      resets: refused([5]),
+      goaways: [],
+      sessionError: undefined,
+    });
+  });
+
+  // Bun reads a top-level maxConcurrentStreams as a setting. Here `settings` overrides it with
+  // no value, so no limit is sent to the peer, and none applies.
+  test("a limit that was not sent to the peer refuses nothing", async () => {
+    const options = { maxConcurrentStreams: 2, settings: { maxConcurrentStreams: undefined } } as http2.ServerOptions;
+    assert.deepStrictEqual(await withLimit(options, hold, inOneWrite(5)), allServed(odd(5)));
+  });
+
+  describe("and maxSessionMemory", () => {
+    // Node: a stream refused for memory is open until its RST_STREAM is written after the read,
+    // so it uses a slot, and the requests after it are over the limit.
+    test("a first flight with large responses keeps the session", async () => {
+      const body = Buffer.alloc(200 * 1024, "a");
+      const large: OnStream = stream => {
+        stream.respond({ ":status": 200 });
+        stream.write(body);
+      };
+      const options = { maxSessionMemory: 1, settings: { maxConcurrentStreams: 10 } };
+      const result = await withLimit(options, large, inOneWrite(150));
+      const memory = withCode(result.resets, ENHANCE_YOUR_CALM).length;
+      assert.deepStrictEqual(
+        {
+          goaways: result.goaways,
+          sessionError: result.sessionError,
+          refusedForMemory: memory > 0,
+          slots: result.handlers.length + memory,
+          overTheLimit: withCode(result.resets, REFUSED_STREAM).length,
+        },
+        { goaways: [], sessionError: undefined, refusedForMemory: true, slots: 10, overTheLimit: 140 },
+      );
+    });
+
+    test("DATA on a stream that was refused for memory gets no second RST_STREAM", async () => {
+      const body = Buffer.alloc(1 << 22, "a");
+      const large: OnStream = stream => {
+        stream.respond({ ":status": 200 });
+        stream.write(body);
+      };
+      const result = await withLimit({ maxSessionMemory: 1 }, large, async (client, served) => {
+        client.send(get(1));
+        await client.waitFor(f => f.type === DATA && f.streamId === 1);
+        client.send(upload(3), frame(DATA, 0, 3, Buffer.from("hello")));
+        await client.ping(1);
+        client.send(frame(DATA, END_STREAM, 3, Buffer.from("world")));
+        return outcome(client, served, 2);
+      });
+      assert.deepStrictEqual(result, {
+        handlers: [1],
+        answered: [1],
+        resets: [[3, ENHANCE_YOUR_CALM]],
+        goaways: [],
+        sessionError: undefined,
+      });
+    });
+  });
+
+  // The listener throws in the dispatch of the reset, before the session handler has finished.
+  // The child is a debug build in CI, and it needs more than the default timeout to start.
+  test("an 'aborted' listener that throws does not keep the slot", { timeout: 60_000 }, async () => {
+    const script = /* js */ `
+      const http2 = require("node:http2");
+      const net = require("node:net");
+      process.on("uncaughtException", () => {});
+      const handlers = [];
+      const server = http2.createServer({ settings: { maxConcurrentStreams: 1 } });
+      server.on("session", session => session.on("error", () => {}));
+      server.on("stream", stream => {
+        handlers.push(stream.id);
+        stream.on("error", () => {});
+        stream.on("aborted", () => {
+          throw new Error("from the 'aborted' listener");
+        });
+        stream.respond({ ":status": 200 });
+        stream.write("hello");
+      });
+      const frame = (type, flags, id, payload = Buffer.alloc(0)) => {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header[3] = type;
+        header[4] = flags;
+        header.writeUInt32BE(id, 5);
+        return Buffer.concat([header, payload]);
+      };
+      const HEADERS = 1, RST_STREAM = 3, SETTINGS = 4;
+      const upload = id => frame(HEADERS, 4, id, Buffer.from([0x83, 0x86, 0x84, 0x01, 9, ...Buffer.from("localhost")]));
+      server.listen(0, "127.0.0.1", () => {
+        const socket = net.connect(server.address().port, "127.0.0.1");
+        socket.write(Buffer.concat([Buffer.from("PRI * HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n"), frame(SETTINGS, 0, 0), upload(1)]));
+        let buffered = Buffer.alloc(0);
+        let resetSent = false;
+        socket.on("data", chunk => {
+          buffered = Buffer.concat([buffered, chunk]);
+          while (buffered.length >= 9 && buffered.length >= 9 + buffered.readUIntBE(0, 3)) {
+            const type = buffered[3];
+            const id = buffered.readUInt32BE(5);
+            buffered = buffered.subarray(9 + buffered.readUIntBE(0, 3));
+            if (type === HEADERS && id === 1 && !resetSent) {
+              resetSent = true;
+              socket.write(Buffer.concat([frame(RST_STREAM, 0, 1, Buffer.from([0, 0, 0, 8])), upload(3)]));
+            } else if ((type === HEADERS || type === RST_STREAM) && id === 3) {
+              console.log(JSON.stringify({ handlers, answer: type === HEADERS ? "HEADERS" : "RST_STREAM" }));
+              process.exit(0);
+            }
+          }
+        });
+      });
+    `;
+    const env = { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" };
+    const child = spawn(process.execPath, ["-e", script], { env, stdio: ["ignore", "pipe", "pipe"] });
+    const [stdout, stderr, [exitCode]] = await Promise.all([
+      text(child.stdout),
+      text(child.stderr),
+      once(child, "close"),
+    ]);
+    assert.deepStrictEqual(
+      { stdout: stdout.trim(), exitCode },
+      {
+        stdout: JSON.stringify({ handlers: [1, 3], answer: "HEADERS" }),
+        exitCode: 0,
+      },
+    );
+    assert.ok(!stderr.includes("error:"), stderr);
   });
 });

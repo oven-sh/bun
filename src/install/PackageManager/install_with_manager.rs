@@ -858,28 +858,28 @@ pub fn install_with_manager(
 
     let install_summary: PackageInstallSummary = 'install_summary: {
         if !manager.options.do_.install_packages() {
+            if manager.options.dry_run {
+                let linker = match manager.options.node_linker {
+                    NodeLinker::Auto => auto_node_linker(manager, config_version, &load_result),
+                    linker => linker,
+                };
+                report_dry_run_peers(
+                    manager,
+                    linker,
+                    install_root_dependencies,
+                    &workspace_filters,
+                )?;
+            }
             break 'install_summary PackageInstallSummary::default();
         }
 
         let mut linker = manager.options.node_linker;
         loop {
             match linker {
-                NodeLinker::Auto => match config_version {
-                    ConfigVersion::V0 => {
-                        linker = NodeLinker::Hoisted;
-                        continue;
-                    }
-                    ConfigVersion::V1 => {
-                        if !load_result.migrated_from_npm()
-                            && manager.lockfile.workspace_paths.len() > 0
-                        {
-                            linker = NodeLinker::Isolated;
-                            continue;
-                        }
-                        linker = NodeLinker::Hoisted;
-                        continue;
-                    }
-                },
+                NodeLinker::Auto => {
+                    linker = auto_node_linker(manager, config_version, &load_result);
+                    continue;
+                }
 
                 NodeLinker::Hoisted => {
                     let summary = install_hoisted_packages(
@@ -1414,6 +1414,58 @@ pub(crate) fn get_workspace_filters(
     let filters = vec![WorkspaceFilter::from_ids(ids)];
     let install_root_dependencies = WorkspaceFilter::is_selected(&filters, 0);
     Ok((filters, install_root_dependencies))
+}
+
+/// The linker that `NodeLinker::Auto` stands for in this install.
+fn auto_node_linker(
+    manager: &PackageManager,
+    config_version: ConfigVersion,
+    load_result: &lockfile::LoadResult,
+) -> NodeLinker {
+    match config_version {
+        ConfigVersion::V0 => NodeLinker::Hoisted,
+        ConfigVersion::V1 => {
+            if !load_result.migrated_from_npm() && manager.lockfile.workspace_paths.len() > 0 {
+                NodeLinker::Isolated
+            } else {
+                NodeLinker::Hoisted
+            }
+        }
+    }
+}
+
+/// `--dry-run` installs nothing. This builds the layout the install would write, for the peer warnings only.
+fn report_dry_run_peers(
+    manager: &mut PackageManager,
+    linker: NodeLinker,
+    install_root_dependencies: bool,
+    workspace_filters: &[WorkspaceFilter],
+) -> crate::Result<()> {
+    if linker == NodeLinker::Isolated {
+        crate::isolated_install::build_store(
+            &*manager,
+            &manager.lockfile,
+            install_root_dependencies,
+            workspace_filters,
+            None,
+            crate::isolated_install::Timings::Quiet,
+            Some(manager.log_mut()),
+        )?;
+        return Ok(());
+    }
+    let pm: *mut PackageManager = manager;
+    // SAFETY: same split as `install_hoisted_packages`: `lockfile` is its own `Box` allocation and `*log` is outside `*pm`, so the three borrows are disjoint.
+    unsafe {
+        let lockfile: *mut Lockfile = &raw mut *(*pm).lockfile;
+        let log: *mut bun_ast::Log = (*pm).log;
+        (*lockfile).filter_dry_run(
+            &mut *log,
+            &mut *pm,
+            install_root_dependencies,
+            workspace_filters,
+        )?;
+    }
+    Ok(())
 }
 
 fn frozen_changed_section(

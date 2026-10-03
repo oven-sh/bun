@@ -102,12 +102,7 @@ mod hardcoded_module {
 /// Intern a byte buffer into the process-lifetime `relative_paths_list`
 /// `BSSStringList` singleton.
 ///
-/// The linker is a
-/// per-transpile singleton whose output paths flow into `ImportRecord.path:
-/// Path<'static>`. PORTING.md §Forbidden bans `Vec::leak`/`Box::leak` for
-/// fabricating `&'static [u8]`; route through the `relative_paths_list`
-/// interner instead so the bytes are owned by a true process-lifetime
-/// singleton (the `OnceLock`-style exception PORTING.md carves out).
+/// The linker's output paths flow into import records that outlive the call.
 #[inline]
 pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
     // SAFETY: `relative_paths_list_ptr()` is Once-initialized and never freed

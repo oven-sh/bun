@@ -3326,9 +3326,8 @@ impl<'a> LinkerContext<'a> {
         self.top_level_symbols_to_parts(Index::RUNTIME.get(), r#ref)
     }
 
-    /// Note: returns `'static` so callers can hold the source across a
-    /// `&mut self.log` borrow; the underlying `parse_graph.input_files` slab
-    /// is append-only and outlives the link step (LIFETIMES.tsv: GRAPHBACKED).
+    /// The reference is not tied to `&self`, so that callers can hold the source
+    /// across a `&mut self.log` borrow.
     #[inline]
     pub(crate) fn get_source<I: TryInto<usize>>(&self, index: I) -> &'a Source<'a> {
         // Note: callers pass both `u32` and
@@ -3340,8 +3339,7 @@ impl<'a> LinkerContext<'a> {
         };
         // SAFETY: parse_graph backref into BundleV2.graph; the input_files SoA
         // is monotonically grown and never freed for the link step's lifetime,
-        // so the element address is stable. `'static` is a white lie matching
-        // the `*mut Graph` erasure on `self.parse_graph`.
+        // so the element address is stable. The outer `'a` overstates that.
         unsafe { &*core::ptr::from_ref(&(*self.parse_graph).input_files.items_source()[index]) }
     }
 

@@ -803,9 +803,8 @@ pub mod fs {
     }
 
     impl<'a> Path<'a> {
-        /// Erase the borrow lifetime — some storage types
-        /// (`ImportRecord.path`, `Graph.input_files`) are pinned to
-        /// `Path<'static>` until the arena lifetime is re-threaded crate-wide.
+        /// Erase the borrow lifetime, for a holder that has none to name (the
+        /// bundler's `ParseTask`, the runtime's `Transpiler<'static>`).
         ///
         /// # Safety
         /// Every borrowed slice in `self` (text/pretty/namespace) must outlive

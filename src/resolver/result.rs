@@ -242,6 +242,31 @@ impl<'a> Result<'a> {
         ptr.map(|p| unsafe { &*p })
     }
 
+    /// For a result that has to outlive the specifier it was resolved from.
+    pub fn dupe_alloc<'b>(
+        self,
+        arena: &'b bun_alloc::MimallocArena,
+    ) -> crate::CrateResult<Result<'b>> {
+        use crate::fs::PathResolverExt as _;
+        Ok(Result {
+            path_pair: PathPair {
+                primary: self.path_pair.primary.dupe_alloc(arena)?,
+                secondary: match self.path_pair.secondary {
+                    Some(secondary) => Some(secondary.dupe_alloc(arena)?),
+                    None => None,
+                },
+            },
+            jsx: self.jsx,
+            package_json: self.package_json,
+            primary_side_effects_data: self.primary_side_effects_data,
+            module_type: self.module_type,
+            dirname_fd: self.dirname_fd,
+            file_fd: self.file_fd,
+            import_kind: self.import_kind,
+            flags: self.flags,
+        })
+    }
+
     pub fn path(&mut self) -> Option<&mut Path<'a>> {
         if !self.path_pair.primary.is_disabled {
             return Some(&mut self.path_pair.primary);

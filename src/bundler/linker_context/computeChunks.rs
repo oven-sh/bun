@@ -143,7 +143,6 @@ pub(crate) fn compute_chunks<'a>(
             // `this.graph` columns disjoint from the slices we hold here.
             let order = find_imported_files_in_css_order(
                 unsafe { &mut *this_ptr },
-                temp,
                 &[Index::init(source_index)],
             );
             // Create a chunk for the entry point here to ensure that the chunk is
@@ -217,7 +216,6 @@ pub(crate) fn compute_chunks<'a>(
                 // SAFETY: see `this_ptr` note above.
                 let order = find_imported_files_in_css_order(
                     unsafe { &mut *this_ptr },
-                    temp,
                     css_source_indices.slice(),
                 );
 

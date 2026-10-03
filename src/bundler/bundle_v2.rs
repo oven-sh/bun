@@ -1827,12 +1827,8 @@ pub mod bv2_impl {
     /// Caller guarantees `s` is one of:
     ///   - a `'static` literal,
     ///   - interned in `FilenameStore`/`DirnameStore` (process-lifetime BSS lists),
-    ///   - allocated from the bundle-pass arena (`BundleV2::arena()`), in which
-    ///     case the returned reference is valid only for the bundle pass and its
-    ///     holder must not outlive it.
-    /// All call sites in this file satisfy one of these; this is the documented
-    /// arena-erasure convention (PORTING.md §Type Mapping: arena-owned struct
-    /// fields use erased lifetimes).
+    ///   - owned by the bundle (its arena, its graph, its transpiler's options),
+    ///     in which case the holder must not outlive the bundle.
     #[inline(always)]
     unsafe fn interned_slice(s: &[u8]) -> &'static [u8] {
         // SAFETY: upheld by caller per fn contract.
@@ -1932,11 +1928,7 @@ pub mod bv2_impl {
 
             // `arena` is only the scratch param for `Transpiler::for_worker`; the
             // returned `Transpiler` itself is NOT placed in it.
-            // SAFETY: `graph.heap` outlives the bundle pass; erase the `&self`
-            // borrow so the `'a` widen inside `for_worker` doesn't keep `self`
-            // borrowed.
-            let arena: &'a bun_alloc::Arena =
-                unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
+            let arena = self.arena();
 
             let this_transpiler: &Transpiler<'a> = &*self.transpiler;
             let this_compile = this_transpiler.options.compile_mode.is_executable();
@@ -3056,8 +3048,6 @@ pub mod bv2_impl {
 
             path = self.path_with_pretty_initialized(&path, target)?;
             path.assert_pretty_is_valid();
-            // `path_with_pretty_initialized` hands a built-in module's path back as it came.
-            path = path.dupe_alloc(self.arena()).expect("oom");
             // The borrowck-reshape
             // above cloned `path` out, which left `result.path_pair` with the
             // unrelativized `pretty` — and `ParseTask::init(&result, ..)` reads
@@ -3364,28 +3354,17 @@ pub mod bv2_impl {
             self.graph.heap
         }
 
-        /// Allocate `value` into the bundler's arena (`self.graph.heap`) and return
-        /// a `&'r mut T` whose lifetime is decoupled from `&self`.
-        /// The arena owns the slab and reclaims it on
-        /// `deinit_without_freeing_arena` / `heap.reset()`. The unbounded `'r`
-        /// releases the `&self` borrow at the call site so callers can immediately
-        /// reborrow `&mut self`.
-        ///
-        /// SAFETY (encapsulated): the arena slab is pinned and outlives every
-        /// `&mut T` handed out here (freed only at `heap.reset()` after all
-        /// callers are done); each call returns a fresh disjoint slot, so the
-        /// resulting `&mut T` is unique.
         #[inline]
-        fn arena_create<'r, T>(&self, value: T) -> &'r mut T {
-            // SAFETY: arena slot is fresh + pinned for the bundle pass; see fn doc.
-            unsafe { bun_ptr::detach_lifetime_mut(self.arena().alloc(value)) }
+        fn arena_create<T: 'a>(&self, value: T) -> &'a mut T {
+            self.arena().alloc(value)
         }
 
-        /// A `ParseTask` has no lifetime to name. It does not outlive the bundle,
-        /// and so not `'a` either.
+        /// # Safety
+        /// Store the result only in a `ParseTask` of this bundle: a task has no
+        /// lifetime to name, and does not outlive the bundle or `'a`.
         #[inline]
-        fn task_path(&self, path: &Fs::Path<'a>) -> Fs::Path<'static> {
-            // SAFETY: see above.
+        unsafe fn task_path(&self, path: &Fs::Path<'a>) -> Fs::Path<'static> {
+            // SAFETY: the caller's.
             unsafe { path.into_static() }
         }
 
@@ -3749,11 +3728,7 @@ pub mod bv2_impl {
                 return Ok(());
             }
 
-            // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; erase the
-            // `&self` borrow so `server`/`client` don't keep `*self` borrowed across
-            // the `self.graph.ast.set(...)` calls at the end of this function.
-            let alloc: &'static bun_alloc::Arena =
-                unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
+            let alloc = self.arena();
 
             let hmr = self.transpiler.options.hot_module_reloading;
             let mut server = AstBuilder::init(alloc, &bake::SERVER_VIRTUAL_SOURCE, hmr)?;
@@ -4065,13 +4040,8 @@ pub mod bv2_impl {
             // graph's stored copy (where the data now lives for the rest of the
             // bundle pass) so the `ParseTask` below sees the actual source bytes.
             let stored = &self.graph.input_files.items_source()[source_index.get() as usize];
-            // `pretty`/`namespace` MUST
-            // be preserved here (the SCB `separate_ssr_graph=false` caller passes a
-            // source whose path went through `path_with_pretty_initialized`, and
-            // `ParseTask::run` builds the `Source` from `task.path` then swaps it
-            // back into `input_files`, so dropping `pretty` would surface the
-            // absolute path as the dev-server module key).
-            let task_path = self.task_path(&stored.path);
+            // SAFETY: goes into the `ParseTask` below.
+            let task_path = unsafe { self.task_path(&stored.path) };
             // SAFETY: `graph.input_files` owns `stored.contents` for the bundle
             // pass (arena lifetime); erase the borrow to `'static` to fit
             // `ContentsOrFd::Contents`. See `interned_slice` contract.
@@ -5251,7 +5221,8 @@ pub mod bv2_impl {
                                             .cast::<BundleV2<'static>>(),
                                     )
                                 }),
-                                path: this.task_path(&path),
+                                // SAFETY: a field of a `ParseTask`.
+                                path: unsafe { this.task_path(&path) },
                                 // unknown at this point:
                                 contents_or_fd: parse_task::ContentsOrFd::Fd {
                                     dir: bun_sys::Fd::INVALID,
@@ -6005,7 +5976,7 @@ pub mod bv2_impl {
 
             // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
             for entry_point in start.css_entry_points.keys() {
-                let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, self.graph.heap, &[*entry_point]);
+                let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, &[*entry_point]);
                 let order_len = order.len() as usize;
                 chunks.push(Chunk {
                     entry_point: chunk::EntryPoint::non_entry_point(
@@ -6338,7 +6309,8 @@ pub mod bv2_impl {
             let source_index = result.source.index;
             let target = result.ast.target;
             // SAFETY: a task's AST has no lifetime to name and is typed `'static`. This one
-            // ends up in `graph.ast`, whose records are `'a`, or is dropped.
+            // ends up in `graph.ast`, whose records are `'a`, or is dropped. Until then it
+            // is typed `'static` again, so nothing may keep a slice out of its records.
             let import_records = unsafe {
                 &mut *(std::ptr::from_mut::<[ImportRecord<'static>]>(&mut result.ast.import_records)
                     as *mut [ImportRecord<'a>])
@@ -6695,7 +6667,6 @@ pub mod bv2_impl {
                         // For virtual files, use the path text as-is (no relative path computation needed).
                         path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
                         import_record.path = path_primary;
-                        let _ = path_primary.text; // key already interned by get_or_put
                         bun_core::scoped_log!(
                             Bundle,
                             "created ParseTask from FileMap: {}",
@@ -6972,12 +6943,6 @@ pub mod bv2_impl {
                         import_record.source_index = Index::INVALID;
 
                         if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
-                            let rel = bun_paths::resolve_path::relative_platform::<
-                                bun_paths::resolve_path::platform::Loose,
-                                false,
-                            >(
-                                self.transpiler.fs().top_level_dir, path.text
-                            );
                             if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset
                             {
                                 // Overload `path.text` to point to the final URL
@@ -7000,8 +6965,6 @@ pub mod bv2_impl {
                                     .as_bytes();
                                 import_record.path.is_disabled = false;
                             } else {
-                                import_record.path.text = path.text;
-                                import_record.path.pretty = rel;
                                 import_record.path = self
                                     .path_with_pretty_initialized(path, target)
                                     .expect("oom");
@@ -7093,8 +7056,9 @@ pub mod bv2_impl {
                         && !core::ptr::eq(secondary, path)
                         && !strings::eql_long(secondary.text, path.text, true)
                     {
+                        // SAFETY: a field of a `ParseTask`.
                         resolve_task.secondary_path_for_commonjs_interop =
-                            Some(self.task_path(secondary));
+                            Some(unsafe { self.task_path(secondary) });
                     }
                 }
 
@@ -7655,7 +7619,7 @@ pub mod bv2_impl {
                     result.ast.import_records = import_records;
 
                     // `result.ast` is moved into `graph.ast` and `result.source` was
-                    // swapped earlier, so snapshot the data the use-directive block
+                    // moved earlier, so snapshot the data the use-directive block
                     // needs *before* the move. Only paid for files that hit the SCB gate.
                     let named_exports_for_scb = if result.use_directive != crate::UseDirective::None
                         && {
@@ -7711,7 +7675,7 @@ pub mod bv2_impl {
                             .unwrap()
                             .separate_ssr_graph;
 
-                        // `result.source` was swapped into
+                        // `result.source` was moved into
                         // `graph.input_files` earlier; re-borrow it from the SoA
                         // and `.clone()` where an owned copy is needed.
                         let source_loader: Loader =

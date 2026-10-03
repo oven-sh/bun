@@ -74,11 +74,8 @@ fn memcpy_and_reset<'a>(order: &mut Vec<CssImportOrder<'a>>, wip: &mut Vec<CssIm
 /// for the first location.
 pub(crate) fn find_imported_files_in_css_order<'a>(
     this: &mut LinkerContext<'a>,
-    temp_arena: &Arena,
     entry_points: &[Index],
 ) -> Vec<CssImportOrder<'a>> {
-    let _ = temp_arena;
-
     struct Visitor<'v, 'a> {
         arena: &'v Arena,
         // `BundledAst.css` SoA column.

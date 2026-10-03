@@ -525,9 +525,8 @@ pub mod fs {
     }
 
     impl<'a> PathResolverExt<'a> for Path<'a> {
-        /// Interns `text`/`pretty` into the
-        /// process-static `FilenameStore` so the returned `Path` borrows `'static`
-        /// data.
+        /// Copies what is not interned yet: into the process-static `FilenameStore`,
+        /// or into `alloc` when `pretty` is not part of `text`.
         ///
         /// Short-circuit: if `text` (and, where relevant,
         /// `pretty`) already points into a process-lifetime store

@@ -359,17 +359,16 @@ impl<'a> Transpiler<'a> {
         if !bun_paths::is_absolute(entry_point)
             && !(entry_point.starts_with(b"./") || entry_point.starts_with(b".\\"))
         {
-            let prefixed: &'a mut [u8] =
-                self.arena.alloc_slice_fill_copy(2 + entry_point.len(), 0u8);
-            prefixed[..2].copy_from_slice(b"./");
-            prefixed[2..].copy_from_slice(entry_point);
+            let mut prefixed = Vec::with_capacity(2 + entry_point.len());
+            prefixed.extend_from_slice(b"./");
+            prefixed.extend_from_slice(entry_point);
             if let Ok(r) = self.resolver.resolve(
                 top_level_dir,
-                prefixed,
+                &prefixed,
                 bun_ast::ImportKind::EntryPointBuild,
             ) {
                 if !r.flags.is_external() {
-                    return Ok(r);
+                    return Ok(r.dupe_alloc(self.arena)?);
                 }
             }
             // return the original result
@@ -2561,7 +2560,7 @@ impl<'a> Transpiler<'a> {
 
     /// Returns only the count and lets
     /// `linker.enqueue_resolve_result` push directly onto `resolve_queue`.
-    fn enqueue_entry_points<const NORMALIZE_ENTRY_POINT: bool>(&mut self) -> usize {
+    fn enqueue_entry_points(&mut self) -> usize {
         let mut entry_point_i: usize = 0;
 
         // snapshot entry points so the `&mut self` resolver call
@@ -2570,12 +2569,7 @@ impl<'a> Transpiler<'a> {
         let top_level_dir = self.fs().top_level_dir;
 
         for _entry in entries.iter() {
-            // The queued result can carry the specifier.
-            let entry: &'static [u8] = if NORMALIZE_ENTRY_POINT {
-                self.normalize_entry_point_path(_entry)
-            } else {
-                crate::linker::dupe(_entry)
-            };
+            let entry = self.normalize_entry_point_path(_entry);
 
             let _reset = bun_ast::StoreResetGuard::new();
 
@@ -2620,7 +2614,7 @@ impl<'a> Transpiler<'a> {
         log: *mut bun_ast::Log,
         _opts: api::TransformOptions,
     ) -> crate::Result<options::TransformResult> {
-        let _ = self.enqueue_entry_points::<true>();
+        let _ = self.enqueue_entry_points();
 
         // `log` is the same `*mut Log` stored on `self.log`; caller
         // (`BuildCommand::exec`) holds it for the process lifetime.

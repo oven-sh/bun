@@ -29,7 +29,6 @@ function nativeRequest(request, socket) {
   return own !== undefined ? own : socket[kBunInternals];
 }
 
-// Whether `response` belongs to `request` or to a wrapper of it.
 function answersRequest(response, request) {
   const own = response.req;
   if (!own || own === request) return true;
@@ -966,7 +965,6 @@ function abortHandshake(socket, code, message, headers, req) {
   };
 
   // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
-  // Not through the response of a request ahead.
   const response = socket._httpMessage;
   if (response && answersRequest(response, req)) {
     response.writeHead(code, headers);

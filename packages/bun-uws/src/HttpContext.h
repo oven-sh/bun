@@ -32,7 +32,6 @@
 #include "MoveOnlyFunction.h"
 #include "HttpParser.h"
 #include <span>
-#include <array>
 #include <mutex>
 
 
@@ -40,56 +39,6 @@ extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
 extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s);
 
 namespace uWS {
-
-namespace detail {
-
-template <typename T, typename... Args>
-[[nodiscard]] constexpr auto makeArray(T&& el0, Args&&... values) noexcept {
-    return std::array<std::decay_t<T>, 1 + sizeof...(Args)>{
-        std::forward<T>(el0), std::forward<Args>(values)...
-    };
-}
-
-static constexpr auto supportedHttpMethods = makeArray<std::string_view>(
-    "ACL",
-    "BIND",
-    "CHECKOUT",
-    "CONNECT",
-    "COPY",
-    "DELETE",
-    "GET",
-    "HEAD",
-    "LINK",
-    "LOCK",
-    "M-SEARCH",
-    "MERGE",
-    "MKACTIVITY",
-    "MKADDRESSBOOK",
-    "MKCALENDAR",
-    "MKCOL",
-    "MOVE",
-    "NOTIFY",
-    "OPTIONS",
-    "PATCH",
-    "POST",
-    "PROPFIND",
-    "PROPPATCH",
-    "PURGE",
-    "PUT",
-    "QUERY",
-    "REBIND",
-    "REPORT",
-    "SEARCH",
-    "SOURCE",
-    "SUBSCRIBE",
-    "TRACE",
-    "UNBIND",
-    "UNLINK",
-    "UNLOCK",
-    "UNSUBSCRIBE"
-);
-
-} // namespace detail
 
 template<bool> struct HttpResponse;
 
@@ -1190,7 +1139,7 @@ public:
         std::string_view method_sv_buffer;
         // When it's NOT node:http, allow the uWS default precedence ordering.
         if (method == "*" && !httpContextData->flags.useStrictMethodValidation) {
-            methods = detail::supportedHttpMethods;
+            methods = HTTP_METHOD_NAMES;
         } else {
             method_buffer = std::string(method);
             method_sv_buffer = std::string_view(method_buffer);

@@ -493,6 +493,21 @@ pub struct InitializeOptions {
     pub short_lived_globals: bool,
 }
 
+/// Set while the command line is parsed, from `--experimental-linear-regexp`.
+pub static EXPERIMENTAL_LINEAR_REGEXP_FROM_CLI: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Whether JSC runs a RegExp on its non-backtracking matcher when the matcher
+/// accepts its pattern. It is a JSC option, so it is one value for the process,
+/// fixed by the first [`initialize`]. It is resolved here and not by the callers
+/// of `initialize`: most of them have no command line to read.
+pub fn experimental_linear_regexp() -> bool {
+    EXPERIMENTAL_LINEAR_REGEXP_FROM_CLI.load(core::sync::atomic::Ordering::Relaxed)
+        || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_LINEAR_REGEXP
+            .get()
+            .unwrap_or(false)
+}
+
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(options: InitializeOptions) {
     // The counter lives in `bun_core` so this crate doesn't depend on
@@ -510,6 +525,7 @@ pub fn initialize(options: InitializeOptions) {
             options.eval_mode,
             options.one_shot,
             options.short_lived_globals,
+            experimental_linear_regexp(),
         )
     };
 }
@@ -1568,6 +1584,7 @@ unsafe extern "C" {
         eval_mode: bool,
         one_shot_startup: bool,
         short_lived_globals: bool,
+        linear_regexp: bool,
     );
 }
 

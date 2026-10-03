@@ -563,6 +563,7 @@ pub struct RuntimeOptions {
     pub eval: Eval,
     pub preconnect: Vec<Box<[u8]>>,
     pub experimental_http2_fetch: bool,
+    pub experimental_linear_regexp: bool,
     pub experimental_http3_fetch: bool,
     pub dns_result_order: Box<[u8]>,
     /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
@@ -634,6 +635,7 @@ impl Default for RuntimeOptions {
             eval: Eval::default(),
             preconnect: Vec::new(),
             experimental_http2_fetch: false,
+            experimental_linear_regexp: false,
             experimental_http3_fetch: false,
             dns_result_order: Box::from(&b"verbatim"[..]),
             expose_gc: false,

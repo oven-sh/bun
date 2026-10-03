@@ -279,6 +279,11 @@ pub mod feature_flag {
     // server selects it. Off by default while the client implementation
     // matures. `--experimental-http2-fetch` is the CLI equivalent.
     new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT, "BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT", {});
+    // Run a RegExp on JavaScriptCore's non-backtracking matcher when the
+    // matcher accepts its pattern, so that one match takes time linear in the
+    // length of the subject. Off by default: the matcher is slower than the
+    // RegExp JIT. `--experimental-linear-regexp` is the CLI equivalent.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_LINEAR_REGEXP, "BUN_FEATURE_FLAG_EXPERIMENTAL_LINEAR_REGEXP", {});
     // Honor `Alt-Svc: h3` from fetch() responses: subsequent requests to the
     // same origin go over QUIC/HTTP-3 instead of TCP. Off by default while
     // the client implementation matures. `--experimental-http3-fetch` is the

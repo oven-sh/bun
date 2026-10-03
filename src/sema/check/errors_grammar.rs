@@ -426,7 +426,7 @@ fn operand_follows_on_the_line(text: &[u8], mut at: usize) -> bool {
         match text.get(at..).unwrap_or_default() {
             [b' ' | b'\t' | 0x0b | 0x0c, ..] => at += 1,
             [b'/', b'*', rest @ ..] => {
-                let Some(end) = rest.windows(2).position(|w| w == b"*/") else {
+                let Some(end) = strings::index_of(rest, b"*/") else {
                     return false;
                 };
                 if rest[..end].iter().any(|b| matches!(b, b'\n' | b'\r')) {

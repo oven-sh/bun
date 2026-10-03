@@ -220,7 +220,7 @@ pub const SYMBOL_NAME_PREFIX: &[u8] = b"\xFE@";
 struct Recent {
     /// `Interner::number`
     of: u64,
-    entries: Box<[RecentEntry]>,
+    entries: Vec<RecentEntry>,
 }
 
 #[derive(Copy, Clone)]
@@ -232,6 +232,11 @@ struct RecentEntry {
 }
 
 impl Recent {
+    /// Of no interner: numbers start at 1. The entries are allocated on first use.
+    const EMPTY: Recent = Recent {
+        of: 0,
+        entries: Vec::new(),
+    };
     const LONGEST: usize = 27;
     const BITS: u32 = 11;
     /// Nothing is this long.
@@ -286,10 +291,30 @@ pub(crate) fn hash_of(text: &[u8]) -> u64 {
 }
 
 thread_local! {
-    static RECENT: std::cell::UnsafeCell<Recent> = std::cell::UnsafeCell::new(Recent {
-        of: 0,
-        entries: vec![Recent::NOTHING; 1 << Recent::BITS].into_boxed_slice(),
-    });
+    static RECENT: std::cell::UnsafeCell<Recent> = const { std::cell::UnsafeCell::new(Recent::EMPTY) };
+}
+
+/// The calling thread's cache of recently interned atoms. A thread of a pool outlives a check, so the cache is owned by the check: a
+/// thread has one for as long as it works for the check.
+pub struct RecentAtoms(Recent);
+
+impl Default for RecentAtoms {
+    fn default() -> Self {
+        RecentAtoms(Recent::EMPTY)
+    }
+}
+
+impl RecentAtoms {
+    /// Takes the cache from the calling thread.
+    pub fn take() -> RecentAtoms {
+        RecentAtoms::default().install()
+    }
+
+    /// Gives the cache to the calling thread. Returns the one it had.
+    pub fn install(self) -> RecentAtoms {
+        // SAFETY: it is the thread's own, and nothing in here gets back here.
+        RECENT.with(|recent| RecentAtoms(std::mem::replace(unsafe { &mut *recent.get() }, self.0)))
+    }
 }
 
 /// From 1 on.
@@ -358,7 +383,10 @@ impl Interner {
             let recent = unsafe { &mut *recent.get() };
             if recent.of != self.number {
                 recent.of = self.number;
-                recent.entries.fill(Recent::NOTHING);
+                match recent.entries.is_empty() {
+                    true => recent.entries = vec![Recent::NOTHING; 1 << Recent::BITS],
+                    false => recent.entries.fill(Recent::NOTHING),
+                }
             }
             let entry = &mut recent.entries[(spread >> (64 - Recent::BITS)) as usize];
             if entry.start == start && entry.end == end {

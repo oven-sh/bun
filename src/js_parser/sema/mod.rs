@@ -372,6 +372,29 @@ fn early_error_in_place(text: &[u8]) -> Option<u32> {
     )
 }
 
+thread_local! {
+    /// The arena files are parsed in, and how much source has been parsed in it since it was reset.
+    static ARENA: core::cell::RefCell<Option<(bun_alloc::Arena, usize)>> = const { core::cell::RefCell::new(None) };
+}
+
+/// What a thread keeps from one file to the next, to allocate less. A thread of a pool outlives a check, so this is owned by the check:
+/// a thread has one for as long as it works for the check.
+#[derive(Default)]
+pub struct ThreadCaches(notes::Notes, builder::Room);
+
+impl ThreadCaches {
+    /// Takes the caches from the calling thread, and frees the arena it parsed in. Only the thread that made an arena allocates in it.
+    pub fn take() -> ThreadCaches {
+        ARENA.take();
+        ThreadCaches::default().install()
+    }
+
+    /// Gives the caches to the calling thread. Returns the ones it had.
+    pub fn install(self) -> ThreadCaches {
+        ThreadCaches(notes::replace_room(self.0), builder::replace_room(self.1))
+    }
+}
+
 /// What the type resolver needs of the TypeScript file `text` at `path`.
 pub fn summarize(
     path: &[u8],
@@ -447,10 +470,8 @@ pub fn summarize(
     };
     // What is left of a file in the arena is dead. It is given back after this much source, not after every file.
     const SOURCE_AT_MOST: usize = 256 << 10;
-    thread_local! {
-        static ARENA: core::cell::RefCell<(bun_alloc::Arena, usize)> = Default::default();
-    }
-    let mut file = ARENA.with_borrow_mut(|(arena, parsed)| {
+    let mut file = ARENA.with_borrow_mut(|arena| {
+        let (arena, parsed) = arena.get_or_insert_default();
         if *parsed >= SOURCE_AT_MOST {
             arena.reset();
             *parsed = 0;

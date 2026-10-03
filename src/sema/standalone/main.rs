@@ -293,6 +293,26 @@ fn main() {
             if request.order != 1 {
                 eprintln!("order {}", request.order);
             }
+            for round in 1..=number("--repeat=", 0) {
+                let started = std::time::Instant::now();
+                let (errors, checked) = bun_sema_driver::check_then(&request, |report| {
+                    (report.diagnostics.len(), started.elapsed())
+                });
+                eprintln!(
+                    "repeat {round}: {errors} errors, {:.3} s to the report, {:.3} s with the memory given back, {} MB held",
+                    checked.as_secs_f64(),
+                    started.elapsed().as_secs_f64(),
+                    bun_sema_standalone::current_memory() >> 20
+                );
+            }
+            if number("--repeat=", 0) > 0 {
+                // What the allocator keeps for the next allocation is not what the checks left behind.
+                bun_alloc::mimalloc::mi_collect(true);
+                eprintln!(
+                    "after the allocator gave back what is free: {} MB held",
+                    bun_sema_standalone::current_memory() >> 20
+                );
+            }
             bun_sema_driver::check_then(&request, |report| {
                 let cwd = bun_sema_driver::host::from_native(cwd.as_bytes());
                 let style = Style {

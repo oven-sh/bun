@@ -178,7 +178,7 @@ impl Checker<'_> {
         let mut from = 0;
         while let Some(tag) = find_bytes(text, from, b"@link") {
             from = tag + 1;
-            let Some(open) = text[..tag].windows(3).rposition(|w| w == b"/**") else {
+            let Some(open) = bun_core::strings::last_index_of(&text[..tag], b"/**") else {
                 continue;
             };
             let Some(close) = find_bytes(text, open + 2, b"*/") else {
@@ -619,7 +619,7 @@ fn byte_before_comment(text: &[u8], mut open: usize) -> Option<u8> {
         let &last = before.last()?;
         let comment = before
             .strip_suffix(b"*/")
-            .and_then(|rest| rest.windows(2).rposition(|w| w == b"/*"));
+            .and_then(|rest| bun_core::strings::last_index_of(rest, b"/*"));
         match comment {
             Some(comment) => open = comment,
             None => return Some(last),
@@ -1599,9 +1599,7 @@ impl Checker<'_> {
             let first = hir[params.at(0)].start;
             let before = hir.text.get(..first as usize).unwrap_or_default();
             let open = if hir[params.at(0)].flags.contains(Flags::REPARSED) {
-                before
-                    .windows(b"@template".len())
-                    .rposition(|tag| tag == b"@template")
+                bun_core::strings::last_index_of(before, b"@template")
                     .map(|at| at.saturating_sub(1))
             } else {
                 before.iter().rposition(|&c| c == b'<')

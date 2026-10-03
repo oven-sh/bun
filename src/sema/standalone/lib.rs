@@ -93,6 +93,22 @@ pub fn peak_memory() -> u64 {
     peak_rss()
 }
 
+pub fn current_memory() -> u64 {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: all zeros is a `rusage_info_v4`.
+        let mut info: libc::rusage_info_v4 = unsafe { core::mem::zeroed() };
+        // SAFETY: `info` is what `RUSAGE_INFO_V4` fills in, and outlives the call.
+        let failed = unsafe {
+            libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())
+        };
+        if failed == 0 {
+            return info.ri_phys_footprint;
+        }
+    }
+    0
+}
+
 pub fn peak_rss() -> u64 {
     #[repr(C)]
     struct Rusage {

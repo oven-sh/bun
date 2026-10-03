@@ -154,6 +154,7 @@ impl Listing {
 /// mostly about what is not there.
 pub struct Disk {
     pub threads: usize,
+    pub(crate) caches: crate::ThreadCaches,
     case_sensitive: bool,
     directories: ShardedMap<Vec<u8>, Directory>,
     /// Where each directory that was asked about really is.
@@ -260,6 +261,7 @@ impl Disk {
     pub fn new(threads: usize) -> Self {
         Disk {
             threads,
+            caches: Default::default(),
             case_sensitive: is_file_system_case_sensitive(),
             directories: ShardedMap::default(),
             real_directories: ShardedMap::default(),
@@ -554,6 +556,7 @@ impl Host for Disk {
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         // In runs: what is next to each other is in the same directory.
         crate::for_each_parallel_in_runs(
+            &self.caches,
             self.threads,
             count,
             if count > 1024 { 16 } else { 1 },

@@ -11,6 +11,7 @@ use bstr::ByteSlice;
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
+use bun_sema::atom::RecentAtoms;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::task::{Finished, Published};
@@ -35,11 +36,39 @@ use std::time::{Duration, Instant};
 /// Runs `work(i)` for every `i` below `count` on the threads everything else in Bun runs on, no more than `threads` of them at a time. They take
 /// the numbers in order, each the next one when it is done with the last.
 pub fn for_each_parallel(threads: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
-    for_each_parallel_in_runs(threads, count, 1, work);
+    for_each_parallel_in_runs(&ThreadCaches::default(), threads, count, 1, work);
+}
+
+/// What the threads that work for a check keep from one file to the next. The threads are the pool's and outlive the check, so the
+/// caches are owned here: a thread borrows a set for the length of a parallel region.
+#[derive(Default)]
+pub struct ThreadCaches {
+    idle: Guarded<Vec<(RecentAtoms, bun_js_parser::sema::ThreadCaches)>>,
+}
+
+impl ThreadCaches {
+    /// Lends the calling thread a set until the guard is dropped.
+    pub fn lend(&self) -> impl Drop + '_ {
+        struct Lent<'a>(&'a ThreadCaches);
+        impl Drop for Lent<'_> {
+            fn drop(&mut self) {
+                let set = (
+                    RecentAtoms::take(),
+                    bun_js_parser::sema::ThreadCaches::take(),
+                );
+                self.0.idle.lock().push(set);
+            }
+        }
+        let (atoms, parser) = self.idle.lock().pop().unwrap_or_default();
+        atoms.install();
+        parser.install();
+        Lent(self)
+    }
 }
 
 /// The same, each thread taking `run` numbers in a row at a time.
 pub fn for_each_parallel_in_runs(
+    caches: &ThreadCaches,
     threads: usize,
     count: usize,
     run: usize,
@@ -52,13 +81,16 @@ pub fn for_each_parallel_in_runs(
     let mut runners = vec![(); threads.clamp(1, count.div_ceil(run))];
     bun_threading::WorkPool::get().each(
         (),
-        |(), (), _| loop {
-            let from = next.fetch_add(run, Ordering::Relaxed);
-            if from >= count {
-                break;
-            }
-            for i in from..(from + run).min(count) {
-                work(i);
+        |(), (), _| {
+            let _lent = caches.lend();
+            loop {
+                let from = next.fetch_add(run, Ordering::Relaxed);
+                if from >= count {
+                    break;
+                }
+                for i in from..(from + run).min(count) {
+                    work(i);
+                }
             }
         },
         &mut runners,
@@ -527,16 +559,18 @@ fn roots_of_paths(disk: &host::Disk, paths: &[Vec<u8>], allow_js: bool) -> Vec<V
     roots
 }
 
-/// Checks what `request` asks for. `then` is handed the report WHILE ALL THAT WAS LOADED IS STILL THERE. Giving back millions of small pieces
-/// of memory one by one takes a while, and the system takes it all back at once: who ends the process does so in `then`. For who returns
-/// from it, all is dropped.
+/// Checks what `request` asks for. `then` is handed the report WHILE ALL THAT WAS LOADED IS STILL THERE. Freeing it takes up to 3% of the
+/// time of the check, and the system takes it all back at once: who ends the process does so in `then`. For who returns from it, all
+/// is dropped, the caches of the threads too, and the free memory goes back to the system.
 pub fn check_then<R>(request: &Request, then: impl FnOnce(Report) -> R) -> R {
     let threads = match request.threads {
         0 => std::thread::available_parallelism().map_or(4, usize::from),
         n => n,
     };
     let disk = host::Disk::new(threads);
-    let (mut report, _program) = check_what_is_asked(&disk, request);
+    // What is not done in a parallel region is done on this thread.
+    let lent = disk.caches.lend();
+    let (mut report, program) = check_what_is_asked(&disk, request);
     if cfg!(windows) {
         for said in &mut report.diagnostics {
             host::show_drives(&mut said.text);
@@ -544,7 +578,14 @@ pub fn check_then<R>(request: &Request, then: impl FnOnce(Report) -> R) -> R {
             related.for_each(|related| host::show_drives(&mut related.text));
         }
     }
-    then(report)
+    let result = then(report);
+    drop(program);
+    drop(lent);
+    disk.caches.idle.lock().clear();
+    // The allocator keeps the free pages of a thread for that thread. The process goes on, so they go back to the system.
+    disk.parallel(threads, &|_| bun_core::Global::mimalloc_cleanup(true));
+    bun_core::Global::mimalloc_cleanup(true);
+    result
 }
 
 pub fn check(request: &Request) -> Report {
@@ -1473,7 +1514,7 @@ fn check_what_is_named(
             .drain(..)
             .map(|one| Guarded::new(Some(one)))
             .collect();
-        for_each_parallel(threads, unfinished.len(), &|i| {
+        host.parallel(unfinished.len(), &|i| {
             let (file, mut checked) = unfinished[i].lock().take().unwrap();
             if let Some(written) = checked.declaration_file.take() {
                 let path = program.files.modules[file.idx()].path.clone();
@@ -1509,7 +1550,7 @@ fn check_what_is_named(
         ),
     };
     let in_parallel = |count: usize, work: &(dyn Fn(usize) + Sync)| {
-        for_each_parallel(threads, count, work);
+        host.parallel(count, work);
     };
     let steps: Guarded<Vec<StepReport>> = Guarded::new(Vec::new());
     // Returns the invalid tasks.
@@ -1530,7 +1571,7 @@ fn check_what_is_named(
         let outcomes: Vec<Guarded<Option<Outcome>>> =
             (0..tasks).map(|_| Guarded::new(None)).collect();
         let (started, busy) = (Instant::now(), AtomicU64::new(0));
-        for_each_parallel(threads, tasks, &|i| {
+        host.parallel(tasks, &|i| {
             let (index, began) = (start_order[i], Instant::now());
             let files: Vec<FileId> = step[index].iter().map(|&file| to_check[file]).collect();
             let outcome = check_chunk(&files, wanted, Some((number, index, is_read_later)));
@@ -1656,7 +1697,7 @@ fn check_what_is_named(
                 })
                 .map(|i| FileId(i as u32))
                 .collect();
-            for_each_parallel(threads, suspects.len(), &|i| {
+            host.parallel(suspects.len(), &|i| {
                 accept(check_chunk(&suspects[i..=i], Wanted::Syntactic, None));
             });
             finish_files();

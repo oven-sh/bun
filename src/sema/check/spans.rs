@@ -86,9 +86,7 @@ pub(crate) fn skip_trivia(text: &[u8], mut at: usize) -> usize {
             Some(b'/') => match text.get(at + 1) {
                 Some(b'/') => at = line_end(text, at + 2),
                 Some(b'*') => {
-                    at = text[at + 2..]
-                        .windows(2)
-                        .position(|w| w == b"*/")
+                    at = bun_core::strings::index_of(&text[at + 2..], b"*/")
                         .map_or(text.len(), |end| at + end + 4);
                 }
                 _ => return at,
@@ -178,10 +176,7 @@ fn line_comment_start(line: &[u8]) -> Option<usize> {
             }
             b'/' if line.get(at + 1) == Some(&b'/') => return Some(at),
             b'/' if line.get(at + 1) == Some(&b'*') => {
-                at = line[at + 2..]
-                    .windows(2)
-                    .position(|w| w == b"*/")
-                    .map(|end| at + end + 4)?;
+                at = bun_core::strings::index_of(&line[at + 2..], b"*/").map(|end| at + end + 4)?;
             }
             _ => at += 1,
         }
@@ -216,7 +211,7 @@ pub(crate) fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
             }
         }
         if text[..at].ends_with(b"*/")
-            && let Some(open) = text[..at - 2].windows(2).rposition(|w| w == b"/*")
+            && let Some(open) = bun_core::strings::last_index_of(&text[..at - 2], b"/*")
         {
             at = open;
         }

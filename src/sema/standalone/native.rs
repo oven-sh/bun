@@ -159,6 +159,8 @@ mod fake_mimalloc {
         main_heap().cast()
     }
     #[unsafe(no_mangle)]
+    extern "C" fn mi_collect(_force: bool) {}
+    #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_heap_malloc(heap: *mut c_void, size: usize) -> *mut c_void {
         unsafe { heap_alloc(heap.cast(), size, 16, false) }
     }

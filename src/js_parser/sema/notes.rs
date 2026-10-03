@@ -154,6 +154,11 @@ thread_local! {
     static ROOM: core::cell::Cell<Notes> = Default::default();
 }
 
+/// Replaces the room the last file of this thread left.
+pub(crate) fn replace_room(room: Notes) -> Notes {
+    ROOM.replace(room)
+}
+
 impl Notes {
     /// None, with the room the last file of this thread left.
     pub(crate) fn with_room() -> Notes {

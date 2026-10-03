@@ -54,6 +54,15 @@ thread_local! {
     static SEEN_NAMES: std::cell::Cell<(u64, Box<[std::cell::Cell<SeenName>]>)> = Default::default();
 }
 
+/// `ROOM` and `SEEN_NAMES`.
+#[derive(Default)]
+pub(crate) struct Room(hir::File, (u64, Box<[std::cell::Cell<SeenName>]>));
+
+/// Replaces what the last file of this thread left for the next.
+pub(crate) fn replace_room(room: Room) -> Room {
+    Room(ROOM.replace(room.0), SEEN_NAMES.replace(room.1))
+}
+
 impl Drop for Builder<'_> {
     fn drop(&mut self) {
         SEEN_NAMES.set((self.atoms.number(), std::mem::take(&mut self.seen_names)));

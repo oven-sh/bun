@@ -259,10 +259,9 @@ impl Host for Virtual {
     ) -> bun_sema::hir::File {
         self.disk.parse(path, text, atoms, options)
     }
+    // One thread of the pool, as in `bun check --threads 1`: it has the stack of the product, and knows where it ends.
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
-        for i in 0..count {
-            work(i);
-        }
+        self.disk.parallel(count, work);
     }
 }
 

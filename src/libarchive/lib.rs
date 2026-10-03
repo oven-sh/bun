@@ -17,7 +17,7 @@ use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 
 pub mod error;
-pub use error::{Error, Result};
+pub use error::{Error, ExtractFailure, Result};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local libarchive C-API surface. Thin safe(ish) wrappers over the raw
@@ -387,22 +387,23 @@ pub mod lib {
         }
 
         /// Reads the data of the current entry and writes it to `fd` through
-        /// an [`EntryWriter`].
-        pub fn read_data_into_fd(&self, fd: Fd, strategy: &mut WriteStrategy) -> Result {
+        /// an [`EntryWriter`]. `Err` is a failed call on `fd`. `Ok` is
+        /// libarchive's status for the data of the entry.
+        pub fn read_data_into_fd(
+            &self,
+            fd: Fd,
+            strategy: &mut WriteStrategy,
+        ) -> bun_sys::Maybe<Result> {
             let mut writer = EntryWriter::new(fd);
             let mut offset: i64 = 0;
             while let Some(block) = self.next(&mut offset) {
                 if block.result != Result::Ok {
-                    return block.result;
+                    return Ok(block.result);
                 }
-                if writer.write(strategy, block.offset, block.bytes).is_err() {
-                    return Result::Failed;
-                }
+                writer.write(strategy, block.offset, block.bytes)?;
             }
-            match writer.finish(offset) {
-                Ok(()) => Result::Ok,
-                Err(_) => Result::Failed,
-            }
+            writer.finish(offset)?;
+            Ok(Result::Ok)
         }
 
         // `self` must be a live archive handle from `archive_{read,write}_new()`.
@@ -1197,7 +1198,7 @@ pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: b
 /// `bun.makePathW` helper which transcodes via `from_w_path` and would lose
 /// lone surrogates / skip `\??\` long-path prefixing).
 #[cfg(windows)]
-fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
+fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> core::result::Result<(), LoopFailure> {
     use bun_sys::{E, WindowsOpenDirOp, WindowsOpenDirOptions, open_dir_at_windows};
     // Access mask (`STANDARD_RIGHTS_READ | FILE_READ_ATTRIBUTES |
     // FILE_READ_EA | SYNCHRONIZE | FILE_TRAVERSE`) is selected by setting `read_only`,
@@ -1219,6 +1220,123 @@ fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
             Err(e) => Err(e.into()),
         }
     })
+}
+
+/// Why the loop in `Archiver::extract_entries` stopped. `extract_to_dir` adds
+/// the entry's path or libarchive's message, which need the live archive
+/// handle, to make the [`ExtractFailure`].
+enum LoopFailure {
+    /// A syscall on the destination failed for the entry the loop is at.
+    Sys(bun_sys::Error),
+    /// libarchive could not read the archive.
+    Archive,
+    Other(Error),
+}
+
+impl LoopFailure {
+    #[cold]
+    fn into_extract_failure(
+        self,
+        archive: &Archive,
+        entry: *mut lib::Entry,
+        depth_to_skip: usize,
+    ) -> ExtractFailure {
+        match self {
+            // A syscall fails for an entry only after `read_next_header`
+            // returned it, so `entry` is not null here.
+            LoopFailure::Sys(error) => ExtractFailure::Entry {
+                error,
+                path: resolved_entry_path(lib::Entry::opaque_ref(entry), depth_to_skip),
+            },
+            LoopFailure::Archive => {
+                ExtractFailure::Archive(Box::from(slice_to_nul(archive.error_string())))
+            }
+            LoopFailure::Other(error) => ExtractFailure::Other(error),
+        }
+    }
+}
+
+impl From<bun_sys::Error> for LoopFailure {
+    fn from(error: bun_sys::Error) -> Self {
+        Self::Sys(error)
+    }
+}
+
+impl From<bun_alloc::AllocError> for LoopFailure {
+    fn from(error: bun_alloc::AllocError) -> Self {
+        Self::Other(error.into())
+    }
+}
+
+impl From<bun_sys::MakeLibUvOwnedError> for LoopFailure {
+    fn from(error: bun_sys::MakeLibUvOwnedError) -> Self {
+        Self::Other(error.into())
+    }
+}
+
+#[cfg(windows)]
+impl From<bun_paths::Error> for LoopFailure {
+    fn from(error: bun_paths::Error) -> Self {
+        Self::Other(error.into())
+    }
+}
+
+/// Drops the first `depth` components of an entry's path and the separators
+/// in front of the rest. `None` when the path ends before that.
+#[inline]
+fn skip_components(mut remaining: &[OSPathChar], depth: usize) -> Option<&[OSPathChar]> {
+    let sep: OSPathChar = b'/' as OSPathChar;
+    let mut i = 0usize;
+    while i < depth {
+        while let [first, rest @ ..] = remaining {
+            if *first == sep {
+                remaining = rest;
+            } else {
+                break;
+            }
+        }
+        if remaining.is_empty() {
+            return None;
+        }
+        match strings::index_of_scalar(remaining, sep) {
+            Some(j) => remaining = &remaining[j..],
+            None => remaining = &remaining[remaining.len()..],
+        }
+        i += 1;
+    }
+    while let [first, rest @ ..] = remaining {
+        if *first == sep {
+            remaining = rest;
+        } else {
+            break;
+        }
+    }
+    Some(remaining)
+}
+
+/// The path `Archiver::extract_entries` resolves for `entry`, relative to the
+/// destination. UTF-8 on Windows.
+fn resolved_entry_path(entry: &lib::Entry, depth_to_skip: usize) -> Box<[u8]> {
+    #[cfg(windows)]
+    let pathname_z = entry.pathname_w();
+    #[cfg(not(windows))]
+    let pathname_z = entry.pathname();
+    let pathname = skip_components(&pathname_z[..], depth_to_skip).unwrap_or_default();
+    let mut normalized_buf: Vec<OSPathChar> = vec![0; pathname.len() + 1];
+    let normalized = bun_paths::resolve_path::normalize_buf_t::<
+        OSPathChar,
+        bun_paths::platform::Auto,
+    >(pathname, &mut normalized_buf);
+    #[cfg(windows)]
+    {
+        strings::to_utf8_list_with_type(Vec::new(), normalized)
+            .map(Vec::into_boxed_slice)
+            .unwrap_or_default()
+    }
+    #[cfg(not(windows))]
+    {
+        Box::from(&*normalized)
+    }
 }
 
 pub struct Archiver;
@@ -1447,12 +1565,27 @@ impl Archiver {
         ctx: Option<&mut Context>,
         appender: &mut A,
         options: ExtractOptions,
-    ) -> crate::Result<u32> {
+    ) -> core::result::Result<u32, ExtractFailure> {
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
         let mut stream = unsafe { BufferReadStream::init(file_buffer) };
         let _ = stream.open_read();
+        Self::extract_entries(&stream, &mut entry, dir, ctx, appender, options).map_err(|failure| {
+            failure.into_extract_failure(stream.archive(), entry, options.depth_to_skip)
+        })
+    }
+
+    /// The loop of `extract_to_dir`. `current_entry` is the entry the loop is
+    /// at when it returns.
+    fn extract_entries<A: ArchiveAppender>(
+        stream: &BufferReadStream,
+        current_entry: &mut *mut lib::Entry,
+        dir: Fd,
+        ctx: Option<&mut Context>,
+        appender: &mut A,
+        options: ExtractOptions,
+    ) -> core::result::Result<u32, LoopFailure> {
         let archive = stream.archive;
         let mut count: u32 = 0;
         let dir_fd = dir;
@@ -1471,13 +1604,14 @@ impl Archiver {
 
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime
-            let r = unsafe { (*archive).read_next_header(&mut entry) };
+            let r = unsafe { (*archive).read_next_header(current_entry) };
+            let entry = *current_entry;
 
             match r {
                 lib::Result::Eof => break 'loop_,
                 lib::Result::Retry => continue 'loop_,
                 lib::Result::Failed | lib::Result::Fatal => {
-                    return Err(crate::Error::Fail);
+                    return Err(LoopFailure::Archive);
                 }
                 _ => {
                     // TODO:
@@ -1535,40 +1669,10 @@ impl Archiver {
                     // `pathname_z` is `&ZStr` on POSIX (`as_bytes() → &[u8]`)
                     // and `&WStr` on Windows (`as_slice() → &[u16]`); both
                     // deref to `&[OSPathChar]`.
-                    let pathname_slice: &[OSPathChar] = &pathname_z[..];
-                    let mut remaining: &[OSPathChar] = pathname_slice;
-                    {
-                        let sep: OSPathChar = b'/' as OSPathChar;
-                        let mut i = 0usize;
-                        while i < options.depth_to_skip {
-                            while let [first, rest @ ..] = remaining {
-                                if *first == sep {
-                                    remaining = rest;
-                                } else {
-                                    break;
-                                }
-                            }
-                            if remaining.is_empty() {
-                                continue 'loop_;
-                            }
-                            match strings::index_of_scalar(remaining, sep) {
-                                Some(j) => remaining = &remaining[j..],
-                                None => remaining = &remaining[remaining.len()..],
-                            }
-                            i += 1;
-                        }
-                        while let [first, rest @ ..] = remaining {
-                            if *first == sep {
-                                remaining = rest;
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    // pathname = rest.ptr[0..rest.len :0]  (NUL is at original buffer end)
-                    // SAFETY: `remaining` is a tail slice of `pathname_z`, which is NUL-terminated
-                    // at its original `.len()`; therefore `remaining[remaining.len()] == 0`.
-                    let pathname: &[OSPathChar] = remaining;
+                    let Some(pathname) = skip_components(&pathname_z[..], options.depth_to_skip)
+                    else {
+                        continue 'loop_;
+                    };
 
                     if pathname.len() >= normalized_buf.len() {
                         if options.log {
@@ -1847,7 +1951,7 @@ impl Archiver {
                                                         ),
                                                     );
                                                 }
-                                                return Err(crate::Error::Fail);
+                                                return Err(LoopFailure::Archive);
                                             }
                                             plucker_.found = !plucker_.contents.list.is_empty();
                                             plucker_.fd = *file_handle;
@@ -1863,7 +1967,7 @@ impl Archiver {
                                     match unsafe {
                                         (*archive)
                                             .read_data_into_fd(*file_handle, &mut write_strategy)
-                                    } {
+                                    }? {
                                         lib::Result::Eof => break 'loop_,
                                         lib::Result::Ok => break 'possibly_retry,
                                         lib::Result::Retry => {
@@ -1902,7 +2006,7 @@ impl Archiver {
                                                     ),
                                                 );
                                             }
-                                            return Err(crate::Error::Fail);
+                                            return Err(LoopFailure::Archive);
                                         }
                                     }
                                     retries_remaining -= 1;
@@ -1927,17 +2031,15 @@ impl Archiver {
         ctx: Option<&mut Context>,
         appender: &mut A,
         options: ExtractOptions,
-    ) -> crate::Result<u32> {
-        let dir: Fd = 'brk: {
-            let cwd = Fd::cwd();
-            let _ = cwd.make_path_u8(root);
-
-            if bun_paths::is_absolute(root) {
-                break 'brk bun_sys::open_dir_absolute(root)?;
-            } else {
-                break 'brk bun_sys::open_dir_at(cwd, root)?;
-            }
-        };
+    ) -> core::result::Result<u32, ExtractFailure> {
+        let cwd = Fd::cwd();
+        let _ = cwd.make_path_u8(root);
+        let dir: Fd = if bun_paths::is_absolute(root) {
+            bun_sys::open_dir_absolute(root)
+        } else {
+            bun_sys::open_dir_at(cwd, root)
+        }
+        .map_err(ExtractFailure::Destination)?;
 
         let _close_guard = scopeguard::guard(dir, |d| {
             if options.close_handles {

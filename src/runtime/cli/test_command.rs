@@ -2407,9 +2407,7 @@ impl TestCommand {
         Self::exit_after_report(reporter, vm, failed)
     }
 
-    /// The report at the end of a run: snapshot files, the coverage table, the summary, the
-    /// JUnit and timings files. Returns whether the run failed. Called from the tail of `exec`,
-    /// and from `report_run_ended_by_exit` when a `process.exit()` ends the run before that.
+    /// The end-of-run report: snapshots, coverage, summary, JUnit, timings. Returns whether the run failed.
     fn report_run(
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,
@@ -2978,8 +2976,7 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            // Only count the file once, not once per repeat. Counted before the load, so that
-            // a `process.exit()` at the top level of the file reports it as started.
+            // Once per file, not once per repeat, and before the load: an exit at its top level reports the file.
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }
@@ -3115,9 +3112,7 @@ impl TestCommand {
     }
 }
 
-/// `process.exit()`, `process.reallyExit()` or a fatal exception on the main thread. The
-/// caller ends the process when this returns, so a run that `run_all_tests` has on the stack
-/// never reaches the tail of `exec`.
+/// A main-thread exit was requested. A serial run on the stack is reported before the caller ends the process.
 #[inline]
 pub(crate) fn on_requested_exit(vm: &mut VirtualMachine, code: u8) {
     if let Some(run) = jest::Jest::runner().and_then(|runner| runner.serial_run.take()) {
@@ -3125,26 +3120,22 @@ pub(crate) fn on_requested_exit(vm: &mut VirtualMachine, code: u8) {
     }
 }
 
-/// Reports the run in place of the tail of `exec`, and keeps a run that failed, or that the
-/// exit cut short, from exiting 0.
+/// Reports the run in place of the tail of `exec`. A run that failed or was cut short does not exit 0.
 #[cold]
 fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code: u8) {
     let running_file =
         jest::Jest::runner().and_then(|runner| runner.bun_test_root.clone_active_file());
-    // `TestCommand::run` lends its reporter to the file that it runs, and `handle_test_completed`
-    // reaches it through the file too. Between files, the reporter is the one of `run_all_tests`.
+    // The file that runs holds the reporter `handle_test_completed` uses. Between files, `run_all_tests` holds it.
     let reporter = running_file
         .as_deref()
         .and_then(|file| file.reporter)
         .map_or_else(|| run.reporter.as_ptr(), core::ptr::NonNull::as_ptr);
-    // SAFETY: `exec` owns the reporter and never returns. `run_all_tests` and `run` borrow it
-    // while they are on the stack, and neither runs again: the caller exits the process.
+    // SAFETY: the reporter outlives the run. The frames that borrow it never run again: the caller exits.
     let reporter = unsafe { &mut *reporter };
     let files: &[Interned] = &run.files;
 
     if should_drain_event_loop() {
-        // The file is the whole run and ends it with its own status, as under node. Only a
-        // failure that is already counted outranks that status.
+        // As under node, the file ends the run with its own code. Only a failure that is already counted outranks it.
         if reporter.jest.summary.fail > 0 || reporter.jest.unhandled_errors_between_tests > 0 {
             vm.exit_handler.min_exit_code = 1;
         }
@@ -3163,9 +3154,7 @@ fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code:
             == 0
             && reporter.jest.unhandled_errors_between_tests == 0;
 
-    // A file that is the whole run and exits before it registers a test or a `describe` is a
-    // script: its status is its result. Node's test harness does this to skip a file
-    // (`common.skip()`) and to re-spawn it with its `// Flags:`.
+    // A lone file that exits before it registers anything is a script, as node's `common.skip()` and `// Flags:` re-spawn.
     if files.len() == 1 && !vm.is_in_preload && nothing_reported && !unfinished.registered {
         return;
     }
@@ -3182,9 +3171,7 @@ fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code:
         .min(files.len());
     let not_started = &files[started..];
 
-    // The exit is one failure when it leaves work undone: a test without a result, a file that
-    // has not registered all its tests, or a file that did not start. A run that lost nothing
-    // keeps the code of the exit.
+    // A failure when the exit leaves work undone. A run that lost nothing keeps the code of the exit.
     let is_failure = unfinished.tests > 0 || unfinished.collecting || !not_started.is_empty();
 
     if reporter.reporters.dots && reporter.last_printed_dot.replace(false) {

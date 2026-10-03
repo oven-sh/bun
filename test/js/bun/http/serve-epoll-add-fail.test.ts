@@ -2,6 +2,7 @@
 // kernel returns when fs.epoll.max_user_watches is exhausted) so Bun.serve /
 // Bun.listen must throw and accepted connections must be closed, not parked.
 // A loop whose own wakeup eventfd is refused must not be handed out at all.
+import type { Subprocess } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import net from "node:net";
@@ -435,11 +436,12 @@ test.concurrent.skipIf(!isLinux || !cc)(
 // thread) waits until something else ends the loop's wait, or for good. Loop
 // creation has to fail instead.
 describe.skipIf(!isLinux || !cc)("a loop whose wakeup eventfd cannot be registered", () => {
-  // Without the fix some of these children never exit. The kill keeps such a
-  // run from leaving a process behind and makes it fail on an assertion, so
-  // the test timeout has to be the longer of the two.
-  const killAfterMs = 10_000;
-  const testTimeoutMs = 20_000;
+  // Without the fix three of these children never exit, and a test that times
+  // out never gets to dispose its child.
+  const running = new Set<Subprocess>();
+  afterAll(() => {
+    for (const proc of running) proc.kill("SIGKILL");
+  });
 
   async function runWithRefusedWakeup(script: string, thread: string, nth: number, env: Record<string, string> = {}) {
     await using proc = Bun.spawn({
@@ -466,10 +468,10 @@ describe.skipIf(!isLinux || !cc)("a loop whose wakeup eventfd cannot be register
       },
       stdout: "pipe",
       stderr: "pipe",
-      timeout: killAfterMs,
-      killSignal: "SIGKILL",
     });
+    running.add(proc);
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    running.delete(proc);
     return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
 
@@ -493,41 +495,29 @@ describe.skipIf(!isLinux || !cc)("a loop whose wakeup eventfd cannot be register
       { WITH_SIGNAL: "1", BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
       { first: thrown, retry: 0, waiterThread: true },
     ],
-  ])(
-    "a Bun.spawnSync %s throws, and the next call works",
-    async (_name, env, expected) => {
-      const result = await runWithRefusedWakeup("spawn-sync.js", "main", 2, env);
-      expect(reportOf(result)).toEqual(expected);
-      expect({ exitCode: result.exitCode, signalCode: result.signalCode }).toEqual({ exitCode: 0, signalCode: null });
-    },
-    testTimeoutMs,
-  );
+  ])("a Bun.spawnSync %s throws, and the next call works", async (_name, env, expected) => {
+    const result = await runWithRefusedWakeup("spawn-sync.js", "main", 2, env);
+    expect(reportOf(result)).toEqual(expected);
+    expect({ exitCode: result.exitCode, signalCode: result.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
 
-  test.concurrent(
-    "node:child_process spawnSync returns the error, and the next call works",
-    async () => {
-      const result = await runWithRefusedWakeup("child-process.js", "main", 2);
-      expect(reportOf(result)).toEqual({
-        first: { status: null, error: { code: "ENOSPC", errno: -28, syscall: "spawnSync /bin/sh" } },
-        retry: { status: 0, error: null },
-      });
-      expect({ exitCode: result.exitCode, signalCode: result.signalCode }).toEqual({ exitCode: 0, signalCode: null });
-    },
-    testTimeoutMs,
-  );
+  test.concurrent("node:child_process spawnSync returns the error, and the next call works", async () => {
+    const result = await runWithRefusedWakeup("child-process.js", "main", 2);
+    expect(reportOf(result)).toEqual({
+      first: { status: null, error: { code: "ENOSPC", errno: -28, syscall: "spawnSync /bin/sh" } },
+      retry: { status: 0, error: null },
+    });
+    expect({ exitCode: result.exitCode, signalCode: result.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
 
   // A per-thread loop has no caller that could carry on without it.
   test.concurrent.each([
     ["the main thread", "main", "hello.js"],
     ["the bundler thread", "Bundler", "build.js"],
     ["the HTTP client thread", "HTTP Client", "fetch-twice.js"],
-  ])(
-    "%s ends the process with a message",
-    async (_name, thread, script) => {
-      const { stdout, stderr, signalCode } = await runWithRefusedWakeup(script, thread, 1);
-      expect(stderr).toContain("failed to create the event loop: epoll_ctl() failed: ENOSPC");
-      expect({ stdout, signalCode }).toEqual({ stdout: "", signalCode: "SIGABRT" });
-    },
-    testTimeoutMs,
-  );
+  ])("%s ends the process with a message", async (_name, thread, script) => {
+    const { stdout, stderr, signalCode } = await runWithRefusedWakeup(script, thread, 1);
+    expect(stderr).toContain("failed to create the event loop: epoll_ctl() failed: ENOSPC");
+    expect({ stdout, signalCode }).toEqual({ stdout: "", signalCode: "SIGABRT" });
+  });
 });

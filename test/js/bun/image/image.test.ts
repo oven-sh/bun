@@ -379,6 +379,31 @@ describe("Bun.Image", () => {
       expect({ w: a.w, h: a.h }).toEqual({ w: 4, h: 2 });
       expect({ w: a.w, h: a.h }).toEqual({ w: b.w, h: b.h });
     });
+
+    // 200×211 asked for width 100 is 100×105 by the source's own ratio.
+    // libjpeg-turbo decodes this one at 1/2 — 100×106, three quarters of the
+    // IDCT skipped — and a target resolved against that buffer answers 106
+    // instead, so the output size depends on the container the pixels
+    // arrived in. PNG, which has no shrink-on-load, is the control.
+    test("shrink-on-load does not move the resize target", async () => {
+      const src = makePng(200, 211, (x, y) => [(x * 5) & 255, (y * 3) & 255, 0, 255]);
+      const jpeg = await new Bun.Image(src).jpeg().bytes();
+      const fromPng = decodePngRaw(await new Bun.Image(src).resize(100).png().bytes());
+      const fromJpeg = decodePngRaw(await new Bun.Image(jpeg).resize(100).png().bytes());
+      expect({ w: fromPng.w, h: fromPng.h }).toEqual({ w: 100, h: 105 });
+      expect({ w: fromJpeg.w, h: fromJpeg.h }).toEqual({ w: 100, h: 105 });
+    });
+
+    // Same numbers with the source stored on its side: rotate runs before
+    // resize, so the dimensions the target is resolved against have to turn
+    // with the pixels. Resolving against the unrotated 211×200 would give
+    // 100×94, and against the 106×100 the decoder returned, 100×106.
+    test("rotate before resize resolves against the upright source", async () => {
+      const src = makePng(211, 200, (x, y) => [(x * 5) & 255, (y * 3) & 255, 0, 255]);
+      const jpeg = await new Bun.Image(src).jpeg().bytes();
+      const out = decodePngRaw(await new Bun.Image(jpeg).rotate(90).resize(100).png().bytes());
+      expect({ w: out.w, h: out.h }).toEqual({ w: 100, h: 105 });
+    });
   });
 
   test("path string input reads from disk", async () => {

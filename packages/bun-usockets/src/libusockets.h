@@ -698,8 +698,8 @@ int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;
 int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
 /* TLS ciphertext bytes already sealed for this socket and reported as
  * written by us_socket_write(), still waiting on a writable event to reach
- * the kernel (the loop-wide spill slot owned by this socket). 0 for
- * plain-TCP sockets and for TLS sockets with nothing spilled. */
+ * the kernel (the socket's own queue). 0 for plain-TCP sockets and for TLS
+ * sockets with nothing queued. */
 unsigned int us_socket_ssl_spill_pending(us_socket_r s) nonnull_fn_decl;
 
 struct us_socket_t *us_socket_close(us_socket_r s, int code, void *reason) __attribute__((nonnull(1)));

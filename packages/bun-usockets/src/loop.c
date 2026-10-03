@@ -238,6 +238,14 @@ int us_loop_close_all_groups(struct us_loop_t *loop) {
 }
 
 /* This functions should never run recursively */
+static void us_internal_dispatch_timeout(struct us_socket_t *s) {
+    if (s->ssl) {
+        us_internal_ssl_on_timeout(s);
+    } else {
+        us_dispatch_timeout(s);
+    }
+}
+
 void us_internal_timer_sweep(struct us_loop_t *loop) {
     struct us_internal_loop_data_t *loop_data = &loop->data;
     /* For all socket groups in this loop */
@@ -272,7 +280,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
 
             if (short_ticks == s->timeout) {
                 s->timeout = 255;
-                us_dispatch_timeout(s);
+                us_internal_dispatch_timeout(s);
             }
             /* An owner must not deinit the embedding group from a timeout handler
              * (see us_socket_group_deinit). Survive one that closed every socket
@@ -317,7 +325,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
         unsigned char long_stamp = s->group->long_timestamp;
         if (stamp == s->timeout) {
             s->timeout = 255;
-            us_dispatch_timeout(s);
+            us_internal_dispatch_timeout(s);
             if (loop_data->low_prio_iterator != s) continue;
         }
         if (long_stamp == s->long_timeout) {
@@ -622,8 +630,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     return;
                 }
 
-                /* If we have no failed write or if we shut down, then stop polling for more writable */
-                if (!s->flags.last_write_failed || us_socket_is_shut_down(s)) {
+                /* If we have no failed write or if we shut down, then stop polling for more writable.
+                 * A TLS socket that sent its close_notify counts as shut down while the alert can
+                 * still wait in its queue: that one keeps polling. */
+                if (!s->flags.last_write_failed || (us_socket_is_shut_down(s) && !us_socket_ssl_spill_pending(s))) {
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
                 } else {
                     #ifdef LIBUS_USE_KQUEUE

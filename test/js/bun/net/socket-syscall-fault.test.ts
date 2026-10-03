@@ -67,10 +67,10 @@ test.concurrent.skipIf(skip)(
         // 2 rounds x (1 primer + 2 waves x 32).
         opened: 130,
         closed: 130,
-        // Every wave socket is closed mid-handshake by the unread-ciphertext
-        // guard, which reports the handshake as failed; the primers are
-        // closed by stop(true) and report nothing.
-        handshakeFailed: 128,
+        // Every socket is closed mid-handshake, which reports the handshake
+        // as failed: the wave sockets by the fatal alert the child sends, the
+        // primers when the child closes them.
+        handshakeFailed: 130,
         handshakeOk: 0,
         data: 0,
         errors: 0,

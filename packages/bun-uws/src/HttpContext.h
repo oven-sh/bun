@@ -485,7 +485,7 @@ private:
                 /* node:http also queues behind responses that were dispatched but
                  * are not the connection's current response yet, and behind a
                  * response that has ended but not finished: its bytes are still
-                 * in the outgoing buffer (or the TLS spill slot), and it owns the
+                 * in the outgoing buffer (or the TLS queue), and it owns the
                  * connection (Node's socket._httpMessage) until they have been
                  * written out, with later responses queued behind it (Node's
                  * state.outgoing). A write or uncork can empty the buffer before

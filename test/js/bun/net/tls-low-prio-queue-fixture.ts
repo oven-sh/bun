@@ -8,7 +8,7 @@
 // parked sockets.
 //
 // A parked socket can still get a WRITABLE dispatch. If its handshake flight
-// is backpressured, us_internal_ssl_on_writable retries the BIO write, and
+// is backpressured, us_internal_ssl_on_writable retries the queued flight, and
 // us_socket_raw_write re-issues us_poll_change(READABLE|WRITABLE); readable
 // is now back on a socket that is still in the low-prio queue. The next
 // readable dispatch with an exhausted budget used to park it a SECOND time:
@@ -32,16 +32,16 @@
 //      has fired.
 //   2. The server resumes all N at once: N readables land in one loop
 //      iteration, the budget processes 5 ClientHellos (flight -> send() -> 0
-//      -> WANT_WRITE) and parks the rest at the ClientHello stage. Each later
+//      -> queued) and parks the rest at the ClientHello stage. Each later
 //      iteration re-enables 5 more, so after ceil(N / 5) + 1 iterations every
 //      socket has a backpressured flight. The server counts iterations
 //      (getEventLoopStats().iteration is us_internal_loop_pre's counter) and
 //      then pauses all N again.
-//   3. The child writes one byte to each socket and reports `bursted`. The
-//      server resumes all N at once: N readables in one iteration again. The
-//      budget processes 5 (the byte is unread ciphertext after WANT_WRITE, so
-//      on_data closes them in that same iteration) and parks N - 5 with their
-//      flight still pending. Every iteration after that re-enables 5 parked
+//   3. The child writes a fatal alert record to each socket and reports
+//      `bursted`. The server resumes all N at once: N readables in one
+//      iteration again. The budget processes 5 (the alert fails the
+//      handshake, so on_data closes them in that same iteration) and parks
+//      N - 5 with their flight still pending. Every iteration after that re-enables 5 parked
 //      sockets (each then closes the same way), while the still-parked ones
 //      get their WRITABLE retry, which re-enables READABLE, and then a
 //      READABLE dispatch with the budget exhausted: the guarded path.
@@ -52,10 +52,9 @@
 // wave and the test asserts the exact split.
 //
 // One extra "primer" connection per round takes the first handshake flight:
-// that flight is batched and its ciphertext occupies the loop's single spill
-// slot (ssl_spill_owner), and a spill owner never hits the unread-ciphertext
-// close in step 3. With the slot taken, all N wave sockets take the same
-// per-record WANT_WRITE path and the per-wave numbers are exact.
+// that flight is batched, and while its unsent rest waits in the primer's
+// queue no other socket on the loop batches. So all N wave sockets take the
+// same per-record path and the per-wave numbers are exact.
 import { socketFaultInjection as fault, getEventLoopStats } from "bun:internal-for-testing";
 import net from "node:net";
 import tls from "node:tls";
@@ -171,11 +170,9 @@ const clientHello = await captureClientHello();
 // stdout once the command's effect has reached the kernel (write callbacks)
 // or the sockets are gone (close events).
 //   connect <n> <port> -> connects n sockets and writes ONLY the ClientHello
-//                         to each (trailing bytes in the same segment would
-//                         trip the unread-ciphertext close in on_data before
-//                         the socket can be parked); answers `hellos <n>`
-//   burst              -> writes one byte to each socket of the last batch;
-//                         answers `bursted <n>`
+//                         to each; answers `hellos <n>`
+//   burst              -> writes a fatal handshake_failure alert record to
+//                         each socket of the last batch; answers `bursted <n>`
 //   reset              -> destroys every socket; answers `reset` once all of
 //                         them have closed
 //   exit               -> exits 0
@@ -209,7 +206,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     }
   } else if (cmd === "burst") {
     const live = batch.filter(c => !c.destroyed);
-    writeAll(live, Buffer.from([0]), () => say("bursted " + live.length));
+    writeAll(live, Buffer.from([21, 3, 3, 0, 2, 2, 40]), () => say("bursted " + live.length));
   } else if (cmd === "reset") {
     const open = all.filter(c => !c.closed);
     all = [];
@@ -338,7 +335,7 @@ async function round() {
   });
 
   // Every send from THIS process returns 0 (backpressure): the server flights
-  // stay WANT_WRITE forever and every writable retry re-issues
+  // stay queued forever and every writable retry re-issues
   // us_poll_change(READABLE|WRITABLE), including on already-parked sockets.
   // The faults are process-wide, so clear them even if the child fails.
   // fault.set returns false if the rule could not be armed; without the

@@ -199,9 +199,9 @@ public:
     }
 
     /* Whether every byte handed to us_socket_write() has reached the kernel.
-     * For TLS, us_socket_write() can report a batch as written while its
-     * ciphertext still sits in the loop's spill slot (openssl.c
-     * ssl_flush_write_batch); the close-after-drain gates in HttpResponse /
+     * For TLS, us_socket_write() can report records as written while their
+     * ciphertext still sits in the socket's queue (openssl.c ssl_emit);
+     * the close-after-drain gates in HttpResponse /
      * HttpContext must wait for that too. Kept separate from
      * getBufferedAmount() so WebSocket's maxBackpressure policy and the
      * JS-exposed bufferedAmount stay a plaintext count. */

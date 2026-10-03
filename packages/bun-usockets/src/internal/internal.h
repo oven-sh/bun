@@ -253,6 +253,8 @@ void us_internal_ssl_socket_left_group(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_open(us_socket_r s, int is_client, char *ip, int ip_length);
 struct us_socket_t *us_internal_ssl_on_data(us_socket_r s, char *data, int length);
 struct us_socket_t *us_internal_ssl_on_writable(us_socket_r s);
+/* The socket's timeout fired: ends a close that still waits for queued ciphertext, else dispatches on_timeout. */
+struct us_socket_t *us_internal_ssl_on_timeout(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_close(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_on_end(us_socket_r s);
 int us_internal_ssl_is_low_prio(us_socket_r s);
@@ -313,7 +315,8 @@ struct us_socket_t {
    * not finished. ssl_write_wants_read cannot tell: every pending handshake
    * sets it. */
   unsigned char ssl_write_parked : 1;
-  unsigned char ssl_read_wants_write : 1;
+  /* Sealed ciphertext of this socket waits for the kernel (openssl.c us_ssl_out_queue_t). */
+  unsigned char ssl_out_queued : 1;
   unsigned char ssl_fatal_error : 1;
   unsigned char ssl_is_server : 1;
   /* If set, us_internal_ssl_on_data() first dispatches the still-encrypted
@@ -321,12 +324,13 @@ struct us_socket_t {
    * Used by Bun's `socket.upgradeTLS()` so the returned [raw, tls] pair's
    * `raw` half can observe ciphertext (node:net Duplex.ondata semantics). */
   unsigned char ssl_raw_tap : 1;
-  /* A graceful TLS shutdown arrived while batched ciphertext was still
-   * spilled (see ssl_flush_write_batch); the shutdown re-runs once the
-   * spill drains so those records are not cut off by our FIN/close_notify. */
+  /* A graceful TLS shutdown arrived while ciphertext was still queued; the
+   * shutdown (or only its FIN, when the queue holds the close_notify) runs
+   * from the writable event once the queue drains. */
   unsigned char ssl_shutdown_after_spill : 1;
   /* Same as ssl_shutdown_after_spill but for us_internal_ssl_close: the
-   * close re-runs from the writable event once the spill drains. */
+   * close re-runs from the writable event once the queue drains, or from the
+   * socket's timeout when the peer never takes it. */
   unsigned char ssl_close_after_spill : 1;
   /* The plaintext EOF (peer close_notify or the raw TCP FIN behind it) was
    * already dispatched to the user layer; both EOF paths can fire for one
@@ -361,6 +365,8 @@ struct us_socket_t {
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
   unsigned char ssl_pending_close_code : 2;
+  /* The deferred close armed the socket's timeout itself (its holder had none). */
+  unsigned char ssl_close_timeout_armed : 1;
   /* Consecutive send() failures with an errno that is neither
    * would-block/transient nor a known peer-gone error (see
    * us_socket_write_check_error). Reset by any send that makes progress.

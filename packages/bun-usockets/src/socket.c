@@ -847,7 +847,7 @@ void us_socket_resume(struct us_socket_t *s) {
     if (us_socket_is_closed(s)) return;
 
     int events = s->read_eof ? 0 : LIBUS_SOCKET_READABLE;
-    if (!us_socket_is_shut_down(s)) {
+    if (!us_socket_is_shut_down(s) || us_socket_ssl_spill_pending(s)) {
         // still writable: a FIN of ours would have left the socket read-only
         events |= LIBUS_SOCKET_WRITABLE;
     }

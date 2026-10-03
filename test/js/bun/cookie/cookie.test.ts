@@ -396,6 +396,72 @@ test("delete cookie invalid path option", () => {
   );
 });
 
+// RFC 6265bis section 5.6: a user agent ignores a cookie attribute whose value is longer
+// than 1024 octets. A longer Path or Domain would silently widen the cookie's scope, so
+// refuse to serialize it, and ignore it when parsing like a browser does.
+describe("cookie attribute values longer than 1024 characters", () => {
+  const path1024 = "/" + Buffer.alloc(1023, "p").toString();
+  const path1025 = path1024 + "p";
+  // 16 labels of 63 characters, each with a dot in front, is exactly 1024.
+  const labels = Array.from({ length: 16 }, () => Buffer.alloc(63, "d").toString()).join(".");
+  const domain1024 = "." + labels;
+  const domain1025 = "d." + labels;
+
+  test("1024 characters is accepted", () => {
+    expect(path1024).toHaveLength(1024);
+    expect(domain1024).toHaveLength(1024);
+    const cookie = new Bun.Cookie("a", "b", { path: path1024, domain: domain1024 });
+    expect(cookie.path).toBe(path1024);
+    expect(cookie.domain).toBe(domain1024);
+    expect(Bun.Cookie.parse(cookie.serialize()).toJSON()).toEqual(cookie.toJSON());
+
+    const map = new Bun.CookieMap();
+    map.set("a", "b", { path: path1024, domain: domain1024 });
+    map.delete("c", { path: path1024, domain: domain1024 });
+    expect(map.toSetCookieHeaders()).toEqual([
+      `a=b; Domain=${domain1024}; Path=${path1024}; SameSite=Lax`,
+      `c=; Domain=${domain1024}; Path=${path1024}; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`,
+    ]);
+  });
+
+  test("a longer path throws", () => {
+    const message = "Invalid cookie path: longer than 1024 characters, so browsers would ignore it";
+    expect(() => new Bun.Cookie("a", "b", { path: path1025 })).toThrow(message);
+    expect(() => Bun.Cookie.from("a", "b", { path: path1025 })).toThrow(message);
+    expect(() => new Bun.Cookie({ name: "a", value: "b", path: path1025 })).toThrow(message);
+    expect(() => new Bun.CookieMap().set("a", "b", { path: path1025 })).toThrow(message);
+    expect(() => new Bun.CookieMap().set({ name: "a", value: "b", path: path1025 })).toThrow(message);
+    expect(() => new Bun.CookieMap().delete("a", { path: path1025 })).toThrow(message);
+    const cookie = new Bun.Cookie("a", "b");
+    expect(() => {
+      cookie.path = path1025;
+    }).toThrow(message);
+    expect(cookie.path).toBe("/");
+  });
+
+  test("a longer domain throws", () => {
+    const message = "Invalid cookie domain: longer than 1024 characters, so browsers would ignore it";
+    expect(() => new Bun.Cookie("a", "b", { domain: domain1025 })).toThrow(message);
+    expect(() => Bun.Cookie.from("a", "b", { domain: domain1025 })).toThrow(message);
+    expect(() => new Bun.Cookie({ name: "a", value: "b", domain: domain1025 })).toThrow(message);
+    expect(() => new Bun.CookieMap().set("a", "b", { domain: domain1025 })).toThrow(message);
+    expect(() => new Bun.CookieMap().set({ name: "a", value: "b", domain: domain1025 })).toThrow(message);
+    expect(() => new Bun.CookieMap().delete("a", { domain: domain1025 })).toThrow(message);
+    const cookie = new Bun.Cookie("a", "b");
+    expect(() => {
+      cookie.domain = domain1025;
+    }).toThrow(message);
+    expect(cookie.domain).toBeNull();
+  });
+
+  test("Cookie.parse ignores the attribute instead of throwing", () => {
+    const cookie = Bun.Cookie.parse(`a=b; Path=${path1025}; Domain=${domain1025}; Secure`);
+    expect(cookie.path).toBe("/");
+    expect(cookie.domain).toBeNull();
+    expect(cookie.secure).toBe(true);
+  });
+});
+
 describe("Bun.CookieMap constructor", () => {
   test("throws for invalid array", () => {
     expect(() => new Bun.CookieMap([["abc defg =fhaingj809读写汉字学中文"]])).toThrowErrorMatchingInlineSnapshot(

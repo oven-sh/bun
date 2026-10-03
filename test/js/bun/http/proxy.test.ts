@@ -903,6 +903,44 @@ test("HTTPS proxy tunnel sends a tls.serverName that is IP shorthand as SNI", as
   }
 });
 
+// As on a direct connection, an IPv6 address with a zone id is an IP address
+// inside the tunnel: it is matched on the IP SAN of its address, and it is not
+// sent as SNI. The certificate is the harness one, with the IP SAN ::1.
+test("HTTPS proxy tunnel matches a tls.serverName with a zone id on its address and sends no SNI", async () => {
+  const seen: (string | null)[] = [];
+  const target = tls.createServer(tlsCert, socket => {
+    socket.on("error", () => {});
+    seen.push(socket.servername || null);
+    socket.once("data", () => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"));
+  });
+  target.listen(0);
+  await once(target, "listening");
+  try {
+    const url = `https://localhost:${(target.address() as net.AddressInfo).port}/`;
+    const options = { proxy: httpProxyServer.url, keepalive: false };
+    const serverNames = [
+      ["::1%lo", { ca: tlsCert.cert }],
+      ["fe80::1%eth0", { rejectUnauthorized: false }],
+      // Not a zone id for net.isIP, so not an IP address.
+      ["fe80::1%br_lan", { rejectUnauthorized: false }],
+    ] as const;
+    for (const [serverName, verify] of serverNames) {
+      const res = await fetch(url, { ...options, tls: { serverName, ...verify } });
+      expect(`${res.status} ${await res.text()}`).toBe("200 ok");
+    }
+    expect(seen).toEqual([null, null, "fe80::1%br_lan"]);
+
+    expect(
+      await fetch(url, { ...options, tls: { serverName: "::2%lo", ca: tlsCert.cert } }).then(
+        res => res.status,
+        err => err.code,
+      ),
+    ).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+  } finally {
+    target.close();
+  }
+});
+
 test("HTTPS proxy tunnel keep-alive does not share tunnel across different credentials", async () => {
   using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
 

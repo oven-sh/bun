@@ -153,6 +153,15 @@ describe.concurrent.each([
     });
   });
 
+  // The zone id names an interface of the client, so the certificate has the address alone.
+  test("an IPv6 address with a zone id in tls.serverName is verified against the IP SAN of the address and is not sent as SNI", async () => {
+    await withServer("127.0.0.1", async server => {
+      const url = `${scheme}://u@127.0.0.1:${server.port}/db`;
+      expect(await connect(url, { ca: localhostTls.cert, serverName: "::1%lo" })).toBe("CONNECTED");
+      expect(server.servernames).toEqual([false]);
+    });
+  });
+
   test("a DNS name in tls.serverName is still sent as SNI", async () => {
     await withServer("127.0.0.1", async server => {
       const url = `${scheme}://u@127.0.0.1:${server.port}/db`;

@@ -288,8 +288,8 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
 }
 
 /// Tree folder names are joined into install destinations as
-/// `node_modules/<name>/...`; this path and the tree builder must agree on the
-/// same validator.
+/// `node_modules/<name>/...`, so a name has to stay inside that directory. The
+/// tree builder admits only names this accepts.
 pub(crate) fn folder_name_is_safe(name: &[u8]) -> bool {
     crate::dependency::is_safe_install_folder_name(name)
 }

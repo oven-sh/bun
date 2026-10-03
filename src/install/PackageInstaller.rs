@@ -375,10 +375,9 @@ pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
 }
 
 /// The path rules alone: the name stays inside the directory it is joined
-/// onto, as one component or as two for a scoped name. This is the whole check
-/// for the own name of the project, a workspace or a folder dependency. The
-/// user chose that name, and it is never an entry of `node_modules` by itself:
-/// such a package is only linked under the alias of a dependent.
+/// onto, as one component or as two for a scoped name. The isolated installer
+/// checks the own name of the project, a workspace or a folder dependency with
+/// this. That name is only used inside the package's own store entry.
 pub(crate) fn name_is_single_path_entry(name: &[u8]) -> bool {
     if name.is_empty() || name.len() >= MAX_PATH_BYTES || strings::contains_any(name, b"\\:\0") {
         return false;

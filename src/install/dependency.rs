@@ -552,22 +552,19 @@ pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
 }
 
 /// A name that becomes an entry in `node_modules`: a dependency alias, or the
-/// name of the package the alias resolves to. On top of the path rules above,
-/// reject the names npm refuses, because each one names a slot the installer
-/// owns rather than a package:
+/// name of the package the alias resolves to. It has to be `name` or
+/// `@scope/name`, and neither half may name a directory the installer owns:
 ///
-/// - a leading period on the name or on the package half of a scoped name.
-///   `.bin` is the directory every lifecycle script has on its `PATH`, and
-///   `.cache` and `.bun` hold bun's own state.
-/// - `node_modules` itself.
-/// - any shape other than `name` or `@scope/name`, so a bare `@scope` cannot
-///   take the scope directory the project's own `@scope/pkg` lives in.
+/// - a leading period. `.bin` holds the commands on the `PATH` of every
+///   lifecycle script, and `.cache` and `.bun` hold bun's own state.
+/// - `node_modules`. A lifecycle script runs with the `node_modules/.bin` of
+///   every directory above it on its `PATH`, so `node_modules/@scope/node_modules/.bin`
+///   reaches the scripts of `@scope/*` the same way `node_modules/node_modules/.bin`
+///   reaches every script.
 ///
-/// This is narrower than npm's full name rule on purpose. It covers the names
-/// that collide with a directory and leaves the rest (the URL-safe byte set, a
-/// leading `_`) to the registry. `is_safe_install_folder_name` keeps its own
-/// rules for the callers that validate something else: a bin name, a temporary
-/// directory label, a yarn lockfile URL.
+/// `is_safe_install_folder_name` keeps its own rules for the callers that
+/// validate something else: a bin name, a temporary directory label, a yarn
+/// lockfile URL.
 pub(crate) fn is_valid_node_modules_entry_name(name: &[u8]) -> bool {
     if !is_safe_install_folder_name(name) {
         return false;
@@ -587,17 +584,13 @@ pub(crate) fn is_valid_node_modules_entry_name(name: &[u8]) -> bool {
         name
     };
 
-    if name[0] == b'.' || package[0] == b'.' {
-        return false;
-    }
-
     if strings::contains_char(package, b'/') {
         return false;
     }
 
-    // Case-insensitive: on a case-insensitive volume `NODE_MODULES` is the
-    // same directory.
-    !name.eq_ignore_ascii_case(b"node_modules")
+    // Compared without case: on a case-insensitive volume `NODE_MODULES` is
+    // the same directory.
+    name[0] != b'.' && package[0] != b'.' && !package.eq_ignore_ascii_case(b"node_modules")
 }
 
 /// assumes version is valid

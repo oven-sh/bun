@@ -10288,52 +10288,150 @@ function registryWhereBarDependsOn(ctx: TestContext, urls: string[], dependencie
 // the installer owns would unpack the target there: `.bin` is on the PATH of
 // every lifecycle script, so is the `.bin` of a nested `node_modules`, and a
 // bare `@scope` is the directory the project's own `@scope/*` packages live in.
-describe.each([".bin", "@barn/.bin", "node_modules", "Node_Modules", "@barn"])("a dependency named %p", key => {
-  it.each(["a registry package", "the project"])(
-    "declared by %s is refused before anything is installed",
-    async declarer => {
-      await withContext(defaultOpts, async ctx => {
-        const urls: string[] = [];
-        const target = { [key]: "npm:baz@0.0.3" };
-        const fromRegistry = declarer === "a registry package";
-        setContextHandler(ctx, registryWhereBarDependsOn(ctx, urls, fromRegistry ? target : {}));
-        await Promise.all([
-          writeFile(
-            join(ctx.package_dir, "package.json"),
-            JSON.stringify({
-              name: "foo",
-              version: "0.0.1",
-              dependencies: fromRegistry ? { bar: "0.0.2" } : target,
-              scripts: { postinstall: [bunExe(), "foo-postinstall.js"].join(" ") },
-            }),
-          ),
-          writeFile(
-            join(ctx.package_dir, "foo-postinstall.js"),
-            'require("fs").writeFileSync("foo-postinstall.txt", "ran");',
-          ),
-        ]);
+// Every key here is a directory the installer owns, or a shape that would make
+// one. `@barn/node_modules` matters for the same reason `node_modules` does: a
+// lifecycle script runs with the `node_modules/.bin` of every directory above
+// it on its PATH, so the payload would reach the scripts of `@barn/*`.
+describe.concurrent.each([
+  ".bin",
+  "@barn/.bin",
+  "node_modules",
+  "Node_Modules",
+  "@barn/node_modules",
+  "@barn",
+  "@/baz",
+  "@barn/baz/extra",
+])("a dependency named %p", key => {
+  it.each([
+    ["a registry package", "hoisted"],
+    ["a registry package", "isolated"],
+    ["the project", "hoisted"],
+    ["the project", "isolated"],
+  ])("declared by %s is refused before anything is installed (%s linker)", async (declarer, linker) => {
+    await withContext({ linker: linker as "hoisted" | "isolated" }, async ctx => {
+      const urls: string[] = [];
+      const target = { [key]: "npm:baz@0.0.3" };
+      const fromRegistry = declarer === "a registry package";
+      setContextHandler(ctx, registryWhereBarDependsOn(ctx, urls, fromRegistry ? target : {}));
+      await Promise.all([
+        writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            // `bar` is a normal package that must install when nothing is refused
+            dependencies: fromRegistry ? { bar: "0.0.2" } : { ...target, bar: "0.0.2" },
+            scripts: { postinstall: [bunExe(), "foo-postinstall.js"].join(" ") },
+          }),
+        ),
+        writeFile(
+          join(ctx.package_dir, "foo-postinstall.js"),
+          'require("fs").writeFileSync("foo-postinstall.txt", "ran");',
+        ),
+      ]);
 
-        await using proc = spawn({
-          cmd: [bunExe(), "install"],
-          cwd: ctx.package_dir,
-          stdout: "pipe",
-          stderr: "pipe",
-          env,
-        });
-        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-        expect(err).toContain(`error: Invalid dependency name "${key}"`);
-        expect(out).not.toContain("installed");
-        expect({
-          // baz is not unpacked at the reserved path
-          unpacked: await exists(join(ctx.package_dir, "node_modules", key, "package.json")),
-          // and no lifecycle script runs in an install that refused a name
-          postinstall: await exists(join(ctx.package_dir, "foo-postinstall.txt")),
-        }).toEqual({ unpacked: false, postinstall: false });
-        expect(exitCode).toBe(1);
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
       });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({
+        errors: [...new Set(err.split(/\r?\n/).filter(line => line.startsWith("error:")))],
+        // nothing is unpacked at the reserved path
+        unpacked: await exists(join(ctx.package_dir, "node_modules", key, "package.json")),
+        // the install stops before the linker, so the good package beside the
+        // refused one is not laid out either
+        otherInstalled: await exists(join(ctx.package_dir, "node_modules", "bar", "package.json")),
+        // and no lifecycle script runs
+        postinstall: await exists(join(ctx.package_dir, "foo-postinstall.txt")),
+        installed: out.includes("installed"),
+        exitCode,
+      }).toEqual({
+        errors: [`error: Invalid dependency name "${key}"`],
+        unpacked: false,
+        otherInstalled: false,
+        postinstall: false,
+        installed: false,
+        exitCode: 1,
+      });
+    });
+  });
+});
+
+it("installs after package.json drops a name that bun.lock still holds", async () => {
+  // bun.lock as an older bun wrote it, when the key `@src` was accepted. The
+  // project has since renamed that dependency. The stale name is in the file
+  // that is loaded, not in the graph that is installed.
+  using dir = tempDir("stale-lockfile-name", {
+    "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "src-alias": "file:./src" } }),
+    "src/package.json": JSON.stringify({ name: "src", version: "1.0.0" }),
+    "bun.lock": `{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "app",
+      "dependencies": {
+        "@src": "file:./src",
+      },
     },
-  );
+  },
+  "packages": {
+    "@src": ["src@file:src", {}],
+  }
+}
+`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({
+    errors: err.split(/\r?\n/).filter(line => line.startsWith("error:")),
+    linked: await exists(join(String(dir), "node_modules", "src-alias", "package.json")),
+    // the lockfile is written again, without the name
+    lockfileHoldsStaleName: (await file(join(String(dir), "bun.lock")).text()).includes('"@src"'),
+    exitCode,
+  }).toEqual({ errors: [], linked: true, lockfileHoldsStaleName: false, exitCode: 0 });
+});
+
+it("refuses a registry package whose own name is an entry of the installer", async () => {
+  await withContext(defaultOpts, async ctx => {
+    const urls: string[] = [];
+    // The alias is fine, so the tree builder accepts it. The name the registry
+    // serves is the one that would become the cache folder.
+    const manifests = dummyRegistryForContext(ctx, urls, { "0.0.3": {} });
+    setContextHandler(ctx, request =>
+      request.url.endsWith(".tgz") ? new Response(file(join(import.meta.dir, "baz-0.0.3.tgz"))) : manifests(request),
+    );
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { helper: "npm:.bin@0.0.3" } }),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain('Refusing to install package with invalid name ".bin"');
+    expect(out).not.toContain("installed");
+    expect(exitCode).not.toBe(0);
+  });
 });
 
 it("still installs an alias that names no entry of the installer", async () => {

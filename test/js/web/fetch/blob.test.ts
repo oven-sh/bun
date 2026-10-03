@@ -741,6 +741,29 @@ describe("consuming a slice's stream after the Blobs were collected", () => {
   });
 });
 
+// Reading a slice records whether its bytes are ASCII. Only a Blob that views
+// the whole store may record that on the store the parent reads through.
+describe("reading an ASCII prefix slice does not mark the parent's store as ASCII", () => {
+  const parts = ['"abc"', "héllo"];
+
+  test.each([
+    ["text()", (blob: Blob) => blob.text()],
+    ["json()", (blob: Blob) => blob.json()],
+    ["new Response(blob).text()", (blob: Blob) => new Response(blob).text()],
+  ])("%s", async (_, read) => {
+    const parent = new Blob(parts);
+    await read(parent.slice(0, 5));
+    expect([await parent.slice(5).text(), await parent.text()]).toEqual(["héllo", '"abc"héllo']);
+  });
+
+  test("the whole Blob still records it", async () => {
+    const parent = new Blob(["abc", "def"]);
+    await parent.slice(0, 3).text();
+    expect(await parent.text()).toBe("abcdef");
+    expect(await parent.slice(0).text()).toBe("abcdef");
+  });
+});
+
 // Wrapping a Blob whose type is heap-owned (not in the mime table) with a
 // known mime type overwrote content_type with a static pointer without
 // clearing content_type_allocated, so GC sweep freed a static pointer.

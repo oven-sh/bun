@@ -2366,13 +2366,9 @@ impl BlobExt for Blob {
     fn set_is_ascii_flag(&self, is_all_ascii: bool) {
         self.charset
             .set(strings::AsciiStatus::from_bool(Some(is_all_ascii)));
-        // if this Blob represents the entire binary data
-        // we can update the store's is_all_ascii flag
-        if self.size.get() > 0 && self.offset.get() == 0 {
+        if self.views_whole_store() {
             if let Some(store) = self.store() {
-                if matches!(store.data, store::Data::Bytes(_)) {
-                    store.is_all_ascii.set(is_all_ascii);
-                }
+                store.is_all_ascii.set(is_all_ascii);
             }
         }
     }
@@ -6038,12 +6034,11 @@ impl Any {
         let Some(s) = blob.store.get() else {
             return;
         };
-        let store::Data::Bytes(bytes) = &s.data else {
+        if !matches!(s.data, store::Data::Bytes(_)) {
             return;
-        };
+        }
         // A slice can hold the last reference to its parent's store.
-        let views_whole_store = blob.offset.get() == 0 && blob.size.get() >= bytes.len();
-        if !s.has_one_ref() || !views_whole_store {
+        if !s.has_one_ref() || !blob.views_whole_store() {
             return;
         }
         let internal = Store::data_mut(s).as_bytes_mut().to_internal_blob();

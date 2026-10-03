@@ -417,6 +417,23 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
+    /// `true` when this Blob's window covers every byte of its in-memory
+    /// store. A `slice()` shares the store and narrows `offset`/`size`, so
+    /// only a Blob for which this holds may speak for the store: take its
+    /// buffer, or record a fact about all of its bytes.
+    #[inline]
+    pub fn views_whole_store(&self) -> bool {
+        match self.store.get().as_deref() {
+            Some(s) => match &s.data {
+                store::Data::Bytes(bytes) => {
+                    self.offset.get() == 0 && self.size.get() >= bytes.len()
+                }
+                store::Data::File(_) | store::Data::S3(_) => false,
+            },
+            None => false,
+        }
+    }
+
     /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`
     /// itself may be `""`; that is not a filename.)
     ///

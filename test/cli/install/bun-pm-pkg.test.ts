@@ -372,6 +372,40 @@ describe.concurrent("bun pm pkg", () => {
     });
   });
 
+  describe("--dry-run", () => {
+    it("set prints the result without writing package.json", async () => {
+      using dir = makeTestDir();
+      const before = await readPkg(dir);
+      const { output, error, code } = await runPmPkg(["set", "description=New description", "--dry-run"], dir);
+      expect(error).toBe("");
+      expect(JSON.parse(output)).toMatchObject({ name: "test-package", description: "New description" });
+      expect(code).toBe(0);
+      expect(await readPkg(dir)).toEqual(before);
+    });
+
+    it("delete prints the result without writing package.json", async () => {
+      using dir = makeTestDir();
+      const before = await readPkg(dir);
+      const { output, error, code } = await runPmPkg(["delete", "description", "--dry-run"], dir);
+      expect(error).toBe("");
+      expect(JSON.parse(output).description).toBeUndefined();
+      expect(code).toBe(0);
+      expect(await readPkg(dir)).toEqual(before);
+    });
+
+    it("fix prints the result without writing package.json", async () => {
+      using dir = tempDir("pm-pkg-fix-dry-run", {
+        "package.json": JSON.stringify({ name: "TEST-PACKAGE", version: "1.0.0" }, null, 2),
+      });
+      const before = await readPkg(String(dir));
+      const { output, error, code } = await runPmPkg(["fix", "--dry-run"], String(dir));
+      expect(error).toBe("");
+      expect(JSON.parse(output)).toEqual({ name: "test-package", version: "1.0.0" });
+      expect(code).toBe(0);
+      expect(await readPkg(String(dir))).toEqual(before);
+    });
+  });
+
   describe("delete command", () => {
     it("should delete a property", async () => {
       using dir = makeTestDir();

@@ -144,6 +144,32 @@ impl PendingScripts {
         }
     }
 
+    /// `bun patch <pkg>` replaced the package at `dir` with a copy for the user to edit. Close
+    /// whatever is pending for that directory; `bun patch --commit` installs the patched
+    /// package and runs its scripts.
+    pub fn forget_directory(&mut self, dir: &bun_core::ZStr) {
+        self.load(true);
+        if let (true, Ok(edited)) = (self.has_stale(), bun_sys::stat(dir)) {
+            let same: Vec<Box<[u8]>> = self
+                .stale
+                .iter()
+                .filter(|path| {
+                    let mut abs = AutoAbsPath::init_top_level_dir();
+                    abs.append(path).assume_ok();
+                    matches!(
+                        bun_sys::stat(abs.slice_z()),
+                        Ok(st) if st.st_ino == edited.st_ino && st.st_dev == edited.st_dev
+                    )
+                })
+                .cloned()
+                .collect();
+            for path in same {
+                self.done(&path);
+            }
+        }
+        self.finish();
+    }
+
     fn forget_stale(&mut self, path: &[u8]) -> bool {
         match self.stale.iter().position(|p| **p == *path) {
             Some(i) => {

@@ -966,6 +966,15 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         Global::crash();
     }
 
+    // The folder is now the user's copy to edit. An install that retried its pending lifecycle
+    // scripts would put the cache's files back over the edits.
+    {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        manager
+            .pending_scripts
+            .forget_directory(resolve_path::z(module_folder, &mut buf));
+    }
+
     if not_in_workspace_root {
         let mut bufn = bun_paths::path_buffer_pool::get();
         bun_core::pretty!(

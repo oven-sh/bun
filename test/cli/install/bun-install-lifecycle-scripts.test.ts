@@ -1524,13 +1524,28 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           return { out, err, exitCode };
         };
 
-        return { ctx, packageDir, spawnInstall, install };
+        // another bun verb in the project, with the same linker
+        const run = async (args: string[], extraEnv: Record<string, string> = {}) => {
+          await using proc = spawn({
+            cmd: [bunExe(), ...args, "--linker", linker],
+            cwd: packageDir,
+            stdout: "pipe",
+            stdin: "ignore",
+            stderr: "pipe",
+            env: { ...testEnv, ...extraEnv },
+          });
+          const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { out, err, exitCode };
+        };
+
+        return { ctx, packageDir, spawnInstall, install, run };
       }
 
       // `lifecycle-postinstall-needs-toolchain` has a postinstall script that exits with 7
       // unless LIFECYCLE_TOOLCHAIN is set, and writes built.txt into the package when it
       // succeeds. With LIFECYCLE_BLOCK_PID_FILE set it writes its pid there instead and
-      // waits to be killed.
+      // waits to be killed. With LIFECYCLE_WAIT_FOR_FILE set it does not finish until that
+      // file exists. It appends one line to LIFECYCLE_STARTED_FILE each time it runs.
       async function setupNeedsToolchainTest() {
         const result = await setupLinkerTest({
           name: "foo",
@@ -1657,10 +1672,88 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         },
       );
 
-      // The retry above keys off a mark written before a trusted package's scripts
-      // run. A trusted package that has no scripts, or only a preinstall script (which
-      // the isolated linker finishes on a separate path), must not keep that mark,
-      // or every later install would reinstall it.
+      test(`a second install leaves a dependency alone while the first install runs its lifecycle script (${linker} linker)`, async () => {
+        const { ctx, packageDir, pkgDir, spawnInstall, install } = await setupNeedsToolchainTest();
+        using _ = ctx;
+        const started = join(packageDir, "started.txt");
+        const release = join(packageDir, "release.txt");
+        const scriptEnv = { LIFECYCLE_TOOLCHAIN: "1", LIFECYCLE_STARTED_FILE: started };
+
+        // The first install is inside the postinstall script, which waits for `release`.
+        const first = spawnInstall({ ...scriptEnv, LIFECYCLE_WAIT_FOR_FILE: release });
+        const firstResult = Promise.all([first.stdout.text(), first.stderr.text(), first.exited]);
+        while (!(await exists(started))) {
+          if (first.exitCode !== null) {
+            throw new Error(`bun install exited before the postinstall script started:\n${(await firstResult)[1]}`);
+          }
+          await Bun.sleep(20);
+        }
+
+        // The package is linked and its script is not finished, exactly as after a failed
+        // install. But the install that owns it is alive: a second install must not
+        // reinstall the package under the running script, nor run the script again.
+        {
+          const { out, err, exitCode } = await install(scriptEnv);
+          expect(err).not.toContain("error:");
+          expect(out).toContain("(no changes)");
+          expect(await file(started).text()).toBe("started\n");
+          expect(exitCode).toBe(0);
+        }
+
+        await writeFile(release, "");
+        {
+          const [, err, exitCode] = await firstResult;
+          expect(err).not.toContain("error:");
+          expect(await file(join(pkgDir, "built.txt")).text()).toBe("ok");
+          expect(await file(started).text()).toBe("started\n");
+          expect(exitCode).toBe(0);
+        }
+      });
+
+      // `bun patch <pkg>` is how a user repairs a package whose script is broken. It runs
+      // an install first, and that install must not stop at the script it is there to fix.
+      test(`bun patch prepares and repairs a dependency whose lifecycle script fails (${linker} linker)`, async () => {
+        const { ctx, pkgDir, install, run } = await setupNeedsToolchainTest();
+        using _ = ctx;
+
+        {
+          const { err, exitCode } = await install();
+          expect(err).toContain('error: postinstall script from "lifecycle-postinstall-needs-toolchain" exited with 7');
+          expect(exitCode).toBe(7);
+        }
+        {
+          const { out, err, exitCode } = await run(["patch", "lifecycle-postinstall-needs-toolchain"]);
+          expect(err).not.toContain("error:");
+          expect(out).toContain("bun patch --commit");
+          expect(exitCode).toBe(0);
+        }
+
+        // The repair: a postinstall script that needs no toolchain.
+        await writeFile(
+          join(pkgDir, "postinstall.js"),
+          `require("fs").writeFileSync(require("path").join(__dirname, "built.txt"), "patched");`,
+        );
+        {
+          const { err, exitCode } = await run(["patch", "--commit", "node_modules/lifecycle-postinstall-needs-toolchain"]);
+          expect(err).not.toContain("error:");
+          expect(await file(join(pkgDir, "built.txt")).text()).toBe("patched");
+          expect(exitCode).toBe(0);
+        }
+        {
+          await rm(join(pkgDir, "built.txt"));
+          const { out, err, exitCode } = await install();
+          expect(err).not.toContain("error:");
+          expect(out).toContain("(no changes)");
+          expect(await exists(join(pkgDir, "built.txt"))).toBe(false);
+          expect(exitCode).toBe(0);
+        }
+      });
+
+      // The retry keys off a record written before a trusted package is linked. A trusted
+      // package that has no scripts, or only a preinstall script (which the isolated
+      // linker finishes on a separate path), must not keep that record, or every later
+      // install would reinstall it. The record lives in one file that is gone when
+      // nothing is pending.
       test(`trusted dependencies whose scripts finished are not installed again (${linker} linker)`, async () => {
         const { ctx, packageDir, install } = await setupLinkerTest({
           name: "foo",
@@ -1680,6 +1773,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect(err).toContain("Saved lockfile");
           expect(out).not.toContain("(no changes)");
           expect(await file(preinstallTxt).text()).toBe("preinstall!");
+          expect(await exists(join(packageDir, "node_modules", ".bun-pending-scripts"))).toBe(false);
           expect(exitCode).toBe(0);
         }
         {

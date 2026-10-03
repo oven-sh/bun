@@ -130,10 +130,18 @@ void us_quic_socket_context_on_stream_close(us_quic_socket_context_t *ctx,
     void (*on_close)(us_quic_stream_t *));
 
 /* Stream I/O. Read happens via on_stream_data; write returns bytes accepted
- * (may be < len under flow-control backpressure). */
+ * (may be < len under flow-control backpressure). -1 is not backpressure:
+ * the send half is gone (reset by either side, already finished, or no
+ * header block was sent), so no later write succeeds and on_stream_writable
+ * does not help. */
 int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len);
 void us_quic_stream_want_read(us_quic_stream_t *s, int want);
-void us_quic_stream_want_write(us_quic_stream_t *s, int want);
+/* -1 when lsquic refuses: the send half is finished (a FIN or a RESET_STREAM
+ * is out), so no on_stream_writable comes for it any more. */
+int us_quic_stream_want_write(us_quic_stream_t *s, int want);
+/* 0 once lsquic owns the header block. -1 when the block cannot go out, for
+ * example a name or value over 65535 bytes, an encoded block over lsquic's
+ * 64 KB limit, or a closed send half. */
 int us_quic_stream_send_headers(us_quic_stream_t *s,
     const struct us_quic_header_t *headers, unsigned int count, int end_stream);
 /* Send a 1xx interim HEADERS frame (`:status` only); the final response
@@ -143,7 +151,11 @@ void us_quic_stream_shutdown(us_quic_stream_t *s);
 void us_quic_stream_flush(us_quic_stream_t *s);
 void us_quic_stream_shutdown_read(us_quic_stream_t *s);
 void us_quic_stream_close(us_quic_stream_t *s);
+/* RESET_STREAM in place of FIN, then close: H3_REQUEST_CANCELLED for a client
+ * that abandons a request, H3_INTERNAL_ERROR for a server that cannot
+ * complete a response. */
 void us_quic_stream_reset(us_quic_stream_t *s);
+void us_quic_stream_reset_internal_error(us_quic_stream_t *s);
 int us_quic_stream_has_unacked(us_quic_stream_t *s);
 
 void *us_quic_stream_ext(us_quic_stream_t *s);

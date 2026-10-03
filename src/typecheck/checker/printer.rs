@@ -14,7 +14,10 @@ use crate::printer::{
     new_printer, new_text_writer,
 };
 
-fn create_printer_with_defaults<'p>(a: Ast<'p>, emit_context: &'p mut EmitContext) -> Printer<'p> {
+fn create_printer_with_defaults<'a, 'p>(
+    a: Ast<'a>,
+    emit_context: &'p mut EmitContext,
+) -> Printer<'a, 'p> {
     new_printer(
         a,
         PrinterOptions::default(),
@@ -23,10 +26,10 @@ fn create_printer_with_defaults<'p>(a: Ast<'p>, emit_context: &'p mut EmitContex
     )
 }
 
-fn create_printer_with_remove_comments<'p>(
-    a: Ast<'p>,
+fn create_printer_with_remove_comments<'a, 'p>(
+    a: Ast<'a>,
     emit_context: &'p mut EmitContext,
-) -> Printer<'p> {
+) -> Printer<'a, 'p> {
     new_printer(
         a,
         PrinterOptions {
@@ -38,10 +41,10 @@ fn create_printer_with_remove_comments<'p>(
     )
 }
 
-fn create_printer_with_remove_comments_omit_trailing_semicolon<'p>(
-    a: Ast<'p>,
+fn create_printer_with_remove_comments_omit_trailing_semicolon<'a, 'p>(
+    a: Ast<'a>,
     emit_context: &'p mut EmitContext,
-) -> Printer<'p> {
+) -> Printer<'a, 'p> {
     new_printer(
         a,
         PrinterOptions {
@@ -54,10 +57,10 @@ fn create_printer_with_remove_comments_omit_trailing_semicolon<'p>(
     )
 }
 
-fn create_printer_with_remove_comments_omit_trailing_semicolon_never_ascii_escape<'p>(
-    a: Ast<'p>,
+fn create_printer_with_remove_comments_omit_trailing_semicolon_never_ascii_escape<'a, 'p>(
+    a: Ast<'a>,
     emit_context: &'p mut EmitContext,
-) -> Printer<'p> {
+) -> Printer<'a, 'p> {
     new_printer(
         a,
         PrinterOptions {
@@ -159,7 +162,7 @@ impl<'a> Checker<'a> {
             } else {
                 create_printer_with_remove_comments(a, emit_context)
             };
-            p.write(type_node, source_file, &mut *writer);
+            p.write_exported(type_node, source_file, &mut *writer);
         }
         let result = writer.string();
         let mut max_length = DEFAULT_MAXIMUM_TRUNCATION_LENGTH * 2;
@@ -262,7 +265,7 @@ impl<'a> Checker<'a> {
             } else {
                 create_printer_with_remove_comments_omit_trailing_semicolon(a, emit_context)
             };
-            printer_.write(entity, source_file, &mut *writer);
+            printer_.write_exported(entity, source_file, &mut *writer);
         }
         writer.string().to_vec()
     }
@@ -330,7 +333,7 @@ impl<'a> Checker<'a> {
                     a,
                     emit_context,
                 );
-            p.write(sig, source_file, &mut *writer);
+            p.write_exported(sig, source_file, &mut *writer);
         }
         writer.string().to_vec()
     }
@@ -370,7 +373,7 @@ impl<'a> Checker<'a> {
         {
             let emit_context = node_builder.emit_context(self);
             let mut printer_ = create_printer_with_remove_comments(a, emit_context);
-            printer_.write(predicate, source_file, &mut *writer);
+            printer_.write_exported(predicate, source_file, &mut *writer);
         }
         writer.string().to_vec()
     }

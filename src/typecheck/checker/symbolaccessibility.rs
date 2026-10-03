@@ -14,6 +14,7 @@ use crate::checker::{
     AccessibleChainCacheKey, Checker, EmitResolver, SymbolFormatFlags, TypeFlags, can_have_locals,
     get_declarations_of_kind,
 };
+use crate::core::Map;
 use crate::printer::{SymbolAccessibility, SymbolAccessibilityResult};
 use bun_collections::HashMap;
 
@@ -242,8 +243,9 @@ impl<'a> Checker<'a> {
             {
                 self.some_symbol_table_in_scope(enclosing_declaration, &mut |c, t, _, _, _, _| {
                     let mut found = false;
-                    for entry in 0..a.table_len(t) {
-                        let (_, s) = a.table_entry_at(t, entry);
+                    let mut position = 0;
+                    while let Some((_, s)) = a.table_entry_at(t, position) {
+                        position += 1;
                         if a.sym(s).flags.intersects(left_meaning)
                             && c.get_type_of_symbol(s) == c.get_declared_type_of_symbol(container)
                         {
@@ -279,13 +281,17 @@ impl<'a> Checker<'a> {
         let containing_file = get_source_file_of_node(a, enclosing_declaration);
         let id = containing_file;
         let links = self.symbol_container_links.get(symbol);
-        if let Some(existing) = self.symbol_container_links[links]
+        if self.symbol_container_links[links]
             .extended_containers_by_file
-            .get(&id)
+            .is_nil()
         {
-            if !existing.is_empty() {
-                return existing.clone();
-            }
+            self.symbol_container_links[links].extended_containers_by_file = Map::make();
+        }
+        let existing = self.symbol_container_links[links]
+            .extended_containers_by_file
+            .get(&id);
+        if !existing.is_nil() {
+            return existing.as_slice().to_vec();
         }
         let mut results: Vec<SymbolId> = Vec::new();
         let imports = a.as_source_file(containing_file).imports();
@@ -308,15 +314,17 @@ impl<'a> Checker<'a> {
                 results.push(resolved_module);
             }
             if !results.is_empty() {
-                self.symbol_container_links[links]
+                let list = self.list(&results);
+                let ok = self.symbol_container_links[links]
                     .extended_containers_by_file
-                    .insert(id, results.clone());
+                    .set(id, list);
+                self.map_set(ok);
                 return results;
             }
         }
 
-        if let Some(extended_containers) = &self.symbol_container_links[links].extended_containers {
-            return extended_containers.clone();
+        if let Some(extended_containers) = self.symbol_container_links[links].extended_containers {
+            return extended_containers.as_slice().to_vec();
         }
         // No results from files already being imported by this file - expand search (expensive, but not location-specific, so cached)
         let other_files: Vec<NodeId> = self.program.source_files().to_vec();
@@ -331,7 +339,8 @@ impl<'a> Checker<'a> {
             }
             results.push(sym);
         }
-        self.symbol_container_links[links].extended_containers = Some(results.clone());
+        let extended_containers = self.list(&results);
+        self.symbol_container_links[links].extended_containers = Some(extended_containers);
         results
     }
 
@@ -425,7 +434,7 @@ impl<'a> Checker<'a> {
             );
         }
         let mut candidates: Vec<SymbolId> = Vec::new();
-        let mut add_candidate = |candidates: &mut Vec<SymbolId>, sym: SymbolId| {
+        let add_candidate = |candidates: &mut Vec<SymbolId>, sym: SymbolId| {
             if !sym.is_nil() && !candidates.contains(&sym) {
                 candidates.push(sym);
             }
@@ -531,8 +540,9 @@ impl<'a> Checker<'a> {
             return quick;
         }
         let mut candidates: Vec<SymbolId> = Vec::new();
-        for entry in 0..a.table_len(exports) {
-            let (_, exported) = a.table_entry_at(exports, entry);
+        let mut position = 0;
+        while let Some((_, exported)) = a.table_entry_at(exports, position) {
+            position += 1;
             if !self.get_symbol_if_same_reference(exported, symbol).is_nil() {
                 candidates.push(exported);
             }

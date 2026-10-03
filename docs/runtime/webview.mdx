@@ -206,7 +206,7 @@ await view.goForward(); // like the browser's forward button
 await view.reload(); // reload the current page
 ```
 
-Calling `goBack()` at the beginning of history (or `goForward()` at the end) resolves `undefined` without navigating — it doesn't reject.
+A view's history starts with its first navigation. Calling `goBack()` at the beginning of history (or `goForward()` at the end) resolves `undefined` without navigating — it doesn't reject.
 
 ### Navigation callbacks
 
@@ -223,6 +223,21 @@ view.onNavigationFailed = error => {
 ```
 
 These fire **before** the corresponding `navigate()` promise settles, so by the time `await view.navigate(...)` returns, your callback has already run. Set to `null` to remove.
+
+### Dialogs
+
+`alert()`, `confirm()`, `prompt()`, and `beforeunload` prompts never block a view. Bun answers them the way a browser with nobody at the keyboard would: `alert()` returns, `confirm()` returns `false`, `prompt()` returns `null`, and a `beforeunload` prompt is accepted so the navigation that triggered it goes ahead.
+
+With the Chrome backend you can take over by listening for the [`Page.javascriptDialogOpening`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#event-javascriptDialogOpening) CDP event (see [Raw Chrome DevTools Protocol](#cdp)). Once a listener is registered, Bun stops answering dialogs for that view. The listener must answer every dialog with `Page.handleJavaScriptDialog`, or the page, and any pending `evaluate()` or `navigate()`, stays blocked:
+
+```ts
+view.addEventListener("Page.javascriptDialogOpening", event => {
+  const { type, message } = event.data; // "alert" | "confirm" | "prompt" | "beforeunload"
+  view.cdp("Page.handleJavaScriptDialog", { accept: true, promptText: "typed into prompt()" });
+});
+
+await view.evaluate("confirm('Delete everything?')"); // true
+```
 
 ---
 
@@ -491,6 +506,8 @@ await view.navigate("https://example.com");
 ```
 
 Bun drops events that have no registered listener before it even parses their JSON `params`, so enabling a chatty domain (like `Network`) is cheap if you only listen for one or two event types.
+
+The `Page` and `Runtime` domains are already enabled: Bun uses `Page.frameNavigated`, `Page.loadEventFired`, and `Runtime.consoleAPICalled` itself to drive `view.url`, `navigate()`, and the `console` option. Listeners still receive those events, after Bun has processed them. A `Page.loadEventFired` listener therefore runs before the `navigate()` it belongs to resolves.
 
 On the WebKit backend, `cdp()` throws `ERR_METHOD_NOT_IMPLEMENTED` — there is no DevTools Protocol bridge. The `EventTarget` interface still works for your own `dispatchEvent()` calls.
 

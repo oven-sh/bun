@@ -374,21 +374,6 @@ static INFO_PARAMS: &[ParamType] = concat_params![
     ]
 ];
 
-static PACK_PARAMS: &[ParamType] = concat_params![
-    SHARED_PARAMS,
-    &[
-        // clap::param!("--filter <STR>...                      Pack each matching workspace"),
-        clap::param!(
-            "--destination <STR>                    The directory the tarball will be saved in"
-        ),
-        clap::param!("--filename <STR>                       The filename of the tarball"),
-        clap::param!(
-            "--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9."
-        ),
-        clap::param!("<POS> ...                              "),
-    ]
-];
-
 static PUBLISH_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
@@ -1025,27 +1010,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/outdated<r>
                 pretty_help(outro_text);
                 Output::flush();
             }
-            Subcommand::Pack => {
-                let intro_text = r"
-<b>Usage<r>: <b><green>bun pm pack<r> <cyan>[flags]<r>
-
-  Create a tarball for the current project.
-
-<b>Flags:<r>";
-
-                let outro_text = r"
-
-<b>Examples:<r>
-  <b><green>bun pm pack<r>
-
-Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
-";
-
-                pretty_help(intro_text);
-                clap::simple_help(PACK_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
             Subcommand::Publish => {
                 let intro_text = r"
 <b>Usage<r>: <b><green>bun publish<r> <cyan>[flags]<r> <blue>[dist]<r>
@@ -1242,7 +1206,6 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Subcommand::Patch => PATCH_PARAMS,
             Subcommand::PatchCommit => PATCH_COMMIT_PARAMS,
             Subcommand::Outdated => OUTDATED_PARAMS,
-            Subcommand::Pack => PACK_PARAMS,
             Subcommand::Publish => PUBLISH_PARAMS,
             Subcommand::Why => WHY_PARAMS,
             Subcommand::Dedupe => DEDUPE_PARAMS,
@@ -1422,10 +1385,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.dry_run = true;
         }
 
-        if matches!(
-            subcommand,
-            Subcommand::Pack | Subcommand::Pm | Subcommand::Publish
-        ) {
+        if matches!(subcommand, Subcommand::Pm | Subcommand::Publish) {
             if subcommand != Subcommand::Publish {
                 if let Some(dest) = args.option(b"--destination") {
                     cli.pack_destination = dest;

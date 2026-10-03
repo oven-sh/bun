@@ -607,7 +607,6 @@ impl Listener {
         Ok(this_value)
     }
 
-    // `OWNED_PROTOS` stays unset: accepted sockets clone the listener's `protos`.
     fn accepted_socket_flags(&self) -> SocketFlags {
         let mut flags = SocketFlags::empty();
         flags.set(SocketFlags::REJECT_UNAUTHORIZED, self.reject_unauthorized);
@@ -1267,9 +1266,6 @@ impl Listener {
                         // when sockets are reused for reconnection (common with MongoDB driver)
                         prev.connection.set(Some(connection));
                         prev.local_binding.set(local_binding.clone());
-                        if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
-                            prev.protos.set(None);
-                        }
                         prev.protos
                             .set(ssl_taken.as_mut().and_then(|s| s.take_protos()));
                         prev.server_name
@@ -1608,9 +1604,6 @@ fn connect_finish<const IS_SSL: bool>(
         // when sockets are reused for reconnection (common with MongoDB driver)
         prev.connection.set(Some(connection));
         prev.local_binding.set(local_binding);
-        if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
-            prev.protos.set(None); // drop old Box
-        }
         prev.protos.set(ssl.as_mut().and_then(|s| s.take_protos()));
         prev.server_name
             .set(ssl.as_mut().and_then(|s| s.take_server_name()));

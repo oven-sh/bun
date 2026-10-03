@@ -1,10 +1,6 @@
 use crate::helpers;
 use crate::inlines::EmphDelim;
 
-pub(crate) fn is_list_bullet(c: u8) -> bool {
-    c == b'-' || c == b'+' || c == b'*'
-}
-
 pub(crate) fn is_list_item_mark(c: u8) -> bool {
     c == b'-' || c == b'+' || c == b'*' || c == b'.' || c == b')'
 }

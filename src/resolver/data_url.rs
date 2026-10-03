@@ -168,6 +168,36 @@ impl<'a> DataURL<'a> {
         bun_http_types::MimeType::MimeType::init(self.mime_type, false, None)
     }
 
+    /// Returns the category of this URL's normalized MIME essence.
+    pub fn mime_type_category(&self) -> bun_http_types::MimeType::Category {
+        use bun_http_types::MimeType::Category;
+        let essence = match strings::index_of_char(self.mime_type, b';') {
+            Some(i) => &self.mime_type[..i as usize],
+            None => self.mime_type,
+        }
+        .trim_ascii();
+        let mut lowered = [0u8; 64];
+        let Some(lowered) = lowered.get_mut(..essence.len()) else {
+            return Category::Other;
+        };
+        lowered.copy_from_slice(essence);
+        lowered.make_ascii_lowercase();
+
+        Category::init(lowered)
+    }
+
+    /// Returns the runtime loader implied by this URL's MIME essence.
+    pub fn loader(&self) -> Option<bun_ast::Loader> {
+        use bun_http_types::MimeType::Category;
+
+        match self.mime_type_category() {
+            Category::Javascript => Some(bun_ast::Loader::Js),
+            Category::Css => Some(bun_ast::Loader::Css),
+            Category::Json => Some(bun_ast::Loader::Json),
+            _ => None,
+        }
+    }
+
     /// Decodes the data from the data URL. Always returns an owned slice.
     pub fn decode_data(&self) -> Result<Vec<u8>, DecodeDataError> {
         let percent_decoded_owned: Option<Vec<u8>> = PercentEncoding::decode_unstrict(self.data)?;

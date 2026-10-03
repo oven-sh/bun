@@ -137,6 +137,8 @@ void CryptoAlgorithmEd25519::importKey(CryptoKeyFormat format, KeyData&& data, c
             exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
             return;
         }
+        if (!validateJwkKeyOps(key, usages, exceptionCallback))
+            return;
         // RFC 8037: "crv" names the curve, and "alg" — when present — is either the
         // curve name or "EdDSA".
         if (!key.crv.isNull() && key.crv != "Ed25519"_s) {

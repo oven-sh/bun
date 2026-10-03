@@ -2489,7 +2489,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
             RETURN_IF_EXCEPTION(scope, {});
         }
 
-        JSValue commandLine = JSValue::decode(Bun__Process__createExecArgv(globalObject));
+        JSValue commandLine = JSValue::decode(Bun__Process__createReportArgv(globalObject));
         RETURN_IF_EXCEPTION(scope, {});
         putDirectNamed(vm, header, "commandLine"_s, commandLine);
         putDirectNamed(vm, header, "nodejsVersion"_s, JSC::jsString(vm, String::fromLatin1(REPORTED_NODEJS_VERSION)));

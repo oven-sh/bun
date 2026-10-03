@@ -7440,3 +7440,45 @@ describe("module init", () => {
     expect(mismatched).toStrictEqual([]);
   });
 });
+
+describe("recursive readdir Dirent symlinks", () => {
+  it.each(["sync", "callback", "promise"])("matches Node directory-symlink traversal (%s)", async mode => {
+    using dir = tempDir("readdir-dirent-symlink", {
+      "root/real/inside.txt": "inside",
+      "outside/unrelated.txt": "outside",
+    });
+    const root = join(String(dir), "root");
+    fs.symlinkSync(join(String(dir), "outside"), join(root, "linked"), "junction");
+    const options = { recursive: true, withFileTypes: true } as const;
+    const entries =
+      mode === "sync"
+        ? fs.readdirSync(root, options)
+        : mode === "promise"
+          ? await fs.promises.readdir(root, options)
+          : await new Promise<fs.Dirent[]>((resolve, reject) =>
+              fs.readdir(root, options, (error, entries) => (error ? reject(error) : resolve(entries))),
+            );
+    const expected = [
+      ["linked", true],
+      ["real", false],
+      ["real/inside.txt", false],
+    ];
+    if (mode !== "promise") expected.push(["linked/unrelated.txt", false]);
+    expect(
+      entries
+        .map(entry => [
+          relative(root, join(entry.parentPath, entry.name)).replaceAll("\\", "/"),
+          entry.isSymbolicLink(),
+        ])
+        .sort(),
+    ).toEqual(expected.sort());
+    // Node follows directory symlinks for recursive string results.
+    expect(
+      fs
+        .readdirSync(root, { recursive: true })
+        .map(String)
+        .map(name => name.replaceAll("\\", "/"))
+        .sort(),
+    ).toEqual(["linked", "linked/unrelated.txt", "real", "real/inside.txt"]);
+  });
+});

@@ -115,13 +115,13 @@ pub fn enqueue_dependency_list(
             // `format_args!` borrows temporaries — bind the
             // formatter first so it outlives the macro expansion.
             let realname = dependency.realname();
-            let path_fmt = bun_fmt::fmt_path_u8(
+            let path_fmt = bun_fmt::EscapeControlChars(bun_fmt::fmt_path_u8(
                 this.lockfile.str(&realname),
                 bun_fmt::PathFormatOptions {
                     path_sep,
                     escape_backslashes: false,
                 },
-            );
+            ));
             let log = this.log_mut();
             if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
                 log.add_warning_with_note(
@@ -931,8 +931,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 bun_ast::Loc::EMPTY,
                                                 format_args!(
                                                     "Package \"{}\" with tag \"{}\" not found, but package exists",
-                                                    bstr::BStr::new(this.lockfile.str(&name)),
-                                                    bstr::BStr::new(
+                                                    bun_fmt::escape_control_chars(this.lockfile.str(&name)),
+                                                    bun_fmt::escape_control_chars(
                                                         this.lockfile.str(&version.dist_tag().tag)
                                                     ),
                                                 ),
@@ -952,8 +952,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             None,
                                             bun_ast::Loc::EMPTY,
                                             "No version matching \"{}\" found for specifier \"{}\"<r> <d>(but package exists)<r>",
-                                            bstr::BStr::new(this.lockfile.str(&version.literal)),
-                                            bstr::BStr::new(this.lockfile.str(&name)),
+                                            bun_fmt::escape_control_chars(
+                                                this.lockfile.str(&version.literal)
+                                            ),
+                                            bun_fmt::escape_control_chars(this.lockfile.str(&name)),
                                         );
                                     }
                                 }
@@ -971,8 +973,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 None,
                                                 bun_ast::Loc::EMPTY,
                                                 "Package \"{}\" with tag \"{}\" not found<r> <d>(all versions blocked by minimum-release-age: {} seconds)<r>",
-                                                bstr::BStr::new(this.lockfile.str(&name)),
-                                                bstr::BStr::new(
+                                                bun_fmt::escape_control_chars(
+                                                    this.lockfile.str(&name)
+                                                ),
+                                                bun_fmt::escape_control_chars(
                                                     this.lockfile.str(&version.dist_tag().tag)
                                                 ),
                                                 age_gate_ms / MS_PER_S,
@@ -983,8 +987,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 None,
                                                 bun_ast::Loc::EMPTY,
                                                 "No version matching \"{}\" found for specifier \"{}\"<r> <d>(blocked by minimum-release-age: {} seconds)<r>",
-                                                bstr::BStr::new(this.lockfile.str(&name)),
-                                                bstr::BStr::new(
+                                                bun_fmt::escape_control_chars(
+                                                    this.lockfile.str(&name)
+                                                ),
+                                                bun_fmt::escape_control_chars(
                                                     this.lockfile.str(&version.literal)
                                                 ),
                                                 age_gate_ms / MS_PER_S,
@@ -1004,8 +1010,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 bun_ast::Loc::EMPTY,
                                                 format_args!(
                                                     "Could not find package.json for \"file:{}\" dependency \"{}\"",
-                                                    bstr::BStr::new(this.lockfile.str(version.folder())),
-                                                    bstr::BStr::new(this.lockfile.str(&name)),
+                                                    bun_fmt::escape_control_chars(this.lockfile.str(version.folder())),
+                                                    bun_fmt::escape_control_chars(this.lockfile.str(&name)),
                                                 ),
                                             );
                                     } else {
@@ -1014,7 +1020,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             bun_ast::Loc::EMPTY,
                                             format_args!(
                                                 "Could not find package.json for dependency \"{}\"",
-                                                bstr::BStr::new(this.lockfile.str(&name)),
+                                                bun_fmt::escape_control_chars(
+                                                    this.lockfile.str(&name)
+                                                ),
                                             ),
                                         );
                                     }
@@ -1039,12 +1047,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 bun_core::pretty_errorln!(
                                     "   -> \"{}\": \"{}\" -> {}@{}",
                                     bstr::BStr::new(this.lockfile.str(&result.package.name)),
-                                    bstr::BStr::new(label),
+                                    bun_fmt::escape_control_chars(label),
                                     bstr::BStr::new(this.lockfile.str(&result.package.name)),
-                                    result.package.resolution.fmt(
+                                    bun_fmt::EscapeControlChars(result.package.resolution.fmt(
                                         this.lockfile.buffers.string_bytes.as_slice(),
                                         bun_fmt::PathSep::Auto
-                                    ),
+                                    )),
                                 );
                             }
                             // Resolve dependencies first
@@ -1624,12 +1632,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         bun_core::pretty_errorln!(
                             "   -> \"{}\": \"{}\" -> {}@{}",
                             bstr::BStr::new(this.lockfile.str(&result.package.name)),
-                            bstr::BStr::new(label),
+                            bun_fmt::escape_control_chars(label),
                             bstr::BStr::new(this.lockfile.str(&result.package.name)),
-                            result.package.resolution.fmt(
+                            bun_fmt::EscapeControlChars(result.package.resolution.fmt(
                                 this.lockfile.buffers.string_bytes.as_slice(),
                                 bun_fmt::PathSep::Auto
-                            ),
+                            )),
                         );
                     }
                     // We shouldn't see any dependencies
@@ -2573,10 +2581,10 @@ fn get_or_put_resolved_package(
                                     existing_package
                                         .name
                                         .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                    existing_package.resolution.fmt(
+                                    bun_fmt::EscapeControlChars(existing_package.resolution.fmt(
                                         this.lockfile.buffers.string_bytes.as_slice(),
                                         bun_fmt::PathSep::Auto
-                                    ),
+                                    )),
                                 ),
                             );
                             success_fn(this, dependency_id, existing_id);
@@ -2624,10 +2632,10 @@ fn get_or_put_resolved_package(
                                     existing_package
                                         .name
                                         .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                    existing_package.resolution.fmt(
+                                    bun_fmt::EscapeControlChars(existing_package.resolution.fmt(
                                         this.lockfile.buffers.string_bytes.as_slice(),
                                         bun_fmt::PathSep::Auto
-                                    ),
+                                    )),
                                 ),
                             );
                             success_fn(this, dependency_id, list[0]);
@@ -2773,7 +2781,7 @@ fn get_or_put_resolved_package(
                                     bun_core::pretty_errorln!(
                                         "<d>[minimum-release-age]<r> <b>{}@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
                                         bstr::BStr::new(package_name),
-                                        bstr::BStr::new(tag_str),
+                                        bun_fmt::escape_control_chars(tag_str),
                                         result.version.fmt(manifest_buf),
                                         newest.fmt(manifest_buf),
                                         min_age_seconds,

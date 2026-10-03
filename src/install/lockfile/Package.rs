@@ -1952,7 +1952,9 @@ impl Package<u64> {
                             format_args!(
                                 "No matching version for workspace dependency \"{}\". Version: \"{}\"",
                                 bstr::BStr::new(external_alias.slice(buf)),
-                                bstr::BStr::new(dependency_version.literal.slice(buf)),
+                                bun_core::fmt::escape_control_chars(
+                                    dependency_version.literal.slice(buf)
+                                ),
                             ),
                         );
                         return Err(crate::Error::InstallFailed);

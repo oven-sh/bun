@@ -1701,6 +1701,7 @@ describe("--compile-aot with a type table", () => {
     ["folds-property-of-constant-object:high", ["readsConstantLimits"], ["readsGivenLimits"]],
     ["folds-property-of-constant-object:name", ["readsConstantLimits"], []],
     ["typed-field-read", ["readsGivenLimits"], ["readsConstantLimits"]],
+    ["scalar-replaced-object", ["ordersOne", "ordersLoosely", "ordersAsserted", "ordersGeneric", "ordersThrough"], ["keepsOrder"]],
   ];
 
   test("a value of another type is refused with the property, what is expected and what it got", async () => {
@@ -1715,6 +1716,9 @@ describe("--compile-aot with a type table", () => {
       'undefined given to a constructor: TypeError: Type check failed: property "x": expected number, got undefined',
       'undefined: TypeError: Type check failed: property "a": expected number, got undefined',
       "numbers given to a constructor: 2.5",
+      'a string in an object that is never made: TypeError: Type check failed: property "count": expected number, got string',
+      'null in an object that is never made: TypeError: Type check failed: property "count": expected number, got null',
+      'a number for the object in an object that is never made: TypeError: Type check failed: property "part": expected object, got number',
       "",
     ]);
     expect(exitCode).toBe(0);

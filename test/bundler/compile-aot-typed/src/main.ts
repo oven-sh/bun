@@ -97,6 +97,19 @@ function halves(n: number) { return n / 2; }
 function describesOrder(unused: unknown, { count, part: { name } }: Order) { keptCounts.push(() => count * 3); return halves(count) + ":" + (count + 0.5) + name; }
 function ordersOne(count: number, part: Part) { return describesOrder(null, { count, part, rank: 1 }); }
 out.push(ordersOne(JSON.parse("1"), { name: "bolt", size: 2 }), keptCounts.map(one => one()).join("|"));
+function describesLooseOrder(unused: unknown, { count, part: { name } }: Order) { keptCounts.push(() => count * 3); return halves(count) + ":" + (count + 0.5) + name; }
+function ordersLoosely(count: any, part: any) { return describesLooseOrder(null, { count, part, rank: 1 }); }
+function keepsOrder(count: number, part: Part): Order { return { count, part, rank: 1 }; }
+out.push(ordersLoosely(JSON.parse("2"), JSON.parse('{"name":"nut","size":1}')), keepsOrder(4, { name: "pin", size: 1 }).count);
+function describesAsserted(unused: unknown, { count, rank }: any) { keptCounts.push(() => count / 2 + rank / 4); return halves(count) + ":" + (count + 0.5); }
+function ordersAsserted(count: number, part: Part) { return describesAsserted(null, { count, part, rank: 1 } as Order); }
+function describesGeneric<T extends { count: number; rank: number }>(unused: unknown, { count, rank }: T) { keptCounts.push(() => count / 2 + rank / 4); return halves(count) + ":" + (count + 0.5); }
+function ordersGeneric(count: number, part: Part) { return describesGeneric<Order>(null, { count, part, rank: 1 }); }
+function describesUnknown(unused: unknown, order: unknown) { const { count, rank } = order as any; keptCounts.push(() => count / 2 + rank / 4); return halves(count) + ":" + (count + 0.5); }
+function passesOrder(order: Order) { return describesUnknown(null, order); }
+function ordersThrough(count: number, part: Part) { return passesOrder({ count, part, rank: 1 }); }
+for (const orders of [ordersAsserted, ordersGeneric, ordersThrough]) out.push(orders(JSON.parse("1"), { name: "bolt", size: 2 }));
+out.push(keptCounts.map(one => one()).join("|"));
 
 console.log(out.join());
 
@@ -111,6 +124,9 @@ if (process.env.BREAK_TYPES) {
     ["undefined given to a constructor", () => new Vector(JSON.parse("[]")[0], 1).x],
     ["undefined", () => writesSound(makesSound(1), JSON.parse("[]")[0]).a],
     ["numbers given to a constructor", () => new Vector(JSON.parse("2.5"), 1).x],
+    ["a string in an object that is never made", () => ordersLoosely(JSON.parse('"text"'), { name: "a", size: 1 })],
+    ["null in an object that is never made", () => ordersLoosely(JSON.parse("null"), { name: "a", size: 1 })],
+    ["a number for the object in an object that is never made", () => ordersLoosely(3, JSON.parse("7"))],
   ];
   for (const [what, attempt] of attempts) {
     try { console.log(what + ": " + attempt()); } catch (e) { console.log(what + ": " + e); }

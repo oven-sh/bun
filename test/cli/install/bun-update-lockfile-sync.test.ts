@@ -804,6 +804,173 @@ describe.concurrent("$ref overrides", () => {
     expect((await lock(dir)).overrides).toStrictEqual({ a1: "npm:no-deps@^1.1.0" });
     await expectInSync(dir);
   });
+
+  // The override key (no-deps, a transitive dependency of one-range-dep) is not the updated direct dependency.
+  test("bun update <name> re-resolves a package whose $name override value changed", async () => {
+    const overrides = { "no-deps": "$dep-with-tags" };
+    const deps = (tags: string) =>
+      root({ dependencies: { "one-range-dep": "1.0.0", "dep-with-tags": tags }, overrides });
+    const dir = await setup({ "package.json": deps("1.0.0") });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await reinstall(dir, deps("^1.0.0"));
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await run(dir, "update", "dep-with-tags");
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "one-range-dep": "1.0.0", "dep-with-tags": "^1.0.1" });
+    const lockfile = await lock(dir);
+    expect(lockfile.overrides).toStrictEqual({ "no-deps": "^1.0.1" });
+    expect(lockfile.packages["one-range-dep/no-deps"]).toBeUndefined();
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.1.0"]);
+    expect(await installed(dir, "no-deps")).toMatchObject({ version: "1.1.0" });
+    await expectInSync(dir, [""], { reinstall: true });
+  });
+
+  // The overridden row belongs to the package version the update adds in this run.
+  test("bun update <name> re-resolves the overridden row of the package version it adds", async () => {
+    const overrides = { "no-deps": "$normal-dep-and-dev-dep" };
+    const deps = (range: string) => root({ dependencies: { "normal-dep-and-dev-dep": range }, overrides });
+    const dir = await setup({ "package.json": deps("1.0.0") });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await reinstall(dir, deps("^1.0.0"));
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await run(dir, "update", "normal-dep-and-dev-dep");
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "normal-dep-and-dev-dep": "^1.0.2" });
+    expect((await lock(dir)).overrides).toStrictEqual({ "no-deps": "^1.0.2" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.1.0"]);
+    expect(await installed(dir, "no-deps")).toMatchObject({ version: "1.1.0" });
+    await expectInSync(dir, [""], { reinstall: true });
+  });
+
+  test("a peer row follows the re-resolved package", async () => {
+    const overrides = { "no-deps": "$dep-with-tags" };
+    const deps = (tags: string) =>
+      root({ dependencies: { "one-range-dep": "1.0.0", "1-peer-dep-a": "1.0.0", "dep-with-tags": tags }, overrides });
+    const dir = await setup({ "package.json": deps("1.0.0") });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await reinstall(dir, deps("^1.0.0"));
+    await run(dir, "update", "dep-with-tags");
+    const { packages } = await lock(dir);
+    expect(packages["no-deps"][0]).toBe("no-deps@1.1.0");
+    expect(packages["1-peer-dep-a/no-deps"]).toBeUndefined();
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.1.0"]);
+    await expectInSync(dir, [""], { reinstall: true });
+  });
+
+  // no-deps is reached through the peer row only: nothing provides it, so the row resolves again on its own.
+  test("a peer row without a provider resolves again", async () => {
+    const overrides = { "no-deps": "$dep-with-tags" };
+    const deps = (tags: string) =>
+      root({ dependencies: { "1-peer-dep-a": "1.0.0", "dep-with-tags": tags }, overrides });
+    const dir = await setup({ "package.json": deps("1.0.0") });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await reinstall(dir, deps("^1.0.0"));
+    await run(dir, "update", "dep-with-tags");
+    expect((await lock(dir)).overrides).toStrictEqual({ "no-deps": "^1.0.1" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.1.0"]);
+    await expectInSync(dir, [""], { reinstall: true });
+  });
+
+  test("bun update <name> re-resolves an optional row whose $name override value changed", async () => {
+    const overrides = { "no-deps": "$dep-with-tags" };
+    const deps = (tags: string) =>
+      root({ dependencies: { "duplicate-optional": "1.0.1", "dep-with-tags": tags }, overrides });
+    const dir = await setup({ "package.json": deps("1.0.0") });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await reinstall(dir, deps("^1.0.0"));
+    await run(dir, "update", "dep-with-tags");
+    expect((await lock(dir)).overrides).toStrictEqual({ "no-deps": "^1.0.1" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.1.0"]);
+    expect(await installed(dir, "no-deps")).toMatchObject({ version: "1.1.0" });
+    await expectInSync(dir, [""], { reinstall: true });
+  });
+
+  // The root declares the override; only the member declares the dependency it refers to.
+  test("bun update <name> in a member re-resolves a package whose root $name override value changed", async () => {
+    const overrides = { "no-deps": "$dep-with-tags" };
+    const memberDeps = (tags: string) => ({ "one-range-dep": "1.0.0", "dep-with-tags": tags });
+    const dir = await setup(MONOREPO({ dependencies: memberDeps("1.0.0") }, { overrides }));
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await reinstall(dir, member("pkg1", { dependencies: memberDeps("^1.0.0") }), PKG1);
+    await runIn(dir, PKG1, "update", "dep-with-tags");
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual(memberDeps("^1.0.1"));
+    expect((await lock(dir)).overrides).toStrictEqual({ "no-deps": "^1.0.1" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.1.0"]);
+    await runBunInstall(envFor(dir), dir, { frozenLockfile: true });
+  });
+
+  // After the update the members disagree on the referent, so the rule is dropped with a warning, as the next `bun install` would do.
+  test("bun update <name> in one of two members that declare a root $name referent drops the rule", async () => {
+    const overrides = { "no-deps": "$dep-with-tags" };
+    const dir = await setup(
+      WORKSPACES(
+        { overrides },
+        {
+          pkg1: { dependencies: { "one-range-dep": "1.0.0", "dep-with-tags": "1.0.0" } },
+          pkg2: { dependencies: { "dep-with-tags": "1.0.0" } },
+        },
+      ),
+    );
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await writePkg(
+      dir,
+      member("pkg1", { dependencies: { "one-range-dep": "1.0.0", "dep-with-tags": "^1.0.0" } }),
+      PKG1,
+    );
+    await reinstall(dir, member("pkg2", { dependencies: { "dep-with-tags": "^1.0.0" } }), PKG2);
+    const { stderr, exitCode } = await tryRun(dir, PKG1, "update", "dep-with-tags");
+    expect(stderr).toContain('workspaces declare different versions of "dep-with-tags"');
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "one-range-dep": "1.0.0", "dep-with-tags": "^1.0.1" });
+    expect((await pkg(dir, PKG2)).dependencies).toStrictEqual({ "dep-with-tags": "^1.0.0" });
+    expect((await lock(dir)).overrides).toBeUndefined();
+    await runBunInstall(envFor(dir), dir, { frozenLockfile: true, allowWarnings: true });
+  });
+
+  // one-range-dep's no-deps row follows the root's npm: alias of that name, as the resolver does, and stays with it.
+  test("a row that follows an npm: alias of its name keeps it through the write-back", async () => {
+    const overrides = { "no-deps": "$dep-with-tags" };
+    const deps = (tags: string) =>
+      root({
+        dependencies: { "one-range-dep": "1.0.0", "no-deps": "npm:@types/no-deps@1.0.0", "dep-with-tags": tags },
+        overrides,
+      });
+    const dir = await setup({ "package.json": deps("1.0.0") });
+    expect(await resolutions(dir, "@types/no-deps")).toStrictEqual(["@types/no-deps@1.0.0"]);
+
+    await reinstall(dir, deps("^1.0.0"));
+    const before = (await lock(dir)).packages;
+    await run(dir, "update", "dep-with-tags");
+    const { packages } = await lock(dir);
+    expect(packages["one-range-dep/no-deps"] ?? packages["no-deps"]).toStrictEqual(
+      before["one-range-dep/no-deps"] ?? before["no-deps"],
+    );
+    await expectInSync(dir, [""], { reinstall: true });
+  });
+
+  test("bun update <name> --latest keeps the rows of a $name override in sync", async () => {
+    const overrides = { "no-deps": "$@types/no-deps" };
+    const dir = await setup({
+      "package.json": root({ dependencies: { "one-range-dep": "1.0.0", "@types/no-deps": "1.0.0" }, overrides }),
+    });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await run(dir, "update", "@types/no-deps", "--latest");
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "one-range-dep": "1.0.0", "@types/no-deps": "2.0.0" });
+    const lockfile = await lock(dir);
+    expect(lockfile.overrides).toStrictEqual({ "no-deps": "2.0.0" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
+    expect(await installed(dir, "no-deps")).toMatchObject({ version: "2.0.0" });
+    await expectInSync(dir, [""], { reinstall: true });
+  });
 });
 
 describe.concurrent("bumping a direct dependency re-points its dependents", () => {

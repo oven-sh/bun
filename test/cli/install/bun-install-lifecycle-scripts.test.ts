@@ -1713,8 +1713,22 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       // `bun patch <pkg>` is how a user repairs a package whose script is broken. It runs
       // an install first, and that install must not stop at the script it is there to fix.
       test(`bun patch prepares and repairs a dependency whose lifecycle script fails (${linker} linker)`, async () => {
-        const { ctx, pkgDir, install, run } = await setupNeedsToolchainTest();
+        const { ctx, packageDir, pkgDir, install, run } = await setupNeedsToolchainTest();
         using _ = ctx;
+        // `bun patch` leaves a copy to edit at node_modules/<pkg>. The isolated linker builds
+        // the patched package in its store entry.
+        const builtTxt =
+          linker === "isolated"
+            ? join(
+                packageDir,
+                "node_modules",
+                ".bun",
+                "lifecycle-postinstall-needs-toolchain@1.0.0",
+                "node_modules",
+                "lifecycle-postinstall-needs-toolchain",
+                "built.txt",
+              )
+            : join(pkgDir, "built.txt");
 
         {
           const { err, exitCode } = await install();
@@ -1736,15 +1750,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         {
           const { err, exitCode } = await run(["patch", "--commit", "node_modules/lifecycle-postinstall-needs-toolchain"]);
           expect(err).not.toContain("error:");
-          expect(await file(join(pkgDir, "built.txt")).text()).toBe("patched");
+          expect(await file(builtTxt).text()).toBe("patched");
           expect(exitCode).toBe(0);
         }
         {
-          await rm(join(pkgDir, "built.txt"));
+          await rm(builtTxt);
           const { out, err, exitCode } = await install();
           expect(err).not.toContain("error:");
           expect(out).toContain("(no changes)");
-          expect(await exists(join(pkgDir, "built.txt"))).toBe(false);
+          expect(await exists(builtTxt)).toBe(false);
           expect(exitCode).toBe(0);
         }
       });

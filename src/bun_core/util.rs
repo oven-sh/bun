@@ -3684,6 +3684,46 @@ fn raw_os_argv() -> Option<&'static [*const core::ffi::c_char]> {
     Some(unsafe { core::slice::from_raw_parts(p, n) })
 }
 
+/// Contiguous writable byte span starting at the kernel `argv[0]`, for
+/// process-title rewriting (what `ps`/`pgrep -f` read: `/proc/self/cmdline`
+/// on Linux, `KERN_PROCARGS2` on macOS). Same span libuv's `uv_setup_args`
+/// records. Cached on first call because later calls would observe an
+/// already-rewritten (NUL-padded) block. Returns `(start, len, argc)`.
+/// `None` if [`init_argv`] was not called or `argc == 0`.
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+pub fn os_argv_title_span() -> Option<(*mut u8, usize, usize)> {
+    static SPAN: Once<Option<(usize, usize, usize)>> = Once::new();
+    let &(addr, len, argc) = SPAN
+        .get_or_init(|| {
+            // Copy the original argv strings into owned storage first so
+            // overwriting the kernel block cannot be observed via `argv()`
+            // (`process.argv`, `--watch` re-exec, crash reports).
+            let _ = argv_storage();
+            let raw = raw_os_argv()?;
+            let first = *raw.first()?;
+            if first.is_null() {
+                return None;
+            }
+            // SAFETY: kernel argv entries are NUL-terminated and live for the
+            // process (`init_argv` contract).
+            let mut end = unsafe { first.add(libc::strlen(first) + 1) };
+            for &p in &raw[1..] {
+                // Stop at the first entry that isn't laid out right after the
+                // previous one; only the contiguous prefix is safe to write.
+                if p != end {
+                    break;
+                }
+                // SAFETY: as above.
+                end = unsafe { p.add(libc::strlen(p) + 1) };
+            }
+            // SAFETY: both pointers index the same contiguous kernel argv block.
+            let len = unsafe { end.offset_from(first) } as usize;
+            Some((first as usize, len, raw.len()))
+        })
+        .as_ref()?;
+    Some((addr as *mut u8, len, argc))
+}
+
 fn argv_storage() -> &'static [ZBox] {
     ARGV_STORAGE.get_or_init(|| {
         // Windows: the CRT-provided `char** argv` captured by `init_argv` is

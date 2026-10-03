@@ -930,6 +930,50 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
+  test("an upload that is aborted while it waits for the connection window leaves the order of the others", async () => {
+    // The warm-up upload uses up the connection window, so three uploads
+    // wait. The client aborts the first one when a GET that it started after
+    // them is answered. The server grants window when the RST_STREAM arrives.
+    const FRAME = 16384;
+    const data: number[] = [];
+    const resets: number[] = [];
+    await withRawUploadServer(
+      initialWindow(1 << 20),
+      ({ type, flags, id }) => {
+        const out: Buffer[] = [];
+        if (type === 1 && flags & 1) out.push(frame(1, 5, id, hpackStatus(200)));
+        if (type === 3) {
+          resets.push(id);
+          out.push(frame(8, 0, 0, u32be(4 * FRAME)));
+        }
+        if (type === 0) {
+          // Stream 1 is the warm-up.
+          if (id !== 1) data.push(id);
+          if (flags & 1) out.push(frame(1, 5, id, hpackStatus(200)));
+        }
+        return out;
+      },
+      async url => {
+        await using proc = await spawnFetch(`
+          const opts = { method: "POST", tls: { rejectUnauthorized: false } };
+          await fetch("${url}", { ...opts, body: Buffer.alloc(65535, "a") }).then(r => r.arrayBuffer());
+          const body = Buffer.alloc(${2 * FRAME}, "a");
+          const controller = new AbortController();
+          const aborted = fetch("${url}", { ...opts, body, signal: controller.signal }).then(r => r.status, e => e.name);
+          const others = [1, 2].map(() => fetch("${url}", { ...opts, body }).then(r => r.status));
+          await fetch("${url}", { tls: opts.tls }).then(r => r.arrayBuffer());
+          controller.abort();
+          console.log(await aborted, ...(await Promise.all(others)));
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe("AbortError 200 200");
+        expect({ resets, data }).toEqual({ resets: [3], data: [5, 7, 5, 7] });
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
   test("the END_STREAM of a streamed body with no bytes left does not wait behind an upload that waits for the connection window", async () => {
     // The warm-up upload uses up the connection window. The server grants more
     // only after the END_STREAM of the empty streamed body has arrived.

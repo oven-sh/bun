@@ -310,3 +310,82 @@ describe("endpoint.close() while a session is live", () => {
     expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
   });
 });
+
+// session.destroy() without close options sends no CONNECTION_CLOSE, and the
+// endpoint answers any later packet for that session with a stateless reset,
+// which rejects the peer's `closed`. Node's peer has nothing left to send once
+// its data is acknowledged, so it closes on its idle timeout and `closed`
+// resolves (test-quic-callback-error-onstream.mjs).
+describe("a session whose peer was destroyed without close options", () => {
+  const sniOpt = { "*": { keys: [key], certs: [cert] } };
+  const boom = new Error("onstream throws");
+
+  // Settles to "resolved", or to the error code `closed` rejected with.
+  const outcome = (client: any, stream: any) =>
+    Promise.all([stream.closed, client.closed]).then(
+      () => "resolved",
+      (err: any) => err.code,
+    );
+
+  // lsquic paced NEW_CONNECTION_ID frames at one per second, so 1.5s after it
+  // connected the client sent one to the server that was gone. ngtcp2 issues
+  // them all with the handshake (conn_required_num_new_connection_id).
+  test("closes on an idle timeout longer than 1.5s", async () => {
+    const tp = { maxIdleTimeout: 2 };
+    await using server = await listen(
+      async (s: any) => {
+        s.onerror = () => {};
+        s.onstream = () => {
+          throw boom;
+        };
+        await s.closed.catch(() => {});
+      },
+      { sni: sniOpt, alpn: ["quic-test"], transportParams: tp },
+    );
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address, {
+      endpoint,
+      alpn: "quic-test",
+      verifyPeer: "manual",
+      transportParams: tp,
+    });
+    await client.opened;
+    const stream = await client.createBidirectionalStream({ body: new TextEncoder().encode("trigger onstream") });
+
+    expect(await outcome(client, stream)).toBe("resolved");
+  });
+
+  // The server acknowledges the stream before it goes silent, and that ACK is
+  // in the client's socket by the time a slow `onstream` returns. The client's
+  // retransmit timer is due by then too, and it used to run first: the probe
+  // it sent was answered with the stateless reset.
+  test("does not retransmit data the peer acknowledged before a slow callback returned", async () => {
+    const tp = { maxIdleTimeout: 1 };
+    let stallMs = 0;
+    await using server = await listen(
+      async (s: any) => {
+        s.onerror = () => {};
+        s.onstream = () => {
+          Bun.sleepSync(stallMs);
+          throw boom;
+        };
+        await s.closed.catch(() => {});
+      },
+      { sni: sniOpt, alpn: ["quic-test"], transportParams: tp },
+    );
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address, {
+      endpoint,
+      alpn: "quic-test",
+      verifyPeer: "manual",
+      transportParams: tp,
+    });
+    await client.opened;
+    // Past the client's tail loss probe (at most 2 x srtt, or 1.5 x srtt +
+    // 25ms) and short of its idle timeout (at least 3 x srtt).
+    stallMs = 50 + (2.5 * Number(client.stats.smoothedRtt)) / 1e6;
+    const stream = await client.createBidirectionalStream({ body: new TextEncoder().encode("trigger onstream") });
+
+    expect(await outcome(client, stream)).toBe("resolved");
+  });
+});

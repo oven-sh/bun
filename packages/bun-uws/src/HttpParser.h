@@ -1192,7 +1192,7 @@ struct HttpResponseData;
 
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
     template <bool ConsumeMinimally, bool IsNodeHttp>
-    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
@@ -1245,7 +1245,7 @@ struct HttpResponseData;
                 return HttpParserResult::success(consumedTotal + length, user);
             }
             bool isConnectRequestLine = false;
-            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize, maxHeaderFields);
+            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, /* useStrictMethodValidation: */ IsNodeHttp, useInsecureHTTPParser, maxHeaderSize, maxHeaderFields);
             if(result.isError()) {
                 return result;
             }
@@ -1575,7 +1575,7 @@ public:
      * head, or WHOLE_READ when the request declared a body: the body is not parsed
      * and is not the caller's. The handler may have destroyed this parser. */
     template <bool IsNodeHttp>
-    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         char *const readStart = data;
         /* The fallback buffer may not exceed the configured per-request header
          * limit (per-server maxHeaderSize can raise it above the default). */
@@ -1669,7 +1669,7 @@ public:
             }
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, reassembled.data(), (unsigned int) reassembled.length(), user, &req, requestHandler, dataHandler);
+            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, reassembled.data(), (unsigned int) reassembled.length(), user, &req, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error.
              * The parser can be gone by then: no member is touched before this return. */
             if (consumed.returnedData != user) {
@@ -1771,7 +1771,7 @@ public:
             }
         }
 
-        HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, &req, requestHandler, dataHandler);
+        HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
             /* A body or a fallback head ahead of this request moved data forward. */

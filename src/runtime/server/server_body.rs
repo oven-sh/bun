@@ -3682,7 +3682,6 @@ fn server_set_app_flags(
     global: &JSGlobalObject,
     server: JSValue,
     require_host_header: bool,
-    use_strict_method_validation: bool,
     lenient_http_flags: u8,
     http_allow_half_open: bool,
 ) -> JsResult<JSValue> {
@@ -3696,7 +3695,6 @@ fn server_set_app_flags(
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_flags(
             require_host_header,
-            use_strict_method_validation,
             lenient_http_flags,
             http_allow_half_open,
         );
@@ -3704,7 +3702,6 @@ fn server_set_app_flags(
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_flags(
             require_host_header,
-            use_strict_method_validation,
             lenient_http_flags,
             http_allow_half_open,
         );
@@ -3712,7 +3709,6 @@ fn server_set_app_flags(
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_flags(
             require_host_header,
-            use_strict_method_validation,
             lenient_http_flags,
             http_allow_half_open,
         );
@@ -3720,7 +3716,6 @@ fn server_set_app_flags(
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_flags(
             require_host_header,
-            use_strict_method_validation,
             lenient_http_flags,
             http_allow_half_open,
         );
@@ -3803,7 +3798,6 @@ extern "C" fn server_set_app_flags_shim(
     global: &JSGlobalObject,
     server: JSValue,
     require_host_header: bool,
-    use_strict_method_validation: bool,
     lenient_http_flags: u8,
     http_allow_half_open: bool,
 ) -> JSValue {
@@ -3813,7 +3807,6 @@ extern "C" fn server_set_app_flags_shim(
             global,
             server,
             require_host_header,
-            use_strict_method_validation,
             lenient_http_flags,
             http_allow_half_open,
         ),

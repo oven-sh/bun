@@ -383,7 +383,7 @@ private:
             nodeHttpRequestTrailers = &nodeHttpResponseData->nodeHttpRequestTrailers;
         }
 
-        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpContextData->maxHeadersCount, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpContextData->maxHeadersCount, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
 
@@ -527,13 +527,16 @@ private:
                 ((AsyncSocket<SSL> *) s)->cork();
             }
 
-            /* Route the method and URL */
-            selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
-            if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
-                /* We have to force close this socket as we have no handler for it.
-                 * close() first sends the responses to earlier requests of this read. */
-                ((AsyncSocket<SSL> *) s)->close();
-                return nullptr;
+            /* Bun.serve routes only the methods of HTTP_METHOD_NAMES. Any other method gets 501 (RFC 9110 15.6.2), and a
+             * request that no route takes gets 404, as over HTTP/2 and HTTP/3. No handler reads the content of such a request,
+             * so the connection closes after the answer. node:http's parser is strict: it answers 400 to an unknown method. */
+            if (!IsNodeHttp && methodIdFromWire(httpRequest->getCaseSensitiveMethod()) == HTTP_METHOD_NONE) [[unlikely]] {
+                ((HttpResponse<SSL> *) s)->writeStatus("501 Not Implemented")->end({}, true);
+            } else {
+                selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
+                if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
+                    ((HttpResponse<SSL> *) s)->writeStatus("404 Not Found")->end({}, true);
+                }
             }
 
             /* First of all we need to check if this socket was deleted due to upgrade */
@@ -1142,8 +1145,7 @@ public:
         std::span<const std::string_view> methods;
         std::string method_buffer;
         std::string_view method_sv_buffer;
-        // When it's NOT node:http, allow the uWS default precedence ordering.
-        if (method == "*" && !httpContextData->flags.useStrictMethodValidation) {
+        if (method == "*") {
             methods = HTTP_METHOD_NAMES;
         } else {
             method_buffer = std::string(method);

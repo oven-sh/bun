@@ -1176,14 +1176,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 };
 
 // Pushes the per-server parser/handler options down to the native listener.
-// Always sets strict method validation, for node.js compatibility.
 function applyServerCustomOptions(server: Server) {
   const handle = server[serverSymbol];
   if (!handle) return;
   setServerCustomOptions(
     handle,
     server.requireHostHeader,
-    true,
     serverLenientFlags(server),
     typeof server.maxHeaderSize !== "undefined" ? server.maxHeaderSize : getMaxHTTPHeaderSize(),
     onServerClientError.bind(server, server[kListenerGeneration]),
@@ -1213,7 +1211,7 @@ function httpAllowHalfOpenSet(this: Server, value) {
   const next = !!value;
   if (previous === next) return;
   const handle = this[serverSymbol];
-  if (handle) setServerAppFlags(handle, this.requireHostHeader, true, serverLenientFlags(this), next);
+  if (handle) setServerAppFlags(handle, this.requireHostHeader, serverLenientFlags(this), next);
 }
 
 // Node.js keeps httpAllowHalfOpen as an own enumerable property of the server.

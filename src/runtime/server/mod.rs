@@ -1671,7 +1671,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn set_flags(
         &mut self,
         require_host_header: bool,
-        use_strict_method_validation: bool,
         lenient_http_flags: u8,
         http_allow_half_open: bool,
     ) {
@@ -1679,7 +1678,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(app).set_flags(
                 require_host_header,
-                use_strict_method_validation,
                 lenient_http_flags,
                 http_allow_half_open,
             );

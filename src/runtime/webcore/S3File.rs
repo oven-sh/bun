@@ -4,7 +4,6 @@ use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
-use bun_core::strings;
 use bun_http::Method;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
@@ -39,15 +38,8 @@ where
 {
     writer.write_str(pfmt!("<r>S3Ref<r>", ENABLE_ANSI_COLORS))?;
     let credentials = s3.get_credentials();
-    // detect virtual host style bucket name
-    let bucket_name: &[u8] = if credentials.virtual_hosted_style && !credentials.endpoint.is_empty()
-    {
-        <s3::S3Credentials>::guess_bucket(&credentials.endpoint).unwrap_or(&credentials.bucket)
-    } else {
-        &credentials.bucket
-    };
 
-    if !bucket_name.is_empty() {
+    if let Some(bucket_name) = credentials.configured_bucket() {
         bun_core::write_pretty!(
             writer,
             ENABLE_ANSI_COLORS,
@@ -625,23 +617,8 @@ fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
     if !matches!(store.data, blob::store::Data::S3(_)) {
         return None;
     }
-    let credentials = store.data.as_s3().get_credentials();
-    let mut full_path = store.data.as_s3().path();
-    if strings::starts_with(full_path, b"/") {
-        full_path = &full_path[1..];
-    }
-    let bucket: &[u8] = &credentials.bucket;
-
-    if bucket.is_empty() {
-        if let Some(end) = strings::index_of(full_path, b"/") {
-            let bucket = &full_path[0..end];
-            if !bucket.is_empty() {
-                return Some(bucket);
-            }
-        }
-        return None;
-    }
-    Some(bucket)
+    let s3 = store.data.as_s3();
+    s3.get_credentials().bucket_for(|| s3.path())
 }
 
 // `#[bun_jsc::host_fn(getter|method)]` requires `Self` (impl-block

@@ -1076,40 +1076,78 @@ pub struct SignOptions<'a> {
 // guessBucket / guessRegion
 // ──────────────────────────────────────────────────────────────────────────
 
-/// This is not used for signing but for console.log output, is just nice to have
-pub fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
-    // check if is amazonaws.com
-    if strings::index_of(endpoint, b".amazonaws.com").is_some() {
-        // check if is .s3. virtual host style
-        if let Some(end) = strings::index_of(endpoint, b".s3.") {
-            // its https://bucket-name.s3.region-code.amazonaws.com/key-name
-            let Some(start) = strings::index_of(endpoint, b"/") else {
-                return Some(&endpoint[0..end]);
-            };
-            return Some(
-                endpoint
-                    .get(start + 1..end)
-                    .unwrap_or_else(|| &endpoint[0..end]),
-            );
+impl S3Credentials {
+    /// The bucket a request with these credentials addresses, when the
+    /// credentials alone decide it. A virtual-hosted endpoint has the bucket in
+    /// its host, and `sign_request` does not send the `bucket` option there.
+    #[inline]
+    pub fn configured_bucket(&self) -> Option<&[u8]> {
+        if self.virtual_hosted_style && !self.endpoint.is_empty() {
+            return guess_bucket(&self.endpoint);
         }
-    } else if let Some(r2_start) = strings::index_of(endpoint, b".r2.cloudflarestorage.com") {
-        // check if is <BUCKET>.<ACCOUNT_ID>.r2.cloudflarestorage.com
-        let end = strings::index_of(endpoint, b".")?; // actually unreachable
-        if end > 0 && r2_start == end {
-            // its https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+        (!self.bucket.is_empty()).then_some(&*self.bucket)
+    }
+
+    /// The bucket of the object at `path()`. `path` runs only for path-style
+    /// credentials with no bucket, where the first `/` segment of the path is
+    /// the bucket.
+    #[inline]
+    pub fn bucket_for<'a>(&'a self, path: impl FnOnce() -> &'a [u8]) -> Option<&'a [u8]> {
+        if let Some(bucket) = self.configured_bucket() {
+            return Some(bucket);
+        }
+        if self.virtual_hosted_style {
             return None;
         }
-        // ok its virtual host style
-        let Some(start) = strings::index_of(endpoint, b"/") else {
-            return Some(&endpoint[0..end]);
-        };
-        return Some(
-            endpoint
-                .get(start + 1..end)
-                .unwrap_or_else(|| &endpoint[0..end]),
-        );
+        let path = path();
+        let path = path.strip_prefix(b"/").unwrap_or(path);
+        let end = strings::index_of_char_usize(path, b'/')?;
+        (end > 0).then_some(&path[..end])
     }
-    None
+}
+
+/// The bucket in the host of a virtual-hosted `endpoint` (`host[:port][/prefix]`),
+/// for the AWS S3 and Cloudflare R2 host shapes that name it. `None` for any
+/// other host: this is the value of `S3File.bucket`, and a wrong name is worse
+/// than none. Never used for signing.
+fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
+    let host = strings::split_once_char(endpoint, b'/').map_or(endpoint, |(host, _)| host);
+    let host = strings::split_once_char(host, b':').map_or(host, |(host, _)| host);
+    let bucket = if let Some(rest) = host
+        .strip_suffix(b".amazonaws.com")
+        .or_else(|| host.strip_suffix(b".amazonaws.com.cn"))
+    {
+        // <bucket>.s3.amazonaws.com
+        // <bucket>.s3.<region>.amazonaws.com
+        // <bucket>.s3.dualstack.<region>.amazonaws.com
+        // Read from the right: a bucket name can contain `.s3.`. A PrivateLink
+        // host (`[<bucket>.]bucket.vpce-<id>.s3.<region>.vpce.amazonaws.com`)
+        // does not match.
+        match rest.strip_suffix(b".s3") {
+            Some(bucket) => bucket,
+            None => {
+                let (rest, _) = strings::rsplit_once_char(rest, b'.')?;
+                rest.strip_suffix(b".dualstack")
+                    .unwrap_or(rest)
+                    .strip_suffix(b".s3")?
+            }
+        }
+    } else {
+        // <bucket>.<account>.r2.cloudflarestorage.com
+        // <bucket>.<account>.<jurisdiction>.r2.cloudflarestorage.com
+        // With no bucket label it is the account endpoint, which is path-style.
+        let rest = host.strip_suffix(b".r2.cloudflarestorage.com")?;
+        let rest = rest
+            .strip_suffix(b".eu")
+            .or_else(|| rest.strip_suffix(b".fedramp"))
+            .unwrap_or(rest);
+        let (bucket, account) = strings::split_once_char(rest, b'.')?;
+        if strings::contains_char(account, b'.') {
+            return None;
+        }
+        bucket
+    };
+    (!bucket.is_empty()).then_some(bucket)
 }
 
 pub fn guess_region(endpoint: &[u8]) -> &[u8] {

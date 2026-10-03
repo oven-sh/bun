@@ -21,6 +21,7 @@ use crate::hosted_git_info::{HostProvider, HostedGitInfo};
 use crate::integrity::Integrity;
 use crate::lockfile::{self, Lockfile, PackageListEntry};
 use crate::lockfile_real::package::PackageColumns as _;
+use crate::lockfile_real::package::folder_relative_to_top_level_dir;
 use crate::lockfile_real::package::workspace_map::WorkspaceMap;
 use crate::npm as Npm;
 use crate::repository::{Repository, RepositoryExt as _, is_safe_resolved_tag};
@@ -87,6 +88,14 @@ fn entry_object(entry: &E::PropertyJSON) -> &E::ObjectJSON {
     pkg
 }
 
+/// `npm install --install-links` installs a copy of a `file:` directory: no link, and `resolved` is `file:` plus the directory.
+fn resolved_folder(pkg: &E::ObjectJSON) -> Option<&[u8]> {
+    let resolved = pkg.get(b"resolved")?.as_str()?;
+    let dir = resolved.strip_prefix(b"file:")?;
+    // npm-package-arg tells a tarball from a directory by the extension too.
+    (DepTag::infer(resolved) == DepTag::Folder).then_some(dir)
+}
+
 fn parent_dir(dir: &[u8]) -> &[u8] {
     if let Some(i) = strings::last_index_of(dir, b"node_modules/") {
         let enclosing = &dir[..i];
@@ -109,6 +118,10 @@ struct Migrator<'a> {
     skipped_external: DynamicBitSet,
     /// Targets the root or a workspace depends on directly.
     local_declared: DynamicBitSet,
+    /// The directory of each copy (`resolved_folder`), as `folder_relative_to_top_level_dir` writes it.
+    copy_sources: Vec<Option<Box<[u8]>>>,
+    /// Copies of a directory that a trusted `file:` spec names (`vouch_copies`).
+    vouched_copies: DynamicBitSet,
     entry_package_ids: Vec<PackageID>,
     queue: Vec<(u32, PackageID)>,
     probe: Vec<u8>,
@@ -144,6 +157,8 @@ pub(super) fn migrate_packages(
         shadowed: DynamicBitSet::init_empty(entry_count)?,
         skipped_external: DynamicBitSet::init_empty(entry_count)?,
         local_declared: DynamicBitSet::init_empty(entry_count)?,
+        copy_sources: vec![None; entry_count],
+        vouched_copies: DynamicBitSet::init_empty(entry_count)?,
         entry_package_ids: vec![INVALID_PACKAGE_ID; entry_count],
         queue: Vec::new(),
         probe: Vec::new(),
@@ -153,6 +168,7 @@ pub(super) fn migrate_packages(
     };
 
     migrator.build_index()?;
+    migrator.vouch_copies()?;
 
     let root_id = migrator.build_package(0, false, DepTag::Npm)?;
     debug_assert_eq!(root_id, 0);
@@ -214,6 +230,10 @@ impl<'a> Migrator<'a> {
                 continue;
             }
             self.index.put(key, j as u32)?;
+            if let Some(dir) = resolved_folder(pkg) {
+                let source = folder_relative_to_top_level_dir(b"", dir);
+                self.copy_sources[j] = Some(source.ok_or(Error::InvalidNPMLockfile)?);
+            }
         }
 
         if self.link_entries.is_set(0) || self.index.get(&b""[..]).copied() != Some(0) {
@@ -482,6 +502,10 @@ impl<'a> Migrator<'a> {
             let path = self.this.string_buf().append(key)?;
             return Ok(Resolution::init(ResTagged::Workspace(path)));
         }
+        if let Some(source) = self.copy_sources[j as usize].as_deref() {
+            let path = self.this.string_buf().append(source)?;
+            return Ok(Resolution::init(ResTagged::Folder(path)));
+        }
 
         if let Some(resolved) = pkg.get(b"resolved") {
             let Some(r) = resolved.as_str() else {
@@ -671,22 +695,7 @@ impl<'a> Migrator<'a> {
                 };
                 let name_hash = string_hash(name);
 
-                let version = {
-                    let this = &mut *self.this;
-                    let mut sb = this.string_buf();
-                    let dep_name = sb.append_with_hash(name, name_hash)?;
-                    let dep_version = sb.append(spec)?;
-                    let sliced = dep_version.sliced(sb.bytes.as_slice());
-                    Dependency::parse(
-                        dep_name,
-                        Some(name_hash),
-                        sliced.slice,
-                        &sliced,
-                        None,
-                        Some(&mut *self.manager),
-                    )
-                    .map(|version| (dep_name, version))
-                };
+                let version = self.parse_spec(name, name_hash, spec)?;
                 let Some((dep_name, version)) = version.filter(|(_, v)| v.tag != DepTag::Catalog)
                 else {
                     if !self.silent {
@@ -733,14 +742,26 @@ impl<'a> Migrator<'a> {
                     && version_tag == DepTag::Folder
                     && self.local_declared.is_set(j as usize);
                 let mut found = self.find_target(key, name);
+                let trusts_spec = is_local || declares_folder;
+                // npm lets one copy satisfy every dependency of its name, whatever directory a `file:` spec names.
+                let unvouched_copy = found.filter(|&(t, _)| {
+                    self.copy_sources[t as usize].is_some()
+                        && !self.vouched_copies.is_set(t as usize)
+                });
                 if let Some((t, _)) = found
                     && is_local
+                    && unvouched_copy.is_none()
                 {
                     self.local_declared.set(t as usize);
                 }
+                if let Some((t, _)) = unvouched_copy
+                    && trusts_spec
+                {
+                    self.skip_unvouched_copy(t, name);
+                    found = None;
+                }
                 if let Some((t, through_link)) = found
-                    && !is_local
-                    && !declares_folder
+                    && !trusts_spec
                     && self.is_external_folder(t, through_link)
                 {
                     self.skip_external(t, name);
@@ -881,16 +902,132 @@ impl<'a> Migrator<'a> {
             .filter(|&x| !self.link_entries.is_set(x as usize))
     }
 
+    fn parse_spec(
+        &mut self,
+        name: &[u8],
+        name_hash: u64,
+        spec: &[u8],
+    ) -> Result<Option<(SemverString, DepVersion)>, Error> {
+        let mut sb = self.this.string_buf();
+        let dep_name = sb.append_with_hash(name, name_hash)?;
+        let dep_version = sb.append(spec)?;
+        let sliced = dep_version.sliced(sb.bytes.as_slice());
+        Ok(Dependency::parse(
+            dep_name,
+            Some(name_hash),
+            sliced.slice,
+            &sliced,
+            None,
+            Some(&mut *self.manager),
+        )
+        .map(|version| (dep_name, version)))
+    }
+
+    /// Marks the copies whose directory a trusted `file:` spec names, before any edge is linked: npm and bun visit packages in different orders.
+    fn vouch_copies(&mut self) -> Result<(), Error> {
+        if self.copy_sources.iter().all(Option::is_none) {
+            return Ok(());
+        }
+        let mut pending: Vec<(u32, bool)> = vec![(0, true)];
+        let mut queued = DynamicBitSet::init_empty(self.entries.len())?;
+        queued.set(0);
+        if let Some(wksp) = self.workspace_map {
+            for path in wksp.keys() {
+                if let Some(&t) = self.index.get(&path[..])
+                    && !self.link_entries.is_set(t as usize)
+                {
+                    queued.set(t as usize);
+                    pending.push((t, true));
+                }
+            }
+        }
+        loop {
+            // A copy declares trusted specs once a trusted spec names it, which can happen in a later round.
+            let ready = pending.iter().position(|&(j, _)| {
+                self.copy_sources[j as usize].is_none() || self.vouched_copies.is_set(j as usize)
+            });
+            let Some(ready) = ready else {
+                return Ok(());
+            };
+            let (j, is_local) = pending.swap_remove(ready);
+            self.vouch_specs_of(j, is_local, &mut pending, &mut queued)?;
+        }
+    }
+
+    fn vouch_specs_of(
+        &mut self,
+        j: u32,
+        is_local: bool,
+        pending: &mut Vec<(u32, bool)>,
+        queued: &mut DynamicBitSet,
+    ) -> Result<(), Error> {
+        let entries = self.entries;
+        let entry = &entries[j as usize];
+        let key = entry.key.slice();
+        for group in DEPENDENCY_GROUPS {
+            let Some(deps) = entry_object(entry)
+                .get(group.prop)
+                .and_then(|d| d.as_object())
+            else {
+                continue;
+            };
+            for prop in deps.properties() {
+                let name = prop.key.slice();
+                let Some((t, through_link)) = self.find_target(key, name) else {
+                    continue;
+                };
+                let t = t as usize;
+                if self.copy_sources[t].is_some()
+                    && let Some(spec) = prop.value.as_str()
+                    && DepTag::infer(spec) == DepTag::Folder
+                    && let Some((_, version)) = self.parse_spec(name, string_hash(name), spec)?
+                    && version.tag == DepTag::Folder
+                {
+                    let buf = self.this.buffers.string_bytes.as_slice();
+                    let dir = self.copy_sources[j as usize].as_deref().unwrap_or(key);
+                    let named = folder_relative_to_top_level_dir(dir, version.folder().slice(buf));
+                    if named == self.copy_sources[t] {
+                        self.vouched_copies.set(t);
+                    }
+                }
+                // Like `declares_folder`: a `file:` package the root or a workspace depends on directly.
+                let is_folder = self.copy_sources[t].is_some()
+                    || (through_link && entry_object(&entries[t]).get(b"resolved").is_none());
+                if is_local && is_folder && !queued.is_set(t) {
+                    queued.set(t);
+                    pending.push((t as u32, false));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn skip_unvouched_copy(&mut self, t: u32, name: &[u8]) {
+        if !self.silent {
+            let source = self.copy_sources[t as usize].as_deref().unwrap_or_default();
+            bun_core::warn!(
+                "skipped \"{}\" from package-lock.json: it is a copy of \"{}\", and no local package names that directory",
+                bstr::BStr::new(name),
+                bstr::BStr::new(source),
+            );
+        }
+        self.shadow(t);
+    }
+
     fn is_external_folder(&self, t: u32, through_link: bool) -> bool {
         let entry = &self.entries[t as usize];
         let key = entry.key.slice();
-        if !bin::bin_target_escapes_package_dir(key) {
+        let source = self.copy_sources[t as usize].as_deref();
+        if !bin::bin_target_escapes_package_dir(source.unwrap_or(key)) {
             return false;
         }
         let id = self.entry_package_ids[t as usize];
         if id != INVALID_PACKAGE_ID {
             return self.this.packages.items_resolution()[id as usize].tag
                 == resolution::Tag::Folder;
+        }
+        if source.is_some() {
+            return true;
         }
         let pkg = entry_object(entry);
         if pkg.get(b"resolved").is_some()
@@ -909,10 +1046,12 @@ impl<'a> Migrator<'a> {
         }
         self.skipped_external.set(t as usize);
         if !self.silent {
+            let source = self.copy_sources[t as usize].as_deref();
+            let folder = source.unwrap_or_else(|| self.entries[t as usize].key.slice());
             bun_core::warn!(
                 "skipped \"{}\" from package-lock.json: transitive folder dependency \"{}\" is outside the project",
                 bstr::BStr::new(name),
-                bstr::BStr::new(self.entries[t as usize].key.slice()),
+                bstr::BStr::new(folder),
             );
         }
         self.shadow(t);

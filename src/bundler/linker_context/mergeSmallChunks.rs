@@ -741,6 +741,7 @@ fn moving_entry_files_repairs_order(
     let module_scopes = this.graph.ast.items_module_scope();
     let mut entered = AutoBitSet::init_empty(this.graph.files.len())?;
     let mut own_file_ran = false;
+    let mut parent_file_ran = false;
     let mut repairs = false;
     let mut stack = vec![Frame::Enter(entry_file)];
     while let Some(frame) = stack.pop() {
@@ -752,6 +753,22 @@ fn moving_entry_files_repairs_order(
                 // It reads top-level names, and one chunk renames those that two files declare.
                 if module_scopes[file as usize].contains_direct_eval {
                     return Ok(false);
+                }
+                // An external `import` runs ahead of its whole chunk. That is its place only ahead of every file of the parent.
+                if is_own(file) && file != Index::RUNTIME.value() {
+                    let mut follows_a_file = parent_file_ran;
+                    for record in import_records[file as usize].iter() {
+                        if record.kind != ImportKind::Stmt
+                            || record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                        {
+                            continue;
+                        }
+                        if record.source_index.is_valid() {
+                            follows_a_file = true;
+                        } else if follows_a_file && !record.path.is_disabled {
+                            return Ok(false);
+                        }
+                    }
                 }
                 entered.set(file as usize);
                 stack.push(Frame::Leave(file));
@@ -780,8 +797,9 @@ fn moving_entry_files_repairs_order(
                         && file != Index::RUNTIME.value()
                         && (flags[file as usize].wrap != WrapKind::None
                             || !this.loading_file_has_no_side_effects(file));
-                } else {
-                    repairs |= own_file_ran && is_in_parent(file) && this.order_can_matter(file);
+                } else if is_in_parent(file) && this.order_can_matter(file) {
+                    parent_file_ran = true;
+                    repairs |= own_file_ran;
                 }
             }
         }
@@ -1173,23 +1191,12 @@ pub(crate) fn merge_small_chunks(
         group.size += size;
         group.pure &= pure;
         group.order_can_matter |= this.order_can_matter(source_index);
-        if source_index != Index::RUNTIME.value() {
-            // `import.meta` describes the chunk that holds it. An external `import` runs ahead of its whole chunk, so in the parent it would run ahead of the shared code.
-            if group.pin == Pin::Name
-                && (ast_flags[source_index as usize]
-                    .contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
-                    || import_records[source_index as usize].iter().any(|record| {
-                        record.kind == ImportKind::Stmt
-                            && !record.source_index.is_valid()
-                            && !record.path.is_disabled
-                            && !record.flags.intersects(
-                                ImportRecordFlags::IS_UNUSED
-                                    | ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
-                            )
-                    }))
-            {
-                group.pin = Pin::Files;
-            }
+        // `import.meta` describes the chunk that holds it.
+        if group.pin == Pin::Name
+            && source_index != Index::RUNTIME.value()
+            && ast_flags[source_index as usize].contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
+        {
+            group.pin = Pin::Files;
         }
         if group.target != Some(target) {
             group.target = None;

@@ -626,7 +626,7 @@ That is too early when `index.js` imports a module of its own ahead of the share
 Bun moves the code only when nothing else changes. The entrypoint keeps its own code in `index.js` when:
 
 - the entrypoint has exports, is a CommonJS module, or the build uses `compile`
-- a module that only the entrypoint imports reads `import.meta` or imports an [external](#external) package
+- a module that only the entrypoint imports reads `import.meta`, or imports an [external](#external) package after another module
 - a module uses a direct `eval`, or tree shaking removed an `import` of a shared module
 - the entrypoint also loads code that is in neither place, such as a module that another entrypoint shares
 - `naming` puts chunks and the entrypoint into different directories

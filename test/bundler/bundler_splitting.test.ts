@@ -711,6 +711,22 @@ describe("bundler", () => {
     onAfterBundle: noChunkImportsIndex,
     run: { file: "/out/index.js", stdout: "setup loaded\nindex app 1\nsettings app 1" },
   });
+  itBundled("splitting/ExternalImportAheadOfSharedCodeRunsFirst", {
+    files: {
+      ...setupBeforeShared,
+      "/index.js": `import "ext";\n` + setupBeforeShared["/index.js"],
+      "/setup.js": `console.log("setup", globalThis.APP.name);`,
+    },
+    runtimeFiles: { "/out/node_modules/ext/index.js": `globalThis.APP = { name: "app" };` },
+    external: ["ext"],
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: { file: "/out/index.js", stdout: "setup app\nindex app\nsettings app" },
+  });
   itBundled("splitting/EntryFilesInImportCycleRunBeforeSharedCode", {
     files: {
       ...setupBeforeShared,
@@ -802,8 +818,13 @@ describe("bundler", () => {
       {},
     ],
     [
-      "ExternalImportInFileOfEntry",
-      { "/setup.js": `import "ext"; globalThis.APP = { name: "app" };` },
+      "ExternalImportBehindSharedFile",
+      { "/index.js": setupBeforeShared["/index.js"] + `import "./late.js";`, "/late.js": `import "node:fs";` },
+      {},
+    ],
+    [
+      "ExternalImportBehindOtherImport",
+      { "/setup.js": `import "./first.js"; import "ext"; globalThis.APP = { name: "app" };`, "/first.js": `` },
       { external: ["ext"] },
     ],
     [

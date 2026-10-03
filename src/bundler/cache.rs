@@ -126,6 +126,7 @@ impl JavaScript {
         }
 
         let mut temp_log = bun_ast::Log::init();
+        temp_log.level = log.level;
         // scopeguard cannot capture &mut temp_log while it's used below;
         // explicit `append_to_maybe_recycled` calls at each exit.
 

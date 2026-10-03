@@ -34,6 +34,8 @@
 #include "JSKeyObject.h"
 
 #include "NodeUtilTypesModule.h"
+#include "PendingEntries.h"
+#include <wtf/HashSet.h>
 
 using namespace JSC;
 
@@ -393,170 +395,146 @@ static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
     return nonIndexObjectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
 }
 
-// Expected's entries as a subset of actual's: identity keys fast-path with
-// index reservation so no actual entry is consumed twice; object keys match
-// by partial deep equality.
+// Node's `typeof x !== "object" || x === null`: such a value matches only an identical counterpart.
+static bool isSpecialValue(JSValue value)
+{
+    return !value.isObject() || value.isCallable();
+}
+
+struct PendingMapEntry {
+    JSValue key;
+    JSValue value;
+};
+
+// Every key actual holds is settled by lookup plus value comparison; the object keys it does not hold are paired off.
 static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
     JSC::JSMap* actualMap = uncheckedDowncast<JSC::JSMap>(actual.asCell());
     JSC::JSMap* expectedMap = uncheckedDowncast<JSC::JSMap>(expected.asCell());
 
-    // Materialized lazily, rooted in gcBuffer (keys then values, pairwise).
-    bool materialized = false;
-    size_t entriesStart = 0;
-    size_t entryCount = 0;
-    WTF::Vector<bool, 8> usedIndices;
-    JSC::MarkedArgumentBuffer usedIdentityKeys;
-
-    auto materialize = [&]() -> bool {
-        if (materialized)
-            return true;
-        materialized = true;
-        entriesStart = gcBuffer.size();
-        auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), actualMap, JSC::IterationKind::Entries);
-        if (scope.exception()) [[unlikely]]
-            return false;
-        JSValue key, value;
-        while (iter->nextKeyValue(globalObject, key, value)) {
-            gcBuffer.append(key);
-            gcBuffer.append(value);
-            entryCount++;
+    Bun::PendingEntries<PendingMapEntry>::Queue queued;
+    WTF::Vector<JSC::JSCell*, 8> settledKeys;
+    {
+        auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), expectedMap, JSC::IterationKind::Entries);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSValue expectedKey, expectedValue;
+        while (iter->nextKeyValue(globalObject, expectedKey, expectedValue)) {
+            JSValue actualValue = actualMap->get(globalObject, expectedKey);
+            RETURN_IF_EXCEPTION(scope, false);
+            bool settled = !actualValue.isUndefined();
+            if (!settled) {
+                // get() answers undefined both for a missing key and for a key holding undefined.
+                settled = actualMap->has(globalObject, expectedKey);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            if (settled) {
+                settled = compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            if (isSpecialValue(expectedKey)) {
+                if (!settled)
+                    return false;
+                continue;
+            }
+            gcBuffer.append(expectedKey);
+            if (settled) {
+                // Node queues identical keys too (comparisons.js v26.3.0 L882-L891): order-dependent, and quadratic once reordered.
+                settledKeys.append(expectedKey.asCell());
+                continue;
+            }
+            gcBuffer.append(expectedValue);
+            queued.append({ expectedKey, expectedValue });
         }
-        usedIndices.fill(false, entryCount);
+    }
+    if (queued.isEmpty())
         return true;
-    };
 
-    auto identityKeyUsed = [&](JSValue key) -> bool {
-        for (size_t i = 0; i < usedIdentityKeys.size(); i++) {
-            bool same = JSC::sameValue(globalObject, usedIdentityKeys.at(i), key);
-            // sameValue can resolve ropes and throw; plain check because the macro can't live
-            // inside a lambda — callers RETURN_IF_EXCEPTION right after this returns.
-            if (scope.exception()) [[unlikely]]
-                return false;
-            if (same)
+    // As node's setEquiv does for members: a settled key's actual entry is spoken for.
+    WTF::HashSet<JSC::JSCell*> reserved;
+    for (JSC::JSCell* key : settledKeys)
+        reserved.add(key);
+    Bun::PendingEntries<PendingMapEntry> pending(std::move(queued));
+    auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), actualMap, JSC::IterationKind::Entries);
+    RETURN_IF_EXCEPTION(scope, false);
+    size_t visited = 0;
+    JSValue actualKey, actualValue;
+    while (iter->nextKeyValue(globalObject, actualKey, actualValue)) {
+        visited++;
+        if (!isSpecialValue(actualKey) && !reserved.contains(actualKey.asCell())) {
+            Bun::Claim claim = pending.claimWith(scope, [&](const PendingMapEntry& entry) -> bool {
+                bool keyEqual = compareBranch(globalObject, gcBuffer, cycles, scope, actualKey, entry.key);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!keyEqual)
+                    return false;
+                return compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, entry.value);
+            });
+            RETURN_IF_EXCEPTION(scope, false);
+            if (claim == Bun::Claim::Exhausted)
                 return true;
         }
-        return false;
-    };
-
-    auto expectedIter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), expectedMap, JSC::IterationKind::Entries);
-    RETURN_IF_EXCEPTION(scope, false);
-    JSValue expectedKey, expectedValue;
-    while (expectedIter->nextKeyValue(globalObject, expectedKey, expectedValue)) {
-        bool consumed = false;
-        bool identityPresent = actualMap->has(globalObject, expectedKey);
-        RETURN_IF_EXCEPTION(scope, false);
-        bool expectedKeyAlreadyUsed = identityKeyUsed(expectedKey);
-        // sameValue can resolve rope strings and throw; the lambda cannot
-        // hold the check macro, so check at every call site.
-        RETURN_IF_EXCEPTION(scope, false);
-        if (identityPresent && !expectedKeyAlreadyUsed) {
-            // Reserve the identity entry's index so the deep-matching loop
-            // below cannot consume it twice.
-            size_t identityIndex = SIZE_MAX;
-            if (materialized) {
-                for (size_t i = 0; i < entryCount; i++) {
-                    bool same = JSC::sameValueZero(globalObject, gcBuffer.at(entriesStart + i * 2), expectedKey);
-                    // Same rope-resolution hazard as identityKeyUsed: bail
-                    // before the next VM-entering call, not after the loop.
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (same) {
-                        identityIndex = i;
-                        break;
-                    }
-                }
-            }
-            if (identityIndex == SIZE_MAX || !usedIndices[identityIndex]) {
-                JSValue actualValue = actualMap->get(globalObject, expectedKey);
-                RETURN_IF_EXCEPTION(scope, false);
-                bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (equal) {
-                    usedIdentityKeys.append(expectedKey);
-                    if (identityIndex != SIZE_MAX)
-                        usedIndices[identityIndex] = true;
-                    consumed = true;
-                }
-            }
-        }
-        if (consumed)
-            continue;
-        if (!expectedKey.isObject())
-            return false;
-        if (!materialize())
-            return false;
-        RETURN_IF_EXCEPTION(scope, false);
-        bool matched = false;
-        for (size_t i = 0; i < entryCount; i++) {
-            if (usedIndices[i])
-                continue;
-            JSValue candidateKey = gcBuffer.at(entriesStart + i * 2);
-            bool candidateIsUsedIdentity = identityKeyUsed(candidateKey);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (candidateIsUsedIdentity)
-                continue;
-            bool keyEqual = compareBranch(globalObject, gcBuffer, cycles, scope, candidateKey, expectedKey);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!keyEqual)
-                continue;
-            bool valueEqual = compareBranch(globalObject, gcBuffer, cycles, scope, gcBuffer.at(entriesStart + i * 2 + 1), expectedValue);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (valueEqual) {
-                usedIndices[i] = true;
-                matched = true;
-                break;
-            }
-        }
-        if (!matched)
+        const size_t size = actualMap->size();
+        const size_t unvisited = size > visited ? size - visited : 0;
+        if (unvisited < pending.openCount())
             return false;
     }
-    return true;
+    return false;
 }
 
-// Expected's items as a subset of actual's; item equality is the partial
-// comparison itself — node matches object items with subset semantics
-// (Set([{a:1,b:2}]) partially contains Set([{a:1}])).
+// Node's setEquiv (comparisons.js v26.3.0 L628-L775): members actual holds are settled by lookup, the rest paired off.
 static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
     JSC::JSSet* actualSet = uncheckedDowncast<JSC::JSSet>(actual.asCell());
     JSC::JSSet* expectedSet = uncheckedDowncast<JSC::JSSet>(expected.asCell());
 
-    const size_t itemsStart = gcBuffer.size();
-    size_t itemCount = 0;
+    Bun::PendingEntries<JSValue>::Queue queued;
     {
-        auto iter = JSC::JSSetIterator::create(vm, globalObject->setIteratorStructure(), actualSet, JSC::IterationKind::Keys);
+        auto iter = JSC::JSSetIterator::create(vm, globalObject->setIteratorStructure(), expectedSet, JSC::IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, false);
-        JSValue item;
-        while (iter->next(globalObject, item)) {
-            gcBuffer.append(item);
-            itemCount++;
+        JSValue expectedMember;
+        while (iter->next(globalObject, expectedMember)) {
+            bool held = actualSet->has(globalObject, expectedMember);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (held)
+                continue;
+            if (isSpecialValue(expectedMember))
+                return false;
+            gcBuffer.append(expectedMember);
+            queued.append(expectedMember);
         }
     }
-    WTF::Vector<bool, 8> usedIndices;
-    usedIndices.fill(false, itemCount);
+    if (queued.isEmpty())
+        return true;
 
-    auto expectedIter = JSC::JSSetIterator::create(vm, globalObject->setIteratorStructure(), expectedSet, JSC::IterationKind::Keys);
+    Bun::PendingEntries<JSValue> pending(std::move(queued));
+    auto iter = JSC::JSSetIterator::create(vm, globalObject->setIteratorStructure(), actualSet, JSC::IterationKind::Keys);
     RETURN_IF_EXCEPTION(scope, false);
-    JSValue expectedItem;
-    while (expectedIter->next(globalObject, expectedItem)) {
-        bool matched = false;
-        for (size_t i = 0; i < itemCount; i++) {
-            if (usedIndices[i])
-                continue;
-            bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, gcBuffer.at(itemsStart + i), expectedItem);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (equal) {
-                usedIndices[i] = true;
-                matched = true;
-                break;
+    size_t visited = 0;
+    JSValue actualMember;
+    while (iter->next(globalObject, actualMember)) {
+        visited++;
+        bool reserved = expectedSet->has(globalObject, actualMember);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!reserved) {
+            if (isSpecialValue(actualMember)) {
+                // Node probes a stray member too (unlike a stray Map key, which it passes over).
+                pending.recordMiss();
+            } else {
+                Bun::Claim claim = pending.claimWith(scope, [&](JSValue expectedMember) -> bool {
+                    return compareBranch(globalObject, gcBuffer, cycles, scope, actualMember, expectedMember);
+                });
+                RETURN_IF_EXCEPTION(scope, false);
+                if (claim == Bun::Claim::Exhausted)
+                    return true;
             }
         }
-        if (!matched)
+        const size_t size = actualSet->size();
+        const size_t unvisited = size > visited ? size - visited : 0;
+        if (unvisited < pending.openCount())
             return false;
     }
-    return true;
+    return false;
 }
 
 // Errors compare name/message/errors leniently: `undefined` (or an empty
@@ -644,14 +622,6 @@ static bool setSubsetAndProps(JSC::JSGlobalObject* globalObject, JSC::MarkedArgu
     if (!contents)
         return false;
     return objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
-}
-
-static bool isSpecialValue(JSValue value)
-{
-    // `typeof x !== "object"`: primitives, null, and callables are decided
-    // by full strict deep equality. Every specific type (Error, Date, RegExp,
-    // boxed primitives, ...) has already been handled by its own arm above.
-    return !value.isObject() || value.isCallable();
 }
 
 static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)

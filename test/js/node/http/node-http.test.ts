@@ -5,7 +5,18 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, isASAN, isCI, isDebug, isWindows, randomPort, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  exampleSite,
+  isASAN,
+  isCI,
+  isDebug,
+  isWindows,
+  randomPort,
+  tempDir,
+  tls as tlsCert,
+} from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
@@ -31,6 +42,7 @@ import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
 import { inspect } from "node:util";
 import tunnel from "tunnel";
+import { scenarios as finishConnectionScenarios } from "./node-http-finish-connection-scenarios.mjs";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
 
@@ -7184,4 +7196,113 @@ it("req.socket.setKeepAlive() and resetAndDestroy() return the socket", async ()
   } finally {
     server.close();
   }
+});
+
+// 'finish' does the connection step of a response: it closes the connection or arms the
+// keep-alive timeout, and takes the next response. The stream destroyer sets req.socket to
+// null, and user code can empty or replace req.socket and res.socket. The step still has to
+// reach the real socket.
+describe("a response finishes after the links to its socket were cut", () => {
+  it("a listener that cancels Readable.toWeb(req) and answers in the same tick keeps the process alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const http = require("node:http");
+          const { Readable } = require("node:stream");
+          const server = http.createServer((req, res) => {
+            const body = Readable.toWeb(req);
+            if (req.headers.authorization !== "secret") {
+              body.cancel();
+              res.statusCode = 401;
+              res.end("no");
+              return;
+            }
+            res.end("ok");
+          });
+          server.listen(0, "127.0.0.1", async () => {
+            const url = "http://127.0.0.1:" + server.address().port;
+            for (let i = 1; i <= 3; i++) {
+              const status = await fetch(url, { method: "POST", body: "hello" }).then(
+                response => response.status,
+                error => "failed: " + (error.code || error.message),
+              );
+              console.log("request", i, "->", status);
+            }
+            console.log("the server is alive");
+            server.close();
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "request 1 -> 401\nrequest 2 -> 401\nrequest 3 -> 401\nthe server is alive\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  const delivered = ["finish", "end callback", "close"];
+  // The response of the scenario, then a second request on the same connection.
+  const served = { statuses: ["401", "200"], events: [delivered] };
+  // node v26.3.0 gives these rows too, except the three that only Bun can send.
+  const rows: Record<string, object> = {
+    "Readable.toWeb(req).cancel(), then end()": served,
+    "reader.cancel(), then end()": served,
+    "stream.destroy(req), then end()": served,
+    "pipeline() with an aborted signal, then end()": served,
+    "compose().destroy(), then end()": served,
+    "Duplex.from(req).destroy(), then end()": served,
+    "Readable.wrap(req).destroy(), then end()": served,
+    "req.socket = null, then end()": served,
+    "req.socket = undefined, then end()": served,
+    "req.connection = null, then end()": served,
+    "req.socket = new net.Socket(), then end()": served,
+    "end(), then the cut in the same tick": served,
+    "the cut in a tick queued before end()": served,
+    "https: the cut, then end()": served,
+    ...(isWindows ? {} : { "unix: the cut, then end()": served }),
+    "a ServerResponse subclass: the cut, then end()": served,
+    "a ServerResponse subclass with its own assignSocket(): the cut, then end()": served,
+    "'checkContinue': the cut, then end()": { statuses: ["401"], events: [delivered] },
+    "'checkExpectation': the cut, then end()": { statuses: ["401"], events: [delivered] },
+    "'dropRequest': the cut, then the server's 503": { statuses: ["200", "503"], events: [delivered] },
+    "the cut, then a later end()": served,
+    "req.socket = new PassThrough(), then a later end()": served,
+    "res.socket = new PassThrough(), then a later end()": served,
+    "the cut, res.socket = null, then a later end()": served,
+    "res.socket = a socket with server: null, then a later end()": served,
+    "res.emit('close'), then a later end()": { statuses: ["200"], events: [["close", ...delivered]] },
+    "write() and end(): writableHighWaterMark in 'finish'": {
+      statuses: ["200", "200"],
+      events: [delivered],
+      highWaterMarkInFinish: 1024,
+    },
+    "a write() over the high water mark, then end()": {
+      statuses: ["200", "200"],
+      events: [delivered],
+      drains: 0,
+      write: false,
+    },
+    "a write() over the high water mark, then end() at 'drain'": {
+      statuses: ["200", "200"],
+      events: [delivered],
+      drains: 1,
+      write: false,
+    },
+  };
+
+  it("has a row for every scenario", () => {
+    expect(Object.keys(rows).sort()).toEqual(Object.keys(finishConnectionScenarios).sort());
+  });
+
+  it.each(Object.keys(rows))("%s", async name => {
+    using dir = tempDir("node-http-finish-connection", {});
+    expect(await finishConnectionScenarios[name](String(dir))).toEqual(rows[name]);
+  });
 });

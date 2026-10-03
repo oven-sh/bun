@@ -43,6 +43,8 @@ impl CurrentFile {
         repeat_index: u32,
         reporter: &mut CommandLineReporter,
     ) {
+        self.repeat_info.count = repeat_count;
+        self.repeat_info.index = repeat_index;
         if reporter.worker_ipc_file_idx.is_some() {
             // Coordinator owns the terminal and prints its own per-test file
             // context; the worker should not emit a header to stderr.
@@ -53,8 +55,6 @@ impl CurrentFile {
             // Assigning into the Box<[u8]> fields below drops the previous values.
             self.title = Box::<[u8]>::from(title);
             self.prefix = Box::<[u8]>::from(prefix);
-            self.repeat_info.count = repeat_count;
-            self.repeat_info.index = repeat_index;
             self.has_printed_filename = false;
             return;
         }
@@ -92,6 +92,11 @@ impl CurrentFile {
         }
 
         Output::flush();
+    }
+
+    /// Runs of the file that `--rerun-each` has not started.
+    pub(crate) fn runs_left(&self) -> u32 {
+        self.repeat_info.count.saturating_sub(self.repeat_info.index + 1)
     }
 
     pub(crate) fn print_if_needed(&mut self) {
@@ -148,7 +153,18 @@ pub(crate) struct TestRunner<'a> {
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
     pub(crate) node_test_used: bool,
 
+    /// Set while `TestCommand::run_all_tests` is on the stack. A `process.exit()` takes it to report the run it ends.
+    pub(crate) serial_run: Option<SerialRun>,
+
     pub(crate) bun_test_root: bun_test::BunTestRoot,
+}
+
+/// A run that executes its test files in this process, as opposed to a `--parallel` worker or coordinator.
+#[derive(Copy, Clone)]
+pub(crate) struct SerialRun {
+    pub(crate) reporter: bun_ptr::BackRef<CommandLineReporter, bun_ptr::Mut>,
+    /// In run order. The first `summary.files` of them have started.
+    pub(crate) files: bun_ptr::BackRef<[bun_ptr::Interned]>,
 }
 
 impl<'a> TestRunner<'a> {

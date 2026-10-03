@@ -617,6 +617,17 @@ pub enum Phase {
     Done,
 }
 
+/// What a test file has left to do.
+#[derive(Default, Copy, Clone)]
+pub(crate) struct Unfinished {
+    /// Tests without a reported result.
+    pub(crate) tests: usize,
+    /// The file has not registered all its tests: its module or a `describe` callback has not finished.
+    pub(crate) collecting: bool,
+    /// The file registered a test or a `describe`.
+    pub(crate) registered: bool,
+}
+
 pub(crate) struct BunTest {
     pub(crate) bun_test_root: bun_ptr::BackRef<BunTestRoot>,
     pub(crate) in_run_loop: bool,
@@ -677,6 +688,24 @@ impl BunTest {
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
+        }
+    }
+
+    pub(crate) fn unfinished(&self) -> Unfinished {
+        match self.phase {
+            Phase::Collection => Unfinished {
+                tests: self.collection.root_scope.test_count(),
+                collecting: true,
+                registered: !self.collection.root_scope.entries.is_empty(),
+            },
+            Phase::Execution | Phase::Done => {
+                let tests = || self.execution.sequences.iter().filter(|sequence| sequence.test_entry.is_some());
+                Unfinished {
+                    tests: tests().filter(|sequence| sequence.active_entry.is_some()).count(),
+                    collecting: false,
+                    registered: tests().next().is_some(),
+                }
+            }
         }
     }
 
@@ -1756,6 +1785,17 @@ impl DescribeScope {
         })
     }
     // destroy → Drop on Box<DescribeScope>; all fields own their contents.
+
+    /// Tests registered in this scope and in the scopes inside it.
+    pub(crate) fn test_count(&self) -> usize {
+        self.entries
+            .iter()
+            .map(|entry| match entry {
+                TestScheduleEntry::Describe(describe) => describe.test_count(),
+                TestScheduleEntry::TestCallback(_) => 1,
+            })
+            .sum()
+    }
 
     fn mark_contains_only(&mut self) {
         let mut target: Option<*mut DescribeScope> = Some(std::ptr::from_mut(self));

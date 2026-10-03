@@ -1499,14 +1499,13 @@ impl<'a> Resolver<'a> {
                         });
                     }
                     bun_options_types::BuiltInModule::Import(path) => {
-                        // NOTE: copy out `path` so the `&self.opts.framework` borrow
-                        // ends before `self.resolve(&mut self, ...)`.
-                        // SAFETY: `path` borrows `self.opts.framework`. The result can carry
-                        // it, and is good until `opts` is replaced.
-                        let path: &'static [u8] =
-                            unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
+                        // SAFETY: releases the `&self.opts.framework` borrow for the
+                        // `&mut self` call, which does not touch `opts`.
+                        let path: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
                         let top = self.fs_ref().top_level_dir;
-                        return self.resolve(top, path, ast::ImportKind::EntryPointBuild);
+                        let result = self.resolve(top, path, ast::ImportKind::EntryPointBuild)?;
+                        // SAFETY: resolved from `path`.
+                        return unsafe { result.detach_from(path) };
                     }
                 }
             }

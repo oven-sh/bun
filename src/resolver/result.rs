@@ -242,19 +242,41 @@ impl<'a> Result<'a> {
         ptr.map(|p| unsafe { &*p })
     }
 
-    /// For a result that has to outlive the specifier it was resolved from.
-    pub fn dupe_alloc<'b>(
-        self,
-        arena: &'b bun_alloc::MimallocArena,
-    ) -> crate::CrateResult<Result<'b>> {
-        use crate::fs::PathResolverExt as _;
+    /// For a result that has to outlive the specifier it was resolved from. Only
+    /// what points into the specifier is copied, into the `FilenameStore`.
+    ///
+    /// # Safety
+    /// `import_path` is what `self` was resolved from. It is the one `'a` input
+    /// of [`Resolver::resolve`](crate::Resolver::resolve), so what does not point
+    /// into it is `'static`.
+    pub unsafe fn detach_from(self, import_path: &[u8]) -> crate::CrateResult<Result<'static>> {
+        let keep = |slice: &'a [u8]| -> crate::CrateResult<&'static [u8]> {
+            if bun_alloc::is_slice_in_buffer(slice, import_path) {
+                crate::fs::file_system::FilenameStore::instance().append_slice(slice)
+            } else {
+                // SAFETY: the caller's.
+                Ok(unsafe { &*core::ptr::from_ref::<[u8]>(slice) })
+            }
+        };
+        let detach = |path: Path<'a>| -> crate::CrateResult<Path<'static>> {
+            let text = keep(path.text)?;
+            Ok(Path {
+                text,
+                // `pretty` being `text` means that it is not computed yet.
+                pretty: if core::ptr::eq(path.pretty, path.text) {
+                    text
+                } else {
+                    keep(path.pretty)?
+                },
+                namespace: keep(path.namespace)?,
+                is_disabled: path.is_disabled,
+                is_symlink: path.is_symlink,
+            })
+        };
         Ok(Result {
             path_pair: PathPair {
-                primary: self.path_pair.primary.dupe_alloc(arena)?,
-                secondary: match self.path_pair.secondary {
-                    Some(secondary) => Some(secondary.dupe_alloc(arena)?),
-                    None => None,
-                },
+                primary: detach(self.path_pair.primary)?,
+                secondary: self.path_pair.secondary.map(detach).transpose()?,
             },
             jsx: self.jsx,
             package_json: self.package_json,

@@ -368,7 +368,8 @@ impl<'a> Transpiler<'a> {
                 bun_ast::ImportKind::EntryPointBuild,
             ) {
                 if !r.flags.is_external() {
-                    return Ok(r.dupe_alloc(self.arena)?);
+                    // SAFETY: resolved from `prefixed`.
+                    return Ok(unsafe { r.detach_from(&prefixed) }?);
                 }
             }
             // return the original result

@@ -340,6 +340,19 @@ public:
     uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
+
+    // The non-ShadowRealm global that stands in for this one wherever per-global state is
+    // serviced by the event loop or observed through `process` from outside the realm: the
+    // rejected-promise list, the nextTick queue, the process event emitters. For a
+    // ShadowRealm global this is the global of the realm that created it (the outermost
+    // one when realms nest). For every other global it is `this`.
+    GlobalObject* hostGlobal()
+    {
+        if (auto* host = m_shadowRealmHost.get())
+            return host;
+        return this;
+    }
+
     ALWAYS_INLINE void initGeneratedLazyClasses();
 
     template<typename Visitor>
@@ -539,6 +552,10 @@ public:
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_moduleGraphFrameStructure)                           \
+                                                                                                             \
+    /* Set only on a ShadowRealm global: the non-ShadowRealm global it derives from (see */                  \
+    /* hostGlobal()). Nested realms point at the outermost one, never at each other. */                      \
+    V(private, WriteBarrier<GlobalObject>, m_shadowRealmHost)                                                \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \

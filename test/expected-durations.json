@@ -7588,7 +7588,7 @@
     "windows": 80,
     "windows-aarch64": 70
   },
-  "js/node/http/node-http-agent-tls-options.test.mts": {
+  "js/node/http/node-http-agent-tls-options.test.ts": {
     "default": 650,
     "asan": 1310,
     "musl": 810,

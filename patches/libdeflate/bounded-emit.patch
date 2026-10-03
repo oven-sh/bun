@@ -1,0 +1,49 @@
+Bound the two emit-path writes that only an ASSERT guards.
+
+deflate_flush_block() costs a block from the symbol frequencies of a first
+pass over the input, compares that cost against the space left in the output
+buffer once, then emits the block in a second pass with no further bounds
+check. That is sound only when the input cannot change between the two
+passes. Bun hands libdeflate memory that another thread can write: a view
+over a SharedArrayBuffer, a MAP_SHARED Bun.mmap region, an external buffer
+from bun:ffi or N-API, or a plain buffer that an in-flight fs.read fills. A
+write between the passes makes the emitted block longer than the cost, and
+the emit path then runs off the end of the output buffer.
+
+The word-at-a-time flush is already bounded by out_fast_end, so the hot path
+does not change. The two writes below are reachable only on the slow
+byte-at-a-time tail and on the final partial byte. Both are guarded by
+ASSERT alone, which a release build compiles out. Set the existing overflow
+flag instead, which makes the call return 0. Every caller already treats 0
+as "the output did not fit".
+
+Upstream treats a stable input as the caller's contract, so this is a local
+hardening patch rather than a fix waiting on a release. If upstream ever
+bounds these writes, this patch stops applying and the build fails, which is
+the signal to drop it.
+
+--- a/lib/deflate_compress.c
++++ b/lib/deflate_compress.c
+@@ -742,8 +742,10 @@
+ 	} else {							\
+ 		/* Flush a byte at a time. */				\
+ 		while (bitcount >= 8) {					\
+-			ASSERT(out_next < os->end);			\
+-			*out_next++ = bitbuf;				\
++			if (likely(out_next < os->end))			\
++				*out_next++ = bitbuf;			\
++			else						\
++				os->overflow = true;			\
+ 			bitcount -= 8;					\
+ 			bitbuf >>= 8;					\
+ 		}							\
+@@ -4056,7 +4058,8 @@
+ 	 */
+ 	ASSERT(os.bitcount <= 7);
+ 	if (os.bitcount) {
+-		ASSERT(os.next < os.end);
++		if (unlikely(os.next >= os.end))
++			return 0;
+ 		*os.next++ = os.bitbuf;
+ 	}
+ 

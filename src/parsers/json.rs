@@ -798,7 +798,8 @@ fn array_next_item(contents: &[u8], item: usize) -> Option<usize> {
     (!matches!(contents[p], b']' | b',')).then_some(p)
 }
 
-fn skip_string_token(contents: &[u8], start: usize) -> Option<usize> {
+/// Offset one past the closing quote of the string token whose opening quote is at `start`.
+pub fn skip_string_token(contents: &[u8], start: usize) -> Option<usize> {
     let quote = *contents.get(start)?;
     if quote != b'"' && quote != b'\'' {
         return None;

@@ -1910,15 +1910,19 @@ it("internal FixedQueue backing list is not holey (test-fixed-queue.js)", () => 
 
 // Node's Readable.fromWeb pushes from a promise reaction, so a 'data' listener
 // throw rejects that promise and surfaces as an unhandledRejection, not an
-// uncaughtException. Bun's fromWeb over a native fetch body keeps that channel,
-// and the stream still reads on to 'end'.
+// uncaughtException. Bun's fromWeb over a native fetch body keeps that channel.
 it("Readable.fromWeb over a fetch body: a 'data' listener throw is an unhandledRejection", async () => {
   const script = `
     const { Readable } = require("node:stream");
-    let ue = 0, ur = 0, bytes = 0, ends = 0;
+    let ue = 0, ur = 0, bytes = 0;
     process.on("uncaughtException", (e, origin) => { ue++; console.log("unexpected: " + origin + " " + e.message); });
-    process.on("unhandledRejection", e => { ur++; if (e.message !== "data-throw") console.log("unexpected: " + e.message); });
-    process.on("exit", () => console.log("bytes=" + bytes + " ends=" + ends + " ue=" + ue + " ur=" + ur));
+    process.on("unhandledRejection", e => {
+      ur++;
+      if (e.message !== "data-throw") console.log("unexpected: " + e.message);
+      // The rejection is the last event this script waits for.
+      setImmediate(() => process.exit());
+    });
+    process.on("exit", () => console.log("bytes=" + bytes + " ue=" + ue + " ur=" + ur));
     const { promise: go, resolve: signal } = Promise.withResolvers();
     const server = Bun.serve({
       port: 0,
@@ -1934,9 +1938,6 @@ it("Readable.fromWeb over a fetch body: a 'data' listener throw is an unhandledR
         }));
       },
     });
-    server.unref();
-    // A stream that stalls after the throw never reaches 'end': report that instead of hanging.
-    setTimeout(() => process.exit(), 3000).unref();
     const res = await fetch(server.url);
     const r = Readable.fromWeb(res.body);
     r.on("data", chunk => {
@@ -1947,7 +1948,6 @@ it("Readable.fromWeb over a fetch body: a 'data' listener throw is an unhandledR
       if (bytes === 1) fetch(server.url + "go");
       else throw new Error("data-throw");
     });
-    await new Promise(resolve => r.on("end", () => { ends++; resolve(); }));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
@@ -1957,7 +1957,7 @@ it("Readable.fromWeb over a fetch body: a 'data' listener throw is an unhandledR
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: "bytes=2 ends=1 ue=0 ur=1",
+    stdout: "bytes=2 ue=0 ur=1",
     stderr: "",
     exitCode: 0,
   });

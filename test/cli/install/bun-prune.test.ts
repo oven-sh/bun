@@ -669,6 +669,22 @@ test.concurrent("keeps dependencies bundled inside a package", async () => {
   expect(existsSync(bundled)).toBeTrue();
 });
 
+// The registry does not have "unpublished-dep", so bun.lock has no entry for it.
+// The copy that bundled-unpublished ships is still a bundled dependency.
+test.concurrent("keeps a bundled dependency that the registry does not have", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir();
+  await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "bundled-unpublished": "1.0.0" } }));
+  const { err } = await runBunInstall(installEnv(dir), dir, { allowWarnings: true });
+  expect(err).toContain(`warn: GET ${registry.registryUrl()}unpublished-dep - 404`);
+  const bundled = join(dir, "node_modules", "bundled-unpublished", "node_modules", "unpublished-dep", "package.json");
+  expect(existsSync(bundled)).toBeTrue();
+
+  const { stdout, exitCode } = await prune(dir);
+  expect(out(stdout)).toBe(`${BANNER}\n\n${NOTHING(1, 1)}`);
+  expect(exitCode).toBe(0);
+  expect(existsSync(bundled)).toBeTrue();
+});
+
 // pnpm#881: --production also removes dev-only entries from the store.
 test.concurrent("isolated linker: removes unused store entries and their links", async () => {
   const dir = await setup(

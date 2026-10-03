@@ -171,6 +171,35 @@ describe("bundler", () => {
       NODE_ENV: "production",
     },
   });
+  // The auto-define for NODE_ENV/BUN_ENV is parsed as JSON. The value must be
+  // escaped so the bundle sees the same string the runtime does.
+  for (const [name, value] of [
+    ["ControlChars", "production\r\n\t"],
+    ["DoubleQuote", 'dev"elop'],
+    ["Backslash", "C:\\new\\table"],
+    ["WrappedInDoubleQuotes", '"production"'],
+    ["WrappedInSingleQuotes", "'production'"],
+    ["NonAscii", "prodüction \u{1F600}"],
+  ] as const) {
+    itBundled(`edgecase/NodeEnvEscaped${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          console.log(JSON.stringify([
+            process.env.NODE_ENV,
+            process.env.BUN_ENV,
+            process.env.NODE_ENV === 'production',
+          ]));
+        `,
+      },
+      target: "browser",
+      env: {
+        NODE_ENV: value,
+      },
+      run: {
+        stdout: JSON.stringify([value, value, false]),
+      },
+    });
+  }
   itBundled("edgecase/NodeEnvOptionalChaining", {
     // Matching `process?.env?.NODE_ENV` against the `process.env.NODE_ENV`
     // define would also match `Symbol?.for` etc. as side-effect-free; esbuild

@@ -1503,8 +1503,8 @@ pub mod pattern {
                         }
 
                         return Ok(Pattern {
-                            // `i` is one past `]`; the next call's leading-`/` skip consumes the separator.
-                            len: i,
+                            // `+ 1` steps over the byte after `]`, normally the `/` separator.
+                            len: i + 1,
                             value: match tag {
                                 Tag::Dynamic => Value::Dynamic(param),
                                 Tag::CatchAll => Value::CatchAll(param),
@@ -1579,6 +1579,15 @@ mod tests {
             (b"404", b"404", &[]),
             (
                 b"[teamSlug]",
+                b"value",
+                &[Entry {
+                    name: b"teamSlug",
+                    value: b"value",
+                }],
+            ),
+            // a lone byte after the last `]` is not part of the pattern
+            (
+                b"[teamSlug]s",
                 b"value",
                 &[Entry {
                     name: b"teamSlug",
@@ -1839,7 +1848,7 @@ mod tests {
     fn validate_rejects_trailing_open_bracket() {
         // `match_inner` would panic on these if they reached the dynamic list.
         let mut log = bun_ast::Log::default();
-        for route in [b"[x][" as &[u8], b"[id]/foo[", b"[x]/foo/[", b"[", b"a/["] {
+        for route in [b"[id]/foo[" as &[u8], b"[x]/foo/[", b"[", b"a/[", b"foo["] {
             assert!(
                 Pattern::validate(route, &mut log).is_none(),
                 "validate should reject {:?}",

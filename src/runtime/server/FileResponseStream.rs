@@ -109,6 +109,11 @@ pub(crate) struct StartOptions {
     /// Maximum bytes to send; `None` reads to EOF. For regular files this
     /// should be `stat.size - offset` (after Range/slice clamping).
     pub length: Option<u64>,
+    /// The `.slice()` bound of a body whose fd is not a regular file. It
+    /// applies only once the kernel has refused the poll. The reader is then
+    /// synchronous, so the end of the body cannot free this stream while a
+    /// poll of it is still registered.
+    pub unpollable_length: Option<u64>,
     pub idle_timeout: u8,
     pub owner: StreamOwner,
 }
@@ -251,6 +256,18 @@ impl FileResponseStream {
             this_ref.fail_with(err);
             return;
         }
+
+        // The kernel refused the poll, so the body is read synchronously and a
+        // `.slice()` of it can be bounded. No read has run yet.
+        #[cfg(unix)]
+        if opts.length.is_none() && !this_ref.reader.get().is_pollable() {
+            if let Some(len) = opts.unpollable_length {
+                this_ref.reader_mut().set_limit(Some(len as usize));
+            }
+        }
+        // libuv never refuses a handle this way.
+        #[cfg(windows)]
+        let _ = opts.unpollable_length;
 
         // SAFETY: as above — `update_ref` re-enters `event_loop` through the parent pointer.
         this_ref.reader_mut().update_ref(true);

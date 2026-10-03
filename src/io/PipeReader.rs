@@ -898,9 +898,11 @@ impl PosixBufferedReader {
             }
             if let Some(Stop::WouldBlock) = stop {
                 if file_type == FileType::File {
-                    bun_core::debug_warn!(
-                        "Received EAGAIN while reading from a file. This is a bug."
-                    );
+                    // Nothing can wake this reader: a regular file never
+                    // blocks, and a demoted fd has no poll. Report it, or the
+                    // consumer waits for a read that cannot complete.
+                    // SAFETY: caller contract; `on_error` is the tail.
+                    unsafe { Self::on_error(this, sys::Error::retry().with_fd(fd)) };
                 } else {
                     // SAFETY: caller contract; the error dispatch may free the parent.
                     unsafe { Self::register_poll(this) };
@@ -1000,10 +1002,15 @@ impl PosixBufferedReader {
                 (n, ReadState::Eof)
             }
             Some(Stop::WouldBlock) => {
-                if file_type != FileType::File {
-                    // SAFETY: caller contract.
-                    unsafe { Self::register_poll(this) };
+                if file_type == FileType::File {
+                    // As in `read_loop`: with no poll to arm, a drained read
+                    // leaves the pull pending for ever.
+                    // SAFETY: caller contract; `on_error` may free the parent.
+                    unsafe { Self::on_error(this, sys::Error::retry().with_fd(fd)) };
+                    return (0, ReadState::Progress);
                 }
+                // SAFETY: caller contract.
+                unsafe { Self::register_poll(this) };
                 (0, ReadState::Drained)
             }
             Some(Stop::Error(err)) => {

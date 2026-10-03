@@ -2032,6 +2032,11 @@ where
             } else {
                 None
             },
+            unpollable_length: if is_regular || original_size == crate::webcore::blob::MAX_SIZE {
+                None
+            } else {
+                Some(original_size as u64)
+            },
             idle_timeout: server.config().idle_timeout,
             owner: file_response_stream::StreamOwner::Ctx {
                 ctx: self.as_ctx_ptr().cast::<c_void>(),

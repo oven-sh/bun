@@ -1394,7 +1394,41 @@ describe.skipIf(isWindows)("Response(Bun.file(<character device>))", () => {
     }).toEqual({ status: 200, contentLength: "0", body: 0 });
   });
 
-  it("/dev/urandom streams until the client stops reading", async () => {
+  // The kernel refused the poll, so the reader is synchronous and the slice
+  // can bound the body. A device that the kernel does poll (/dev/random) has
+  // no bound yet.
+  it("a /dev/zero slice ends after the bytes it asked for", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(Bun.file("/dev/zero").slice(0, 200_000));
+      },
+    });
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    expect({ status: res.status, body: (await res.arrayBuffer()).byteLength }).toEqual({
+      status: 200,
+      body: 200_000,
+    });
+  });
+
+  it("a /dev/urandom slice in a static route ends after the bytes it asked for", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: { "/x": new Response(Bun.file("/dev/urandom").slice(0, 4096)) },
+      fetch() {
+        return new Response("no route");
+      },
+    });
+    const res = await fetch(`http://127.0.0.1:${server.port}/x`);
+    expect({ status: res.status, body: (await res.arrayBuffer()).byteLength }).toEqual({
+      status: 200,
+      body: 4096,
+    });
+  });
+
+  it("an unsliced /dev/urandom streams until the client stops reading", async () => {
     await using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",

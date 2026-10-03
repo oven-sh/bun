@@ -1679,10 +1679,6 @@ enum FoundAt {
     Own,
     /// The path of a package that encloses `<pkg path>`.
     Enclosing,
-    /// The last path a walk bounded at a bundled package probes: next to that package, in
-    /// the package that bundles it. `bundler_len` is the length of the bundler's path,
-    /// 0 for the root package.
-    BundleRoot { bundler_len: usize },
     /// The top-level `<name>`.
     Root,
 }
@@ -1779,11 +1775,7 @@ impl<T> PkgMap<T> {
             let res_path = &path_buf[0..offset + dep_name.len()];
 
             if let Some(entry) = self.map.get(res_path) {
-                if at_bundle_root {
-                    found_at = FoundAt::BundleRoot {
-                        bundler_len: offset.saturating_sub(1),
-                    };
-                } else if offset == 0 {
+                if offset == 0 {
                     found_at = FoundAt::Root;
                 }
                 return Ok((entry, found_at));
@@ -3322,21 +3314,12 @@ pub(crate) fn parse_into_binary_lockfile(
     Ok(())
 }
 
-/// A package printed at several paths has one set of edges, and its rows can walk to
-/// different copies of an optional peer. The hoister decides such an edge at the first
-/// placement it processes and nests the bound package only where it has to
-/// (`Tree::process_subtree`), so take the binding from the row that shows the most of it:
-///
-/// 1. An entry in the row's own path is the bound package. Nothing else nests there.
-/// 2. A copy the hoister does not dedupe a peer onto (out of range, and not a root
-///    dependency) is the bound package too, or the row would have an entry of its own.
-/// 3. A copy at the root of the row's bundle, then one at the top level, can be where the
-///    edge itself placed the bound package because nothing was there to dedupe onto. A
-///    copy the bundling package depends on was there first, so it ranks with the rest.
-/// 4. Any other copy is one the package deduped onto.
-///
-/// Equal ranks keep the last row, as the rows loop does. The first two ranks prove the
-/// binding, so those edges go to `pinned` and the hoister does not move them.
+/// A package printed at several paths has one slot for an optional peer, and its rows walked
+/// to different copies. Two kinds of row prove what the hoister bound the slot to: an entry
+/// in the row's own path (only the bound package nests there), and a copy the hoister does
+/// not dedupe a peer onto (with any other binding the row would have an entry of its own).
+/// Such a slot is pinned. Without proof the slot is left unbound and the hoister binds it
+/// again, the way it did when the file was written.
 #[cold]
 fn bind_optional_peers_by_row(
     conflicts: &mut Vec<PackageID>,
@@ -3352,15 +3335,10 @@ fn bind_optional_peers_by_row(
     path_buf: &mut [u8],
     pinned: &mut Vec<DependencyID>,
 ) {
-    const OWN_ENTRY: u8 = 5;
-    const REJECTED_COPY: u8 = 4;
-    const BUNDLE_ROOT_COPY: u8 = 3;
-    const ROOT_COPY: u8 = 2;
-    const OTHER_COPY: u8 = 1;
-
     conflicts.sort_unstable();
     conflicts.dedup();
 
+    let root_deps = pkg_deps[0];
     for &pkg_id in conflicts.iter() {
         let deps = pkg_deps[pkg_id as usize];
         for dep_id in deps.begin()..deps.end() {
@@ -3370,7 +3348,7 @@ fn bind_optional_peers_by_row(
             }
             let range = catalogs.resolve_range(string_buf, dep);
 
-            let mut best: u8 = 0;
+            let mut proved = invalid_package_id;
             for row in pkg_rows {
                 let pkg_path = row.key.slice();
                 if pkg_map.get(pkg_path) != Some(&pkg_id) {
@@ -3385,54 +3363,32 @@ fn bind_optional_peers_by_row(
                 ) else {
                     continue;
                 };
+                if found_at == FoundAt::Own {
+                    proved = found;
+                    break;
+                }
 
-                let rank = if found_at == FoundAt::Own {
-                    OWN_ENTRY
-                } else {
-                    // The package whose `node_modules` the walk ended in, when that is the
-                    // top of the search.
-                    let top_pkg_id = match found_at {
-                        FoundAt::Root | FoundAt::BundleRoot { bundler_len: 0 } => Some(0),
-                        FoundAt::BundleRoot { bundler_len } => {
-                            pkg_map.get(&pkg_path[..bundler_len]).copied()
-                        }
-                        FoundAt::Own | FoundAt::Enclosing => None,
-                    };
-                    let top_pkg_depends_on_it = top_pkg_id.is_some_and(|top_pkg_id| {
-                        let top_deps = pkg_deps[top_pkg_id as usize];
-                        (top_deps.begin()..top_deps.end()).any(|top_dep_id| {
-                            dependencies[top_dep_id as usize].name_hash == dep.name_hash
-                                && resolutions[top_dep_id as usize] == found
-                        })
+                // Mirrors the peer dedupe in `Tree::hoist_dependency`.
+                let found_res = &pkg_resolutions[found as usize];
+                let in_range = range.tag == DependencyVersionTag::Npm
+                    && found_res.tag == ResolutionTag::Npm
+                    && range.npm().version.satisfies(
+                        found_res.npm().version,
+                        string_buf,
+                        string_buf,
+                    );
+                let root_dependency = found_at == FoundAt::Root
+                    && (root_deps.begin()..root_deps.end()).any(|root_dep_id| {
+                        dependencies[root_dep_id as usize].name_hash == dep.name_hash
+                            && resolutions[root_dep_id as usize] == found
                     });
-                    let found_res = &pkg_resolutions[found as usize];
-                    let in_range = range.tag == DependencyVersionTag::Npm
-                        && found_res.tag == ResolutionTag::Npm
-                        && range.npm().version.satisfies(
-                            found_res.npm().version,
-                            string_buf,
-                            string_buf,
-                        );
-                    let root_dependency = top_pkg_id == Some(0) && top_pkg_depends_on_it;
-                    if !in_range && !root_dependency {
-                        REJECTED_COPY
-                    } else {
-                        match found_at {
-                            FoundAt::BundleRoot { .. } if !top_pkg_depends_on_it => {
-                                BUNDLE_ROOT_COPY
-                            }
-                            FoundAt::Root => ROOT_COPY,
-                            _ => OTHER_COPY,
-                        }
-                    }
-                };
-                if rank >= best {
-                    best = rank;
-                    resolutions[dep_id as usize] = found;
+                if !in_range && !root_dependency {
+                    proved = found;
                 }
             }
 
-            if best >= REJECTED_COPY {
+            resolutions[dep_id as usize] = proved;
+            if proved != invalid_package_id {
                 pinned.push(dep_id);
             }
         }

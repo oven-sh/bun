@@ -534,8 +534,8 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         Ok(CleanResult { trees, dep_ids })
     }
 
-    /// Whether this pass already processed a placement of `pkg_id` before the one
-    /// `dependency_id` names, so the package's optional-peer slots have been read.
+    /// Whether this pass processed another placement of `pkg_id` before the one
+    /// `dependency_id` names. That placement read the package's optional-peer slots.
     #[cold]
     fn processed_earlier_placement(&self, pkg_id: PackageID, dependency_id: DependencyID) -> bool {
         // The root has no tree entry and its pass comes first.
@@ -551,8 +551,8 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     }
 }
 
-/// Counts the placements of `pkg_id` a pass has taken off its queue, the one in progress
-/// included. Every placement is a tree entry, and is queued until it is processed.
+/// The placements of `pkg_id` a pass has taken off its queue, the one in progress included:
+/// its tree entries minus the queued ones. An entry bound late was never queued and counts.
 #[cold]
 #[inline(never)]
 fn processed_placements(
@@ -882,10 +882,8 @@ impl Tree {
                 HoistDependencyResult::Resolve(res_id) => {
                     debug_assert!(pkg_id == invalid_package_id);
                     debug_assert!(res_id != invalid_package_id);
-                    // An earlier placement of this package was processed with the slot
-                    // unbound, and has to be processed again with it bound.
-                    if METHOD == BuilderMethod::Resolvable
-                        && !builder.late_bound_optional_peer
+                    // An earlier placement of this package went by with the slot unbound.
+                    if !builder.late_bound_optional_peer
                         && builder.processed_earlier_placement(parent_pkg_id, dependency_id)
                     {
                         builder.late_bound_optional_peer = true;
@@ -902,6 +900,8 @@ impl Tree {
                         .fetch_swap_remove(&dependency.name_hash)
                     {
                         let peers = entry.1;
+                        // Their placements were processed with the slot unbound too.
+                        builder.late_bound_optional_peer = true;
                         for &unresolved_dep_id in peers.keys() {
                             // the dependency should be either unresolved or the same dependency as above
                             debug_assert!(
@@ -954,12 +954,9 @@ impl Tree {
                 }
                 HoistDependencyResult::Rebind(res_id) => {
                     debug_assert!(dependency.behavior.is_optional_peer());
-                    // One slot serves every placement of the package. Only the first
-                    // placement a pass processes can move it, and not off a binding that
-                    // bun.lock spells out. Any other placement dedupes without moving it,
-                    // so none is left built from a binding the pass did not end with.
-                    if METHOD == BuilderMethod::Resolvable
-                        && !builder.lockfile().pinned_optional_peers.contains(&dep_id)
+                    // Every placement of the package shares the slot, and an earlier one
+                    // was built from it: only the first placement of a pass moves it.
+                    if !builder.lockfile().pinned_optional_peers.contains(&dep_id)
                         && !builder.processed_earlier_placement(parent_pkg_id, dependency_id)
                     {
                         builder.resolutions[dep_id as usize] = res_id;

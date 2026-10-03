@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, mkdirSync, readFileSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
@@ -717,6 +717,49 @@ describe("bunshell", () => {
     TestBuilder.command`HOME="" USERPROFILE="" && echo ~ && echo ~/Documents`
       .stdout("\n/Documents\n")
       .runAsTest("empty $HOME or $USERPROFILE");
+
+    test.skipIf(isWindows)("unset $HOME falls back to the passwd home like os.homedir()", async () => {
+      const env: Record<string, string | undefined> = { ...bunEnv };
+      delete env.HOME;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { $ } = Bun; console.log(JSON.stringify([require("os").homedir(), (await $\`echo ~ a ~/x\`.text()).trim()]))`,
+        ],
+        env,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const [home, expanded] = JSON.parse(stdout);
+      expect(home).not.toBe("");
+      expect(expanded).toBe(`${home} a ${home}/x`);
+      expect(exitCode).toBe(0);
+    });
+
+    // Needs root: the child runs as a uid that has no passwd entry.
+    test.skipIf(isWindows || process.getuid?.() !== 0)(
+      "unset $HOME and no passwd entry keeps the ~ instead of expanding it to nothing",
+      async () => {
+        const passwd = readFileSync("/etc/passwd", "utf8");
+        let uid = 60123;
+        while (passwd.includes(`:${uid}:`)) uid++;
+        const env: Record<string, string | undefined> = { ...bunEnv };
+        delete env.HOME;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", `console.log((await Bun.$\`echo ~ a ~/x ~"" ~$UNSET_VARIABLE\`.text()).trim())`],
+          env,
+          uid,
+          gid: uid,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe("~ a ~/x ~ ~\n");
+        expect(exitCode).toBe(0);
+      },
+    );
 
     describe("modified $HOME or $USERPROFILE", async () => {
       TestBuilder.command`HOME=lmao USERPROFILE=lmao && echo ~`.stdout("lmao\n").runAsTest("1");

@@ -98,4 +98,71 @@ describe("S3Client upload options coercion", () => {
     expect(() => make({ queueSize: "0" })).toThrow(RangeError);
     expect(() => make({ partSize: "1024" })).toThrow(RangeError);
   });
+
+  function rangeErrorMessage(opts: Record<string, unknown>): string {
+    let err: unknown;
+    try {
+      make(opts);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(RangeError);
+    return (err as RangeError).message;
+  }
+
+  // The range check runs on the coerced number, before it is narrowed to the
+  // native field, so the message reports what the caller passed.
+  test("retry above 2^31 reports the received value, not the saturated i32", () => {
+    expect(rangeErrorMessage({ retry: 2 ** 32 + 3 })).toBe(
+      'The value of "retry" is out of range. It must be >= 0 and <= 255. Received 4294967299',
+    );
+    expect(rangeErrorMessage({ retry: 2 ** 31 })).toContain("Received 2147483648");
+    expect(rangeErrorMessage({ retry: Infinity })).toContain("Received Infinity");
+    expect(rangeErrorMessage({ retry: -1 })).toContain("Received -1");
+  });
+
+  test("retry: NaN throws instead of silently meaning 0 retries", () => {
+    expect(rangeErrorMessage({ retry: NaN })).toBe(
+      'The value of "retry" is out of range. It must be an integer. Received NaN',
+    );
+    expect(rangeErrorMessage({ retry: "not a number" })).toContain("Received NaN");
+    expect(rangeErrorMessage({ retry: Number(undefined) })).toContain("Received NaN");
+  });
+
+  test("queueSize and partSize report NaN as NaN, not as 0", () => {
+    expect(rangeErrorMessage({ queueSize: NaN })).toBe(
+      'The value of "queueSize" is out of range. It must be an integer. Received NaN',
+    );
+    expect(rangeErrorMessage({ partSize: NaN })).toBe(
+      'The value of "partSize" is out of range. It must be an integer. Received NaN',
+    );
+    expect(rangeErrorMessage({ pageSize: NaN })).toContain('"pageSize"');
+  });
+
+  test("queueSize below 1 reports the value before truncation", () => {
+    expect(rangeErrorMessage({ queueSize: 0.5 })).toBe(
+      'The value of "queueSize" is out of range. It must be >= 1. Received 0.5',
+    );
+    expect(rangeErrorMessage({ queueSize: -0.5 })).toContain("Received -0.5");
+    expect(rangeErrorMessage({ queueSize: -Infinity })).toContain("Received -Infinity");
+  });
+
+  test("pageSize and partSize are both validated, and partSize is kept", () => {
+    expect(Bun.inspect(make({ pageSize: 10485760, partSize: 20971520 }))).toContain("partSize: 20971520");
+    expect(Bun.inspect(make({ pageSize: 20971520, partSize: 10485760 }))).toContain("partSize: 10485760");
+    expect(rangeErrorMessage({ pageSize: 1024, partSize: 10485760 })).toContain('"pageSize"');
+  });
+
+  test("queueSize above 255 still clamps to 255", () => {
+    for (const queueSize of [256, 2 ** 32 + 3, Infinity, "1000"]) {
+      expect(Bun.inspect(make({ queueSize }))).toContain("queueSize: 255");
+    }
+  });
+
+  test("in-range floats still truncate", () => {
+    const inspected = Bun.inspect(make({ retry: 255.9, queueSize: 1.9, partSize: 5242880.9 }));
+    expect(inspected).toContain("retry: 255");
+    expect(inspected).toContain("queueSize: 1");
+    expect(inspected).toContain("partSize: 5242880");
+  });
 });

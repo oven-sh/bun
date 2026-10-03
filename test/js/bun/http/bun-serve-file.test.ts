@@ -4,6 +4,7 @@ import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, temp
 import { mkfifo } from "mkfifo";
 import {
   closeSync,
+  existsSync,
   openSync,
   readFileSync,
   statSync,
@@ -1625,15 +1626,14 @@ describe("Bun.file body that ends short of its Content-Length", () => {
   // A sysfs attribute is a regular file whose stat size is a whole page while
   // a read returns only its few bytes. The committed length is wrong before
   // anything shrinks, and the end of the file arrives with the only chunk.
-  // Other platforms have no regular file like it.
-  test.concurrent.skipIf(!isLinux)(
+  // Other platforms have no regular file like it, and a sandbox can mask /sys.
+  const attribute = "/sys/devices/system/cpu/online";
+  const attributeContent = isLinux && existsSync(attribute) ? readFileSync(attribute).toString("latin1") : "";
+  const attributeStatSize = attributeContent ? statSync(attribute).size : 0;
+
+  test.concurrent.skipIf(attributeStatSize <= attributeContent.length)(
     "sends what a file has when its stat size overstates it, then ends the connection",
     async () => {
-      const attribute = "/sys/devices/system/cpu/online";
-      const content = readFileSync(attribute).toString("latin1");
-      const statSize = statSync(attribute).size;
-      expect(statSize).toBeGreaterThan(content.length);
-
       const server = resources.use(
         Bun.serve({
           port: 0,
@@ -1650,7 +1650,12 @@ describe("Bun.file body that ends short of its Content-Length", () => {
         connection: /^connection:\s*(.+)$/im.exec(seen.head)?.[1],
         body: seen.bodyStart,
         error: seen.error,
-      }).toEqual({ contentLength: statSize, connection: "close", body: content, error: undefined });
+      }).toEqual({
+        contentLength: attributeStatSize,
+        connection: "close",
+        body: attributeContent,
+        error: undefined,
+      });
     },
   );
 });

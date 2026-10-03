@@ -14,7 +14,7 @@ use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry 
 use crate::isolated_install::{Store, Timings, build_store};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
-use crate::lockfile::{LoadResult, Lockfile, reachable, tree};
+use crate::lockfile::{LoadResult, Lockfile, pruned_workspaces, reachable, tree};
 use crate::lockfile_real::package::{Diff, DiffSummary, Package};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
@@ -504,8 +504,7 @@ fn print_apply_hint() {
 }
 
 fn is_pruned_workspace(manager: &PackageManager, pkg_id: usize) -> bool {
-    let pruned = &manager.summary.pruned_workspaces;
-    !pruned.is_empty() && pruned.contains(&manager.lockfile.packages.items_name_hash()[pkg_id])
+    pruned_workspaces::is_pruned_workspace(manager, &manager.lockfile, pkg_id as PackageID)
 }
 
 fn collect_workspace_names(manager: &PackageManager) -> Vec<Box<[u8]>> {

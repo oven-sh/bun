@@ -636,7 +636,7 @@ impl Checker<'_> {
             _ => return,
         };
         if !is_annotated {
-            widened_type = self.regular_object(widened_type);
+            widened_type = self.get_widened_type(widened_type);
         }
         if matches!(hir[pat].kind, PatKind::Array(_)) {
             let usage = IterationUse::Destructuring;

@@ -406,7 +406,7 @@ impl<'p> Checker<'p> {
             } else {
                 ty
             };
-            self.regular_object(ty)
+            self.get_widened_type(ty)
         }))
     }
 
@@ -438,8 +438,7 @@ impl<'p> Checker<'p> {
             }
             Some(&(Arg::Type(ty, ..) | Arg::Spread(ty, ..))) => Some(ty),
             None if own.default.is_some() => None,
-            // `undefinedWideningType`
-            None => Some(TypeId::UNDEFINED),
+            None => Some(self.undefined_widening()),
         }
     }
 

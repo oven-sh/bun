@@ -138,7 +138,7 @@ impl Checker<'_> {
     fn type_without_signatures(&mut self, ty: TypeId) -> Option<TypeId> {
         // Among non-object types only `null` can be extended, and it is returned unchanged.
         let Some(members) = self.members(ty) else {
-            return (ty == TypeId::NULL).then_some(ty);
+            return (ty == self.null_widening()).then_some(ty);
         };
         let mut shape = Shape::default();
         for prop in &members.shape().props {

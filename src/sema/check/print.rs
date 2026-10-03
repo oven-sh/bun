@@ -1228,10 +1228,10 @@ impl<'p> Printer<'_, 'p> {
                     | Intrinsic::UnreachableNever
                     | Intrinsic::ImplicitNever => (b"never", 5),
                     Intrinsic::Void => (b"void", 4),
-                    Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared => {
+                    Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening => {
                         (b"undefined", 9)
                     }
-                    Intrinsic::Null | Intrinsic::NullDeclared => (b"null", 4),
+                    Intrinsic::Null | Intrinsic::NullWidening => (b"null", 4),
                     Intrinsic::String => (b"string", 6),
                     Intrinsic::Number => (b"number", 6),
                     Intrinsic::BigInt => (b"bigint", 6),

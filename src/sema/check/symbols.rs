@@ -387,7 +387,7 @@ impl<'p> Checker<'p> {
     fn type_of_symbol_uncached(&mut self, sym: Sym) -> TypeId {
         // `c.valueSymbolLinks.Get(c.undefinedSymbol).resolvedType = c.undefinedWideningType`
         if sym == self.files().undefined_symbol {
-            return TypeId::UNDEFINED;
+            return self.undefined_widening();
         }
         // `cloneTypeAsModuleType` assigns the type of the symbol it creates. A symbol created by
         // `combineValueAndTypeSymbols` has the type of the value.
@@ -968,7 +968,7 @@ impl<'p> Checker<'p> {
     /// The declared type of a mutable location initialized with a value of type `ty`.
     pub fn widened(&mut self, ty: TypeId) -> TypeId {
         let ty = self.widen_literal(ty);
-        self.regular_object(ty)
+        self.get_widened_type(ty)
     }
 
     /// `widenTypeForVariableLikeDeclaration`: the type of a named declaration, given the type it is
@@ -981,7 +981,7 @@ impl<'p> Checker<'p> {
         } else {
             ty
         };
-        let widened = self.regular_object(ty);
+        let widened = self.get_widened_type(ty);
         // `getTypeOfVariableOrParameterOrPropertyWorker` goes by `symbol.ValueDeclaration`.
         if let Some((file, pat)) = name
             && self.contains_widening_type(ty, 0)
@@ -1000,7 +1000,7 @@ impl<'p> Checker<'p> {
         }
         match self.data(ty) {
             // `createWideningType`
-            _ if ty == TypeId::NULL || ty == TypeId::UNDEFINED => true,
+            _ if ty == TypeId::NULL_WIDENING || ty == TypeId::UNDEFINED_WIDENING => true,
             // `getPropagatingFlagsOfTypes`
             TypeData::Union(list)
             | TypeData::Intersection(list)
@@ -1080,7 +1080,7 @@ impl<'p> Checker<'p> {
                     if let Some((file, p)) = written {
                         let start = self.hir(file)[p].pos;
                         let name = self.declaration_name_at(file, start);
-                        let widened = self.regular_object(of_prop);
+                        let widened = self.get_widened_type(of_prop);
                         self.error_at(
                             (file, start, self.end_of_prop(file, p)),
                             7018,
@@ -1136,7 +1136,7 @@ impl<'p> Checker<'p> {
         }
         // `reportImplicitAny`
         let at = self.place_of_signature_declaration(file, func);
-        let widened = self.regular_object(ty);
+        let widened = self.get_widened_type(ty);
         let is_yield = matches!(kind, WideningKind::GeneratorYield);
         if f.name.is_some() || matches!(f.kind, FnKind::Method | FnKind::Getter) {
             let name = self.declaration_name_at(file, at.1);
@@ -1260,12 +1260,12 @@ impl<'p> Checker<'p> {
         self.types()
             .object_flags(ty)
             .contains(ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL)
-            || self.regular_object(ty) != ty
+            || self.get_widened_type(ty) != ty
     }
 
     /// `getWidenedType`
     #[inline]
-    pub fn regular_object(&mut self, ty: TypeId) -> TypeId {
+    pub fn get_widened_type(&mut self, ty: TypeId) -> TypeId {
         if self.may_require_widening(ty) {
             self.get_widened_type_with_context(ty, None)
         } else {
@@ -1280,7 +1280,6 @@ impl<'p> Checker<'p> {
         let flags = self.types().object_flags(ty);
         flags.contains(ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL)
             || flags.contains(ObjectFlags::CONTAINS_WIDENING_TYPE)
-                && !self.p.files.options.strict_null_checks
     }
 
     /// `getWidenedTypeWithContext`. A type that widening leaves entirely unchanged is returned as
@@ -1374,7 +1373,7 @@ impl<'p> Checker<'p> {
     /// `core.SameMap(types, c.getWidenedType)`. `None`: the same.
     fn get_widened_types(&mut self, types: &[TypeId]) -> Option<SmallVec<[TypeId; 8]>> {
         let widened: SmallVec<[TypeId; 8]> =
-            types.iter().map(|&t| self.regular_object(t)).collect();
+            types.iter().map(|&t| self.get_widened_type(t)).collect();
         (widened[..] != *types).then_some(widened)
     }
 
@@ -1395,24 +1394,23 @@ impl<'p> Checker<'p> {
         self.widening_contexts.len() - 1
     }
 
-    /// `undefinedType`: the non-widening `undefined`. Without strictNullChecks that is not the one
-    /// expressions have.
+    /// `undefinedWideningType`
     #[inline]
-    pub(super) fn undefined_as_declared(&self) -> TypeId {
+    pub(super) fn undefined_widening(&self) -> TypeId {
         if self.p.files.options.strict_null_checks {
             TypeId::UNDEFINED
         } else {
-            TypeId::UNDEFINED_DECLARED
+            TypeId::UNDEFINED_WIDENING
         }
     }
 
-    /// `nullType`, likewise.
+    /// `nullWideningType`
     #[inline]
-    pub(super) fn null_as_declared(&self) -> TypeId {
+    pub(super) fn null_widening(&self) -> TypeId {
         if self.p.files.options.strict_null_checks {
             TypeId::NULL
         } else {
-            TypeId::NULL_DECLARED
+            TypeId::NULL_WIDENING
         }
     }
 
@@ -1426,7 +1424,7 @@ impl<'p> Checker<'p> {
         let missing = if self.p.files.options.exact_optional_property_types {
             TypeId::MISSING
         } else {
-            self.undefined_as_declared()
+            TypeId::UNDEFINED
         };
         let result = Prop {
             name: prop.name,
@@ -1488,7 +1486,7 @@ impl<'p> Checker<'p> {
                         }
                     }
                     for info in &mut shape.index {
-                        info.value = self.regular_object(info.value);
+                        info.value = self.get_widened_type(info.value);
                     }
                     self.synth(shape)
                 }
@@ -1512,7 +1510,7 @@ impl<'p> Checker<'p> {
         self.get_named_members(&mut shape.props, |_| true, &[]);
         for info in &members.shape().index {
             let value = self.instantiate(info.value, members.mapper);
-            let value = self.regular_object(value);
+            let value = self.get_widened_type(value);
             shape.index.push(IndexInfo { value, ..*info });
         }
         shape.symbol_declared_at = self.symbol_declaration_of_object_type(ty);
@@ -1788,7 +1786,7 @@ impl<'p> Checker<'p> {
         if self.p.files.options.strict_null_checks {
             ty == TypeId::IMPLICIT_NEVER
         } else {
-            ty == TypeId::UNDEFINED
+            ty == TypeId::UNDEFINED_WIDENING
         }
     }
 
@@ -1852,21 +1850,6 @@ impl<'p> Checker<'p> {
                 // bound to a name.
                 if !matches!(hir[pat].kind, PatKind::Ident(_)) {
                     return ty;
-                }
-                // `getTupleElementTypeOutOfStartCount`: an element past the end of a tuple is a
-                // non-widening `undefined`.
-                if ty == TypeId::UNDEFINED
-                    && let PatParent::Elem(_, elem) = self.bound(file).pat_parent[pat.idx()]
-                    && hir[elem].default.is_none()
-                    && !hir[elem].is_rest
-                    && let PatKind::Array(elems) = hir[parent].kind
-                    && let TypeData::Tuple { flags, .. } = self.data(parent_ty)
-                    && !flags
-                        .iter()
-                        .any(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-                    && (elem.0 - elems.start) as usize >= flags.len()
-                {
-                    return self.undefined_as_declared();
                 }
                 self.widened_for_declaration(ty, Some((file, pat)))
             }
@@ -2294,7 +2277,7 @@ impl<'p> Checker<'p> {
             let prop = &members.shape().props[i];
             // `getSpreadSymbol`: a write-only property reads as `undefined`.
             let ty = if prop.flags.contains(PropFlags::WRITE_ONLY) {
-                self.undefined_as_declared()
+                TypeId::UNDEFINED
             } else {
                 self.type_of_prop(prop, members.mapper)
             };
@@ -2958,12 +2941,12 @@ impl<'p> Checker<'p> {
                     };
                     let expected = expected.map(|t| if is_async { self.awaited(t) } else { t });
                     if expected.is_some_and(|t| self.some_type(t, |_, m| m.is_undefined())) {
-                        self.undefined_as_declared()
+                        TypeId::UNDEFINED
                     } else {
                         TypeId::VOID
                     }
                 } else {
-                    if without_expression {
+                    if without_expression && self.p.files.options.strict_null_checks {
                         types.push(TypeId::UNDEFINED);
                     }
                     self.union_reduced(&types)
@@ -2990,7 +2973,7 @@ impl<'p> Checker<'p> {
                 }
                 ret = self.widen_literal_for_context(ret, contextual);
             }
-            ret = self.regular_object(ret);
+            ret = self.get_widened_type(ret);
             if is_async {
                 // `unwrapAwaitedType`: a promise of `Awaited<T>` is a promise of `T`.
                 let ret = self.map_type(ret, |c, m| c.awaited_argument(m).unwrap_or(m));
@@ -3008,7 +2991,7 @@ impl<'p> Checker<'p> {
                 continue;
             }
             let operand = if value.is_none() {
-                TypeId::UNDEFINED
+                self.undefined_widening()
             } else {
                 let ty = self.check_expression_cached_ex(file, value, check_mode);
                 self.regular_in_const_context(file, value, ty)
@@ -3073,10 +3056,10 @@ impl<'p> Checker<'p> {
             }
         }
         // `getWidenedType`
-        let yielded = self.regular_object(yielded);
-        let ret = self.regular_object(ret);
+        let yielded = self.get_widened_type(yielded);
+        let ret = self.get_widened_type(ret);
         let next = match next {
-            Some(next) => self.regular_object(next),
+            Some(next) => self.get_widened_type(next),
             // `getContextualIterationType`, for which `any` provides no contextual type either.
             None => {
                 let expected = self
@@ -3803,7 +3786,7 @@ impl<'p> Checker<'p> {
         let yield_expression_type = if value.is_some() {
             self.type_of_expr(file, value)
         } else {
-            TypeId::UNDEFINED
+            self.undefined_widening()
         };
         // `getYieldedTypeOfYieldExpression`
         let error_node = |c: &Self| {
@@ -4054,7 +4037,7 @@ impl<'p> Checker<'p> {
     /// `getBuiltinIteratorReturnType`
     fn builtin_iterator_return(&self) -> TypeId {
         if self.p.files.options.strict_builtin_iterator_return {
-            self.undefined_as_declared()
+            TypeId::UNDEFINED
         } else {
             TypeId::ANY
         }

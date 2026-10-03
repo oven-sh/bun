@@ -1807,6 +1807,38 @@ export const wrong: number = { ...tool, kind: 1 };
       );
     });
 
+    test("without strictNullChecks, [] and [undefined] are assignable to never[]", async () => {
+      using dir = project({
+        "a.ts": `const a: never[] = [];
+const b: never[] = [undefined];
+const c: never[] = [null];
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--strict", "false"]);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(3,21): error TS2322: Type 'null' is not assignable to type 'never'."`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test("without strictNullChecks, the undefined target of a field decorator is not widened to any", async () => {
+      using dir = project({
+        "a.ts": `declare function Formula<T extends object>(
+  formula: (columns: Record<keyof T, string>) => string,
+): (target: T, context: unknown) => void;
+class Book {
+  price = 1;
+  @Formula(columns => columns.price) taxed = 2;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--strict", "false"]);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(6,31): error TS2339: Property 'price' does not exist on type 'Record<never, string>'."`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test("an export that cannot merge is still the value its own block refers to", async () => {
       const declarations = `declare module "m" {
   const key: unique symbol;

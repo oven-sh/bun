@@ -837,7 +837,7 @@ impl<'p> Checker<'p> {
                             if let Some(index_node) = index_node {
                                 self.error_at(index_node, 2514, &[]);
                             }
-                            return Some(self.undefined_as_declared());
+                            return Some(TypeId::UNDEFINED);
                         }
                         if let Some(index_node) = index_node {
                             let args =
@@ -870,7 +870,7 @@ impl<'p> Checker<'p> {
                         };
                         let (elems, fixed) = (c.type_arguments(t), Self::fixed_length(flags));
                         if fixed == flags.len() {
-                            return c.undefined_as_declared();
+                            return TypeId::UNDEFINED;
                         }
                         let rest = c.tuple_element_union(&elems[fixed..], &flags[fixed..]);
                         if include_undefined && at >= Self::total_fixed_element_count(flags) as f64
@@ -958,11 +958,11 @@ impl<'p> Checker<'p> {
                     {
                         let at = self.place_inside_parentheses(file, e);
                         self.error_at(at, 2339, &[Arg::Atom(name), Arg::Type(object)]);
-                        return Some(self.undefined_as_declared());
+                        return Some(TypeId::UNDEFINED);
                     }
                     if index == TypeId::STRING || index == TypeId::NUMBER {
                         let members = self.members(object)?;
-                        let mut types = vec![self.undefined_as_declared()];
+                        let mut types = vec![TypeId::UNDEFINED];
                         for prop in &members.shape().props {
                             types.push(self.type_of_prop(prop, members.mapper));
                         }
@@ -991,7 +991,7 @@ impl<'p> Checker<'p> {
         }
         if access_flags.contains(AccessFlags::ALLOW_MISSING) && self.is_object_literal_type(object)
         {
-            return Some(self.undefined_as_declared());
+            return Some(TypeId::UNDEFINED);
         }
         if self.is_js_literal_type(object) {
             return Some(TypeId::ANY);

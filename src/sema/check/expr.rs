@@ -414,7 +414,7 @@ impl<'p> Checker<'p> {
             return None;
         }
         let ty = match kind {
-            ExprKind::Null => TypeId::NULL,
+            ExprKind::Null => self.null_widening(),
             ExprKind::True => TypeId::FRESH_TRUE,
             ExprKind::False => TypeId::FRESH_FALSE,
             ExprKind::Number(n) => self.number_literal(hir.numbers[n as usize], true),
@@ -888,7 +888,7 @@ impl<'p> Checker<'p> {
         left: TypeId,
     ) -> TypeId {
         if self.target_kind(file, e).written || self.is_called(file, e) {
-            self.regular_object(left)
+            self.get_widened_type(left)
         } else {
             left
         }
@@ -1171,7 +1171,7 @@ impl<'p> Checker<'p> {
         // `getFlowTypeOfProperty`
         let (class, _) = self.class_of_member_fn(file, container)?;
         let inherited = self.type_of_property_in_base_class(file, class, name);
-        Some(inherited.unwrap_or_else(|| self.undefined_as_declared()))
+        Some(inherited.unwrap_or_else(|| TypeId::UNDEFINED))
     }
 
     /// `lookupSymbolForPrivateIdentifierDeclaration`, `getPrivateIdentifierPropertyOfType`: the
@@ -1254,7 +1254,7 @@ impl<'p> Checker<'p> {
         // `getWidenedType(exprType)`: the target of an assignment or a call is looked up in the
         // widened type of the object.
         let receiver = if target.written || self.is_called(file, e) {
-            self.regular_object(receiver)
+            self.get_widened_type(receiver)
         } else {
             receiver
         };
@@ -1486,14 +1486,14 @@ impl<'p> Checker<'p> {
             // differently.
             ExprKind::Missing => match self.bound(file).expr_parent[e.idx()] {
                 Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Array(_)) => {
-                    TypeId::UNDEFINED
+                    self.undefined_widening()
                 }
                 _ => TypeId::ERROR,
             },
             ExprKind::Ident(name) => self.type_of_identifier(file, e, name),
             ExprKind::This => self.check_this_expression(file, e),
             ExprKind::Super => self.check_super_expression(file, e),
-            ExprKind::Null => TypeId::NULL,
+            ExprKind::Null => self.null_widening(),
             ExprKind::True => TypeId::FRESH_TRUE,
             ExprKind::False => TypeId::FRESH_FALSE,
             ExprKind::Number(n) => self.number_literal(hir.numbers[n as usize], true),
@@ -2306,10 +2306,8 @@ impl<'p> Checker<'p> {
                 origin: Origin::GlobalThis,
                 mapper: MapperId::IDENTITY,
             })
-        } else if self.p.files.options.strict_null_checks {
-            TypeId::UNDEFINED
         } else {
-            TypeId::UNDEFINED_DECLARED
+            TypeId::UNDEFINED
         })
     }
 
@@ -2737,11 +2735,11 @@ impl<'p> Checker<'p> {
         let sym = self.class_sym(file, class);
         let constructor = self.base_constructor_type_of_class(sym);
         // `classDeclarationExtendsNull`
-        if constructor == TypeId::NULL {
+        if constructor == self.null_widening() {
             return if is_call_expression {
                 TypeId::ERROR
             } else {
-                TypeId::NULL
+                constructor
             };
         }
         let is_static = hir.is_static(container);
@@ -2820,14 +2818,14 @@ impl<'p> Checker<'p> {
                 }
                 // Only under exactOptionalPropertyTypes may a hole be omitted, and then so may
                 // everything that follows it.
+                ExprKind::Missing if exact => {
+                    has_hole = true;
+                    types.push(TypeId::MISSING);
+                    flags.push(ElemFlags::OPTIONAL);
+                }
                 ExprKind::Missing => {
-                    has_hole |= exact;
-                    types.push(self.undefined_or_missing());
-                    flags.push(if exact {
-                        ElemFlags::OPTIONAL
-                    } else {
-                        ElemFlags::REQUIRED
-                    });
+                    types.push(self.undefined_widening());
+                    flags.push(ElemFlags::REQUIRED);
                 }
                 _ => {
                     let ty = self.type_of_expr(file, item);
@@ -2892,7 +2890,7 @@ impl<'p> Checker<'p> {
         let nothing = if self.p.files.options.strict_null_checks {
             TypeId::IMPLICIT_NEVER
         } else {
-            TypeId::UNDEFINED
+            TypeId::UNDEFINED_WIDENING
         };
         let element = if types.is_empty() {
             nothing
@@ -4043,7 +4041,7 @@ impl<'p> Checker<'p> {
             // `checkVoidExpression`: the operand is deferred.
             UnOp::Void => {
                 self.check_node_deferred(file, e);
-                TypeId::UNDEFINED
+                self.undefined_widening()
             }
             UnOp::Delete => {
                 self.look_at(file, operand);

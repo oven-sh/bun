@@ -508,7 +508,7 @@ impl<'p> Checker<'p> {
                     ExprKind::Assign { value, .. } if bound.is_expando_declaration(e) => {
                         let ty = self.type_of_expr(file, value);
                         let ty = self.widen_literal(ty);
-                        Some(self.regular_object(ty))
+                        Some(self.get_widened_type(ty))
                     }
                     _ => None,
                 };
@@ -524,7 +524,7 @@ impl<'p> Checker<'p> {
                     StmtKind::Class(c) => bound.class_symbol[c.idx()],
                     StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
                         let ty = self.type_of_expr(file, e);
-                        return Some(self.regular_object(ty));
+                        return Some(self.get_widened_type(ty));
                     }
                     _ => return None,
                 };
@@ -1405,7 +1405,7 @@ impl<'p> Checker<'p> {
                 };
                 let ty = self.type_of_expr(file, e);
                 let ty = self.regular(ty);
-                self.regular_object(ty)
+                self.get_widened_type(ty)
             }
             Pseudo::MaybeConst {
                 at,
@@ -1436,8 +1436,8 @@ impl<'p> Checker<'p> {
                     _ => self.union(&types),
                 }
             }
-            Pseudo::Undefined => TypeId::UNDEFINED,
-            Pseudo::Null => TypeId::NULL,
+            Pseudo::Undefined => self.undefined_widening(),
+            Pseudo::Null => self.null_widening(),
             Pseudo::String => TypeId::STRING,
             Pseudo::Number => TypeId::NUMBER,
             Pseudo::BigInt => TypeId::BIGINT,

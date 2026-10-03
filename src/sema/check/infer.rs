@@ -2105,7 +2105,7 @@ impl<'p> Checker<'p> {
             let inferred = self
                 .type_from_inference(&inner.candidates[0])
                 .unwrap_or(TypeId::UNKNOWN);
-            Some(self.regular_object(inferred))
+            Some(self.get_widened_type(inferred))
         } else {
             None
         };
@@ -2474,7 +2474,7 @@ impl<'p> Checker<'p> {
         } else {
             self.union_reduced(&candidates)
         };
-        (self.regular_object(unwidened), constraint)
+        (self.get_widened_type(unwidened), constraint)
     }
 
     /// `getInferredType`. `is_fixed`: the inference is being fixed, because something needs it

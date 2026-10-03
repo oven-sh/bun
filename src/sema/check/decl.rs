@@ -2282,8 +2282,8 @@ impl<'p> Checker<'p> {
                 Keyword::Never => TypeId::NEVER,
                 Keyword::Void => TypeId::VOID,
                 // `undefinedType`, `nullType`: as type nodes they are never widened.
-                Keyword::Undefined => self.undefined_as_declared(),
-                Keyword::Null => self.null_as_declared(),
+                Keyword::Undefined => TypeId::UNDEFINED,
+                Keyword::Null => TypeId::NULL,
                 Keyword::String => TypeId::STRING,
                 Keyword::Number => TypeId::NUMBER,
                 Keyword::Boolean => TypeId::BOOLEAN,
@@ -2454,27 +2454,9 @@ impl<'p> Checker<'p> {
                 has_type_arguments,
                 expr,
             } => {
+                // `getTypeFromTypeQueryNode`: `getRegularTypeOfLiteralType(getWidenedType(t))`
                 let narrowed = self.type_of_expr(file, expr);
-                // `getTypeFromTypeQueryNode`, `getWidenedType`: the type of the value `undefined`
-                // widens without strictNullChecks. A declared `undefined` is preserved.
-                if !self.p.files.options.strict_null_checks && narrowed == TypeId::UNDEFINED {
-                    let is_global = |e: ExprId| self.bound(file).expr_symbol[e.idx()].is_none();
-                    let is_the_value = match hir[expr].kind {
-                        ExprKind::Ident(known::undefined) => is_global(expr),
-                        ExprKind::Dot {
-                            obj,
-                            name: known::undefined,
-                            ..
-                        } => {
-                            matches!(hir[obj].kind, ExprKind::Ident(known::globalThis))
-                                && is_global(obj)
-                        }
-                        _ => false,
-                    };
-                    if is_the_value {
-                        return TypeId::ANY;
-                    }
-                }
+                let narrowed = self.get_widened_type(narrowed);
                 // `checkPropertyAccessExpressionOrQualifiedName`: the missing name of `typeof a.`
                 // resolves to no property, so the result is the error type.
                 if narrowed == TypeId::UNRESOLVED
@@ -2823,8 +2805,8 @@ impl<'p> Checker<'p> {
             b"BigInt" => TypeId::BIGINT,
             b"Boolean" => TypeId::BOOLEAN,
             b"Void" => TypeId::VOID,
-            b"Undefined" => self.undefined_as_declared(),
-            b"Null" => self.null_as_declared(),
+            b"Undefined" => TypeId::UNDEFINED,
+            b"Null" => TypeId::NULL,
             b"Function" | b"function" => self.global_ref(known::Function, &[]),
             b"array" if args.is_empty() && !no_implicit_any => {
                 return Some(self.array_of(TypeId::ANY));
@@ -3214,7 +3196,7 @@ impl<'p> Checker<'p> {
                     && self.atoms().bytes(self.files().symbol(sym).name) == b"BuiltinIteratorReturn"
                 {
                     return if self.files().options.strict_builtin_iterator_return {
-                        self.undefined_as_declared()
+                        TypeId::UNDEFINED
                     } else {
                         TypeId::ANY
                     };

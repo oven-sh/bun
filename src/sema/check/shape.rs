@@ -1818,12 +1818,10 @@ impl<'p> Checker<'p> {
                 .base_constructor_types
                 .insert(&mut self.task, class, error, stored);
         }
-        // `nullWideningType`, which is `nullType` under `strictNullChecks`.
-        let ty = if constructor == TypeId::NULL
-            || constructor.is_null() && self.p.files.options.strict_null_checks
+        let ty = if constructor == self.null_widening()
+            || self.has_any_flag(constructor)
+            || self.is_constructor_type(constructor)
         {
-            TypeId::NULL
-        } else if self.has_any_flag(constructor) || self.is_constructor_type(constructor) {
             constructor
         } else {
             if holds && let Some(at) = self.place_to_report_base_at(file, c) {
@@ -1859,7 +1857,7 @@ impl<'p> Checker<'p> {
 
     /// `classDeclarationExtendsNull`
     pub(super) fn class_declaration_extends_null(&mut self, class: Sym) -> bool {
-        self.base_constructor_type_of_class(class) == TypeId::NULL
+        self.base_constructor_type_of_class(class) == self.null_widening()
     }
 
     /// `isConstructorType`
@@ -2299,7 +2297,7 @@ impl<'p> Checker<'p> {
                 // `getWidenedTypeOfObjectLiteral`: the value type of an index signature is widened
                 // like a property.
                 for info in &mut shape.index {
-                    info.value = self.regular_object(info.value);
+                    info.value = self.get_widened_type(info.value);
                 }
                 return shape;
             }
@@ -3539,7 +3537,7 @@ impl<'p> Checker<'p> {
             base
         };
         let ty = if prop.flags.contains(PropFlags::WIDEN) {
-            self.regular_object(ty)
+            self.get_widened_type(ty)
         } else if prop.flags.contains(PropFlags::REGULAR) {
             self.regular_type_of_object_literal(ty)
         } else {
@@ -3689,7 +3687,7 @@ impl<'p> Checker<'p> {
             }
             ThisAssignmentDeclaration::Constructor(func) => {
                 // `getFlowTypeOfProperty`: the walk starts from the inherited type, or from `undefinedType`.
-                let initial = inherited(self).unwrap_or_else(|| self.undefined_as_declared());
+                let initial = inherited(self).unwrap_or_else(|| TypeId::UNDEFINED);
                 let first = UntypedProperty::Assignment(value_declaration);
                 self.flow_type_in_constructor_from(file, func, name, initial, first)
             }
@@ -4225,7 +4223,7 @@ impl<'p> Checker<'p> {
                         }
                         return any;
                     }
-                    let widened = self.regular_object(ty);
+                    let widened = self.get_widened_type(ty);
                     // `widenTypeForVariableLikeDeclaration`
                     if reports_errors && self.report_errors_from_widening(ty) {
                         self.report_implicit_any(file, UntypedProperty::Member(first), widened);
@@ -4248,7 +4246,7 @@ impl<'p> Checker<'p> {
                         None
                     };
                     // `getFlowTypeOfProperty`: the walk starts from the inherited type, or from `undefinedType`.
-                    let initial = inherited.unwrap_or_else(|| self.undefined_as_declared());
+                    let initial = inherited.unwrap_or_else(|| TypeId::UNDEFINED);
                     let mut has_flow_container = false;
                     if !member.flags.contains(Flags::STATIC) {
                         if let Some(constructor) = hir[c].members.iter().find(|&m| {
@@ -5428,7 +5426,7 @@ impl<'p> Checker<'p> {
                 index_types.push(self.beyond_fixed_elements(t).unwrap_or(info.value));
             } else if self.is_closed_object_literal_type(t) {
                 flags |= PropFlags::WRITE_PARTIAL;
-                index_types.push(self.undefined_as_declared());
+                index_types.push(TypeId::UNDEFINED);
             } else {
                 flags |= PropFlags::READ_PARTIAL;
             }

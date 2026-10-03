@@ -50,15 +50,18 @@ pub enum Intrinsic {
     /// `TypeFlagsNever`. `isEmptyLiteralType` recognizes it.
     ImplicitNever,
     Void,
+    /// `undefinedType`
     Undefined,
     /// The `undefined` of a missing property or element. `missingType`
     Missing,
-    /// `undefined` as a type node without strictNullChecks: like the plain one, which is then the
-    /// type of expressions (`undefinedWideningType`), but never widened to `any`. `undefinedType`
-    UndefinedDeclared,
+    /// `undefinedWideningType` without strictNullChecks: the type of the expression `undefined`,
+    /// which `getWidenedType` turns into `any`. Under strictNullChecks it is `undefinedType`
+    /// (`createWideningType`), and this one is not used.
+    UndefinedWidening,
+    /// `nullType`
     Null,
-    /// The same for `null`. `nullType`
-    NullDeclared,
+    /// `nullWideningType`, likewise.
+    NullWidening,
     String,
     Number,
     BigInt,
@@ -1236,9 +1239,9 @@ well_known! {
     VOID = TypeData::Intrinsic(Intrinsic::Void),
     UNDEFINED = TypeData::Intrinsic(Intrinsic::Undefined),
     MISSING = TypeData::Intrinsic(Intrinsic::Missing),
-    UNDEFINED_DECLARED = TypeData::Intrinsic(Intrinsic::UndefinedDeclared),
+    UNDEFINED_WIDENING = TypeData::Intrinsic(Intrinsic::UndefinedWidening),
     NULL = TypeData::Intrinsic(Intrinsic::Null),
-    NULL_DECLARED = TypeData::Intrinsic(Intrinsic::NullDeclared),
+    NULL_WIDENING = TypeData::Intrinsic(Intrinsic::NullWidening),
     STRING = TypeData::Intrinsic(Intrinsic::String),
     NUMBER = TypeData::Intrinsic(Intrinsic::Number),
     BIGINT = TypeData::Intrinsic(Intrinsic::BigInt),
@@ -1285,8 +1288,8 @@ impl TypeId {
     #[inline]
     pub fn plain(self) -> TypeId {
         match self {
-            TypeId::MISSING | TypeId::UNDEFINED_DECLARED => TypeId::UNDEFINED,
-            TypeId::NULL_DECLARED => TypeId::NULL,
+            TypeId::MISSING | TypeId::UNDEFINED_WIDENING => TypeId::UNDEFINED,
+            TypeId::NULL_WIDENING => TypeId::NULL,
             ty => ty,
         }
     }
@@ -1478,10 +1481,10 @@ impl<'p> Types<'p> {
                 | Intrinsic::IntrinsicMarker
                 | Intrinsic::Wildcard => tf::ANY,
                 Intrinsic::Unknown => tf::UNKNOWN,
-                Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared => {
+                Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening => {
                     tf::UNDEFINED
                 }
-                Intrinsic::Null | Intrinsic::NullDeclared => tf::NULL,
+                Intrinsic::Null | Intrinsic::NullWidening => tf::NULL,
                 Intrinsic::Void => tf::VOID,
                 Intrinsic::String => tf::STRING,
                 Intrinsic::Number => tf::NUMBER,
@@ -1536,7 +1539,7 @@ impl<'p> Types<'p> {
         match data {
             TypeData::Intrinsic(Intrinsic::Unresolved) => ObjectFlags::HAS_UNRESOLVED,
             // `createWideningType`
-            TypeData::Intrinsic(Intrinsic::Null | Intrinsic::Undefined) => {
+            TypeData::Intrinsic(Intrinsic::NullWidening | Intrinsic::UndefinedWidening) => {
                 ObjectFlags::CONTAINS_WIDENING_TYPE
             }
             // A type parameter whose constraint depends on an unresolved type is flagged as such. A

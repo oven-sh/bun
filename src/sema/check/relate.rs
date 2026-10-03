@@ -2,8 +2,7 @@
 //!
 //! Follows `internal/checker/relater.go` of TypeScript 7.0.2 function by function. The names in
 //! `backticks` at the head of a function are the names used there. `REPORT` is `reportErrors`. Code
-//! that only serves error elaboration is in `explain_relation.rs`. Omitted:
-//! `isEmptyArrayLiteralType` (the type of `[]` is not distinguished from an annotated `never[]`).
+//! that only serves error elaboration is in `explain_relation.rs`.
 
 use super::explain_relation::{
     Chain, ErrorState, chain_depth, is_same_chain, visibility_to_string,
@@ -5008,6 +5007,12 @@ impl<'p> Checker<'p> {
             (TypeData::Ref { target: st, .. }, TypeData::Ref { target: tt, .. })
                 if st == tt && !self.is_marker_type(source) && !self.is_marker_type(target) =>
             {
+                // "When strictNullChecks is disabled, the element type of the empty array literal is
+                // undefinedWideningType, and an empty array literal wouldn't be assignable to a
+                // `never[]` without this check."
+                if self.is_empty_array_literal_type(source) {
+                    return Ternary::TRUE;
+                }
                 // Two instantiations of one generic type: relate the type arguments by variance.
                 let variances = self.variances_list(*st);
                 // The variance computation is in progress. So only occurrences that are not inside

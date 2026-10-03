@@ -695,9 +695,9 @@ impl<'p> Checker<'p> {
             TypeData::BoolLit { value, .. } => of(OF_BOOLEAN, *value, !*value),
             TypeData::Intrinsic(Intrinsic::Void) => OF_VOID,
             TypeData::Intrinsic(
-                Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared,
+                Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening,
             ) => OF_UNDEFINED,
-            TypeData::Intrinsic(Intrinsic::Null | Intrinsic::NullDeclared) => OF_NULL,
+            TypeData::Intrinsic(Intrinsic::Null | Intrinsic::NullWidening) => OF_NULL,
             TypeData::Intrinsic(Intrinsic::Symbol) | TypeData::UniqueSymbol { .. } => {
                 of(OF_SYMBOL, true, false)
             }
@@ -1743,7 +1743,7 @@ impl<'p> Checker<'p> {
     fn start_unassigned(&mut self, walk: &mut Walk) {
         let declared = walk.declared;
         if self.is_automatic_type(declared) {
-            walk.initial = self.undefined_as_declared();
+            walk.initial = TypeId::UNDEFINED;
             walk.start = Start::Known;
         } else if self.p.files.options.strict_null_checks
             && !self.is_any(declared)
@@ -2867,7 +2867,7 @@ impl<'p> Checker<'p> {
             }
             known::symbol => self.narrow_type_by_type_facts(ty, TypeId::SYMBOL, TYPEOF_EQ_SYMBOL),
             known::undefined => {
-                let undefined = self.undefined_as_declared();
+                let undefined = TypeId::UNDEFINED;
                 self.narrow_type_by_type_facts(ty, undefined, EQ_UNDEFINED)
             }
             known::object => {
@@ -2875,7 +2875,7 @@ impl<'p> Checker<'p> {
                     return ty;
                 }
                 let object = self.narrow_type_by_type_facts(ty, TypeId::OBJECT, TYPEOF_EQ_OBJECT);
-                let null = self.null_as_declared();
+                let null = TypeId::NULL;
                 let null = self.narrow_type_by_type_facts(ty, null, EQ_NULL);
                 self.union(&[object, null])
             }

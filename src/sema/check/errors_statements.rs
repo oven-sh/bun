@@ -713,7 +713,7 @@ impl Checker<'_> {
         let target = self.union(&target);
         // `widenTypeForVariableLikeDeclaration`: an object literal may have excess properties.
         let source = self.type_of_expr(file, decl.init);
-        let source = self.regular_object(source);
+        let source = self.get_widened_type(source);
         let at = self.error_start_of(file, decl.init);
         // An anonymous function uses the name of the variable.
         let at = if at == hir[decl.pat].pos {

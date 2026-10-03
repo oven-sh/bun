@@ -343,7 +343,7 @@ impl<'p> Checker<'p> {
                 let ty = if for_context {
                     ty
                 } else {
-                    c.regular_object(ty)
+                    c.get_widened_type(ty)
                 };
                 return c.optional(ty);
             }
@@ -513,7 +513,7 @@ impl<'p> Checker<'p> {
     /// pattern is an ordinary type, which is not in `patternForType`.
     fn without_pattern_marks(&mut self, ty: TypeId) -> TypeId {
         if self.has_pattern_mark(ty) {
-            self.regular_object(ty)
+            self.get_widened_type(ty)
         } else {
             ty
         }

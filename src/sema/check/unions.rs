@@ -163,19 +163,16 @@ impl<'p> Checker<'p> {
         // (`TypeFlagsIncludesNonWideningType`).
         if !self.p.files.options.strict_null_checks {
             let null = members.iter().any(|m| m.is_null());
-            let not_widened = members.iter().any(|&m| {
-                matches!(
-                    m,
-                    TypeId::NULL_DECLARED | TypeId::UNDEFINED_DECLARED | TypeId::MISSING
-                )
-            });
+            let not_widened = members
+                .iter()
+                .any(|&m| matches!(m, TypeId::NULL | TypeId::UNDEFINED | TypeId::MISSING));
             members.retain(|m| !m.is_undefined() && !m.is_null());
             if members.is_empty() {
                 let left = match (null, not_widened) {
-                    (true, true) => TypeId::NULL_DECLARED,
-                    (true, false) => TypeId::NULL,
-                    (false, true) => TypeId::UNDEFINED_DECLARED,
-                    (false, false) => TypeId::UNDEFINED,
+                    (true, true) => TypeId::NULL,
+                    (true, false) => TypeId::NULL_WIDENING,
+                    (false, true) => TypeId::UNDEFINED,
+                    (false, false) => TypeId::UNDEFINED_WIDENING,
                 };
                 return (left, true);
             }
@@ -1030,9 +1027,9 @@ impl<'p> Checker<'p> {
             let left = if includes & tf::INCLUDES_EMPTY_OBJECT != 0 {
                 TypeId::NEVER
             } else if includes & tf::UNDEFINED != 0 {
-                TypeId::UNDEFINED_DECLARED
+                TypeId::UNDEFINED
             } else {
-                TypeId::NULL_DECLARED
+                TypeId::NULL
             };
             return (left, false);
         }

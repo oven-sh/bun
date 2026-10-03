@@ -1916,6 +1916,8 @@ impl EString {
     }
 
     /// The rope's bytes, concatenated into a fresh `bump` slice.
+    // PERF: out of line, so the rope check in `resolve_rope_if_needed` and `flattened` stays inlinable at every string.
+    #[inline(never)]
     fn flatten_rope<'b>(&self, bump: &'b Bump) -> &'b [u8] {
         let mut bytes = bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
         bytes.extend_from_slice(&self.data);

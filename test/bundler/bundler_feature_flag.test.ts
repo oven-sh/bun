@@ -88,6 +88,28 @@ if (feature("DISABLED_FEATURE")) {
         },
       });
 
+      // minifySyntax folds "ENABLED_" + "FEATURE" before feature() sees it; the
+      // lookup must use the whole folded name, not its first segment.
+      itBundled(`feature_flag/${backend}/FoldedFlagName`, {
+        backend,
+        files: {
+          "/a.js": `
+import { feature } from "bun:bundle";
+if (feature("ENABLED_" + "FEATURE")) {
+  console.log("this should be kept");
+} else {
+  console.log("this should be removed");
+}
+`,
+        },
+        features: ["ENABLED_FEATURE"],
+        minifySyntax: true,
+        onAfterBundle(api) {
+          api.expectFile("out.js").toInclude("this should be kept");
+          api.expectFile("out.js").not.toInclude("this should be removed");
+        },
+      });
+
       itBundled(`feature_flag/${backend}/ImportRemoved`, {
         backend,
         files: {

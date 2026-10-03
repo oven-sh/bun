@@ -1860,11 +1860,13 @@ impl EString {
     }
 
     pub fn eql_bytes(&self, other: &[u8]) -> bool {
-        if self.is_utf8() {
-            strings::eql_long(&self.data, other, true)
-        } else {
-            strings::utf16_eql_string(self.slice16(), other)
+        if !self.is_utf8() {
+            return strings::utf16_eql_string(self.slice16(), other);
         }
+        if self.next.is_none() {
+            return strings::eql_long(&self.data, other, true);
+        }
+        self.eql8_rope(other)
     }
 
     pub fn eql_comptime(&self, value: &'static [u8]) -> bool {
@@ -1927,29 +1929,33 @@ impl EString {
         bytes.into_bump_slice()
     }
 
-    /// Return UTF-8 bytes, transcoding if UTF-16.
-    /// The transcode allocates via the global arena then copies into `bump`.
+    /// Return UTF-8 bytes, transcoding if UTF-16 and joining a rope.
+    /// A rope is joined into `bump` on every call; `slice` stores the joined
+    /// bytes back into the node instead.
     pub fn string<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
-        if self.is_utf8() {
-            // `self.data` is arena-owned with the same lifetime as `bump`;
-            // StoreStr re-borrows under that contract.
-            Ok(self.data.slice())
-        } else {
+        if !self.is_utf8() {
             let v = strings::to_utf8_alloc(self.slice16());
-            Ok(bump.alloc_slice_copy(&v))
+            return Ok(bump.alloc_slice_copy(&v));
         }
+        if self.next.is_some() {
+            return Ok(self.flatten_rope(bump));
+        }
+        // `self.data` is arena-owned with the same lifetime as `bump`;
+        // StoreStr re-borrows under that contract.
+        Ok(self.data.slice())
     }
 
     pub(crate) fn string_cloned<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
-        if self.is_utf8() {
+        if self.is_utf8() && self.next.is_none() {
             Ok(bump.alloc_slice_copy(&self.data))
         } else {
-            let v = strings::to_utf8_alloc(self.slice16());
-            Ok(bump.alloc_slice_copy(&v))
+            // `string` already returns a fresh copy for these.
+            self.string(bump)
         }
     }
 
     pub fn hash(&self) -> u64 {
+        debug_assert!(self.next.is_none(), "hash() on an unresolved rope");
         if self.is_blank() {
             return 0;
         }
@@ -1978,6 +1984,10 @@ impl EString {
     #[inline]
     pub fn order(&self, other: &EString) -> Ordering {
         debug_assert!(self.is_utf8() == other.is_utf8());
+        debug_assert!(
+            self.next.is_none() && other.next.is_none(),
+            "order() on an unresolved rope"
+        );
         if self.is_utf8() {
             strings::order(&self.data, &other.data)
         } else {
@@ -2001,6 +2011,10 @@ impl EString {
 
     // `eql`, split by operand type.
     pub fn eql_string(&self, other: &EString) -> bool {
+        debug_assert!(
+            self.next.is_none() && other.next.is_none(),
+            "eql_string() on an unresolved rope"
+        );
         if self.is_utf8() {
             if other.is_utf8() {
                 strings::eql_long(&self.data, &other.data, true)
@@ -2469,7 +2483,7 @@ impl Import {
         self.import_record_index == u32::MAX
     }
 
-    pub fn import_record_loader(&self) -> Option<crate::Loader> {
+    pub fn import_record_loader(&self, bump: &Bump) -> Option<crate::Loader> {
         let crate::ExprData::EObject(obj) = &self.options.data else {
             return None;
         };
@@ -2477,7 +2491,9 @@ impl Import {
         let crate::ExprData::EObject(with_obj) = &with.data else {
             return None;
         };
-        let str_ = Object::get(with_obj, b"type")?.data.as_e_string()?;
+        let mut str_ = Object::get(with_obj, b"type")?.data.as_e_string()?;
+        // import() options are always constant-folded, so this may be a rope.
+        str_.resolve_rope_if_needed(bump);
 
         if !str_.is_utf16 {
             if let Some(loader) = crate::Loader::from_string(&str_.data) {

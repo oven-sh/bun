@@ -151,6 +151,32 @@ describe("bundler", async () => {
     });
   }
 
+  // import() options are visited with constant folding forced on, so these
+  // attribute strings reach the loader lookup as ropes; the lookup must see the
+  // whole string ("json"), not just its first segment ("js" is a real loader).
+  itBundled("bun/loader-dynamic-import-attribute-folded-type", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        const mod = await import('./hello.notjson', { with: { type: "js" + "on" } });
+        console.write(JSON.stringify(mod.default));
+      `,
+      "/hello.notjson": JSON.stringify({ hello: "world" }),
+    },
+    run: { stdout: '{"hello":"world"}' },
+  });
+  itBundled("bun/loader-dynamic-import-attribute-folded-keys", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        const mod = await import('./hello.notjson', { ["wi" + "th"]: { ["ty" + "pe"]: "json" } });
+        console.write(JSON.stringify(mod.default));
+      `,
+      "/hello.notjson": JSON.stringify({ hello: "world" }),
+    },
+    run: { stdout: '{"hello":"world"}' },
+  });
+
   itBundled("bun/loader-text-file", {
     target: "bun",
     outfile: "",

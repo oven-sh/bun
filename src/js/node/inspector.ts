@@ -24,6 +24,7 @@ const isCPUProfilerRunning = $newCppFunction("JSInspectorProfiler.cpp", "jsFunct
 const startPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage", 0);
 const stopPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage", 0);
 const collectPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage", 0);
+const collectInspectorGarbage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_collectInspectorGarbage", 0);
 
 // Native bindings for inspector.open(): they start Bun's debugger thread with a
 // WebSocket server that speaks the V8 Chrome DevTools Protocol (see
@@ -421,11 +422,13 @@ function collectCoverageScripts(): any[] | Error {
 
 class Session extends EventEmitter {
   #connected = false;
+  #connectedToMainThread = false;
   #profilerEnabled = false;
   #preciseCoverageEnabled = false;
   #preciseCoverageCallCount = false;
   #preciseCoverageDetailed = false;
   #forwardedDebugger = false;
+  #pendingCollections: Set<{ callback: (err: Error | null, result?: any) => void }> = new SafeSet();
   // Baseline for delta semantics: takePreciseCoverage must reset counters, but
   // JSC has no counter-reset API, so subtract the previous take instead.
   #coverageBaseline: Map<string, number> = new Map();
@@ -454,6 +457,7 @@ class Session extends EventEmitter {
       throw $ERR_INSPECTOR_ALREADY_CONNECTED();
     }
     this.#connected = true;
+    this.#connectedToMainThread = false;
   }
 
   connectToMainThread() {
@@ -461,6 +465,7 @@ class Session extends EventEmitter {
       throw $ERR_INSPECTOR_NOT_WORKER();
     }
     this.connect();
+    this.#connectedToMainThread = true;
   }
 
   disconnect() {
@@ -472,6 +477,10 @@ class Session extends EventEmitter {
     }
     this.#profilerEnabled = false;
     this.#connected = false;
+    for (const { callback } of this.#pendingCollections) {
+      process.nextTick(callback, $ERR_INSPECTOR_CLOSED());
+    }
+    this.#pendingCollections.clear();
     this.#coverageBaseline.$clear();
     runtimeEnabledSessions.delete(this);
     if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
@@ -501,12 +510,24 @@ class Session extends EventEmitter {
     if (callback !== undefined) validateFunction(callback, "callback");
 
     if (!this.#connected) {
-      const error = $ERR_INSPECTOR_NOT_CONNECTED();
+      throw $ERR_INSPECTOR_NOT_CONNECTED();
+    }
+
+    if (method === "HeapProfiler.enable" || method === "HeapProfiler.disable") {
+      if (callback) this.#heapCallback(callback, {});
+      return;
+    }
+
+    if (method === "HeapProfiler.collectGarbage" && !this.#connectedToMainThread) {
+      const collection = collectInspectorGarbage();
       if (callback) {
-        queueMicrotask(() => callback(error));
-        return;
+        const request = { callback };
+        this.#pendingCollections.add(request);
+        collection.$then(() => {
+          if (this.#pendingCollections.delete(request)) this.#heapCallback(request.callback, {});
+        });
       }
-      throw error;
+      return;
     }
 
     const result = this.#handleMethod(method, params as object | undefined);
@@ -534,6 +555,14 @@ class Session extends EventEmitter {
         throw error;
       }
       return result;
+    }
+  }
+
+  #heapCallback(callback: (err: Error | null, result?: any) => void, result: any) {
+    try {
+      callback(null, result);
+    } catch (error) {
+      process.emitWarning(error as Error);
     }
   }
 

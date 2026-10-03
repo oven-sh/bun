@@ -469,9 +469,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 
     pub fn register_poll(&mut self) {
         let Some(poll) = self.get_poll() else { return };
-        // Use the event loop from the parent, not the global one
-        let loop_ = self.parent_event_loop().loop_();
-        match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
+        match poll.register_with_fd(self.parent_event_loop(), FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => {
                 // Same report as a failed write (the streaming writer does the
                 // same): parents expect every error to be followed by `on_close`.
@@ -581,9 +579,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
                 p
             }
         };
-        let loop_ = self.parent_event_loop().loop_();
-
-        match poll.register_with_fd(loop_, FilePollKind::Writable, fd) {
+        match poll.register_with_fd(self.parent_event_loop(), FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
                 // A poll from an earlier start() still holds that start's fd.
                 if existing_poll.is_none() {
@@ -631,9 +627,6 @@ pub trait PosixStreamingWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
-    /// # Safety
-    /// `this` must point to a live `Self`.
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop;
 }
 
 pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
@@ -827,8 +820,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     fn register_poll(&mut self) {
         let Some(poll) = self.get_poll() else { return };
         // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        let loop_ = unsafe { Parent::loop_(self.parent()) }.cast();
-        match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
+        let event_loop = unsafe { Parent::event_loop(self.parent()) };
+        match poll.register_with_fd(event_loop, FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => {
                 // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
                 // `Parent::on_error` (e.g. `FileSink::on_error`) re-enters via
@@ -1098,13 +1091,13 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         }
 
         // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        let loop_ = unsafe { Parent::event_loop(self.parent()) };
+        let event_loop = unsafe { Parent::event_loop(self.parent()) };
         let existing_poll = self.get_poll();
         let poll = match existing_poll {
             Some(p) => p,
             None => {
                 let p = FilePollRef::init(
-                    loop_,
+                    event_loop,
                     fd,
                     Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()),
                 );
@@ -1113,7 +1106,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             }
         };
 
-        match poll.register_with_fd(loop_.loop_(), FilePollKind::Writable, fd) {
+        match poll.register_with_fd(event_loop, FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
                 // A poll from an earlier start() still holds that start's fd.
                 if existing_poll.is_none() {
@@ -2654,7 +2647,6 @@ pub mod __parent_macro {
     pub use ::bun_sys::Error as SysError;
     #[cfg(windows)]
     pub use ::bun_sys::windows::libuv::Loop as UvLoop;
-    pub use ::bun_uws_sys::Loop as UwsLoop;
 }
 
 /// Stamp `PosixStreamingWriterParent` + `WindowsWriterParent` +
@@ -2676,7 +2668,6 @@ macro_rules! impl_streaming_writer_parent {
         on_ready   = $on_ready:ident,
         on_close   = $on_close:ident,
         event_loop = |$el_this:ident| $el:expr,
-        uws_loop   = |$uws_this:ident| $uws:expr,
         uv_loop    = |$uv_this:ident| $uv:expr,
         ref_       = |$ref_this:ident| $ref_:expr,
         deref      = |$deref_this:ident| $deref:expr,
@@ -2714,13 +2705,6 @@ macro_rules! impl_streaming_writer_parent {
                 let $el_this = this;
                 #[allow(unused_unsafe)]
                 unsafe { $el }
-            }
-            #[inline]
-            unsafe fn loop_(this: *mut Self) -> *mut $crate::pipe_writer::__parent_macro::UwsLoop {
-                // SAFETY: see on_write. Shared-only read.
-                let $uws_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $uws }
             }
         }
 

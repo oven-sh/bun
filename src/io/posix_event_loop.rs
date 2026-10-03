@@ -336,7 +336,7 @@ impl FilePoll {
     // Note: these handlers take no loop parameter: holding a
     // protected `&mut Loop` across `on_update` would alias the fresh `&mut Loop`
     // that downstream `__bun_run_file_poll` handlers conjure via
-    // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
+    // `EventLoopCtx::loop_mut()` when they re-enter the loop
     // (`register_with_fd`/`unregister`/`deinit`).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub(crate) fn on_kqueue_event(&mut self, kqueue_event: &KQueueEvent) {
@@ -388,10 +388,7 @@ impl FilePoll {
     }
 
     fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, force_unregister: bool) {
-        // `loop_mut()` is the crate-private nonnull-asref accessor (single
-        // deref in `EventLoopCtx`); the `&mut Loop` is consumed by `unregister`
-        // and dropped before any `&mut Store` is materialised.
-        let _ = self.unregister(vm.loop_mut(), force_unregister);
+        let _ = self.unregister(vm, force_unregister);
 
         self.owner.clear();
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
@@ -450,11 +447,19 @@ impl FilePoll {
                 || self.flags.contains(Flags::PollProcess))
     }
 
+    /// The loop this poll is registered with, not the loop `vm` currently points at.
+    #[inline]
+    fn loop_mut(&self, vm: EventLoopCtx) -> &'static mut Loop {
+        vm.loop_for(self.flags.contains(Flags::SpawnSyncLoop))
+    }
+
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
-        event_loop_ctx
-            .loop_sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
+        loop_sub_active(
+            self.loop_mut(event_loop_ctx),
+            self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
+        );
 
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
@@ -465,8 +470,10 @@ impl FilePoll {
             return;
         }
 
-        event_loop_ctx
-            .loop_add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
+        loop_add_active(
+            self.loop_mut(event_loop_ctx),
+            (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
+        );
 
         self.flags.insert(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::HasIncrementedActiveCount);
@@ -514,7 +521,10 @@ impl FilePoll {
     /// non-macOS-debug builds and then read it in the `syslog!` below. Building
     /// the whole struct by value fixes both.
     #[inline]
-    fn new_value(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> FilePoll {
+    fn new_value(vm: EventLoopCtx, fd: Fd, mut flags: FlagsSet, owner: Owner) -> FilePoll {
+        if vm.is_spawn_sync_loop() {
+            flags.insert(Flags::SpawnSyncLoop);
+        }
         FilePoll {
             fd,
             flags,
@@ -545,9 +555,9 @@ impl FilePoll {
         poll
     }
 
-    pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
+    pub fn register(&mut self, vm: EventLoopCtx, flag: Flags, one_shot: bool) -> sys::Result<()> {
         self.register_with_fd(
-            loop_,
+            vm,
             flag,
             if one_shot {
                 OneShotFlag::OneShot
@@ -560,7 +570,7 @@ impl FilePoll {
 
     pub fn register_with_fd(
         &mut self,
-        loop_: &mut Loop,
+        vm: EventLoopCtx,
         flag: Flags,
         one_shot: OneShotFlag,
         fd: Fd,
@@ -571,7 +581,7 @@ impl FilePoll {
             target_os = "macos",
             target_os = "freebsd"
         ))]
-        return self.register_with_fd_impl(loop_, flag, one_shot, fd);
+        return self.register_with_fd_impl(self.loop_mut(vm), flag, one_shot, fd);
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
@@ -579,7 +589,7 @@ impl FilePoll {
             target_os = "freebsd"
         )))]
         {
-            let _ = (loop_, flag, one_shot, fd);
+            let _ = (vm, flag, one_shot, fd);
             sys::Result::Ok(())
         }
     }
@@ -861,16 +871,17 @@ impl FilePoll {
         sys::Result::Ok(())
     }
 
-    pub fn unregister(&mut self, loop_: &mut Loop, force_unregister: bool) -> sys::Result<()> {
-        self.unregister_with_fd(loop_, self.fd, force_unregister)
+    pub fn unregister(&mut self, vm: EventLoopCtx, force_unregister: bool) -> sys::Result<()> {
+        self.unregister_with_fd(vm, self.fd, force_unregister)
     }
 
     pub(crate) fn unregister_with_fd(
         &mut self,
-        loop_: &mut Loop,
+        vm: EventLoopCtx,
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
+        let loop_ = self.loop_mut(vm);
         // Note: compute the syscall result first, then unconditionally
         // deactivate. Avoids a raw-pointer scopeguard.
         #[cfg(any(
@@ -1216,6 +1227,9 @@ pub enum Flags {
 
     Socket,
     Tty,
+
+    /// Registered on `Bun.spawnSync`'s isolated loop, not the thread's loop.
+    SpawnSyncLoop,
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
@@ -1490,7 +1504,7 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
 
     // SAFETY: `loop_` is the live uws loop. Do *not* materialize `&mut *loop_`
     // here — `on_update` (via `__bun_run_file_poll`) re-enters the loop and conjures
-    // a fresh `&mut Loop` through `EventLoopCtx::platform_event_loop()`; a
+    // a fresh `&mut Loop` through `EventLoopCtx::loop_mut()`; a
     // protected `&mut Loop` spanning that call would be SB-UB. Take a short-lived
     // `&*loop_` only to copy the POD event onto the stack (the `BackRef`-style
     // accessor returns by value), then drop the borrow before dispatching so the

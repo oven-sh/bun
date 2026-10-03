@@ -132,8 +132,11 @@ impl FileOpener for WriteFile {
     const OPEN_FLAGS: i32 =
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
 
-    fn open_mode(&self) -> sys::Mode {
-        self.mode.unwrap_or(crate::node::fs::DEFAULT_PERMISSION)
+    fn open_args(&self) -> (i32, sys::Mode) {
+        (
+            (Self::OPEN_FLAGS & !bun_sys::O::TRUNC) | blob::truncate_on_open(self.mode),
+            self.mode.unwrap_or(crate::node::fs::DEFAULT_PERMISSION),
+        )
     }
     fn opened_fd(&self) -> Fd {
         self.opened_fd
@@ -425,15 +428,13 @@ impl WriteFile {
 
         let fd = self.opened_fd;
 
-        if let Some(mode) = self.mode {
-            if self.is_allowed_to_close() {
-                if let bun_sys::Result::Err(err) = bun_sys::fchmod(fd, mode) {
-                    let err = err.with_path(self.pathlike().path().slice());
-                    self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                    self.system_error = Some(err.to_system_error().into());
-                    self.on_finish();
-                    return;
-                }
+        if self.is_allowed_to_close() {
+            if let bun_sys::Result::Err(err) = blob::apply_mode(fd, self.mode, true) {
+                let err = err.with_path(self.pathlike().path().slice());
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                self.system_error = Some(err.to_system_error().into());
+                self.on_finish();
+                return;
             }
         }
 
@@ -793,6 +794,13 @@ mod windows_impl {
                     });
                 }
             };
+            // SAFETY: caller contract — `this` is live.
+            let mode = unsafe { (*this).mode };
+            let truncate = if blob::truncate_on_open(mode) != 0 {
+                uv::O::TRUNC
+            } else {
+                0
+            };
             // SAFETY: (*this).io_request is a valid uv_fs_t embedded in a Box-allocated WriteFileWindows;
             // (*this).loop_() is the VM's libuv loop which outlives this request; posix_path is NUL-terminated.
             let rc = unsafe {
@@ -805,8 +813,8 @@ mod windows_impl {
                         | uv::O::NOCTTY
                         | uv::O::NONBLOCK
                         | uv::O::SEQUENTIAL
-                        | uv::O::TRUNC,
-                    (*this).mode.unwrap_or(0o644) as i32,
+                        | truncate,
+                    mode.unwrap_or(0o644) as i32,
                     Some(Self::on_open),
                 )
             };
@@ -903,24 +911,16 @@ mod windows_impl {
             // SAFETY: `this` is live.
             unsafe { (*this).fd = i32::try_from(rc.int()).expect("int cast") };
 
-            // uv_fs_open only applies `mode` on create; fchmod covers existing files.
-            // SAFETY: `this` is live.
-            if let Some(mode) = unsafe { (*this).mode } {
-                // SAFETY: `this` is live; `fd` was just opened above.
-                if let sys::Result::Err(err) = sys::fchmod(Fd::from_uv(unsafe { (*this).fd }), mode)
-                {
-                    // SAFETY: `this` is live; `throw` consumes it.
-                    match unsafe { Self::throw(this, err) } {
-                        WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                        WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
-                    }
-                    return;
-                }
-            }
-
-            // the loop must be copied
-            // SAFETY: `this` is live; on `Err`, `*this` has been freed and is not accessed again.
-            if let Err(e) = unsafe { Self::do_write_loop(this, (*this).loop_()) } {
+            // SAFETY: `this` is live; `fd` was just opened above.
+            let prepared = unsafe { blob::apply_mode(Fd::from_uv((*this).fd), (*this).mode, true) };
+            let result = match prepared {
+                // SAFETY: `this` is live; `throw` consumes it.
+                Err(err) => Err(unsafe { Self::throw(this, err) }),
+                // the loop must be copied
+                // SAFETY: `this` is live; on `Err`, `*this` has been freed and is not accessed again.
+                Ok(()) => unsafe { Self::do_write_loop(this, (*this).loop_()) },
+            };
+            if let Err(e) = result {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
                     WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),

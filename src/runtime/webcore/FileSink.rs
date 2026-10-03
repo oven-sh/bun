@@ -186,7 +186,7 @@ impl Options {
         let flags =
             bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY;
         if self.truncate {
-            flags | bun_sys::O::TRUNC
+            flags | webcore::blob::truncate_on_open(self.mode)
         } else {
             flags
         }
@@ -759,9 +759,10 @@ impl FileSink {
             sys::Result::Ok(fd) => fd,
         };
 
-        // open() only applies `mode` on create, and through the umask; fchmod makes it exact.
-        if let (Some(mode), bun_io::PathOrFileDescriptor::Path(path)) = (options.mode, &io_path) {
-            if let sys::Result::Err(err) = sys::fchmod(fd, mode) {
+        if let bun_io::PathOrFileDescriptor::Path(path) = &io_path {
+            if let sys::Result::Err(err) =
+                webcore::blob::apply_mode(fd, options.mode, options.truncate)
+            {
                 fd.close();
                 return sys::Result::Err(err.with_path(*path));
             }

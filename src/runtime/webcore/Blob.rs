@@ -1440,7 +1440,7 @@ impl BlobExt for Blob {
                     let path = pathlike.path().slice_z(&mut file_path);
                     let flags = bun_sys::O::WRONLY
                         | bun_sys::O::CREAT
-                        | bun_sys::O::TRUNC
+                        | truncate_on_open(options.mode)
                         | bun_sys::O::NONBLOCK;
                     let mode = options.mode.unwrap_or(WRITE_PERMISSIONS);
                     let mut result = bun_sys::open(path, flags, mode);
@@ -1464,17 +1464,14 @@ impl BlobExt for Blob {
                             .to_js());
                         }
                     };
-                    // uv_fs_open only applies `mode` on create; fchmod covers existing files.
-                    if let Some(mode) = options.mode {
-                        if let bun_sys::Result::Err(err) = bun_sys::fchmod(fd, mode) {
-                            use bun_sys::FdExt as _;
-                            fd.close();
-                            return Ok(JSPromise::rejected_promise(
-                                cx.global(),
-                                err.with_path(path).to_js(cx.global()),
-                            )
-                            .to_js());
-                        }
+                    if let bun_sys::Result::Err(err) = apply_mode(fd, options.mode, true) {
+                        use bun_sys::FdExt as _;
+                        fd.close();
+                        return Ok(JSPromise::rejected_promise(
+                            cx.global(),
+                            err.with_path(path).to_js(cx.global()),
+                        )
+                        .to_js());
                     }
                     fd
                 };
@@ -4062,6 +4059,31 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
         .map(|_| ())
 }
 
+/// `O_TRUNC` for a destination `Bun.write` replaces. With a `mode`, [`apply_mode`] truncates instead.
+pub(crate) fn truncate_on_open(mode: Option<bun_sys::Mode>) -> i32 {
+    if mode.is_some() { 0 } else { bun_sys::O::TRUNC }
+}
+
+/// Sets a requested `mode` on a destination opened by path, before its old contents are discarded.
+pub(crate) fn apply_mode(
+    fd: Fd,
+    mode: Option<bun_sys::Mode>,
+    truncate: bool,
+) -> bun_sys::Result<()> {
+    let Some(mode) = mode else {
+        return Ok(());
+    };
+    bun_sys::fchmod(fd, mode)?;
+    if truncate {
+        match bun_sys::ftruncate(fd, 0) {
+            // A FIFO or a device has nothing to discard, as with O_TRUNC.
+            Err(err) if err.get_errno() != bun_sys::E::EINVAL => return Err(err),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 // TODO: move this to bun_sys?
 #[inline(never)]
 #[cfg(not(windows))]
@@ -4134,6 +4156,24 @@ pub(crate) struct WriteFileOptions {
     pub(crate) mode: Option<bun_sys::Mode>,
 }
 
+/// An empty source written to `path` with a `mode`: create or empty the file, mode first.
+fn empty_file_with_mode(
+    path: &PathLike<'_>,
+    mode: bun_sys::Mode,
+    mkdirp: bool,
+) -> bun_sys::Result<()> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let path_z = path.slice_z(&mut buf);
+    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK;
+    let mut result = bun_sys::open(path_z, flags, mode);
+    if mkdirp && matches!(&result, Err(err) if err.get_errno() == bun_sys::E::ENOENT) {
+        result = mkdirp_parent(path.slice()).and_then(|()| bun_sys::open(path_z, flags, mode));
+    }
+    let fd = result?;
+    let _close = bun_sys::CloseOnDrop::new(fd);
+    apply_mode(fd, Some(mode), true)
+}
+
 /// Write an empty string to a file by truncating it.
 ///
 /// This behavior matches what we do with the fast path.
@@ -4159,6 +4199,19 @@ fn write_file_with_empty_source_to_destination(
 
     match &destination_store.data {
         store::Data::File(file) => {
+            if let (Some(mode), PathOrFileDescriptor::Path(path)) = (options.mode, &file.pathlike) {
+                let mkdirp = options.mkdirp_if_not_exists != Some(false);
+                return Ok(match empty_file_with_mode(path, mode, mkdirp) {
+                    Ok(()) => {
+                        JSPromise::resolved_promise_value(cx.global(), JSValue::js_number(0.0))
+                    }
+                    Err(err) => JSPromise::rejected_promise(
+                        cx.global(),
+                        err.with_path(path.slice()).to_js(cx.global()),
+                    )
+                    .to_js(),
+                });
+            }
             // TODO: make this async
             // `VirtualMachine::node_fs()` currently returns `*mut c_void`; the
             // typed `&mut NodeFS` accessor isn't wired yet, so use a fresh
@@ -4235,15 +4288,6 @@ fn write_file_with_empty_source_to_destination(
                                         break 'err;
                                     }
                                     bun_sys::Result::Ok(f) => {
-                                        // open() applied `mode` through the umask; make it exact.
-                                        if let Some(m) = options.mode {
-                                            if let bun_sys::Result::Err(e) =
-                                                bun_sys::fchmod(f.fd(), m)
-                                            {
-                                                *err = e;
-                                                break 'err;
-                                            }
-                                        }
                                         let _ = f.close(); // close error is non-actionable
                                         return Ok(JSPromise::resolved_promise_value(
                                             cx.global(),
@@ -4261,25 +4305,6 @@ fn write_file_with_empty_source_to_destination(
                 return Ok(
                     JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
                 );
-            }
-
-            if let Some(mode) = options.mode {
-                if let PathOrFileDescriptor::Path(path) = &file.pathlike {
-                    let chmod_result = node_fs.chmod(
-                        &node::fs::args::Chmod {
-                            path: PathLike::borrowed(path.slice()),
-                            mode,
-                        },
-                        node::fs::Flavor::Sync,
-                    );
-                    if let bun_sys::Result::Err(err) = chmod_result {
-                        return Ok(JSPromise::rejected_promise(
-                            cx.global(),
-                            err.to_js(cx.global()),
-                        )
-                        .to_js());
-                    }
-                }
             }
         }
         store::Data::S3(s3) => {
@@ -5232,16 +5257,14 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     // Declared before the truncate guard so it drops *after* it (close runs last).
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
 
-    // open() only applies `mode` on create, and through the umask; fchmod makes it exact.
+    // This path truncates after the write, so `apply_mode` has nothing to discard here.
     if NEEDS_OPEN {
-        if let Some(mode) = mode {
-            if let bun_sys::Result::Err(err) = bun_sys::fchmod(fd, mode) {
-                return JSPromise::rejected_promise(
-                    global_this,
-                    err.with_path(pathlike.path().slice()).to_js(global_this),
-                )
-                .to_js();
-            }
+        if let bun_sys::Result::Err(err) = apply_mode(fd, mode, false) {
+            return JSPromise::rejected_promise(
+                global_this,
+                err.with_path(pathlike.path().slice()).to_js(global_this),
+            )
+            .to_js();
         }
     }
 
@@ -5335,14 +5358,12 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
 
     if NEEDS_OPEN {
-        if let Some(mode) = mode {
-            if let bun_sys::Result::Err(err) = bun_sys::fchmod(fd, mode) {
-                return JSPromise::rejected_promise(
-                    global_this,
-                    err.with_path(pathlike.path().slice()).to_js(global_this),
-                )
-                .to_js();
-            }
+        if let bun_sys::Result::Err(err) = apply_mode(fd, mode, false) {
+            return JSPromise::rejected_promise(
+                global_this,
+                err.with_path(pathlike.path().slice()).to_js(global_this),
+            )
+            .to_js();
         }
     }
 
@@ -6532,9 +6553,9 @@ pub(crate) trait FileOpener: Sized {
     const OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
     const OPENER_FLAGS: i32 = bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC;
 
-    /// Permission bits passed to `open(2)` when creating the file.
-    fn open_mode(&self) -> bun_sys::Mode {
-        crate::node::fs::DEFAULT_PERMISSION
+    /// The flags and permission bits of the open. Override when they depend on the instance.
+    fn open_args(&self) -> (i32, bun_sys::Mode) {
+        (Self::OPEN_FLAGS, crate::node::fs::DEFAULT_PERMISSION)
     }
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
@@ -6612,7 +6633,7 @@ pub(crate) trait FileOpener: Sized {
             }
 
             self.set_open_callback(callback);
-            let open_mode = self.open_mode();
+            let (open_flags, open_mode) = self.open_args();
             let loop_ = self.loop_();
             let self_ptr: *mut Self = core::ptr::from_mut(self);
             // Derive `req` THROUGH `self_ptr` rather than via a fresh `self.req()`
@@ -6635,7 +6656,7 @@ pub(crate) trait FileOpener: Sized {
                     loop_,
                     req,
                     path.as_ptr(),
-                    Self::OPEN_FLAGS | Self::OPENER_FLAGS,
+                    open_flags | Self::OPENER_FLAGS,
                     open_mode as i32,
                     Some(wrapped_callback::<Self>),
                 )
@@ -6659,9 +6680,9 @@ pub(crate) trait FileOpener: Sized {
 
         #[cfg(not(windows))]
         {
-            let open_mode = self.open_mode();
+            let (open_flags, open_mode) = self.open_args();
             loop {
-                match bun_sys::open(path, Self::OPEN_FLAGS | Self::OPENER_FLAGS, open_mode) {
+                match bun_sys::open(path, open_flags | Self::OPENER_FLAGS, open_mode) {
                     bun_sys::Result::Ok(fd) => {
                         self.set_opened_fd(fd);
                         break;

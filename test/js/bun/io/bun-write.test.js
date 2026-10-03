@@ -1710,6 +1710,84 @@ describe.skipIf(isWindows).concurrent("Bun.write mode option", () => {
     expect(modeOf(dest)).toBe(0o751);
   });
 
+  // chmod fails for a file the caller can write but does not own. The child creates the
+  // files as root, then drops root, so it needs no other user that can run bun.
+  test.skipIf(process.getuid?.() !== 0)("a refused chmod leaves the destination as it was", async () => {
+    using dir = tempDir("bun-write-mode-eperm", {});
+    fs.chmodSync(String(dir), 0o777);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          const stream = () =>
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("NEW"));
+                controller.close();
+              },
+            });
+          const sources = {
+            string: () => "NEW",
+            largeBuffer: () => new Uint8Array(512 * 1024),
+            blob: () => new Blob(["NEW"]),
+            emptyBlob: () => new Blob([]),
+            stream,
+            streamingResponse: () => new Response(stream()),
+          };
+          for (const name in sources) {
+            fs.writeFileSync(name, "OLD");
+            fs.chmodSync(name, 0o666);
+          }
+          process.setgroups([]);
+          process.setgid(65534);
+          process.setuid(65534);
+          const results = {};
+          for (const name in sources) {
+            let outcome;
+            try {
+              await Bun.write(name, sources[name](), { mode: 0o600 });
+              outcome = "resolved";
+            } catch (e) {
+              outcome = e.code;
+            }
+            const mode = (fs.statSync(name).mode & 0o777).toString(8);
+            results[name] = [outcome, fs.readFileSync(name, "utf8"), mode];
+          }
+          console.log(JSON.stringify(results));
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const untouched = ["EPERM", "OLD", "666"];
+    expect(JSON.parse(stdout)).toEqual({
+      string: untouched,
+      largeBuffer: untouched,
+      blob: untouched,
+      emptyBlob: untouched,
+      stream: untouched,
+      streamingResponse: untouched,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The truncation that follows the chmod must not reject what O_TRUNC accepts.
+  test.skipIf(process.getuid?.() !== 0)("a mode is accepted for a destination that is not a regular file", async () => {
+    const mode = modeOf("/dev/null");
+    const written = [
+      await Bun.write("/dev/null", "hello", { mode }),
+      await Bun.write("/dev/null", new Blob(["hello"]), { mode }),
+      await Bun.write("/dev/null", stream(), { mode }),
+    ];
+    expect({ written, mode: modeOf("/dev/null") }).toEqual({ written: [5, 5, 5], mode });
+  });
+
   // umask is process-global, so this runs in a child with umask 0 to make the
   // raw create mode observable. Every path must match fs.writeFileSync (0o666).
   test("default create mode does not depend on the payload size or write path", async () => {

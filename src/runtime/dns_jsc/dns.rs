@@ -4852,11 +4852,18 @@ impl Resolver {
 
         let _guard = self.ref_guard();
 
+        // A poll that failed or hung up reports no direction; give c-ares both, like Node:
+        // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
+        let failed =
+            poll.flags.contains(Async::PollFlag::Eof) || poll.flags.contains(Async::PollFlag::Hup);
+        let readable = poll.is_readable() || failed;
+        let writable = poll.is_writable() || failed;
+
         // SAFETY: `channel` is the live c-ares channel owned by `self`; no `&mut`
         // to `*self` is held across this re-entrant call (all fields are
         // UnsafeCell-backed).
         unsafe {
-            (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
+            (*channel).process(poll.fd.native(), readable, writable);
         }
 
         // c-ares detaches a query only *after* its callback returns, so

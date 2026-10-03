@@ -585,6 +585,9 @@ function renderBundlerMessage(msg: BundlerMessage) {
 
 function renderTraceFrame(frame: Frame, className: string) {
   const hasFn = !!frame.fn;
+  if (frame.file && /(^|[/\\])node_modules[/\\]/.test(frame.file)) {
+    className += " library-frame";
+  }
   return elem("div", { class: className }, [
     elemText("span", { class: "muted" }, "at "),
     ...(hasFn

@@ -2682,6 +2682,130 @@ it("onread: read() redelivers the declined tail without resume()", async () => {
   }
 });
 
+it("onread: a destroyed socket that connects again does not replay the declined tail", async () => {
+  // Node keeps the bytes a false return left behind in the kernel, so they go
+  // away with the fd. The second connection must only see its own bytes.
+  let connections = 0;
+  const server = createServer(c => {
+    c.on("error", () => {});
+    c.end(++connections === 1 ? "AAAABBBBCCCC" : "xxxxyyyy");
+  });
+  // Bytes per connection. The first callback returns false, so connection 1
+  // gets exactly one slice and the rest of its read stays undelivered.
+  const received = ["", ""];
+  let connection = 0;
+  const first = Promise.withResolvers<void>();
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => listening.resolve());
+    await listening.promise;
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    client = createConnection({
+      port,
+      host: "127.0.0.1",
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          received[connection] += buf.toString("latin1", 0, n);
+          if (connection === 0) {
+            first.resolve();
+            return false;
+          }
+        },
+      },
+    });
+    client.on("error", first.reject);
+    await first.promise;
+    client.destroy();
+    await once(client, "close");
+
+    connection = 1;
+    client.connect({ port, host: "127.0.0.1" });
+    client.resume();
+    await once(client, "close");
+    expect(received[0].length).toBeLessThanOrEqual(4);
+    expect("AAAABBBBCCCC".startsWith(received[0])).toBe(true);
+    expect(received[1]).toBe("xxxxyyyy");
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("onread: a peer reset that lands on the declined tail does not end the next connection early", async () => {
+  // A native close with a tail still undelivered defers the 'end' until the
+  // tail drains. That deferred end belongs to the closed connection: after
+  // destroy() and connect(), the next tail drain must not emit it.
+  let connections = 0;
+  const serverSockets: Socket[] = [];
+  const server = createServer(c => {
+    serverSockets.push(c);
+    c.on("error", () => {});
+    if (++connections === 1) {
+      c.write("AAAABBBBCCCC");
+    } else {
+      c.write("xxxxyyyy");
+      c.on("data", () => c.end());
+    }
+  });
+  const events: string[] = [];
+  let delivered = Promise.withResolvers<void>();
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => listening.resolve());
+    await listening.promise;
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    client = createConnection({
+      port,
+      host: "127.0.0.1",
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          const slice = buf.toString("latin1", 0, n);
+          events.push(slice);
+          if (slice === "AAAA" || slice === "xxxx") {
+            delivered.resolve();
+            return false;
+          }
+          if (slice === "yyyy") delivered.resolve();
+        },
+      },
+    });
+    client.on("end", () => events.push("end"));
+    client.on("close", () => events.push("close"));
+    await delivered.promise;
+    // No 'error' listener: the reset reaches the client as a plain close while
+    // "BBBBCCCC" is still undelivered, which parks the end behind the tail. The
+    // stream shows nothing of that; the native handle detaches (readyState -1).
+    const handle = client._handle;
+    serverSockets[0].resetAndDestroy();
+    while (handle.readyState > 0) await new Promise(resolve => setImmediate(resolve));
+    events.push("destroy");
+    client.destroy();
+    await once(client, "close");
+
+    delivered = Promise.withResolvers<void>();
+    client.connect({ port, host: "127.0.0.1" });
+    const closed = once(client, "close");
+    await delivered.promise; // "xxxx" taken, "yyyy" left as the tail
+    delivered = Promise.withResolvers<void>();
+    client.resume();
+    await delivered.promise; // the tail drained
+    // A stale deferred end fires from that drain, before this continuation runs.
+    events.push("write");
+    client.write("go");
+    await closed;
+    expect(events).toEqual(["AAAA", "destroy", "close", "xxxx", "yyyy", "write", "end", "close"]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
 it("onread: a buffer factory that never yields a Uint8Array hands the callback `true`", async () => {
   // Node leaves kBuffer as the literal `true` and passes it through:
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L332-L342

@@ -871,12 +871,13 @@ impl RewriterPipe {
     /// settling: it will never resume this pipe. Runs on the JS thread,
     /// outside GC sweep; the suspension's ref keeps `pipe` live until here.
     ///
-    /// If the Transform cell is still alive — a reader or the output Response
-    /// keeps the rewrite reachable — fail the body normally, which errors the
-    /// live output stream and clears the `owner`/`sinkOwner` edges so the cell
-    /// becomes ordinary garbage. If the cell was collected with the promise,
-    /// every source that could have held a backref died with the cell, so
-    /// clear the handles raw and fail the body through the Response native `+1`.
+    /// If the Transform cell is still alive (`cell` reads `Some`) —
+    /// a reader or the output Response keeps the rewrite reachable — fail
+    /// the body normally, which errors the live output stream and clears the
+    /// `owner`/`sinkOwner` edges so the cell becomes ordinary garbage. If the
+    /// cell was collected with the promise (`cell` reads `None`), every source that
+    /// could have held a backref died with the cell, so clear the handles
+    /// raw and fail the body through the Response native `+1`.
     ///
     /// Once the VM has stopped (a worker torn down with the handler still
     /// parked; this may then be reached mid-sweep from `~VM`) nothing is
@@ -890,8 +891,7 @@ impl RewriterPipe {
         // (for nobody, if that was a `Bun.ModuleGraph` that has been disposed since).
         let _context = VirtualMachine::get().enter_context(this.script_context);
         let vm_stopped = !VirtualMachine::get().script_allowed();
-        // Held: nothing else on this stack reaches the cell, and `fail` allocates before it uses
-        // the streams that only the cell roots.
+        // Held for `fail`, which allocates: nothing else on this stack reaches the cell.
         let cell = if vm_stopped {
             None
         } else {
@@ -993,10 +993,7 @@ impl RewriterPipe {
     /// Sever the output `ByteStream`'s `SourceHandle::HTMLRewriter` backref
     /// (installed via `PendingValue.producer` in [`Self::init`]) so a later
     /// `signal_drained()` can't reach a freed pipe, and clear its `owner`
-    /// slot. Only called from terminal paths on the JS thread, which run it
-    /// late for the same reason as [`Self::release_input_roots`]: a reader that
-    /// cancels may reach the cell, and the input it roots, only through that
-    /// slot. Idempotent.
+    /// slot. Only called from terminal paths on the JS thread. Idempotent.
     fn detach_output(&self) {
         if let Some(out) = self.output.take() {
             out.parent_const().set_owner(JSValue::UNDEFINED);
@@ -1584,6 +1581,7 @@ impl RewriterPipe {
             p.result = Writable::Done;
             p.run();
         });
+        // After the input's close: the reader that cancels may reach the cell only through `owner`.
         self.detach_output();
         self.release_input_roots(src);
     }

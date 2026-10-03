@@ -273,8 +273,22 @@ test.skipIf(!isDebug)(
   async () => {
     // Each round keeps LANES loopback connects in flight per worker and
     // terminates once the worker reports steady state, so terminate() lands
-    // while on_open is hot. Debug+ASAN makes each round ~5s, so the pass
-    // time is ~60s; the unpatched build aborts in the first few rounds.
+    // while on_open is hot. Debug+ASAN makes each round ~1.5s, so the pass
+    // time is ~20s; the unpatched build aborts in the first few rounds.
+    //
+    // The fixture is shaped so a loopback flood cannot wedge it (it did on
+    // Windows, where a full backlog RSTs instead of dropping the SYN):
+    // - The server runs in its own worker. The accept loop of a flooded
+    //   listener never returns to its event loop, so the thread that awaits
+    //   'hot' and terminate() must not be the one accepting.
+    // - A lane reconnects only after the server answered ('x' arrives), so
+    //   at most LANES connections per worker are ever pending in the backlog.
+    // - The client closes with terminate() (RST, no TIME_WAIT). An end() on
+    //   every connection ties up the whole ephemeral port range within
+    //   seconds, and every connect after that fails.
+    // - A failed connect fires connectError() AND rejects the promise, so
+    //   only connectError() re-spawns the lane. Re-spawning from both doubles
+    //   the lanes on every failure.
     const ROUNDS = 12;
     const WORKERS = 4;
     const LANES = 32;
@@ -284,28 +298,36 @@ test.skipIf(!isDebug)(
         "-e",
         `
         const { Worker } = require("node:worker_threads");
-        const net = require("node:net");
-        const srv = net.createServer((c) => { c.on("error", () => {}); c.end(); });
-        await new Promise((r) => srv.listen(0, "127.0.0.1", r));
-        const port = srv.address().port;
+        function ready(w) {
+          return new Promise((res, rej) => {
+            const onExit = (c) => rej(new Error("worker exited " + c + " before ready"));
+            w.once("exit", onExit);
+            w.once("error", rej);
+            w.once("message", (m) => { w.off("exit", onExit); w.off("error", rej); res(m); });
+          });
+        }
+        const server = new Worker(
+          "const net = require('node:net');" +
+          "const srv = net.createServer((c) => { c.on('error', () => {}); c.end('x'); });" +
+          "srv.listen(0, '127.0.0.1', () => require('node:worker_threads').parentPort.postMessage(srv.address().port));",
+          { eval: true },
+        );
+        const port = await ready(server);
+        // Without the server every lane spins on connectError() and no worker
+        // ever reports 'hot'; fail at once instead of at the test timeout.
+        const serverGone = (c) => { console.error("server worker exited " + c); process.exit(1); };
+        server.on("exit", serverGone);
         const src =
           "const { parentPort, workerData: d } = require('node:worker_threads');" +
           "let opens = 0;" +
           "function lane() {" +
           "  Bun.connect({ hostname: '127.0.0.1', port: d.port, socket: {" +
-          "    open(s) { if (++opens === ${LANES}) parentPort.postMessage('hot'); s.end(); }," +
-          "    data() {}, close() { setImmediate(lane); }," +
+          "    open() { if (++opens === ${LANES}) parentPort.postMessage('hot'); }," +
+          "    data(s) { s.terminate(); }, close() { setImmediate(lane); }," +
           "    connectError() { setImmediate(lane); }, error() {} } })" +
-          "    .catch(() => setImmediate(lane));" +
+          "    .catch(() => {});" +
           "}" +
           "for (let i = 0; i < ${LANES}; i++) lane();";
-        function ready(w) {
-          return new Promise((res, rej) => {
-            w.once("message", res);
-            w.once("error", rej);
-            w.once("exit", (c) => rej(new Error("worker exited " + c + " before ready")));
-          });
-        }
         for (let r = 0; r < ${ROUNDS}; r++) {
           const ws = [];
           for (let i = 0; i < ${WORKERS}; i++) {
@@ -317,7 +339,8 @@ test.skipIf(!isDebug)(
           await Bun.sleep(r % 3);
           await Promise.all(ws.map((w) => w.terminate()));
         }
-        srv.close();
+        server.off("exit", serverGone);
+        await server.terminate();
         console.log("PASS");
       `,
       ],

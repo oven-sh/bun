@@ -1,6 +1,6 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { isLinux, isWindows, tempDir } from "harness";
 import path from "path";
 
 const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
@@ -132,4 +132,105 @@ test("discovers from filesystem paths", () => {
       },
     ],
   });
+});
+
+test("prefix mounts every route under it", () => {
+  using dir = tempDir("fsr-prefix", {
+    "index.tsx": "1",
+    "_layout.tsx": "1",
+    "about.tsx": "1",
+    "blog/[slug].tsx": "1",
+  });
+  const router = new FrameworkRouter({ root: dir, style: "nextjs-pages", prefix: "/docs/v1/" });
+  // The prefix segments are plain nodes above the files. The root layout sits
+  // on the last one, so it still wraps every page.
+  expect(router.toJSON()).toEqual({
+    part: "/",
+    page: null,
+    layout: null,
+    children: [
+      {
+        part: "/docs",
+        page: null,
+        layout: null,
+        children: [
+          {
+            part: "/v1",
+            page: path.join(dir, "index.tsx"),
+            layout: path.join(dir, "_layout.tsx"),
+            children: [
+              {
+                part: "/about",
+                page: path.join(dir, "about.tsx"),
+                layout: null,
+                children: [],
+              },
+              {
+                part: "/blog",
+                page: null,
+                layout: null,
+                children: [
+                  {
+                    part: "/:slug",
+                    page: path.join(dir, "blog/[slug].tsx"),
+                    layout: null,
+                    children: [],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  const urls = [
+    "/docs/v1",
+    "/docs/v1/about",
+    "/docs/v1/blog/hello",
+    "/",
+    "/about",
+    "/blog/hello",
+    "/docs",
+    "/docs/about",
+    "/docs/v1about",
+    "/docs/v12/about",
+  ];
+  const matched = Object.fromEntries(
+    urls.map(url => {
+      const match = router.match(url);
+      return [url, match && { page: path.relative(String(dir), match.route.page), params: match.params }];
+    }),
+  );
+  expect(matched).toEqual({
+    "/docs/v1": { page: "index.tsx", params: null },
+    "/docs/v1/about": { page: "about.tsx", params: null },
+    "/docs/v1/blog/hello": { page: path.join("blog", "[slug].tsx"), params: { slug: "hello" } },
+    "/": null,
+    "/about": null,
+    "/blog/hello": null,
+    "/docs": null,
+    "/docs/about": null,
+    "/docs/v1about": null,
+    "/docs/v12/about": null,
+  });
+});
+
+test("a route whose URL does not fit in a path buffer is a scan error", () => {
+  using dir = tempDir("fsr-prefix-long", { "about.tsx": "1" });
+  // bun_core::MAX_PATH_BYTES
+  const maxPathBytes = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
+  const fits = "/" + Buffer.alloc(maxPathBytes - "/about.tsx".length - 2, "a").toString();
+
+  const router = new FrameworkRouter({ root: dir, style: "nextjs-pages", prefix: fits });
+  expect(router.match(fits + "/about")?.route.page).toBe(path.join(dir, "about.tsx"));
+
+  let error: AggregateError | undefined;
+  try {
+    new FrameworkRouter({ root: dir, style: "nextjs-pages", prefix: fits + "a" });
+  } catch (e) {
+    error = e as AggregateError;
+  }
+  expect(error?.errors.map(e => e.message)).toEqual(['Invalid route "about.tsx": The URL of this route is too long']);
 });

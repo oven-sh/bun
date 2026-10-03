@@ -2158,6 +2158,12 @@ impl<'a> ESModule<'a> {
                         && !strings::has_prefix(str, b"../")
                         && !strings::has_prefix(str, b"/")
                         && (!self.validate_package_config
+                            || (str.starts_with(b"bun:")
+                                && bun_resolve_builtins::Alias::has(
+                                    str,
+                                    bun_ast::Target::Bun,
+                                    Default::default(),
+                                ))
                             || bun_url::whatwg::Parsed::from_utf8(str).is_none())
                     {
                         if PATTERN {

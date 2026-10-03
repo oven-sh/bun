@@ -26,6 +26,7 @@ use bun_sha_hmac as Crypto;
 use bun_sys::{self as sys, Fd, File};
 
 use crate::config_version::ConfigVersion;
+use crate::dependency::DependencyExt as _;
 use crate::migration;
 use crate::package_manager::WorkspaceFilter;
 use crate::package_manager_real::{
@@ -798,6 +799,41 @@ impl Lockfile {
             }
         }
         None
+    }
+
+    /// The first edge, in package order, declared as `file:<path>` with exactly that tarball path.
+    pub(crate) fn first_dependency_declaring_local_tarball(
+        &self,
+        path: &[u8],
+    ) -> Option<DependencyID> {
+        let buf = self.buffers.string_bytes.as_slice();
+        let dependencies = self.buffers.dependencies.as_slice();
+        for dependency_list in self.packages.items_dependencies() {
+            let begin = dependency_list.begin() as usize;
+            let found = dependency_list
+                .get(dependencies)
+                .iter()
+                .position(|dependency| {
+                    dependency.version.tag == dependency::Tag::Tarball
+                        && matches!(
+                            &dependency.version.tarball().uri,
+                            dependency::tarball::Uri::Local(declared) if declared.slice(buf) == path
+                        )
+                });
+            if let Some(i) = found {
+                return Some(DependencyID::try_from(begin + i).expect("int cast"));
+            }
+        }
+        None
+    }
+
+    /// Does the root package.json declare the same dependency (name and specifier) itself?
+    pub(crate) fn has_equal_root_dependency(&self, dependency: &Dependency) -> bool {
+        let buf = self.buffers.string_bytes.as_slice();
+        self.packages.items_dependencies()[0]
+            .get(self.buffers.dependencies.as_slice())
+            .iter()
+            .any(|root_dependency| root_dependency.eql(dependency, buf, buf))
     }
 
     pub(crate) fn get_workspace_pkg_if_workspace_dep(&self, id: DependencyID) -> PackageID {

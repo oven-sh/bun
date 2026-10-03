@@ -1706,13 +1706,33 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
         dependency::version::Tag::Tarball => {
             let tarball = version.tarball();
-            let res: Resolution = match &tarball.uri {
-                dependency::tarball::Uri::Local(path) => {
-                    Resolution::init(ResolutionTagged::LocalTarball(*path))
+            // Only a package.json read from the project may name a tarball in the project.
+            if matches!(tarball.uri, dependency::tarball::Uri::Local(_))
+                && !version_was_replaced
+                && !this.lockfile.is_dependency_of_local_package(id)
+                && !this.lockfile.has_equal_root_dependency(dependency)
+                && let Some(declarer) = this.lockfile.get_parent_pkg_of_dependency(id)
+                && this.lockfile.packages.items_resolution()[declarer as usize].tag
+                    != ResolutionTag::LocalTarball
+            {
+                if dependency.behavior.is_required() {
+                    reject_local_tarball_of_remote_package(this, declarer, dependency);
                 }
-                dependency::tarball::Uri::Remote(url) => {
+                return Ok(());
+            }
+            let local_path: Option<SemverString> = match &tarball.uri {
+                dependency::tarball::Uri::Local(path) if !version_was_replaced => {
+                    Some(locate_next_to_declaring_tarball(this, id, *path).unwrap_or(*path))
+                }
+                dependency::tarball::Uri::Local(path) => Some(*path),
+                dependency::tarball::Uri::Remote(_) => None,
+            };
+            let res: Resolution = match (&tarball.uri, local_path) {
+                (_, Some(path)) => Resolution::init(ResolutionTagged::LocalTarball(path)),
+                (dependency::tarball::Uri::Remote(url), None) => {
                     Resolution::init(ResolutionTagged::RemoteTarball(*url))
                 }
+                (dependency::tarball::Uri::Local(_), None) => unreachable!(),
             };
 
             // First: see if we already loaded the tarball package in-memory
@@ -1727,9 +1747,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             // SAFETY: the enqueue callees copy `url` into the filename store
             // before any `string_bytes` resize.
             let url = unsafe {
-                detach_lifetime(match &tarball.uri {
-                    dependency::tarball::Uri::Local(path) => this.lockfile.str(path),
-                    dependency::tarball::Uri::Remote(url) => this.lockfile.str(url),
+                detach_lifetime(match (&tarball.uri, &local_path) {
+                    (_, Some(path)) => this.lockfile.str(path),
+                    (dependency::tarball::Uri::Remote(url), None) => this.lockfile.str(url),
+                    (dependency::tarball::Uri::Local(_), None) => unreachable!(),
                 })
             };
             let task_id = Task::Id::for_tarball(url);
@@ -1849,6 +1870,42 @@ fn warn_unmet_peer_dependency(
         "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(but package exists)<r>",
         bstr::BStr::new(this.lockfile.str(&version.literal)),
         bstr::BStr::new(this.lockfile.str(&name)),
+    );
+}
+
+/// `enqueue_local_tarball` would read the path relative to the project, not to the declarer.
+#[cold]
+#[inline(never)]
+fn reject_local_tarball_of_remote_package(
+    this: &PackageManager,
+    declarer: PackageID,
+    dependency: &Dependency,
+) {
+    let buf = this.lockfile.buffers.string_bytes.as_slice();
+    let packages = this.lockfile.packages.slice();
+    let name = bstr::BStr::new(dependency.name.slice(buf));
+    let literal = bstr::BStr::new(dependency.version.literal.slice(buf));
+    let declarer_name = bstr::BStr::new(packages.items_name()[declarer as usize].slice(buf));
+    // A bundled dependency ships inside the declaring package. The root cannot stand in for it.
+    let notes: Box<[bun_ast::Data]> = if dependency.behavior.is_bundled() {
+        Box::new([])
+    } else {
+        Box::new([bun_ast::range_data(
+            None,
+            bun_ast::Range::NONE,
+            bun_ast::alloc_print(format_args!(
+                "add \"{name}\": \"{literal}\" to the root package.json to install that tarball for {declarer_name} as well",
+            )),
+        )])
+    };
+    this.log_mut().add_range_error_fmt_with_notes(
+        None,
+        bun_ast::Range::NONE,
+        notes,
+        format_args!(
+            "refusing to resolve \"{name}@{literal}\" declared by {declarer_name}@{}: local tarball dependencies are only allowed in the package.json files of this project",
+            packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix),
+        ),
     );
 }
 
@@ -2209,13 +2266,75 @@ fn local_tarball_base_dir<'a>(
     }
 
     let declarer = lockfile.get_parent_pkg_of_dependency(dependency_id)?;
-    let declarer_res = &lockfile.packages.items_resolution()[declarer as usize];
-    let base_dir = match declarer_res.tag {
-        ResolutionTag::Workspace => declarer_res.workspace(),
-        ResolutionTag::Folder => declarer_res.folder(),
+    local_package_dir(lockfile, declarer)
+}
+
+/// The workspace or `file:` folder directory of `package_id`; `None` for every other package.
+fn local_package_dir(lockfile: &Lockfile::Lockfile, package_id: PackageID) -> Option<&[u8]> {
+    let res = &lockfile.packages.items_resolution()[package_id as usize];
+    let dir = match res.tag {
+        ResolutionTag::Workspace => res.workspace(),
+        ResolutionTag::Folder => res.folder(),
         _ => return None,
     };
-    Some(lockfile.str(base_dir))
+    Some(lockfile.str(dir))
+}
+
+/// A local tarball's own `file:` tarballs are next to it, like npm. Returns that location from the top-level dir.
+fn locate_next_to_declaring_tarball(
+    this: &mut PackageManager,
+    dependency_id: DependencyID,
+    declared: SemverString,
+) -> Option<SemverString> {
+    let lockfile = &this.lockfile;
+    let declarer = lockfile.get_parent_pkg_of_dependency(dependency_id)?;
+    let declarer_res = &lockfile.packages.items_resolution()[declarer as usize];
+    if declarer_res.tag != ResolutionTag::LocalTarball {
+        return None;
+    }
+    let declared_path = lockfile.str(&declared);
+    if bun_paths::is_absolute(declared_path) {
+        return None;
+    }
+    // Where `enqueue_local_tarball` read the declaring tarball from.
+    let declarer_tarball = lockfile.str(declarer_res.local_tarball());
+    let mut declarer_buf = bun_paths::path_buffer_pool::get();
+    let declarer_location = if bun_paths::is_absolute(declarer_tarball) {
+        declarer_tarball
+    } else {
+        match lockfile
+            .first_dependency_declaring_local_tarball(declarer_tarball)
+            .and_then(|edge| lockfile.get_parent_pkg_of_dependency(edge))
+            .and_then(|declarer_of_declarer| local_package_dir(lockfile, declarer_of_declarer))
+        {
+            Some(base_dir) => Path::resolve_path::join_string_buf::<Path::platform::Posix>(
+                &mut *declarer_buf,
+                &[base_dir, declarer_tarball],
+            ),
+            None => declarer_tarball,
+        }
+    };
+    let declarer_dir = bun_paths::dirname(declarer_location).unwrap_or(b"");
+    let mut location_buf = bun_paths::path_buffer_pool::get();
+    let joined = Path::resolve_path::join_string_buf::<Path::platform::Posix>(
+        &mut *location_buf,
+        &[declarer_dir, declared_path],
+    );
+    // The lockfile reader takes a bare `x.tgz` for an npm version.
+    let location: Vec<u8> = if bun_paths::is_absolute(joined)
+        || joined.starts_with(b"./")
+        || joined.starts_with(b"../")
+    {
+        joined.to_vec()
+    } else {
+        [b"./".as_slice(), joined].concat()
+    };
+    let mut builder = this.lockfile.string_builder();
+    builder.count(&location);
+    builder.allocate().unwrap_or_oom();
+    let located = builder.append::<SemverString>(&location);
+    builder.clamp();
+    Some(located)
 }
 
 fn update_name_and_name_hash_from_version_replacement(

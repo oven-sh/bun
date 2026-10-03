@@ -293,4 +293,45 @@ describe("heapStats() mimalloc integration", () => {
       expect(perRequest).toBeLessThan(20);
     },
   );
+
+  // A heap that is destroyed hands what it counted to the process: the allocator merges the heap's block of statistics
+  // (about 180 counts, most of them one per size bin) into the main heap's. An atomic add of zero is still a locked
+  // instruction, and a destroy merges three times, which was most of the time of an arena that lives for one call. So the
+  // merge skips a count that the heap never touched. What the heap did count still has to arrive. transformSync parses in
+  // an arena of its own: each call creates a heap, takes pages for it, and destroys it.
+  test("the statistics of a destroyed heap arrive in the process statistics", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { heapStats } from "bun:jsc";
+        const transpiler = new Bun.Transpiler({ loader: "js" });
+        const sum = bins => bins.reduce((total, bin) => total + bin.total, 0);
+        transpiler.transformSync("export const a = 1;\\n");
+        const before = heapStats().mimalloc;
+        for (let i = 0; i < 100; i++) transpiler.transformSync("export const a = 1;\\n");
+        const after = heapStats().mimalloc;
+        console.log(JSON.stringify({
+          heaps: after.heaps.total - before.heaps.total,
+          pages: after.pages.total - before.pages.total,
+          pageBins: sum(after.page_bins) - sum(before.page_bins),
+          pagesExtended: after.pages_extended - before.pages_extended,
+        }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { heaps, pages, pageBins, pagesExtended } = JSON.parse(stdout);
+    expect(heaps, stdout).toBeGreaterThanOrEqual(100);
+    // A page or more for each of those heaps: in a plain count, in the counts per size bin, and in a counter. The main
+    // heap takes one or two pages in that time.
+    expect(pages, stdout).toBeGreaterThanOrEqual(heaps);
+    expect(pageBins, stdout).toBeGreaterThanOrEqual(heaps);
+    expect(pagesExtended, stdout).toBeGreaterThanOrEqual(heaps);
+    expect(exitCode).toBe(0);
+  });
 });

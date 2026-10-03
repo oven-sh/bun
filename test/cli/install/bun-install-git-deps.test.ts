@@ -620,6 +620,140 @@ test.concurrent("bun install <git url> sorts the workspace dependency by its res
   expect(Object.keys(lockfile.workspaces[""].dependencies)).toEqual(["hhh-first", "iii-middle", "jjj-last"]);
 });
 
+// The registry package `consumer` has a required peer on five names, and the
+// package that depends on `consumer` provides each of them itself, from git, a
+// tarball URL or `github:`. The resolver used to ask the registry for every one
+// of those names: a name the registry does not have failed the install with a
+// 404, and a name it does have added a second copy that only the hoisted
+// linker installed under `consumer`.
+for (const linker of ["hoisted", "isolated"] as const) {
+  for (const shape of ["root", "workspace"] as const) {
+    test.concurrent(
+      `${linker} linker binds a registry package's peers to the git and tarball dependencies of the ${shape} package`,
+      async () => {
+        using dir = tempDir(`git-dep-peer-${linker}-${shape}`, {});
+        const root = String(dir);
+
+        // One server is the registry, the tarball host and the GitHub API.
+        const requests: string[] = [];
+        const served = new Map<string, Uint8Array | object>();
+        await using server = Bun.serve({
+          port: 0,
+          fetch(req) {
+            const path = decodeURIComponent(new URL(req.url).pathname);
+            requests.push(path);
+            const body = served.get(path);
+            if (body === undefined) return Response.json({ error: "not found" }, { status: 404 });
+            return body instanceof Uint8Array ? new Response(body) : Response.json(body);
+          },
+        });
+        const origin = `http://localhost:${server.port}`;
+        const publish = async (name: string, manifest: object, files: Record<string, string>) => {
+          const tarball = await tarballOf("package", files);
+          const url = `${origin}/${name.replace("/", "-")}-1.0.0.tgz`;
+          const integrity = integrityOf(tarball);
+          served.set(new URL(url).pathname, tarball);
+          served.set(`/${name}`, {
+            name,
+            "dist-tags": { latest: "1.0.0" },
+            versions: { "1.0.0": { ...manifest, name, version: "1.0.0", dist: { tarball: url, integrity } } },
+          });
+          return [url, integrity] as const;
+        };
+
+        const peers = {
+          [nameOf("b")]: "*", // git; the registry does not have this name
+          [nameOf("d")]: "*", // git; the registry has this name too
+          "provider": "*", // git; the repository's package.json name is @scope/pkg-c
+          [nameOf("e")]: "*", // tarball URL
+          [nameOf("f")]: "*", // github:
+        };
+        const [consumerUrl, consumerIntegrity] = await publish(
+          "consumer",
+          { peerDependencies: peers },
+          { "package.json": JSON.stringify({ name: "consumer", version: "1.0.0", peerDependencies: peers }) },
+        );
+        await publish(nameOf("d"), {}, packageFiles(nameOf("d"), "registry-pkg-d"));
+        const tarballE = await tarballOf("package", packageFiles(nameOf("e"), "pkg-e"));
+        served.set("/pkg-e.tgz", tarballE);
+        const tarballF = await tarballOf("scope-pkg-f-0000000", packageFiles(nameOf("f"), "pkg-f"));
+        served.set("/repos/scope/pkg-f/tarball/", tarballF);
+
+        const dependencies = {
+          "consumer": "1.0.0",
+          [nameOf("b")]: `${sharedRepoUrl}#pkg-b`,
+          [nameOf("d")]: `${sharedRepoUrl}#pkg-d`,
+          "provider": `${sharedRepoUrl}#pkg-c`,
+          [nameOf("e")]: `${origin}/pkg-e.tgz`,
+          [nameOf("f")]: "github:scope/pkg-f",
+        };
+        const project = join(root, "project");
+        const dependent = shape === "root" ? project : join(project, "packages", "app");
+        mkdirSync(dependent, { recursive: true });
+        if (shape === "root") {
+          writeFileSync(join(project, "package.json"), JSON.stringify({ name: "project", dependencies }));
+        } else {
+          writeFileSync(join(project, "package.json"), JSON.stringify({ name: "project", workspaces: ["packages/*"] }));
+          writeFileSync(join(dependent, "package.json"), JSON.stringify({ name: "app", dependencies }));
+        }
+
+        const { stderr, exitCode } = await runInstall(
+          project,
+          join(root, "cache"),
+          { BUN_CONFIG_REGISTRY: `${origin}/`, GITHUB_API_URL: origin },
+          `--linker=${linker}`,
+        );
+        expect(stderr).not.toContain("error:");
+
+        // the registry is asked for `consumer` only
+        expect(requests.sort()).toEqual([
+          "/consumer",
+          "/consumer-1.0.0.tgz",
+          "/pkg-e.tgz",
+          "/repos/scope/pkg-f/tarball/",
+        ]);
+
+        // one entry for each provider, and nothing nested under `consumer`
+        const gitEntry = (l: string) => {
+          const sha = sharedCommits[`pkg-${l}`];
+          return [`${nameOf(l)}@${sharedRepoUrl}#${sha}`, {}, sha];
+        };
+        expect(await lockedPackages(project)).toEqual({
+          ...(shape === "workspace" ? { app: ["app@workspace:packages/app"] } : {}),
+          "consumer": ["consumer@1.0.0", consumerUrl, { peerDependencies: peers }, consumerIntegrity],
+          [nameOf("b")]: gitEntry("b"),
+          [nameOf("d")]: gitEntry("d"),
+          "provider": gitEntry("c"),
+          [nameOf("e")]: [`${nameOf("e")}@${origin}/pkg-e.tgz`, {}, integrityOf(tarballE)],
+          [nameOf("f")]: [
+            `${nameOf("f")}@github:scope/pkg-f#0000000`,
+            {},
+            "scope-pkg-f-0000000",
+            integrityOf(tarballF),
+          ],
+        });
+
+        // `consumer` loads the dependent's copy of every peer
+        const consumerDir = join(Bun.resolveSync("consumer/package.json", dependent), "..");
+        const loaded: Record<string, string> = {};
+        for (const name of Object.keys(peers)) {
+          const text = readFileSync(Bun.resolveSync(name, consumerDir), "utf8");
+          loaded[name] = JSON.parse(text.slice(text.indexOf("=") + 1, text.lastIndexOf(";")));
+        }
+        expect(loaded).toEqual({
+          [nameOf("b")]: "pkg-b",
+          [nameOf("d")]: "pkg-d",
+          "provider": "pkg-c",
+          [nameOf("e")]: "pkg-e",
+          [nameOf("f")]: "pkg-f",
+        });
+        expect(exitCode).toBe(0);
+      },
+      30_000,
+    );
+  }
+}
+
 // The git commands of an install used to run on thread-pool threads through
 // the synchronous spawn helper, which installed the signal forwarder meant for
 // the foreground child of `bun run`: a SIGINT while clones ran was sent on to

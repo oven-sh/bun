@@ -1245,6 +1245,56 @@ describe("--compile-aot at run time", () => {
   });
 });
 
+test("--compile-aot lays machine code out by --bytecode-order", async () => {
+  using dir = tempDir("compile-aot-order", {
+    "entry.ts": `
+      function alpha(n: number) { let s = "alpha"; for (let i = 0; i < n; i++) s += i; return s; }
+      function beta(n: number) { let s = "beta"; while (n-- > 0) s = s + n + "."; return s; }
+      function gamma(n: number) { return "gamma" + [n, n * 2].map(x => x + 1).join("-"); }
+      function delta(n: number) { const s = ["delta"]; do s.push(String(n)); while (--n > 2); return s.join("/"); }
+      function epsilon(n: number) { return n > 0 ? "epsilon".slice(0, n) + (n % 2 ? "odd" : "even") : "none"; }
+      function twinOfDelta(n: number) { const s = ["twin"]; do s.push(String(n)); while (--n > 2); return s.join("/"); }
+      const all: Record<string, (n: number) => string> = { alpha, beta, gamma, delta, epsilon, twinOfDelta };
+      console.log(process.argv.slice(2).map(which => all[which](4)).join());
+    `,
+  });
+  const cwd = String(dir);
+  async function build(outfile: string, args: string[]) {
+    const map = join(cwd, outfile + ".map");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", ...args, "entry.ts", "--outfile", outfile],
+      env: { ...bunEnv, BUN_AOT_OPTIONS: `aotMapFilePath=${map}` },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect([await proc.stderr.text(), await proc.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+    if (!args.includes("--compile-aot")) return [];
+    const wanted = new Set(["alpha", "beta", "gamma", "delta", "epsilon", "twinOfDelta"]);
+    return (await Bun.file(map).text())
+      .split("\n")
+      .map(line => line.split("\t"))
+      .filter(fields => fields[0] === "F" && wanted.has(fields[7]))
+      .sort((a, b) => Number(a[2]) - Number(b[2]))
+      .map(fields => fields[7]);
+  }
+  async function run(outfile: string, argv: string[], env: Record<string, string> = {}) {
+    await using proc = Bun.spawn({ cmd: [join(cwd, outfile), ...argv], env: { ...bunEnv, ...env }, stdout: "pipe", stderr: "pipe" });
+    return [await proc.stdout.text(), await proc.exited];
+  }
+  await build("recorded", ["--bytecode"]);
+  expect(await run("recorded", ["delta", "beta"], { BUN_BYTECODE_ORDER_OUT: join(cwd, "app.order") })).toEqual(["delta/4/3,beta3.2.1.0.\n", 0]);
+  expect(await build("plain", ["--compile-aot"])).toEqual(["alpha", "beta", "gamma", "delta", "epsilon", "twinOfDelta"]);
+  const ordered = await build("ordered", ["--compile-aot", "--bytecode-order=app.order"]);
+  expect(ordered).toEqual(["delta", "twinOfDelta", "beta", "alpha", "gamma", "epsilon"]);
+  expect(await build("again", ["--compile-aot", "--bytecode-order=app.order"])).toEqual(ordered);
+  for (const outfile of ["plain", "ordered"])
+    expect(await run(outfile, ["alpha", "beta", "gamma", "delta", "epsilon", "twinOfDelta"])).toEqual([
+      "alpha0123,beta3.2.1.0.,gamma5-9,delta/4/3,epsieven,twin/4/3\n",
+      0,
+    ]);
+});
+
 describe("--compile-aot optimizations", () => {
   const program = /* ts */ `
     const out: unknown[] = [];
@@ -1518,6 +1568,54 @@ describe("--compile-aot with a type table", () => {
     }
     return { stdout, exitCode, remarks };
   }
+
+  test("--bytecode-order of a build without type tags", async () => {
+    using dir = tempDir("compile-aot-typed-order", {});
+    const out = (name: string) => join(String(dir), name);
+    async function build(outfile: string, args: string[], env: Record<string, string>) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", ...args, "src/main.ts", "--outfile", out(outfile)],
+        env: { ...bunEnv, ...env },
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect([await proc.stderr.text(), await proc.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+    }
+    async function comeBeforeTopLevelCode(outfile: string, args: string[]) {
+      await build(outfile, ["--compile-aot", ...args], {
+        BUN_SOUND_TYPES_TAGS: join(root, "tags.bin"),
+        BUN_SOUND_TYPES_ORACLE_ROOT: root,
+        BUN_AOT_OVERRIDDEN_METHODS: join(root, "overridden.txt"),
+        BUN_AOT_OPTIONS: `${typed},aotMapFilePath=${out(outfile + ".map")}`,
+      });
+      const functions = (await Bun.file(out(outfile + ".map")).text())
+        .split("\n")
+        .map(line => line.split("\t"))
+        .filter(fields => fields[0] === "F");
+      const topLevelCode = Math.min(...functions.filter(fields => fields[5] === "4294967295").map(fields => Number(fields[2])));
+      return Object.fromEntries(
+        ["readsSound", "add", "length2"].map(name => [
+          name,
+          functions.filter(fields => fields[7] === name).every(fields => Number(fields[2]) < topLevelCode),
+        ]),
+      );
+    }
+    await build("recorded", ["--bytecode"], {});
+    await using recorded = Bun.spawn({
+      cmd: [out("recorded")],
+      env: { ...bunEnv, BUN_BYTECODE_ORDER_OUT: out("app.order") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await recorded.exited).toBe(0);
+    expect(await comeBeforeTopLevelCode("plain", [])).toEqual({ readsSound: false, add: false, length2: false });
+    expect(await comeBeforeTopLevelCode("ordered", [`--bytecode-order=${out("app.order")}`])).toEqual({
+      readsSound: true,
+      add: true,
+      length2: true,
+    });
+  });
 
   const cases: [remark: string, appliesTo: string[], doesNotApplyTo: string[]][] = [
     ["typed-field-read:a", ["readsSound"], []],

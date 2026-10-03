@@ -28,6 +28,23 @@ pub enum Named<'a> {
     InternalModule(&'a [u8]),
 }
 
+/// A type tag (`js_printer`'s `print_type_tag`: 0x01 and six digits) is for JavaScriptCore alone. Blanked, every offset
+/// stays what JavaScriptCore says it is, and the tree, and so each name, is that of the same text printed without tags.
+fn without_type_tags(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    const TAG_LENGTH: usize = 7;
+    if !text.contains(&1) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut blanked = text.to_vec();
+    let mut at = 0;
+    while let Some(found) = blanked[at..].iter().position(|&byte| byte == 1) {
+        let end = (at + found + TAG_LENGTH).min(blanked.len());
+        blanked[at + found..end].fill(b' ');
+        at = end;
+    }
+    std::borrow::Cow::Owned(blanked)
+}
+
 impl Named<'_> {
     /// `None`: it does not parse, and its code has no names.
     pub fn names(self) -> Option<CodeNames> {
@@ -37,7 +54,7 @@ impl Named<'_> {
                 is_esm,
                 chunk_paths,
             } => FunctionIdentities::of_text(
-                text,
+                &without_type_tags(text),
                 if is_esm { Text::Module } else { Text::Script },
                 chunk_paths,
             ),

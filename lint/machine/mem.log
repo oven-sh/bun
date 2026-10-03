@@ -1,12 +1,3 @@
-10-02_14:18:21 anon=278MB pids=44 load=569.74 top=rustc:356MB
-10-02_14:18:53 anon=82MB pids=44 load=606.37 top=rustc:106MB
-10-02_14:19:25 anon=324MB pids=38 load=618.60 top=rustc:384MB
-10-02_14:19:56 anon=13MB pids=27 load=608.97 top=mariadbd:7MB
-10-02_14:20:27 anon=64MB pids=36 load=601.38 top=git:115MB
-10-02_14:20:58 anon=13MB pids=30 load=636.68 top=mariadbd:7MB
-10-02_14:21:30 anon=13MB pids=27 load=629.78 top=mariadbd:7MB
-10-02_14:22:01 anon=13MB pids=30 load=638.49 top=mariadbd:7MB
-10-02_14:22:31 anon=14MB pids=33 load=621.89 top=mariadbd:7MB
 10-02_14:23:02 anon=13MB pids=30 load=569.34 top=mariadbd:7MB
 10-02_14:23:35 anon=215MB pids=35 load=521.07 top=node-MainThread:250MB
 10-02_14:24:05 anon=13MB pids=30 load=492.24 top=mariadbd:7MB
@@ -398,3 +389,12 @@
 10-03_01:08:53 anon=3MB pids=27 load=1311.59 top=mariadbd:16MB
 10-03_01:09:23 anon=3MB pids=27 load=1425.12 top=mariadbd:16MB
 10-03_01:09:54 anon=3MB pids=27 load=1499.40 top=mariadbd:16MB
+10-03_01:10:25 anon=3MB pids=27 load=1496.21 top=mariadbd:16MB
+10-03_01:10:58 anon=3MB pids=28 load=1595.77 top=mariadbd:16MB
+10-03_01:11:31 anon=3MB pids=27 load=1635.24 top=mariadbd:16MB
+10-03_01:12:01 anon=3MB pids=27 load=1658.79 top=mariadbd:16MB
+10-03_01:12:40 anon=3MB pids=31 load=1708.76 top=mariadbd:16MB
+10-03_01:13:18 anon=3MB pids=27 load=2088.12 top=mariadbd:14MB
+10-03_01:13:54 anon=103MB pids=45 load=2097.96 top=bun:134MB
+10-03_01:14:28 anon=4MB pids=31 load=2047.07 top=mariadbd:14MB
+10-03_01:15:00 anon=17MB pids=29 load=2020.37 top=python3:20MB

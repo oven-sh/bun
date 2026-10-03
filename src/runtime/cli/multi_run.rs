@@ -884,6 +884,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         ConfigureEnvOptions {
             log_errors: true,
             store_root_fd: false,
+            defer_package_errors: false,
         },
     )?;
     // SAFETY: `configure_env_for_run` fully writes the slot on the success path.

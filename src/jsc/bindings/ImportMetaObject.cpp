@@ -51,10 +51,44 @@
 
 #include "isBuiltinModule.h"
 #include "WebCoreJSBuiltins.h"
+#include <wtf/HashSet.h>
 
 namespace Zig {
 using namespace JSC;
 using namespace WebCore;
+
+extern "C" void ResolveMessage__appendRequireParent(JSC::EncodedJSValue, const BunString*);
+
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__appendRequireParents(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedError, JSC::EncodedJSValue encodedParent)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto error = JSValue::decode(encodedError);
+    auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(JSValue::decode(encodedParent));
+    if (!requirer)
+        return encodedError;
+    Strong<Unknown> protectedError(vm, error);
+    MarkedArgumentBuffer parents;
+    HashSet<Bun::JSCommonJSModule*> seen;
+    seen.add(requirer);
+    for (auto* parent = requirer->m_parent.get(); parent && seen.add(parent).isNewEntry; parent = parent->m_parent.get())
+        parents.append(parent);
+    if (parents.hasOverflowed()) {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    for (unsigned i = 0; i < parents.size(); ++i) {
+        auto* parent = uncheckedDowncast<Bun::JSCommonJSModule>(parents.at(i));
+        JSValue filename = parent->m_filename.get();
+        if (!filename.isString())
+            continue;
+        auto string = filename.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto path = Bun::toString(string);
+        ResolveMessage__appendRequireParent(JSValue::encode(error), &path);
+    }
+    return encodedError;
+}
 
 ImportMetaObject* ImportMetaObject::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url)
 {
@@ -186,7 +220,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
         }
     }
 
-    auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from, isESM, false);
+    auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from, isESM, false, JSValue::encode(jsUndefined()));
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!JSC::JSValue::decode(result).isString()) {
@@ -299,7 +333,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     paths.append(Bun::toStringRef(pathStr));
                 }
 
-                result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
+                result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size(), JSValue::encode(parentModule));
                 if (scope.exception()) [[unlikely]]
                     goto cleanup;
 
@@ -328,7 +362,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         return {};
     }
 
-    auto result = Bun__resolveSync(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve);
+    auto result = Bun__resolveSync(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, JSValue::encode(parentModule));
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!JSC::JSValue::decode(result).isString()) {
@@ -404,7 +438,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     auto fromWTFString = from.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Try to resolve it to a relative file path. This path is not meant to throw module resolution errors.
+    // File URLs can name missing files; existing files still require package format validation.
     if (specifier.startsWith("./"_s) || specifier.startsWith("../"_s) || specifier.startsWith("/"_s) || specifier.startsWith("file://"_s)
 #if OS(WINDOWS)
         || specifier.startsWith(".\\"_s) || specifier.startsWith("..\\"_s) || specifier.startsWith("\\"_s)
@@ -417,6 +451,12 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         }
 
         WTF::URL url(fromURL, specifier);
+        if (url.protocolIsFile()) {
+            auto pathString = url.fileSystemPath();
+            auto path = Bun::toString(pathString);
+            Bun__validateImportMetaPackageConfig(globalObject, &path);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.string())));
     }
 

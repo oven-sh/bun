@@ -5,6 +5,74 @@ import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 
+for (const asNode of [false, true]) {
+  for (const entry of asNode ? ["eval"] : ["stdin", "eval", "run stdin"]) {
+    test.concurrent.each([
+      { name: "plain script", source: 'console.log("executed")', stdout: "executed\n" },
+      {
+        name: "builtin require",
+        source: 'console.log(require("node:path").basename("/a/b"))',
+        stdout: "b\n",
+      },
+      {
+        name: "builtin import",
+        source: 'import { basename } from "node:path"; console.log(basename("/a/b"))',
+        stdout: "b\n",
+      },
+      {
+        name: "script-owned JSON rejection",
+        source:
+          'try { JSON.parse(require("node:fs").readFileSync("../package.json", "utf8")) } catch { console.log("invalid JSON from script"); process.exitCode = 17 }',
+        stdout: "invalid JSON from script\n",
+        exitCode: 17,
+      },
+      {
+        name: "require validates its scope",
+        source: 'console.log("executed"); try { require("./value.cjs") } catch (e) { console.log(e.code) }',
+        stdout: "executed\nERR_INVALID_PACKAGE_CONFIG\n",
+      },
+      {
+        name: "dynamic import validates a js scope",
+        source: 'console.log("executed"); import("./value.js").catch(e => console.log(e.code))',
+        stdout: "executed\nERR_INVALID_PACKAGE_CONFIG\n",
+      },
+      {
+        name: "dynamic import does not need a cjs scope",
+        source: 'console.log("executed"); import("./value.cjs").then(m => console.log(m.default))',
+        stdout: "executed\n7\n",
+      },
+      {
+        name: "nearer valid scope shields the ancestor",
+        source: 'console.log("executed"); import("./scoped/value.js").then(m => console.log(m.default))',
+        stdout: "executed\n9\n",
+      },
+    ])(`inline entry ${entry}, node alias = ${asNode}: $name`, async ({ source, stdout, exitCode = 0 }) => {
+      using dir = tempDir("inline-package-scope-", {
+        "package.json": "{",
+        "nested/value.cjs": "module.exports = 7",
+        "nested/value.js": "module.exports = 8",
+        "nested/scoped/package.json": "{}",
+        "nested/scoped/value.js": "module.exports = 9",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...(entry === "eval" ? ["-e", source] : entry === "stdin" ? ["-"] : ["run", "-"])],
+        ...(asNode ? { argv0: "node" } : {}),
+        cwd: join(String(dir), "nested"),
+        env: bunEnv,
+        stdin: entry === "eval" ? "ignore" : Buffer.from(source),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [actualStdout, stderr, actualExitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect({ stdout: actualStdout, stderr, exitCode: actualExitCode }).toEqual({ stdout, stderr: "", exitCode });
+    });
+  }
+}
+
 for (const flag of ["-e", "--print"]) {
   describe(`bun ${flag}`, () => {
     test("it works", async () => {

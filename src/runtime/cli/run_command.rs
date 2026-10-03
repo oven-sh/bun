@@ -92,6 +92,8 @@ pub(crate) struct ConfigureEnvOptions {
     /// for callers that go on to read files through it, like `bunx` resolving
     /// a package's `bin`.
     pub(crate) store_root_fd: bool,
+    /// Leave inline-source package errors for runtime resolution to report.
+    pub(crate) defer_package_errors: bool,
 }
 
 pub(crate) struct RunCommand;
@@ -604,6 +606,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = opts.store_root_fd;
+        this_transpiler.resolver.validate_package_config = opts.defer_package_errors;
 
         // Bundler-linker + JSX-runtime config: only callers that actually
         // transpile through this `Transpiler` need it. `configure_linker`'s
@@ -2349,6 +2352,7 @@ impl RunCommand {
             ConfigureEnvOptions {
                 log_errors,
                 store_root_fd: false,
+                defer_package_errors: target_name == b"-",
             },
         )?;
         // SAFETY: `configure_env_for_run_without_linker` returned `Ok`, so the

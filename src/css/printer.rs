@@ -122,13 +122,6 @@ pub struct Printer<'a> {
     pub(crate) minify: bool,
     pub(crate) targets: Targets,
     pub(crate) vendor_prefix: css::VendorPrefix,
-    /// True while nested rules are being re-serialized for a non-final vendor
-    /// prefix pass of an ancestor style rule (when nesting is compiled away).
-    /// Nested style rules that carry their own vendor prefixes override
-    /// `vendor_prefix`, so their output is identical in every ancestor pass;
-    /// they are skipped while this is set and emitted once in the final pass,
-    /// keeping the output linear in nesting depth instead of exponential.
-    pub(crate) skip_prefixed_nested_rules: bool,
     pub(crate) in_calc: bool,
     pub(crate) css_module: Option<css::CssModule<'a>>,
     pub(crate) dependencies: Option<BumpVec<'a, css::Dependency>>,
@@ -147,22 +140,7 @@ pub struct Printer<'a> {
     /// `serialize::serialize_nesting` so deeply nested rules with multiple
     /// `&` references per level cannot expand exponentially.
     pub(crate) nesting_expansions: u32,
-    /// Running total of bytes emitted by duplicate vendor-prefix passes. A rule
-    /// whose selector list carries more than one vendor prefix (e.g. a list
-    /// mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a single
-    /// pseudo downleveled to several prefixes) is serialized once per prefix,
-    /// and every pass after the first re-serializes the rule's whole body —
-    /// declarations, nested rules, and everything under them. Nesting such
-    /// rules repeats that body once per prefix at every level, so the output
-    /// grows by (prefix count)^depth. The bytes written by each such duplicate
-    /// pass are measured and accumulated here (across the whole stylesheet,
-    /// never reset) and bounded in `StyleRule::to_css`, so a few kilobytes of
-    /// deeply nested input cannot expand into gigabytes — regardless of whether
-    /// the duplicated payload is nested rules or a large declaration block. The
-    /// original (first) pass of each rule, and any single-prefix output (which
-    /// has no passes after the first), emit nothing here. A flat multi-prefix
-    /// rule's later passes do count, but without nesting to compound them that
-    /// stays linear in the input.
+    /// Bytes emitted so far by the vendor prefix passes after the first of each style rule (see `MAX_PREFIX_EXPANSION_BYTES`).
     pub(crate) prefix_expansion_bytes: usize,
     pub(crate) scratchbuf: BumpVec<'a, u8>,
     pub(crate) error_kind: Option<css::PrinterError>,
@@ -305,7 +283,6 @@ impl<'a> Printer<'a> {
             line: 0,
             col: 0,
             vendor_prefix: css::VendorPrefix::default(),
-            skip_prefixed_nested_rules: false,
             in_calc: false,
             css_module: None,
             ctx: None,
@@ -798,6 +775,7 @@ impl<'a> Printer<'a> {
     pub(crate) fn with_context<C, F>(
         &mut self,
         selectors: &css::SelectorList,
+        prefix_passes: css::VendorPrefix,
         closure: C,
         func: F,
     ) -> PrintResult<()>
@@ -811,7 +789,11 @@ impl<'a> Printer<'a> {
             None
         };
 
-        let ctx = css::StyleContext { selectors, parent };
+        let ctx = css::StyleContext {
+            selectors,
+            parent,
+            prefix_passes,
+        };
 
         // `&ctx` is stack-local but the field type is `&'a StyleContext<'a>`;
         // soundness relies on restoring `parent` before this frame returns.

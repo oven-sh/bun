@@ -2,8 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -8116,5 +8117,201 @@ console.log(line.length - line.trimStart().length);`,
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("300");
     expect(exitCode).toBe(0);
+  });
+
+  describe("nesting: order of the vendor prefix variants of nested rules", () => {
+    // A browser applies only the prefix variants of a rule that it can parse.
+    // Safari 14 parses `:-webkit-full-screen` but not `:fullscreen`. Chrome 80
+    // parses both, and `:-webkit-any()` but not `:is()`. Whatever a browser
+    // parses, the last rule it applies must be the last one in the source. So
+    // every variant of a nested rule has to print before every variant of the
+    // rules that follow it, and after every variant of the rules before it.
+    const chrome80safari14 = { chrome: 80 << 16, safari: 14 << 16 };
+
+    test.each([
+      {
+        name: "a rule with prefix passes of its own, then a rule without",
+        source: ".p:fullscreen { & .k:is(.a, .b) { color: red } & .k.c { color: blue } }",
+        expected: [
+          ".p:-webkit-full-screen .k:-webkit-any(.a,.b){color:red}",
+          ".p:fullscreen .k:is(.a,.b){color:red}",
+          ".p:-webkit-full-screen .k.c{color:#00f}",
+          ".p:fullscreen .k.c{color:#00f}",
+        ],
+      },
+      {
+        name: "a rule without prefix passes of its own, then a rule with",
+        source: ".p:fullscreen { & .k.c { color: blue } & .k:is(.a, .b) { color: red } }",
+        expected: [
+          ".p:-webkit-full-screen .k.c{color:#00f}",
+          ".p:fullscreen .k.c{color:#00f}",
+          ".p:-webkit-full-screen .k:-webkit-any(.a,.b){color:red}",
+          ".p:fullscreen .k:is(.a,.b){color:red}",
+        ],
+      },
+      {
+        name: "a rule with prefix passes of its own between two rules without",
+        source: ".p:fullscreen { & .j { color: green } & .k:is(.a, .b) { color: red } & .k.c { color: blue } }",
+        expected: [
+          ".p:-webkit-full-screen .j{color:green}",
+          ".p:fullscreen .j{color:green}",
+          ".p:-webkit-full-screen .k:-webkit-any(.a,.b){color:red}",
+          ".p:fullscreen .k:is(.a,.b){color:red}",
+          ".p:-webkit-full-screen .k.c{color:#00f}",
+          ".p:fullscreen .k.c{color:#00f}",
+        ],
+      },
+      {
+        name: "two rules with prefix passes of their own",
+        source: ".p:fullscreen { & .k:is(.a, .b) { color: red } & .k:fullscreen { color: blue } }",
+        expected: [
+          ".p:-webkit-full-screen .k:-webkit-any(.a,.b){color:red}",
+          ".p:fullscreen .k:is(.a,.b){color:red}",
+          ".p:-webkit-full-screen .k:-webkit-full-screen{color:#00f}",
+          ".p:fullscreen .k:fullscreen{color:#00f}",
+        ],
+      },
+      {
+        name: "a parent with declarations",
+        source: ".p:fullscreen { color: green; & .k:is(.a, .b) { color: red } & .k.c { color: blue } }",
+        expected: [
+          ".p:-webkit-full-screen{color:green}",
+          ".p:fullscreen{color:green}",
+          ".p:-webkit-full-screen .k:-webkit-any(.a,.b){color:red}",
+          ".p:fullscreen .k:is(.a,.b){color:red}",
+          ".p:-webkit-full-screen .k.c{color:#00f}",
+          ".p:fullscreen .k.c{color:#00f}",
+        ],
+      },
+      {
+        name: "under a nested rule without prefix passes of its own",
+        source: ".p:fullscreen { & .c { & .k:is(.a, .b) { color: red } & .k.c { color: blue } } }",
+        expected: [
+          ".p:-webkit-full-screen .c .k:-webkit-any(.a,.b){color:red}",
+          ".p:fullscreen .c .k:is(.a,.b){color:red}",
+          ".p:-webkit-full-screen .c .k.c{color:#00f}",
+          ".p:fullscreen .c .k.c{color:#00f}",
+        ],
+      },
+      {
+        name: "in a nested @media rule",
+        source: ".p:fullscreen { @media (min-width: 1px) { & .k:is(.a, .b) { color: red } & .k.c { color: blue } } }",
+        expected: [
+          "@media (min-width:1px){",
+          ".p:-webkit-full-screen .k:-webkit-any(.a,.b){color:red}",
+          ".p:fullscreen .k:is(.a,.b){color:red}",
+          ".p:-webkit-full-screen .k.c{color:#00f}",
+          ".p:fullscreen .k.c{color:#00f}",
+          "}",
+        ],
+      },
+    ])("$name", ({ source, expected }) => {
+      expect(cssInternals.minifyTest(source, "", chrome80safari14)).toBe(expected.join(""));
+    });
+
+    // The values of `prop` in output order, with the adjacent prefix variants
+    // of one rule counted once.
+    function printedOrder(output: string, prop: string): string[] {
+      const values = Array.from(output.matchAll(new RegExp(`${prop}:([^;}]+)`, "g")), match => match[1]);
+      return values.filter((value, i) => value !== values[i - 1]);
+    }
+
+    test("the parent and the nested rule need different prefixes", () => {
+      // Firefox 70 needs `:-moz-any()`, Safari 15 needs `:-webkit-full-screen`.
+      const output = cssInternals.minifyTest(
+        ".p:is(.x, .y) { & .k:fullscreen { color: red } & .j { color: blue } }",
+        "",
+        { firefox: 70 << 16, safari: 15 << 16 },
+      );
+      expect(printedOrder(output, "color")).toEqual(["red", "#00f"]);
+    });
+
+    test("every depth", () => {
+      // Siblings alternate between a rule with prefix passes of its own and a
+      // rule without, at three depths and in a nested at-rule. `--i` counts
+      // the rules in source order.
+      let i = 0;
+      const siblings = () =>
+        `& .r${i}:is(.a, .b) { --i: ${i++} } & .r${i} { --i: ${i++} } ` +
+        `& .r${i}:fullscreen { --i: ${i++} } & .r${i} { --i: ${i++} }`;
+      const source = `.p:fullscreen {
+        ${siblings()}
+        & .c {
+          ${siblings()}
+          @media (min-width: 1px) { ${siblings()} }
+          & .d:is(.e, .f) { ${siblings()} }
+          ${siblings()}
+        }
+        ${siblings()}
+      }`;
+      const output = cssInternals.minifyTest(source, "", chrome80safari14);
+      expect(printedOrder(output, "--i")).toEqual(Array.from({ length: i }, (_, n) => String(n)));
+    });
+
+    test("a nested at-rule prints once, with every prefix variant of its rules", () => {
+      const output = cssInternals.prefixTest(
+        ".p:fullscreen { color: green; @media (min-width: 1px) { & .k:is(.a, .b) { color: red } } & .j { color: blue } }",
+        "",
+        chrome80safari14,
+      );
+      expect(output).toBe(
+        [
+          ".p:-webkit-full-screen {\n  color: green;\n}\n",
+          ".p:fullscreen {\n  color: green;\n}\n",
+          "@media (min-width: 1px) {\n" +
+            "  .p:-webkit-full-screen .k:-webkit-any(.a, .b) {\n    color: red;\n  }\n\n" +
+            "  .p:fullscreen .k:is(.a, .b) {\n    color: red;\n  }\n" +
+            "}\n",
+          ".p:-webkit-full-screen .j {\n  color: #00f;\n}\n",
+          ".p:fullscreen .j {\n  color: #00f;\n}\n",
+        ].join("\n"),
+      );
+    });
+
+    test("a nested @scope prelude prints once, in the last prefix pass of the parent", () => {
+      // Every browser that has `@scope` has the unprefixed `:fullscreen`.
+      const output = cssInternals.minifyTest(
+        ".p:fullscreen { & .k:is(.a, .b) { color: red } @scope (& > .x) { .z { color: blue } } & .j { color: green } }",
+        "",
+        chrome80safari14,
+      );
+      const [before, ...scopes] = output.split("@scope");
+      expect(before).toBe(
+        ".p:-webkit-full-screen .k:-webkit-any(.a,.b){color:red}" + ".p:fullscreen .k:is(.a,.b){color:red}",
+      );
+      expect(scopes.map(scope => scope.slice(0, scope.indexOf("{")))).toEqual(["(.p:fullscreen>.x)"]);
+      expect(output.slice(output.lastIndexOf("}}") + 2)).toBe(
+        ".p:-webkit-full-screen .j{color:green}" + ".p:fullscreen .j{color:green}",
+      );
+    });
+
+    test("bun build --target=browser", async () => {
+      // The default browser targets need `:-webkit-full-screen`, `:-webkit-any()`
+      // and `:-moz-any()`, and nesting is compiled away.
+      using dir = tempDir("css-nested-prefix-order", {
+        "app.css": ".p:fullscreen { & .k:is(.a, .b) { color: red } & .k.c { color: blue } }",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "app.css", "--target=browser", "--minify", "--outdir", "out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // A failed build shows its stderr in the assertion message.
+      expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
+
+      const output = await Bun.file(join(String(dir), "out", "app.css")).text();
+      expect(output.trim()).toBe(
+        [
+          ".p:-webkit-full-screen .k:-webkit-any(.a,.b){color:red}",
+          ".p:fullscreen .k:-moz-any(.a,.b){color:red}",
+          ".p:fullscreen .k:is(.a,.b){color:red}",
+          ".p:-webkit-full-screen .k.c{color:#00f}",
+          ".p:fullscreen .k.c{color:#00f}",
+        ].join(""),
+      );
+    });
   });
 });

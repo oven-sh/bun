@@ -962,12 +962,7 @@ impl JSGlobalObject {
         debug_assert!(error_array.is_array());
         let message = BunString::create_format(message);
         crate::from_js_host_call(self, || {
-            JSC__JSGlobalObject__createAggregateErrorWithArray(
-                self,
-                error_array,
-                &message,
-                JSValue::UNDEFINED,
-            )
+            JSC__JSGlobalObject__createAggregateErrorWithArray(self, error_array, &message)
         })
     }
 
@@ -1568,7 +1563,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         error_array: JSValue,
         message: &BunString,
-        options: JSValue,
     ) -> JSValue;
     safe fn JSC__JSGlobalObject__generateHeapSnapshot(this: &JSGlobalObject) -> JSValue;
 

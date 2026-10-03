@@ -330,3 +330,151 @@ describe("bun run --tsconfig-override", () => {
     }
   });
 });
+
+// The override stands in for $cwd/tsconfig.json, so its compilerOptions must
+// drive transpilation (not only "paths" resolution). Each fixture prints
+// something that comes out differently under the defaults, and ./tsconfig.json
+// sets every option to a conflicting value so the override has to win over it.
+describe("--tsconfig-override compilerOptions", () => {
+  const files = {
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        jsx: "react",
+        jsxFactory: "wrongFactory",
+        jsxFragmentFactory: "wrongFragment",
+        experimentalDecorators: false,
+        emitDecoratorMetadata: false,
+        useDefineForClassFields: true,
+      },
+    }),
+    "config/override.json": JSON.stringify({
+      compilerOptions: {
+        jsx: "react",
+        jsxFactory: "h",
+        jsxFragmentFactory: "Frag",
+        experimentalDecorators: true,
+        emitDecoratorMetadata: true,
+        useDefineForClassFields: false,
+      },
+    }),
+    // An empty node_modules keeps the default automatic JSX runtime from
+    // auto-installing react; it fails to resolve instead.
+    "node_modules/.gitkeep": "",
+    "jsx.tsx": `
+      const h = (tag: unknown, props: unknown, ...children: unknown[]) => ({ tag, props, children });
+      const Frag = "fragment";
+      console.log(JSON.stringify([<div a="1">hi</div>, <><br /></>]));
+    `,
+    "decorators.ts": `
+      function dec(...args: unknown[]) {
+        console.log(JSON.stringify(args.map(arg => typeof arg)));
+      }
+      class Foo {
+        @dec
+        method() {}
+      }
+    `,
+    "metadata.ts": `
+      const seen: Record<string, string> = {};
+      (Reflect as any).metadata = (metadataKey: string, value: any) => (_target: unknown, propertyKey: string) => {
+        seen[propertyKey + " " + metadataKey] = [value].flat().map(type => type.name).join(",");
+      };
+      function dec() {}
+      class Dep {}
+      class Foo {
+        @dec
+        prop: Dep;
+        @dec
+        method(a: string, b: number): boolean {
+          return true;
+        }
+      }
+      console.log(JSON.stringify(seen));
+    `,
+    "class-fields.ts": `
+      class Base {
+        x = 1;
+      }
+      class Derived extends Base {
+        x;
+      }
+      console.log(new Derived().x);
+    `,
+    "jsx.test.tsx": `
+      import { expect, test } from "bun:test";
+      const h = (tag: unknown, props: unknown) => ({ tag, props });
+      test("jsxFactory from the override", () => {
+        expect(<div a="1" />).toEqual({ tag: "div", props: { a: "1" } });
+      });
+    `,
+  };
+
+  const override = ["--tsconfig-override", "./config/override.json"];
+
+  async function run(dir: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("jsx, jsxFactory and jsxFragmentFactory", async () => {
+    await using dir = tempDir("tsconfig-override-jsx", files);
+    const { stdout, exitCode } = await run(dir, [...override, "jsx.tsx"]);
+
+    expect(stdout).toBe(
+      JSON.stringify([
+        { tag: "div", props: { a: "1" }, children: ["hi"] },
+        { tag: "fragment", props: null, children: [{ tag: "br", props: null, children: [] }] },
+      ]) + "\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("experimentalDecorators", async () => {
+    await using dir = tempDir("tsconfig-override-decorators", files);
+    const { stdout, exitCode } = await run(dir, [...override, "decorators.ts"]);
+
+    // TypeScript's legacy method decorators get (prototype, key, descriptor);
+    // standard decorators get (method, context).
+    expect(stdout).toBe(JSON.stringify(["object", "string", "object"]) + "\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("emitDecoratorMetadata", async () => {
+    await using dir = tempDir("tsconfig-override-metadata", files);
+    const { stdout, exitCode } = await run(dir, [...override, "metadata.ts"]);
+
+    expect(JSON.parse(stdout)).toEqual({
+      "prop design:type": "Dep",
+      "method design:type": "Function",
+      "method design:paramtypes": "String,Number",
+      "method design:returntype": "Boolean",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("useDefineForClassFields", async () => {
+    await using dir = tempDir("tsconfig-override-class-fields", files);
+    const { stdout, exitCode } = await run(dir, [...override, "class-fields.ts"]);
+
+    // With useDefineForClassFields: false, the uninitialized `x;` in Derived
+    // is dropped instead of redefining the inherited field as undefined.
+    expect(stdout).toBe("1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("applies to bun test", async () => {
+    await using dir = tempDir("tsconfig-override-bun-test", files);
+    const { stderr, exitCode } = await run(dir, ["test", ...override, "jsx.test.tsx"]);
+
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
+});

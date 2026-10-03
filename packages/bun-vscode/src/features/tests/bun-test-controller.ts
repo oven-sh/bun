@@ -339,16 +339,17 @@ export class BunTestController implements vscode.Disposable {
         return " ".repeat(match.length);
       });
 
-    const testRegex =
-      /\b(describe|test|it)(?:\.(?:skip|todo|failing|only|concurrent|serial))*(?:\.(?:if|todoIf|skipIf|failingIf|concurrentIf|serialIf)\s*\([^)]*\))?(?:\.each\s*\([^)]*\))?\s*\(\s*(['"`])((?:\\\2|.)*?)\2\s*(?:,|\))/g;
+    const testRegex = /\b(?:describe|test|it)\b/g;
 
     const stack: TestNode[] = [];
     const root: TestNode[] = [];
-    let match: RegExpExecArray | null;
 
-    match = testRegex.exec(cleanContent);
-    while (match !== null) {
-      const [full, type, , name] = match;
+    for (let match = testRegex.exec(cleanContent); match !== null; match = testRegex.exec(cleanContent)) {
+      const call = this.matchTestCall(cleanContent, match.index);
+      if (!call) continue;
+      testRegex.lastIndex = call.end;
+
+      const { type, name } = call;
       const _type = type === "it" ? "test" : type;
       const line = cleanContent.slice(0, match.index).split("\n").length - 1;
 
@@ -361,7 +362,7 @@ export class BunTestController implements vscode.Disposable {
       }
 
       const expandedNodes = this.expandEachTests(
-        full,
+        cleanContent.slice(match.index, call.end),
         name,
         cleanContent,
         match.index,
@@ -375,15 +376,117 @@ export class BunTestController implements vscode.Disposable {
         } else {
           stack[stack.length - 1].children.push(node);
         }
-
-        if (type === "describe") {
-          stack.push(node);
-        }
       }
-      match = testRegex.exec(cleanContent);
+
+      if (type === "describe" && expandedNodes.length > 0) {
+        // Every row of a describe.each runs the same body, so the rows share one list of children.
+        for (const node of expandedNodes) {
+          node.children = expandedNodes[0].children;
+        }
+        stack.push(expandedNodes[0]);
+      }
     }
 
     return root;
+  }
+
+  /**
+   * Matches the test call that starts at `index`, up to its title: `test("title"`,
+   * `it.skipIf(condition)("title"`, `describe.only.each(table)("title"`, `test.each`table`("title"`.
+   */
+  private matchTestCall(content: string, index: number) {
+    const matchAt = (regex: RegExp, position: number) => {
+      regex.lastIndex = position;
+      return regex.exec(content);
+    };
+
+    const head = matchAt(/(describe|test|it)(?:\.(?:skip|todo|failing|only|concurrent|serial)\b)*/y, index);
+    if (!head) return undefined;
+    let end = index + head[0].length;
+
+    const condition = matchAt(/\.(?:if|todoIf|skipIf|failingIf|concurrentIf|serialIf)\s*(?=\()/y, end);
+    if (condition) {
+      end = this.skipGroup(content, end + condition[0].length);
+      if (end === -1) return undefined;
+    }
+
+    let table: { start: number; end: number } | undefined;
+    const each = matchAt(/\.each\s*(?=[(`])/y, end);
+    if (each) {
+      const start = end + each[0].length;
+      end = this.skipGroup(content, start);
+      if (end === -1) return undefined;
+      table = { start, end };
+    }
+
+    const title = matchAt(/\s*\(\s*(['"`])((?:\\\1|.)*?)\1\s*(?:,|\))/y, end);
+    if (!title) return undefined;
+
+    return { type: head[1], name: title[2], table, end: end + title[0].length };
+  }
+
+  /**
+   * Returns the index after the `(...)`, `{...}`, or template literal that starts at `start`,
+   * or -1 if it does not end.
+   */
+  private skipGroup(content: string, start: number): number {
+    const open = content[start];
+    if (open === "`") {
+      return this.readTemplate(content, start)?.end ?? -1;
+    }
+
+    const close = open === "(" ? ")" : "}";
+    // A string ends on the line it starts on. A quote with no partner on its line is not a string.
+    const quoted = /(["'])(?:\\[^]|(?!\1)[^\\\n])*\1/y;
+    let depth = 0;
+
+    for (let i = start; i < content.length; i++) {
+      const char = content[i];
+      if (char === open) {
+        depth++;
+      } else if (char === close) {
+        if (--depth === 0) return i + 1;
+      } else if (char === "`") {
+        const end = this.readTemplate(content, i)?.end;
+        if (end === undefined) return -1;
+        i = end - 1;
+      } else if (char === '"' || char === "'") {
+        quoted.lastIndex = i;
+        i += (quoted.exec(content)?.[0].length ?? 1) - 1;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Reads the template literal that starts at `start`: the text around each `${}`, and the source
+   * inside each `${}`.
+   */
+  private readTemplate(
+    content: string,
+    start: number,
+  ): { strings: string[]; values: string[]; end: number } | undefined {
+    const strings: string[] = [];
+    const values: string[] = [];
+    let stringStart = start + 1;
+
+    for (let i = stringStart; i < content.length; i++) {
+      const char = content[i];
+      if (char === "\\") {
+        i++;
+      } else if (char === "`") {
+        strings.push(content.slice(stringStart, i));
+        return { strings, values, end: i + 1 };
+      } else if (char === "$" && content[i + 1] === "{") {
+        const valueEnd = this.skipGroup(content, i + 1);
+        if (valueEnd === -1) return undefined;
+        strings.push(content.slice(stringStart, i));
+        values.push(content.slice(i + 2, valueEnd - 1));
+        stringStart = valueEnd;
+        i = valueEnd - 1;
+      }
+    }
+    return undefined;
   }
 
   private getBraceDepth(content: string, start: number, end: number): number {
@@ -450,7 +553,15 @@ export class BunTestController implements vscode.Disposable {
       ];
     }
 
-    const eachMatch = content.slice(index).match(/\.each\s*\(\s*(\[[\s\S]*?\])\s*\)/);
+    const table = this.matchTestCall(content, index)?.table;
+
+    if (table && content[table.start] === "`") {
+      const title = name.replace(/\\/g, "");
+      const rowNames = this.templateTableNames(title, content, table.start) ?? [title];
+      return rowNames.map(rowName => ({ name: rowName, type, line, children: [], startIdx: index }));
+    }
+
+    const eachMatch = table && content.slice(table.start, table.end).match(/^\(\s*(\[[\s\S]*\])\s*\)$/);
     if (!eachMatch) {
       return [
         {
@@ -504,6 +615,72 @@ export class BunTestController implements vscode.Disposable {
         },
       ];
     }
+  }
+
+  /**
+   * The test names for the rows of the template table that starts at `start`. The runtime makes
+   * one object per row, keyed by the headings in the first line, and formats the title with it.
+   * Returns undefined for a table or a title whose names only the runtime can tell.
+   */
+  private templateTableNames(title: string, content: string, start: number): string[] | undefined {
+    const template = this.readTemplate(content, start);
+    // The text before the first value: a line break, then one line of names with `|` between them.
+    const headingRow = template?.strings[0]
+      .replace(/\r\n?/g, "\n")
+      .match(/^\n\s*([^\s|\\]+(?:[^\S\n]*\|[^\S\n]*[^\s|\\]+)*)[^\S\n]*\n\s*$/);
+    if (!template || !headingRow) return undefined;
+
+    const headings = headingRow[1].split("|").map(heading => heading.trim());
+    const { values } = template;
+    if (values.length === 0 || values.length % headings.length !== 0) return undefined;
+
+    const names: string[] = [];
+    for (let i = 0; i < values.length; i += headings.length) {
+      const row = new Map<string, string>();
+      headings.forEach((heading, column) => {
+        const text = this.formatLiteral(values[i + column]);
+        if (text === undefined) row.delete(heading);
+        else row.set(heading, text);
+      });
+
+      const name = this.formatRowTitle(title, row);
+      if (name === undefined) return undefined;
+      names.push(name);
+    }
+    return names;
+  }
+
+  /**
+   * Replaces each `$heading` in `title` with the text for that heading in `row`. Returns undefined
+   * for a `$` or `%` placeholder that `row` cannot resolve.
+   */
+  private formatRowTitle(title: string, row: Map<string, string>): string | undefined {
+    let name = "";
+    let last = 0;
+
+    for (const placeholder of title.matchAll(/[$%](?=[^])(?:[A-Za-z_$][\w$]*(?:\.[\w$]+)*)?/g)) {
+      const end = placeholder.index + placeholder[0].length;
+      const text = /^\$[^.]+$/.test(placeholder[0]) ? row.get(placeholder[0].slice(1)) : undefined;
+      // The runtime reads a title as bytes, so a non-ASCII character after a name becomes part of it.
+      if (text === undefined || title.charCodeAt(end) > 0x7f) return undefined;
+
+      name += title.slice(last, placeholder.index) + text;
+      last = end;
+    }
+    return name + title.slice(last);
+  }
+
+  /** The text the runtime prints in a title for a string, number, or boolean literal. */
+  private formatLiteral(source: string): string | undefined {
+    const literal = source.trim();
+
+    if (literal === "true" || literal === "false") return literal;
+    if (/^(["'])(?:(?!\1)[^\\\n\r])*\1$/.test(literal)) return literal.slice(1, -1);
+    if (/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(literal)) {
+      const number = Number(literal);
+      return Object.is(number, -0) ? "-0" : String(number);
+    }
+    return undefined;
   }
 
   private addTestNodes(nodes: TestNode[], parent: vscode.TestItem, filePath: string, parentPath = ""): void {
@@ -1336,7 +1513,7 @@ export class BunTestController implements vscode.Disposable {
       t = t.replaceAll(/\$\{[^}]+\}/g, ".*?");
       t = t.replaceAll(/\\\$\\\{[^}]+\\\}/g, ".*?");
       t = t.replaceAll(/\\%[isfdojp#%]|(\\%)|(\\#)/g, ".*?");
-      t = t.replaceAll(/\$[\w\.\[\]]+/g, ".*?");
+      t = t.replaceAll(/\\?\$(?:\\?[\w\.\[\]])+/g, ".*?");
 
       if (test?.tags?.some(tag => tag.id === "test" || tag.id === "it")) {
         testNames.push(`^ ?${t}$`);

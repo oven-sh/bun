@@ -44,6 +44,25 @@ describe("BunTestController", () => {
       expect(pattern).toBe("(^ ?test with .*?$)|(^ ?test with .*?$)");
     });
 
+    test("should match every row of a title with $name placeholders", () => {
+      const mockTests = [
+        { id: "file#" + internal.escapeTestName("add($a, $b) = $expected"), tags: [{ id: "test" }] },
+        { id: "file#" + internal.escapeTestName("$user.name from $users[0].city"), tags: [{ id: "test" }] },
+        { id: "file#" + internal.escapeTestName("Database $db"), tags: [{ id: "describe" }] },
+      ] as any;
+
+      const pattern = internal.buildTestNamePattern(mockTests);
+
+      expect(pattern).toBe("(^ ?add\\(.*?\\, .*?\\) \\= .*?$)|(^ ?.*? from .*?$)|(^ ?Database .*? )");
+      const regex = new RegExp(pattern!);
+      expect(["add(1, 2) = 3", "Alice from NYC", "Database postgres connects"].map(name => regex.test(name))).toEqual([
+        true,
+        true,
+        true,
+      ]);
+      expect(regex.test("subtract(1, 2) = -1")).toBe(false);
+    });
+
     test("should join multiple patterns with |", () => {
       const mockTests = [
         { id: "file#test 1", tags: [{ id: "test" }] },

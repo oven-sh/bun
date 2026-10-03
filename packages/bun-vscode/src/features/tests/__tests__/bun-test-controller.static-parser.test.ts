@@ -481,9 +481,122 @@ describe("BunTestController (static file parser)", () => {
         expect(result.length).toBeGreaterThanOrEqual(1);
       });
     });
+
+    describe("template table", () => {
+      // The names of the nodes for test.each`<body>`(<title>, () => {}).
+      const rowNames = (body: string, title: string) =>
+        expandEachTests(
+          "test.each`",
+          title,
+          "test.each`" + body + "`(" + JSON.stringify(title) + ", () => {})",
+          0,
+          "test",
+          1,
+        ).map(node => node.name);
+      const table = (...lines: string[]) => "\n" + lines.map(line => `  ${line}\n`).join("");
+
+      test("should expand one test per row", () => {
+        const body = table("a    | b    | expected", "${1} | ${2} | ${3}", "${4} | ${5} | ${9}");
+
+        expect(rowNames(body, "add($a, $b) = $expected")).toEqual(["add(1, 2) = 3", "add(4, 5) = 9"]);
+      });
+
+      test("should keep the node type and position", () => {
+        const content = "describe.each`\n  db\n  ${'postgres'}\n  ${'mysql'}\n`('Database $db', () => {})";
+
+        expect(expandEachTests("describe.each`", "Database $db", content, 0, "describe", 7)).toEqual([
+          { name: "Database postgres", type: "describe", line: 7, children: [], startIdx: 0 },
+          { name: "Database mysql", type: "describe", line: 7, children: [], startIdx: 0 },
+        ]);
+      });
+
+      test.each([
+        ['"apple"', "apple"],
+        ["'pear'", "pear"],
+        ['""', ""],
+        ["true", "true"],
+        ["false", "false"],
+        ["7", "7"],
+        ["-1.50", "-1.5"],
+        ["-0", "-0"],
+        ["1e21", "1e+21"],
+      ])("should print the literal %s as the runtime does", (literal, printed) => {
+        expect(rowNames(table("value", "${" + literal + "}"), "[$value]")).toEqual([`[${printed}]`]);
+      });
+
+      test.each([
+        "value",
+        "fn(1)",
+        "null",
+        "undefined",
+        "[1, 2]",
+        "{ a: 1 }",
+        "`text`",
+        '"a" + "b"',
+        '"a\\n"',
+        "0x10",
+        "10n",
+        "-value",
+      ])("should keep the raw title for the value %s", source => {
+        expect(rowNames(table("value", "${" + source + "}"), "[$value]")).toEqual(["[$value]"]);
+      });
+
+      test("should expand when the title does not use the value that is not a literal", () => {
+        const body = table("name | input", "${'one'} | ${[1]}", "${'two'} | ${fn(2)}");
+
+        expect(rowNames(body, "case $name")).toEqual(["case one", "case two"]);
+      });
+
+      test("should use the last value of a heading that repeats", () => {
+        expect(rowNames(table("a | a", "${value} | ${1}"), "row $a")).toEqual(["row 1"]);
+        expect(rowNames(table("a | a", "${1} | ${value}"), "row $a")).toEqual(["row $a"]);
+      });
+
+      test.each(["$missing", "$a.length", "$a$b", "$1", "$ a", "$#", "%s $a", "%# $a", "$aé"])(
+        "should keep the raw title %s",
+        title => {
+          expect(rowNames(table("a | b", "${1} | ${2}"), title)).toEqual([title]);
+        },
+      );
+
+      test("should keep the raw title for a path or a number that is also the name of a heading", () => {
+        expect(rowNames(table("a.b", "${1}"), "row $a.b")).toEqual(["row $a.b"]);
+        expect(rowNames(table("1st", "${1}"), "row $1st")).toEqual(["row $1st"]);
+      });
+
+      test("should keep a $ or % that ends the title", () => {
+        const body = table("a | b", "${1} | ${2}");
+
+        expect(rowNames(body, "$a of $b%")).toEqual(["1 of 2%"]);
+        expect(rowNames(body, "$a costs $")).toEqual(["1 costs $"]);
+      });
+
+      test.each([
+        ["headings on the line of the backtick", "a | c\n  ${1} | ${2}\n"],
+        ["a row with a missing value", table("a | c", "${1} | ${2}", "${3}")],
+        ["no values", table("a | c")],
+        ["a space in a heading", table("a b | c", "${1} | ${2}")],
+        ["an empty heading", table("a || c", "${1} | ${2} | ${3}")],
+        ["an escape in the first heading", table("a\\u0062 | c", "${1} | ${2}")],
+        ["an escape in a later heading", table("c | a\\u0062", "${1} | ${2}")],
+      ])("should keep the raw title for a table with %s", (_, body) => {
+        expect(rowNames(body, "row $c")).toEqual(["row $c"]);
+      });
+
+      test("should read a table with CRLF line endings", () => {
+        expect(rowNames("\r\n  a | b\r\n  ${1} | ${2}\r\n", "$a and $b")).toEqual(["1 and 2"]);
+      });
+    });
   });
 
   describe("parseTestBlocks", () => {
+    // Node names as a tree: a node with children is { name: children }.
+    const tree = (nodes: ReturnType<typeof parseTestBlocks>): unknown[] =>
+      nodes.map(node => {
+        const name = `${node.type} ${node.name}`;
+        return node.children.length > 0 ? { [name]: tree(node.children) } : name;
+      });
+
     test("should parse simple test blocks", () => {
       const content = `
         test("should add numbers", () => {
@@ -838,6 +951,181 @@ describe("BunTestController (static file parser)", () => {
 
       expect(result.length).toBeGreaterThanOrEqual(1);
       expect(result[0].name).toBe("generator test");
+    });
+
+    test("should find tests with a template table", () => {
+      const content = [
+        "test.each`",
+        "  a    | b    | expected",
+        "  ${1} | ${2} | ${3}",
+        "  ${4} | ${5} | ${9}",
+        '`("add($a, $b) = $expected", ({ a, b, expected }) => {',
+        "  expect(a + b).toBe(expected);",
+        "});",
+        "",
+        "describe.each`",
+        "  db",
+        '  ${"postgres"}',
+        '  ${"mysql"}',
+        '`("Database $db", ({ db }) => {',
+        "  it.each`",
+        "    query",
+        "    ${'select'}",
+        '  `("runs $query", ({ query }) => {});',
+        '  it("connects", () => {});',
+        "});",
+        "",
+        'test("after", () => {});',
+      ].join("\n");
+
+      const result = parseTestBlocks(content);
+
+      expect(tree(result)).toEqual([
+        "test add(1, 2) = 3",
+        "test add(4, 5) = 9",
+        { "describe Database postgres": ["test runs select", "test connects"] },
+        { "describe Database mysql": ["test runs select", "test connects"] },
+        "test after",
+      ]);
+      expect(result.map(node => node.line)).toEqual([0, 0, 8, 8, 20]);
+    });
+
+    test("should find a template table behind modifiers", () => {
+      const content = [
+        "test.skip.each`\n  a\n  ${1}\n`('skipped $a', () => {});",
+        "it.failing.each`\n  a\n  ${2}\n`('failing $a', () => {});",
+        "describe.only.each`\n  a\n  ${3}\n`('only $a', () => {});",
+        "test.skipIf(isWindows()).each`\n  a\n  ${4}\n`('conditional $a', () => {});",
+      ].join("\n");
+
+      expect(tree(parseTestBlocks(content))).toEqual([
+        "test skipped 1",
+        "test failing 2",
+        "describe only 3",
+        "test conditional 4",
+      ]);
+    });
+
+    test("should keep one node with the raw title for a template table it cannot expand", () => {
+      const content = [
+        "test.each`",
+        "  a        | b",
+        "  ${first} | ${1}",
+        "  ${other} | ${2}",
+        '`("compares $a with $b", ({ a, b }) => {});',
+        'test("after", () => {});',
+      ].join("\n");
+
+      expect(tree(parseTestBlocks(content))).toEqual(["test compares $a with $b", "test after"]);
+    });
+
+    test("should read a template table with braces and backticks in a value", () => {
+      const content = [
+        "test.each`",
+        "  name          | input",
+        "  ${'object'}   | ${{ a: { b: 1 } }}",
+        "  ${'template'} | ${`x${1}`}",
+        "  ${'brace'}    | ${'}'}",
+        "  ${'backtick'} | ${`}\\``}",
+        "`('handles $name', () => {});",
+        "test('after', () => {});",
+      ].join("\n");
+
+      expect(tree(parseTestBlocks(content))).toEqual([
+        "test handles object",
+        "test handles template",
+        "test handles brace",
+        "test handles backtick",
+        "test after",
+      ]);
+    });
+
+    test("should format a title with escaped quotes", () => {
+      const content = 'test.each`\n  a\n  ${1}\n`("says \\"$a\\"", () => {});';
+
+      expect(tree(parseTestBlocks(content))).toEqual(['test says "1"']);
+    });
+
+    test("should put the body of describe.each under every row", () => {
+      const content = [
+        'describe.each([[1], [2]])("group %i", n => {',
+        '  describe.each([["a"], ["b"]])("inner %s", s => {',
+        '    it("leaf", () => {});',
+        "  });",
+        '  it("mid", () => {});',
+        "});",
+        'test("after", () => {});',
+      ].join("\n");
+
+      const inner = [{ "describe inner a": ["test leaf"] }, { "describe inner b": ["test leaf"] }, "test mid"];
+      expect(tree(parseTestBlocks(content))).toEqual([
+        { "describe group 1": inner },
+        { "describe group 2": inner },
+        "test after",
+      ]);
+    });
+
+    test("should find a test when the argument of .each or .if has parentheses", () => {
+      const content = [
+        'test.each([[fn(1)], [new Date(0)]])("call %s", value => {});',
+        'test.each([["a)"], ["(b"]])("string %s", value => {});',
+        'test.each([[`(c\\``]])("template %s", value => {});',
+        'test.skipIf(os.platform() === "win32")("posix only", () => {});',
+        'test.if(isCI())("ci only", () => {});',
+        'describe.skipIf(isWindows())("group", () => {',
+        '  it("inner", () => {});',
+        "});",
+        'test("after", () => {});',
+      ].join("\n");
+
+      expect(tree(parseTestBlocks(content))).toEqual([
+        "test call %s",
+        "test string a)",
+        "test string (b",
+        "test template %s",
+        "test posix only",
+        "test ci only",
+        { "describe group": ["test inner"] },
+        "test after",
+      ]);
+    });
+
+    test.each([
+      ["parenthesis", '("decoy", () => {});\ntest.each([[1], [2]'],
+      ["template", '("decoy", () => {});\ntest.each`[[1], [2]'],
+      ["template in a parenthesis", 'test.each([[`a]])("decoy", () => {});'],
+      ["value in a template", 'test.each`("decoy", () => {}); ${1'],
+    ])("should not find a test behind a %s that does not end", (_, content) => {
+      expect(tree(parseTestBlocks(content))).toEqual([]);
+    });
+
+    test("should find a test when a quote in the table has no partner on its line", () => {
+      const content = [
+        "test.each([",
+        '  [/"/],',
+        "  [/'/],",
+        '])("quote %s", () => {});',
+        'test("after", () => {});',
+      ].join("\n");
+
+      expect(tree(parseTestBlocks(content))).toEqual(["test quote %s", "test after"]);
+    });
+
+    test("should expand only a table that is an array literal of the same test", () => {
+      const content = [
+        'test.each(cases)("from a variable %s", value => {});',
+        'test.each(shuffle([[1], [2]]))("from a call %i", value => {});',
+        'test("mentions .each", () => {});',
+        'test.each([[1], [2]])("literal %i", value => {});',
+      ].join("\n");
+
+      expect(tree(parseTestBlocks(content))).toEqual([
+        "test from a variable %s",
+        "test from a call %i",
+        "test mentions .each",
+        "test literal 1",
+        "test literal 2",
+      ]);
     });
   });
 

@@ -14,24 +14,34 @@ test("node:dgram close() inside 'message' handler stops remaining batch datagram
       `
       import dgram from "node:dgram";
       const trace = [];
+      const closed = Promise.withResolvers();
       const rx = dgram.createSocket("udp4");
       await new Promise(r => rx.bind(0, "127.0.0.1", r));
       const port = rx.address().port;
       rx.on("message", d => {
         trace.push("message:" + d.toString());
-        if (d.toString() === "0") rx.close(() => trace.push("closeCallback"));
+        if (d.toString() === "0") {
+          rx.close(() => {
+            trace.push("closeCallback");
+            closed.resolve();
+          });
+        }
       });
       rx.on("close", () => trace.push("closeEvent"));
+      rx.on("error", closed.reject);
       const tx = dgram.createSocket("udp4");
-      tx.on("error", () => {});
+      tx.on("error", closed.reject);
       // Queue a burst on the kernel rx buffer before the loop dispatches
       // 'message'. Each send is awaited so its syscall has completed before
       // the next one starts; on loopback this deterministically yields a
       // multi-packet recvmmsg batch.
       for (let i = 0; i < 16; i++) {
-        await new Promise(r => tx.send(String(i), port, "127.0.0.1", r));
+        await new Promise((r, j) => tx.send(String(i), port, "127.0.0.1", e => (e ? j(e) : r())));
       }
-      // Let any queued 'message' / 'close' events drain.
+      // Loopback delivery is asynchronous on macOS, so wait for the close
+      // itself, not for a number of loop turns. Then give a replay of the rest
+      // of the batch a few turns to show up in the trace.
+      await closed.promise;
       for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r));
       tx.close();
       console.log(JSON.stringify(trace));
@@ -46,12 +56,13 @@ test("node:dgram close() inside 'message' handler stops remaining batch datagram
     .split("\n")
     .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
     .join("\n");
-  const trace = JSON.parse(stdout.trim());
   // The socket closes on the first datagram. Node ordering: 'close' event
   // first, then the close() callback (both via queueMicrotask in dgram.ts).
-  expect({ stderr, trace }).toEqual({
+  // stdout stays a string so that a child error shows up in stderr here
+  // instead of as a JSON.parse failure on empty output.
+  expect({ stderr, stdout }).toEqual({
     stderr: "",
-    trace: ["message:0", "closeEvent", "closeCallback"],
+    stdout: JSON.stringify(["message:0", "closeEvent", "closeCallback"]) + "\n",
   });
   expect(exitCode).toBe(0);
 });

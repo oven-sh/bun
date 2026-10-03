@@ -631,6 +631,7 @@ interface Server extends Disposable {
 
   /**
    * Publish a message to all WebSocket clients subscribed to a topic.
+   * @param compress Defaults to true (ws.send() and ws.publish() default to false); only applies to clients that negotiated perMessageDeflate
    * @returns Bytes sent, 0 if dropped, -1 if backpressure applied
    */
   publish(

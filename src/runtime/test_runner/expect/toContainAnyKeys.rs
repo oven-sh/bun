@@ -6,7 +6,7 @@ impl Expect {
     pub(crate) fn to_contain_any_keys(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.contain_matcher(global, frame, "toContainAnyKeys", ExpectedArray::AfterValue, ContainMsgs::CONTAIN,
             |g, value, expected| {
-                if !value.is_object() { return Ok(ContainOutcome::pass(false)); }
+                if value.is_undefined_or_null() { return Ok(ContainOutcome::pass(false)); }
                 let count = expected.get_length(g)?;
                 let mut i: u32 = 0;
                 while u64::from(i) < count {

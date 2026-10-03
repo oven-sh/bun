@@ -180,6 +180,7 @@ pub(crate) struct ParserSnapshot<'a> {
     latest_arrow_arg_loc: bun_ast::Loc,
     forbid_suffix_after_as_loc: bun_ast::Loc,
     after_arrow_body_loc: bun_ast::Loc,
+    after_update_expr: bool,
     esm_import_keyword: bun_ast::Range,
     esm_export_keyword: bun_ast::Range,
     enclosing_class_keyword: bun_ast::Range,
@@ -190,6 +191,10 @@ pub(crate) struct ParserSnapshot<'a> {
     symbols_len: usize,
     allocated_names_len: usize,
     import_records_len: usize,
+    await_was_refused: bool,
+    reparses_rest_of_file: bool,
+    stray_decorators_len: usize,
+    noted: crate::sema::notes::Checkpoint,
 }
 
 pub(crate) type NeedsJSXType = bool;
@@ -263,6 +268,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
     pub(crate) has_es_module_syntax: bool,
+    /// Tolerant mode: a list refused `await` as a name in the top-level statement being parsed.
+    pub(crate) await_was_refused: bool,
+    /// Tolerant mode: the loop of `reparseTopLevelAwait` goes on to the end of the file.
+    pub(crate) reparses_rest_of_file: bool,
+    /// Tolerant mode: what `note_stray_decorators` kept, until the list of statements being parsed takes it.
+    pub(crate) stray_decorators: Vec<Expr>,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub(crate) fn_or_arrow_data_visit: FnOrArrowDataVisit,
@@ -383,6 +394,16 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) stack_check: bun_core::StackCheck,
     /// `Parser::parse_only`: where what does not say so itself starts.
     pub(crate) starts_for_parse_only: Option<StartsForParseOnly>,
+    /// Where the type syntax that gets skipped is, when something wants to know. See `crate::sema`.
+    pub(crate) type_syntax: Option<Box<crate::sema::TypeSyntax<'a>>>,
+    /// Tolerant mode only. The tag name of the JSX element whose child is about to be parsed (`openingTag` of `parseJsxChildren`).
+    pub(crate) jsx_parent_tag: Option<&'a [u8]>,
+    /// Tolerant mode only. In `<div><span></div>`, the closing tag that the child read and its parent takes, with where it starts
+    /// and ends.
+    pub(crate) jsx_adopted_close: Option<(crate::parser::JSXTag<'a>, bun_ast::Loc, bun_ast::Loc)>,
+    /// Tolerant mode only. The children of a JSX element went on to the end of the file (`parseJsxChild`). The text among them is no
+    /// trivia, so what ends there ends with the file.
+    pub(crate) jsx_children_met_end_of_file: bool,
 
     pub(crate) reported_stack_overflow: core::cell::Cell<bool>,
 
@@ -678,6 +699,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     //     Expression , AssignmentExpression
     //
     pub(crate) after_arrow_body_loc: bun_ast::Loc,
+    /// Tolerant mode only: the token at `after_arrow_body_loc` follows `x++` or `x--`, not the body of an arrow function.
+    pub(crate) after_update_expr: bool,
 
     pub(crate) const_values: bun_ast::ast_result::ConstValuesMap,
 
@@ -845,6 +868,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.module_scope
     }
 
+    /// `finishNode`: `expr` ends where the token before the current one does.
+    #[inline]
+    pub(crate) fn finish_expr(&mut self, expr: &mut Expr) {
+        if self.keeps_type_syntax() {
+            self.note_expr_end(expr, self.lexer.full_start());
+        }
+    }
+
     #[inline]
     pub(crate) fn new_expr<T>(&mut self, t: T, loc: bun_ast::Loc) -> Expr
     where
@@ -852,7 +883,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     {
         // The import-record side-effect is order-independent of `Expr.init`'s
         // Store allocation.
-        let expr = Expr::init(t, loc);
+        let loc = self.real_loc(loc);
+        let mut expr = Expr::init(t, loc);
+        self.finish_expr(&mut expr);
         if SCAN_ONLY {
             if let js_ast::ExprData::ECall(call) = expr.data {
                 if let js_ast::ExprData::EIdentifier(ident) = call.target.data {
@@ -878,7 +911,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     where
         T: js_ast::stmt::StatementData,
     {
-        Stmt::alloc(t, loc)
+        Stmt::alloc(t, self.real_loc(loc))
     }
 
     pub(crate) fn load_name_from_ref(&self, r#ref: Ref) -> &'a [u8] {
@@ -1943,7 +1976,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     where
         T: js_ast::binding::BindingAlloc,
     {
-        Binding::alloc(self.arena, t, loc)
+        Binding::alloc(self.arena, t, self.real_loc(loc))
+    }
+
+    /// `b`, of the binding that the expression whose `loc` is `loc` turned out to be. It is that node: what is noted of the expression
+    /// is noted of the binding.
+    #[inline]
+    fn binding_of_expr<T>(&mut self, t: T, expr: &Expr) -> Binding
+    where
+        T: js_ast::binding::BindingAlloc,
+    {
+        let mut binding = Binding::alloc(self.arena, t, expr.loc);
+        // The range of the declaration is about to be noted where the end of the expression is.
+        if let Some(end) = self.end_of_literal(expr) {
+            self.note_loc(&mut binding.loc, crate::sema::Mark::PatternEnd, end);
+        }
+        binding
     }
 
     pub(crate) fn record_exported_binding(&mut self, binding: Binding) {
@@ -1951,10 +1999,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(ident) => {
                 let ident = ident.get();
-                // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
-                let name: &'a [u8] = self.symbols[ident.r#ref.inner_index() as usize]
-                    .original_name
-                    .slice();
+                let name: &'a [u8] = self.load_name_from_ref(ident.r#ref);
                 self.record_export(binding.loc, name, ident.r#ref)
                     .expect("unreachable");
             }
@@ -4004,7 +4049,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match expr.data {
             js_ast::ExprData::EMissing(_) => return None,
             js_ast::ExprData::EIdentifier(ex) => {
-                return Some(self.b(B::Identifier { r#ref: ex.ref_ }, expr.loc));
+                return Some(self.binding_of_expr(B::Identifier { r#ref: ex.ref_ }, &expr));
             }
             js_ast::ExprData::EArray(ex) => {
                 if let Some(spread) = ex.comma_after_spread.to_nullable() {
@@ -4016,7 +4061,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if ex.is_parenthesized {
                     invalid_loc.push(InvalidLoc {
-                        loc: self.source.range_of_operator_before(expr.loc, b"(").loc,
+                        loc: self
+                            .source
+                            .range_of_operator_before(self.real_loc(expr.loc), b"(")
+                            .loc,
                         kind: crate::parser::InvalidLocTag::Parentheses,
                     });
                 }
@@ -4026,8 +4074,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut is_spread = false;
                 for i in 0..ex.items.len_u32() as usize {
                     let mut item = ex.items.slice()[i];
+                    let mut dots = bun_ast::Loc::EMPTY;
                     if matches!(item.data, js_ast::ExprData::ESpread(_)) {
                         is_spread = true;
+                        dots = self.real_loc(item.loc);
                         item = item
                             .data
                             .e_spread()
@@ -4040,25 +4090,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         is_spread,
                     );
 
+                    // It's valid for it to be missing
+                    // An example:
+                    //      Promise.all(promises).then(([, len]) => true);
+                    //                                   ^ Binding is missing there
+                    let mut binding = res
+                        .binding
+                        .unwrap_or_else(|| self.binding_of_expr(B::Missing {}, &item));
+                    if !dots.is_empty() {
+                        self.note_loc(&mut binding.loc, crate::sema::Mark::DotDotDot, dots);
+                    }
                     items.push(bun_ast::ArrayBinding {
-                        // It's valid for it to be missing
-                        // An example:
-                        //      Promise.all(promises).then(([, len]) => true);
-                        //                                   ^ Binding is missing there
-                        binding: res
-                            .binding
-                            .unwrap_or_else(|| self.b(B::Missing {}, item.loc)),
+                        binding,
                         default_value: res.expr,
                     });
                 }
 
-                return Some(self.b(
+                return Some(self.binding_of_expr(
                     B::Array {
                         items: bun_ast::StoreSlice::new_mut(items.into_bump_slice_mut()),
                         has_spread: is_spread,
                         is_single_line: ex.is_single_line,
                     },
-                    expr.loc,
+                    &expr,
                 ));
             }
             js_ast::ExprData::EObject(mut ex) => {
@@ -4071,7 +4125,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if ex.is_parenthesized {
                     invalid_loc.push(InvalidLoc {
-                        loc: self.source.range_of_operator_before(expr.loc, b"(").loc,
+                        loc: self
+                            .source
+                            .range_of_operator_before(self.real_loc(expr.loc), b"(")
+                            .loc,
                         kind: crate::parser::InvalidLocTag::Parentheses,
                     });
                 }
@@ -4085,7 +4142,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         || item.kind == js_ast::g::PropertyKind::Set
                     {
                         invalid_loc.push(InvalidLoc {
-                            loc: item.key.expect("infallible: prop has key").loc,
+                            loc: self.real_loc(item.key.expect("infallible: prop has key").loc),
                             kind: if item.flags.contains(Flags::Property::IsMethod) {
                                 crate::parser::InvalidLocTag::Method
                             } else if item.kind == js_ast::g::PropertyKind::Get {
@@ -4121,17 +4178,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
 
-                return Some(self.b(
+                return Some(self.binding_of_expr(
                     B::Object {
                         properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
                         is_single_line: ex.is_single_line,
                     },
-                    expr.loc,
+                    &expr,
                 ));
             }
             _ => {
                 invalid_loc.push(InvalidLoc {
-                    loc: expr.loc,
+                    loc: self.real_loc(expr.loc),
                     kind: crate::parser::InvalidLocTag::Unknown,
                 });
                 return None;
@@ -4159,7 +4216,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let bind = self.convert_expr_to_binding(expr, invalid_log);
         if let Some(initial) = initializer {
-            let equals_range = self.source.range_of_operator_before(initial.loc, b"=");
+            let equals_range = self
+                .source
+                .range_of_operator_before(self.real_loc(initial.loc), b"=");
             if is_spread {
                 self.log().add_range_error(
                     Some(self.source),
@@ -4198,7 +4257,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn log_expr_errors(&mut self, errors: &mut DeferredErrors) {
-        if let Some(r) = errors.invalid_expr_default_value {
+        // `parseObjectLiteralElement` accepts `{ a = 1 }`. The checker reports 1312.
+        if let Some(r) = errors.invalid_expr_default_value
+            && !self.lexer.tolerant
+        {
             self.log()
                 .add_range_error(Some(self.source), r, b"Unexpected \"=\"");
         }
@@ -4246,6 +4308,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         was_originally_bare_import: bool,
     ) -> Result<Stmt, crate::Error> {
+        // The type checker has what was written (`keep_import`).
+        if self.keeps_type_syntax() {
+            return Ok(self.s(S::TypeScript::default(), loc));
+        }
         let is_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
@@ -4343,6 +4409,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             // Return empty statement - the import is completely removed
+            if self.keeps_type_syntax() {
+                return Ok(self.s(S::TypeScript::default(), loc));
+            }
             return Ok(self.s(S::Empty {}, loc));
         }
 
@@ -4778,7 +4847,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 exported_members.put(
                     name,
                     js_ast::TSNamespaceMember {
-                        loc: binding.loc,
+                        loc: self.real_loc(binding.loc),
                         data: js_ast::ts::Data::Property,
                     },
                 )?;
@@ -4816,7 +4885,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     self.log().add_error_fmt(
                         Some(self.source),
-                        value.loc,
+                        self.real_loc(value.loc),
                         format_args!(
                             "for-{} loop variables cannot have an initializer",
                             loop_type
@@ -4827,7 +4896,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {
                 self.log().add_error_fmt(
                     Some(self.source),
-                    decls[0].binding.loc,
+                    self.real_loc(decls[0].binding.loc),
                     format_args!("for-{} loops must have a single declaration", loop_type),
                 );
             }
@@ -4851,12 +4920,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if decl.value.is_none() {
                 match &decl.binding.data {
                     js_ast::b::B::BIdentifier(ident) => {
-                        let r = js_lexer::range_of_identifier(self.source, decl.binding.loc);
+                        let r = js_lexer::range_of_identifier(
+                            self.source,
+                            self.real_loc(decl.binding.loc),
+                        );
                         let ident_ref = ident.r#ref;
-                        // SAFETY: original_name is an arena-owned slice valid for 'a.
-                        let name = self.symbols[ident_ref.inner_index() as usize]
-                            .original_name
-                            .slice();
+                        let name = self.load_name_from_ref(ident_ref);
                         self.log().add_range_error_fmt(
                             Some(self.source),
                             r,
@@ -4869,9 +4938,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // return;/
                     }
                     _ => {
+                        // `checkGrammarVariableDeclaration`: a pattern after `using` gets 1492 and nothing else.
+                        if self.lexer.tolerant && !matches!(KIND, js_ast::s::Kind::KConst) {
+                            continue;
+                        }
                         self.log().add_error_fmt(
                             Some(self.source),
-                            decl.binding.loc,
+                            self.real_loc(decl.binding.loc),
                             format_args!("This {} must be initialized", what),
                         );
                     }
@@ -5187,6 +5260,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )?;
         }
 
+        // The type checker binds for itself.
+        if self.keeps_type_syntax() {
+            return Ok(self.store_name_in_ref(name));
+        }
+
         // Allocate a new symbol
         let mut ref_ = self.new_symbol(kind, name);
 
@@ -5274,10 +5352,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn validate_function_name(&mut self, func: &G::Fn) {
         if let Some(name) = &func.name {
-            // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.
-            let original_name: &[u8] = self.symbols[name.ref_.inner_index() as usize]
-                .original_name
-                .slice();
+            let original_name: &[u8] = self.load_name_from_ref(name.ref_);
 
             if func.flags.contains(Flags::Function::IsAsync) && original_name == b"await" {
                 self.log().add_range_error(
@@ -5308,7 +5383,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !opts.is_typescript_declare || (opts.scope.is_namespace() && opts.is_export) {
                     bind.r#ref = self.declare_symbol(
                         kind,
-                        binding.loc,
+                        self.real_loc(binding.loc),
                         self.load_name_from_ref(bind.r#ref),
                     )?;
                 }
@@ -8353,6 +8428,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             latest_arrow_arg_loc: self.latest_arrow_arg_loc,
             forbid_suffix_after_as_loc: self.forbid_suffix_after_as_loc,
             after_arrow_body_loc: self.after_arrow_body_loc,
+            after_update_expr: self.after_update_expr,
             esm_import_keyword: self.esm_import_keyword,
             esm_export_keyword: self.esm_export_keyword,
             enclosing_class_keyword: self.enclosing_class_keyword,
@@ -8363,13 +8439,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             symbols_len: self.symbols.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
+            await_was_refused: self.await_was_refused,
+            reparses_rest_of_file: self.reparses_rest_of_file,
+            stray_decorators_len: self.stray_decorators.len(),
+            noted: self.type_syntax_checkpoint(),
         }
+    }
+
+    /// [`Self::restore_parser_snapshot`], where what was parsed since is kept: what is noted of it stays.
+    pub(crate) fn restore_parser_snapshot_but_for_notes(
+        &mut self,
+        mut snapshot: ParserSnapshot<'a>,
+    ) {
+        snapshot.noted = self.type_syntax_checkpoint();
+        self.restore_parser_snapshot(snapshot);
     }
 
     /// Undo every parse-pass mutation made since [`Self::parser_snapshot`].
     pub(crate) fn restore_parser_snapshot(&mut self, snapshot: ParserSnapshot<'a>) {
         self.lexer.restore(&snapshot.lexer);
         self.lexer.comments_to_preserve_before = snapshot.comments_to_preserve_before;
+        self.rewind_type_syntax(&snapshot.noted);
 
         let log = self.log();
         log.msgs.truncate(snapshot.log_msgs_len);
@@ -8387,6 +8477,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.latest_arrow_arg_loc = snapshot.latest_arrow_arg_loc;
         self.forbid_suffix_after_as_loc = snapshot.forbid_suffix_after_as_loc;
         self.after_arrow_body_loc = snapshot.after_arrow_body_loc;
+        self.after_update_expr = snapshot.after_update_expr;
         self.esm_import_keyword = snapshot.esm_import_keyword;
         self.esm_export_keyword = snapshot.esm_export_keyword;
         self.enclosing_class_keyword = snapshot.enclosing_class_keyword;
@@ -8420,6 +8511,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
+        self.await_was_refused = snapshot.await_was_refused;
+        self.reparses_rest_of_file = snapshot.reparses_rest_of_file;
+        self.stray_decorators
+            .truncate(snapshot.stray_decorators_len);
     }
 
     /// When not transpiling we dont use the renamer, so our solution is to generate really
@@ -9704,7 +9799,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // at zero capacity and reserved one identifier reference at a time. A
         // `source.len() / 16` hint (≈ one symbol per 16 source bytes) covers
         // the vast majority of real files in a single allocation.
-        let estimated_symbol_count = source.contents.len() / 16;
+        let estimated_symbol_count = if opts.tolerant {
+            0
+        } else {
+            source.contents.len() / 16
+        };
 
         // ~one scope per 64 source bytes covers most files without regrowth.
         let mut scope_order =
@@ -9807,6 +9906,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             log,
             stack_check: bun_core::StackCheck::init(),
             starts_for_parse_only: None,
+            type_syntax: None,
+            jsx_parent_tag: None,
+            jsx_adopted_close: None,
+            jsx_children_met_end_of_file: false,
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
             ts_conditional_arrow_attempts: Vec::new(),
@@ -9835,6 +9938,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             latest_return_had_semicolon: false,
             has_import_meta: false,
             has_es_module_syntax: false,
+            await_was_refused: false,
+            reparses_rest_of_file: false,
+            stray_decorators: Vec::new(),
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),
@@ -9929,6 +10035,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             temp_ref_count: 0,
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
+            after_update_expr: false,
             const_values: Default::default(),
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),

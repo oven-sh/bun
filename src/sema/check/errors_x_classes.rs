@@ -1,0 +1,631 @@
+//! Classes and interfaces against what they extend, and what only the inside of a class can get wrong:
+//! 4112 4113 4114 4115 4116 4117 4127 (`override`), 4119 to 4123 4128 (`override` in a JavaScript file); 2510 2545 2797
+//! 2675 (what a class extends); 2422 (what it implements); 2499 (what an interface extends); 2725 (a class called `Object`);
+//! 2376 2377 2401 17005 (where `super()` is called); 2715 (an abstract property read while the instance is set up).
+//!
+//! Follows `checkClassLikeDeclaration`, `checkBaseTypeAccessibility`, `checkMembersForOverrideModifier`,
+//! `checkMemberForOverrideModifier`, `isValidBaseType`, `checkInterfaceDeclaration`, `checkClassNameCollisionWithObject`,
+//! `checkConstructorDeclaration` and `checkPropertyAccessibilityAtLocation` of TypeScript 7.0.2's checker.go.
+
+use super::*;
+use crate::bind::MemberOwner;
+
+/// What `getBaseConstructorTypeOfClass` and `getBaseTypes` come to for a class with an `extends` clause.
+#[derive(Copy, Clone)]
+enum ClassBase {
+    /// It cannot be told.
+    Unknown,
+    /// It has no `extends` clause, or no base types.
+    Nothing,
+    /// `constructor`: the type of what is written after `extends`. `base`: the first of its base types.
+    Is { constructor: TypeId, base: TypeId },
+}
+
+/// What `checkMemberForOverrideModifier` is given: a member of a class, or a parameter that declares a property.
+#[derive(Copy, Clone)]
+struct Overrider {
+    key: PropKey,
+    flags: Flags,
+    /// The member, or the constructor that has the parameter.
+    member: MemberId,
+    /// `NONE` for a member.
+    param: ParamId,
+}
+
+/// The code `checkMemberForOverrideModifier` reports in a JavaScript file in place of `code`: the message names the `@override`
+/// tag instead of the modifier. 4116 has no such variant.
+fn js_override_code(code: u32) -> u32 {
+    match code {
+        4112 => 4121,
+        4113 => 4122,
+        4114 => 4119,
+        4115 => 4120,
+        4117 => 4123,
+        4127 => 4128,
+        _ => code,
+    }
+}
+
+impl Checker<'_> {
+    // ───────────────────────────── what a class extends and implements ─────────────────────────────
+
+    /// `checkClassLikeDeclaration`, from `baseTypeNode` to the `implements` clauses, and `checkClassNameCollisionWithObject`.
+    pub(super) fn report_class_like_declaration(&mut self, file: FileId, c: ClassId, sym: Sym) {
+        let hir = self.hir(file);
+        let class = &hir[c];
+        let base = self.base_of_class(file, c, sym);
+        if let ClassBase::Is { constructor, base } = base {
+            let static_base_type = self.apparent_type(constructor);
+            self.check_base_type_accessibility(file, c, static_base_type);
+            if self.is_type_variable(constructor) {
+                let static_type = self.type_of_symbol(sym);
+                let own = self.signatures(static_type, true);
+                // `GetErrorRangeForNode`
+                let at = self.place_of_token(file, class.name_pos);
+                if !self.is_mixin_constructor_type(&own) {
+                    self.error_at(at, 2545, &[]);
+                } else if !class.flags.contains(Flags::ABSTRACT)
+                    && self
+                        .signatures(constructor, true)
+                        .iter()
+                        .any(|&sig| self.is_abstract_signature(sig))
+                {
+                    self.error_at(at, 2797, &[]);
+                }
+            } else if !matches!(
+                self.data(static_base_type),
+                TypeData::Anon {
+                    origin: Origin::ClassStatic(_),
+                    ..
+                }
+            ) {
+                // What is like a class without being one has to make the same thing whichever way it is called.
+                let mut returns = Vec::new();
+                for sig in self.super_constructor_sigs(sym) {
+                    returns.push(self.sig_return(sig));
+                }
+                let all_the_same = returns
+                    .iter()
+                    .all(|&returned| self.is_identical(returned, base));
+                if !all_the_same && let Some(at) = self.place_to_report_base_at(file, c) {
+                    self.error_at(at, 2510, &[]);
+                }
+            }
+        }
+        self.check_members_for_override_modifier(file, c, sym, base);
+        for node in hir.ids(class.implements) {
+            // The name of a primitive type is a name that nothing goes by here, which is said elsewhere.
+            if !matches!(hir[node].kind, TypeNodeKind::Ref { .. }) {
+                continue;
+            }
+            let implemented = self.type_from_node(file, node);
+            let implemented = self.reduced_base_type(implemented);
+            if self.is_settled_base(implemented) && !self.is_valid_base_type(implemented) {
+                let at = (file, hir[node].pos, self.end_of_type_node(file, node));
+                self.error_at(at, 2422, &[]);
+            }
+        }
+    }
+
+    /// `getBaseConstructorTypeOfClass` and `getBaseTypes(classType)[0]`, of the class `c` of `sym`.
+    fn base_of_class(&mut self, file: FileId, c: ClassId, sym: Sym) -> ClassBase {
+        let class = &self.hir(file)[c];
+        if class.extends.is_none() {
+            return ClassBase::Nothing;
+        }
+        let constructor = self.base_constructor_type_of_class(sym);
+        if let Some(&base) = self.base_types(sym).first() {
+            return ClassBase::Is { constructor, base };
+        }
+        let returned = match self.super_constructor_sigs(sym).first() {
+            Some(&sig) => self.sig_return(sig),
+            None => TypeId::ERROR,
+        };
+        if self.is_error_type(returned) || self.is_settled_base(returned) {
+            ClassBase::Nothing
+        } else {
+            ClassBase::Unknown
+        }
+    }
+
+    /// `checkBaseTypeAccessibility`: TS2675. A class with a private constructor can only be extended inside its own declaration.
+    fn check_base_type_accessibility(&mut self, file: FileId, c: ClassId, apparent: TypeId) {
+        let TypeData::Anon {
+            origin: Origin::ClassStatic(class),
+            ..
+        } = *self.data(apparent)
+        else {
+            return;
+        };
+        let Some(&first) = self.signatures(apparent, true).first() else {
+            return;
+        };
+        let declared = self.declared_sig(first);
+        let hir = self.hir(file);
+        if let Some((declared_in, func, _)) = self.sig_decl(declared)
+            && self.hir(declared_in)[func].flags.contains(Flags::PRIVATE)
+            && !(self.enclosing_classes(file, hir[c].extends).into_iter())
+                .any(|around| self.class_sym(file, around) == class)
+        {
+            let name = super::errors_modules::fully_qualified_name(self, class);
+            self.error(
+                file,
+                hir.node(c).with(Part::Base),
+                2675,
+                &[Arg::Text(&name)],
+            );
+        }
+    }
+
+    /// Whether `ty` was worked out for good: all of it is known, and it does not wait for type parameters that are not there.
+    pub(super) fn is_settled_base(&self, ty: TypeId) -> bool {
+        self.has_type_variables(ty) || !self.is_deferred(ty)
+    }
+
+    /// `isValidBaseType`: `any`, an object type whose members can be told, or an intersection of such. What is not known passes.
+    pub(super) fn is_valid_base_type(&mut self, ty: TypeId) -> bool {
+        if matches!(
+            self.data(ty),
+            TypeData::TypeParam(..) | TypeData::ThisParam(_)
+        ) && let Some(constraint) = self.base_constraint_of(ty)
+        {
+            return self.is_valid_base_type(constraint);
+        }
+        match self.data(ty) {
+            TypeData::Intersection(parts) => {
+                parts.iter().all(|&part| self.is_valid_base_type(part))
+            }
+            _ => {
+                (self.is_object_type(ty) || ty == TypeId::OBJECT || self.has_any_flag(ty))
+                    && !self.is_generic_mapped_base(ty)
+            }
+        }
+    }
+
+    /// `isGenericMappedType`: what it maps over is not known yet, or what it renames that to.
+    fn is_generic_mapped_base(&mut self, ty: TypeId) -> bool {
+        if self.mapped_origin(ty).is_none() {
+            return false;
+        }
+        if self.is_generic(ty) {
+            return true;
+        }
+        let Some(name) = self.mapped_name_type(ty) else {
+            return false;
+        };
+        let (param, keys) = (self.mapped_type_param(ty), self.mapped_keys(ty));
+        let mapper = self.mapper_from(&[param], &[keys]);
+        let name = self.instantiate(name, mapper);
+        self.is_generic(name) && !self.is_pattern_literal(name)
+    }
+
+    /// `getReducedType`, with `isConflictingPrivateProperty` seen to: nothing can be an intersection in which a property is private
+    /// to one member and declared anew by another.
+    fn reduced_base_type(&mut self, ty: TypeId) -> TypeId {
+        let ty = self.reduced(ty);
+        if self.is_intersection(ty)
+            && let Some(members) = self.members(ty)
+        {
+            for prop in &members.shape().props {
+                if let PropSource::Intersected(_, parts) = &prop.source
+                    && parts
+                        .iter()
+                        .any(|part| part.flags.contains(PropFlags::PRIVATE))
+                    && Self::value_declaration(prop).is_none()
+                {
+                    return TypeId::NEVER;
+                }
+            }
+        }
+        ty
+    }
+
+    // ───────────────────────────── what an interface extends ─────────────────────────────
+
+    /// The end of `checkInterfaceDeclaration`: 2499.
+    pub(super) fn check_bases_of_interface(&mut self, file: FileId, i: InterfaceId) {
+        let hir = self.hir(file);
+        for node in hir.ids(hir[i].extends) {
+            if matches!(
+                hir[node].kind,
+                TypeNodeKind::Error | TypeNodeKind::Heritage(_)
+            ) {
+                let end = match hir[node].kind {
+                    TypeNodeKind::Heritage(expression) => self.end_of_expr(file, expression),
+                    _ => hir[node].end,
+                };
+                self.error_at((file, hir[node].pos, end), 2499, &[]);
+            }
+        }
+    }
+
+    // ───────────────────────────── override ─────────────────────────────
+
+    /// `checkMembersForOverrideModifier`
+    fn check_members_for_override_modifier(
+        &mut self,
+        file: FileId,
+        c: ClassId,
+        sym: Sym,
+        base: ClassBase,
+    ) {
+        let hir = self.hir(file);
+        let class = &hir[c];
+        // Otherwise only what says `override` is looked at.
+        let looks_at_all = self.p.files.options.no_implicit_override;
+        for m in class.members.iter() {
+            let member = &hir[m];
+            if !looks_at_all
+                && !member.flags.contains(Flags::OVERRIDE)
+                && (member.kind != MemberKind::Constructor
+                    || member.func.is_some()
+                        && !hir[member.func]
+                            .params
+                            .iter()
+                            .any(|p| hir[p].flags.contains(Flags::OVERRIDE)))
+            {
+                continue;
+            }
+            // `HasAmbientModifier`: `declare` is written on the member itself. Every member of an ambient class has `Flags::AMBIENT`.
+            if hir
+                .find_modifier(member.modifiers, Flags::AMBIENT)
+                .is_some()
+            {
+                continue;
+            }
+            if member.kind != MemberKind::Constructor {
+                let overrider = Overrider {
+                    key: member.key,
+                    flags: member.flags,
+                    member: m,
+                    param: ParamId::NONE,
+                };
+                self.check_member_for_override_modifier(file, c, sym, base, overrider);
+                continue;
+            }
+            for p in hir[member.func].params.iter() {
+                let param = &hir[p];
+                if !param.flags.contains(Flags::PARAMETER_PROPERTY) {
+                    continue;
+                }
+                let key = match hir[param.pat].kind {
+                    PatKind::Ident(name) => PropKey::Name(name),
+                    _ => PropKey::None,
+                };
+                let overrider = Overrider {
+                    key,
+                    flags: param.flags,
+                    member: m,
+                    param: p,
+                };
+                self.check_member_for_override_modifier(file, c, sym, base, overrider);
+            }
+        }
+    }
+
+    /// `checkMemberForOverrideModifier`
+    fn check_member_for_override_modifier(
+        &mut self,
+        file: FileId,
+        c: ClassId,
+        sym: Sym,
+        base: ClassBase,
+        member: Overrider,
+    ) {
+        let is_js = self.hir(file).is_js;
+        let code = |code: u32| if is_js { js_override_code(code) } else { code };
+        let has_override = member.flags.contains(Flags::OVERRIDE);
+        let no_implicit_override = self.p.files.options.no_implicit_override;
+        let (constructor, base) = match base {
+            ClassBase::Unknown => return,
+            ClassBase::Nothing => {
+                if has_override {
+                    let class_type = self.declared_type(sym);
+                    let at = self.place_of_overrider(file, member);
+                    self.error_at(at, code(4112), &[Arg::Type(class_type)]);
+                }
+                return;
+            }
+            ClassBase::Is { constructor, base } => (constructor, base),
+        };
+        // A name that is only known when the program runs is the name of no property that could be looked up.
+        if let PropKey::Computed(name) = member.key {
+            match self.is_bindable_computed_name(file, name) {
+                None => return,
+                Some(false) => {
+                    if has_override {
+                        let at = self.place_of_overrider(file, member);
+                        self.error_at(at, code(4127), &[]);
+                    }
+                    return;
+                }
+                Some(true) => {}
+            }
+        }
+        if !has_override && !no_implicit_override {
+            return;
+        }
+        let Some(name) = self.member_name(file, member.key) else {
+            return;
+        };
+        let is_static = member.param.is_none() && member.flags.contains(Flags::STATIC);
+        let this_type = if is_static {
+            self.type_of_symbol(sym)
+        } else {
+            self.declared_type(sym)
+        };
+        if self.property_of_base(this_type, name).is_none() {
+            return;
+        }
+        let base_type = if is_static { constructor } else { base };
+        // `#x` of a class is not the `#x` of the class it extends.
+        let base_prop = if matches!(member.key, PropKey::Private(_)) {
+            None
+        } else {
+            self.property_of_base(base_type, name)
+        };
+        let Some(base_prop) = base_prop else {
+            if has_override {
+                let at = self.place_of_overrider(file, member);
+                match self.suggested_member(base_type, name) {
+                    Some(suggestion) => {
+                        let suggestion = self.prop_to_string(&suggestion);
+                        let args = [Arg::Type(base), Arg::Text(&suggestion)];
+                        self.error_at(at, code(4117), &args);
+                    }
+                    None => {
+                        self.error_at(at, code(4113), &[Arg::Type(base)]);
+                    }
+                }
+            }
+            return;
+        };
+        if has_override || self.hir(file)[c].flags.contains(Flags::AMBIENT) {
+            return;
+        }
+        let Some((true, is_abstract)) = self.declarations_of_base_property(&base_prop) else {
+            return;
+        };
+        let at = self.place_of_overrider(file, member);
+        if !is_abstract {
+            let must = if member.param.is_some() { 4115 } else { 4114 };
+            self.error_at(at, code(must), &[Arg::Type(base)]);
+        } else if member.flags.contains(Flags::ABSTRACT) {
+            self.error_at(at, 4116, &[Arg::Type(base)]);
+        }
+    }
+
+    /// `GetErrorRangeForNode`, of what `checkMemberForOverrideModifier` is given.
+    fn place_of_overrider(&self, file: FileId, member: Overrider) -> (FileId, u32, u32) {
+        if member.param.is_some() {
+            let start = self.hir(file)[member.param].pos;
+            return (file, start, self.end_of_param(file, member.param));
+        }
+        let (start, end) = self.error_range_of_member(file, member.member);
+        (file, start, end)
+    }
+
+    /// Whether the computed name `e` comes to a name that is known beforehand: not `isNonBindableDynamicName`.
+    /// `None`: it cannot be told.
+    fn is_bindable_computed_name(&mut self, file: FileId, e: ExprId) -> Option<bool> {
+        let hir = self.hir(file);
+        if !is_dynamic_name(hir, e) {
+            return Some(true);
+        }
+        // `isLateBindableAST`
+        if !is_entity_name_expression(hir, e) {
+            return Some(false);
+        }
+        let ty = self.type_of_expr(file, e);
+        // `isValidESSymbolDeclaration`: `static readonly k = Symbol()` holds a symbol of its own, where here it is any symbol.
+        if ty == TypeId::SYMBOL
+            && let ExprKind::Dot { obj, name, .. } = hir[e].kind
+        {
+            let object = self.type_of_expr(file, obj);
+            let apparent = self.apparent_type(object);
+            if let Some((prop, _)) = self.prop_of(apparent, name)
+                && let PropSource::Symbol(sym) = prop.source
+                && self.members_of_symbol(sym).iter().any(|&(f, m)| {
+                    let member = &self.hir(f)[m];
+                    member.ty.is_none() && member.flags.contains(Flags::STATIC | Flags::READONLY)
+                })
+            {
+                return None;
+            }
+        }
+        // `isTypeUsableAsPropertyName`
+        Some(self.property_name_of_type(ty).is_some())
+    }
+
+    /// `getPropertyOfType`
+    fn property_of_base(&mut self, ty: TypeId, name: Atom) -> Option<Prop> {
+        let ty = self.reduced(ty);
+        let apparent = self.apparent_type(ty);
+        let members = self.members(apparent)?;
+        self.property_of_type(&members, name).map(|(prop, _)| prop)
+    }
+
+    /// `getSuggestedSymbolForNonexistentClassMember`
+    fn suggested_member(&mut self, ty: TypeId, name: Atom) -> Option<Prop> {
+        // `ast.SymbolName`: a private name is compared as written.
+        let written = self.written_name(name);
+        // The name of a symbol-keyed member is compared like any other. In tsgo it is `\xFE@description@<symbol id>`
+        // (`getESSymbolLikeTypeForNode`). `GetSymbolId` numbers symbols in the order they are first asked for, which cannot be
+        // reproduced: the id is taken to have one digit, as it has early in a process.
+        let late_bound = written
+            .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)
+            .map(|described| {
+                let description = &described[..described
+                    .iter()
+                    .rposition(|&b| b == b'@')
+                    .unwrap_or(described.len())];
+                [crate::atom::SYMBOL_NAME_PREFIX, description, &b"@0"[..]].concat()
+            });
+        let text = late_bound.as_deref().unwrap_or(written);
+        let ty = self.reduced(ty);
+        let apparent = self.apparent_type(ty);
+        let members = self.members(apparent)?;
+        // `getCandidateName`: an internal name is never suggested, and only `SymbolFlagsClassMember` counts, which the exports of a
+        // namespace merged with the class are not.
+        let get_name = |prop: &Prop| match self.written_name(prop.name) {
+            _ if matches!(prop.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym)) => {
+                &[][..]
+            }
+            name if name.starts_with(crate::atom::SYMBOL_NAME_PREFIX) => &[][..],
+            name => name,
+        };
+        // Of two that are as close, the first.
+        let compare = |_, _| std::cmp::Ordering::Equal;
+        get_spelling_suggestion(text, members.shape().props.iter(), get_name, compare).cloned()
+    }
+
+    /// Whether `prop` has declarations at all, and whether one of them says `abstract`. `None`: where it comes from is not kept.
+    fn declarations_of_base_property(&self, prop: &Prop) -> Option<(bool, bool)> {
+        match &prop.source {
+            PropSource::Symbol(sym) => {
+                let members = members_among(&self.files().decls_of(*sym));
+                let is_abstract =
+                    |&(f, m): &(FileId, MemberId)| self.hir(f)[m].flags.contains(Flags::ABSTRACT);
+                Some((true, members.iter().any(is_abstract)))
+            }
+            PropSource::Literal(..) => Some((true, false)),
+            // `addMemberForKeyTypeWorker`: `prop.Declarations = modifiersProp.Declarations`
+            PropSource::Intersected(..)
+            | PropSource::Copy(..)
+            | PropSource::ReverseMapped(..)
+            | PropSource::Mapped(..) => {
+                let parts = match &prop.source {
+                    PropSource::Intersected(_, parts)
+                    | PropSource::Copy(_, parts, _)
+                    | PropSource::ReverseMapped(_, parts) => &parts[..],
+                    _ => prop.declared_by_modifiers_property(),
+                };
+                let (mut is_declared, mut is_abstract) = (false, false);
+                for part in parts {
+                    let (declared, abstract_) = self.declarations_of_base_property(part)?;
+                    is_declared |= declared;
+                    is_abstract |= abstract_;
+                }
+                Some((is_declared, is_abstract))
+            }
+            // The `prototype` of a class is made up.
+            PropSource::Type(_) if prop.name == known::prototype => Some((false, false)),
+            _ => None,
+        }
+    }
+
+    // ───────────────────────────── where `super()` is called ─────────────────────────────
+
+    /// The end of `checkConstructorDeclaration`: 2377 17005 2401 2376.
+    /// Where fields are set up by assignments put in the constructor, they
+    /// go right after the call of `super`, which therefore has to be a statement of the constructor itself, and the first
+    /// that has to do with `this`.
+    pub(super) fn check_super_call_in_constructor(&mut self, file: FileId, m: MemberId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let is_super_call = |e: ExprId| matches!(hir[e].kind, ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, ExprKind::Super));
+        let func = &hir[hir[m].func];
+        let (FnBody::Block(body), MemberOwner::Class(c)) = (func.body, bound.member_owner[m.idx()])
+        else {
+            return;
+        };
+        if hir[c].extends.is_none() {
+            return;
+        }
+        let class_extends_null = self.class_declaration_extends_null(self.class_sym(file, c));
+        let block = hir.node(hir[m].func).with(Part::Body);
+        let NodeData::Expr(first) = hir.data(self.find_first_super_call(hir, block)) else {
+            if !class_extends_null {
+                self.error(file, m, 2377, &[]);
+            }
+            return;
+        };
+        if class_extends_null {
+            self.error(file, first, 17005, &[]);
+        }
+        if self.p.files.options.emit_standard_class_fields {
+            return;
+        }
+        // `isInstancePropertyWithInitializerOrPrivateIdentifierProperty`, or a parameter that declares a property.
+        let has_to_be_at_root_level = hir[c].members.iter().any(|x| {
+            let member = &hir[x];
+            match member.kind {
+                MemberKind::Property => {
+                    matches!(member.key, PropKey::Private(_))
+                        || !member.flags.contains(Flags::STATIC) && member.init.is_some()
+                }
+                MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
+                    matches!(member.key, PropKey::Private(_))
+                }
+                _ => false,
+            }
+        }) || func
+            .params
+            .iter()
+            .any(|p| hir[p].flags.contains(Flags::PARAMETER_PROPERTY));
+        if !has_to_be_at_root_level {
+            return;
+        }
+        // `superCallIsRootLevelInConstructor`
+        if !hir
+            .ids(body)
+            .any(|s| matches!(hir[s].kind, StmtKind::Expr(x) if x == first))
+        {
+            self.error(file, first, 2401, &[]);
+            return;
+        }
+        for s in hir.ids(body) {
+            if matches!(hir[s].kind, StmtKind::Expr(x) if is_super_call(self.skip_outer_expressions(file, x)))
+            {
+                return;
+            }
+            if self.node_immediately_references_super_or_this(hir, hir.node(s)) {
+                break;
+            }
+        }
+        self.error(file, m, 2376, &[]);
+    }
+
+    /// `findFirstSuperCall`
+    fn find_first_super_call(&self, hir: &File, node: Node) -> Node {
+        if hir.kind(node) == Kind::CallExpression
+            && hir.kind(hir.expression(node)) == Kind::SuperKeyword
+        {
+            return node;
+        }
+        let mut found = Node::NONE;
+        if !hir.kind(node).is_function_like() && !self.is_stack_low() {
+            hir.for_each_child(node, &mut |child| {
+                found = self.find_first_super_call(hir, child);
+                found.is_some()
+            });
+        }
+        found
+    }
+
+    /// `nodeImmediatelyReferencesSuperOrThis`
+    fn node_immediately_references_super_or_this(&self, hir: &File, node: Node) -> bool {
+        match hir.kind(node) {
+            Kind::SuperKeyword | Kind::ThisKeyword => return true,
+            Kind::ArrowFunction
+            | Kind::FunctionDeclaration
+            | Kind::FunctionExpression
+            | Kind::PropertyDeclaration => return false,
+            Kind::Block
+                if matches!(
+                    hir.kind(hir.parent(node)),
+                    Kind::Constructor
+                        | Kind::MethodDeclaration
+                        | Kind::GetAccessor
+                        | Kind::SetAccessor
+                ) =>
+            {
+                return false;
+            }
+            _ => {}
+        }
+        !self.is_stack_low()
+            && hir.for_each_child(node, &mut |child| {
+                self.node_immediately_references_super_or_this(hir, child)
+            })
+    }
+}

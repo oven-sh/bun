@@ -941,6 +941,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Global::exit(exit_code as u32);
         }
 
+        if ctx.runtime_options.check && !crate::cli::check_command::check_before(&[&entry_path]) {
+            Global::exit(1);
+        }
+
         // `bun_jsc::initialize`
         // is real (calls `JSCInitialize` over `bun_sys::environ()`); the
         // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
@@ -2438,6 +2442,13 @@ impl RunCommand {
                         let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
                         let silent = ctx.debug.silent;
                         let use_system_shell = ctx.debug.use_system_shell;
+
+                        // A script has no entry point to start from: the project is checked, as by `bun check`.
+                        if ctx.runtime_options.check
+                            && !crate::cli::check_command::check_project_before()
+                        {
+                            Global::exit(1);
+                        }
 
                         if let Some(&prescript) = scripts.get(&temp_script_buffer[1..]) {
                             Self::run_package_script_foreground_with_shell_path(

@@ -2275,6 +2275,13 @@ impl TestCommand {
             }
         }
 
+        if ctx.runtime_options.check {
+            let paths: Vec<&[u8]> = test_files.iter().map(|path| &**path).collect();
+            if !crate::cli::check_command::check_before(&paths) {
+                Global::exit(1);
+            }
+        }
+
         // Normally the watcher is only enabled when there are test files to
         // run; `bun test --watch` with nothing matching should still exit.
         // With --changed we always want to keep watching as long as any test

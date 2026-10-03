@@ -336,6 +336,8 @@ pub(crate) mod upgrade_command;
 pub(crate) mod add_command;
 #[path = "audit_command.rs"]
 pub(crate) mod audit_command;
+#[path = "check_command.rs"]
+pub(crate) mod check_command;
 #[path = "dedupe_command.rs"]
 pub(crate) mod dedupe_command;
 #[path = "filter_arg.rs"]
@@ -644,6 +646,7 @@ pub(crate) mod help_command {
   <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
             <d>lint<r>                 Run a package.json script
   <b><magenta>test<r>                           Run unit tests with Bun
+  <b><magenta>check<r>                          Type check a TypeScript project
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
   <b><magenta>repl<r>                           Start a REPL session with Bun
   <b><magenta>exec<r>                           Run a shell script directly with Bun
@@ -1043,6 +1046,9 @@ pub(crate) mod command {
         if x == RootCommandMatcher::case(b"audit") {
             return Tag::AuditCommand;
         }
+        if x == RootCommandMatcher::case(b"check") {
+            return Tag::CheckCommand;
+        }
         if x == RootCommandMatcher::case(b"info") {
             return Tag::InfoCommand;
         }
@@ -1303,6 +1309,7 @@ pub(crate) mod command {
             Tag::UpdateInteractiveCommand => exec_update_interactive(log),
             Tag::PublishCommand => exec_publish(log),
             Tag::AuditCommand => exec_audit(log),
+            Tag::CheckCommand => exec_check(),
             Tag::DedupeCommand => exec_dedupe(log),
             Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
@@ -1545,6 +1552,14 @@ pub(crate) mod command {
         let ctx = init(Tag::BuildCommand, log)?;
         super::build_command::BuildCommand::exec(ctx, None)?;
         Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_check() -> CmdResult {
+        // CheckCommand parses its own argv (no Context).
+        let argv = argv_zslice();
+        super::check_command::CheckCommand::exec(&argv[2.min(argv.len())..])
     }
 
     #[cold]
@@ -2041,6 +2056,9 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
   <d>Run all test files, only including tests whose names includes \"baz\"<r>
   <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
 
+  <d>Type check the test files and what they import, then run them<r>
+  <b><green>bun test<r> <cyan>--check<r>
+
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 "
                 );
@@ -2159,6 +2177,48 @@ Execute a shell script directly from Bun.
             }
             Tag::AuditCommand => {
                 pm_print_help(PmSubcommand::Audit);
+            }
+            Tag::CheckCommand => {
+                pretty!(
+                    "\
+<b>Usage<r>: <b><green>bun check<r> <cyan>[flags]<r> <blue>[...files or directories]<r>
+  Type check a TypeScript project.
+
+  Uses the nearest <b>tsconfig.json<r> and reports the same errors as <b>tsc<r>, using all CPU cores.
+  Pass files or directories to check only those and their imports.
+  Project <b>references<r> are followed, like <b>tsc -b<r>, and nothing has to be built first.
+
+<b>Flags:<r>
+  <cyan>-p<r>, <cyan>--project<r> <d>\\<path\\><r>   Path to a tsconfig.json or its directory
+      <cyan>--pretty<r>           Show source code around each error <d>(default in a terminal)<r>
+      <cyan>--no-pretty<r>        One line per error, like <b>tsc --pretty false<r> <d>(default when piped)<r>
+      <cyan>--all<r>              Show every error <d>(above 50, identical errors are grouped)<r>
+      <cyan>--threads<r> <d>\\<n\\><r>      Number of threads <d>(default: one per CPU core)<r>
+      <cyan>--timing<r>           Print load and check times
+      <cyan>--cwd<r> <d>\\<path\\><r>       Set the working directory
+      <cyan>--strict<r>, <cyan>--target<r> <d>\\<v\\><r>, ...  Any compiler option, as for <b>tsc<r>. Overrides tsconfig.json
+  <cyan>-h<r>, <cyan>--help<r>             Print this help menu
+
+<b>Examples:<r>
+  <d>Check the current project<r>
+  <b><green>bun check<r>
+
+  <d>Check one file and everything it imports<r>
+  <b><green>bun check<r> <blue>src/index.ts<r>
+
+  <d>Check another project<r>
+  <b><green>bun check<r> <cyan>-p<r> <blue>packages/server<r>
+
+  <d>Try a stricter option without editing tsconfig.json<r>
+  <b><green>bun check<r> <cyan>--noUncheckedIndexedAccess<r>
+
+  <d>Check a file, then run it<r>
+  <b><green>bun<r> <cyan>--check<r> <blue>src/index.ts<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r>
+"
+                );
+                Output::flush();
             }
             Tag::DedupeCommand => {
                 pm_print_help(PmSubcommand::Dedupe);

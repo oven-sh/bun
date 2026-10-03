@@ -151,6 +151,18 @@ impl BuildCommand {
             .cloned()
             .unwrap_or_default();
 
+        if ctx.bundler_options.check {
+            let entry_points: Vec<&[u8]> = this_transpiler
+                .options
+                .entry_points
+                .iter()
+                .map(|entry_point| &**entry_point)
+                .collect();
+            if !crate::cli::check_command::check_before(&entry_points) {
+                Global::exit(1);
+            }
+        }
+
         this_transpiler.options.source_map =
             options::SourceMapOption::from_api(ctx.args.source_map);
 

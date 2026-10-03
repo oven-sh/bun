@@ -73,7 +73,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
     // This function is taken from the official TypeScript compiler source code:
     // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
-    fn is_binary_operator(&self) -> bool {
+    pub(crate) fn is_binary_operator(&self) -> bool {
         let p = self;
         match p.lexer.token {
             T::TIn => p.allow_in,
@@ -111,7 +111,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
     // This function is taken from the official TypeScript compiler source code:
     // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
-    fn is_start_of_left_hand_side_expression(&mut self) -> bool {
+    pub(crate) fn is_start_of_left_hand_side_expression(&mut self) -> bool {
         let p = self;
         match p.lexer.token {
             T::TThis
@@ -138,7 +138,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
-    fn look_ahead_next_token_is_open_paren_or_less_than_or_dot(&mut self) -> bool {
+    pub(crate) fn look_ahead_next_token_is_open_paren_or_less_than_or_dot(&mut self) -> bool {
         let p = self;
         let old_lexer = p.lexer.snapshot();
         let old_log_disabled = p.lexer.is_log_disabled;
@@ -157,7 +157,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     // This function is taken from the official TypeScript compiler source code:
     // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
     // renamed `ts_is_identifier` to avoid clash with lexer/P helpers of the same name.
-    fn ts_is_identifier(&self) -> bool {
+    pub(crate) fn ts_is_identifier(&self) -> bool {
         use crate::parser::AwaitOrYield::AllowIdent;
         let p = self;
         if p.lexer.token == T::TIdentifier {
@@ -181,7 +181,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         false
     }
 
-    fn is_start_of_expression(&mut self) -> bool {
+    pub(crate) fn is_start_of_expression(&mut self) -> bool {
         let p = self;
         if p.is_start_of_left_hand_side_expression() {
             return true;
@@ -283,6 +283,38 @@ pub mod identifier {
     #[inline]
     pub(crate) fn kind_for_identifier(ident: &[u8]) -> Option<Kind> {
         KIND_MAP.get(ident).copied()
+    }
+
+    bun_core::comptime_string_set! {
+        /// TypeScript's contextual keywords that are not in any of the other tables.
+        static OTHER_CONTEXTUAL_KEYWORDS = {
+            b"as",
+            b"is",
+            b"of",
+            b"out",
+            b"from",
+            b"await",
+            b"defer",
+            b"using",
+            b"assert",
+            b"require",
+            b"immediate",
+            b"intrinsic",
+            b"satisfies",
+            b"constructor",
+        };
+    }
+
+    /// `IsKeyword` for a token this lexer scans as an identifier: TypeScript's `textToKeyword` minus the JavaScript keywords.
+    pub(crate) fn is_contextual_keyword(word: &[u8]) -> bool {
+        use crate::lexer::{
+            PropertyModifierKeyword, TypescriptStmtKeyword, is_strict_mode_reserved_word,
+        };
+        kind_for_identifier(word).is_some()
+            || PropertyModifierKeyword::find(word).is_some()
+            || TypescriptStmtKeyword::from_bytes(word).is_some()
+            || is_strict_mode_reserved_word(word)
+            || OTHER_CONTEXTUAL_KEYWORDS.contains(word)
     }
 
     #[derive(Clone, Copy, PartialEq, Eq)]

@@ -1,4 +1,5 @@
 #![warn(unused_must_use)]
+pub(crate) mod lists;
 pub mod parse_entry;
 pub(crate) mod parse_fn;
 pub(crate) mod parse_import_export;
@@ -21,17 +22,30 @@ use bun_ast::LexerLog as _;
 
 use crate::lexer::T;
 use crate::p::P;
+use crate::parse::lists::{ListKind, ListStep};
 use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
     FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
     ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
-    StmtList, TypeParameterFlag,
+    StmtList,
 };
+use crate::sema::Mark;
 use bun_ast as js_ast;
 use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
 use bun_ast::{ArrayBinding, StrictModeKind};
 use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Stmt};
+
+/// What `parse_paren_expr_as` is to make of the parentheses. Anything but `Undecided` in tolerant mode only.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArrowAttempt {
+    /// What follows the ")" decides.
+    Undecided,
+    /// `parseParenthesizedArrowFunctionExpression` without `allowAmbiguity`: an arrow function, or `Err(Error::Backtrack)`.
+    ArrowOrBacktrack,
+    /// `isParenthesizedArrowFunctionExpression` said no, or the attempt failed: no arrow function, whatever follows the ")".
+    NeverArrow,
+}
 
 // File-split mixin: Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`,
 // so this is a direct `impl P` block.
@@ -106,6 +120,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if is_star {
             if p.lexer.has_newline_before {
+                // `parseYieldExpression`: nothing after a line break belongs to the "yield".
+                if p.lexer.tolerant {
+                    return Ok(p.new_expr(
+                        E::Yield {
+                            value: None,
+                            is_star: false,
+                        },
+                        loc,
+                    ));
+                }
                 p.lexer.unexpected()?;
                 return Err(crate::Error::SyntaxError);
             }
@@ -119,9 +143,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             | T::TCloseBracket
             | T::TColon
             | T::TComma
-            | T::TSemicolon => {}
+            | T::TSemicolon
+                // `parseYieldExpression`: after "*" the operand is parsed whatever follows (1109).
+                if !(is_star && p.lexer.tolerant) => {}
             _ => {
-                if is_star || !p.lexer.has_newline_before {
+                // `parseYieldExpression`: without "*" there is an operand only if the token can start an expression.
+                if is_star
+                    || (!p.lexer.has_newline_before
+                        && (!p.lexer.tolerant || p.is_start_of_expression_or_shift_assign()))
+                {
                     value = Some(p.parse_expr(Level::Yield)?);
                 }
             }
@@ -134,7 +164,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // been parsed. We need to start parsing from the "extends" clause.
     pub(crate) fn parse_class(
         &mut self,
-        class_keyword: bun_ast::Range,
+        mut class_keyword: bun_ast::Range,
         name: Option<js_ast::LocRef>,
         class_opts: &ParseClassOptions<'a>,
     ) -> Result<G::Class, Error> {
@@ -142,6 +172,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut extends: Option<Expr> = None;
         let mut has_decorators: bool = false;
         let mut has_auto_accessor: bool = false;
+
+        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.tolerant && !p.lexer.is_log_disabled {
+            // Consumes every clause, so the two blocks below find none.
+            extends = p.parse_heritage_clauses(&mut class_keyword.loc)?;
+        }
 
         if p.lexer.token == T::TExtends {
             p.lexer.next()?;
@@ -154,8 +189,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // This seems kind of wasteful to me but it's what the official compiler
             // does and it probably doesn't have that high of a performance overhead
             // because "extends" clauses aren't that frequent, so it should be ok.
-            if Self::IS_TYPESCRIPT_ENABLED {
-                let _ = p.skip_type_script_type_arguments::<false, false>()?; // isInsideJSXElement
+            if Self::IS_TYPESCRIPT_ENABLED && p.skip_type_script_type_arguments::<false, false>()? {
+                p.note_type_arguments_of(&mut class_keyword.loc, Mark::ExtendsArguments);
             }
         }
 
@@ -164,7 +199,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
 
                 loop {
+                    let start = p.lexer.loc();
                     p.skip_type_script_type(Level::Lowest)?;
+                    let implemented = p.kept_type();
+                    p.note_implemented(
+                        &mut class_keyword.loc,
+                        Mark::Implements,
+                        implemented,
+                        start,
+                    );
                     if p.lexer.token != T::TComma {
                         break;
                     }
@@ -174,6 +217,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let body_loc = p.lexer.loc();
+        // `parseClassDeclarationOrExpression`: without the "{" there are no members, and no "}" is looked for.
+        let has_body = p.lexer.token == T::TOpenBrace || !p.lexer.tolerant;
         p.lexer.expect(T::TOpenBrace)?;
         let mut properties = BumpVec::<G::Property>::new_in(p.arena);
 
@@ -188,10 +233,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .push_scope_for_parse_pass(js_ast::scope::Kind::ClassBody, body_loc)
             .expect("unreachable");
 
-        while !p.lexer.token.is_close_brace_or_eof() {
+        let saved_contexts = p.enter_list(ListKind::ClassMembers);
+        while has_body && !p.lexer.token.is_close_brace_or_eof() {
             if p.lexer.token == T::TSemicolon {
+                let (semicolon, full_start) = (p.lexer.loc(), p.pos_for_jsdoc());
+                if p.has_comments_before(semicolon, full_start) {
+                    p.note_loc(
+                        &mut class_keyword.loc,
+                        Mark::SemicolonClassElement,
+                        semicolon,
+                    );
+                    p.note_loc(&mut class_keyword.loc, Mark::SemicolonFullStart, full_start);
+                }
                 p.lexer.next()?;
                 continue;
+            }
+            match p.classify_list_token(ListKind::ClassMembers)? {
+                ListStep::Element => {}
+                ListStep::Skipped => continue,
+                ListStep::Over => break,
             }
 
             // `opts` is fully
@@ -207,6 +267,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Parse decorators for this property
             let first_decorator_loc = p.lexer.loc();
+            let member_full_start = p.lexer.full_start();
             let property_scope_index = p.scopes_in_order.len();
             if opts.allow_ts_decorators {
                 opts.ts_decorators = p.parse_type_script_decorators()?;
@@ -214,13 +275,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 has_decorators = has_decorators || opts.ts_decorators.len() > 0;
             }
 
+            let modifiers_base = p.pushed_modifiers();
             // This property may turn out to be a type in TypeScript, which should be ignored
-            if let Some(property) =
+            if let Some(mut property) =
                 p.parse_property(js_ast::g::PropertyKind::Normal, &mut opts, None)?
             {
                 // read fields before move (G::Property is not Copy).
                 let prop_kind = property.kind;
                 let prop_key = property.key;
+                p.finish_class_member(
+                    &mut property,
+                    first_decorator_loc,
+                    member_full_start,
+                    modifiers_base,
+                );
                 if let Some(starts) = &mut p.starts_for_parse_only {
                     let named_at = match property.class_static_block_ref() {
                         Some(block) => Some(block.loc),
@@ -258,8 +326,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Discard any scopes recorded while parsing them or the visit pass
                 // will hit a scope order mismatch.
                 p.discard_scopes_up_to(property_scope_index);
+                if p.keeps_type_syntax() {
+                    p.finish_class_index_signature(
+                        &mut class_keyword.loc,
+                        first_decorator_loc,
+                        member_full_start,
+                        modifiers_base,
+                    );
+                }
             }
         }
+        p.lexer.list_contexts = saved_contexts;
 
         if class_opts.is_type_script_declare {
             p.pop_and_discard_scope(scope_index);
@@ -270,7 +347,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.allow_in = old_allow_in;
         p.allow_private_identifiers = old_allow_private_identifiers;
         let close_brace_loc = p.lexer.loc();
-        p.lexer.expect(T::TCloseBrace)?;
+        if has_body {
+            p.lexer.expect(T::TCloseBrace)?;
+        }
 
         let has_any_decorators = has_decorators || class_opts.ts_decorators.len() > 0;
         // `Expr: Copy` — safe arena-slice → owned Vec (one memcpy, no double-drop).
@@ -287,6 +366,170 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             should_lower_standard_decorators: p.options.features.standard_decorators
                 && (has_any_decorators || has_auto_accessor),
         })
+    }
+
+    /// `parseHeritageClauses`, and the errors of `checkGrammarClassDeclarationHeritageClauses`. Returns the base class: the first
+    /// type of the first `extends` clause. Tolerant mode only.
+    #[cold]
+    #[inline(never)]
+    fn parse_heritage_clauses(
+        &mut self,
+        class_keyword: &mut bun_ast::Loc,
+    ) -> Result<Option<Expr>, Error> {
+        let p = self;
+        let mut extends: Option<Expr> = None;
+        if p.lexer.token != T::TExtends && !p.lexer.is_contextual_keyword(b"implements") {
+            return Ok(extends);
+        }
+        let mut seen_extends = false;
+        let mut seen_implements = false;
+        // The checker returns after 1172, 1173, 1174 or 1175.
+        let mut stop_checking = false;
+        let saved_clauses = p.enter_list(ListKind::HeritageClauses);
+        loop {
+            match p.classify_list_token(ListKind::HeritageClauses)? {
+                ListStep::Element => {}
+                ListStep::Skipped => continue,
+                ListStep::Over => break,
+            }
+            let keyword = p.lexer.range();
+            let is_extends = p.lexer.token == T::TExtends;
+            let order_error = match (is_extends, seen_extends, seen_implements) {
+                (true, true, _) => 1172,
+                (true, false, true) => 1173,
+                (false, _, true) => 1175,
+                _ => 0,
+            };
+            if order_error != 0 && !stop_checking {
+                p.lexer.ts_grammar_error(keyword, order_error);
+                stop_checking = true;
+            }
+            p.lexer.next()?;
+
+            // `parseHeritageClause`
+            let saved_elements = p.enter_list(ListKind::HeritageClauseElement);
+            let mut count = 0u32;
+            let mut trailing_comma: Option<bun_ast::Range> = None;
+            loop {
+                match p.classify_list_token(ListKind::HeritageClauseElement)? {
+                    ListStep::Element => {}
+                    ListStep::Skipped => continue,
+                    ListStep::Over => break,
+                }
+                let start = p.lexer.range();
+                trailing_comma = None;
+                if is_extends {
+                    let scope_index = p.scopes_in_order.len();
+                    let value = p.parse_expr(Level::New)?;
+                    let has_type_arguments = p.skip_type_script_type_arguments::<false, false>()?;
+                    if count == 0 && !seen_extends {
+                        extends = Some(value);
+                        if has_type_arguments {
+                            p.note_type_arguments_of(class_keyword, Mark::ExtendsArguments);
+                        }
+                    } else {
+                        p.discard_scopes_up_to(scope_index);
+                        p.note_expr(class_keyword, Mark::OtherExtends, value);
+                        if count == 1 && !stop_checking {
+                            p.lexer.ts_grammar_error(start, 1174);
+                            stop_checking = true;
+                        }
+                    }
+                } else {
+                    let clause = if seen_implements {
+                        Mark::OtherImplements
+                    } else {
+                        Mark::Implements
+                    };
+                    // `extends` after the type starts the next clause.
+                    let opts = crate::typescript::SkipTypeOptionsBitset::only(
+                        crate::typescript::SkipTypeOptions::DisallowConditionalTypes,
+                    );
+                    if p.should_keep_types() {
+                        p.parse_and_keep_type(Level::Lowest, opts)?;
+                    } else {
+                        p.skip_type_script_type_with_opts::<false>(Level::Lowest, opts, None)?;
+                    }
+                    let mut implemented = p.kept_type();
+                    if matches!(
+                        p.lexer.token,
+                        T::TQuestionDot
+                            | T::TOpenParen
+                            | T::TOpenBracket
+                            | T::TExclamation
+                            | T::TNoSubstitutionTemplateLiteral
+                            | T::TTemplateHead
+                    ) {
+                        // `checkClassLikeDeclaration`: only `A.B<C>` can be implemented. It is said of the expression.
+                        let expression = if p.parse_optional_chain_of_implemented(implemented)? {
+                            p.lexer.range_from(start.loc)
+                        } else {
+                            implemented = crate::sema::ts_syntax::TypeId::NONE;
+                            p.parse_rest_of_implemented(start.loc)?
+                        };
+                        p.ts_checker_error(expression, 2500);
+                    } else if !p.is_kept_entity_name(implemented) {
+                        // What reads as a type and is no `isEntityNameExpression`: `(I)`, `string[]`.
+                        p.ts_checker_error(p.lexer.range_from(start.loc), 2500);
+                        implemented = crate::sema::ts_syntax::TypeId::NONE;
+                    }
+                    p.note_implemented(class_keyword, clause, implemented, start.loc);
+                }
+                count += 1;
+                if p.lexer.token == T::TComma {
+                    trailing_comma = Some(p.lexer.range());
+                    p.lexer.next()?;
+                    continue;
+                }
+                if !p.recover_missing_comma(ListKind::HeritageClauseElement, start.loc)? {
+                    break;
+                }
+            }
+            p.lexer.list_contexts = saved_elements;
+            if !is_extends {
+                p.note_loc(class_keyword, Mark::ImplementsClause, keyword.loc);
+                p.note_loc(class_keyword, Mark::ImplementsClause, p.lexer.full_start());
+            }
+
+            // `checkGrammarHeritageClause`
+            if !stop_checking {
+                if let Some(comma) = trailing_comma {
+                    p.lexer.ts_grammar_error(comma, 1009);
+                } else if count == 0 {
+                    let after = bun_ast::Range {
+                        loc: keyword.end(),
+                        len: 0,
+                    };
+                    let keyword: &[u8] = if is_extends {
+                        b"extends"
+                    } else {
+                        b"implements"
+                    };
+                    p.lexer.ts_grammar_error_about(after, 1097, keyword);
+                }
+            }
+            if is_extends {
+                seen_extends = true;
+            } else {
+                seen_implements = true;
+            }
+        }
+        p.lexer.list_contexts = saved_clauses;
+        Ok(extends)
+    }
+
+    /// `parseExpressionWithTypeArguments` after `implements`, from where the expression no longer reads as a type (2500). From where
+    /// to where the expression goes.
+    #[cold]
+    #[inline(never)]
+    fn parse_rest_of_implemented(&mut self, start: bun_ast::Loc) -> Result<bun_ast::Range, Error> {
+        let scope_index = self.scopes_in_order.len();
+        let mut value = self.new_expr(E::Missing {}, start);
+        self.parse_suffix(&mut value, Level::New, None, EFlags::None)?;
+        let expression = self.lexer.range_from(start);
+        self.skip_type_script_type_arguments::<false, false>()?;
+        self.discard_scopes_up_to(scope_index);
+        Ok(expression)
     }
 
     pub(crate) fn parse_template_parts(
@@ -306,12 +549,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
             let value = p.parse_expr(Level::Lowest)?;
             tail_loc = p.lexer.loc();
+            if p.lexer.token != T::TCloseBrace && p.lexer.tolerant {
+                let tail = p.missing_template_tail(include_raw)?;
+                parts.push(E::TemplatePart {
+                    value,
+                    tail_loc,
+                    tail,
+                });
+                break 'parse_template_part;
+            }
             p.lexer.rescan_close_brace_as_template_token()?;
 
             let tail: E::TemplateContents = if !include_raw {
                 E::TemplateContents::Cooked(p.lexer.to_e_string()?)
             } else {
-                E::TemplateContents::Raw(p.lexer.raw_template_contents().into())
+                p.tagged_template_contents()
             };
 
             parts.push(E::TemplatePart {
@@ -332,6 +584,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `from_bump` leaks into the arena and wraps the unique `&'bump mut [T]`
         // so mutable provenance is preserved for the visit pass.
         Ok((bun_ast::StoreSlice::from_bump(parts), tail_loc))
+    }
+
+    /// `parseLiteralOfTemplateSpan` when no "}" follows the expression: 1005, nothing is consumed, and an empty tail ends the template.
+    #[cold]
+    #[inline(never)]
+    fn missing_template_tail(&mut self, include_raw: bool) -> Result<E::TemplateContents, Error> {
+        self.lexer.expect(T::TCloseBrace)?;
+        // A tagged template with a missing tail is an incomplete call (`hasCorrectArity`).
+        self.lexer.unterminated_at = self.lexer.start;
+        Ok(if include_raw {
+            E::TemplateContents::Raw(b"".into())
+        } else {
+            E::TemplateContents::Cooked(E::String::init(b""))
+        })
     }
 
     // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
@@ -359,8 +625,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let mut args: smallvec::SmallVec<[Expr; 4]> = smallvec::SmallVec::new();
         p.lexer.expect(T::TOpenParen)?;
+        let saved_contexts = p.enter_list(ListKind::ArgumentExpressions);
 
         while p.lexer.token != T::TCloseParen {
+            match p.classify_list_token(ListKind::ArgumentExpressions)? {
+                ListStep::Element => {}
+                ListStep::Skipped => continue,
+                ListStep::Over => break,
+            }
             let loc = p.lexer.loc();
             let is_spread = p.lexer.token == T::TDotDotDot;
             if is_spread {
@@ -373,11 +645,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             args.push(arg);
             if p.lexer.token != T::TComma {
+                if p.recover_missing_comma(ListKind::ArgumentExpressions, loc)? {
+                    continue;
+                }
                 break;
             }
             p.lexer.next()?;
         }
-        let close_paren_loc = p.lexer.loc();
+        p.lexer.list_contexts = saved_contexts;
+        let mut close_paren_loc = p.lexer.loc();
+        if p.lexer.token != T::TCloseParen && p.lexer.tolerant && !p.lexer.is_log_disabled {
+            // `finishNode`: without the ")" the call ends where the last token it consumed ends.
+            close_paren_loc.start = p.lexer.full_start().start - 1;
+        }
         p.lexer.expect(T::TCloseParen)?;
         Ok(ExprListLoc {
             list: ExprNodeList::from_arena_slice(&args),
@@ -388,7 +668,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn parse_jsx_prop_value_identifier(
         &mut self,
         previous_string_with_backslash_loc: &mut bun_ast::Loc,
-    ) -> Result<Expr, Error> {
+    ) -> Result<Option<Expr>, Error> {
         let p = self;
         // Use NextInsideJSXElement() not Next() so we can parse a JSX-style string literal
         p.lexer.next_inside_jsx_element()?;
@@ -402,31 +682,185 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let expr = p.new_expr(estr, *previous_string_with_backslash_loc);
 
             p.lexer.next_inside_jsx_element()?;
-            Ok(expr)
+            Ok(Some(expr))
         } else {
+            if p.lexer.token != T::TOpenBrace && p.lexer.tolerant {
+                return p.parse_jsx_attribute_value_without_braces();
+            }
             // Use Expect() not ExpectInsideJSXElement() so we can parse expression tokens
+            let open_brace = p.lexer.loc();
             p.lexer.expect(T::TOpenBrace)?;
-            let value = p.parse_expr(Level::Lowest)?;
+            if p.lexer.token == T::TCloseBrace && p.lexer.tolerant {
+                // `parseJsxExpression`: there may be nothing between the braces. What is missing is put where they open.
+                p.lexer.next_inside_jsx_element()?;
+                let mut missing = p.new_expr(E::Missing {}, open_brace);
+                p.note_loc(
+                    &mut missing.loc,
+                    crate::sema::Mark::JsxExpression,
+                    open_brace,
+                );
+                return Ok(Some(missing));
+            }
+            let mut value = p.parse_expr(Level::Lowest)?;
+            p.note_loc(&mut value.loc, crate::sema::Mark::JsxExpression, open_brace);
 
+            if p.lexer.token != T::TCloseBrace && p.lexer.tolerant {
+                // `parseExpected`: it is missed, and nothing is consumed.
+                p.lexer.expect(T::TCloseBrace)?;
+                return Ok(Some(value));
+            }
             p.lexer.expect_inside_jsx_element(T::TCloseBrace)?;
-            Ok(value)
+            Ok(Some(value))
         }
     }
 
+    /// `parseJsxAttributeValue`, when what follows the "=" is neither a string nor a "{": an element, or nothing at all.
+    #[cold]
+    #[inline(never)]
+    fn parse_jsx_attribute_value_without_braces(&mut self) -> Result<Option<Expr>, Error> {
+        let p = self;
+        if p.is_at_less_than_token() {
+            let first = p.lexer.loc();
+            return p.parse_jsx_elements_in_attribute_value(first).map(Some);
+        }
+        if p.lexer.is_log_disabled {
+            return Err(Error::Backtrack);
+        }
+        // Nothing is consumed, and the attribute is one without a value.
+        let range = p.lexer.range();
+        p.lexer.ts_error(range, 1145);
+        Ok(None)
+    }
+
+    /// Whether the "<" the lexer gave inside a JSX tag is one for TypeScript's scanner too, which makes tokens of their own of
+    /// "<<", "<=" and "</", unless the "/" starts a comment (`Scan`).
+    fn is_at_less_than_token(&self) -> bool {
+        let lexer = &self.lexer;
+        lexer.token == T::TLessThan
+            && match lexer.code_point {
+                0x3C | 0x3D => false,
+                0x2F => lexer.contents.get(lexer.current) == Some(&b'*'),
+                _ => true,
+            }
+    }
+
+    /// `parseJsxElementOrSelfClosingElementOrFragment` in an expression context, at its "<". Another element that follows
+    /// at once is objected to where the first of them starts, `first`, and joined to this one by a comma.
+    fn parse_jsx_elements_in_attribute_value(
+        &mut self,
+        first: bun_ast::Loc,
+    ) -> Result<Expr, Error> {
+        let p = self;
+        let less_than = p.lexer.loc();
+        let full_start = p.lexer.full_start();
+        p.lexer.next_inside_jsx_element()?;
+        let element = p.parse_jsx_element(less_than, full_start)?;
+        // The last ">" is left to the caller. Nothing is consumed for one that is missed.
+        if p.lexer.token == T::TGreaterThan {
+            p.lexer.next_inside_jsx_element()?;
+        }
+        if !p.is_at_less_than_token() {
+            return Ok(element);
+        }
+        if p.lexer.is_log_disabled {
+            return Err(Error::Backtrack);
+        }
+        let rest = p.parse_jsx_elements_in_attribute_value(first)?;
+        p.lexer.ts_error(p.lexer.range_from(first), 2657);
+        Ok(p.join_with_comma(element, rest))
+    }
+
     /// This assumes that the open parenthesis has already been parsed by the caller
+    #[inline]
     pub(crate) fn parse_paren_expr(
         &mut self,
         loc: bun_ast::Loc,
         level: Level,
         opts: ParenExprOpts,
     ) -> Result<Expr, Error> {
+        if self.lexer.tolerant
+            && !opts.is_async
+            && !opts.force_arrow_fn
+            && !self.lexer.is_log_disabled
+        {
+            return self.parse_paren_expr_after_lookahead(loc, level, opts);
+        }
+        self.parse_paren_expr_as(loc, level, opts, ArrowAttempt::Undecided)
+    }
+
+    /// `tryParseParenthesizedArrowFunctionExpression`, after the "(" at `loc`, or after "<T>(" if the "<" is at `loc`.
+    /// Asks `isParenthesizedArrowFunctionExpression` before parsing.
+    #[cold]
+    #[inline(never)]
+    fn parse_paren_expr_after_lookahead(
+        &mut self,
+        loc: bun_ast::Loc,
+        level: Level,
+        opts: ParenExprOpts,
+    ) -> Result<Expr, Error> {
         let p = self;
+        let verdict = if level.gt(Level::Assign) {
+            // Only `parseAssignmentExpressionOrHigher` tries for an arrow function.
+            Some(false)
+        } else if !opts.open_paren.is_empty() {
+            // After type parameters the lookahead cannot tell.
+            None
+        } else {
+            p.is_arrow_function_after_open_paren()
+        };
+        match verdict {
+            // `allowAmbiguity`, `allowReturnTypeInArrowFunction`
+            Some(true) => p.parse_paren_expr_as(
+                loc,
+                level,
+                ParenExprOpts {
+                    force_arrow_fn: true,
+                    is_after_question_and_before_colon: false,
+                    ..opts
+                },
+                ArrowAttempt::Undecided,
+            ),
+            Some(false) => p.parse_paren_expr_as(loc, level, opts, ArrowAttempt::NeverArrow),
+            None => p.parse_paren_expr_as(loc, level, opts, ArrowAttempt::Undecided),
+        }
+    }
+
+    /// `parse_paren_expr`, told what it may come to.
+    fn parse_paren_expr_as(
+        &mut self,
+        loc: bun_ast::Loc,
+        level: Level,
+        mut opts: ParenExprOpts,
+        mut attempt: ArrowAttempt,
+    ) -> Result<Expr, Error> {
+        let p = self;
+        let (open_paren, paren_full_start) = if opts.open_paren.is_empty() {
+            (loc, opts.full_start)
+        } else {
+            (opts.open_paren, bun_ast::Loc::EMPTY)
+        };
         let mut items_list = BumpVec::<Expr>::new_in(p.arena);
+        // Where each item ends, its type and its initializer included. Only filled in when parsing for the type checker.
+        let mut item_ends: Vec<bun_ast::Loc> = Vec::new();
+        // Where the first token of each item is, if it is a parameter (a modifier, the dots, the name), and its `TokenFullStart`.
+        // Likewise.
+        let mut item_starts: Vec<(bun_ast::Loc, bun_ast::Loc)> = Vec::new();
+        // Whether each item has a "?" after it, and its type. Likewise.
+        let mut item_types: Vec<crate::sema::ts_syntax::TypeId> = Vec::new();
+        // Where the dots before each item are. Likewise.
+        let mut item_dots: Vec<bun_ast::Loc> = Vec::new();
+        let mut first_modifier: Option<(bun_ast::Loc, bun_ast::Loc)> = None;
         let mut errors = DeferredErrors::default();
         let mut arrow_arg_errors = DeferredArrowArgErrors::default();
         let mut spread_range = bun_ast::Range::default();
         let mut type_colon_range = bun_ast::Range::default();
         let mut comma_after_spread = bun_ast::Loc::EMPTY;
+        // One bit for each item that had a modifier before it: "(public x) => 0". Only set when parsing for the type checker.
+        let mut with_modifiers: u32 = 0;
+        // Those words: which item each is a modifier of.
+        let mut parameter_modifiers: Vec<(usize, crate::sema::ts_syntax::Modifier)> = Vec::new();
+        // "(a, )". Only set in tolerant mode.
+        let mut has_trailing_comma = false;
 
         // Push a scope assuming this is an arrow function. It may not be, in which
         // case we'll need to roll this change back. This has to be done ahead of
@@ -446,8 +880,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse.arrow_arg_errors = arrow_arg_errors;
         p.fn_or_arrow_data_parse.track_arrow_arg_errors = true;
 
+        // `parseParametersWorker`: the parameters of an async arrow function are read in its [Await] context and in no
+        // [Yield] context.
+        let are_async_parameters = opts.is_async
+            && (opts.force_arrow_fn || attempt == ArrowAttempt::ArrowOrBacktrack)
+            && p.lexer.tolerant
+            && !p.lexer.is_log_disabled;
+        if are_async_parameters {
+            p.fn_or_arrow_data_parse.allow_await = AwaitOrYield::AllowExpr;
+            p.fn_or_arrow_data_parse.allow_yield = AwaitOrYield::AllowIdent;
+            p.fn_or_arrow_data_parse.is_top_level = false;
+        }
+
         // Scan over the comma-separated arguments or expressions
+        let saved_contexts = p.lexer.list_contexts;
         while p.lexer.token != T::TCloseParen {
+            if opts.force_arrow_fn {
+                // `parseDelimitedList(PCParameters)`
+                let _ = p.enter_list(ListKind::Parameters);
+                match p.classify_list_token(ListKind::Parameters)? {
+                    ListStep::Element => {}
+                    ListStep::Skipped => continue,
+                    ListStep::Over => break,
+                }
+            }
+            let item_start = p.lexer.loc();
+            let item_full_start = p.lexer.full_start();
             let is_spread = p.lexer.token == T::TDotDotDot;
 
             if is_spread {
@@ -456,50 +914,217 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
             }
 
+            // `parseParameterEx` without `allowAmbiguity`: what starts no parameter name ends the attempt.
+            if p.lexer.tolerant
+                && !opts.force_arrow_fn
+                && attempt != ArrowAttempt::NeverArrow
+                && !p.lexer.is_log_disabled
+                && !matches!(
+                    p.lexer.token,
+                    T::TIdentifier | T::TOpenBracket | T::TOpenBrace | T::TThis
+                )
+                && !(is_spread && items_list.is_empty())
+            {
+                if attempt == ArrowAttempt::ArrowOrBacktrack {
+                    return Err(Error::Backtrack);
+                }
+                attempt = ArrowAttempt::NeverArrow;
+            }
+
             // We don't know yet whether these are arguments or expressions, so parse
             p.latest_arrow_arg_loc = p.lexer.loc();
 
             let mut item = Expr::EMPTY;
-            p.parse_expr_or_bindings(Level::Comma, Some(&mut errors), &mut item)?;
+            let mut has_type = false;
+            let mut item_type = crate::sema::ts_syntax::TypeId::NONE;
+            let question_before = errors.invalid_expr_after_question;
+            // "(...": for TypeScript an arrow function whatever follows (`nextIsParenthesizedArrowFunctionExpression`). Not
+            // where one is only tried for: type parameters came first then, and after them nothing is sure.
+            let is_surely_rest_parameter = is_spread
+                && p.lexer.tolerant
+                && !p.lexer.is_log_disabled
+                && items_list.is_empty()
+                && level.lte(Level::Assign)
+                && attempt == ArrowAttempt::Undecided;
+            if is_surely_rest_parameter {
+                opts.force_arrow_fn = true;
+            }
+            if is_surely_rest_parameter
+                && matches!(p.lexer.token, T::TCloseParen | T::TComma | T::TColon)
+            {
+                // `parseNameOfParameter`: the name is missing. It is put where the dots end (`createMissingIdentifier`).
+                p.lexer.expect(T::TIdentifier)?;
+                p.latest_arrow_arg_loc = spread_range.end();
+                let ref_ = p.store_name_in_ref(b"");
+                item = p.new_expr(
+                    E::Identifier {
+                        ref_,
+                        ..Default::default()
+                    },
+                    p.latest_arrow_arg_loc,
+                );
+            } else if opts.force_arrow_fn
+                && !matches!(
+                    p.lexer.token,
+                    T::TIdentifier | T::TOpenBracket | T::TOpenBrace | T::TThis
+                )
+                && p.lexer.tolerant
+                && !p.lexer.is_log_disabled
+            {
+                let has_modifiers = with_modifiers & (1u32 << items_list.len().min(31)) != 0;
+                item = p.parse_missing_parameter_name(has_modifiers)?;
+            } else if are_async_parameters && p.lexer.is_contextual_keyword(b"await") {
+                // `isParameterNameStart`, `parseBindingIdentifier`: a parameter may be called "await" even there. It is
+                // `checkContextualIdentifier` that objects, in the words `parse_binding` has for it.
+                let range = p.lexer.range();
+                p.log().add_range_error(
+                    Some(p.source),
+                    range,
+                    b"Cannot use \"yield\" or \"await\" here.",
+                );
+                let ref_ = p.store_name_in_ref(p.lexer.identifier);
+                item = Expr::init_identifier(ref_, range.loc);
+                p.lexer.next()?;
+                p.parse_suffix(&mut item, Level::Comma, Some(&mut errors), EFlags::None)?;
+            } else {
+                p.parse_expr_or_bindings(Level::Comma, Some(&mut errors), &mut item)?;
+                if matches!(item.data, js_ast::expr::Data::EMissing(_))
+                    && p.lexer.tolerant
+                    && p.lexer.loc() == p.real_loc(item.loc)
+                {
+                    // `createMissingNode` puts it where the previous token ends. 2695 is reported there.
+                    item.loc = p.lexer.full_start();
+                }
+            }
 
             if is_spread {
-                item = p.new_expr(E::Spread { value: item }, loc);
+                // The type checker goes by where an argument of a call of "async" starts (`parseSpreadElement`).
+                let dots = if p.lexer.tolerant {
+                    spread_range.loc
+                } else {
+                    loc
+                };
+                item = p.new_expr(E::Spread { value: item }, dots);
             }
 
             // Skip over types
-            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon {
-                type_colon_range = p.lexer.range();
+            if Self::IS_TYPESCRIPT_ENABLED
+                && p.lexer.token == T::TColon
+                && attempt != ArrowAttempt::NeverArrow
+            {
+                has_type = true;
+                // Tolerant mode reports the first ":" if this turns out to be no arrow function.
+                if type_colon_range.len == 0 || !p.lexer.tolerant {
+                    type_colon_range = p.lexer.range();
+                }
                 p.lexer.next()?;
                 p.skip_type_script_type(Level::Lowest)?;
+                item_type = p.kept_type_or_error();
             }
 
             // There may be a "=" after the type (but not after an "as" cast)
             if Self::IS_TYPESCRIPT_ENABLED
                 && p.lexer.token == T::TEquals
                 && !p.forbid_suffix_after_as_loc.eql(p.lexer.loc())
+                // `parseParenthesizedExpression`: only a parameter goes on with "=", after its "?" or its type.
+                && (has_type
+                    || !p.lexer.tolerant
+                    || errors.invalid_expr_after_question.map(|r| r.loc.start)
+                        != question_before.map(|r| r.loc.start))
             {
                 p.lexer.next()?;
                 let rhs = p.parse_expr(Level::Comma)?;
-                item = Expr::assign(item, rhs);
+                item = match item.data {
+                    // "...a: T = x": the initializer belongs to the parameter (`parseParameterEx`).
+                    js_ast::expr::Data::ESpread(spread) if p.lexer.tolerant => p.new_expr(
+                        E::Spread {
+                            value: p.assign(spread.value, rhs),
+                        },
+                        item.loc,
+                    ),
+                    _ => p.assign(item, rhs),
+                };
             }
 
             items_list.push(item);
+            if p.keeps_type_syntax() {
+                item_ends.push(p.lexer.full_start());
+                item_types.push(item_type);
+                item_starts.push(
+                    first_modifier
+                        .take()
+                        .unwrap_or((item_start, item_full_start)),
+                );
+            }
 
             if p.lexer.token != T::TComma {
+                if Self::IS_TYPESCRIPT_ENABLED
+                    && p.lexer.token != T::TCloseParen
+                    && p.lexer.tolerant
+                    && !is_spread
+                    && level.lte(Level::Assign)
+                    && attempt != ArrowAttempt::NeverArrow
+                    && p.is_parameter_modifier(item, items_list.len() == 1 || opts.force_arrow_fn)
+                {
+                    // `parseParameterEx`: the word was a modifier of the parameter that starts here, so this is an arrow function.
+                    let _ = items_list.pop();
+                    let _ = item_ends.pop();
+                    let _ = item_types.pop();
+                    first_modifier = item_starts.pop();
+                    with_modifiers |= 1u32 << items_list.len().min(31);
+                    if let js_ast::expr::Data::EIdentifier(word) = item.data
+                        && let Some(flag) = crate::lexer::PropertyModifierKeyword::find(
+                            p.load_name_from_ref(word.ref_),
+                        )
+                        .and_then(crate::sema::keep::modifier_flag)
+                    {
+                        let modifier = crate::sema::ts_syntax::Modifier {
+                            flag,
+                            loc: p.real_loc(item.loc),
+                            decorator: None,
+                        };
+                        parameter_modifiers.push((items_list.len(), modifier));
+                    }
+                    opts.force_arrow_fn = true;
+                    continue;
+                }
+                // `parseDelimitedList(PCParameters)`: the list goes on after a missing comma.
+                if opts.force_arrow_fn
+                    && p.recover_missing_comma(ListKind::Parameters, item_start)?
+                {
+                    continue;
+                }
                 break;
             }
 
             // Spread arguments must come last. If there's a spread argument followed
-            if is_spread {
+            // by a comma, remember where. (TypeScript's parser takes the dots before any parameter: it is
+            // `checkGrammarParameterList` that objects.)
+            if is_spread && !p.lexer.tolerant {
                 comma_after_spread = p.lexer.loc();
             }
 
             // Eat the comma token
             p.lexer.next()?;
+            has_trailing_comma =
+                p.lexer.token == T::TCloseParen && p.lexer.tolerant && !p.lexer.is_log_disabled;
         }
+        p.lexer.list_contexts = saved_contexts;
         let items: &'a mut [Expr] = items_list.into_bump_slice_mut();
 
+        // `parseParenthesizedArrowFunctionExpression`: an attempt is given up if the list does not come to its ")".
+        if p.lexer.token != T::TCloseParen && attempt == ArrowAttempt::ArrowOrBacktrack {
+            return Err(Error::Backtrack);
+        }
+
         // The parenthetical construct must end with a close parenthesis
+        let close_paren_loc = p.lexer.loc();
+        let before_close_paren = p.lexer.full_start();
+        if items.is_empty() && attempt == ArrowAttempt::NeverArrow && !opts.is_async {
+            // `parseParenthesizedExpression`: an expression is expected where the ")" is.
+            let close_paren = p.lexer.range();
+            p.lexer.ts_error(close_paren, 1109);
+        }
         p.lexer.expect(T::TCloseParen)?;
 
         // Restore "in" operator status before we parse the arrow function body
@@ -508,11 +1133,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Also restore "await" and "yield" expression errors
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
-        // Are these arguments to an arrow function?
-        let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan;
-        if is_arrow_fn
+        // Are these arguments to an arrow function? (`parseParenthesizedArrowFunctionExpression`: an attempt is kept
+        // before a "{" as well, where the "=>" is then missed.)
+        let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan
+            || (p.lexer.token == T::TOpenBrace
+                && (attempt == ArrowAttempt::ArrowOrBacktrack
+                    || (attempt == ArrowAttempt::Undecided
+                        && p.lexer.tolerant
+                        && !p.lexer.is_log_disabled)));
+        if (is_arrow_fn
             || opts.force_arrow_fn
-            || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
+            || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon))
+            // TypeScript tries for an arrow function in `parseAssignmentExpressionOrHigher` only: an operand is what is in the
+            // parentheses, and what follows them is left to whoever asked for it.
+            && !(level.gt(Level::Assign)
+                && !opts.force_arrow_fn
+                && p.lexer.tolerant
+                && !p.lexer.is_log_disabled)
+            && attempt != ArrowAttempt::NeverArrow
         {
             // Arrow functions are not allowed inside certain expressions
             if level.gt(Level::Assign) {
@@ -522,6 +1160,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut invalid_log = LocList::new_in(p.arena);
             let mut args = BumpVec::<G::Arg>::new_in(p.arena);
+            let mut this_parameter = bun_ast::Loc::EMPTY;
+            let mut return_type = crate::sema::ts_syntax::TypeId::NONE;
 
             if opts.is_async {
                 // markl,oweredsyntaxpoksdpokasd
@@ -530,6 +1170,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // First, try converting the expressions to bindings
             for i in 0..items.len() {
                 let mut is_spread = false;
+                let dots = p.real_loc(items[i].loc);
                 if let js_ast::expr::Data::ESpread(v) = &items[i].data {
                     is_spread = true;
                     let inner = v.value;
@@ -542,15 +1183,63 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut invalid_log,
                     is_spread,
                 );
+                // `parseParameterEx` takes `this` for a parameter of any function.
+                let is_this = tuple.binding.is_none()
+                    && i == 0
+                    && !is_spread
+                    && p.lexer.tolerant
+                    && matches!(item.data, js_ast::expr::Data::EThis(_));
                 // double allocations
-                args.push(G::Arg {
-                    binding: tuple.binding.unwrap_or(Binding {
+                let binding = if is_this {
+                    let _ = invalid_log.pop();
+                    this_parameter = p.real_loc(item.loc);
+                    let r#ref = p.store_name_in_ref(b"this");
+                    p.b(B::Identifier { r#ref }, item.loc)
+                } else {
+                    tuple.binding.unwrap_or(Binding {
                         data: B::B::BMissing(B::Missing {}),
                         loc: item.loc,
-                    }),
+                    })
+                };
+                if p.keeps_type_syntax() {
+                    item_dots.push(if is_spread { dots } else { bun_ast::Loc::EMPTY });
+                }
+                if is_this {
+                    args.push(G::Arg {
+                        binding,
+                        ..Default::default()
+                    });
+                    continue;
+                }
+                let mut binding = binding;
+                let is_typescript_ctor_field = with_modifiers & (1u32 << i.min(31)) != 0;
+                if is_typescript_ctor_field {
+                    let modifiers: Vec<crate::sema::ts_syntax::Modifier> = parameter_modifiers
+                        .iter()
+                        .filter(|modifier| modifier.0 == i)
+                        .map(|modifier| modifier.1)
+                        .collect();
+                    p.note_parameter_modifiers(&mut binding.loc, &modifiers);
+                }
+                args.push(G::Arg {
+                    binding,
                     default: tuple.expr,
+                    is_typescript_ctor_field,
                     ..Default::default()
                 });
+            }
+
+            // `parseParameterEx`: an attempt is given up at what can be no parameter.
+            if !invalid_log.is_empty() && attempt == ArrowAttempt::ArrowOrBacktrack {
+                return Err(Error::Backtrack);
+            }
+            // The parentheses hold an expression then, and the "=>" or "{" is left to the caller.
+            if !invalid_log.is_empty()
+                && !opts.force_arrow_fn
+                && p.lexer.tolerant
+                && !p.lexer.is_log_disabled
+            {
+                is_arrow_fn = false;
             }
 
             let mut arrow_data = FnOrArrowDataParse {
@@ -568,7 +1257,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
-                if opts.is_after_question_and_before_colon {
+                if opts.force_arrow_fn && p.lexer.tolerant && !p.lexer.is_log_disabled {
+                    // `allowAmbiguity`: the ":" starts the return type, whatever follows the type.
+                    is_arrow_fn = true;
+                    p.lexer.next()?;
+                    p.skip_typescript_return_type()?;
+                } else if opts.is_after_question_and_before_colon {
                     // Only do this very expensive check if we must
                     is_arrow_fn = p
                         .is_type_script_arrow_return_type_after_question_and_before_colon(
@@ -583,11 +1277,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Otherwise, do the less expensive check
                     is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking();
                 }
+                if is_arrow_fn {
+                    return_type = p.kept_type_or_error();
+                }
             }
 
             if is_arrow_fn || opts.force_arrow_fn {
                 p.maybe_comma_spread_error(comma_after_spread);
                 p.log_arrow_arg_errors(&mut arrow_arg_errors);
+                if !this_parameter.is_empty() {
+                    // `checkParameter`
+                    p.log().add_range_error(
+                        Some(p.source),
+                        bun_ast::Range {
+                            loc: this_parameter,
+                            len: 4,
+                        },
+                        b"TC2730",
+                    );
+                }
 
                 // Now that we've decided we're an arrow function, report binding pattern
                 // conversion errors
@@ -596,13 +1304,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc_.add_error(p.log(), p.source);
                     }
                 }
+                if p.keeps_type_syntax() {
+                    p.note_arrow_parameters(
+                        &mut args,
+                        &item_starts,
+                        &item_ends,
+                        &item_types,
+                        &item_dots,
+                    );
+                }
                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
-                let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
+                let has_arrow_token = p.lexer.token == T::TEqualsGreaterThan;
+                let body_flags = if opts.is_after_question_and_before_colon {
+                    EFlags::AfterQuestionAndBeforeColon
+                } else {
+                    EFlags::None
+                };
+                let mut arrow =
+                    p.parse_arrow_body_with_flags(args_slice, &mut arrow_data, body_flags)?;
                 arrow.is_async = opts.is_async;
                 arrow.has_rest_arg = spread_range.len > 0;
                 p.pop_scope();
-                return Ok(p.new_expr(arrow, loc));
+                if !has_arrow_token
+                    && arrow.prefer_expr
+                    && p.lexer.tolerant
+                    && p.lexer.token != T::TComma
+                {
+                    // `parseAssignmentExpressionOrHigher` returns the arrow function as it is. After a body that is missing, the
+                    // next token must not be taken for a suffix of it.
+                    p.forbid_suffix_after_as_loc = p.lexer.loc();
+                }
+                let mut arrow = p.new_expr(arrow, loc);
+                p.mark_comments_before(&mut arrow.loc, loc, opts.full_start);
+                if return_type.is_some() {
+                    p.note_kept_type(&mut arrow.loc, Mark::ReturnType, return_type);
+                }
+                return Ok(arrow);
             }
+        }
+
+        if attempt == ArrowAttempt::ArrowOrBacktrack {
+            return Err(Error::Backtrack);
         }
 
         // If we get here, it's not an arrow function so undo the pushing of the
@@ -612,26 +1354,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // If this isn't an arrow function, then types aren't allowed
         if type_colon_range.len > 0 {
-            p.log()
-                .add_range_error(Some(p.source), type_colon_range, b"Unexpected \":\"");
-            return Err(crate::Error::SyntaxError);
+            if !p.lexer.tolerant || p.lexer.is_log_disabled {
+                p.log()
+                    .add_range_error(Some(p.source), type_colon_range, b"Unexpected \":\"");
+                return Err(crate::Error::SyntaxError);
+            }
+            // `parseParenthesizedExpression`: the ")" is expected at the ":".
+            p.lexer.ts_expected(type_colon_range, ")");
         }
 
         // Are these arguments for a call to a function named "async"?
         if opts.is_async {
             p.log_expr_errors(&mut errors);
             let async_ref = p.store_name_in_ref(b"async");
-            let async_expr = p.new_expr(
+            let async_expr = p.new_expr_ending_at(
                 E::Identifier {
                     ref_: async_ref,
                     ..Default::default()
                 },
                 loc,
+                bun_ast::Loc {
+                    start: p.real_loc(loc).start + b"async".len() as i32,
+                },
             );
             return Ok(p.new_expr(
                 E::Call {
                     target: async_expr,
                     args: ExprNodeList::from_arena_slice(items),
+                    // The type checker tells calls apart by it. The printer would add a mapping for it.
+                    close_paren_loc: if p.keeps_type_syntax() {
+                        close_paren_loc
+                    } else {
+                        bun_ast::Loc::EMPTY
+                    },
                     ..Default::default()
                 },
                 loc,
@@ -642,13 +1397,58 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if items.len() > 0 {
             p.log_expr_errors(&mut errors);
             if spread_range.len > 0 {
-                p.log()
-                    .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"");
-                return Err(crate::Error::SyntaxError);
+                if !p.lexer.tolerant || p.lexer.is_log_disabled {
+                    p.log().add_range_error(
+                        Some(p.source),
+                        type_colon_range,
+                        b"Unexpected \"...\"",
+                    );
+                    return Err(crate::Error::SyntaxError);
+                }
+                // `parsePrimaryExpression`: no expression starts with the dots.
+                p.lexer.ts_error(spread_range, 1109);
+                for item in items.iter_mut() {
+                    if let js_ast::expr::Data::ESpread(spread) = item.data {
+                        *item = spread.value;
+                    }
+                }
             }
 
-            let mut value = Expr::join_all_with_comma(items);
+            let mut value = if p.lexer.tolerant {
+                p.join_with_commas_keeping_missing(items, &item_ends)
+            } else {
+                Expr::join_all_with_comma(items)
+            };
+            if has_trailing_comma {
+                // `parseExpression`: an operand is expected after every ",".
+                p.lexer.ts_error(
+                    bun_ast::Range {
+                        loc: close_paren_loc,
+                        len: 1,
+                    },
+                    1109,
+                );
+                let missing_loc = before_close_paren;
+                let missing = p.new_expr(E::Missing {}, missing_loc);
+                let ends = [missing_loc, missing_loc];
+                value = p.join_with_commas_keeping_missing(&[value, missing], &ends);
+            }
             p.mark_expr_as_parenthesized(&mut value);
+            p.mark_paren(&mut value, open_paren, paren_full_start);
+            return Ok(value);
+        }
+
+        if p.lexer.tolerant && !p.lexer.is_log_disabled {
+            // "()", or "<T>()" that turned out to be a cast: 1109 at the ")". Not said twice.
+            p.lexer.ts_error(
+                bun_ast::Range {
+                    loc: close_paren_loc,
+                    len: 1,
+                },
+                1109,
+            );
+            let mut value = p.new_expr(E::Missing {}, close_paren_loc);
+            p.mark_paren(&mut value, open_paren, paren_full_start);
             return Ok(value);
         }
 
@@ -657,8 +1457,84 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Err(crate::Error::SyntaxError)
     }
 
+    /// `parseParameterEx`: the items of a parenthesized list are the parameters `args`. Of each item: where its first token is and fully
+    /// starts, where it ends, whether a "?" follows it, its type, and where the dots before it are.
+    #[cold]
+    #[inline(never)]
+    fn note_arrow_parameters(
+        &mut self,
+        args: &mut [G::Arg],
+        starts: &[(bun_ast::Loc, bun_ast::Loc)],
+        ends: &[bun_ast::Loc],
+        types: &[crate::sema::ts_syntax::TypeId],
+        dots: &[bun_ast::Loc],
+    ) {
+        for (i, arg) in args.iter_mut().enumerate() {
+            let at = &mut arg.binding.loc;
+            if !dots[i].is_empty() {
+                self.note_loc(at, Mark::DotDotDot, dots[i]);
+            }
+            let (start, full_start) = starts[i];
+            if start != self.real_loc(*at) {
+                self.note_loc(at, Mark::DeclarationStart, start);
+            }
+            self.note_range(at, full_start, ends[i]);
+            if types[i].is_some() {
+                self.note_kept_type(at, Mark::Annotation, types[i]);
+            }
+        }
+    }
+
+    /// `Expr::join_all_with_comma` drops missing operands. TypeScript keeps them (`makeBinaryExpression`), and reports 2695 for
+    /// the operand to their left. The ")" has been taken by now. `ends`: where each of `items` ends.
+    #[cold]
+    #[inline(never)]
+    fn join_with_commas_keeping_missing(&mut self, items: &[Expr], ends: &[bun_ast::Loc]) -> Expr {
+        let mut joined = items[0];
+        for (i, item) in items.iter().enumerate().skip(1) {
+            joined = self.new_expr_ending_at(
+                E::Binary {
+                    op: js_ast::op::Code::BinComma,
+                    left: joined,
+                    right: *item,
+                },
+                joined.loc,
+                ends.get(i).copied().unwrap_or(bun_ast::Loc::EMPTY),
+            );
+        }
+        joined
+    }
+
+    /// `parseNameOfParameter` where no name starts: reports it and returns a name that is missing.
+    #[cold]
+    #[inline(never)]
+    fn parse_missing_parameter_name(&mut self, has_modifiers: bool) -> Result<Expr, Error> {
+        let p = self;
+        // `createIdentifierWithDiagnostic`
+        let range = p.lexer.range();
+        let code = if p.lexer.token == T::TPrivateIdentifier {
+            18009
+        } else if p.lexer.token.is_reserved_word() || p.lexer.token == T::TEscapedKeyword {
+            1359
+        } else {
+            1003
+        };
+        p.lexer.ts_error(range, code);
+        p.latest_arrow_arg_loc = p.lexer.full_start();
+        let ref_ = p.store_name_in_ref(b"");
+        let name = Expr::init_identifier(ref_, p.latest_arrow_arg_loc);
+        // A modifier keyword that can be no name is skipped, so that the list makes progress.
+        if !has_modifiers && p.is_modifier_kind() {
+            p.lexer.next()?;
+        }
+        Ok(name)
+    }
+
     pub(crate) fn parse_label_name(&mut self) -> Result<Option<js_ast::LocRef>, Error> {
         let p = self;
+        if p.lexer.token != T::TSemicolon && p.lexer.tolerant && !p.lexer.is_log_disabled {
+            return p.parse_identifier_unless_at_semicolon();
+        }
         if p.lexer.token != T::TIdentifier || p.lexer.has_newline_before {
             return Ok(None);
         }
@@ -671,6 +1547,56 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Some(name))
     }
 
+    /// `parseIdentifierUnlessAtSemicolon`
+    #[cold]
+    #[inline(never)]
+    fn parse_identifier_unless_at_semicolon(&mut self) -> Result<Option<js_ast::LocRef>, Error> {
+        let p = self;
+        // `canParseSemicolon`
+        if p.lexer.has_newline_before
+            || matches!(
+                p.lexer.token,
+                T::TSemicolon | T::TCloseBrace | T::TEndOfFile
+            )
+        {
+            return Ok(None);
+        }
+        if !p.is_identifier_in_context() {
+            // `createIdentifierWithDiagnostic`
+            let range = p.lexer.range();
+            if p.lexer.token != T::TPrivateIdentifier {
+                // Nothing is consumed: the ";" that is missed next is missed at the same place, which is not said again.
+                let is_reserved_word =
+                    p.lexer.token.is_reserved_word() || p.lexer.token == T::TEscapedKeyword;
+                p.lexer
+                    .ts_error(range, if is_reserved_word { 1359 } else { 1003 });
+                return Ok(Some(LocRef {
+                    loc: p.lexer.full_start(),
+                    ref_: p.store_name_in_ref(b""),
+                }));
+            }
+            // A private name is objected to, and taken for the name all the same.
+            p.lexer.ts_error(range, 18016);
+        }
+        let name = LocRef {
+            loc: p.lexer.loc(),
+            ref_: p.store_name_in_ref(p.lexer.identifier),
+        };
+        p.lexer.next()?;
+        Ok(Some(name))
+    }
+
+    /// `isIdentifier`: "await" is no name in an [Await] context, nor "yield" in a [Yield] context.
+    pub(crate) fn is_identifier_in_context(&self) -> bool {
+        let data = &self.fn_or_arrow_data_parse;
+        self.lexer.token == T::TIdentifier
+            && !(self.lexer.identifier == b"await"
+                && data.allow_await != AwaitOrYield::AllowIdent
+                // TypeScript reads the statements of a file in no [Await] context, whatever can be awaited there.
+                && !(data.is_top_level && data.allow_await == AwaitOrYield::AllowExpr))
+            && !(self.lexer.identifier == b"yield" && data.allow_yield != AwaitOrYield::AllowIdent)
+    }
+
     pub(crate) fn parse_class_stmt(
         &mut self,
         loc: bun_ast::Loc,
@@ -678,7 +1604,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt, Error> {
         let p = self;
         let mut name: Option<js_ast::LocRef> = None;
-        let class_keyword = p.lexer.range();
+        let mut class_keyword = p.lexer.range();
         if p.lexer.token == T::TClass {
             //marksyntaxfeature
             p.lexer.next()?;
@@ -688,9 +1614,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let is_identifier = p.lexer.token == T::TIdentifier;
 
-        if !opts.is_name_optional
+        // `parseNameOfClassDeclarationOrExpression`: for TypeScript's parser the name is always optional. Its checker reports 1211.
+        if (!opts.is_name_optional && !p.lexer.tolerant)
             || (is_identifier
-                && (!Self::IS_TYPESCRIPT_ENABLED || p.lexer.identifier != b"implements"))
+                && (!Self::IS_TYPESCRIPT_ENABLED
+                    || p.lexer.identifier != b"implements"
+                    // `isImplementsClause`: for TypeScript it is the name unless a name or a keyword follows it.
+                    || (p.lexer.tolerant
+                        && !p.next_token_matches(|p| p.lexer.is_identifier_or_keyword()))))
         {
             let name_loc = p.lexer.loc();
             let name_text = p.lexer.identifier;
@@ -709,7 +1640,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 p.log().add_range_error(
                     Some(p.source),
-                    p.lexer.range(),
+                    if p.lexer.tolerant {
+                        // `checkContextualIdentifier` reports the name. The lexer is already past it.
+                        bun_ast::Range {
+                            loc: name_loc,
+                            len: name_text.len() as i32,
+                        }
+                    } else {
+                        p.lexer.range()
+                    },
                     b"Cannot use \"await\" as an identifier here",
                 );
             }
@@ -722,15 +1661,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name.as_mut().unwrap().ref_ = p
                     .declare_symbol(js_ast::symbol::Kind::Class, name_loc, name_text)
                     .expect("unreachable");
+            } else if p.keeps_type_syntax() {
+                name = Some(p.keep_name(name_loc, name_text));
             }
         }
 
         // Even anonymous classes can have TypeScript type parameters
         if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_parameters(
-                TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
-                    | TypeParameterFlag::ALLOW_CONST_MODIFIER,
-            )?;
+            p.skip_class_type_parameters(&mut class_keyword.loc)?;
         }
         let mut class_opts = ParseClassOptions {
             allow_ts_decorators: true,
@@ -752,16 +1690,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if opts.scope.is_namespace() && opts.is_export {
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
+                if p.keeps_type_syntax() {
+                    let is_export = opts.is_export;
+                    return Ok(p.s(S::Class { class, is_export }, loc));
+                }
 
-                return Ok(p.s(S::TypeScript {}, loc));
+                return Ok(p.s(S::TypeScript::default(), loc));
             }
         }
 
         p.pop_scope();
+        // `parse_type_script_namespace_stmt` unwraps the name of each exported class.
+        let is_nameless_in_namespace =
+            p.lexer.tolerant && class.class_name.is_none() && opts.scope.is_namespace();
         Ok(p.s(
             S::Class {
                 class,
-                is_export: opts.is_export,
+                is_export: opts.is_export && !is_nameless_in_namespace,
             },
             loc,
         ))
@@ -819,6 +1764,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if opts.lexical_decl == LexicalDecl::AllowAll
                         || !p.lexer.has_newline_before
                         || p.lexer.token == T::TOpenBracket
+                        // `isLetDeclaration` does not ask about line breaks.
+                        || p.lexer.tolerant
                     {
                         if opts.lexical_decl != LexicalDecl::AllowAll {
                             p.forbid_lexical_decl(token_range.loc);
@@ -854,7 +1801,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.lexer.next()?;
 
-            if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
+            // `isUsingDeclaration`: TypeScript's parser also takes an object pattern. Its checker reports 1492.
+            if (p.lexer.token == T::TIdentifier
+                || (p.lexer.token == T::TOpenBrace && p.lexer.tolerant))
+                && !p.lexer.has_newline_before
+                // `nextTokenIsBindingIdentifierOrStartOfDestructuringOnSameLineDisallowOf`: in `for (using of x)`, "using" is a name.
+                && !(p.lexer.tolerant
+                    && opts.is_for_loop_init
+                    && p.lexer.is_contextual_keyword(b"of")
+                    && !p.next_token_matches(|p| {
+                        matches!(p.lexer.token, T::TEquals | T::TSemicolon | T::TColon)
+                    }))
+            {
                 if opts.lexical_decl != LexicalDecl::AllowAll {
                     p.forbid_lexical_decl(token_range.loc);
                 }
@@ -881,7 +1839,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         S::Local {
                             kind: js_ast::LocalKind::KUsing,
                             decls,
-                            is_export: false,
+                            // The "export" is an error, but it makes the file a module.
+                            is_export: p.lexer.tolerant && opts.is_export,
                             ..Default::default()
                         },
                         token_range.loc,
@@ -889,7 +1848,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     decls: decls_slice,
                 });
             }
-        } else if p.fn_or_arrow_data_parse.allow_await == AwaitOrYield::AllowExpr && raw == b"await"
+        } else if raw == b"await"
+            && (p.fn_or_arrow_data_parse.allow_await == AwaitOrYield::AllowExpr
+                || (p.lexer.tolerant && !p.lexer.is_log_disabled && p.is_await_using_declaration()))
         {
             // Handle an "await using" declaration
             if opts.is_export {
@@ -912,7 +1873,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // const using_loc = p.saveExprCommentsHere();
                     let using_range = p.lexer.range();
                     p.lexer.next()?;
-                    if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
+                    if (p.lexer.token == T::TIdentifier
+                        || (p.lexer.token == T::TOpenBrace && p.lexer.tolerant))
+                        && !p.lexer.has_newline_before
+                    {
+                        if p.lexer.tolerant && p.is_empty_declaration_list_before_of(using_range) {
+                            return Ok(ExprOrLetStmt {
+                                stmt_or_expr: js_ast::StmtOrExpr::Stmt(p.s(
+                                    S::Local {
+                                        kind: js_ast::LocalKind::KAwaitUsing,
+                                        ..Default::default()
+                                    },
+                                    token_range.loc,
+                                )),
+                                ..Default::default()
+                            });
+                        }
+
                         // It's an "await using" declaration if we get here
                         if opts.lexical_decl != LexicalDecl::AllowAll {
                             p.forbid_lexical_decl(using_range.loc);
@@ -936,7 +1913,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 S::Local {
                                     kind: js_ast::LocalKind::KAwaitUsing,
                                     decls,
-                                    is_export: false,
+                                    is_export: p.lexer.tolerant && opts.is_export,
                                     ..Default::default()
                                 },
                                 token_range.loc,
@@ -959,7 +1936,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
 
             if p.lexer.token == T::TAsteriskAsterisk {
-                p.lexer.unexpected()?;
+                if p.lexer.tolerant && !p.lexer.is_log_disabled {
+                    // `parseUnaryExpressionOrHigher`: the await expression is on the left of "**".
+                    let range = p.lexer.range_from(token_range.loc);
+                    p.lexer.ts_error_about(range, 17006, b"await");
+                } else {
+                    p.lexer.unexpected()?;
+                }
             }
             p.parse_suffix(&mut value, Level::Prefix, None, EFlags::None)?;
             let mut expr = p.new_expr(E::Await { value }, token_range.loc);
@@ -1018,10 +2001,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let ref_ = p.store_name_in_ref(name);
                 p.lexer.next()?;
-                return Ok(p.b(B::Identifier { r#ref: ref_ }, loc));
+                let mut binding = p.b(B::Identifier { r#ref: ref_ }, loc);
+                if Self::IS_TYPESCRIPT_ENABLED && !ref_.is_source_contents_slice() {
+                    p.note_token_full_start(&mut binding.loc, Mark::PatternEnd);
+                }
+                return Ok(binding);
             }
             T::TOpenBracket => {
-                if !opts.is_using_statement {
+                // `parseVariableDeclarationWorker` takes a pattern after "using" too.
+                if !opts.is_using_statement || p.lexer.tolerant {
                     p.lexer.next()?;
                     let mut is_single_line = !p.lexer.has_newline_before;
                     let mut items = BumpVec::<ArrayBinding>::new_in(p.arena);
@@ -1031,16 +2019,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let old_allow_in = p.allow_in;
                     p.allow_in = true;
 
+                    let saved_contexts = p.enter_list(ListKind::ArrayBindingElements);
                     while p.lexer.token != T::TCloseBracket {
+                        match p.classify_list_token(ListKind::ArrayBindingElements)? {
+                            ListStep::Element => {}
+                            ListStep::Skipped => continue,
+                            ListStep::Over => break,
+                        }
+                        let element_start = p.lexer.loc();
                         if p.lexer.token == T::TComma {
+                            let mut hole = Binding {
+                                data: B::B::BMissing(B::Missing {}),
+                                loc: p.lexer.loc(),
+                            };
+                            p.note_token_full_start(&mut hole.loc, Mark::OmittedExpression);
                             items.push(ArrayBinding {
-                                binding: Binding {
-                                    data: B::B::BMissing(B::Missing {}),
-                                    loc: p.lexer.loc(),
-                                },
+                                binding: hole,
                                 default_value: None,
                             });
                         } else {
+                            let is_rest = p.lexer.token == T::TDotDotDot;
                             if p.lexer.token == T::TDotDotDot {
                                 p.lexer.next()?;
                                 has_spread = true;
@@ -1051,10 +2049,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             }
 
-                            let binding = p.parse_binding(opts)?;
+                            // `parseArrayBindingElement`: what is said of a private name that is an element does not depend on what
+                            // the pattern is for.
+                            let mut binding = p.parse_binding(ParseBindingOptions::default())?;
+                            if is_rest {
+                                p.note_loc(&mut binding.loc, Mark::DotDotDot, element_start);
+                            }
 
                             let mut default_value: Option<Expr> = None;
-                            if !has_spread && p.lexer.token == T::TEquals {
+                            // `parseArrayBindingElement`: TypeScript's parser takes an initializer after any element.
+                            if p.lexer.token == T::TEquals && (!has_spread || p.lexer.tolerant) {
                                 p.lexer.next()?;
                                 default_value = Some(p.parse_expr(Level::Comma)?);
                             }
@@ -1066,16 +2070,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // Commas after spread elements are not allowed
                             if has_spread && p.lexer.token == T::TComma {
-                                p.log().add_range_error(
-                                    Some(p.source),
-                                    p.lexer.range(),
-                                    b"Unexpected \",\" after rest pattern",
-                                );
-                                return Err(crate::Error::SyntaxError);
+                                if !p.lexer.tolerant {
+                                    p.log().add_range_error(
+                                        Some(p.source),
+                                        p.lexer.range(),
+                                        b"Unexpected \",\" after rest pattern",
+                                    );
+                                    return Err(crate::Error::SyntaxError);
+                                }
+                                if is_rest {
+                                    p.check_comma_after_rest_element(T::TCloseBracket);
+                                }
                             }
                         }
 
                         if p.lexer.token != T::TComma {
+                            if p.recover_missing_comma(
+                                ListKind::ArrayBindingElements,
+                                element_start,
+                            )? {
+                                continue;
+                            }
                             break;
                         }
 
@@ -1088,6 +2103,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             is_single_line = false;
                         }
                     }
+                    p.lexer.list_contexts = saved_contexts;
 
                     p.allow_in = old_allow_in;
 
@@ -1095,18 +2111,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         is_single_line = false;
                     }
                     p.lexer.expect(T::TCloseBracket)?;
-                    return Ok(p.b(
+                    let mut binding = p.b(
                         B::Array {
                             items: bun_ast::StoreSlice::new_mut(items.into_bump_slice_mut()),
                             has_spread,
                             is_single_line,
                         },
                         loc,
-                    ));
+                    );
+                    p.note_token_full_start(&mut binding.loc, Mark::PatternEnd);
+                    return Ok(binding);
                 }
             }
             T::TOpenBrace => {
-                if !opts.is_using_statement {
+                if !opts.is_using_statement || p.lexer.tolerant {
                     // p.markSyntaxFeature(compat.Destructuring, p.lexer.Range())
                     p.lexer.next()?;
                     let mut is_single_line = !p.lexer.has_newline_before;
@@ -1116,22 +2134,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let old_allow_in = p.allow_in;
                     p.allow_in = true;
 
+                    let saved_contexts = p.enter_list(ListKind::ObjectBindingElements);
                     while p.lexer.token != T::TCloseBrace {
+                        match p.classify_list_token(ListKind::ObjectBindingElements)? {
+                            ListStep::Element => {}
+                            ListStep::Skipped => continue,
+                            ListStep::Over => break,
+                        }
+                        let element_start = p.lexer.loc();
+
                         let property = p.parse_property_binding()?;
                         let is_spread = property.flags.contains(Flags::Property::IsSpread);
                         properties.push(property);
 
                         // Commas after spread elements are not allowed
                         if is_spread && p.lexer.token == T::TComma {
-                            p.log().add_range_error(
-                                Some(p.source),
-                                p.lexer.range(),
-                                b"Unexpected \",\" after rest pattern",
-                            );
-                            return Err(crate::Error::SyntaxError);
+                            if !p.lexer.tolerant {
+                                p.log().add_range_error(
+                                    Some(p.source),
+                                    p.lexer.range(),
+                                    b"Unexpected \",\" after rest pattern",
+                                );
+                                return Err(crate::Error::SyntaxError);
+                            }
+                            p.check_comma_after_rest_element(T::TCloseBrace);
                         }
 
                         if p.lexer.token != T::TComma {
+                            if p.recover_missing_comma(
+                                ListKind::ObjectBindingElements,
+                                element_start,
+                            )? {
+                                continue;
+                            }
                             break;
                         }
 
@@ -1143,6 +2178,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             is_single_line = false;
                         }
                     }
+                    p.lexer.list_contexts = saved_contexts;
 
                     p.allow_in = old_allow_in;
 
@@ -1151,7 +2187,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     p.lexer.expect(T::TCloseBrace)?;
 
-                    return Ok(p.b(
+                    let mut binding = p.b(
                         B::Object {
                             properties: bun_ast::StoreSlice::new_mut(
                                 properties.into_bump_slice_mut(),
@@ -1159,17 +2195,63 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             is_single_line,
                         },
                         loc,
-                    ));
+                    );
+                    p.note_token_full_start(&mut binding.loc, Mark::PatternEnd);
+                    return Ok(binding);
                 }
             }
             _ => {}
         }
 
+        if p.lexer.token == T::TPrivateIdentifier && p.lexer.tolerant && !p.lexer.is_log_disabled {
+            // `createIdentifierWithDiagnostic`: objected to, and taken for the name all the same.
+            let range = p.lexer.range();
+            let code = match opts.private_name_code {
+                0 => 18016,
+                code => u32::from(code),
+            };
+            p.lexer.ts_error(range, code);
+            let ref_ = p.store_name_in_ref(p.lexer.identifier);
+            p.lexer.next()?;
+            return Ok(p.b(B::Identifier { r#ref: ref_ }, loc));
+        }
+
+        if p.lexer.tolerant && !p.lexer.is_log_disabled {
+            return p.parse_missing_binding_name();
+        }
         p.lexer.expect(T::TIdentifier)?;
         Ok(Binding {
             loc,
             data: B::B::BMissing(B::Missing {}),
         })
+    }
+
+    /// `createIdentifierWithDiagnostic`, `createMissingIdentifier`: reports the missing name and consumes nothing. The name is where the
+    /// previous token ends.
+    #[cold]
+    #[inline(never)]
+    fn parse_missing_binding_name(&mut self) -> Result<Binding, Error> {
+        let loc = self.lexer.full_start();
+        if self.lexer.token == T::TEndOfFile {
+            // At the end of the file the error is there too.
+            self.lexer.ts_error(bun_ast::Range { loc, len: 0 }, 1003);
+        } else {
+            self.lexer.expect(T::TIdentifier)?;
+        }
+        Ok(Binding {
+            loc,
+            data: B::B::BMissing(B::Missing {}),
+        })
+    }
+
+    /// `checkGrammarBindingElement`: 1013 for a comma after a rest element that is the last of its pattern. Call at the comma.
+    #[cold]
+    #[inline(never)]
+    fn check_comma_after_rest_element(&mut self, closing: T) {
+        if self.next_token_matches(|p| p.lexer.token == closing) {
+            let comma = self.lexer.range();
+            self.lexer.ts_grammar_error(comma, 1013);
+        }
     }
 
     pub(crate) fn parse_property_binding(&mut self) -> Result<B::Property, Error> {
@@ -1180,7 +2262,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         match p.lexer.token {
             T::TDotDotDot => {
+                let dots = p.lexer.loc();
                 p.lexer.next()?;
+                if p.lexer.tolerant {
+                    let mut property = p.parse_rest_property_binding()?;
+                    p.note_loc(&mut property.value.loc, Mark::DotDotDot, dots);
+                    return Ok(property);
+                }
                 let ident_ref = p.store_name_in_ref(p.lexer.identifier);
                 let value = p.b(B::Identifier { r#ref: ident_ref }, p.lexer.loc());
                 p.lexer.expect(T::TIdentifier)?;
@@ -1197,7 +2285,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
             }
             T::TStringLiteral => {
-                key = p.parse_string_literal()?;
+                let mut name = p.parse_string_literal()?;
+                let next = p.lexer.loc();
+                p.note_loc(&mut name.loc, Mark::StringLiteralName, next);
+                key = name;
             }
             T::TBigIntegerLiteral => {
                 key = p.new_expr(
@@ -1211,19 +2302,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             T::TOpenBracket => {
                 is_computed = true;
+                let open_bracket = p.lexer.loc();
                 p.lexer.next()?;
-                key = p.parse_expr(Level::Comma)?;
+                let mut expr = p.parse_expr(Level::Comma)?;
+                if p.lexer.token == T::TComma && p.lexer.tolerant {
+                    // `parseComputedPropertyName` takes any expression: `checkGrammarComputedPropertyName` objects to the comma.
+                    p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
+                }
+                p.note_loc(&mut expr.loc, Mark::ComputedName, open_bracket);
+                key = expr;
                 p.lexer.expect(T::TCloseBracket)?;
             }
             _ => {
-                let name = p.lexer.identifier;
+                let mut name = p.lexer.identifier;
                 let loc = p.lexer.loc();
+                // `isBindingIdentifier`
+                let is_binding_identifier = p.lexer.token == T::TIdentifier;
 
-                if !p.lexer.is_identifier_or_keyword() {
+                // `parsePropertyName`: for TypeScript's parser a private name is a name.
+                if !p.lexer.is_identifier_or_keyword()
+                    && !(p.lexer.token == T::TPrivateIdentifier && p.lexer.tolerant)
+                {
                     p.lexer.expect(T::TIdentifier)?;
+                    if p.lexer.tolerant {
+                        // The missing name was reported, and nothing was consumed.
+                        name = b"";
+                    } else {
+                        p.lexer.next()?;
+                    }
+                } else {
+                    p.lexer.next()?;
                 }
-
-                p.lexer.next()?;
 
                 key = p.new_expr(
                     E::String {
@@ -1233,7 +2342,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc,
                 );
 
-                if p.lexer.token != T::TColon && p.lexer.token != T::TOpenParen {
+                // `parseObjectBindingElement`: for TypeScript a name that no ":" follows stands for itself whatever follows, and a
+                // reserved word is no name (`isBindingIdentifier`).
+                if p.lexer.token != T::TColon
+                    && (p.lexer.token != T::TOpenParen || p.lexer.tolerant)
+                    && (is_binding_identifier || !p.lexer.tolerant)
+                {
+                    // `checkContextualIdentifier`, as in `parse_binding`.
+                    if p.lexer.tolerant
+                        && !p.lexer.is_log_disabled
+                        && ((p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
+                            && name == b"await")
+                            || (p.fn_or_arrow_data_parse.allow_yield != AwaitOrYield::AllowIdent
+                                && name == b"yield"))
+                    {
+                        p.log().add_range_error(
+                            Some(p.source),
+                            bun_ast::Range {
+                                loc,
+                                len: name.len() as i32,
+                            },
+                            b"Cannot use \"yield\" or \"await\" here.",
+                        );
+                    }
                     let ref_ = p.store_name_in_ref(name);
                     let value = p.b(B::Identifier { r#ref: ref_ }, loc);
                     let mut default_value: Option<Expr> = None;
@@ -1273,6 +2404,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
+    /// `parseObjectBindingElement` after the `...`: TypeScript's parser reads what follows like any other element. Its checker reports
+    /// a property name (2566) or an initializer (1186).
+    #[cold]
+    #[inline(never)]
+    fn parse_rest_property_binding(&mut self) -> Result<B::Property, Error> {
+        let p = self;
+        let mut property = if p.lexer.token == T::TDotDotDot {
+            // No property name starts here.
+            B::Property {
+                flags: Flags::PROPERTY_NONE,
+                key: Expr::EMPTY,
+                value: p.parse_missing_binding_name()?,
+                default_value: None,
+            }
+        } else {
+            p.parse_property_binding()?
+        };
+        property.flags.insert(Flags::Property::IsSpread);
+        // `...a`: the name is what is bound, and there is no property name.
+        if p.real_loc(property.key.loc) == p.real_loc(property.value.loc)
+            && matches!(property.value.data, B::B::BIdentifier(_))
+            && matches!(&property.key.data, js_ast::expr::Data::EString(name) if name.is_present())
+        {
+            property.key = p.new_expr(E::Missing {}, p.lexer.loc());
+        }
+        Ok(property)
+    }
+
     pub(crate) fn parse_and_declare_decls(
         &mut self,
         kind: js_ast::symbol::Kind,
@@ -1280,8 +2439,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<G::DeclList, Error> {
         let p = self;
         let mut decls: smallvec::SmallVec<[G::Decl; 4]> = smallvec::SmallVec::new();
+        if p.lexer.tolerant && !p.lexer.is_log_disabled && p.is_for_of_without_declarations() {
+            return Ok(G::DeclList::from_arena_slice(&decls));
+        }
+        let saved_contexts = p.enter_list(ListKind::VariableDeclarations);
+        // Only set in tolerant mode.
+        let mut trailing_comma: Option<bun_ast::Range> = None;
 
         loop {
+            match p.classify_list_token(ListKind::VariableDeclarations)? {
+                ListStep::Element => {}
+                ListStep::Skipped => continue,
+                ListStep::Over => {
+                    // `checkGrammarForDisallowedTrailingComma`
+                    if let Some(comma) = trailing_comma {
+                        p.lexer.ts_grammar_error(comma, 1009);
+                    }
+                    break;
+                }
+            }
+            let decl_start = p.lexer.loc();
+            let decl_full_start = p.lexer.full_start();
             // Forbid "let let" and "const let" but not "var let"
             if (kind == js_ast::symbol::Kind::Other || kind == js_ast::symbol::Kind::Constant)
                 && p.lexer.is_contextual_keyword(b"let")
@@ -1296,6 +2474,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut value: Option<js_ast::Expr> = None;
             let mut local = p.parse_binding(ParseBindingOptions {
                 is_using_statement: opts.is_using_statement,
+                // `parseVariableDeclarationWorker`
+                private_name_code: 18029,
             })?;
             p.declare_binding(kind, &mut local, opts)
                 .expect("unreachable");
@@ -1303,16 +2483,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Skip over types
             if Self::IS_TYPESCRIPT_ENABLED {
                 // "let foo!"
-                let is_definite_assignment_assertion =
-                    p.lexer.token == T::TExclamation && !p.lexer.has_newline_before;
+                // `parseVariableDeclarationWorker`: for TypeScript only after a name, and not in the head of a "for".
+                let is_definite_assignment_assertion = p.lexer.token == T::TExclamation
+                    && !p.lexer.has_newline_before
+                    && (!p.lexer.tolerant
+                        || (matches!(local.data, B::B::BIdentifier(_)) && !opts.is_for_loop_init));
                 if is_definite_assignment_assertion {
                     p.lexer.next()?;
+                    p.note_flag(&mut local.loc, Mark::Definite);
                 }
 
                 // "let foo: number"
-                if is_definite_assignment_assertion || p.lexer.token == T::TColon {
+                // TypeScript's parser does not insist on a type after the "!": `checkGrammarVariableDeclaration` does.
+                if (is_definite_assignment_assertion && !p.lexer.tolerant)
+                    || p.lexer.token == T::TColon
+                {
                     p.lexer.expect(T::TColon)?;
                     p.skip_type_script_type(Level::Lowest)?;
+                    p.note_type(&mut local.loc, Mark::Annotation);
                 }
             }
 
@@ -1321,22 +2509,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value = Some(p.parse_expr(Level::Comma)?);
             }
 
+            p.finish_node(&mut local.loc, decl_full_start);
             decls.push(G::Decl {
                 binding: local,
                 value,
             });
 
             if p.lexer.token != T::TComma {
+                if p.recover_missing_comma(ListKind::VariableDeclarations, decl_start)? {
+                    trailing_comma = None;
+                    continue;
+                }
                 break;
+            }
+            if p.lexer.tolerant {
+                trailing_comma = Some(p.lexer.range());
             }
             p.lexer.next()?;
         }
 
+        p.lexer.list_contexts = saved_contexts;
         Ok(G::DeclList::from_arena_slice(&decls))
     }
 
     pub(crate) fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
         let p = self;
+        if p.lexer.tolerant {
+            return p.parse_path_tolerant();
+        }
         let path_text = p.lexer.to_utf8_e_string()?;
         let mut path = ParsedPath {
             loc: p.lexer.loc(),
@@ -1463,6 +2663,163 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(path)
     }
 
+    /// `parseModuleSpecifier`, then `tryParseImportAttributes` or the same step of `parseExportDeclaration`.
+    #[cold]
+    #[inline(never)]
+    fn parse_path_tolerant(&mut self) -> Result<ParsedPath<'a>, Error> {
+        let p = self;
+        let mut path = ParsedPath {
+            loc: p.lexer.loc(),
+            text: b"",
+            is_macro: false,
+            import_tag: bun_ast::ImportRecordTag::None,
+            loader: None,
+        };
+
+        if p.lexer.token == T::TStringLiteral {
+            let path_text = p.lexer.to_utf8_e_string()?;
+            // SAFETY: E::String slice8() is arena-owned for 'a.
+            path.text = unsafe { bun_collections::detach_lifetime(path_text.slice8()) };
+            p.keep_module_specifier(Some(path.text), None, path.loc);
+            p.lexer.next()?;
+        } else {
+            // Any expression is accepted and never checked. `checkExternalImportOrExportDeclaration` reports 1141 unless it
+            // is missing. `checkGrammarModuleElementContext` returns first in a block or a function.
+            let value = p.parse_expr(Level::Lowest)?;
+            if !value.is_missing() && p.current_scope().kind == js_ast::scope::Kind::Entry {
+                p.ts_checker_error(p.lexer.range_from(path.loc), 1141);
+            }
+            p.keep_module_specifier(None, Some(value), path.loc);
+        }
+
+        // After an import, `with` can be on the next line.
+        let is_with = p.lexer.token == T::TWith;
+        if (is_with || p.lexer.is_contextual_keyword(b"assert"))
+            && (!p.lexer.has_newline_before || (is_with && !p.is_in_export_statement()))
+        {
+            if !is_with {
+                let range = p.lexer.range();
+                p.lexer.ts_error(range, 2880);
+            }
+            p.parse_import_attributes()?;
+        }
+
+        Ok(path)
+    }
+
+    /// Whether the statement being parsed starts with `export`. Only known in keep mode.
+    fn is_in_export_statement(&self) -> bool {
+        self.type_syntax.as_ref().is_some_and(|syntax| {
+            syntax.statement_modifiers[syntax.statement_modifiers_base..]
+                .iter()
+                .any(|modifier| {
+                    modifier
+                        .flag
+                        .contains(crate::sema::ts_syntax::Flags::EXPORT)
+                })
+        })
+    }
+
+    /// `parseImportAttributes`, at `with` or `assert`, in tolerant mode. Keeps the attributes as an object literal for the checker.
+    #[cold]
+    #[inline(never)]
+    fn parse_import_attributes(&mut self) -> Result<(), Error> {
+        let p = self;
+        let keyword_loc = p.lexer.loc();
+        p.lexer.next()?;
+        let open_brace_loc = p.lexer.loc();
+        let (object, mode) = p.parse_import_attribute_list(true)?;
+        p.keep_resolution_mode(mode);
+        let object = object.unwrap_or_else(|| p.new_expr(E::Object::default(), open_brace_loc));
+        p.keep_import_attributes(keyword_loc, object);
+        Ok(())
+    }
+
+    /// `parseImportAttributes`, after its keyword. Returns the attributes as an object literal, if there is a "{" and `keeps`, and the
+    /// resolution mode (`getResolutionModeOverride`): what the attribute says if it is the only one.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn parse_import_attribute_list(
+        &mut self,
+        keeps: bool,
+    ) -> Result<(Option<Expr>, crate::sema::ts_syntax::ResolutionMode), Error> {
+        let p = self;
+        let open_brace_loc = p.lexer.loc();
+        let mut mode = crate::sema::ts_syntax::ResolutionMode::None;
+        if p.lexer.token != T::TOpenBrace {
+            // Reported, and there are no attributes.
+            p.lexer.expect(T::TOpenBrace)?;
+            return Ok((None, mode));
+        }
+        p.lexer.next()?;
+        let mut properties = BumpVec::<G::Property>::new_in(p.arena);
+        let mut count = 0u32;
+        let saved_contexts = p.enter_list(ListKind::ImportAttributes);
+        while p.lexer.token != T::TCloseBrace {
+            match p.classify_list_token(ListKind::ImportAttributes)? {
+                ListStep::Element => {}
+                ListStep::Skipped => continue,
+                ListStep::Over => break,
+            }
+            // A speculative parse, which classifies nothing, fails here.
+            if !p.lexer.is_identifier_or_keyword()
+                && !matches!(p.lexer.token, T::TStringLiteral | T::TPrivateIdentifier)
+            {
+                return Err(crate::Error::Backtrack);
+            }
+
+            // `parseImportAttribute`
+            let element_start = p.lexer.loc();
+            let is_string_key = p.lexer.token == T::TStringLiteral;
+            let key = if !keeps {
+                None
+            } else if is_string_key {
+                let text = p.lexer.to_e_string()?;
+                Some(p.new_expr(text, element_start))
+            } else {
+                let name = p.lexer.identifier;
+                Some(p.new_expr(E::EString::init(name), element_start))
+            };
+            p.lexer.next()?;
+            p.lexer.expect(T::TColon)?;
+            let literal_end = matches!(
+                p.lexer.token,
+                T::TStringLiteral | T::TNoSubstitutionTemplateLiteral
+            )
+            .then(|| p.lexer.range().end());
+            let value = p.parse_detached(|p| p.parse_expr(Level::Comma))?;
+            count += 1;
+            mode = match &key {
+                Some(key) if count == 1 => {
+                    p.resolution_mode_of_attribute(key, is_string_key, &value, literal_end)
+                }
+                _ => crate::sema::ts_syntax::ResolutionMode::None,
+            };
+            if key.is_some() {
+                properties.push(G::Property {
+                    key,
+                    value: Some(value),
+                    ..Default::default()
+                });
+            }
+
+            if p.lexer.token != T::TComma {
+                if p.recover_missing_comma(ListKind::ImportAttributes, element_start)? {
+                    continue;
+                }
+                break;
+            }
+            p.lexer.next()?;
+        }
+        p.lexer.list_contexts = saved_contexts;
+        p.lexer.expect_close_brace_of_attributes(open_brace_loc)?;
+        let object = E::Object {
+            properties: G::PropertyList::from_bump_vec(properties),
+            ..Default::default()
+        };
+        Ok((keeps.then(|| p.new_expr(object, open_brace_loc)), mode))
+    }
+
     pub(crate) fn parse_stmts_up_to(
         &mut self,
         eend: T,
@@ -1475,6 +2832,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut return_without_semicolon_start: i32 = -1;
         opts.lexical_decl = LexicalDecl::AllowAll;
         let mut is_directive_prologue = true;
+        let list = if eend == T::TEndOfFile {
+            ListKind::SourceElements
+        } else {
+            ListKind::BlockStatements
+        };
+        let saved_contexts = p.enter_list(list);
+        // Those kept before this list was entered are for the list around it.
+        let stray_decorators_base = p.stray_decorators.len();
 
         loop {
             for comment in p.lexer.comments_to_preserve_before.iter() {
@@ -1486,41 +2851,83 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == eend {
                 break;
             }
-
-            let mut current_opts = opts;
-            let mut stmt = p.parse_stmt(&mut current_opts)?;
-
-            // Skip TypeScript types entirely
-            if Self::IS_TYPESCRIPT_ENABLED {
-                if let js_ast::stmt::Data::STypeScript(_) = stmt.data {
-                    continue;
+            if p.lexer.tolerant && !p.lexer.is_log_disabled {
+                // The block is never closed. Whoever called says so, and moves on from the end of the file to the end of the file.
+                if p.lexer.token == T::TEndOfFile {
+                    break;
+                }
+                // The loop of `reparseTopLevelAwait` calls `parseStatement` whatever the token is.
+                let is_reparsing = eend == T::TEndOfFile && p.reparses_rest_of_file;
+                // `parseToplevelStatement`
+                if eend == T::TEndOfFile && !is_reparsing {
+                    p.lexer.await_name_seen = false;
+                    p.await_was_refused = false;
+                }
+                if !is_reparsing {
+                    match p.classify_list_token(list)? {
+                        ListStep::Element => {}
+                        ListStep::Skipped => continue,
+                        ListStep::Over => break,
+                    }
                 }
             }
 
-            let mut skip = matches!(stmt.data, js_ast::stmt::Data::SEmpty(_));
+            let mut current_opts = opts;
+            let stmt_start = p.lexer.loc();
+            let outer_modifiers_base = p.begin_statement();
+            let mut stmt = p.parse_stmt(&mut current_opts)?;
+            p.end_statement(outer_modifiers_base, &mut stmt.loc);
+            if p.reparses_rest_of_file && eend == T::TEndOfFile && p.lexer.loc() == stmt_start {
+                p.lexer.next()?;
+            }
+            if p.stray_decorators.len() > stray_decorators_base {
+                p.push_stray_decorators(stray_decorators_base, &mut stmts);
+            }
+
+            // Skip TypeScript types entirely
+            if Self::IS_TYPESCRIPT_ENABLED {
+                if matches!(stmt.data, js_ast::stmt::Data::STypeScript(_)) {
+                    // The visit pass drops it.
+                    if p.keeps_type_syntax() {
+                        stmts.push(stmt);
+                    }
+                    continue;
+                }
+            }
+            // `parseEmptyStatement`: a node like any other to the type checker.
+            let mut skip =
+                matches!(stmt.data, js_ast::stmt::Data::SEmpty(_)) && !p.keeps_type_syntax();
             // Parse one or more directives at the beginning
             if is_directive_prologue {
                 is_directive_prologue = false;
                 if let js_ast::stmt::Data::SExpr(expr) = &stmt.data {
                     if let js_ast::expr::Data::EString(str_) = &expr.value.data {
-                        if !str_.prefer_template {
+                        // `isPrologueDirective`: not `("use strict")`, of which the parentheses are not kept here.
+                        if !str_.prefer_template
+                            && (!p.keeps_type_syntax()
+                                || p.real_loc(expr.value.loc) == p.real_loc(stmt.loc))
+                        {
                             is_directive_prologue = true;
 
                             if str_.eql_comptime(b"use strict") {
-                                skip = true;
+                                // To the type checker a directive is a statement like any other.
+                                skip = !p.keeps_type_syntax();
                                 // Track "use strict" directives
                                 p.current_scope_mut().strict_mode =
                                     StrictModeKind::ExplicitStrictMode;
                                 if p.current_scope == p.module_scope {
-                                    p.module_scope_directive_loc = stmt.loc;
+                                    p.module_scope_directive_loc = p.real_loc(stmt.loc);
                                 }
-                            } else if str_.eql_comptime(b"use asm") && !p.options.repl_mode {
+                            } else if str_.eql_comptime(b"use asm")
+                                && !p.options.repl_mode
+                                && !p.keeps_type_syntax()
+                            {
                                 // In the REPL the directive stays a string
                                 // statement so it evaluates as the result,
                                 // like node ('use asm' prints 'use asm').
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
-                            } else {
+                            } else if !p.keeps_type_syntax() {
                                 let bytes = str_.string(p.arena).expect("OOM");
                                 stmt = Stmt::alloc(
                                     S::Directive {
@@ -1563,13 +2970,61 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        p.lexer.list_contexts = saved_contexts;
         Ok(stmts)
+    }
+
+    /// Call where `closer` is expected to close the array or object literal that opens at `open`. If it is not there, the literal ends
+    /// where the token before does (`finishNode`).
+    #[inline]
+    pub(crate) fn note_literal_if_unclosed(&mut self, closer: T, open: bun_ast::Loc) {
+        if self.lexer.token != closer && self.lexer.tolerant && !self.lexer.is_log_disabled {
+            let end = self.lexer.full_start();
+            if let Some(syntax) = &mut self.type_syntax {
+                syntax.unclosed_literals.push((open, end));
+            }
+        }
+    }
+
+    /// Makes statements of what `note_stray_decorators` kept, from `base` on, while the last statement was parsed.
+    #[cold]
+    #[inline(never)]
+    fn push_stray_decorators(&mut self, base: usize, stmts: &mut StmtList<'a>) {
+        for decorator in self.stray_decorators.split_off(base) {
+            stmts.push(self.s(
+                S::SExpr {
+                    value: decorator,
+                    ..Default::default()
+                },
+                decorator.loc,
+            ));
+        }
+    }
+
+    /// The "}" of the block of statements whose "{" is at `open`, or was missed there, where `parse_stmts_up_to` stopped. `parseBlock`
+    /// Returns where the block ends.
+    #[inline]
+    pub(crate) fn end_of_block(&mut self, open: bun_ast::Loc) -> Result<bun_ast::Loc, Error> {
+        if self.lexer.token != T::TCloseBrace && self.lexer.tolerant {
+            // `parseExpectedMatchingBrackets`: it is missed, and nothing is consumed.
+            self.lexer.expected_closing(T::TCloseBrace, open)?;
+        } else {
+            self.lexer.next()?;
+        }
+        let end = self.lexer.full_start();
+        if self.lexer.token == T::TEquals && self.lexer.tolerant && !self.lexer.is_log_disabled {
+            // A "=" right after the block is objected to and skipped.
+            let range = self.lexer.range();
+            self.lexer.ts_error(range, 2809);
+            self.lexer.next()?;
+        }
+        Ok(end)
     }
 
     /// One-token lookahead: advance past the current token, evaluate `pred`,
     /// then unconditionally restore the lexer (including `is_log_disabled`).
     #[inline]
-    fn next_token_matches(&mut self, pred: impl FnOnce(&Self) -> bool) -> bool {
+    pub(crate) fn next_token_matches(&mut self, pred: impl FnOnce(&Self) -> bool) -> bool {
         let old_lexer = self.lexer.snapshot();
         self.lexer.is_log_disabled = true;
         let result = matches!(self.lexer.next(), Ok(())) && pred(self);
@@ -1579,7 +3034,250 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[inline]
     fn check_for_arrow_after_the_current_token(&mut self) -> bool {
-        self.next_token_matches(|p| p.lexer.token == T::TEqualsGreaterThan)
+        // `nextIsUnParenthesizedAsyncArrowFunction`: for TypeScript not after a line break, nor after a word that is no name
+        // where it stands.
+        self.next_token_matches(|p| {
+            p.lexer.token == T::TEqualsGreaterThan
+                && !(p.lexer.has_newline_before && p.lexer.tolerant)
+        }) && (!self.lexer.tolerant || self.is_identifier_in_context())
+    }
+
+    /// `isParenthesizedArrowFunctionExpression`, at the "(": `Some(true)` an arrow function starts here, `Some(false)` none
+    /// does, `None` one may. Only looks.
+    #[cold]
+    #[inline(never)]
+    fn is_parenthesized_arrow_function(&mut self) -> Option<bool> {
+        let old_lexer = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let verdict = self.next_is_parenthesized_arrow_function();
+        self.lexer.restore(&old_lexer);
+        verdict.unwrap_or(Some(false))
+    }
+
+    /// `nextIsParenthesizedArrowFunctionExpression`, at the "(".
+    fn next_is_parenthesized_arrow_function(&mut self) -> Result<Option<bool>, Error> {
+        self.lexer.next()?;
+        self.is_arrow_function_from_second_token()
+    }
+
+    /// `is_parenthesized_arrow_function`, at the token after the "(".
+    #[cold]
+    #[inline(never)]
+    fn is_arrow_function_after_open_paren(&mut self) -> Option<bool> {
+        let old_lexer = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let verdict = self.is_arrow_function_from_second_token();
+        self.lexer.restore(&old_lexer);
+        verdict.unwrap_or(Some(false))
+    }
+
+    /// `nextIsParenthesizedArrowFunctionExpression`, from the token after the "(" on.
+    fn is_arrow_function_from_second_token(&mut self) -> Result<Option<bool>, Error> {
+        let p = self;
+        match p.lexer.token {
+            T::TCloseParen => {
+                p.lexer.next()?;
+                return Ok(Some(matches!(
+                    p.lexer.token,
+                    T::TEqualsGreaterThan | T::TColon | T::TOpenBrace
+                )));
+            }
+            T::TOpenBracket | T::TOpenBrace => return Ok(None),
+            T::TDotDotDot => return Ok(Some(true)),
+            _ => {}
+        }
+        // `IsModifierKind`, "async" apart.
+        let is_modifier = p.is_modifier_kind() && !p.lexer.is_contextual_keyword(b"async");
+        let is_name_or_this = p.is_identifier_in_context() || p.lexer.token == T::TThis;
+        p.lexer.next()?;
+        if is_modifier && p.is_identifier_in_context() {
+            return Ok(Some(!p.lexer.is_contextual_keyword(b"as")));
+        }
+        if !is_name_or_this {
+            return Ok(Some(false));
+        }
+        Ok(match p.lexer.token {
+            T::TColon => Some(true),
+            T::TQuestion => {
+                p.lexer.next()?;
+                Some(matches!(
+                    p.lexer.token,
+                    T::TColon | T::TComma | T::TEquals | T::TCloseParen
+                ))
+            }
+            T::TComma | T::TEquals | T::TCloseParen => None,
+            _ => Some(false),
+        })
+    }
+
+    /// At the "(" after "async", or after "async<T>" if `has_type_parameters`: an arrow function if TypeScript reads one
+    /// there (`tryParseParenthesizedArrowFunctionExpression`), its parameters in the [Await] context; otherwise a call of
+    /// "async", its arguments in the context of the surroundings.
+    #[cold]
+    #[inline(never)]
+    fn parse_async_paren_expr(
+        &mut self,
+        loc: bun_ast::Loc,
+        level: Level,
+        opts: ParenExprOpts,
+        has_type_parameters: bool,
+    ) -> Result<Expr, Error> {
+        let p = self;
+        let verdict = if level.gt(Level::Assign) {
+            // `parseAssignmentExpressionOrHigher` is the only one to try.
+            Some(false)
+        } else if !has_type_parameters {
+            p.is_parenthesized_arrow_function()
+        } else if p.is_jsx_enabled() {
+            // `nextIsParenthesizedArrowFunctionExpression`, at a "<": with JSX, what `is_ts_arrow_fn_jsx` lets through is one.
+            Some(true)
+        } else {
+            None
+        };
+        if verdict == Some(true) {
+            // `allowAmbiguity`, `allowReturnTypeInArrowFunction`
+            p.lexer.next()?;
+            return p.parse_paren_expr(
+                loc,
+                level,
+                ParenExprOpts {
+                    force_arrow_fn: true,
+                    is_after_question_and_before_colon: false,
+                    ..opts
+                },
+            );
+        }
+        // `parsePossibleParenthesizedArrowFunctionExpression`. What it keeps in `notParenthesizedArrow` is kept with the outcomes
+        // of the other attempts, which are told by where a ":" is: no "async" is there.
+        let key = loc.start as u32;
+        if verdict.is_none()
+            && p.ts_conditional_arrow_attempts
+                .binary_search_by_key(&key, |&packed| packed >> 1)
+                .is_err()
+        {
+            let snapshot = p.parser_snapshot();
+            p.lexer.next()?;
+            match p.parse_paren_expr_as(loc, level, opts, ArrowAttempt::ArrowOrBacktrack) {
+                // Stack and memory exhaustion are not properties of the attempt
+                Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
+                Err(_) => {
+                    p.restore_parser_snapshot(snapshot);
+                    // Attempts nested in this one may have added entries of their own.
+                    if let Err(insert_at) = p
+                        .ts_conditional_arrow_attempts
+                        .binary_search_by_key(&key, |&packed| packed >> 1)
+                    {
+                        p.ts_conditional_arrow_attempts.insert(insert_at, key << 1);
+                    }
+                }
+                arrow => return arrow,
+            }
+        }
+        p.lexer.next()?;
+        p.parse_paren_expr_as(loc, level, opts, ArrowAttempt::NeverArrow)
+    }
+
+    /// Whether `item`, just parsed as an expression in parentheses, was a modifier of the parameter that starts at the current
+    /// token (`parseModifiersEx` in `parseParameterEx`). `is_arrow_fn`: this is known to be the head of an arrow function, or
+    /// `item` is the first word after the "(", which makes it one (`nextIsParenthesizedArrowFunctionExpression`).
+    #[cold]
+    #[inline(never)]
+    fn is_parameter_modifier(&mut self, item: Expr, is_arrow_fn: bool) -> bool {
+        if self.lexer.is_log_disabled
+            || self.lexer.has_newline_before
+            || self.lexer.token != T::TIdentifier
+        {
+            return false;
+        }
+        let js_ast::expr::Data::EIdentifier(id) = item.data else {
+            return false;
+        };
+        let word = self.load_name_from_ref(id.ref_);
+        crate::lexer::is_type_script_accessibility_modifier(word)
+            // Nothing but blanks between the word and the name.
+            && self.lexer.contents[..self.lexer.start].trim_ascii_end().len()
+                == self.real_loc(item.loc).start as usize + word.len()
+            && (is_arrow_fn || self.is_in_the_head_of_an_arrow_function())
+    }
+
+    /// Whether the list the current token is in comes to its ")" and what follows that is the "=>" of an arrow function, with
+    /// a return type before it or not, or the "{" of its body. Stands for the attempt TypeScript makes at the whole head
+    /// (`parsePossibleParenthesizedArrowFunctionExpression`). Only looks.
+    #[cold]
+    #[inline(never)]
+    fn is_in_the_head_of_an_arrow_function(&mut self) -> bool {
+        let old_lexer = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let mut depth = 0u32;
+        let result = loop {
+            match self.lexer.token {
+                T::TOpenParen | T::TOpenBracket | T::TOpenBrace => depth += 1,
+                T::TCloseParen | T::TCloseBracket | T::TCloseBrace if depth > 0 => depth -= 1,
+                T::TCloseParen => {
+                    break self.lexer.next().is_ok()
+                        && match self.lexer.token {
+                            T::TEqualsGreaterThan | T::TOpenBrace => true,
+                            T::TColon => self
+                                .skip_type_script_arrow_return_type_with_backtracking()
+                                .is_ok(),
+                            _ => false,
+                        };
+                }
+                // The tokens of a template cannot be told without parsing what is in it.
+                T::TCloseBracket | T::TCloseBrace | T::TTemplateHead | T::TEndOfFile => {
+                    break false;
+                }
+                _ => {}
+            }
+            if self.lexer.next().is_err() {
+                break false;
+            }
+        };
+        self.lexer.restore(&old_lexer);
+        result
+    }
+
+    /// `isAwaitUsingDeclaration`, at "await".
+    #[cold]
+    #[inline(never)]
+    fn is_await_using_declaration(&mut self) -> bool {
+        let old_lexer = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let result = self.lexer.next().is_ok()
+            && self.lexer.is_contextual_keyword(b"using")
+            && self.lexer.next().is_ok()
+            && matches!(self.lexer.token, T::TIdentifier | T::TOpenBrace)
+            && !self.lexer.has_newline_before;
+        self.lexer.restore(&old_lexer);
+        result
+    }
+
+    /// "for (await using of x)": no declarations, and "of" is the keyword (`parseVariableDeclarationList`).
+    /// `keyword`: the word before it.
+    #[cold]
+    #[inline(never)]
+    fn is_empty_declaration_list_before_of(&mut self, keyword: bun_ast::Range) -> bool {
+        if self.lexer.is_log_disabled || !self.lexer.is_contextual_keyword(b"of") {
+            return false;
+        }
+        let old_lexer = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let result = self.lexer.next().is_ok()
+            && self.lexer.token == T::TIdentifier
+            && self.lexer.next().is_ok()
+            && self.lexer.token == T::TCloseParen;
+        self.lexer.restore(&old_lexer);
+        if result {
+            // `checkGrammarVariableDeclarationList`
+            self.lexer.ts_error(
+                bun_ast::Range {
+                    loc: keyword.end(),
+                    len: 0,
+                },
+                1123,
+            );
+        }
+        result
     }
 
     /// This parses an expression. This assumes we've already parsed the "async"
@@ -1587,6 +3285,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn parse_async_prefix_expr(
         &mut self,
         async_range: bun_ast::Range,
+        async_full_start: bun_ast::Loc,
         level: Level,
         flags: EFlags,
     ) -> Result<Expr, Error> {
@@ -1598,19 +3297,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         // "async function() {}"
         if !p.lexer.has_newline_before && p.lexer.token == T::TFunction {
-            return p.parse_fn_expr(async_range.loc, true);
+            let mut function = p.parse_fn_expr(async_range.loc, true)?;
+            p.mark_comments_before(&mut function.loc, async_range.loc, async_full_start);
+            return Ok(function);
         }
 
         // Check the precedence level to avoid parsing an arrow function in
         // "new async () => {}". This also avoids parsing "new async()" as
         // "new (async())()" instead.
-        if !p.lexer.has_newline_before && level.lt(Level::Member) {
+        // "async", a line break, "=>": for TypeScript the arrow function it would be without the line break, to which
+        // `checkGrammarArrowFunction` objects (`parseAssignmentExpressionOrHigherWorker`).
+        if (!p.lexer.has_newline_before
+            || (p.lexer.token == T::TEqualsGreaterThan && p.lexer.tolerant))
+            && level.lt(Level::Member)
+        {
             match p.lexer.token {
                 // "async => {}"
                 T::TEqualsGreaterThan => {
                     if level.lte(Level::Assign) {
                         let async_ref = p.store_name_in_ref(b"async");
-                        let arg_binding = p.b(B::Identifier { r#ref: async_ref }, async_range.loc);
+                        let mut arg_binding =
+                            p.b(B::Identifier { r#ref: async_ref }, async_range.loc);
+                        if p.has_comments_before(async_range.loc, async_full_start) {
+                            p.note_flag(&mut arg_binding.loc, Mark::SimpleArrowParameter);
+                        }
+                        p.finish_node(&mut arg_binding.loc, async_full_start);
                         let args: &'a mut [G::Arg] = p.arena.alloc_slice_fill_with(1, |_| G::Arg {
                             binding: arg_binding,
                             ..Default::default()
@@ -1625,9 +3336,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             needs_async_loc: async_range.loc,
                             ..Default::default()
                         };
-                        let arrow_body = p.parse_arrow_body(args, &mut data)?;
+                        let arrow_body = p.parse_arrow_body_with_flags(args, &mut data, flags)?;
                         p.pop_scope();
-                        return Ok(p.new_expr(arrow_body, async_range.loc));
+                        let mut arrow = p.new_expr(arrow_body, async_range.loc);
+                        p.mark_comments_before(&mut arrow.loc, async_range.loc, async_full_start);
+                        return Ok(arrow);
                     }
                 }
                 // "async x => {}"
@@ -1644,13 +3357,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if is_arrow_fn {
                             let ref_ = p.store_name_in_ref(p.lexer.identifier);
                             let arg_loc = p.lexer.loc();
-                            let arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
+                            let arg_full_start = p.lexer.full_start();
+                            let mut arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
+                            if p.has_comments_before(arg_loc, arg_full_start) {
+                                p.note_flag(&mut arg_binding.loc, Mark::SimpleArrowParameter);
+                            }
+                            p.lexer.next()?;
+                            p.finish_node(&mut arg_binding.loc, arg_full_start);
                             let args: &'a mut [G::Arg] =
                                 p.arena.alloc_slice_fill_with(1, |_| G::Arg {
                                     binding: arg_binding,
                                     ..Default::default()
                                 });
-                            p.lexer.next()?;
 
                             let _ = p.push_scope_for_parse_pass(
                                 js_ast::scope::Kind::FunctionArgs,
@@ -1659,20 +3377,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             let mut data = FnOrArrowDataParse {
                                 allow_await: AwaitOrYield::AllowExpr,
-                                needs_async_loc: args[0].binding.loc,
+                                needs_async_loc: arg_loc,
                                 ..Default::default()
                             };
                             // Pop the scope on the error path too.
-                            let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
-                                Ok(body) => body,
-                                Err(e) => {
-                                    p.pop_scope();
-                                    return Err(e);
-                                }
-                            };
+                            let mut arrow_body =
+                                match p.parse_arrow_body_with_flags(args, &mut data, flags) {
+                                    Ok(body) => body,
+                                    Err(e) => {
+                                        p.pop_scope();
+                                        return Err(e);
+                                    }
+                                };
                             arrow_body.is_async = true;
                             p.pop_scope();
-                            return Ok(p.new_expr(arrow_body, async_range.loc));
+                            let mut arrow = p.new_expr(arrow_body, async_range.loc);
+                            p.mark_comments_before(
+                                &mut arrow.loc,
+                                async_range.loc,
+                                async_full_start,
+                            );
+                            return Ok(arrow);
                         }
                     }
                 }
@@ -1680,17 +3405,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "async()"
                 // "async () => {}"
                 T::TOpenParen => {
+                    let opts = ParenExprOpts {
+                        is_async: true,
+                        full_start: async_full_start,
+                        is_after_question_and_before_colon: flags
+                            == EFlags::AfterQuestionAndBeforeColon,
+                        ..Default::default()
+                    };
+                    if p.lexer.tolerant && !p.lexer.is_log_disabled {
+                        return p.parse_async_paren_expr(async_range.loc, level, opts, false);
+                    }
                     p.lexer.next()?;
-                    return p.parse_paren_expr(
-                        async_range.loc,
-                        level,
-                        ParenExprOpts {
-                            is_async: true,
-                            is_after_question_and_before_colon: flags
-                                == EFlags::AfterQuestionAndBeforeColon,
-                            ..Default::default()
-                        },
-                    );
+                    return p.parse_paren_expr(async_range.loc, level, opts);
                 }
 
                 // "async<T>()"
@@ -1704,17 +3430,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             ) {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
-                                p.lexer.next()?;
-                                return p.parse_paren_expr(
-                                    async_range.loc,
-                                    level,
-                                    ParenExprOpts {
-                                        is_async: true,
-                                        force_arrow_fn: result
-                                            == SkipTypeParameterResult::DefinitelyTypeParameters,
-                                        ..Default::default()
-                                    },
-                                );
+                                let type_parameters = p.kept_type_parameters(result);
+                                let opts = ParenExprOpts {
+                                    is_async: true,
+                                    full_start: async_full_start,
+                                    force_arrow_fn: result
+                                        == SkipTypeParameterResult::DefinitelyTypeParameters,
+                                    ..Default::default()
+                                };
+                                let mut expr = if !opts.force_arrow_fn
+                                    && p.lexer.tolerant
+                                    && !p.lexer.is_log_disabled
+                                {
+                                    p.parse_async_paren_expr(async_range.loc, level, opts, true)?
+                                } else {
+                                    p.lexer.next()?;
+                                    p.parse_paren_expr(async_range.loc, level, opts)?
+                                };
+                                if matches!(expr.data, js_ast::expr::Data::EArrow(_)) {
+                                    p.note_type_parameters(&mut expr.loc, type_parameters);
+                                }
+                                // "async<T>()" turned out to be a call.
+                                if let js_ast::expr::Data::ECall(mut call) = expr.data {
+                                    p.note_type_arguments_read_as_parameters(
+                                        &mut call.close_paren_loc,
+                                        type_parameters,
+                                    );
+                                }
+                                return Ok(expr);
                             }
                         }
                     }

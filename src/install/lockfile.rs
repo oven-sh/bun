@@ -12,7 +12,7 @@ use bun_collections::{
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
-use bun_paths::{MAX_PATH_BYTES, SEP, SEP_STR, platform, resolve_path};
+use bun_paths::{AutoAbsPathChecked, MAX_PATH_BYTES, SEP, SEP_STR, platform, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
 use crate::bun_json as JSON;
@@ -2100,6 +2100,14 @@ pub(crate) fn linked_workspace_path(
     }
     let version = *workspace_versions.get(&name_hash)?;
     range.satisfies(version, buf, buf).then_some(path)
+}
+
+/// `None` when the path does not fit a path buffer.
+pub(crate) fn workspace_package_json_path(workspace_path: &[u8]) -> Option<AutoAbsPathChecked> {
+    let mut path = AutoAbsPathChecked::init_top_level_dir();
+    // A path from a lockfile is unchecked. `join` resolves an absolute one where `append` asserts on it.
+    path.join(&[workspace_path, b"package.json"]).ok()?;
+    Some(path)
 }
 
 impl Lockfile {

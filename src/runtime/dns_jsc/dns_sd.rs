@@ -1,9 +1,9 @@
-//! macOS DNSServiceGetAddrInfo backend: all lookups share one mDNSResponder connection (see dns.rs banner).
+//! macOS DNSServiceQueryRecord backend: all lookups share one mDNSResponder connection (see dns.rs banner).
 
 use super::*;
 use bun_collections::index_sort;
 
-pub(crate) type DNSServiceRef = *mut c_void;
+type DNSServiceRef = *mut c_void;
 type DNSServiceFlags = u32;
 type DNSServiceErrorType = i32;
 pub(crate) type DNSServiceProtocol = u32;
@@ -18,18 +18,25 @@ const FLAGS_TIMEOUT: DNSServiceFlags = 0x10000;
 pub(crate) const PROTOCOL_IPV4: DNSServiceProtocol = 0x01;
 pub(crate) const PROTOCOL_IPV6: DNSServiceProtocol = 0x02;
 
+const TYPE_A: u16 = 1;
+const TYPE_AAAA: u16 = 28;
+const CLASS_IN: u16 = 1;
+
 pub(crate) const ERR_NO_ERROR: DNSServiceErrorType = 0;
 pub(crate) const ERR_NO_SUCH_RECORD: DNSServiceErrorType = -65554;
 pub(crate) const ERR_TIMEOUT: DNSServiceErrorType = -65568;
 const ERR_DEFUNCT_CONNECTION: DNSServiceErrorType = -65569;
 
-type GetAddrInfoReply = unsafe extern "C" fn(
+type QueryRecordReply = unsafe extern "C" fn(
     sd_ref: DNSServiceRef,
     flags: DNSServiceFlags,
     interface_index: u32,
     error_code: DNSServiceErrorType,
-    hostname: *const c_char,
-    address: *const Sockaddr,
+    fullname: *const c_char,
+    rrtype: u16,
+    rrclass: u16,
+    rdlen: u16,
+    rdata: *const c_void,
     ttl: u32,
     context: *mut c_void,
 );
@@ -40,35 +47,37 @@ unsafe extern "C" {
     fn DNSServiceRefSockFD(sd_ref: DNSServiceRef) -> c_int;
     fn DNSServiceProcessResult(sd_ref: DNSServiceRef) -> DNSServiceErrorType;
     fn DNSServiceRefDeallocate(sd_ref: DNSServiceRef);
-    fn DNSServiceGetAddrInfo(
+    fn DNSServiceQueryRecord(
         sd_ref: *mut DNSServiceRef,
         flags: DNSServiceFlags,
         interface_index: u32,
-        protocol: DNSServiceProtocol,
-        hostname: *const c_char,
-        callback: GetAddrInfoReply,
+        fullname: *const c_char,
+        rrtype: u16,
+        rrclass: u16,
+        callback: QueryRecordReply,
         context: *mut c_void,
     ) -> DNSServiceErrorType;
 }
 
-/// SPI: `DNSServiceGetAddrInfo` plus the attribute libinfo's getaddrinfo passes. Absent on macOS 12, so resolved at runtime.
-type GetAddrInfoExFn = unsafe extern "C" fn(
+/// `DNSServiceQueryRecord` plus an attribute. Absent on macOS 12, so resolved at runtime.
+type QueryRecordWithAttributeFn = unsafe extern "C" fn(
     sd_ref: *mut DNSServiceRef,
     flags: DNSServiceFlags,
     interface_index: u32,
-    protocol: DNSServiceProtocol,
-    hostname: *const c_char,
+    fullname: *const c_char,
+    rrtype: u16,
+    rrclass: u16,
     attr: *const DNSServiceAttribute,
-    callback: GetAddrInfoReply,
+    callback: QueryRecordReply,
     context: *mut c_void,
 ) -> DNSServiceErrorType;
 
-/// `DNSServiceGetAddrInfoEx` with `kDNSServiceAttrAllowFailover` (lets mDNSResponder fail a query over to
-/// scoped/supplemental resolvers, as getaddrinfo does), when this OS has both.
-fn getaddrinfo_ex() -> Option<(GetAddrInfoExFn, *const DNSServiceAttribute)> {
+/// libinfo's getaddrinfo call: only QueryRecord sends `kDNSServiceAttrAllowFailover` to the daemon (`DNSServiceGetAddrInfoEx` drops it).
+fn query_record_allowing_failover()
+-> Option<(QueryRecordWithAttributeFn, *const DNSServiceAttribute)> {
     let f = bun_sys::dlsym_with_handle!(
-        GetAddrInfoExFn,
-        "DNSServiceGetAddrInfoEx",
+        QueryRecordWithAttributeFn,
+        "DNSServiceQueryRecordWithAttribute",
         Some(libc::RTLD_DEFAULT)
     )?;
     let attr = bun_sys::dlsym_with_handle!(
@@ -150,9 +159,44 @@ enum Attempt {
     Reissued,
 }
 
+/// The A and the AAAA subordinate of one lookup; null for a family that was not asked for.
+type FamilyRefs = [DNSServiceRef; 2];
+
+fn deallocate_refs(sd_refs: FamilyRefs) {
+    for sd_ref in sd_refs {
+        if !sd_ref.is_null() {
+            // SAFETY: FFI; a non-null entry is a live subordinate that nothing else releases.
+            unsafe { DNSServiceRefDeallocate(sd_ref) };
+        }
+    }
+}
+
+/// What dnssd_clientstub's `handle_addrinfo_response` builds: a link-local address is scoped to the interface it was seen on.
+fn address_from_record(
+    rrtype: u16,
+    rdata: &[u8],
+    interface_index: u32,
+) -> Option<bun_dns::Address> {
+    match rrtype {
+        TYPE_A => {
+            let ip = Ipv4Addr::from(<[u8; 4]>::try_from(rdata).ok()?);
+            Some(bun_dns::Address::from_ip(ip.into(), 0))
+        }
+        TYPE_AAAA => {
+            let ip = Ipv6Addr::from(<[u8; 16]>::try_from(rdata).ok()?);
+            let mut address = bun_dns::Address::from_ip(ip.into(), 0);
+            if ip.is_unicast_link_local() {
+                address.set_scope_id(interface_index);
+            }
+            Some(address)
+        }
+        _ => None,
+    }
+}
+
 /// Per-query state shared by the JS `dns.lookup` path and the internal connect path.
 pub(crate) struct QueryState {
-    pub(crate) sd_ref: DNSServiceRef,
+    sd_refs: FamilyRefs,
     pub(crate) results: bun_dns::ResultList,
     /// First hard error (NoSuchRecord/Timeout are per-family negatives, not errors).
     pub(crate) sd_error: DNSServiceErrorType,
@@ -166,13 +210,12 @@ pub(crate) struct QueryState {
     attempt: Attempt,
     /// Kept so `finish()` can reissue the query for the retry.
     hostname: bun::ZBox,
-    callback: Option<GetAddrInfoReply>,
 }
 
 impl QueryState {
     pub(crate) fn new(protocol: DNSServiceProtocol) -> Self {
         Self {
-            sd_ref: ptr::null_mut(),
+            sd_refs: [ptr::null_mut(); 2],
             results: Default::default(),
             sd_error: 0,
             saw_timeout: false,
@@ -181,8 +224,11 @@ impl QueryState {
             stragglers: Stragglers::None,
             attempt: Attempt::Plain,
             hostname: bun::ZBox::from_bytes(b""),
-            callback: None,
         }
+    }
+
+    fn deallocate_refs(&mut self) {
+        deallocate_refs(core::mem::replace(&mut self.sd_refs, [ptr::null_mut(); 2]));
     }
 
     /// Back to a fresh in-flight state for the unsuppressed reissue.
@@ -206,43 +252,36 @@ impl QueryState {
             && !self.saw_timeout
     }
 
-    /// Absorb one callback. SAFETY: `address`, if non-null, is a valid sockaddr (dnssd_clientstub guarantees it).
-    pub(crate) unsafe fn record_reply(
+    /// Absorb one callback.
+    fn record_reply(
         &mut self,
         flags: DNSServiceFlags,
+        interface_index: u32,
         error_code: DNSServiceErrorType,
-        address: *const Sockaddr,
+        rrtype: u16,
+        rdata: &[u8],
         ttl: u32,
     ) {
         self.awaiting_more = flags & FLAGS_MORE_COMING != 0;
-        // Only PolicyDenied passes a null sockaddr; A/AAAA replies (incl. negatives) are family-tagged.
-        if address.is_null() {
-            if self.sd_error == 0 {
-                self.sd_error = error_code;
-            }
-            return;
-        }
-        // SAFETY: caller contract.
-        let fam = unsafe { (*address).sa_family } as i32;
-        // Any reply retires the family's bit; completeness is tracked by `awaiting_more`.
-        self.pending_proto &= !if fam == netc::AF_INET6 {
-            PROTOCOL_IPV6
-        } else {
-            PROTOCOL_IPV4
+        // An A/AAAA reply (negatives are typed too) retires its family's bit; a CNAME on the way there retires nothing.
+        self.pending_proto &= !match rrtype {
+            TYPE_A => PROTOCOL_IPV4,
+            TYPE_AAAA => PROTOCOL_IPV6,
+            _ => 0,
         };
-        if error_code == ERR_NO_ERROR && flags & FLAGS_ADD != 0 {
-            self.results.push(GetAddrInfoResult {
-                // SAFETY: caller contract.
-                address: unsafe { bun_dns::Address::init_posix(address.cast()) },
-                ttl: ttl as i32,
-            });
-        } else if error_code == ERR_TIMEOUT {
-            self.saw_timeout = true;
-        } else if error_code != ERR_NO_ERROR
-            && error_code != ERR_NO_SUCH_RECORD
-            && self.sd_error == 0
-        {
-            self.sd_error = error_code;
+        match error_code {
+            ERR_NO_ERROR if flags & FLAGS_ADD != 0 => {
+                if let Some(address) = address_from_record(rrtype, rdata, interface_index) {
+                    self.results.push(GetAddrInfoResult {
+                        address,
+                        ttl: ttl as i32,
+                    });
+                }
+            }
+            ERR_NO_ERROR | ERR_NO_SUCH_RECORD => {}
+            ERR_TIMEOUT => self.saw_timeout = true,
+            _ if self.sd_error == 0 => self.sd_error = error_code,
+            _ => {}
         }
         self.stragglers = match (self.only_stragglers_left(), self.stragglers) {
             (false, _) => Stragglers::None,
@@ -295,6 +334,14 @@ impl Inflight {
         }
     }
 
+    /// The `on_reply` that turns `context()` back into this variant.
+    fn reply_callback(&self) -> QueryRecordReply {
+        match *self {
+            Inflight::Jsc(_) => on_reply::<false>,
+            Inflight::Internal(_) => on_reply::<true>,
+        }
+    }
+
     /// SAFETY: the request behind `self` is live (pinned in `inflight`);
     /// the `&mut` derives from the stored raw pointer, not from a borrow.
     unsafe fn query<'a>(self) -> &'a mut QueryState {
@@ -306,6 +353,32 @@ impl Inflight {
             }
         }
     }
+}
+
+/// Records a reply; `on_readable` completes. SAFETY: `context` is a live request of the `INTERNAL` kind; `rdata` spans `rdlen` bytes.
+unsafe extern "C" fn on_reply<const INTERNAL: bool>(
+    _sd_ref: DNSServiceRef,
+    flags: DNSServiceFlags,
+    interface_index: u32,
+    error_code: DNSServiceErrorType,
+    _fullname: *const c_char,
+    rrtype: u16,
+    _rrclass: u16,
+    rdlen: u16,
+    rdata: *const c_void,
+    ttl: u32,
+    context: *mut c_void,
+) {
+    SharedConnection::note_reply(context);
+    let owner = if INTERNAL {
+        Inflight::Internal(context.cast())
+    } else {
+        Inflight::Jsc(context.cast())
+    };
+    // SAFETY: caller contract; the slice is only read before this callback returns.
+    let rdata = unsafe { bun::ffi::slice(rdata.cast::<u8>(), rdlen as usize) };
+    // SAFETY: caller contract; event-loop thread, and no other borrow of the query is live here.
+    unsafe { owner.query() }.record_reply(flags, interface_index, error_code, rrtype, rdata, ttl);
 }
 
 /// One per event loop: owns the primary `DNSServiceRef` + `FilePoll`; lookups are ShareConnection subordinates.
@@ -400,76 +473,88 @@ impl SharedConnection {
         Self::current()
     }
 
-    /// Start a subordinate query and track it (keeps the process alive); `None` if the daemon refused.
+    /// Start `owner`'s queries and track it (keeps the process alive); `false` if the daemon refused.
     pub(crate) fn start(
         &mut self,
         owner: Inflight,
         protocol: DNSServiceProtocol,
         hostname: &ZStr,
-        callback: GetAddrInfoReply,
-        context: *mut c_void,
-    ) -> Option<DNSServiceRef> {
+    ) -> bool {
         let suppress = addrconfig_flags(protocol);
-        let sub = self.issue(protocol, suppress, hostname, callback, context)?;
+        let Some(sd_refs) = self.issue(owner, protocol, suppress, hostname) else {
+            return false;
+        };
         if self.inflight.is_empty() {
             let ctx = self.ctx;
             self.file_poll().enable_keeping_process_alive(ctx);
         }
         // SAFETY: `owner` is the caller's live request, tracked here until `finish()`.
         let q = unsafe { owner.query() };
-        q.sd_ref = sub;
+        q.sd_refs = sd_refs;
         q.attempt = if suppress != 0 {
             Attempt::Suppressed
         } else {
             Attempt::Plain
         };
         q.hostname = bun::ZBox::from_bytes(hostname.as_bytes());
-        q.callback = Some(callback);
         self.inflight.push(owner);
-        Some(sub)
+        true
     }
 
+    /// One query per family in `protocol`, as libinfo does; `None`, with none left running, if the daemon refused one.
     fn issue(
         &mut self,
+        owner: Inflight,
         protocol: DNSServiceProtocol,
         suppress: DNSServiceFlags,
         hostname: &ZStr,
-        callback: GetAddrInfoReply,
-        context: *mut c_void,
-    ) -> Option<DNSServiceRef> {
-        // ShareConnection requires `sub` to start as a copy of the primary ref.
-        let mut sub: DNSServiceRef = self.main_ref;
+    ) -> Option<FamilyRefs> {
         let flags = FLAGS_SHARE_CONNECTION | FLAGS_TIMEOUT | FLAGS_RETURN_INTERMEDIATES | suppress;
-        let hostname = hostname.as_ptr().cast::<c_char>();
-        // SAFETY: FFI; `hostname` is NUL-terminated (copied by dns_sd); `context` is only stored.
-        let err = unsafe {
-            match getaddrinfo_ex() {
-                Some((ex, attr)) => ex(
-                    &raw mut sub,
-                    flags,
-                    0,
-                    protocol,
-                    hostname,
-                    attr,
-                    callback,
-                    context,
-                ),
-                None => DNSServiceGetAddrInfo(
-                    &raw mut sub,
-                    flags,
-                    0,
-                    protocol,
-                    hostname,
-                    callback,
-                    context,
-                ),
+        // Sent as given: the daemon tries search domains only for a name with no trailing dot.
+        let name = hostname.as_ptr().cast::<c_char>();
+        let (callback, context) = (owner.reply_callback(), owner.context());
+        let mut sd_refs: FamilyRefs = [ptr::null_mut(); 2];
+        let families = [(PROTOCOL_IPV4, TYPE_A), (PROTOCOL_IPV6, TYPE_AAAA)];
+        for (i, (family, rrtype)) in families.into_iter().enumerate() {
+            if protocol & family == 0 {
+                continue;
             }
-        };
-        if err != ERR_NO_ERROR {
-            bun_output::scoped_log!(dns, "DNSServiceGetAddrInfo failed: {}", err);
-            return None;
+            // ShareConnection requires `sub` to start as a copy of the primary ref.
+            let mut sub: DNSServiceRef = self.main_ref;
+            // SAFETY: FFI; `name` is NUL-terminated (copied by dns_sd); `context` is only stored.
+            let err = unsafe {
+                match query_record_allowing_failover() {
+                    Some((query_record, allow_failover)) => query_record(
+                        &raw mut sub,
+                        flags,
+                        0,
+                        name,
+                        rrtype,
+                        CLASS_IN,
+                        allow_failover,
+                        callback,
+                        context,
+                    ),
+                    None => DNSServiceQueryRecord(
+                        &raw mut sub,
+                        flags,
+                        0,
+                        name,
+                        rrtype,
+                        CLASS_IN,
+                        callback,
+                        context,
+                    ),
+                }
+            };
+            if err != ERR_NO_ERROR {
+                bun_output::scoped_log!(dns, "DNSServiceQueryRecord failed: {}", err);
+                deallocate_refs(sd_refs);
+                return None;
+            }
+            sd_refs[i] = sub;
         }
-        Some(sub)
+        Some(sd_refs)
     }
 
     /// Called first from every reply callback: a different `context` ends the previous request's `MoreComing` run.
@@ -630,8 +715,7 @@ impl SharedConnection {
     fn finish(inf: Inflight, force_err: Option<DNSServiceErrorType>) {
         // SAFETY: `inf` is a live heap request just removed from `inflight`.
         let q = unsafe { inf.query() };
-        // SAFETY: FFI; `sd_ref` is this request's live subordinate.
-        unsafe { DNSServiceRefDeallocate(q.sd_ref) };
+        q.deallocate_refs();
         if let Some(e) = force_err {
             q.results.clear();
             q.sd_error = e;
@@ -652,11 +736,8 @@ impl SharedConnection {
         // SAFETY: `inf` is a live heap request removed from `inflight` by the caller.
         let q = unsafe { inf.query() };
         let (protocol, hostname) = (protocol_for_pending(q), q.hostname.clone());
-        let Some(callback) = q.callback else {
-            return false;
-        };
         q.reset_for_retry(protocol);
-        let Some(sub) = this.issue(protocol, 0, &hostname, callback, inf.context()) else {
+        let Some(sd_refs) = this.issue(inf, protocol, 0, &hostname) else {
             return false;
         };
         bun_output::scoped_log!(
@@ -664,7 +745,7 @@ impl SharedConnection {
             "retrying {} without SuppressUnusable",
             bstr::BStr::new(hostname.as_bytes())
         );
-        q.sd_ref = sub;
+        q.sd_refs = sd_refs;
         if this.inflight.is_empty() {
             let ctx = this.ctx;
             this.file_poll().enable_keeping_process_alive(ctx);
@@ -687,9 +768,8 @@ impl SharedConnection {
                 // have waiters on other threads (and its outcome is cached): this
                 // thread going away is not an answer. Finish it on the work pool.
                 Inflight::Internal(req) => {
-                    // SAFETY: `inf` is a live heap request just removed from `inflight`;
-                    // FFI releases this thread's subordinate for it.
-                    unsafe { DNSServiceRefDeallocate(inf.query().sd_ref) };
+                    // SAFETY: `inf` is a live heap request just removed from `inflight`.
+                    unsafe { inf.query() }.deallocate_refs();
                     internal::run_on_work_pool(req);
                 }
                 // A dns.lookup() from this thread's script: only this VM waits on it.
@@ -755,13 +835,7 @@ pub(crate) fn lookup(
     let promise_value = unsafe { (*request).head.promise.value() };
 
     let name_z = bun::ZBox::from_bytes(query.name.as_ref());
-    let Some(_) = shared.start(
-        Inflight::Jsc(request),
-        protocol,
-        &name_z,
-        GetAddrInfoRequest::dns_sd_reply,
-        request.cast::<c_void>(),
-    ) else {
+    if !shared.start(Inflight::Jsc(request), protocol, &name_z) {
         // SAFETY: request is exclusively owned; dns_sd never accepted it.
         unsafe {
             if let Some(pos) = (*request).pending_slot {
@@ -775,7 +849,7 @@ pub(crate) fn lookup(
             drop(bun_core::heap::take(request));
         }
         return lib_c::lookup(this, query, global_this, context);
-    };
+    }
 
     this.request_sent(this.vm());
 

@@ -382,19 +382,8 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     }
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    Vector<TransferredMessagePort> transferredPorts;
-
-    if (!ports.isEmpty()) {
-        auto disentangleResult = MessagePort::disentanglePorts(WTF::move(ports));
-        if (disentangleResult.hasException()) {
-            WebCore::propagateException(*lexicalGlobalObject, throwScope, disentangleResult.releaseException());
-            RELEASE_AND_RETURN(throwScope, {});
-        }
-        transferredPorts = disentangleResult.releaseReturnValue();
-    }
-
     options.workerDataAndEnvironmentData = serialized.releaseReturnValue();
-    options.dataMessagePorts = WTF::move(transferredPorts);
+    options.dataMessagePorts = MessagePort::disentanglePorts(WTF::move(ports));
 
     auto object = Worker::create(*context, WTF::move(scriptUrl), WTF::move(options));
     if constexpr (IsExceptionOr<decltype(object)>)

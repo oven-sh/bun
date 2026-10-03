@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -438,6 +439,177 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
   it("Bun.write(Bun.stderr, 'new TextEncoder().encode(Bun.write STDERR TEST'))", async () => {
     expect(await Bun.write(Bun.stderr, new TextEncoder().encode("\nBun.write STDERR TEST\n\n"))).toBe(24);
+  });
+
+  describe("empty source", () => {
+    const emptySources = () => ["", new Uint8Array(0), new Blob([]), new Response(""), []];
+    const emptySourceExprs = [`""`, `new Uint8Array(0)`, `new Blob([])`, `new Response("")`, `[]`];
+
+    it("to a user-provided fd does not truncate", async () => {
+      using dir = tempDir("bun-write-empty-fd", { "out.txt": "" });
+      const p = path.join(String(dir), "out.txt");
+      // Each entry point reaches the write through a different destination shape.
+      const doors = {
+        "Bun.write(Bun.file(fd), src)": (fd, src) => Bun.write(Bun.file(fd), src),
+        "Bun.write(fd, src)": (fd, src) => Bun.write(fd, src),
+        "Bun.file(fd).write(src)": (fd, src) => Bun.file(fd).write(src),
+      };
+      const results = [];
+      for (const flags of ["r+", "a"]) {
+        for (const [door, write] of Object.entries(doors)) {
+          for (const src of emptySources()) {
+            fs.writeFileSync(p, "EXISTING");
+            const fd = fs.openSync(p, flags);
+            try {
+              results.push({
+                flags,
+                door,
+                ret: await write(fd, src),
+                size: fs.fstatSync(fd).size,
+                contents: fs.readFileSync(p, "utf8"),
+              });
+            } finally {
+              fs.closeSync(fd);
+            }
+          }
+        }
+      }
+      expect(results).toEqual(
+        ["r+", "a"].flatMap(flags =>
+          Object.keys(doors).flatMap(door =>
+            emptySourceExprs.map(() => ({ flags, door, ret: 0, size: 8, contents: "EXISTING" })),
+          ),
+        ),
+      );
+    });
+
+    // A body with no bytes is an empty source too: an answer with no content, or a stream
+    // that closed before it gave a chunk.
+    it("an empty Response or Request body to a user-provided fd does not truncate", async () => {
+      using dir = tempDir("bun-write-empty-body-fd", { "out.txt": "" });
+      const p = path.join(String(dir), "out.txt");
+      await using server = Bun.serve({
+        port: 0,
+        fetch: req => (req.url.endsWith("/204") ? new Response(null, { status: 204 }) : new Response("")),
+      });
+      const closed = () =>
+        new ReadableStream({
+          start(controller) {
+            controller.close();
+          },
+        });
+      const sources = {
+        "fetch() with Content-Length: 0": () => fetch(server.url),
+        "fetch() with status 204": () => fetch(new URL("/204", server.url)),
+        "Response with a closed stream": () => new Response(closed()),
+        "Request with a closed stream": () => new Request(server.url, { method: "POST", body: closed() }),
+        "Response(null)": () => new Response(null),
+      };
+      const results = [];
+      for (const flags of ["r+", "a"]) {
+        for (const [source, make] of Object.entries(sources)) {
+          fs.writeFileSync(p, "EXISTING");
+          const fd = fs.openSync(p, flags);
+          try {
+            results.push({
+              flags,
+              source,
+              ret: await Bun.write(Bun.file(fd), await make()),
+              size: fs.fstatSync(fd).size,
+            });
+          } finally {
+            fs.closeSync(fd);
+          }
+        }
+      }
+      expect(results).toEqual(
+        ["r+", "a"].flatMap(flags => Object.keys(sources).map(source => ({ flags, source, ret: 0, size: 8 }))),
+      );
+    });
+
+    // The `bun app.js >> app.log 2>> err.log` shape: fd 1 and fd 2 arrive already open in
+    // append mode on files that hold an earlier process's output.
+    it("to inherited O_APPEND stdout/stderr leaves earlier content intact", async () => {
+      using dir = tempDir("bun-write-empty-append-stdio", {
+        "out.log": "line1\nline2\nline3\n",
+        "err.log": "err1\nerr2\n",
+        "results.json": "",
+      });
+      const outLog = path.join(String(dir), "out.log");
+      const errLog = path.join(String(dir), "err.log");
+      const resultsPath = path.join(String(dir), "results.json");
+      // A Response body is single-use, so build a fresh source for each destination.
+      const script = `
+        const mk = () => [${emptySourceExprs.join(", ")}];
+        const results = [];
+        for (let i = 0; i < ${emptySourceExprs.length}; i++) {
+          results.push([await Bun.write(Bun.stdout, mk()[i]), await Bun.write(Bun.stderr, mk()[i])]);
+        }
+        require("fs").writeFileSync(process.env.RESULTS_PATH, JSON.stringify(results));
+      `;
+      const outFd = fs.openSync(outLog, "a");
+      const errFd = fs.openSync(errLog, "a");
+      let exitCode;
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: { ...bunEnv, RESULTS_PATH: resultsPath },
+          stdin: "ignore",
+          stdout: outFd,
+          stderr: errFd,
+        });
+        exitCode = await proc.exited;
+      } finally {
+        fs.closeSync(outFd);
+        fs.closeSync(errFd);
+      }
+      expect({
+        out: fs.readFileSync(outLog, "utf8"),
+        err: fs.readFileSync(errLog, "utf8"),
+        results: JSON.parse(fs.readFileSync(resultsPath, "utf8") || "null"),
+        exitCode,
+      }).toEqual({
+        out: "line1\nline2\nline3\n",
+        err: "err1\nerr2\n",
+        results: emptySourceExprs.map(() => [0, 0]),
+        exitCode: 0,
+      });
+    });
+
+    it("to a regular-file path still empties the file", async () => {
+      using dir = tempDir("bun-write-empty-truncate", { "out.txt": "EXISTING" });
+      const p = path.join(String(dir), "out.txt");
+      for (const dest of [() => p, () => Bun.file(p)]) {
+        for (const src of emptySources()) {
+          fs.writeFileSync(p, "EXISTING");
+          expect(await Bun.write(dest(), src)).toBe(0);
+          expect(fs.readFileSync(p, "utf8")).toBe("");
+        }
+      }
+    });
+
+    it("to a new path still creates an empty file, and its directory", async () => {
+      using dir = tempDir("bun-write-empty-create", {});
+      let n = 0;
+      for (const parent of [[], ["missing"]]) {
+        for (const src of emptySources()) {
+          const p = path.join(String(dir), ...parent.map(name => `${name}-${n}`), `out-${n++}.txt`);
+          expect(await Bun.write(p, src)).toBe(0);
+          expect(fs.readFileSync(p, "utf8")).toBe("");
+        }
+      }
+    });
+
+    it("a shorter write to a path still trims the file", async () => {
+      using dir = tempDir("bun-write-shorter", { "out.txt": "" });
+      const p = path.join(String(dir), "out.txt");
+      const results = [];
+      for (const src of ["ab", new Uint8Array([97, 98]), new Blob(["ab"])]) {
+        fs.writeFileSync(p, "EXISTING");
+        results.push({ ret: await Bun.write(p, src), contents: fs.readFileSync(p, "utf8") });
+      }
+      expect(results).toEqual(Array(3).fill({ ret: 2, contents: "ab" }));
+    });
   });
 
   // These tests pass by not throwing:
@@ -1484,6 +1656,101 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     Bun.gc(true);
 
     expect(f.name).toBe(filePath);
+  });
+});
+
+(isWindows ? describe : describe.concurrent)("Bun.write(Bun.stdout, <empty source>)", () => {
+  it("does not truncate the destination", async () => {
+    const emptySourceExprs = [`""`, `new Uint8Array(0)`, `new Blob([])`, `new Response("")`, `[]`];
+    const script = `
+      const fs = require("fs");
+      for (const src of [${emptySourceExprs.join(", ")}]) {
+        fs.writeSync(1, "BEFORE ");
+        const r = await Bun.write(Bun.stdout, src);
+        fs.writeSync(2, "ret=" + r + "\\n");
+        fs.writeSync(1, "AFTER\\n");
+      }
+    `;
+    const expectedStdout = "BEFORE AFTER\n".repeat(emptySourceExprs.length);
+    const expectedStderr = "ret=0\n".repeat(emptySourceExprs.length);
+
+    using dir = tempDir("bun-write-empty-stdout", {});
+    const out = path.join(String(dir), "out.txt");
+    {
+      // stdout redirected to a regular file: must not ftruncate it
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: Bun.file(out),
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ out: fs.readFileSync(out, "utf8"), stderr, exitCode }).toEqual({
+        out: expectedStdout,
+        stderr: expectedStderr,
+        exitCode: 0,
+      });
+    }
+    {
+      // stdout is a pipe: must not reject with EINVAL
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: expectedStdout,
+        stderr: expectedStderr,
+        exitCode: 0,
+      });
+    }
+  });
+
+  // XNU updates the shared file offset with a non-atomic `+= bytecnt`, so concurrent write(2)
+  // calls on one fd without O_APPEND can lose bytes there whatever the empty write does.
+  // Linux serializes the offset update (f_pos_lock), so every byte must be in the file.
+  it.skipIf(isMacOS)("does not drop concurrent in-flight writes when stdout is a file", async () => {
+    // The thread pool runs the queued writes. An ftruncate(fd, 0) from the empty write drops
+    // what they wrote so far and leaves the fd offset where it was: the later writes land past
+    // a hole of NUL bytes, or the file stays empty when they had all finished.
+    const N = 2000;
+    const script = `
+      const fs = require("fs");
+      const ps = [];
+      for (let i = 0; i < ${N}; i++) ps.push(Bun.write(Bun.stdout, "C" + i + "\\n"));
+      fs.writeSync(1, "SYNC_WRITE\\n");
+      await Bun.write(Bun.stdout, "");
+      const r = await Promise.allSettled(ps);
+      process.stderr.write(
+        "fulfilled=" + r.filter(x => x.status === "fulfilled").length +
+        " bytes=" + r.reduce((a, x) => a + (x.value || 0), 0) + "\\n",
+      );
+    `;
+    const expectedBytes = Array.from({ length: N }, (_, i) => ("C" + i).length + 1).reduce((a, b) => a + b, 0);
+
+    using dir = tempDir("bun-write-stdout-nul-hole", {});
+    const out = path.join(String(dir), "out.txt");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: Bun.file(out),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const buf = fs.readFileSync(out);
+    expect({
+      stderr,
+      size: buf.length,
+      nulBytes: buf.indexOf(0) === -1 ? 0 : Array.prototype.reduce.call(buf, (a, b) => a + (b === 0 ? 1 : 0), 0),
+      exitCode,
+    }).toEqual({
+      stderr: `fulfilled=${N} bytes=${expectedBytes}\n`,
+      size: expectedBytes + "SYNC_WRITE\n".length,
+      nulBytes: 0,
+      exitCode: 0,
+    });
   });
 });
 

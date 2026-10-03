@@ -8503,6 +8503,11 @@ impl CloseOnDrop {
     pub fn new(fd: Fd) -> Self {
         Self(fd)
     }
+    /// The fd, still open. The caller closes it from here on.
+    #[inline]
+    pub fn release(self) -> Fd {
+        core::mem::ManuallyDrop::new(self).0
+    }
 }
 impl Drop for CloseOnDrop {
     #[inline]

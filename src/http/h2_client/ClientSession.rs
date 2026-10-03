@@ -131,6 +131,9 @@ pub struct ClientSession {
     /// Connection-level send window. Starts at the spec default regardless of
     /// SETTINGS; only WINDOW_UPDATE on stream 0 grows it.
     pub(crate) conn_send_window: i32,
+    /// Streams whose request body waits for a turn at `conn_send_window` and
+    /// `write_buffer`. Allocated when the first one has to wait.
+    pub(crate) send_queue: Option<Box<encode::SendQueue>>,
 
     /// DATA bytes consumed since the last connection-level WINDOW_UPDATE.
     pub(crate) conn_unacked_bytes: u32,
@@ -376,6 +379,7 @@ impl ClientSession {
             remote_initial_window_size: wire::DEFAULT_WINDOW_SIZE,
             pending_hpack_enc_capacity: None,
             conn_send_window: wire::DEFAULT_WINDOW_SIZE as i32,
+            send_queue: None,
             conn_unacked_bytes: 0,
             registry_index: Cell::new(u32::MAX),
         }));
@@ -625,6 +629,11 @@ impl ClientSession {
         if let Some(id) = s.async_http_id {
             self.by_http_id.swap_remove(&id);
         }
+        if s.queued
+            && let Some(queue) = &mut self.send_queue
+        {
+            queue.remove(s.id);
+        }
         drop_stream(stream);
     }
 
@@ -735,7 +744,7 @@ impl ClientSession {
             return;
         }
         self.rearm_timeout();
-        encode::drain_send_body(self, stream_mut(stream), usize::MAX);
+        encode::send_body(self, stream_mut(stream));
         if let Err(err) = self.pump_send_bodies() {
             self.fail_all(err);
         }
@@ -971,6 +980,7 @@ impl ClientSession {
             self.streams.clear_retaining_capacity();
             self.by_http_id.clear_retaining_capacity();
         }
+        self.send_queue = None;
         self.give_up_socket_ref();
     }
 

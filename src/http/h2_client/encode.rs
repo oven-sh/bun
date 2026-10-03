@@ -11,6 +11,7 @@ use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
 use bun_core::strings;
 use bun_picohttp as picohttp;
+use std::collections::VecDeque;
 
 pub(crate) fn write_preface(session: &mut ClientSession) {
     session.queue(wire::CLIENT_PREFACE);
@@ -205,7 +206,7 @@ pub(crate) fn write_request(
     session.encode_scratch = encoded;
     if has_inline_body {
         stream.pending_body = body;
-        drain_send_body(session, stream, usize::MAX);
+        send_body(session, stream);
     } else if !is_streaming {
         stream.sent_end_stream();
     }
@@ -252,7 +253,7 @@ pub(crate) fn write_header_block(
 /// Frame `data` into DATA frames respecting `remote_max_frame_size` and
 /// both flow-control windows. Returns bytes consumed; END_STREAM is set
 /// on the final frame only when `end_stream` and all of `data` fit.
-pub(crate) fn write_data_windowed(
+fn write_data_windowed(
     session: &mut ClientSession,
     stream: &mut Stream,
     data: &[u8],
@@ -303,17 +304,36 @@ pub(crate) fn write_data_windowed(
     consumed
 }
 
-/// Push as much of `stream`'s request body as the send windows allow.
-/// Buffers into `write_buffer`; caller flushes.
-pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: usize) {
-    if stream.local_closed() || stream.awaiting_continue || stream.fatal_error.is_some() {
-        return;
+/// Why `drain_send_body` stopped.
+enum Drain {
+    /// END_STREAM is sent, or the stream can no longer send.
+    Closed,
+    /// A streamed body with nothing buffered that has not ended. `send_body`
+    /// runs again when it is fed.
+    Idle,
+    /// Bytes are left and the connection holds them: its send window is used
+    /// up, or `write_buffer` is at `WRITE_BUFFER_HIGH_WATER`.
+    ConnBlocked,
+    /// Bytes are left and the stream holds them: it framed `cap`, its own
+    /// send window is used up, or it waits for a 100 Continue.
+    Yield,
+}
+
+/// Frame at most `cap` bytes of `stream`'s request body, as far as the send
+/// windows allow. Buffers into `write_buffer`; caller flushes. The END_STREAM
+/// of a body with no bytes left needs no window and goes out at any `cap`.
+fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: usize) -> Drain {
+    if stream.local_closed() || stream.fatal_error.is_some() {
+        return Drain::Closed;
     }
     let Some(client_ptr) = stream.client else {
-        return;
+        return Drain::Closed;
     };
+    if stream.awaiting_continue {
+        return Drain::Yield;
+    }
     let client = super::client_session::stream_client_mut(client_ptr);
-    match &mut client.state.original_request_body {
+    let sent = match &mut client.state.original_request_body {
         HTTPRequestBody::Bytes(_) => {
             let pending = stream.pending_body;
             let sent = write_data_windowed(session, stream, pending.slice(), true, cap);
@@ -322,12 +342,14 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
             if stream.pending_body.is_empty() {
                 stream.sent_end_stream();
                 client.state.request_stage = HTTPStage::Done;
+                return Drain::Closed;
             }
+            sent
         }
         HTTPRequestBody::Stream(body) => {
             let ended = body.ended;
             let Some(sb) = body.buffer_mut() else {
-                return;
+                return Drain::Idle;
             };
             let buffer = sb.acquire();
             let data_ptr = buffer.list.as_ptr();
@@ -335,7 +357,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
             let cursor = buffer.cursor;
             if data_len == 0 && !ended {
                 sb.release();
-                return;
+                return Drain::Idle;
             }
             // SAFETY: data_ptr[cursor..cursor+data_len] is the readable slice.
             let data = unsafe { bun_core::ffi::slice(data_ptr.add(cursor), data_len) };
@@ -357,47 +379,163 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
             sb.release();
             if stream.local_closed() {
                 body.detach();
+                return Drain::Closed;
             }
+            if drained {
+                return Drain::Idle;
+            }
+            sent
         }
         HTTPRequestBody::Sendfile(_) => unreachable!(),
+    };
+    if sent < cap && stream.send_window > 0 {
+        Drain::ConnBlocked
+    } else {
+        Drain::Yield
+    }
+}
+
+/// The streams whose request body has bytes left that could not be framed,
+/// in the order they take turns at the connection window and the write
+/// buffer. It holds ids, not pointers, so an id that outlives its stream
+/// matches nothing.
+#[derive(Default)]
+pub(crate) struct SendQueue {
+    ids: VecDeque<u32>,
+    /// What is left of the front stream's slice after the connection cut its
+    /// turn short. 0: its next turn is a whole slice.
+    turn_left: u32,
+}
+
+impl SendQueue {
+    fn pop(&mut self) {
+        self.ids.pop_front();
+        self.turn_left = 0;
+    }
+
+    /// The stream with this id is removed while it waits.
+    pub(crate) fn remove(&mut self, id: u32) {
+        match self.ids.iter().position(|&queued| queued == id) {
+            Some(0) => self.pop(),
+            Some(at) => {
+                self.ids.remove(at);
+            }
+            None => {}
+        }
+    }
+
+    /// Round robin: the stream at the front frames one `remote_max_frame_size`
+    /// slice and goes to the back. The order outlives the call, so a window
+    /// grant of any size goes to the stream after the one that used the last
+    /// grant. True if it stopped at `WRITE_BUFFER_HIGH_WATER`.
+    fn serve(&mut self, session: &mut ClientSession) -> bool {
+        // Streams in a row that framed nothing. A full lap of them ends the
+        // pass, so streams that wait for their own window cannot spin it.
+        let mut stalled: usize = 0;
+        while stalled < self.ids.len() {
+            if session.conn_send_window <= 0 {
+                return false;
+            }
+            if session.write_buffer.size() >= WRITE_BUFFER_HIGH_WATER {
+                return true;
+            }
+            let Some(&stream) = session.streams.get(&self.ids[0]) else {
+                self.pop();
+                continue;
+            };
+            let stream = super::client_session::stream_mut(stream);
+            let turn = match self.turn_left {
+                0 => session.remote_max_frame_size,
+                left => left,
+            };
+            // With nobody to take turns with, a slice boundary only adds laps.
+            let cap = if self.ids.len() == 1 {
+                usize::MAX
+            } else {
+                turn as usize
+            };
+            let before = session.conn_send_window;
+            let drain = if stream.send_window <= 0 && !stream.local_closed() {
+                Drain::Yield
+            } else {
+                drain_send_body(session, stream, cap)
+            };
+            let sent = u32::try_from(before - session.conn_send_window).expect("int cast");
+            if sent != 0 {
+                stalled = 0;
+            }
+            match drain {
+                Drain::Closed | Drain::Idle => {
+                    stream.queued = false;
+                    self.pop();
+                }
+                // It keeps the front and the rest of its slice. The checks at
+                // the top of the loop end the pass.
+                Drain::ConnBlocked => self.turn_left = turn.saturating_sub(sent),
+                Drain::Yield => {
+                    self.turn_left = 0;
+                    self.ids.rotate_left(1);
+                    if sent == 0 {
+                        stalled += 1;
+                    }
+                }
+            }
+        }
+        false
+    }
+}
+
+/// `stream` has request-body bytes, or the end of its body, to send: at
+/// attach, and each time a streamed body is fed. With no stream waiting it
+/// frames what the windows allow. Behind waiting streams it frames nothing
+/// and joins the queue, so it takes no window ahead of them.
+pub(crate) fn send_body(session: &mut ClientSession, stream: &mut Stream) {
+    if stream.queued {
+        return;
+    }
+    let cap = match &session.send_queue {
+        Some(queue) if !queue.ids.is_empty() => 0,
+        _ => usize::MAX,
+    };
+    if matches!(
+        drain_send_body(session, stream, cap),
+        Drain::ConnBlocked | Drain::Yield
+    ) {
+        stream.queued = true;
+        session
+            .send_queue
+            .get_or_insert_default()
+            .ids
+            .push_back(stream.id);
     }
 }
 
 /// True if it stopped at `WRITE_BUFFER_HIGH_WATER` with body bytes still sendable.
 pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
-    // Round-robin: each pass gives every uploader at most one
-    // remote_max_frame_size slice before the next stream gets a turn, so
-    // the lowest-index stream can't monopolise conn_send_window.
-    let slice: usize = session.remote_max_frame_size as usize;
-    loop {
-        if session.conn_send_window <= 0 {
-            return false;
+    // `drain_send_body` takes the whole session, so the queue leaves it for
+    // the pass.
+    let more = match session.send_queue.take() {
+        Some(mut queue) => {
+            let more = queue.serve(session);
+            session.send_queue = Some(queue);
+            more
         }
-        if session.write_buffer.size() >= WRITE_BUFFER_HIGH_WATER {
-            return true;
-        }
-        let mut progressed = false;
-        // Iterating `session.streams.values()` while passing `session` mutably
-        // to `drain_send_body` would conflict; iterate by index
-        // and re-borrow each pass.
-        let mut i = 0usize;
-        while i < session.streams.count() {
-            let stream = session.streams.values()[i];
-            let s = super::client_session::stream_mut(stream);
-            i += 1;
-            if s.local_closed() || s.send_window <= 0 {
-                continue;
-            }
-            let before = session.conn_send_window;
-            drain_send_body(session, s, slice);
-            if session.conn_send_window != before || s.local_closed() {
-                progressed = true;
-            }
-        }
-        if !progressed {
-            return false;
-        }
+        None => false,
+    };
+    #[cfg(debug_assertions)]
+    for &stream in session.streams.values() {
+        let s = super::client_session::stream_mut(stream);
+        debug_assert!(
+            s.queued
+                || s.pending_body.is_empty()
+                || s.local_closed()
+                || s.fatal_error.is_some()
+                || s.client.is_none(),
+            "h2 stream {} has unsent body bytes and is not in the send queue",
+            s.id
+        );
     }
+    more
 }
 
 fn encode_header(

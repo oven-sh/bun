@@ -53,6 +53,8 @@ pub struct Stream {
     /// Expect: 100-continue is in effect: hold the request body until a 1xx
     /// or final status arrives.
     pub(crate) awaiting_continue: bool,
+    /// The id of this stream is in the session's `send_queue`.
+    pub(crate) queued: bool,
     pub(crate) fatal_error: Option<Error>,
     /// DATA bytes consumed since the last WINDOW_UPDATE for this stream.
     pub(crate) unacked_bytes: u32,
@@ -140,6 +142,7 @@ impl Stream {
             headers_ready: false,
             headers_end_stream: false,
             awaiting_continue: false,
+            queued: false,
             fatal_error: None,
             unacked_bytes: 0,
             data_bytes_received: 0,

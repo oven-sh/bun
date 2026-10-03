@@ -308,11 +308,15 @@ impl Framework {
             return;
         }
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
-            Ok(mut result) => {
-                let p = result.path().expect("just resolved");
-                *path = resolved_path(p.text);
-            }
+        let resolved = r
+            .resolve(top_level_dir, path, bun_ast::ImportKind::Stmt)
+            .and_then(|result| match result.path_const() {
+                Some(p) => Ok(resolved_path(p.text)),
+                // Disabled, by a "browser" map for example.
+                None => Err(bun_resolver::Error::ModuleNotFound),
+            });
+        match resolved {
+            Ok(resolved) => *path = resolved,
             Err(err) => {
                 // This routes through `Output::err` (stderr), not
                 // `r.log`. The "Errors written into r.log" doc on `Framework.resolve`

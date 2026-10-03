@@ -2249,7 +2249,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
         }
 
-        // The bake options (and the arena that backs `root`) live in
+        // The bake options (`root`, and the arena the transpilers live in) are in
         // `(*server).config.bake` for the server's lifetime. Initialise
         // DevServer AFTER the server box exists so the `Options::arena` borrow
         // points into the heap-allocated config rather than the caller's

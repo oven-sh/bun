@@ -57,3 +57,34 @@ test("Bun.serve({ app }) rejects wrong-typed framework options", async () => {
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+test('Bun.serve({ app }) reports a framework entry point that a "browser" map disables', async () => {
+  using dir = tempDir("bake-app-disabled-entry", {
+    "package.json": JSON.stringify({ name: "app", browser: { "./client.ts": false } }),
+    "client.ts": `export {};`,
+    "server.ts": `export function render() { return new Response("ok"); }`,
+    "routes/index.ts": `export default () => new Response("ok");`,
+    "fixture.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+      try {
+        Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } }).stop(true);
+        console.log("no error");
+      } catch (e) {
+        console.log("threw: " + e.message);
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("Failed to resolve './client.ts' for framework (client side entrypoint)");
+  expect(stdout).toStartWith("threw: ");
+  expect(exitCode).toBe(0);
+});

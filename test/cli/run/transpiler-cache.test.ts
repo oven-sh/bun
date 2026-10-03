@@ -140,10 +140,14 @@ describe("transpiler cache", () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     writeFileSync(join(temp_dir, "b.js"), dummyFile(50 * 1024, "2", "b"));
 
-    const remover = Bun.spawn({
+    // The remover's cwd is temp_dir. A Windows process keeps its cwd open until
+    // it exits, and the next beforeEach removes temp_dir. Disposal kills the
+    // remover and waits for its exit, so the test cannot end before that.
+    await using remover = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "transpiler-cache-aggressive-remover.js"), cache_dir],
       env,
       cwd: temp_dir,
+      killSignal: "SIGKILL",
     });
 
     let processes: Subprocess<"ignore", "pipe", "inherit">[] = [];
@@ -168,8 +172,6 @@ describe("transpiler cache", () => {
     await Promise.all(processes.map(x => x.exited));
 
     expect(!killing).toBeTrue();
-
-    remover.kill(9);
 
     for (const proc of processes) {
       expect(proc.exitCode).toBe(0);

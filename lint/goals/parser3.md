@@ -10,12 +10,17 @@ own) and this file. This file REPLACES `parser2.md`: its part A is done by the i
 
 ## The base binaries now (read this first)
 
-The machine was restarted after this file was written, and the base binaries were built again, from a newer main.
-`/workspace/base/bun.bc7a813b1` and `/workspace/base/bun-profile.bc7a813b1` are release builds of main at
-`bc7a813b10`. The names `bun.f4d755a9c` and `bun-profile.f4d755a9c` that this file and your goal use are links to
-them. Your branch is merged with main at `bc7a813b10`, so a release build of your branch against these files
-compares the branch with its own base. If `/workspace/base` is empty, the machine was restarted again: say so in
-`NEEDS.md` and go on with the work that needs no base binary.
+The machine is restarted every few hours, and each restart removes `/workspace/base` and every build directory.
+The base binaries are no longer built here: they are the canary release of main on GitHub. `/workspace/base/README.txt`
+says which commit of main they are and gives the two download commands (one minute). The names `bun.f4d755a9c` and
+`bun-profile.f4d755a9c` that this file and your goal use are links to them. Your branch is merged with that commit
+of main, so a release build of your branch against these files compares the branch with its own base.
+If `/workspace/base` is empty: download the two files again, run `./bun --revision`, merge that commit of main into
+your branch is NOT allowed for you, so instead write the commit into `NEEDS.md` and use the files as they are if
+`git merge-base --is-ancestor <that commit> HEAD` succeeds.
+Builds are lost at each restart too. Before you start a build that takes an hour, make sure the work it tests is
+committed and pushed. Prefer the checks that need no full build: `cargo check -p bun_js_parser` and
+`cargo test -p bun_js_parser --lib` (the test binary of the crate links alone, with stand-ins).
 
 ## What was measured (2026-10-01, linux-x64 release builds, the benchmark of this pull request)
 

@@ -1568,6 +1568,15 @@ describe.each([
       if (options === undefined) socket.send(data() as Buffer, () => void callbacks++);
       else socket.send(data() as Buffer, options, () => void callbacks++);
     }
+    // A value that has no payload makes send() throw, as on an open socket. It does not wait for the socket to open.
+    const thrown = [true, { a: 1 }].map(value => {
+      try {
+        socket.send(value as unknown as Buffer, () => void callbacks++);
+        return "no error";
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code;
+      }
+    });
 
     await using server = Bun.serve<Handlers>({
       port: 0,
@@ -1596,7 +1605,12 @@ describe.each([
     try {
       const callbacksRun = await all.promise;
       const expected = onTheWire(rows);
-      expect({ frames: frames.map((frame, i) => ({ row: expected[i].row, ...frame })), callbacksRun }).toEqual({
+      expect({
+        thrown,
+        frames: frames.map((frame, i) => ({ row: expected[i].row, ...frame })),
+        callbacksRun,
+      }).toEqual({
+        thrown: ["ERR_INVALID_ARG_TYPE", "ERR_INVALID_ARG_TYPE"],
         frames: expected,
         callbacksRun: rows.length,
       });

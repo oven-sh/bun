@@ -1098,16 +1098,13 @@ class BunWebSocketMocked extends EventEmitter {
     let chunk;
     while ((chunk = this.#enquedMessages[0]) && this.#state === 1) {
       const [data, compress, cb, binary] = chunk;
-      const taken = sendServerFrame(ws, data, binary, compress);
       // dropped again: wait for the next drain event
-      if (taken === false) return;
+      if (!sendServerFrame(ws, data, binary, compress)) return;
 
       this.#bufferedAmount -= data.length;
       this.#enquedMessages.shift();
 
-      // Only a send() before the socket opened queues a value that is not a string, bytes or a Blob.
-      if (taken === undefined) this.#frame(toFramePayload(data), binary, compress, cb);
-      else if (typeof cb === "function") queueMicrotask(cb);
+      if (typeof cb === "function") queueMicrotask(cb);
     }
   }
 
@@ -1171,15 +1168,15 @@ class BunWebSocketMocked extends EventEmitter {
 
   #frame(data, binary, compress, cb) {
     const state = this.#state;
-    if (state === ReadyState_OPEN) {
-      const taken = sendServerFrame(this.#ws, data, binary, compress);
-      // Buffer.from() can run code of the caller that closes the socket, so the state is read again.
-      if (taken === undefined) return this.#frame(toFramePayload(data), binary, compress, cb);
-      if (taken) {
-        if (typeof cb === "function") process.nextTick(cb);
-        return;
-      }
-    } else if (state !== ReadyState_CONNECTING) {
+    if (state !== ReadyState_OPEN && state !== ReadyState_CONNECTING) return;
+
+    // A socket that is not open yet has no native socket: `#ws` is null, and the entry sends nothing. The entry
+    // still says what it does not take, so send() throws for a value that has no payload in both states.
+    const taken = sendServerFrame(this.#ws, data, binary, compress);
+    // Buffer.from() can run code of the caller that closes the socket, so the state is read again.
+    if (taken === undefined) return this.#frame(toFramePayload(data), binary, compress, cb);
+    if (taken) {
+      if (typeof cb === "function") process.nextTick(cb);
       return;
     }
     // Not open yet, or over the backpressure limit: #drain sends it.

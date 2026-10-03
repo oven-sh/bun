@@ -1,0 +1,112 @@
+## How the tests of the parser run
+
+Files `src/js_parser/native_test_shims.rs` and `src/js_parser/type_sink_tests.rs`, both under `#[cfg(test)]` in
+`src/js_parser/lib.rs`, and the `mod tests` and `*_tests.rs` files under `src/js_parser/parse/`: no build of bun
+holds them and nothing in them is for another unit to call. This section is for whoever runs or adds a test of the
+parser.
+
+### Which command runs which test
+
+In the worktree, after one `/workspace/tools/lk bun bd -j8 --version` (cargo needs `build/debug/codegen` and
+`vendor/` to resolve the workspace). Every command goes through `/workspace/tools/lk` with a timeout of 3600000 ms.
+
+| what runs | command |
+| --- | --- |
+| every test of the crate: [[FILL tests-total: "<n> tests" at the final commit]] | `cargo test -p bun_js_parser --lib` |
+| the type nodes alone (no parser): seven tests of `src/ast/ts_nodes.rs`, also in CI | `bun run rust:miri -p bun_ast` |
+| the `Build` sink on types read alone: five tests | `cargo test -p bun_js_parser --lib type_sink_tests` |
+| the lint parse: the entry, the four tables, the codes, the backtracking points | `cargo test -p bun_js_parser --lib parse::` |
+| the 366 cases of the four removed test files, read by a lint parse | `cargo test -p bun_js_parser --lib parse::grammar_rows_tests` |
+| the stand-ins: seven tests | `cargo test -p bun_js_parser --lib native_test_shims` |
+| a parse without lint: the eight older files of parser.md P1.6, as on main | `bun bd test <file>` for each, or `bash /workspace/notes/lint/units/parser/round3/proof-behaviour/older-tests.sh plain` |
+| a parse without lint against main, record by record | `bash /workspace/notes/lint/units/parser/grammar-diff/parity.sh <tag> build/release/bun` ("Proofs of round 3") |
+| a lint parse through the command | [[FILL tests-command: `BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 bun bd test test/bundler/transpiler/lint-parse*.test.ts` with its counts, or: "none: `bun --lint` does not call `Parser::parse_for_lint` yet (NEEDS.md, N2 and N3). The draft is round3/tests-known-differences/bottom-up/lint-parse-grammar.test.ts.draft"]] |
+
+The tests of the lint parse are the `mod tests` of the files under `src/js_parser/parse/` and the files
+`*_tests.rs` there: each name starts with `parse::`. No job of CI runs the tests of `bun_js_parser` (`NEEDS.md`, N4).
+
+| module | tests at b882bfc32f | what |
+| --- | ---: | --- |
+| `native_test_shims::tests` | 7 | the stand-ins |
+| `type_sink_tests` | 5 | types, closers, return types, type parameter lists, texts that start no type |
+| `parse::parse_entry::tests` | 5 | the entry: loaders, declaration file names, `// @bun`, `name_of` |
+| `parse::attached::tests` | 10 | the eight lists, their keys, the rewind |
+| `parse::annotation_tests` | 4 | annotations of the known sources, the lint twin of `parse_paren_expr`, metadata beside a decorated member |
+| `parse::wrappers::tests` | 5 | `ExprId`, the offsets of a record, the rewind, 13 sources, `<T>` without a type |
+| `parse::generics::tests` | 4 | type arguments and type parameters of the known sources, the rewind |
+| `parse::erased::tests`, `parse::erased_tests` | 11, 1 | places, flags, the 40 sources |
+| `parse::parse_skip_typescript::tests` | 7 | one record in each of the thirteen lists, before and after each backtracker and the snapshot |
+| `parse::parse_stmt::tests` | 2 | a declaration whose name is `as` or `satisfies` |
+| `parse::syntax_errors::tests` | 9 | the codes |
+[[FILL tests-modules: the table at the final commit, from `cargo test -p bun_js_parser --lib -- --list`: the modules that R1 moved (the seven backtracker tests, the two of parse_stmt), `parse::grammar_rows_tests` (four tests, and a fifth while `KNOWN_DIFFERENCES` has a row), and the tests of R5]]
+
+### The cases of the four removed test files (R4)
+
+`test/bundler/transpiler/typescript-grammar.test.ts`, `-expressions`, `-statements` and `-decorator-metadata`
+(180, 63, 66 and 57 cases) asserted what round 1 made a parse without lint do. A parse without lint is main again,
+where 256 of the 366 are rejected and 110 give another value or output, so the four files are gone. Every case is
+a row of `src/js_parser/parse/grammar_rows_tests.rs`, read by a lint parse:
+
+- `ROWS`: the 366 cases in the order of the four files (`const _: () = assert!(ROWS.len() == 366)`), each with its
+  dialect (`ts`, `tsx`, `js`, `ts` with `experimentalDecorators`) and with what tsc 6.0.2 makes of the source: the
+  type roots, the kept statements, the erased records, the wrapper records, or the code and the offset of its first
+  diagnostic. Test `a_lint_parse_reads_a_row_as_tsc_does`.
+- `TYPES`, `RETURN_TYPES`, `TYPE_PARAMETERS`: the type roots of the cases about the type grammar and about decorator
+  metadata, read alone as `type_sink_tests.rs` reads a type, each with the kind and the range of every node that tsc
+  builds. Tests `a_type_of_a_row_is_the_nodes_that_tsc_builds`, `a_return_type_of_a_row_is_the_nodes_that_tsc_builds`,
+  `the_type_parameters_of_a_row_end_at_their_closer`.
+- `KNOWN_DIFFERENCES`: the sources that a lint parse does not read as tsc does, each with what the lint parse makes
+  of it (the first message of main, or the statements main keeps). Test
+  `a_lint_parse_makes_this_of_a_source_that_it_does_not_read_as_tsc_does`. A change that makes a lint parse read one
+  of them fails the test until its line is gone. [[FILL rows-known: how many rows the table has at the final commit, or "the table and its test are gone: a lint parse reads all 313 distinct sources as tsc does"]]
+
+The file is generated: `round3/lint-grammar-tests-r4/bottom-up-1a/gen/rust5.mjs` (`bash run.sh <state>` there), from
+the rows and the facts of tsc under `round3/tests-known-differences/bottom-up/`. The 99 cases about decorator
+metadata assert the type nodes of the decorated member, not a `design:` value: a lint parse prints nothing. What
+main emits for them is in "Decorator metadata that differs from tsc".
+[[CHECK rows-generated: the file in the tree is the output of the generator for the state that was built: `diff <(bash run.sh <state>; rustfmt --edition 2024 < generated file) src/js_parser/parse/grammar_rows_tests.rs`; say which arguments (`--as-without-lint=<cases>`) made it]]
+
+### Why the test binary needs stand-ins
+
+A test binary of `bun_js_parser` links none of the C and C++ objects of bun. With one test that parses, the linker
+reported 46 undefined symbols at `e3566be889` (`measure/base/cargo-test-undefined-symbols.txt`). A binary without
+such a test links, because nothing in it reaches them. Miri is no way around the linker: a parse reads the stack
+pointer with inline assembly (`bun_core::StackCheck`), which Miri does not run. `src/parsers` has a file of the
+same name for its own tests.
+
+`native_test_shims.rs` defines 57 symbols in Rust, each `#[unsafe(no_mangle)]`: the 46, and the others of the two
+families that a change of the parser reaches first (the scans of `bun_highway`, the entry points of mimalloc).
+
+| symbols | what the stand-in does |
+| --- | --- |
+| `Bun__StackCheck__getMaxStack` | a bound 1 MiB below the first call of the thread, and the same bound at every later call |
+| `WTF__parseDouble` | the longest decimal prefix as fast_float reads it, parsed by `str::parse::<f64>` |
+| 17 scans `highway_*` of bytes and substrings | scalar loops with the predicate of each kernel of `highway_strings.cpp` |
+| 6 of `simdutf__*` | `validate_ascii`, `validate_utf8`, the two UTF-8 lengths of UTF-16, UTF-16 to UTF-8 with errors, base64 encode |
+| 24 of `mi_*` | blocks of the allocator of the test binary, kept in a table by address: a heap is a number, and `mi_heap_destroy` frees the blocks of its heap |
+| `__bun_macro_context_get_remap` | no path is one of a macro |
+| `bun_cpu_features`, `getRSS`, `getPeakRSS`, `compress2`, `is_executable_file`, `bun_restore_stdio`, `on_before_reload_process_posix`, `mi_process_info` | what the crash reporter and a reload of the process link to: they report nothing, or fail |
+
+What does not link: the visit pass. At the base a test of another crate that ran `Parser::parse` on TypeScript
+needed twelve more symbols, of JavaScriptCore among them (`WTF__dtoa`, `JSC__jsToNumber`,
+`Bun__JSC__operationMathPow`). A test stays on `Parser::init`, `P::init`, `Parser::parse_only`,
+`Parser::parse_for_lint` and what the parse pass calls. Where a later change makes the linker report a symbol, its
+stand-in goes into that file. The 57 stand-ins are enough for every test of the crate at b882bfc32f.
+[[CHECK shims-enough: `cargo test -p bun_js_parser --lib` links at the final commit; name a stand-in that R1, R4 or R5 added]]
+
+The pattern of a test that parses: `Arena::new()`; `ASTMemoryAllocator::borrowing(&arena).enter()`;
+`Source::init_path_string(path, text)`; `Options::init(Default::default(), loader)` with `features.no_macros` and
+`features.dont_bundle_twice`; `Parser::init(options, &mut log, &source, &define, &arena)`; then
+`parser.parse_for_lint(|parsed| ...)` or `parser.parse_for_lint_with_codes(&mut errors, |parsed| ...)`.
+
+### Reading one type alone
+
+`type_sink_tests.rs` makes a `P<'_, true, false>` the way `Parser::parse_only` makes its parser, with no side
+table, and calls the entries of the lint grammar that are `pub` on `P`: `build_type_script_type`,
+`build_typescript_return_type` and `build_type_script_type_parameters`. Five tests: 26 types with the kind and the
+range of every type node inside them, 6 lists that a `>` inside `>>`, `>>>`, `>=`, `>>=` or `>>>=` closes (the range
+of each list, the end of each node, the token and the offset after the type), 6 return types (predicates and
+`asserts`), 5 type parameter lists, 2 texts that start no type. Every expectation is what tsc 6.0.2 builds for
+`type T = <text>;`, `let x: <text>;`, `function f(x: any): <text> {}` and `function f<text>() {}`: `getStart()` and
+`end` of each node, `pos` and `end` of each list. `probes/test-seam/outline.mjs` and `rows.mjs` print the
+expectations from tsc (`rows.expected.txt`).

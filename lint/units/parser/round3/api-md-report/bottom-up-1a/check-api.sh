@@ -29,28 +29,29 @@ n=$(grep -c -E '\[\[(FILL|CHECK|PICK|OR\]\]|END\]\])|<<[^<>]+>>' "$API")
 m=$(grep -n -E '\[\[(FILL|CHECK|PICK) |\[\[OR\]\]|\[\[END\]\]|<<[A-Za-z][^<>]*>>' "$API" | head -20)
 if [ -n "$m" ]; then say "markers left ($n lines):"; echo "$m" | cut -c1-160 | sed 's/^/     /'; else ok "markers: none left"; fi
 
-# stale: regex | why it is false after round 3
-STALE='Nothing builds these nodes yet|the Build sink builds them since round 1
-not built in the worktree|every file is built in the worktree: say what ran
-Not built and not run in the worktree|the same
-were not run\.|name the run, or say "not run at <commit>"
-No test binary of the crate was built|the test binary builds: cargo test -p bun_js_parser --lib
-No build has compared|type_sink_tests compares the Build sink with tsc
-has no field for a code|Metadata::Code landed in 4d9b8e5139 (N1)
-TypeSink::STRICT`, which is true|STRICT is gone: a site asks the side table
-sink whose `STRICT` is true|STRICT is gone: the lint grammar has one sink
-This holds for every sink|the skipper of main is not strict in any parse
-CONDITIONAL_FALSE_LEVEL` is gone|it is back: a parse without lint is main
-tested only on paths that[[:space:]]*$|is_lint_parse: list its readers at the final commit
-`lexer_backtracker_kept` does not|state what the backtrackers of the final code truncate
-tested through `x as T` only|type_sink_tests and grammar_rows_tests read the Build grammar too
-EXPECTED_VERSION.{0,40}34|the version is 33 again
-typescript-grammar[a-z*-]*\.test\.ts.{0,60}(pass|cases pass)|the four files are removed in R4: their cases are grammar_rows_tests.rs
-One grammar reads every type|two grammars since round 3
-A JavaScript file fills only `wrappers`|the decision on parentheses: see "What a lint parse of JavaScript records"'
+# stale: regex @@ why it is false after round 3
+STALE='Nothing builds these nodes yet @@ the Build sink builds them since round 1
+not built in the worktree @@ every file is built in the worktree: say what ran
+Not built and not run in the worktree @@ the same
+were not run\. @@ name the run, or say "not run at <commit>"
+No test binary of the crate was built @@ the test binary builds: cargo test -p bun_js_parser --lib
+No build has compared @@ type_sink_tests compares the Build sink with tsc
+has no field for a code @@ Metadata::Code landed in 4d9b8e5139 (N1)
+TypeSink::STRICT`, which is true @@ STRICT is gone: a site asks the side table
+sink whose `STRICT` is true @@ STRICT is gone: the lint grammar has one sink
+This holds for every sink @@ the skipper of main is not strict in any parse
+CONDITIONAL_FALSE_LEVEL` is gone @@ it is back: a parse without lint is main
+tested only on paths that[[:space:]]*$ @@ is_lint_parse: list its readers at the final commit
+`lexer_backtracker_kept` does not @@ state what the backtrackers of the final code truncate
+tested through `x as T` only @@ type_sink_tests and grammar_rows_tests read the Build grammar too
+EXPECTED_VERSION.{0,40}34 @@ the version is 33 again
+typescript-grammar[a-z*-]*\.test\.ts.{0,60}(pass|cases pass) @@ the four files are removed in R4: their cases are grammar_rows_tests.rs
+One grammar reads every type @@ two grammars since round 3
+A JavaScript file fills only `wrappers` @@ the decision on parentheses: see "What a lint parse of JavaScript records"'
 found=0
-while IFS='|' read -r re why; do
-  [ -n "$re" ] || continue
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  re=${line%% @@ *}; why=${line#* @@ }
   hit=$(grep -n -E -- "$re" "$API" | head -3)
   if [ -n "$hit" ]; then found=1; say "stale: /$re/ ($why)"; echo "$hit" | cut -c1-150 | sed 's/^/     /'; fi
 done <<EOF

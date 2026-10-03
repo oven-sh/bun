@@ -1,0 +1,19 @@
+## Memory: what an arena holds
+
+Rule: a value that an arena holds owns no memory of the global heap, because an arena never drops it.
+
+- Every node of `bun_ast::ts` and every record of the four tables is `Copy` (`ts::List<T>` by its own `impl`), so
+  none can hold a `Vec`, a `Box` or a `String`. What they point to is in the arena or in the AST stores:
+  `StoreRef`, `StoreSlice`, `StoreStr`, `Expr`, `Binding`, `Stmt`.
+- `ErasedMemberData::Property` points to a `G::Property` in the arena. It is not `Copy`: it holds
+  `ts_decorators: Vec<Expr, AstAlloc>`, whose buffer is in the AST allocation scope, as in every `G::Property` of a
+  class that stays, and `ts_metadata`, which holds no heap memory since `be1ebe5295` (`Metadata::MDot` is a
+  `StoreSlice<Ref>`).
+- The lists themselves are `Vec`s of the global heap: eight in `Attached`, two public and one private in
+  `ErasedTables`, two in `Generics`, one in `Wrappers`, three `HashMap`s, and `SyntaxErrors` (an entry holds a
+  `Cow<'static, [u8]>`). They are in the `Box` on the parser and are dropped with it, or with the side table when
+  `f` returns. [[CHECK memory-comments: after R5 (B1) add the lists of the comments, of the comment directives and of the pragmas]]
+- The lint grammar gathers the items of a list in a `Vec` on the stack and copies them to the arena with
+  `ts::List::from_slice`: the `Vec` is dropped where its function returns, also on an error.
+
+[[CHECK memory-audit: `python3 round2/api-md-gates-report/bottom-up/copy_audit.py /workspace/wt/parser <the new files of R1 and R5>`: at be1ebe5295 114 types outside test modules, 9 not `Copy` (the five tables, `ListFrame`, `AsyncTypeLists`, `SyntaxError`, `Recorded`), none of them held by an arena. The eight older test files pass under the leak check of CI ("State of this file")]]

@@ -1234,7 +1234,7 @@ impl BunTest {
                     }
                     PromiseStatus::Fulfilled => {
                         // Do not register a then callback when it's already fulfilled.
-                        return Some(cfg_data);
+                        // Fall through: a pending done callback still has to be awaited.
                     }
                     PromiseStatus::Rejected => {
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
@@ -1244,6 +1244,7 @@ impl BunTest {
 
                         // We previously marked it as handled above.
 
+                        // Fail fast without waiting for done(), like bun_test_catch.
                         return Some(cfg_data);
                     }
                 }

@@ -798,9 +798,11 @@ impl PackageJSON {
                                 Some(&mut *r_log),
                             ) {
                                 if dependency_version.is_exact_npm() {
-                                    if let Some(resolved) =
-                                        pm.lockfile_resolve(&package_json.name, &dependency_version)
-                                    {
+                                    if let Some(resolved) = pm.lockfile_resolve(
+                                        &package_json.name,
+                                        &dependency_version,
+                                        &package_json.version,
+                                    ) {
                                         package_json.package_manager_package_id = resolved;
                                         if resolved > 0 {
                                             break 'update_dependencies;
@@ -891,23 +893,32 @@ impl PackageJSON {
                                     let Some(version_str) = prop.value.as_str() else {
                                         continue;
                                     };
-                                    let sliced_str =
-                                        Semver::SlicedString::init(version_str, version_str);
 
                                     // The parser body lives in install-tier so route through
                                     // the AutoInstaller vtable when one is wired. When it
                                     // isn't, still record the dependency name (with an
                                     // uninitialized-tag version) — `bun run --filter` reads
                                     // only the map keys to compute workspace ordering.
+                                    // Same for a value with JSON escapes: not in `source_buf`.
                                     let dependency_version = match r.auto_installer() {
-                                        Some(pm) => pm.parse_dependency(
-                                            name,
-                                            Some(name_hash),
-                                            version_str,
-                                            &sliced_str,
-                                            Some(&mut *r_log),
-                                        ),
-                                        None => Some(DependencyVersion::default()),
+                                        Some(pm)
+                                            if bun_alloc::is_slice_in_buffer(
+                                                version_str,
+                                                package_json.dependencies.source_buf,
+                                            ) =>
+                                        {
+                                            pm.parse_dependency(
+                                                name,
+                                                Some(name_hash),
+                                                version_str,
+                                                &Semver::SlicedString::init(
+                                                    package_json.dependencies.source_buf,
+                                                    version_str,
+                                                ),
+                                                Some(&mut *r_log),
+                                            )
+                                        }
+                                        _ => Some(DependencyVersion::default()),
                                     };
                                     if let Some(dependency_version) = dependency_version {
                                         let dependency = Dependency {

@@ -921,8 +921,7 @@ impl WebWorker {
             }
         };
         if let EntryOutcome::Stop = observe_entry(vm) {
-            // exit_code is already 1 from uncaught_exception, or the handler's process.exit() code;
-            // re-setting it here would clobber that, or a process.on('exit') change to process.exitCode.
+            // exit_code is already set (1, or the handler's process.exit() code), and an 'exit' listener may have changed it.
             return self.shutdown();
         }
         // A still-pending entry promise is an unsettled top-level await: as in

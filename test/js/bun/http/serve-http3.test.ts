@@ -1,6 +1,6 @@
 import type { ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { createHash, createPrivateKey, randomBytes } from "crypto";
+import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
 import { connect, QuicEndpoint } from "node:quic";
@@ -2026,5 +2026,48 @@ describe("Bun.serve HTTP/3 request handlers run to completion before the callbac
       fetch: expectedOrder,
       route: expectedOrder,
     });
+  });
+});
+
+describe("Bun.serve HTTP/3 SNI", () => {
+  const tlsFixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+  // Each agent certificate has its own CN, which tells the entries apart.
+  const identity = (agent: string) => ({
+    key: readFileSync(join(tlsFixtures, `${agent}-key.pem`), "utf8"),
+    cert: readFileSync(join(tlsFixtures, `${agent}-cert.pem`), "utf8"),
+  });
+
+  // node:quic sends `servername` as written and exposes the certificate the
+  // server picked.
+  async function servedCN(port: number, servername: string): Promise<string> {
+    const session = await connect({ address: "127.0.0.1", port }, { alpn: "h3", servername, verifyPeer: "manual" });
+    try {
+      await session.opened;
+      const cert = session.peerCertificate;
+      const x509 = cert instanceof X509Certificate ? cert : new X509Certificate(Buffer.from(cert));
+      return x509.subject.match(/CN=([^\s,]+)/)![1];
+    } finally {
+      await session.close();
+    }
+  }
+
+  test("a later entry with the same serverName replaces the earlier one", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        identity("agent1"),
+        { serverName: "admin.example.com", ...identity("agent2") },
+        { serverName: "admin.example.com.", ...identity("agent3") },
+      ],
+      http3: true,
+      fetch: () => new Response("ok"),
+    });
+    const served = {
+      admin: await servedCN(server.port, "admin.example.com"),
+      dottedAdmin: await servedCN(server.port, "admin.example.com."),
+      other: await servedCN(server.port, "other.example.com"),
+    };
+    // The TCP listener selects the same entry for these names.
+    expect(served).toEqual({ admin: "agent3", dottedAdmin: "agent3", other: "agent1" });
   });
 });

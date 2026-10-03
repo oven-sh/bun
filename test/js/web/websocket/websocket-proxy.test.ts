@@ -4,7 +4,7 @@ import { tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import tls from "node:tls";
 import {
   type ClientEvent,
@@ -287,6 +287,28 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
       requests: [connectRequest(wssPort)],
     });
     gc();
+  });
+
+  test("an origin that ends the TLS handshake with close_notify fails the connection", async () => {
+    // The origin answers the ClientHello with a close_notify alert and keeps the tunnel open, so only the alert
+    // says that no TLS session will come.
+    await using origin = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => socket.write(Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00])));
+    });
+    origin.listen(0, "127.0.0.1");
+    await once(origin, "listening");
+    const originPort = (origin.address() as AddressInfo).port;
+    using recorded = await startRecordingProxy();
+    const url = `wss://127.0.0.1:${originPort}`;
+    const ws = new WebSocket(url, {
+      proxy: `http://127.0.0.1:${recorded.port}`,
+      tls: { rejectUnauthorized: false },
+    });
+    expect({ events: await failingSession(ws), requests: recorded.requests }).toEqual({
+      events: failed(url, "TLS handshake failed", 1015),
+      requests: [connectRequest(originPort)],
+    });
   });
 
   test("server-initiated ping survives through TLS tunnel proxy", async () => {

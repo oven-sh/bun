@@ -461,6 +461,41 @@ describe("HTTP/2 upgrade — server TLS options", () => {
   });
 });
 
+describe("HTTP/2 upgrade — failed TLS handshake", () => {
+  test("a peer that ends the handshake with close_notify is reported as tlsClientError", async () => {
+    const h2Server = http2.createSecureServer(TLS);
+    h2Server.on("error", () => {});
+    const netServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      h2Server.emit("connection", socket);
+    });
+    const port = await new Promise<number>(resolve => {
+      netServer.listen(0, "127.0.0.1", () => resolve((netServer.address() as net.AddressInfo).port));
+    });
+    // The alert is the first record, and the peer keeps the connection open behind it.
+    const peer = net.connect(port, "127.0.0.1", () => {
+      peer.write(Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00]));
+    });
+    peer.on("error", () => {});
+    try {
+      const [err] = await once(h2Server, "tlsClientError");
+      if (typeof Bun !== "undefined") {
+        // BoringSSL reads the alert as the peer's close, at every point of the handshake.
+        assert.deepStrictEqual(
+          { code: err.code, message: err.message },
+          { code: "ECONNRESET", message: "socket hang up" },
+        );
+      } else {
+        // OpenSSL refuses an alert ahead of the ClientHello.
+        assert.strictEqual(err.code, "ERR_SSL_UNEXPECTED_MESSAGE");
+      }
+    } finally {
+      peer.destroy();
+      netServer.close();
+    }
+  });
+});
+
 if (typeof Bun !== "undefined") {
   describe("Node.js compatibility", () => {
     test("tests should run on node.js", async () => {

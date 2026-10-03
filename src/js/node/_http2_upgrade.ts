@@ -202,7 +202,12 @@ function socketHandshake(
   const ctx = tlsSocket._ctx;
 
   if (!success) {
-    const err = verifyError || new Error("TLS handshake failed");
+    let err: NodeJS.ErrnoException = verifyError || new Error("TLS handshake failed");
+    // The peer left mid-handshake. Same wording as tlsHandshakeError in net.ts.
+    if (err.code === "ECONNRESET") {
+      const { ConnResetException } = require("internal/shared");
+      err = new ConnResetException("socket hang up");
+    }
     ctx.server.emit("tlsClientError", err, tlsSocket);
     tlsSocket.destroy(err);
     return;

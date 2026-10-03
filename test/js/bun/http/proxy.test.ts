@@ -3262,6 +3262,45 @@ test("a proxy's own reply to CONNECT never resolves as the https origin's respon
   ]);
 });
 
+test("an https origin that ends the TLS handshake with close_notify fails the tunneled request", async () => {
+  // The proxy opens the tunnel and keeps it open. The origin answers the ClientHello with a close_notify alert,
+  // so only the alert says that no TLS session will come.
+  const closeNotify = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00]);
+  const established = Buffer.from("HTTP/1.1 200 Connection Established\r\n\r\n");
+  const outcomes = [];
+  // "with the reply": the alert is in the same write as the reply to CONNECT, ahead of the ClientHello.
+  for (const alert of ["after the ClientHello", "with the reply"]) {
+    const sockets: net.Socket[] = [];
+    const proxy = net.createServer(socket => {
+      sockets.push(socket);
+      socket.on("error", () => {});
+      let chunks = 0;
+      socket.on("data", () => {
+        chunks++;
+        if (chunks === 1)
+          socket.write(alert === "with the reply" ? Buffer.concat([established, closeNotify]) : established);
+        else if (chunks === 2 && alert === "after the ClientHello") socket.write(closeNotify);
+      });
+    });
+    await once(proxy.listen(0, "127.0.0.1"), "listening");
+    try {
+      outcomes.push(
+        await fetch("https://origin.invalid/", {
+          proxy: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
+          keepalive: false,
+        }).then(
+          response => ({ resolved: response.status }),
+          e => ({ code: e.code }),
+        ),
+      );
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      proxy.close();
+    }
+  }
+  expect(outcomes).toEqual([{ code: "EPROTO" }, { code: "EPROTO" }]);
+});
+
 test("invalid TLS options are reported the same through a proxy as directly", async () => {
   // Says the tunnel is up; the TLS options are what fails next.
   const proxy = net.createServer(socket => {

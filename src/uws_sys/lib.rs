@@ -49,6 +49,19 @@ pub struct us_bun_verify_error_t {
 impl us_bun_verify_error_t {
     /// `X509_V_ERR_HOSTNAME_MISMATCH`, from the in-handshake server identity check (`ERR_TLS_CERT_ALTNAME_INVALID`).
     pub const HOSTNAME_MISMATCH: core::ffi::c_int = 62;
+    /// `error` of [`Self::peer_disconnected`]. Not an X509 code.
+    pub const PEER_DISCONNECTED: core::ffi::c_int = -46;
+
+    /// The peer left before the handshake finished, like `ssl_trigger_handshake_econnreset` in openssl.c.
+    pub const fn peer_disconnected() -> Self {
+        Self {
+            error_no: Self::PEER_DISCONNECTED,
+            code: c"ECONNRESET".as_ptr(),
+            reason:
+                c"Client network socket disconnected before secure TLS connection was established"
+                    .as_ptr(),
+        }
+    }
 }
 
 impl Default for us_bun_verify_error_t {

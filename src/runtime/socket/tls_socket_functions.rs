@@ -538,12 +538,8 @@ pub(super) fn get_peer_certificate(
     // X509_STORE_CTX_get1_issuer to surface the root that completed
     // verification even though the peer never sent it.
     let mut last_is_self_issued = false;
-    // SAFETY: the store ctx is created, initialized against the live SSL_CTX's
-    // store, used only within this scope and freed before returning; every
-    // issuer returned by get1_issuer is a +1 reference, either released at
-    // once when it repeats the last certificate, or collected in `extras` and
-    // released after its fields have been copied into JS values and the
-    // terminal self-issued check has run.
+    // SAFETY: the store ctx lives in this scope only. Each +1 issuer from
+    // get1_issuer is freed here: at once on a repeat, else from `extras`.
     unsafe {
         let mut store = ffi::SSL_CTX_get_cert_store(boringssl::SSL_CTX::opaque_ref(
             ffi::SSL_get_SSL_CTX(boringssl::SSL::opaque_ref(ssl_ptr)),

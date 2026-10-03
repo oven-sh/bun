@@ -780,6 +780,67 @@ describe("udpSocket()", () => {
   });
 });
 
+// `error` gets the socket first, like `data` and `drain`, and like the
+// handlers of Bun.listen() and Bun.connect().
+describe("error handler is called with (socket, error)", () => {
+  describe.each(["unconnected", "connected"] as const)("%s socket", kind => {
+    describe.each(["data", "drain"] as const)("%s handler throws", trigger => {
+      test.each(["udpSocket()", "reload()"] as const)("handlers registered by %s", async registeredBy => {
+        const thrown = new Error("boom");
+        const { promise, resolve } = Promise.withResolvers<{ args: unknown[]; self: unknown }>();
+        const handlers = {
+          [trigger]() {
+            throw thrown;
+          },
+          // `this` is the socket too. bun-types does not declare it.
+          error(this: unknown, ...args: unknown[]) {
+            resolve({ args, self: this });
+          },
+        };
+
+        const peer = await udpSocket({ hostname: "127.0.0.1" });
+        const options = {
+          hostname: "127.0.0.1",
+          ...(kind === "connected" && { connect: { hostname: "127.0.0.1", port: peer.port } }),
+          ...(registeredBy === "udpSocket()" && { socket: handlers }),
+        };
+        const socket = await udpSocket(options);
+        if (registeredBy === "reload()") {
+          // @ts-expect-error reload() reads the handlers from `socket`: https://github.com/oven-sh/bun/issues/44271
+          socket.reload({ socket: handlers });
+        }
+
+        let resend: ReturnType<typeof setInterval> | undefined;
+        try {
+          // A new socket reports writable once, so `drain` runs with no send.
+          if (trigger === "data") {
+            const send = () => peer.send("x", socket.port, "127.0.0.1");
+            resend = setInterval(send, 20);
+            send();
+          }
+
+          const { args, self } = await promise;
+          expect({
+            argc: args.length,
+            firstIsSocket: args[0] === socket,
+            secondIsThrown: args[1] === thrown,
+            thisIsSocket: self === socket,
+          }).toEqual({
+            argc: 2,
+            firstIsSocket: true,
+            secondIsThrown: true,
+            thisIsSocket: true,
+          });
+        } finally {
+          clearInterval(resend);
+          socket.close();
+          peer.close();
+        }
+      });
+    });
+  });
+});
+
 // us_udp_socket_send batches at most ~204 messages per sendmmsg; a >batch-size
 // sendMany must loop and report the TOTAL accepted. The pre-fix loop condition
 // compared against a decremented `num` and stopped after one batch, which every

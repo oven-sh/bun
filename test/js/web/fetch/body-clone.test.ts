@@ -1172,6 +1172,18 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     expect(await cloneInChild("Bun.stdin")).toEqual(bothBodiesReadStdin);
   });
 
+  // Reads of one fd share its offset, so the second Blob would start where the first one ended.
+  test("a body over a regular file given by file descriptor is teed, not duped", async () => {
+    const fd = openSync(join(tempDirWithFiles("body-clone-fd", { "a.txt": "hello world" }), "a.txt"), "r");
+    try {
+      const original = new Response(Bun.file(fd));
+      const clone = original.clone();
+      expect(await Promise.all([original.text(), clone.text()])).toEqual(["hello world", "hello world"]);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
   // The same store kind reached by path: stat says it is not a regular file.
   test.skipIf(isWindows)("a body over a FIFO opened by path is still teed", async () => {
     const fifo = join(tempDirWithFiles("body-clone-fifo", {}), "body.fifo");

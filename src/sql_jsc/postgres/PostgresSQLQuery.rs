@@ -78,7 +78,7 @@ pub struct Flags {
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
-    /// Rejected for an undecodable row: in flight, its response skipped, until `ReadyForQuery`.
+    /// Rejected while in flight: its response is skipped until `ReadyForQuery`.
     pub(crate) discard_response: bool,
     /// Which connection counter this request's dispatch incremented; reset to
     /// `None` when `finish_request` consumes that contribution, so the
@@ -90,6 +90,8 @@ pub struct Flags {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RequestCounter {
     None,
+    /// `PostgresSQLConnection::pending_requests`
+    Pending,
     /// `PostgresSQLConnection::nonpipelinable_requests`
     Nonpipelinable,
     /// `PostgresSQLConnection::pipelined_requests`
@@ -191,6 +193,7 @@ impl PostgresSQLQuery {
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
+        Self::release_connection(this_value, global_object);
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
         let Some(target_value) = self.get_target(global_object, true) else {
             return;
@@ -219,13 +222,19 @@ impl PostgresSQLQuery {
         );
     }
 
+    /// The cached `connection` is a strong GC edge; every terminal path must
+    /// clear it or a retained `Query` pins the whole connection.
+    fn release_connection(this_value: JSValue, global_object: &JSGlobalObject) {
+        js::connection_set_cached(this_value, global_object, JSValue::ZERO);
+    }
+
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
         self.status.set(Status::Fail);
         self.reject(err, global_object);
     }
 
     /// Rejects now, but `status` stays in flight: the server is still answering this query.
-    pub(crate) fn on_undecodable_row(&self, err: JSValue, global_object: &JSGlobalObject) {
+    pub(crate) fn reject_in_flight(&self, err: JSValue, global_object: &JSGlobalObject) {
         self.update_flags(|f| f.discard_response = true);
         self.reject(err, global_object);
     }
@@ -240,6 +249,7 @@ impl PostgresSQLQuery {
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
+        Self::release_connection(this_value, global_object);
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
         let Some(target_value) = self.get_target(global_object, true) else {
             return;
@@ -283,6 +293,7 @@ impl PostgresSQLQuery {
         js::binding_set_cached(this_value, global_object, JSValue::ZERO);
         js::pending_value_set_cached(this_value, global_object, JSValue::ZERO);
         js::target_set_cached(this_value, global_object, JSValue::ZERO);
+        Self::release_connection(this_value, global_object);
     }
 
     pub(crate) fn on_result(
@@ -467,7 +478,8 @@ impl PostgresSQLQuery {
         // duration of this call, satisfying the `ParentRef` outlives-holder
         // invariant. R-2: shared borrow — every connection field accessed below is
         // `Cell`/`JsCell`.
-        let Some(connection) = postgres_sql_connection::js::from_js_ref(arguments[0]) else {
+        let connection_value = arguments[0];
+        let Some(connection) = postgres_sql_connection::js::from_js_ref(connection_value) else {
             return Err(
                 global_object.throw(format_args!("connection must be a PostgresSQLConnection"))
             );
@@ -491,6 +503,12 @@ impl PostgresSQLQuery {
         // is already pending.
         let throw_write_error = |msg: &[u8], err: AnyPostgresError| -> JsError {
             if !global_object.has_exception() {
+                // `cancel()` from the code of a parameter stopped the write. The write did not fail.
+                let msg = if matches!(err, AnyPostgresError::QueryCancelled) {
+                    b"Query cancelled"
+                } else {
+                    msg
+                };
                 return global_object.throw_value(postgres_error_to_js(
                     global_object,
                     Some(msg),
@@ -548,7 +566,7 @@ impl PostgresSQLQuery {
             }
             connection.requests.with_mut(|q| q.push_back(queued));
             if this.status.get() == Status::Pending {
-                connection.note_request_pending();
+                connection.note_request_pending(this);
             }
 
             // Request is enqueued: keep the event loop alive until the server
@@ -563,6 +581,7 @@ impl PostgresSQLQuery {
 
             this.this_value.with_mut(|r| r.upgrade(global_object));
             js::target_set_cached(this_value, global_object, query);
+            js::connection_set_cached(this_value, global_object, connection_value);
             if this.status.get() == Status::Running {
                 connection.flush_data_and_reset_timeout();
             } else {
@@ -593,6 +612,14 @@ impl PostgresSQLQuery {
                 return Err(JsError::Thrown);
             }
         };
+
+        // The code of a binding ran, and it can have called `cancel()`.
+        if this.is_rejected() {
+            return Err(throw_write_error(
+                b"Query cancelled",
+                AnyPostgresError::QueryCancelled,
+            ));
+        }
 
         let has_params = signature.fields.len() > 0;
         let mut did_write = false;
@@ -642,6 +669,7 @@ impl PostgresSQLQuery {
                                 // bindAndExecute will bind + execute, it will change to running after binding is complete
                                 if let Err(err) = connection.encode_request(
                                     global_object,
+                                    this,
                                     EncodeRequest::BindAndExecute {
                                         statement: stmt,
                                         binding_value,
@@ -701,6 +729,7 @@ impl PostgresSQLQuery {
                     // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
                     if let Err(err) = connection.encode_request(
                         global_object,
+                        this,
                         EncodeRequest::PrepareAndQuery {
                             query: query_str.slice(),
                             signature: &mut signature,
@@ -812,7 +841,7 @@ impl PostgresSQLQuery {
 
         connection.requests.with_mut(|q| q.push_back(queued));
         if this.status.get() == Status::Pending {
-            connection.note_request_pending();
+            connection.note_request_pending(this);
         }
         // Request is enqueued: keep the event loop alive until the server
         // responds. See the matching call in the simple-query branch above
@@ -828,6 +857,7 @@ impl PostgresSQLQuery {
         this.this_value.with_mut(|r| r.upgrade(global_object));
 
         js::target_set_cached(this_value, global_object, query);
+        js::connection_set_cached(this_value, global_object, connection_value);
         if did_write {
             connection.flush_data_and_reset_timeout();
         } else {
@@ -841,13 +871,21 @@ impl PostgresSQLQuery {
 
     pub fn do_cancel(
         this: &Self,
-        global_object: &JSGlobalObject,
+        _global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let _ = callframe;
-        let _ = global_object;
-        let _ = this;
-
+        // Set from the end of `do_run` until the query settles.
+        let Some(connection_value) = js::connection_get_cached(callframe.this()) else {
+            // Not dispatched, or the code of a parameter called this from inside `do_run`.
+            if this.status.get() == Status::Pending {
+                this.status.set(Status::Fail);
+            }
+            return Ok(JSValue::UNDEFINED);
+        };
+        let Some(connection) = postgres_sql_connection::js::from_js_ref(connection_value) else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        connection.cancel(this);
         Ok(JSValue::UNDEFINED)
     }
 }

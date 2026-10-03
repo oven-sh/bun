@@ -1,6 +1,11 @@
 {
     "targets": [
         {
+            "target_name": "tsfn_payload_ownership",
+            "sources": ["tsfn_payload_ownership.cpp"],
+            "cflags_cc": ["-std=c++17"],
+        },
+        {
             "target_name": "napitests",
             "cflags!": ["-fno-exceptions"],
             "cflags_cc!": ["-fno-exceptions"],

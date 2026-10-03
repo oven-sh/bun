@@ -1,5 +1,6 @@
 // @ts-expect-error - debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
+import cluster from "cluster";
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
 import { bunEnv, bunExe, tls as cert1, isDebug, isWindows } from "harness";
@@ -1792,18 +1793,24 @@ describe("setSecureContext() on a listening server", () => {
   // A cluster worker's listen() completes when the primary answers. A call
   // made before that has to reach the listener the worker then creates.
   it("counts in a cluster worker when called before 'listening'", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "tls-cluster-set-secure-context-fixture.mjs")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // stderr only shows up in the failure message of a worker that printed nothing.
-    expect(stdout.trim() || stderr).toBe(
-      JSON.stringify({ handleAfterListen: "none", default: "agent3", viaAddContext: "agent2" }),
-    );
-    expect(exitCode).toBe(0);
+    // This process is the primary, so the test starts one process and not two.
+    const settings = cluster.settings;
+    cluster.setupPrimary({ exec: join(import.meta.dir, "tls-cluster-set-secure-context-fixture.mjs"), execArgv: [] });
+    const worker = cluster.fork(bunEnv);
+    cluster.settings = settings;
+    const exited = once(worker, "exit");
+    try {
+      const served = await Promise.race([
+        once(worker, "message").then(([message]) => message),
+        exited.then(([code, signal]) => {
+          throw new Error(`the worker exited before it reported: code ${code}, signal ${signal}`);
+        }),
+      ]);
+      expect(served).toEqual({ handleAfterListen: "none", default: "agent3", viaAddContext: "agent2" });
+    } finally {
+      worker.kill();
+      await exited;
+    }
   });
 });
 

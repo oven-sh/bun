@@ -19,89 +19,6 @@ pub(crate) type ResolveResults = HashMap<u64, ()>;
 // is structurally equivalent (growable ring buffer); swap once the re-export lands.
 pub(crate) type ResolveQueue = std::collections::VecDeque<resolver::Result>;
 
-/// Defined at
-/// this tier (lowest crate that needs to name it) and re-exported from
-/// `bun_jsc::BunPluginTarget` so there is exactly one enum (no bridge between
-/// mirror types).
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum BunPluginTarget {
-    Bun = 0,
-    Node = 1,
-    Browser = 2,
-}
-
-// Crosses FFI by-value to `JSBundlerPlugin__create` / `Bun__runOn*Plugins`
-// (C++: `typedef uint8_t BunPluginTarget`, `headers-handwritten.h`). NB: the
-// C++ header's *named* constants (`BunPluginTargetBrowser = 1`, `Node = 2`)
-// disagree with the Rust enum (`Node = 1`, `Browser = 2`). The width (`u8`)
-// is what matters at the ABI.
-bun_core::assert_ffi_discr!(BunPluginTarget, u8; Bun = 0, Node = 1, Browser = 2);
-
-/// The JSC-aware resolve hook.
-///
-/// The body calls `JSGlobalObject.runOnResolvePlugins`, so it cannot be
-/// defined at this tier (`bun_jsc` depends on this crate). `bun_jsc` provides
-/// the concrete `PluginRunner { global_object: *mut JSGlobalObject }` and
-/// implements this trait; `Linker.plugin_runner` holds it as
-/// `*mut dyn PluginResolver` so the linker stays JSC-free while the body lives
-/// in exactly one place (no fn-ptr field, no `*mut c_void` erasure).
-pub trait PluginResolver {
-    fn on_resolve(
-        &self,
-        specifier: &[u8],
-        importer: &[u8],
-        log: &mut bun_ast::Log,
-        loc: bun_ast::Loc,
-        target: BunPluginTarget,
-    ) -> crate::Result<Option<bun_paths::fs::Path<'static>>>;
-}
-
-/// Namespace for the static byte-level helpers
-/// (`extractNamespace` / `couldBePlugin`). The stateful struct (with
-/// `global_object`) lives in `bun_jsc::PluginRunner` where `JSGlobalObject` is
-/// nameable; only the JSC-free helpers stay at this tier.
-pub struct PluginRunner;
-
-impl PluginRunner {
-    /// Returns the `namespace:` prefix of `specifier`, or `b""` if it has none
-    /// (Windows drive-letter prefixes are not namespaces).
-    pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
-        let Some(colon) = bun_core::strings::index_of_char_usize(specifier, b':') else {
-            return b"";
-        };
-        let colon = colon as usize;
-        if cfg!(windows)
-            && colon == 1
-            && specifier.len() > 3
-            && bun_paths::resolve_path::is_sep_any(specifier[2])
-            && ((specifier[0] > b'a' && specifier[0] < b'z')
-                || (specifier[0] > b'A' && specifier[0] < b'Z'))
-        {
-            return b"";
-        }
-        &specifier[..colon]
-    }
-
-    /// Cheap pre-filter that rules
-    /// out `./` / `../` / absolute paths before hitting the resolve hook.
-    pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
-            let ext = &specifier[last_dot + 1..];
-            // '.' followed by either a letter or a non-ascii character
-            // maybe there are non-ascii file extensions?
-            // we mostly want to cheaply rule out "../" and ".." and "./"
-            if !ext.is_empty()
-                && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
-            {
-                return true;
-            }
-        }
-        !bun_paths::is_absolute(specifier)
-            && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
-    }
-}
-
 /// The canonical newtype lives in `bun_ast::Macro` (the lowest tier that
 /// stores it, in `MacroContext.javascript_object`); re-exported here.
 pub use js_ast::Macro::MacroJSCtx;
@@ -368,8 +285,6 @@ impl<'a> Transpiler<'a> {
         self.options.log = log;
         self.resolver.log = core::ptr::NonNull::new(log).expect("wire_after_move: log is non-null");
         self.resolver.fs = self.fs;
-        // Only reseat the back-pointers — do NOT `Linker::init` here: that
-        // would clobber `plugin_runner`, which must be preserved across the move.
         self.linker.reseat_self_refs(
             log,
             core::ptr::addr_of_mut!(self.resolve_queue),

@@ -87,7 +87,7 @@ await Bun.build({
 
 ### Namespaces
 
-`onLoad` and `onResolve` accept an optional `namespace` string. Every module has a namespace, which prefixes the import in transpiled code. For instance, a loader with a `filter: /\.yaml$/` and `namespace: "yaml:"` transforms an import from `./myfile.yaml` into `yaml:./myfile.yaml`.
+`onLoad` and `onResolve` accept an optional `namespace` string. Every module has a namespace, which prefixes its path. For instance, when `onResolve` returns `{ path: "./myfile.yaml", namespace: "yaml" }`, the module is `yaml:./myfile.yaml`.
 
 The default namespace is `"file"` and you don't need to specify it: `import myModule from "./my-module.ts"` is the same as `import myModule from "file:./my-module.ts"`.
 
@@ -176,6 +176,8 @@ The first argument to `onResolve()` is an object with a `filter` and [`namespace
 The second argument to `onResolve()` is a callback that runs for each module import Bun finds that matches the `filter` and `namespace` defined in the first argument.
 
 The callback receives the _path_ to the matching module and can return a _new path_ for it. Bun reads the contents of the _new path_ and parses it as a module.
+
+At runtime, the callback runs once for each `import` or `require()` as it executes. A _new path_ without a `namespace` is resolved from the importing module like any other import, without running `onResolve()` callbacks on it: it can be relative, leave out its extension, or name a package. If nothing is found there, the _new path_ is used as it is when an [`onLoad()`](#onload) callback matches it, so it does not have to exist on disk.
 
 For example, redirecting all imports to `images/` to `./public/images/`:
 

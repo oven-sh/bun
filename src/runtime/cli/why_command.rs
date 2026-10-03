@@ -275,19 +275,20 @@ impl WhyCommand {
         );
 
         bun_core::pretty!(
-            "Explain why a package is installed\n\
-\n\
-<b>Arguments:<r>\n\
-  <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>\n\
-\n\
-<b>Options:<r>\n\
-  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>\n\
-  <cyan>--depth<r> <blue>\\<NUM\\><r> <d>Maximum depth of the dependency tree to display<r>\n\
-\n\
-<b>Examples:<r>\n\
-  <d>$<r> <b><green>bun why<r> <blue>react<r>\n\
-  <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>\n\
-  <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>\n\
+            "\
+Explain why a package is installed
+
+<b>Arguments:<r>
+  <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>
+
+<b>Options:<r>
+  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>
+  <cyan>--depth<r> <blue>\\<NUM\\><r> <d>Maximum depth of the dependency tree to display<r>
+
+<b>Examples:<r>
+  <d>$<r> <b><green>bun why<r> <blue>react<r>
+  <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>
+  <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>
 "
         );
         Output::flush();

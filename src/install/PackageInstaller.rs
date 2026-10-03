@@ -156,9 +156,22 @@ impl NodeModulesFolder {
         bun_sys::directory_exists_at(&dir, file_path).unwrap_or(false)
     }
 
-    /// Whether the entry `file_path` in this folder is a symlink (on Windows a
-    /// symlink or a junction). `None` when the entry is missing or the probe
-    /// fails.
+    /// Whether `path` is a symlink (on Windows a symlink or a junction).
+    /// `None` when it is missing or the probe fails.
+    fn path_is_symlink(path: &ZStr) -> Option<bool> {
+        #[cfg(windows)]
+        {
+            // `lstat` opens the reparse point and reports a junction as a directory.
+            Some(bun_sys::get_file_attributes(path)?.is_reparse_point)
+        }
+        #[cfg(not(windows))]
+        {
+            let stat = bun_sys::lstat(path).ok()?;
+            Some(bun_sys::posix::s_islnk(stat.st_mode as u32))
+        }
+    }
+
+    /// Whether the entry `file_path` in this folder is a symlink.
     #[inline(never)]
     pub(crate) fn entry_is_symlink(
         &self,
@@ -180,17 +193,18 @@ impl NodeModulesFolder {
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
-        let path = join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts);
-        #[cfg(windows)]
-        {
-            // `lstatat` opens the reparse point and reports a junction as a directory.
-            Some(bun_sys::get_file_attributes(path)?.is_reparse_point)
+        Self::path_is_symlink(join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts))
+    }
+
+    /// Whether the package folder that holds the `node_modules` at `path` is a symlink.
+    #[inline(never)]
+    fn owner_is_symlink(path: &[u8]) -> Option<bool> {
+        let owner = dirname::<platform::Auto>(path);
+        if owner.is_empty() || owner.len() >= MAX_PATH_BYTES {
+            return None;
         }
-        #[cfg(not(windows))]
-        {
-            let stat = bun_sys::lstatat(root_node_modules_dir.fd(), path).ok()?;
-            Some(bun_sys::posix::s_islnk(stat.st_mode as u32))
-        }
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        Self::path_is_symlink(bun_paths::resolve_path::z(owner, &mut path_buf))
     }
 
     /// Since the stack size of these functions are rather large, let's not let them be inlined.
@@ -328,6 +342,10 @@ pub struct TreeContext {
 
     /// Number of installed dependencies. Could be successful or failure.
     pub(crate) install_count: usize,
+
+    /// See `PackageInstaller::tree_is_behind_symlink`. `None` until the first
+    /// package of the tree installs.
+    pub(crate) behind_symlink: core::cell::Cell<Option<bool>>,
 }
 
 type TreeContextId = lockfile::tree::Id;
@@ -1042,6 +1060,52 @@ impl<'a> PackageInstaller<'a> {
     // free fn (not `&self`) so callers can pass disjoint borrows
     // (`&self.completed_trees` + `&self.lockfile().buffers.trees`) without
     // tripping borrowck on the whole-`self` reborrow.
+    /// A tree is the `node_modules` of the package that owns it, and its path
+    /// goes through the folder of that package. When the package installs a
+    /// real directory and its install fails, a symlink can stay in its place.
+    /// The path then leads into the directory the symlink points at, and
+    /// nothing may be installed there.
+    fn tree_is_behind_symlink(&self) -> bool {
+        let tree_id = self.current_tree_id as usize;
+        if let Some(behind) = self.trees[tree_id].behind_symlink.get() {
+            return behind;
+        }
+
+        let behind = !self.skip_delete && {
+            let lockfile = self.lockfile();
+            let trees = lockfile.buffers.trees.as_slice();
+            let dependencies = lockfile.buffers.dependencies.as_slice();
+            let string_buf = lockfile.buffers.string_bytes.as_slice();
+            let mut path = self.node_modules.path.as_slice();
+            let mut tree = trees[tree_id];
+            loop {
+                if tree.parent == lockfile::tree::INVALID_ID {
+                    break false;
+                }
+                let package_id =
+                    lockfile.buffers.resolutions.as_slice()[tree.dependency_id as usize];
+                if !PackageInstall::installs_symlink(self.resolutions[package_id as usize].tag)
+                    && NodeModulesFolder::owner_is_symlink(path) == Some(true)
+                {
+                    break true;
+                }
+                // `path` is `<parent tree>/<folder name>/node_modules`.
+                let folder_name = tree.folder_name(dependencies, string_buf);
+                let Some(parent_len) = path
+                    .len()
+                    .checked_sub(folder_name.len() + "//node_modules".len())
+                else {
+                    break false;
+                };
+                path = &path[..parent_len];
+                tree = trees[tree.parent as usize];
+            }
+        };
+
+        self.trees[tree_id].behind_symlink.set(Some(behind));
+        behind
+    }
+
     fn can_install_package_for_tree(
         completed_trees: &Bitset,
         trees: &[Tree],
@@ -1825,6 +1889,15 @@ impl<'a> PackageInstaller<'a> {
                 return;
             }
 
+            if self.tree_is_behind_symlink() {
+                self.increment_tree_install_count(
+                    !is_pending_package_install,
+                    self.current_tree_id,
+                    log_level,
+                );
+                return;
+            }
+
             // creating this directory now, right before installing package
             let destination_dir = match self
                 .node_modules
@@ -2280,6 +2353,15 @@ impl<'a> PackageInstaller<'a> {
                         tree_id: self.current_tree_id,
                         path: self.node_modules.path.clone(),
                     });
+                return;
+            }
+
+            if self.tree_is_behind_symlink() {
+                self.increment_tree_install_count(
+                    !is_pending_package_install,
+                    self.current_tree_id,
+                    log_level,
+                );
                 return;
             }
 

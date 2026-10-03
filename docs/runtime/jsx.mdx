@@ -19,7 +19,7 @@ console.log(<Component message="Hello world!" />);
 
 ## Configuration
 
-Bun reads your `tsconfig.json` or `jsconfig.json` to determine how to perform the JSX transform internally. If you'd rather not use either, you can set the same options in [`bunfig.toml`](/runtime/bunfig).
+Bun reads your `tsconfig.json` or `jsconfig.json` to determine how to perform the JSX transform internally. If you'd rather not use either, you can set the same options in [`bunfig.toml`](/runtime/bunfig#jsx). Two spellings differ there: the `jsx` key accepts only `react`, `react-jsx`, and `react-jsxDEV` (capital `DEV`), and `jsxFragmentFactory` is named `jsxFragment`.
 
 Bun respects the following compiler options.
 

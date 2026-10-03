@@ -21,8 +21,7 @@ pub fn is_node_modules_bin_dir(entry: &[u8]) -> bool {
         && crate::dirname(entry).is_some_and(|parent| crate::basename(parent) == b"node_modules")
 }
 
-/// Splits `path` into the entries to keep and the `node_modules/.bin` entries of `root` and of the
-/// directories above and inside it.
+/// Splits `path` into the kept entries and the `.bin` entries of `root` and the directories around it.
 pub fn split_bin_dirs_of(path: &[u8], root: &[u8]) -> (Vec<u8>, Vec<u8>) {
     use crate::resolve_path::{ParentEqual, is_parent_or_equal};
     let is_related = |dir: &[u8]| {

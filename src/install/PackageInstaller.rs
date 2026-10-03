@@ -425,15 +425,15 @@ struct OwnerBinDir {
 }
 
 impl OwnerBinDir {
-    fn open(owner_dir: &ZStr) -> Option<Self> {
+    fn open(owner_dir: &ZStr) -> Syscall::Maybe<Option<Self>> {
         // A linked package is the user's own directory: write nothing there.
         if !is_real_dir(owner_dir) {
-            return None;
+            return Ok(None);
         }
 
         // Relative bin links need real paths: a tree path can cross a workspace symlink.
         let mut real_buf = bun_paths::path_buffer_pool::get();
-        let real_owner = Syscall::realpath(owner_dir, &mut real_buf).ok()?;
+        let real_owner = Syscall::realpath(owner_dir, &mut real_buf)?;
         let owner_path_is_real =
             real_owner == strings::without_trailing_slash(owner_dir.as_bytes());
         let mut node_modules = AbsPath::from(real_owner).unwrap_or_oom();
@@ -464,11 +464,11 @@ impl OwnerBinDir {
             let _ = Syscall::close(fd);
         }
 
-        Some(Self {
+        Ok(Some(Self {
             node_modules,
             owner_path_is_real,
             seen,
-        })
+        }))
     }
 }
 
@@ -476,10 +476,11 @@ impl OwnerBinDir {
 #[cold]
 pub(crate) fn link_owner_bins(
     manager: &PackageManager,
+    log_level: Options::LogLevel,
     package_id: PackageID,
     tree_id: lockfile::tree::Id,
     dependency_id: DependencyID,
-) -> Result<(), crate::Error> {
+) {
     let lockfile: &Lockfile = &manager.lockfile;
     let trees = lockfile.buffers.trees.as_slice();
     let hoisted = lockfile.buffers.hoisted_dependencies.as_slice();
@@ -494,7 +495,7 @@ pub(crate) fn link_owner_bins(
         || dependency_id as usize >= deps.len()
         || package_id as usize >= bins.len()
     {
-        return Ok(());
+        return;
     }
 
     let owner_alias = deps[dependency_id as usize].name.slice(string_buf);
@@ -531,6 +532,20 @@ pub(crate) fn link_owner_bins(
         }
     };
 
+    // A warning, as the script still runs: it finds the name on the user's PATH or in a shared `.bin`.
+    let failed_to_link = |alias: &[u8], err: crate::Error| {
+        if log_level != Options::LogLevel::Silent {
+            bun_ast::add_warning_pretty!(
+                manager.log_mut(),
+                None,
+                bun_ast::Loc::EMPTY,
+                "Failed to link <b>{}<r> for the scripts of <b>{}<r>: {}",
+                bstr::BStr::new(alias),
+                bstr::BStr::new(owner_alias),
+                err.name(),
+            );
+        }
+    };
     let mut owner_bin_dir: Option<OwnerBinDir> = None;
     let mut link_target_buf = bun_paths::path_buffer_pool::get();
     let mut link_dest_buf = bun_paths::path_buffer_pool::get();
@@ -558,13 +573,14 @@ pub(crate) fn link_owner_bins(
 
         let owner_bin_dir = match &mut owner_bin_dir {
             Some(opened) => opened,
-            slot @ None => {
-                let Some(opened) = OwnerBinDir::open(owner_dir.slice_z()) else {
-                    return Ok(());
-                };
-                bin::Linker::ensure_umask();
-                slot.insert(opened)
-            }
+            slot @ None => match OwnerBinDir::open(owner_dir.slice_z()) {
+                Ok(Some(opened)) => {
+                    bin::Linker::ensure_umask();
+                    slot.insert(opened)
+                }
+                Ok(None) => return,
+                Err(err) => return failed_to_link(owner_alias, err.into()),
+            },
         };
 
         let alias = deps[placed_dep_id as usize].name.slice(string_buf);
@@ -630,12 +646,11 @@ pub(crate) fn link_owner_bins(
             }
 
             if let Some(err) = bin_linker.err {
-                return Err(err);
+                failed_to_link(alias, err);
             }
             break;
         }
     }
-    Ok(())
 }
 
 /// A dependency alias becomes the install destination inside `node_modules`
@@ -843,9 +858,7 @@ impl<'a> PackageInstaller<'a> {
                     && can_defer
                     && !completed_trees.is_set(target_tree_id as usize)
                 {
-                    // Platform package's tree isn't installed yet: link the
-                    // package's own bin now and re-queue for
-                    // `link_remaining_bins`.
+                    // Its tree isn't installed yet: link the own bin now, re-queue for `link_remaining_bins`.
                     deferred.push(dep_id);
                 } else {
                     if target_tree_id != tree_id {

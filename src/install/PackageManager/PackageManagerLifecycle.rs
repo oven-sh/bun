@@ -369,9 +369,19 @@ impl PackageManager {
             dependency_id,
         } = list.owner
         {
-            crate::package_installer::link_owner_bins(self, package_id, tree_id, dependency_id)?;
+            crate::package_installer::link_owner_bins(
+                self,
+                log_level,
+                package_id,
+                tree_id,
+                dependency_id,
+            );
         }
-        let project_node_gyp = self.project_node_gyp();
+        // Only hoisted: there the root `node_modules` is complete before a dependency's script runs.
+        let root_node_gyp = match list.owner {
+            ScriptsOwner::Hoisted { .. } => self.root_node_gyp(),
+            _ => None,
+        };
 
         // `list` is moved into `spawn_package_scripts` below; copy
         // `cwd` out so the PATH builder can borrow it independently.
@@ -400,9 +410,9 @@ impl PackageManager {
             demoted_bin_dirs,
         )?;
         script_env.put(b"PATH", path.slice())?;
-        if let Some(node_gyp) = project_node_gyp {
+        if let Some(node_gyp) = root_node_gyp {
             if script_env.get(b"npm_config_node_gyp").is_none() {
-                script_env.put(b"npm_config_node_gyp", node_gyp)?;
+                script_env.put(b"npm_config_node_gyp", &node_gyp)?;
             }
         }
 
@@ -465,23 +475,31 @@ impl PackageManager {
         Ok(DEMOTED.get_or_init(|| demoted.into_boxed_slice()))
     }
 
-    /// `bin/node-gyp.js` of a `node-gyp` that the root package itself depends on.
-    fn project_node_gyp(&self) -> Option<&'static [u8]> {
-        static PINNED: std::sync::OnceLock<Option<Box<[u8]>>> = std::sync::OnceLock::new();
-        PINNED
-            .get_or_init(|| {
-                let lockfile = &self.lockfile;
-                let deps = lockfile.buffers.dependencies.as_slice();
-                let string_buf = lockfile.buffers.string_bytes.as_slice();
-                let root_deps = *lockfile.packages.slice().items_dependencies().first()?;
-                (root_deps.begin()..root_deps.end())
-                    .any(|id| deps[id as usize].name.slice(string_buf) == b"node-gyp")
-                    .then_some(())?;
-                let mut path = AutoAbsPath::init_top_level_dir();
-                let _ = path.append(b"node_modules/node-gyp/bin/node-gyp.js");
-                Syscall::exists(path.slice()).then(|| Box::from(path.slice()))
-            })
-            .as_deref()
+    /// `bin/node-gyp.js` of the root `node_modules/node-gyp`, when the project asked for it or it is the real package.
+    fn root_node_gyp(&self) -> Option<Vec<u8>> {
+        let lockfile = &self.lockfile;
+        let deps = lockfile.buffers.dependencies.as_slice();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let pkgs = lockfile.packages.slice();
+        let dep_id = lockfile
+            .buffers
+            .trees
+            .as_slice()
+            .first()?
+            .dependencies
+            .get(lockfile.buffers.hoisted_dependencies.as_slice())
+            .iter()
+            .copied()
+            .find(|&id| deps[id as usize].name.slice(string_buf) == b"node-gyp")?;
+        let root_deps = *pkgs.items_dependencies().first()?;
+        let package_id = *lockfile.buffers.resolutions.as_slice().get(dep_id as usize)? as usize;
+        let is_real_package = package_id < pkgs.len()
+            && pkgs.items_resolution()[package_id].tag == ResolutionTag::Npm
+            && pkgs.items_name()[package_id].slice(string_buf) == b"node-gyp";
+        ((root_deps.begin()..root_deps.end()).contains(&dep_id) || is_real_package).then_some(())?;
+        let mut path = AutoAbsPath::init_top_level_dir();
+        let _ = path.append(b"node_modules/node-gyp/bin/node-gyp.js");
+        Syscall::exists(path.slice()).then(|| path.slice().to_vec())
     }
 
     /// For `bun pm trust`, which does not know which linker installed `dir`.

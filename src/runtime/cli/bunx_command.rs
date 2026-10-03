@@ -833,7 +833,8 @@ impl BunxCommand {
                 }
             }
 
-            // The shim would find itself, and `bunx` does not take a bin from behind it.
+            // The shim would find itself, and no `.bin` behind it outranks it as `node-gyp`.
+            let is_shimmed = initial_bin_name == b"node-gyp";
             let mut lookup = front.clone();
             let mut bin_dirs = front.clone();
             let mut behind_shim = false;
@@ -843,14 +844,13 @@ impl BunxCommand {
                     continue;
                 }
                 let is_bin_dir = bun_paths::env_path::is_node_modules_bin_dir(entry);
-                if behind_shim && is_bin_dir {
-                    continue;
-                }
-                lookup.extend_from_slice(entry);
-                lookup.push(DELIMITER);
                 if is_bin_dir {
                     bin_dirs.extend_from_slice(entry);
                     bin_dirs.push(DELIMITER);
+                }
+                if !(is_shimmed && behind_shim && is_bin_dir) {
+                    lookup.extend_from_slice(entry);
+                    lookup.push(DELIMITER);
                 }
             }
 

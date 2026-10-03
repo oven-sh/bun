@@ -1,0 +1,931 @@
+//! TypeScript that a lint parse reads with its own grammar and at its own sites: each expectation is what tsc 6.0.2 makes of the source.
+
+use bun_alloc::Arena;
+use bun_ast::walk::{self, Visitor};
+use bun_ast::{E, Expr, ExprTag, G, Loader, Loc, S, ts};
+
+use super::erased_tests;
+use super::parse_entry::{Options, ParsedForLint, Parser};
+use super::syntax_errors::SyntaxErrors;
+use super::wrappers::Wrapper;
+use crate::defines::Define;
+use crate::type_sink_tests::{outline, read_from, type_parameters_read, type_read};
+
+/// How a source is read: its loader, and with `Decorators` the decorators of TypeScript and their metadata.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Dialect {
+    Ts,
+    Tsx,
+    Js,
+    Decorators,
+}
+
+enum Want {
+    /// tsc parses the source and reads this outside its types: the line that `facts` makes.
+    Reads(&'static str),
+    /// tsc rejects the source: the code, the start and the end of its first diagnostic.
+    Fails(u32, u32, u32),
+}
+
+struct Row {
+    /// The change of the grammar that the source shows.
+    family: &'static str,
+    dialect: Dialect,
+    text: &'static [u8],
+    want: Want,
+}
+
+/// The first error of a lint parse that fails: the code, the start and the end of its entry, zeros where it has none, and the text and the offset of its message.
+struct Failure {
+    entry: (u32, u32, u32),
+    text: String,
+    offset: usize,
+}
+
+/// What a lint parse made of a source, for the message of a test that fails.
+fn said(found: &Result<String, Failure>) -> String {
+    match found {
+        Ok(line) => line.clone(),
+        Err(failure) => {
+            let (code, start, end) = failure.entry;
+            let (text, offset) = (&failure.text, failure.offset);
+            format!("TS{code} [{start},{end}), the message at {offset}: {text}")
+        }
+    }
+}
+
+/// What `check` makes of the lint parse of `text`, or its first error.
+fn lint_parse<R>(
+    dialect: Dialect,
+    text: &'static [u8],
+    check: impl FnOnce(&ParsedForLint<'_, '_>) -> R,
+) -> Result<R, Failure> {
+    let (path, loader): (&'static [u8], Loader) = match dialect {
+        Dialect::Ts | Dialect::Decorators => (b"/a.ts", Loader::Ts),
+        Dialect::Tsx => (b"/a.tsx", Loader::Tsx),
+        Dialect::Js => (b"/a.js", Loader::Js),
+    };
+    let arena = Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let source = bun_ast::Source::init_path_string(path, text);
+    let mut options = Options::init(Default::default(), loader);
+    options.features.no_macros = true;
+    options.features.dont_bundle_twice = true;
+    options.features.standard_decorators = dialect != Dialect::Decorators;
+    options.features.emit_decorator_metadata = dialect == Dialect::Decorators;
+    let define = Define::default();
+    let mut log = bun_ast::Log::init();
+    let mut errors = SyntaxErrors::default();
+    if let Ok(parser) = Parser::init(options, &mut log, &source, &define, &arena)
+        && let Ok(found) = parser.parse_for_lint_with_codes(&mut errors, check)
+    {
+        return Ok(found);
+    }
+    let first = log
+        .msgs
+        .iter()
+        .position(|msg| msg.kind == bun_ast::Kind::Err);
+    let entry = first.and_then(|first| errors.get(first));
+    let message = first.and_then(|first| log.msgs.get(first));
+    Err(Failure {
+        entry: entry.map_or((0, 0, 0), |entry| (entry.code, entry.start, entry.end)),
+        text: message.map_or_else(String::new, |msg| {
+            bstr::BStr::new(&*msg.data.text).to_string()
+        }),
+        offset: message
+            .and_then(|msg| msg.data.location.as_ref())
+            .map_or(0, |location| location.offset),
+    })
+}
+
+/// The line of a wrapper record, as the tests of `wrappers` print it.
+fn wrapper_line(record: &Wrapper) -> String {
+    let kind = record.data.kind_name();
+    let (op, end) = (record.op, record.end);
+    let type_node = record.type_node().map(described).unwrap_or_default();
+    let tag = <&'static str>::from(record.operand.data.tag());
+    let start = record.operand.loc.start;
+    format!("{kind} [{op},{end}){type_node} of {tag}@{start}")
+}
+
+fn described(type_node: ts::Type) -> String {
+    let kind = type_node.data.kind_name();
+    let name = match type_node.data {
+        ts::TypeData::TypeReference(reference) => match reference.type_name {
+            ts::EntityName::Identifier(name) => format!("({})", bstr::BStr::new(name.text.slice())),
+            ts::EntityName::QualifiedName(_) => String::new(),
+        },
+        _ => String::new(),
+    };
+    format!(" {kind}{name}[{},{})", type_node.start, type_node.end)
+}
+
+/// The nodes of the statements that stay which the rows are about.
+struct Nodes<'r, 'p, 'a> {
+    parsed: &'r ParsedForLint<'p, 'a>,
+    found: Vec<(i32, &'static str)>,
+    enums: Vec<String>,
+}
+
+impl Nodes<'_, '_, '_> {
+    fn accessors(&mut self, class: &G::Class) {
+        for property in class.properties.slice() {
+            if property.kind == G::PropertyKind::AutoAccessor {
+                let start = property.key.map_or(-1, |key| key.loc.start);
+                self.found.push((start, "auto_accessor"));
+            }
+        }
+    }
+}
+
+impl<'ast> Visitor<'ast> for Nodes<'_, '_, '_> {
+    fn enter_expr(&mut self, expr: &'ast Expr) {
+        let tag = expr.data.tag();
+        if matches!(
+            tag,
+            ExprTag::EIf
+                | ExprTag::EArrow
+                | ExprTag::ECall
+                | ExprTag::EImport
+                | ExprTag::EImportMeta
+        ) {
+            self.found.push((expr.loc.start, tag.into()));
+        }
+    }
+
+    fn visit_s_class(&mut self, node: &'ast S::Class, _loc: Loc) {
+        self.accessors(&node.class);
+        walk::walk_s_class(self, node);
+    }
+
+    fn visit_e_class(&mut self, node: &'ast E::Class, _loc: Loc) {
+        self.accessors(node);
+        walk::walk_e_class(self, node);
+    }
+
+    fn visit_s_enum(&mut self, node: &'ast S::Enum, _loc: Loc) {
+        let name = bstr::BStr::new(self.parsed.name_of(node.name.ref_));
+        let members: Vec<String> = node
+            .values
+            .slice()
+            .iter()
+            .map(|value| bstr::BStr::new(value.name.slice()).to_string())
+            .collect();
+        self.enums.push(format!("{name}={}", members.join(",")));
+        walk::walk_s_enum(self, node);
+    }
+}
+
+/// The tag of each statement that the file keeps.
+fn kept(parsed: &ParsedForLint<'_, '_>) -> Vec<&'static str> {
+    parsed
+        .stmts
+        .iter()
+        .map(|stmt| stmt.data.tag().into())
+        .collect()
+}
+
+/// The outline of a type, as the tests of the sink print it.
+fn outlined(node: ts::Type) -> String {
+    let mut lines = Vec::new();
+    outline(node, &mut lines);
+    lines.join(" ")
+}
+
+/// The lines of a list in the order of the source.
+fn in_order(mut list: Vec<(u32, String)>) -> String {
+    list.sort();
+    let lines: Vec<String> = list.into_iter().map(|(_, line)| line).collect();
+    lines.join(" | ")
+}
+
+/// The types that the side table keeps for the nodes that stay: annotations, return types, type parameters and the heritage of classes.
+fn records(parsed: &ParsedForLint<'_, '_>) -> String {
+    let attached = &parsed.sidecar.attached;
+    let types = attached
+        .annotations
+        .iter()
+        .filter_map(|record| record.type_node)
+        .map(|node| (node.start, outlined(node)))
+        .collect();
+    let return_types = attached
+        .return_types
+        .iter()
+        .map(|record| (record.type_node.start, outlined(record.type_node)))
+        .collect();
+    let mut type_parameters = Vec::new();
+    for record in &attached.type_parameters {
+        let list = record.list;
+        let mut line = format!(
+            "<{},{}>{{{},{}}}",
+            record.lt, record.end, list.start, list.end
+        );
+        for parameter in list.iter() {
+            let name = bstr::BStr::new(parameter.name.text.slice());
+            line.push_str(&format!(" {name}[{},{})", parameter.start, parameter.end));
+        }
+        type_parameters.push((record.lt, line));
+    }
+    let mut heritage = Vec::new();
+    for record in &attached.heritage {
+        let token = match record.clause.token {
+            ts::HeritageToken::Extends => "extends",
+            ts::HeritageToken::Implements => "implements",
+        };
+        for &node in record.clause.types.iter() {
+            heritage.push((node.start, format!("{token}: {}", outlined(node))));
+        }
+    }
+    format!(
+        "types[{}] return_types[{}] type_parameters[{}] heritage[{}]",
+        in_order(types),
+        in_order(return_types),
+        in_order(type_parameters),
+        in_order(heritage)
+    )
+}
+
+/// What the lint parse shows of the source: the statements that stay, the dropped records, the wrappers, the conditionals, arrow functions, calls, `import()`, `import.meta` and auto-accessors by offset, the enums, and the recorded types.
+fn facts(parsed: &ParsedForLint<'_, '_>) -> String {
+    let mut nodes = Nodes {
+        parsed,
+        found: Vec::new(),
+        enums: Vec::new(),
+    };
+    for stmt in parsed.stmts {
+        nodes.visit_stmt(stmt);
+    }
+    nodes.found.sort();
+    let found: Vec<String> = nodes
+        .found
+        .iter()
+        .map(|(start, tag)| format!("{tag}@{start}"))
+        .collect();
+    let wrappers: Vec<String> = parsed
+        .sidecar
+        .wrappers
+        .records
+        .iter()
+        .map(wrapper_line)
+        .collect();
+    format!(
+        "kept[{}] erased[{}] wrappers[{}] nodes[{}] enums[{}] {}",
+        kept(parsed).join(" "),
+        erased_tests::describe(parsed).join(" | "),
+        wrappers.join(" | "),
+        found.join(" "),
+        nodes.enums.join(" | "),
+        records(parsed)
+    )
+}
+
+#[test]
+fn a_type_of_a_row_is_the_nodes_that_tsc_builds() {
+    let mut failed = Vec::new();
+    for &(text, expected, next) in TYPES {
+        let found = type_read(text).map(|(outline, errors, _, start)| (outline, errors, start));
+        if found != Some((expected.to_owned(), 0, next)) {
+            failed.push(format!("{}: {found:?}", bstr::BStr::new(text)));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+#[test]
+fn a_return_type_of_a_row_is_the_nodes_that_tsc_builds() {
+    let mut failed = Vec::new();
+    for &(text, expected, next) in RETURN_TYPES {
+        let found = read_from(text, |p| p.build_typescript_return_type())
+            .map(|(outline, errors, _, start)| (outline, errors, start));
+        if found != Some((expected.to_owned(), 0, next)) {
+            failed.push(format!("{}: {found:?}", bstr::BStr::new(text)));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+#[test]
+fn the_type_parameters_of_a_row_end_at_their_closer() {
+    for &(text, expected, close_end) in TYPE_PARAMETERS {
+        let found = type_parameters_read(text);
+        let expected = Some((expected.to_owned(), close_end));
+        assert_eq!(found, expected, "{}", bstr::BStr::new(text));
+    }
+}
+
+#[test]
+fn a_lint_parse_reads_a_row_as_tsc_does() {
+    let mut failed = Vec::new();
+    for row in ROWS.iter().filter(|row| !is_known_difference(row)) {
+        let found = lint_parse(row.dialect, row.text, facts);
+        let passed = match (&row.want, &found) {
+            (Want::Reads(want), Ok(found)) => found == want,
+            (Want::Fails(code, start, end), Err(found)) => found.entry == (*code, *start, *end),
+            _ => false,
+        };
+        if !passed {
+            failed.push(format!(
+                "{} {:?} {}: {}",
+                row.family,
+                row.dialect,
+                bstr::BStr::new(row.text),
+                said(&found)
+            ));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+/// Whether `row` is a source that a lint parse does not read as tsc does.
+fn is_known_difference(row: &Row) -> bool {
+    KNOWN_DIFFERENCES
+        .iter()
+        .any(|&(dialect, text, _)| dialect == row.dialect && text == row.text)
+}
+
+/// What a lint parse makes of a source: the tag of each statement it keeps, or the text and the offset of its first message.
+type Made = Result<&'static [&'static str], (&'static [u8], usize)>;
+
+#[test]
+fn a_lint_parse_makes_this_of_a_source_that_it_does_not_read_as_tsc_does() {
+    let mut failed = Vec::new();
+    for &(dialect, text, made) in KNOWN_DIFFERENCES {
+        let found = lint_parse(dialect, text, kept);
+        let passed = match (&made, &found) {
+            (Ok(tags), Ok(found)) => found == tags,
+            (Err((message, offset)), Err(found)) => {
+                found.text.as_bytes() == *message && found.offset == *offset
+            }
+            _ => false,
+        };
+        if !passed {
+            let found = found.map(|tags| tags.join(" "));
+            failed.push(format!(
+                "{dialect:?} {}: {}",
+                bstr::BStr::new(text),
+                said(&found)
+            ));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+/// Each text starts with a type of a row and goes on to the end of its source: the outline of the type, and where the token after it starts.
+#[rustfmt::skip]
+const TYPES: &[(&[u8], &str, usize)] = &[
+    (b"if;", "TypeReference[0,2)", 2),
+    (b"class;", "TypeReference[0,5)", 5),
+    (b"function;", "TypeReference[0,8)", 8),
+    (b"in;", "TypeReference[0,2)", 2),
+    (b"extends;", "TypeReference[0,7)", 7),
+    (b"super;", "TypeReference[0,5)", 5),
+    (b"delete;", "TypeReference[0,6)", 6),
+    (b"if.x;", "TypeReference[0,4)", 4),
+    (b"class<T>;", "TypeReference[0,8)<6,7> TypeReference[6,7)", 8),
+    (b"| if;", "UnionType[0,4) TypeReference[2,4)", 4),
+    (b"A | if;", "UnionType[0,6) TypeReference[0,1) TypeReference[4,6)", 6),
+    (b"A & class;", "IntersectionType[0,9) TypeReference[0,1) TypeReference[4,9)", 9),
+    (b"keyof if;", "TypeOperator[0,8) TypeReference[6,8)", 8),
+    (b"(if);", "ParenthesizedType[0,4) TypeReference[1,3)", 4),
+    (b"(class);", "ParenthesizedType[0,7) TypeReference[1,6)", 7),
+    (b"`${if}`;", "TemplateLiteralType[0,7) TypeReference[3,5)", 7),
+    (b"[...const: A[]];", "TupleType[0,15) NamedTupleMember[1,14) ArrayType[11,14) TypeReference[11,12)", 15),
+    (b"[...in: A[]];", "TupleType[0,12) NamedTupleMember[1,11) ArrayType[8,11) TypeReference[8,9)", 12),
+    (b"[...class: A[]];", "TupleType[0,15) NamedTupleMember[1,14) ArrayType[11,14) TypeReference[11,12)", 15),
+    (b"[...if: A[]];", "TupleType[0,12) NamedTupleMember[1,11) ArrayType[8,11) TypeReference[8,9)", 12),
+    (b"typeof import(\"x\")<C>;", "ImportType[0,21)<19,20> LiteralType[14,17) TypeReference[19,20)", 21),
+    (b"import(\"x\")<T>;", "ImportType[0,14)<12,13> LiteralType[7,10) TypeReference[12,13)", 14),
+    (b"import(\"x\", { with: { a: \"b\" } })<T>;", "ImportType[0,36)<34,35> LiteralType[7,10) TypeReference[34,35)", 36),
+    (b"import(\"x\", { with: { a: \"b\" + \"c\" } });", "ImportType[0,39) LiteralType[7,10)", 39),
+    (b"import(\"x\").A.<T>;", "ImportType[0,17)<15,16> LiteralType[7,10) TypeReference[15,16)", 17),
+    (b"(a) => asserts a\nis B;", "FunctionType[0,21) TypePredicate[7,21) TypeReference[20,21)", 21),
+    (b"{ a(b = 1): A };", "TypeLiteral[0,15) TypeReference[12,13)", 15),
+    (b"A }", "TypeReference[0,1)", 2),
+    (b"{ a(public b: B): A };", "TypeLiteral[0,21) TypeReference[14,15) TypeReference[18,19)", 21),
+    (b"(a = 1) => void;", "FunctionType[0,15) VoidKeyword[11,15)", 15),
+    (b"({ a = 1 }) => void;", "FunctionType[0,19) VoidKeyword[15,19)", 19),
+    (b"(public a: A) => void;", "FunctionType[0,21) TypeReference[11,12) VoidKeyword[17,21)", 21),
+    (b"([a, , b]) => void;", "FunctionType[0,18) VoidKeyword[14,18)", 18),
+    (b"new ([a, , b]) => A;", "ConstructorType[0,19) TypeReference[18,19)", 19),
+    (b"{ ([a, , b]): void };", "TypeLiteral[0,20) VoidKeyword[14,18)", 20),
+    (b"{ new ([a, , b]): A };", "TypeLiteral[0,21) TypeReference[18,19)", 21),
+    (b"A<(a = 1) => void>;", "TypeReference[0,18)<2,17> FunctionType[2,17) VoidKeyword[13,17)", 18),
+    (b"A<([a, , b]) => void>;", "TypeReference[0,21)<2,20> FunctionType[2,20) VoidKeyword[16,20)", 21),
+    (b"(a = 1) => void> {}", "FunctionType[0,15) VoidKeyword[11,15)", 15),
+    (b"T) => a;", "TypeReference[0,1)", 1),
+    (b"out>x;", "TypeReference[0,3)", 3),
+    (b"out>(x);", "TypeReference[0,3)", 3),
+    (b"in>x;", "TypeReference[0,2)", 2),
+    (b"in>(x);", "TypeReference[0,2)", 2),
+    (b"if>x;", "TypeReference[0,2)", 2),
+    (b"class>x;", "TypeReference[0,5)", 5),
+    (b"enum>x;", "TypeReference[0,4)", 4),
+    (b"var;", "TypeReference[0,3)", 3),
+    (b"T <= y;", "TypeReference[0,1)", 2),
+    (b"T <= y);", "TypeReference[0,1)", 2),
+    (b"T <= y];", "TypeReference[0,1)", 2),
+    (b"number | A extends B ? string : never; }", "ConditionalType[0,37) UnionType[0,10) NumberKeyword[0,6) TypeReference[9,10) TypeReference[19,20) StringKeyword[23,29) NeverKeyword[32,37)", 37),
+    (b"K & A extends B ? string : never; }", "ConditionalType[0,32) IntersectionType[0,5) TypeReference[0,1) TypeReference[4,5) TypeReference[14,15) StringKeyword[18,24) NeverKeyword[27,32)", 32),
+    (b"K | A extends B ? string[] : number[]; }", "ConditionalType[0,37) UnionType[0,5) TypeReference[0,1) TypeReference[4,5) TypeReference[14,15) ArrayType[18,26) StringKeyword[18,24) ArrayType[29,37) NumberKeyword[29,35)", 37),
+    (b"string | A extends B ? () => void : () => void; }", "ConditionalType[0,46) UnionType[0,10) StringKeyword[0,6) TypeReference[9,10) TypeReference[19,20) FunctionType[23,33) VoidKeyword[29,33) FunctionType[36,46) VoidKeyword[42,46)", 46),
+    (b"K | A extends B ? null : K; }", "ConditionalType[0,26) UnionType[0,5) TypeReference[0,1) TypeReference[4,5) TypeReference[14,15) LiteralType[18,22) TypeReference[25,26)", 26),
+    (b"number | A extends B ? string : string) {} }", "ConditionalType[0,38) UnionType[0,10) NumberKeyword[0,6) TypeReference[9,10) TypeReference[19,20) StringKeyword[23,29) StringKeyword[32,38)", 38),
+    (b"keyof A extends B ? string : never; }", "ConditionalType[0,34) TypeOperator[0,7) TypeReference[6,7) TypeReference[16,17) StringKeyword[20,26) NeverKeyword[29,34)", 34),
+    (b"readonly A[] extends B ? string : number; }", "ConditionalType[0,40) TypeOperator[0,12) ArrayType[9,12) TypeReference[9,10) TypeReference[21,22) StringKeyword[25,31) NumberKeyword[34,40)", 40),
+    (b"unique symbol extends B ? string : never; }", "ConditionalType[0,40) TypeOperator[0,13) SymbolKeyword[7,13) TypeReference[22,23) StringKeyword[26,32) NeverKeyword[35,40)", 40),
+    (b"keyof A extends B ? () => void : () => void) {} }", "ConditionalType[0,43) TypeOperator[0,7) TypeReference[6,7) TypeReference[16,17) FunctionType[20,30) VoidKeyword[26,30) FunctionType[33,43) VoidKeyword[39,43)", 43),
+    (b"A extends B ? string : never | number; }", "ConditionalType[0,37) TypeReference[0,1) TypeReference[10,11) StringKeyword[14,20) UnionType[23,37) NeverKeyword[23,28) NumberKeyword[31,37)", 37),
+    (b"A extends B ? unknown : string & string; }", "ConditionalType[0,39) TypeReference[0,1) TypeReference[10,11) UnknownKeyword[14,21) IntersectionType[24,39) StringKeyword[24,30) StringKeyword[33,39)", 39),
+    (b"any.b; }", "TypeReference[0,5)", 5),
+    (b"string.b; }", "TypeReference[0,8)", 8),
+    (b"bigint.b<T>; }", "TypeReference[0,11)<9,10> TypeReference[9,10)", 11),
+    (b"undefined.b; }", "TypeReference[0,11)", 11),
+    (b"never.b) {} }", "TypeReference[0,7)", 7),
+    (b"unique symbol[]; }", "TypeOperator[0,15) ArrayType[7,15) SymbolKeyword[7,13)", 15),
+    (b"unique [A]; }", "TypeOperator[0,10) TupleType[7,10) TypeReference[8,9)", 10),
+    (b"X extends Y ? number : never; }", "ConditionalType[0,28) TypeReference[0,1) TypeReference[10,11) NumberKeyword[14,20) NeverKeyword[23,28)", 28),
+    (b"X extends Y ? K : K; }", "ConditionalType[0,19) TypeReference[0,1) TypeReference[10,11) TypeReference[14,15) TypeReference[18,19)", 19),
+    (b"X extends Y ? A : (A | null); }", "ConditionalType[0,28) TypeReference[0,1) TypeReference[10,11) TypeReference[14,15) ParenthesizedType[18,28) UnionType[19,27) TypeReference[19,20) LiteralType[23,27)", 28),
+    (b"(X extends Y ? string : unknown); }", "ParenthesizedType[0,32) ConditionalType[1,31) TypeReference[1,2) TypeReference[11,12) StringKeyword[15,21) UnknownKeyword[24,31)", 32),
+    (b"X extends infer U extends V ? string : never; }", "ConditionalType[0,44) TypeReference[0,1) InferType[10,27) TypeReference[26,27) StringKeyword[30,36) NeverKeyword[39,44)", 44),
+    (b"string | (never | never); }", "UnionType[0,24) StringKeyword[0,6) ParenthesizedType[9,24) UnionType[10,23) NeverKeyword[10,15) NeverKeyword[18,23)", 24),
+    (b"(null | undefined) | string; }", "UnionType[0,27) ParenthesizedType[0,18) UnionType[1,17) LiteralType[1,5) UndefinedKeyword[8,17) StringKeyword[21,27)", 27),
+    (b"A.B | C.D; }", "UnionType[0,9) TypeReference[0,3) TypeReference[6,9)", 9),
+    (b"A.B & A.C) {} }", "IntersectionType[0,9) TypeReference[0,3) TypeReference[6,9)", 9),
+    (b"A | unique symbol; }", "UnionType[0,17) TypeReference[0,1) TypeOperator[4,17) SymbolKeyword[11,17)", 17),
+    (b"import(\"x\") | A; }", "UnionType[0,15) ImportType[0,11) LiteralType[7,10) TypeReference[14,15)", 15),
+    (b"import(\"x\")[\"y\"]; }", "IndexedAccessType[0,16) ImportType[0,11) LiteralType[7,10) LiteralType[12,15)", 16),
+    (b"this is B; }", "TypePredicate[0,9) ThisType[0,4) TypeReference[8,9)", 9),
+    (b"number | A extends B ? string : string; }", "ConditionalType[0,38) UnionType[0,10) NumberKeyword[0,6) TypeReference[9,10) TypeReference[19,20) StringKeyword[23,29) StringKeyword[32,38)", 38),
+    (b"string & A extends B ? never : string; }", "ConditionalType[0,37) IntersectionType[0,10) StringKeyword[0,6) TypeReference[9,10) TypeReference[19,20) NeverKeyword[23,28) StringKeyword[31,37)", 37),
+    (b"keyof A extends B ? () => void : () => void; }", "ConditionalType[0,43) TypeOperator[0,7) TypeReference[6,7) TypeReference[16,17) FunctionType[20,30) VoidKeyword[26,30) FunctionType[33,43) VoidKeyword[39,43)", 43),
+    (b"readonly A[] extends B ? unknown : string; }", "ConditionalType[0,41) TypeOperator[0,12) ArrayType[9,12) TypeReference[9,10) TypeReference[21,22) UnknownKeyword[25,32) StringKeyword[35,41)", 41),
+    (b"A extends B ? never : string | number; }", "ConditionalType[0,37) TypeReference[0,1) TypeReference[10,11) NeverKeyword[14,19) UnionType[22,37) StringKeyword[22,28) NumberKeyword[31,37)", 37),
+    (b"A extends B ? string : unknown | null; }", "ConditionalType[0,37) TypeReference[0,1) TypeReference[10,11) StringKeyword[14,20) UnionType[23,37) UnknownKeyword[23,30) LiteralType[33,37)", 37),
+    (b"A extends B ? string : never & K; }", "ConditionalType[0,32) TypeReference[0,1) TypeReference[10,11) StringKeyword[14,20) IntersectionType[23,32) NeverKeyword[23,28) TypeReference[31,32)", 32),
+    (b"never.b; }", "TypeReference[0,7)", 7),
+    (b"X extends Y ? never : string & string; }", "ConditionalType[0,37) TypeReference[0,1) TypeReference[10,11) NeverKeyword[14,19) IntersectionType[22,37) StringKeyword[22,28) StringKeyword[31,37)", 37),
+    (b"X extends Y ? string : never & string; }", "ConditionalType[0,37) TypeReference[0,1) TypeReference[10,11) StringKeyword[14,20) IntersectionType[23,37) NeverKeyword[23,28) StringKeyword[31,37)", 37),
+    (b"X extends Y ? never : A.B; }", "ConditionalType[0,25) TypeReference[0,1) TypeReference[10,11) NeverKeyword[14,19) TypeReference[22,25)", 25),
+    (b"X extends Y ? A<B> : null; }", "ConditionalType[0,25) TypeReference[0,1) TypeReference[10,11) TypeReference[14,18)<16,17> TypeReference[16,17) LiteralType[21,25)", 25),
+    (b"string | never & string; }", "UnionType[0,23) StringKeyword[0,6) IntersectionType[9,23) NeverKeyword[9,14) StringKeyword[17,23)", 23),
+    (b"string & (unknown & unknown); }", "IntersectionType[0,28) StringKeyword[0,6) ParenthesizedType[9,28) IntersectionType[10,27) UnknownKeyword[10,17) UnknownKeyword[20,27)", 28),
+    (b"A.B & A.C; }", "IntersectionType[0,9) TypeReference[0,3) TypeReference[6,9)", 9),
+    (b"unique symbol & A; }", "IntersectionType[0,17) TypeOperator[0,13) SymbolKeyword[7,13) TypeReference[16,17)", 17),
+    (b"A | import(\"x\"); }", "UnionType[0,15) TypeReference[0,1) ImportType[4,15) LiteralType[11,14)", 15),
+    (b"this is this; }", "TypePredicate[0,12) ThisType[0,4) ThisType[8,12)", 12),
+];
+
+/// The same for what follows the `:` after a parameter list.
+#[rustfmt::skip]
+const RETURN_TYPES: &[(&[u8], &str, usize)] = &[
+    (b"(a) => asserts a\nis B => 0;", "FunctionType[0,21) TypePredicate[7,21) TypeReference[20,21)", 22),
+    (b"asserts a\nis B => 0;", "TypePredicate[0,14) TypeReference[13,14)", 15),
+    (b"asserts this\nis B => 0;", "TypePredicate[0,17) ThisType[8,12) TypeReference[16,17)", 18),
+    (b"asserts this\nis B { throw 0 }", "TypePredicate[0,17) ThisType[8,12) TypeReference[16,17)", 18),
+    (b"T => a;", "TypeReference[0,1)", 2),
+    (b"if => x;", "TypeReference[0,2)", 3),
+    (b"string & A extends B ? never : string { throw 0 } }", "ConditionalType[0,37) IntersectionType[0,10) StringKeyword[0,6) TypeReference[9,10) TypeReference[19,20) NeverKeyword[23,28) StringKeyword[31,37)", 38),
+    (b"readonly A[] extends B ? unknown : string { throw 0 } }", "ConditionalType[0,41) TypeOperator[0,12) ArrayType[9,12) TypeReference[9,10) TypeReference[21,22) UnknownKeyword[25,32) StringKeyword[35,41)", 42),
+    (b"a is B { throw 0 } }", "TypePredicate[0,6) TypeReference[5,6)", 7),
+    (b"a is B | C { throw 0 } }", "TypePredicate[0,10) UnionType[5,10) TypeReference[5,6) TypeReference[9,10)", 11),
+    (b"string is B { throw 0 } }", "TypePredicate[0,11) TypeReference[10,11)", 12),
+    (b"asserts a { throw 0 } }", "TypePredicate[0,9)", 10),
+    (b"asserts a is B { throw 0 } }", "TypePredicate[0,14) TypeReference[13,14)", 15),
+    (b"asserts this is B { throw 0 } }", "TypePredicate[0,17) ThisType[8,12) TypeReference[16,17)", 18),
+    (b"asserts a | B { throw 0 } }", "UnionType[0,13) TypePredicate[0,9) TypeReference[12,13)", 14),
+    (b"A | asserts a { throw 0 } }", "UnionType[0,13) TypeReference[0,1) TypePredicate[4,13)", 14),
+    (b"a is B extends C ? D : E { throw 0 } }", "TypePredicate[0,24) ConditionalType[5,24) TypeReference[5,6) TypeReference[15,16) TypeReference[19,20) TypeReference[23,24)", 25),
+    (b"this is B { throw 0 } }", "TypePredicate[0,9) ThisType[0,4) TypeReference[8,9)", 10),
+    (b"asserts this { throw 0 } }", "TypePredicate[0,12) ThisType[8,12)", 13),
+];
+
+/// The type parameter lists of the rows: the range of the list, the name and the range of each type parameter, and the offset after the `>`.
+#[rustfmt::skip]
+const TYPE_PARAMETERS: &[(&[u8], &str, u32)] = &[
+    (b"<out>", "{1,4} out[1,4)", 5),
+    (b"<out = A>", "{1,8} out[1,8)", 9),
+    (b"<const out>", "{1,10} out[1,10)", 11),
+    (b"<out, T>", "{1,7} out[1,4) T[6,7)", 8),
+];
+
+/// The sources that a lint parse does not read as tsc does, with what it makes of each.
+#[rustfmt::skip]
+const KNOWN_DIFFERENCES: &[(Dialect, &[u8], Made)] = &[
+    (Dialect::Ts, b"import A from \"x\"\nwith { type: \"json\" };", Err((b"Expected \"(\" but found \"{\"", 23))),
+    (Dialect::Ts, b"import \"x\"\nwith { type: \"json\" };", Err((b"Expected \"(\" but found \"{\"", 16))),
+    (Dialect::Ts, b"import type A from \"x\"\nwith { type: \"json\" };", Err((b"Expected \"(\" but found \"{\"", 28))),
+    (Dialect::Js, b"import A from \"x\"\nwith { type: \"json\" }; A;", Err((b"Expected \"(\" but found \"{\"", 23))),
+    (Dialect::Js, b"import A from \"x\"\nwith { type: \"json\" };\nimport B from \"y\"\nwith (A) {}", Err((b"Expected \"(\" but found \"{\"", 23))),
+];
+
+/// The cases in groups, each group after the line that names it: a source, how it is read, and what tsc makes of it.
+#[rustfmt::skip]
+const ROWS: &[Row] = &[
+    // TypeScript that tsc parses: type forms
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: if;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[TypeReference[7,9)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: class;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[TypeReference[7,12)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: function;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[TypeReference[7,15)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: in;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[TypeReference[7,9)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: extends;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[TypeReference[7,14)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: super;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[TypeReference[7,12)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: delete;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[TypeReference[7,13)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: if.x;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[TypeReference[7,11)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: class<T>;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[TypeReference[7,15)<13,14> TypeReference[13,14)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: | if;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[UnionType[7,11) TypeReference[9,11)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: A | if;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[UnionType[7,13) TypeReference[7,8) TypeReference[11,13)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: A & class;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[IntersectionType[7,16) TypeReference[7,8) TypeReference[11,16)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: keyof if;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[TypeOperator[7,15) TypeReference[13,15)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: (if);", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[ParenthesizedType[7,11) TypeReference[8,10)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: (class);", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[ParenthesizedType[7,14) TypeReference[8,13)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: `${if}`;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[TemplateLiteralType[7,14) TypeReference[10,12)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Tsx, text: b"let x: if;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[TypeReference[7,9)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-tuple-label", dialect: Dialect::Ts, text: b"type X = [...const: A[]];", want: Want::Reads("kept[] erased[type-alias [0,25) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-tuple-label", dialect: Dialect::Ts, text: b"type X = [...in: A[]];", want: Want::Reads("kept[] erased[type-alias [0,22) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-tuple-label", dialect: Dialect::Ts, text: b"type X = [...class: A[]];", want: Want::Reads("kept[] erased[type-alias [0,25) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-tuple-label", dialect: Dialect::Ts, text: b"type X = [...if: A[]];", want: Want::Reads("kept[] erased[type-alias [0,22) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "import-type", dialect: Dialect::Ts, text: b"let x: typeof import(\"x\")<C>;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[ImportType[7,28)<26,27> LiteralType[21,24) TypeReference[26,27)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "import-type", dialect: Dialect::Ts, text: b"type X = typeof import(\"x\")<C>;", want: Want::Reads("kept[] erased[type-alias [0,31) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "import-type", dialect: Dialect::Ts, text: b"let x: import(\"x\")<T>;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[ImportType[7,21)<19,20> LiteralType[14,17) TypeReference[19,20)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "import-type", dialect: Dialect::Ts, text: b"type X = import(\"x\")<T>;", want: Want::Reads("kept[] erased[type-alias [0,24) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "import-type", dialect: Dialect::Ts, text: b"let x: import(\"x\", { with: { a: \"b\" } })<T>;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[ImportType[7,43)<41,42> LiteralType[14,17) TypeReference[41,42)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "import-type", dialect: Dialect::Ts, text: b"let x: import(\"x\", { with: { a: \"b\" + \"c\" } });", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[ImportType[7,46) LiteralType[14,17)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "import-type", dialect: Dialect::Ts, text: b"type X = import(\"x\", { with: { a: \"b\" + \"c\" } });", want: Want::Reads("kept[] erased[type-alias [0,49) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "import-type", dialect: Dialect::Ts, text: b"let x: import(\"x\").A.<T>;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[ImportType[7,24)<22,23> LiteralType[14,17) TypeReference[22,23)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "import-type", dialect: Dialect::Ts, text: b"type X = import(\"x\").A.<T>;", want: Want::Reads("kept[] erased[type-alias [0,27) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "asserts-is-next-line", dialect: Dialect::Ts, text: b"type X = (a) => asserts a\nis B;", want: Want::Reads("kept[] erased[type-alias [0,31) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "asserts-is-next-line", dialect: Dialect::Ts, text: b"const f = (a): (a) => asserts a\nis B => 0;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[FunctionType[15,36) TypePredicate[22,36) TypeReference[35,36)] type_parameters[] heritage[]") },
+    Row { family: "asserts-is-next-line", dialect: Dialect::Ts, text: b"const f = (a): asserts a\nis B => 0;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[TypePredicate[15,29) TypeReference[28,29)] type_parameters[] heritage[]") },
+    Row { family: "asserts-is-next-line", dialect: Dialect::Ts, text: b"const f = (a): asserts this\nis B => 0;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[TypePredicate[15,32) ThisType[23,27) TypeReference[31,32)] type_parameters[] heritage[]") },
+    Row { family: "asserts-is-next-line", dialect: Dialect::Ts, text: b"function f(): asserts this\nis B { throw 0 }", want: Want::Reads("kept[s_function] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[14,31) ThisType[22,26) TypeReference[30,31)] type_parameters[] heritage[]") },
+    // TypeScript that tsc parses: object types
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"type as = 1", want: Want::Reads("kept[] erased[type-alias [0,11) module#0 name=as@[5,7)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"declare type as = 1", want: Want::Reads("kept[] erased[type-alias [0,19) module#0 declare ambient name=as@[13,15)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"type satisfies = 1", want: Want::Reads("kept[] erased[type-alias [0,18) module#0 name=satisfies@[5,14)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"interface as {}", want: Want::Reads("kept[] erased[interface [0,15) module#0 name=as@[10,12)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"export interface as {}", want: Want::Reads("kept[] erased[interface [0,22) module#0 export name=as@[17,19)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"interface satisfies {}", want: Want::Reads("kept[] erased[interface [0,22) module#0 name=satisfies@[10,19)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-initializer", dialect: Dialect::Ts, text: b"type X = { a(b = 1): A };", want: Want::Reads("kept[] erased[type-alias [0,25) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-initializer", dialect: Dialect::Ts, text: b"let x: { a(b = 1): A };", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[TypeLiteral[7,22) TypeReference[19,20)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-initializer", dialect: Dialect::Ts, text: b"interface I { (a = 1): A }", want: Want::Reads("kept[] erased[interface [0,26) module#0 name=I@[10,11)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-parameter-modifier", dialect: Dialect::Ts, text: b"type X = { a(public b: B): A };", want: Want::Reads("kept[] erased[type-alias [0,31) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "interface-extends-expression", dialect: Dialect::Ts, text: b"interface I extends a() {}", want: Want::Reads("kept[] erased[interface [0,26) module#0 name=I@[10,11)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "interface-extends-expression", dialect: Dialect::Ts, text: b"interface I extends a.b() {}", want: Want::Reads("kept[] erased[interface [0,28) module#0 name=I@[10,11)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // TypeScript that tsc parses: signatures, type parameters and type arguments
+    Row { family: "signature-initializer", dialect: Dialect::Ts, text: b"let g: (a = 1) => void;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[FunctionType[7,22) VoidKeyword[18,22)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-initializer", dialect: Dialect::Ts, text: b"let x: ({ a = 1 }) => void;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[FunctionType[7,26) VoidKeyword[22,26)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-parameter-modifier", dialect: Dialect::Ts, text: b"let x: (public a: A) => void;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[FunctionType[7,28) TypeReference[18,19) VoidKeyword[24,28)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-initializer", dialect: Dialect::Tsx, text: b"let g: (a = 1) => void;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[FunctionType[7,22) VoidKeyword[18,22)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-pattern", dialect: Dialect::Ts, text: b"let x: ([a, , b]) => void;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[FunctionType[7,25) VoidKeyword[21,25)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-pattern", dialect: Dialect::Ts, text: b"type X = ([a, , b]) => void;", want: Want::Reads("kept[] erased[type-alias [0,28) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-pattern", dialect: Dialect::Ts, text: b"let x: new ([a, , b]) => A;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[ConstructorType[7,26) TypeReference[25,26)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-pattern", dialect: Dialect::Ts, text: b"type X = { ([a, , b]): void };", want: Want::Reads("kept[] erased[type-alias [0,30) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-pattern", dialect: Dialect::Ts, text: b"type X = { new ([a, , b]): A };", want: Want::Reads("kept[] erased[type-alias [0,31) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-initializer", dialect: Dialect::Ts, text: b"let x: A<(a = 1) => void>;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[TypeReference[7,25)<9,24> FunctionType[9,24) VoidKeyword[20,24)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-pattern", dialect: Dialect::Ts, text: b"type X = A<([a, , b]) => void>;", want: Want::Reads("kept[] erased[type-alias [0,31) module#0 name=X@[5,6)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "signature-initializer", dialect: Dialect::Ts, text: b"class C extends B<(a = 1) => void> {}", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[extends: ExpressionWithTypeArguments[16,34)<18,33> FunctionType[18,33) VoidKeyword[29,33)]") },
+    Row { family: "function-parameter-modifier", dialect: Dialect::Ts, text: b"function f(public a: A) {}", want: Want::Reads("kept[s_function] erased[] wrappers[] nodes[] enums[] types[TypeReference[21,22)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "rest-parameter-comma", dialect: Dialect::Ts, text: b"declare class C { m(...a,): void; }", want: Want::Reads("kept[] erased[class [0,35) module#0 declare ambient name=C@[14,15) | member method [18,33) scope@16#0] wrappers[] nodes[] enums[] types[] return_types[VoidKeyword[28,32)] type_parameters[] heritage[]") },
+    Row { family: "rest-parameter-comma", dialect: Dialect::Ts, text: b"declare class C { constructor(...a,); }", want: Want::Reads("kept[] erased[class [0,39) module#0 declare ambient name=C@[14,15) | member constructor [18,37) scope@16#0] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "rest-parameter-comma", dialect: Dialect::Ts, text: b"declare class C { m(...a: A[],): void; }", want: Want::Reads("kept[] erased[class [0,40) module#0 declare ambient name=C@[14,15) | member method [18,38) scope@16#0] wrappers[] nodes[] enums[] types[ArrayType[26,29) TypeReference[26,27)] return_types[VoidKeyword[33,37)] type_parameters[] heritage[]") },
+    Row { family: "rest-parameter-comma", dialect: Dialect::Ts, text: b"declare class C { constructor(...a: A[],); }", want: Want::Reads("kept[] erased[class [0,44) module#0 declare ambient name=C@[14,15) | member constructor [18,42) scope@16#0] wrappers[] nodes[] enums[] types[ArrayType[36,39) TypeReference[36,37)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"function f<out>() {}", want: Want::Reads("kept[s_function] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[<10,15>{11,14} out[11,14)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const f = function <out>() {};", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[<19,24>{20,23} out[20,23)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"function f<out = A>() {}", want: Want::Reads("kept[s_function] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[<10,19>{11,18} out[11,18)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const f = function <out = A>() {};", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[<19,28>{20,27} out[20,27)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"function f<const out>() {}", want: Want::Reads("kept[s_function] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[<10,21>{11,20} out[11,20)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const f = function <const out>() {};", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[<19,30>{20,29} out[20,29)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const f = <out>(a): T => a;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[TypeReference[20,21)] type_parameters[<10,15>{11,14} out[11,14)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const f = <out>(a: T) => a;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[TypeReference[19,20)] return_types[] type_parameters[<10,15>{11,14} out[11,14)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const f = <out = A>(a): T => a;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[TypeReference[24,25)] type_parameters[<10,19>{11,18} out[11,18)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const f = <out = A>(a: T) => a;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[TypeReference[23,24)] return_types[] type_parameters[<10,19>{11,18} out[11,18)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const f = <const out>(a): T => a;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[TypeReference[26,27)] type_parameters[<10,21>{11,20} out[11,20)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Tsx, text: b"const f = function g<out>() {};", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[<20,25>{21,24} out[21,24)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Tsx, text: b"async function f<out>() {}", want: Want::Reads("kept[s_function] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[<16,21>{17,20} out[17,20)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Tsx, text: b"const f = function g<out = A>() {};", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[<20,29>{21,28} out[21,28)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Tsx, text: b"async function f<const out>() {}", want: Want::Reads("kept[s_function] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[<16,27>{17,26} out[17,26)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Tsx, text: b"const f = <out = A>() => 0;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[] type_parameters[<10,19>{11,18} out[11,18)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Tsx, text: b"const f = async <out = A>() => 0;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[] type_parameters[<16,25>{17,24} out[17,24)] heritage[]") },
+    // TypeScript that tsc parses: expressions
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const v = <out>x;", want: Want::Reads("kept[s_local] erased[] wrappers[TypeAssertionExpression [10,15) TypeReference(out)[11,14) of e_identifier@15] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"<out>x;", want: Want::Reads("kept[s_expr] erased[] wrappers[TypeAssertionExpression [0,5) TypeReference(out)[1,4) of e_identifier@5] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const v = <out>(x);", want: Want::Reads("kept[s_local] erased[] wrappers[ParenthesizedExpression [15,18) of e_identifier@16 | TypeAssertionExpression [10,15) TypeReference(out)[11,14) of e_identifier@16] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const v = <in>x;", want: Want::Reads("kept[s_local] erased[] wrappers[TypeAssertionExpression [10,14) TypeReference(in)[11,13) of e_identifier@14] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const v = <in>(x);", want: Want::Reads("kept[s_local] erased[] wrappers[ParenthesizedExpression [14,17) of e_identifier@15 | TypeAssertionExpression [10,14) TypeReference(in)[11,13) of e_identifier@15] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"const v = <if>x;", want: Want::Reads("kept[s_local] erased[] wrappers[TypeAssertionExpression [10,14) TypeReference(if)[11,13) of e_identifier@14] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"const v = <class>x;", want: Want::Reads("kept[s_local] erased[] wrappers[TypeAssertionExpression [10,17) TypeReference(class)[11,16) of e_identifier@17] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"const v = <enum>x;", want: Want::Reads("kept[s_local] erased[] wrappers[TypeAssertionExpression [10,16) TypeReference(enum)[11,15) of e_identifier@16] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const v = <out>(x) => x;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[] type_parameters[<10,15>{11,14} out[11,14)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const v = <out, T>(x) => x;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[] type_parameters[<10,18>{11,17} out[11,14) T[16,17)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const v = <out = A>(x) => x;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[] type_parameters[<10,19>{11,18} out[11,18)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Tsx, text: b"f(<out, T>(x) => x);", want: Want::Reads("kept[s_expr] erased[] wrappers[] nodes[e_call@0 e_arrow@2] enums[] types[] return_types[] type_parameters[<2,10>{3,9} out[3,6) T[8,9)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Tsx, text: b"f(<out = A>(x) => x);", want: Want::Reads("kept[s_expr] erased[] wrappers[] nodes[e_call@0 e_arrow@2] enums[] types[] return_types[] type_parameters[<2,11>{3,10} out[3,10)] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"const v = x as if;", want: Want::Reads("kept[s_local] erased[] wrappers[AsExpression [12,17) TypeReference(if)[15,17) of e_identifier@10] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"const v = x as var;", want: Want::Reads("kept[s_local] erased[] wrappers[AsExpression [12,18) TypeReference(var)[15,18) of e_identifier@10] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"const v = x satisfies if;", want: Want::Reads("kept[s_local] erased[] wrappers[SatisfiesExpression [12,24) TypeReference(if)[22,24) of e_identifier@10] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"const v = (): if => x;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[TypeReference[14,16)] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Tsx, text: b"x as if;", want: Want::Reads("kept[s_expr] erased[] wrappers[AsExpression [2,7) TypeReference(if)[5,7) of e_identifier@0] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "reserved-type-name", dialect: Dialect::Tsx, text: b"x as var;", want: Want::Reads("kept[s_expr] erased[] wrappers[AsExpression [2,8) TypeReference(var)[5,8) of e_identifier@0] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-less-equals", dialect: Dialect::Ts, text: b"const v = x as T <= y;", want: Want::Reads("kept[s_local] erased[] wrappers[AsExpression [12,16) TypeReference(T)[15,16) of e_identifier@10] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-less-equals", dialect: Dialect::Ts, text: b"x as T <= y;", want: Want::Reads("kept[s_expr] erased[] wrappers[AsExpression [2,6) TypeReference(T)[5,6) of e_identifier@0] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-less-equals", dialect: Dialect::Ts, text: b"const v = x satisfies T <= y;", want: Want::Reads("kept[s_local] erased[] wrappers[SatisfiesExpression [12,23) TypeReference(T)[22,23) of e_identifier@10] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-less-equals", dialect: Dialect::Tsx, text: b"f(x as T <= y);", want: Want::Reads("kept[s_expr] erased[] wrappers[AsExpression [4,8) TypeReference(T)[7,8) of e_identifier@2] nodes[e_call@0] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-less-equals", dialect: Dialect::Tsx, text: b"const v = [x as T <= y];", want: Want::Reads("kept[s_local] erased[] wrappers[AsExpression [13,17) TypeReference(T)[16,17) of e_identifier@11] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "colon-after-operand", dialect: Dialect::Ts, text: b"x = a ? 1 + async(b) : c;", want: Want::Reads("kept[s_expr] erased[] wrappers[] nodes[e_if@4 e_call@12] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "colon-after-operand", dialect: Dialect::Ts, text: b"x = a ? -<T>(b) : c;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [12,15) of e_identifier@13 | TypeAssertionExpression [9,12) TypeReference(T)[10,11) of e_identifier@13] nodes[e_if@4] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon", dialect: Dialect::Ts, text: b"x = a ? <T>(b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [11,14) of e_identifier@12 | TypeAssertionExpression [8,11) TypeReference(T)[9,10) of e_identifier@12] nodes[e_if@4 e_arrow@17] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? y => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [13,16) of e_identifier@14] nodes[e_if@4 e_arrow@8 e_arrow@19] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? (y) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [15,18) of e_identifier@16] nodes[e_if@4 e_arrow@8 e_arrow@21] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? <T>(y: T) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [21,24) of e_identifier@22] nodes[e_if@4 e_arrow@8 e_arrow@27] enums[] types[TypeReference[15,16)] return_types[] type_parameters[<8,11>{9,10} T[9,10)] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Tsx, text: b"x = a ? y => ({ y }) : z => ({ z });", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [13,20) of e_object@14 | ParenthesizedExpression [28,35) of e_object@29] nodes[e_if@4 e_arrow@8 e_arrow@23] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // TypeScript that tsc parses: class members
+    Row { family: "index-signature-comma", dialect: Dialect::Ts, text: b"class C { [k: string]: T, }", want: Want::Reads("kept[s_class] erased[member index-signature [10,25) scope@8#0] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "index-signature-comma", dialect: Dialect::Ts, text: b"abstract class C extends B { [k: string]: T, }", want: Want::Reads("kept[s_class] erased[member index-signature [29,44) scope@27#0] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[extends: ExpressionWithTypeArguments[25,26)]") },
+    Row { family: "index-signature-comma", dialect: Dialect::Ts, text: b"const c = class { [k: string]: T, };", want: Want::Reads("kept[s_local] erased[member index-signature [18,33) scope@16#0] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "index-signature-comma", dialect: Dialect::Ts, text: b"declare class C { [k: string]: T, }", want: Want::Reads("kept[] erased[class [0,35) module#0 declare ambient name=C@[14,15) | member index-signature [18,33) scope@16#0] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "function-parameter-modifier", dialect: Dialect::Ts, text: b"class C { m(public a: A) {} }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeReference[22,23)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "class-implements-expression", dialect: Dialect::Ts, text: b"class C implements a() {}", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[implements: ExpressionWithTypeArguments[19,22)]") },
+    Row { family: "accessor-modifier", dialect: Dialect::Decorators, text: b"class C { accessor x: T; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[auto_accessor@19] enums[] types[TypeReference[22,23)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "accessor-modifier", dialect: Dialect::Decorators, text: b"class C { static accessor x = 1; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[auto_accessor@26] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "accessor-modifier", dialect: Dialect::Decorators, text: b"class C { accessor #x: T; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[auto_accessor@19] enums[] types[TypeReference[23,24)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "accessor-modifier", dialect: Dialect::Decorators, text: b"class C { static accessor #x = 1; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[auto_accessor@26] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "accessor-modifier", dialect: Dialect::Decorators, text: b"abstract class C extends B { abstract accessor x: T; }", want: Want::Reads("kept[s_class] erased[member property [29,52) scope@27#0 abstract] wrappers[] nodes[] enums[] types[TypeReference[50,51)] return_types[] type_parameters[] heritage[extends: ExpressionWithTypeArguments[25,26)]") },
+    Row { family: "accessor-modifier", dialect: Dialect::Decorators, text: b"declare class C { accessor x: T; }", want: Want::Reads("kept[] erased[class [0,34) module#0 declare ambient name=C@[14,15)] wrappers[] nodes[] enums[] types[TypeReference[30,31)] return_types[] type_parameters[] heritage[]") },
+    // TypeScript that tsc parses: module syntax
+    Row { family: "import-attributes-next-line", dialect: Dialect::Ts, text: b"import A from \"x\"\nwith { type: \"json\" };", want: Want::Reads("kept[s_import] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "namespace-import-expression", dialect: Dialect::Ts, text: b"namespace N { import(\"x\"); }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[e_import@14] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "namespace-import-expression", dialect: Dialect::Ts, text: b"namespace N { import.meta; }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[e_import_meta@14] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "abstract-declare", dialect: Dialect::Ts, text: b"abstract declare class C {}", want: Want::Reads("kept[] erased[class [0,27) module#0 declare ambient abstract name=C@[23,24)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "abstract-declare", dialect: Dialect::Ts, text: b"export abstract declare class C {}", want: Want::Reads("kept[] erased[class [0,34) module#0 export declare ambient abstract name=C@[30,31)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Ts, text: b"enum E { [\"x\"] }", want: Want::Reads("kept[s_enum] erased[] wrappers[] nodes[] enums[E=x] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Ts, text: b"enum E { [\"x\"] = 1 }", want: Want::Reads("kept[s_enum] erased[] wrappers[] nodes[] enums[E=x] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Ts, text: b"enum E { ['x'] = 1, B = E.x }", want: Want::Reads("kept[s_enum] erased[] wrappers[] nodes[] enums[E=x,B] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Ts, text: b"enum E { [`x`] = 1 }", want: Want::Reads("kept[s_enum] erased[] wrappers[] nodes[] enums[E=x] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"namespace as {}", want: Want::Reads("kept[] erased[module [0,15) module#0 name=as@[10,12)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"declare namespace as {}", want: Want::Reads("kept[] erased[module [0,23) module#0 declare ambient name=as@[18,20)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"namespace as { export const x = 1; }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"namespace as.b { export const x = 1; }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"namespace satisfies { export const x = 1; }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // TypeScript that tsc parses: decorator metadata
+    Row { family: "metadata-union-check-type", dialect: Dialect::Decorators, text: b"class C { @d p: number | A extends B ? string : never; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,53) UnionType[16,26) NumberKeyword[16,22) TypeReference[25,26) TypeReference[35,36) StringKeyword[39,45) NeverKeyword[48,53)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-union-check-type", dialect: Dialect::Decorators, text: b"class C { @d p: K & A extends B ? string : never; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,48) IntersectionType[16,21) TypeReference[16,17) TypeReference[20,21) TypeReference[30,31) StringKeyword[34,40) NeverKeyword[43,48)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-union-check-type", dialect: Dialect::Decorators, text: b"class C { @d p: K | A extends B ? string[] : number[]; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,53) UnionType[16,21) TypeReference[16,17) TypeReference[20,21) TypeReference[30,31) ArrayType[34,42) StringKeyword[34,40) ArrayType[45,53) NumberKeyword[45,51)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-union-check-type", dialect: Dialect::Decorators, text: b"class C { @d p: string | A extends B ? () => void : () => void; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,62) UnionType[16,26) StringKeyword[16,22) TypeReference[25,26) TypeReference[35,36) FunctionType[39,49) VoidKeyword[45,49) FunctionType[52,62) VoidKeyword[58,62)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-union-check-type", dialect: Dialect::Decorators, text: b"class C { @d p: K | A extends B ? null : K; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,42) UnionType[16,21) TypeReference[16,17) TypeReference[20,21) TypeReference[30,31) LiteralType[34,38) TypeReference[41,42)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-union-check-type", dialect: Dialect::Decorators, text: b"class C { @d m(a: number | A extends B ? string : string) {} }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[18,56) UnionType[18,28) NumberKeyword[18,24) TypeReference[27,28) TypeReference[37,38) StringKeyword[41,47) StringKeyword[50,56)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-union-check-type", dialect: Dialect::Decorators, text: b"class C { @d m(): string & A extends B ? never : string { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[ConditionalType[18,55) IntersectionType[18,28) StringKeyword[18,24) TypeReference[27,28) TypeReference[37,38) NeverKeyword[41,46) StringKeyword[49,55)] type_parameters[] heritage[]") },
+    Row { family: "metadata-operator-before-extends", dialect: Dialect::Decorators, text: b"class C { @d p: keyof A extends B ? string : never; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,50) TypeOperator[16,23) TypeReference[22,23) TypeReference[32,33) StringKeyword[36,42) NeverKeyword[45,50)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operator-before-extends", dialect: Dialect::Decorators, text: b"class C { @d p: readonly A[] extends B ? string : number; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,56) TypeOperator[16,28) ArrayType[25,28) TypeReference[25,26) TypeReference[37,38) StringKeyword[41,47) NumberKeyword[50,56)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operator-before-extends", dialect: Dialect::Decorators, text: b"class C { @d p: unique symbol extends B ? string : never; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,56) TypeOperator[16,29) SymbolKeyword[23,29) TypeReference[38,39) StringKeyword[42,48) NeverKeyword[51,56)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operator-before-extends", dialect: Dialect::Decorators, text: b"class C { @d m(a: keyof A extends B ? () => void : () => void) {} }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[18,61) TypeOperator[18,25) TypeReference[24,25) TypeReference[34,35) FunctionType[38,48) VoidKeyword[44,48) FunctionType[51,61) VoidKeyword[57,61)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operator-before-extends", dialect: Dialect::Decorators, text: b"class C { @d m(): readonly A[] extends B ? unknown : string { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[ConditionalType[18,59) TypeOperator[18,30) ArrayType[27,30) TypeReference[27,28) TypeReference[39,40) UnknownKeyword[43,50) StringKeyword[53,59)] type_parameters[] heritage[]") },
+    Row { family: "metadata-false-type-union", dialect: Dialect::Decorators, text: b"class C { @d p: A extends B ? string : never | number; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,53) TypeReference[16,17) TypeReference[26,27) StringKeyword[30,36) UnionType[39,53) NeverKeyword[39,44) NumberKeyword[47,53)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-false-type-union", dialect: Dialect::Decorators, text: b"class C { @d p: A extends B ? unknown : string & string; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,55) TypeReference[16,17) TypeReference[26,27) UnknownKeyword[30,37) IntersectionType[40,55) StringKeyword[40,46) StringKeyword[49,55)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-keyword-dot", dialect: Dialect::Decorators, text: b"class C { @d p: any.b; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeReference[16,21)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-keyword-dot", dialect: Dialect::Decorators, text: b"class C { @d p: string.b; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeReference[16,24)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-keyword-dot", dialect: Dialect::Decorators, text: b"class C { @d p: bigint.b<T>; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeReference[16,27)<25,26> TypeReference[25,26)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-keyword-dot", dialect: Dialect::Decorators, text: b"class C { @d p: undefined.b; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeReference[16,27)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-keyword-dot", dialect: Dialect::Decorators, text: b"class C { @d m(a: never.b) {} }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeReference[18,25)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-unique-operand", dialect: Dialect::Decorators, text: b"class C { @d p: unique symbol[]; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeOperator[16,31) ArrayType[23,31) SymbolKeyword[23,29)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-unique-operand", dialect: Dialect::Decorators, text: b"class C { @d p: unique [A]; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeOperator[16,26) TupleType[23,26) TypeReference[24,25)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-conditional-branches", dialect: Dialect::Decorators, text: b"class C { @d p: X extends Y ? number : never; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,44) TypeReference[16,17) TypeReference[26,27) NumberKeyword[30,36) NeverKeyword[39,44)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-conditional-branches", dialect: Dialect::Decorators, text: b"class C { @d p: X extends Y ? K : K; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,35) TypeReference[16,17) TypeReference[26,27) TypeReference[30,31) TypeReference[34,35)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-false-type-union", dialect: Dialect::Decorators, text: b"class C { @d p: X extends Y ? A : (A | null); }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,44) TypeReference[16,17) TypeReference[26,27) TypeReference[30,31) ParenthesizedType[34,44) UnionType[35,43) TypeReference[35,36) LiteralType[39,43)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-conditional-branches", dialect: Dialect::Decorators, text: b"class C { @d p: (X extends Y ? string : unknown); }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ParenthesizedType[16,48) ConditionalType[17,47) TypeReference[17,18) TypeReference[27,28) StringKeyword[31,37) UnknownKeyword[40,47)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-conditional-branches", dialect: Dialect::Decorators, text: b"class C { @d p: X extends infer U extends V ? string : never; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,60) TypeReference[16,17) InferType[26,43) TypeReference[42,43) StringKeyword[46,52) NeverKeyword[55,60)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operand-serialization", dialect: Dialect::Decorators, text: b"class C { @d p: string | (never | never); }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[UnionType[16,40) StringKeyword[16,22) ParenthesizedType[25,40) UnionType[26,39) NeverKeyword[26,31) NeverKeyword[34,39)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operand-serialization", dialect: Dialect::Decorators, text: b"class C { @d p: (null | undefined) | string; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[UnionType[16,43) ParenthesizedType[16,34) UnionType[17,33) LiteralType[17,21) UndefinedKeyword[24,33) StringKeyword[37,43)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operand-serialization", dialect: Dialect::Decorators, text: b"class C { @d p: A.B | C.D; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[UnionType[16,25) TypeReference[16,19) TypeReference[22,25)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operand-serialization", dialect: Dialect::Decorators, text: b"class C { @d m(a: A.B & A.C) {} }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[IntersectionType[18,27) TypeReference[18,21) TypeReference[24,27)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-import-and-unique", dialect: Dialect::Decorators, text: b"class C { @d p: A | unique symbol; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[UnionType[16,33) TypeReference[16,17) TypeOperator[20,33) SymbolKeyword[27,33)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-import-and-unique", dialect: Dialect::Decorators, text: b"class C { @d p: import(\"x\") | A; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[UnionType[16,31) ImportType[16,27) LiteralType[23,26) TypeReference[30,31)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-import-and-unique", dialect: Dialect::Decorators, text: b"class C { @d p: import(\"x\")[\"y\"]; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[IndexedAccessType[16,32) ImportType[16,27) LiteralType[23,26) LiteralType[28,31)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d p: this is B; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypePredicate[16,25) ThisType[16,20) TypeReference[24,25)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): a is B { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,24) TypeReference[23,24)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): a is B | C { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,28) UnionType[23,28) TypeReference[23,24) TypeReference[27,28)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): string is B { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,29) TypeReference[28,29)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): asserts a { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,27)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): asserts a is B { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,32) TypeReference[31,32)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): asserts this is B { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,35) ThisType[26,30) TypeReference[34,35)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): asserts a | B { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[UnionType[18,31) TypePredicate[18,27) TypeReference[30,31)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): A | asserts a { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[UnionType[18,31) TypeReference[18,19) TypePredicate[22,31)] type_parameters[] heritage[]") },
+    // a colon after an operand that ends with a parenthesis: a call of async is no arrow function there
+    Row { family: "colon-after-operand", dialect: Dialect::Ts, text: b"x = a ? 1 + async(b) : c;", want: Want::Reads("kept[s_expr] erased[] wrappers[] nodes[e_if@4 e_call@12] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "colon-after-operand", dialect: Dialect::Ts, text: b"x = a ? -async(b) : c;", want: Want::Reads("kept[s_expr] erased[] wrappers[] nodes[e_if@4 e_call@9] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "colon-after-operand", dialect: Dialect::Ts, text: b"x = a ? y || async(b) : c;", want: Want::Reads("kept[s_expr] erased[] wrappers[] nodes[e_if@4 e_call@13] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "colon-after-operand", dialect: Dialect::Ts, text: b"x = a ? typeof async() : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[] nodes[e_if@4 e_call@15 e_arrow@25] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "colon-after-operand", dialect: Dialect::Ts, text: b"x = a ? 1 + async<T>(b) : c;", want: Want::Reads("kept[s_expr] erased[] wrappers[] nodes[e_if@4 e_call@12] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "colon-after-operand", dialect: Dialect::Ts, text: b"switch (x) { case 1 + async(b): c; }", want: Want::Reads("kept[s_switch] erased[] wrappers[] nodes[e_call@22] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // a colon after an operand that ends with a parenthesis: a type assertion before parentheses is no arrow function there
+    Row { family: "colon-after-operand", dialect: Dialect::Ts, text: b"x = a ? -<T>(b) : c;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [12,15) of e_identifier@13 | TypeAssertionExpression [9,12) TypeReference(T)[10,11) of e_identifier@13] nodes[e_if@4] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "colon-after-operand", dialect: Dialect::Ts, text: b"x = a ? !<T>(b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [12,15) of e_identifier@13 | TypeAssertionExpression [9,12) TypeReference(T)[10,11) of e_identifier@13] nodes[e_if@4 e_arrow@18] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "colon-after-operand", dialect: Dialect::Ts, text: b"x = a ? typeof <T>(b) : c;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [18,21) of e_identifier@19 | TypeAssertionExpression [15,18) TypeReference(T)[16,17) of e_identifier@19] nodes[e_if@4] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "colon-after-operand", dialect: Dialect::Ts, text: b"x = a ? 1 + <T>(b) : c;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [15,18) of e_identifier@16 | TypeAssertionExpression [12,15) TypeReference(T)[13,14) of e_identifier@16] nodes[e_if@4] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "colon-after-operand", dialect: Dialect::Ts, text: b"async function f() { x = a ? await <T>(b) : c; }", want: Want::Reads("kept[s_function] erased[] wrappers[ParenthesizedExpression [38,41) of e_identifier@39 | TypeAssertionExpression [35,38) TypeReference(T)[36,37) of e_identifier@39] nodes[e_if@25] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "colon-after-operand", dialect: Dialect::Ts, text: b"switch (x) { case -<T>(b): c; }", want: Want::Reads("kept[s_switch] erased[] wrappers[ParenthesizedExpression [22,25) of e_identifier@23 | TypeAssertionExpression [19,22) TypeReference(T)[20,21) of e_identifier@23] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // a colon after an operand that ends with a parenthesis: the same with the tsx loader
+    Row { family: "colon-after-operand", dialect: Dialect::Tsx, text: b"x = a ? 1 + async(b) : c;", want: Want::Reads("kept[s_expr] erased[] wrappers[] nodes[e_if@4 e_call@12] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "colon-after-operand", dialect: Dialect::Tsx, text: b"switch (x) { case -async(b): c; }", want: Want::Reads("kept[s_switch] erased[] wrappers[] nodes[e_call@19] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // a colon after parentheses between the question mark and the colon of a conditional: after type parameters it starts a return type only where a colon follows the body
+    Row { family: "conditional-colon", dialect: Dialect::Ts, text: b"x = a ? <T>(b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [11,14) of e_identifier@12 | TypeAssertionExpression [8,11) TypeReference(T)[9,10) of e_identifier@12] nodes[e_if@4 e_arrow@17] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon", dialect: Dialect::Ts, text: b"x = a ? <T>(b, c) : d => e;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [11,17) of e_binary@12 | TypeAssertionExpression [8,11) TypeReference(T)[9,10) of e_binary@12] nodes[e_if@4 e_arrow@20] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon", dialect: Dialect::Ts, text: b"x = a ? async <T>(b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[] nodes[e_if@4 e_call@8 e_arrow@23] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon", dialect: Dialect::Ts, text: b"x = a ? b ? c : <T>(d) : e => f;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [19,22) of e_identifier@20 | TypeAssertionExpression [16,19) TypeReference(T)[17,18) of e_identifier@20] nodes[e_if@4 e_if@8 e_arrow@25] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon", dialect: Dialect::Ts, text: b"x = a ? b ? c : async <T>(d) : e => f;", want: Want::Reads("kept[s_expr] erased[] wrappers[] nodes[e_if@4 e_if@8 e_call@16 e_arrow@31] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon", dialect: Dialect::Ts, text: b"for (const k of a ? <T>(b) : c => d) {}", want: Want::Reads("kept[s_for_of] erased[] wrappers[ParenthesizedExpression [23,26) of e_identifier@24 | TypeAssertionExpression [20,23) TypeReference(T)[21,22) of e_identifier@24] nodes[e_if@16 e_arrow@29] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon", dialect: Dialect::Ts, text: b"x = { [a ? <T>(b) : c => d]: 1 };", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [14,17) of e_identifier@15 | TypeAssertionExpression [11,14) TypeReference(T)[12,13) of e_identifier@15] nodes[e_if@7 e_arrow@20] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // a colon after parentheses between the question mark and the colon of a conditional: in the body of an arrow function with one name it does the same
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? y => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [13,16) of e_identifier@14] nodes[e_if@4 e_arrow@8 e_arrow@19] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? y => ({ y }) : z => ({ z });", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [13,20) of e_object@14 | ParenthesizedExpression [28,35) of e_object@29] nodes[e_if@4 e_arrow@8 e_arrow@23] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? y => ([y]) : z => z;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [13,18) of e_array@14] nodes[e_if@4 e_arrow@8 e_arrow@21] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? y => (b, c) : d => e;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [13,19) of e_binary@14] nodes[e_if@4 e_arrow@8 e_arrow@22] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? y => (b = 1) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [13,20) of e_binary@14] nodes[e_if@4 e_arrow@8 e_arrow@23] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? y => async (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[] nodes[e_if@4 e_arrow@8 e_call@13 e_arrow@25] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? y => <T>(b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [16,19) of e_identifier@17 | TypeAssertionExpression [13,16) TypeReference(T)[14,15) of e_identifier@17] nodes[e_if@4 e_arrow@8 e_arrow@22] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? y => z => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [18,21) of e_identifier@19] nodes[e_if@4 e_arrow@8 e_arrow@13 e_arrow@24] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? y => q ? r : (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [21,24) of e_identifier@22] nodes[e_if@4 e_arrow@8 e_if@13 e_arrow@27] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? async y => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [19,22) of e_identifier@20] nodes[e_if@4 e_arrow@8 e_arrow@25] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? async => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [17,20) of e_identifier@18] nodes[e_if@4 e_arrow@8 e_arrow@23] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? b ? c : y => (d) : e => f;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [21,24) of e_identifier@22] nodes[e_if@4 e_if@8 e_arrow@16 e_arrow@27] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"f(a ? y => (b) : c => d);", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [11,14) of e_identifier@12] nodes[e_call@0 e_if@2 e_arrow@6 e_arrow@17] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // a colon after parentheses between the question mark and the colon of a conditional: in the body after parameters that an expression could start with as well
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? (y) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [15,18) of e_identifier@16] nodes[e_if@4 e_arrow@8 e_arrow@21] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? (y, z) => ({ y, z }) : c => ({ c });", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [18,28) of e_object@19 | ParenthesizedExpression [36,43) of e_object@37] nodes[e_if@4 e_arrow@8 e_arrow@31] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? (y = 1) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [19,22) of e_identifier@20] nodes[e_if@4 e_arrow@8 e_arrow@25] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? ({ y }) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [19,22) of e_identifier@20] nodes[e_if@4 e_arrow@8 e_arrow@25] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? ({ y }: Y) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [22,25) of e_identifier@23] nodes[e_if@4 e_arrow@8 e_arrow@28] enums[] types[TypeReference[16,17)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? ([y]: Y, z: Z) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [26,29) of e_identifier@27] nodes[e_if@4 e_arrow@8 e_arrow@32] enums[] types[TypeReference[14,15) | TypeReference[20,21)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? (y, ...z) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [21,24) of e_identifier@22] nodes[e_if@4 e_arrow@8 e_arrow@27] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? async (y) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [21,24) of e_identifier@22] nodes[e_if@4 e_arrow@8 e_arrow@27] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? <T>(y) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [18,21) of e_identifier@19] nodes[e_if@4 e_arrow@8 e_arrow@24] enums[] types[] return_types[] type_parameters[<8,11>{9,10} T[9,10)] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? <T,>(y) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [19,22) of e_identifier@20] nodes[e_if@4 e_arrow@8 e_arrow@25] enums[] types[] return_types[] type_parameters[<8,12>{9,11} T[9,10)] heritage[]") },
+    // a colon after parentheses between the question mark and the colon of a conditional: in the body after type parameters, whatever the parameters are
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? <T>(y: T) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [21,24) of e_identifier@22] nodes[e_if@4 e_arrow@8 e_arrow@27] enums[] types[TypeReference[15,16)] return_types[] type_parameters[<8,11>{9,10} T[9,10)] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? <T>() => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [17,20) of e_identifier@18] nodes[e_if@4 e_arrow@8 e_arrow@23] enums[] types[] return_types[] type_parameters[<8,11>{9,10} T[9,10)] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? <T>(y: T) => ({ y }) : z => ({ z });", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [21,28) of e_object@22 | ParenthesizedExpression [36,43) of e_object@37] nodes[e_if@4 e_arrow@8 e_arrow@31] enums[] types[TypeReference[15,16)] return_types[] type_parameters[<8,11>{9,10} T[9,10)] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? <T extends U>(y: T) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [31,34) of e_identifier@32] nodes[e_if@4 e_arrow@8 e_arrow@37] enums[] types[TypeReference[25,26)] return_types[] type_parameters[<8,21>{9,20} T[9,20)] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? <T>(...y: T[]) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [26,29) of e_identifier@27] nodes[e_if@4 e_arrow@8 e_arrow@32] enums[] types[ArrayType[18,21) TypeReference[18,19)] return_types[] type_parameters[<8,11>{9,10} T[9,10)] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? async <T>(y: T) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [27,30) of e_identifier@28] nodes[e_if@4 e_arrow@8 e_arrow@33] enums[] types[TypeReference[21,22)] return_types[] type_parameters[<14,17>{15,16} T[15,16)] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Ts, text: b"x = a ? async <T>() => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [23,26) of e_identifier@24] nodes[e_if@4 e_arrow@8 e_arrow@29] enums[] types[] return_types[] type_parameters[<14,17>{15,16} T[15,16)] heritage[]") },
+    // a colon after parentheses between the question mark and the colon of a conditional: the same with the tsx loader
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Tsx, text: b"x = a ? y => ({ y }) : z => ({ z });", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [13,20) of e_object@14 | ParenthesizedExpression [28,35) of e_object@29] nodes[e_if@4 e_arrow@8 e_arrow@23] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "conditional-colon-in-arrow-body", dialect: Dialect::Tsx, text: b"x = a ? (y) => (b) : c => d;", want: Want::Reads("kept[s_expr] erased[] wrappers[ParenthesizedExpression [15,18) of e_identifier@16] nodes[e_if@4 e_arrow@8 e_arrow@21] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // a type or type parameters where an expression starts or goes on: out is the name of a type and of a type parameter of an arrow function
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const v = <out>x;", want: Want::Reads("kept[s_local] erased[] wrappers[TypeAssertionExpression [10,15) TypeReference(out)[11,14) of e_identifier@15] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const v = <out>(x);", want: Want::Reads("kept[s_local] erased[] wrappers[ParenthesizedExpression [15,18) of e_identifier@16 | TypeAssertionExpression [10,15) TypeReference(out)[11,14) of e_identifier@16] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const v = <out>(x) => x;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[] type_parameters[<10,15>{11,14} out[11,14)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const v = <out, T>(x) => x;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[] type_parameters[<10,18>{11,17} out[11,14) T[16,17)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Ts, text: b"const v = <out = A>(x) => x;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[e_arrow@10] enums[] types[] return_types[] type_parameters[<10,19>{11,18} out[11,18)] heritage[]") },
+    // a type or type parameters where an expression starts or goes on: a comparison follows the type after as and satisfies
+    Row { family: "as-less-equals", dialect: Dialect::Ts, text: b"const v = x as T <= y;", want: Want::Reads("kept[s_local] erased[] wrappers[AsExpression [12,16) TypeReference(T)[15,16) of e_identifier@10] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-less-equals", dialect: Dialect::Ts, text: b"const v = x satisfies T <= y;", want: Want::Reads("kept[s_local] erased[] wrappers[SatisfiesExpression [12,23) TypeReference(T)[22,23) of e_identifier@10] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // a type or type parameters where an expression starts or goes on: the same with the tsx loader
+    Row { family: "out-in-name", dialect: Dialect::Tsx, text: b"f(<out, T>(x) => x);", want: Want::Reads("kept[s_expr] erased[] wrappers[] nodes[e_call@0 e_arrow@2] enums[] types[] return_types[] type_parameters[<2,10>{3,9} out[3,6) T[8,9)] heritage[]") },
+    Row { family: "out-in-name", dialect: Dialect::Tsx, text: b"f(<out = A>(x) => x);", want: Want::Reads("kept[s_expr] erased[] wrappers[] nodes[e_call@0 e_arrow@2] enums[] types[] return_types[] type_parameters[<2,11>{3,10} out[3,10)] heritage[]") },
+    Row { family: "as-less-equals", dialect: Dialect::Tsx, text: b"const v = [x as T <= y];", want: Want::Reads("kept[s_local] erased[] wrappers[AsExpression [13,17) TypeReference(T)[16,17) of e_identifier@11] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // statements that tsc parses: as and satisfies name a type alias
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"type as = 1; let x: as;", want: Want::Reads("kept[s_local] erased[type-alias [0,12) module#0 name=as@[5,7)] wrappers[] nodes[] enums[] types[TypeReference[20,22)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"type as<T> = T;", want: Want::Reads("kept[] erased[type-alias [0,15) module#0 name=as@[5,7)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"type /* c */ as = 1", want: Want::Reads("kept[] erased[type-alias [0,19) module#0 name=as@[13,15)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"type as\n= 1", want: Want::Reads("kept[] erased[type-alias [0,11) module#0 name=as@[5,7)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"let type: any; type as = 1;", want: Want::Reads("kept[s_local] erased[type-alias [15,27) module#1 name=as@[20,22)] wrappers[] nodes[] enums[] types[AnyKeyword[10,13)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"function f() { type as = 1; return 1 as as }", want: Want::Reads("kept[s_function] erased[type-alias [15,27) scope@13#0 name=as@[20,22)] wrappers[AsExpression [37,42) TypeReference(as)[40,42) of e_number@35] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"{ type satisfies = 1 }", want: Want::Reads("kept[s_block] erased[type-alias [2,20) scope@0#0 name=satisfies@[7,16)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"export declare type satisfies = 1", want: Want::Reads("kept[] erased[type-alias [0,33) module#0 export declare ambient name=satisfies@[20,29)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Tsx, text: b"type as = 1; let x: as;", want: Want::Reads("kept[s_local] erased[type-alias [0,12) module#0 name=as@[5,7)] wrappers[] nodes[] enums[] types[TypeReference[20,22)] return_types[] type_parameters[] heritage[]") },
+    // statements that tsc parses: as and satisfies name an interface
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"interface as {}\nfoo()", want: Want::Reads("kept[s_expr] erased[interface [0,15) module#0 name=as@[10,12)] wrappers[] nodes[e_call@16] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"interface as { a: 1 }\nconst x = 1;", want: Want::Reads("kept[s_local] erased[interface [0,21) module#0 name=as@[10,12)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"interface as {}; foo()", want: Want::Reads("kept[s_expr] erased[interface [0,15) module#0 name=as@[10,12)] wrappers[] nodes[e_call@17] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"interface as {}\n[x] = y", want: Want::Reads("kept[s_expr] erased[interface [0,15) module#0 name=as@[10,12)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"interface as<T> extends B<T> { a: T }", want: Want::Reads("kept[] erased[interface [0,37) module#0 name=as@[10,12)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"interface satisfies extends B {}", want: Want::Reads("kept[] erased[interface [0,32) module#0 name=satisfies@[10,19)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"declare interface as { a: 1 }", want: Want::Reads("kept[] erased[interface [0,29) module#0 declare ambient name=as@[18,20)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"export declare interface as {}", want: Want::Reads("kept[] erased[interface [0,30) module#0 export declare ambient name=as@[25,27)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"export default interface as {}", want: Want::Reads("kept[] erased[interface [0,30) module#0 export default name=as@[25,27)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"function f() { interface as {} }", want: Want::Reads("kept[s_function] erased[interface [15,30) scope@13#0 name=as@[25,27)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"namespace N { export interface as {} }", want: Want::Reads("kept[] erased[module [0,38) module#0 name=N@[10,11) | interface [14,36) child@0#0 export name=as@[31,33)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"declare global { interface as {} }", want: Want::Reads("kept[] erased[module [0,34) module#0 declare ambient name=global@[8,14) | interface [17,32) child@0#0 ambient name=as@[27,29)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Tsx, text: b"interface as {}\nfoo()", want: Want::Reads("kept[s_expr] erased[interface [0,15) module#0 name=as@[10,12)] wrappers[] nodes[e_call@16] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // statements that tsc parses: as and satisfies name a namespace
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"namespace as {}\nfoo()", want: Want::Reads("kept[s_expr] erased[module [0,15) module#0 name=as@[10,12)] wrappers[] nodes[e_call@16] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"namespace as {};", want: Want::Reads("kept[] erased[module [0,15) module#0 name=as@[10,12)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"namespace as {}`x`", want: Want::Reads("kept[s_expr] erased[module [0,15) module#0 name=as@[10,12)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"module as.b {}", want: Want::Reads("kept[s_namespace] erased[module [10,14) in-tree@9 nested name=b@[10,11)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"namespace as.b.c { export const a = 1 }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"export namespace as { export const a = 1 }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"namespace N { namespace as { export const x = 1 } export const y = as.x }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"declare namespace as { const x: number; function f(): void }", want: Want::Reads("kept[] erased[module [0,60) module#0 declare ambient name=as@[18,20) | function [40,58) child@0#1 ambient no-body name=f@[49,50)] wrappers[] nodes[] enums[] types[NumberKeyword[32,38)] return_types[VoidKeyword[54,58)] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"declare module as.b {}", want: Want::Reads("kept[] erased[module [0,22) module#0 declare ambient name=as@[15,17) | module [18,22) in-tree@17 ambient nested name=b@[18,19)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Ts, text: b"export declare namespace satisfies {}", want: Want::Reads("kept[] erased[module [0,37) module#0 export declare ambient name=satisfies@[25,34)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "as-names-declaration", dialect: Dialect::Tsx, text: b"namespace as { export const x = 1; }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // statements that tsc parses: abstract stands before declare
+    Row { family: "abstract-declare", dialect: Dialect::Ts, text: b"abstract declare class C { m(): void }", want: Want::Reads("kept[] erased[class [0,38) module#0 declare ambient abstract name=C@[23,24) | member method [27,36) scope@25#0] wrappers[] nodes[] enums[] types[] return_types[VoidKeyword[32,36)] type_parameters[] heritage[]") },
+    Row { family: "abstract-declare", dialect: Dialect::Ts, text: b"@d abstract declare class C {}", want: Want::Reads("kept[] erased[class [0,30) module#0 declare ambient abstract name=C@[26,27)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "abstract-declare", dialect: Dialect::Tsx, text: b"abstract declare class C {}", want: Want::Reads("kept[] erased[class [0,27) module#0 declare ambient abstract name=C@[23,24)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // statements that tsc parses: a string in brackets names an enum member
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Ts, text: b"enum E { [\"x\"], [\"y\"] }", want: Want::Reads("kept[s_enum] erased[] wrappers[] nodes[] enums[E=x,y] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Ts, text: b"enum E { [ \"x\" ] = 1, }", want: Want::Reads("kept[s_enum] erased[] wrappers[] nodes[] enums[E=x] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Ts, text: b"enum E { [\"x\"] = \"s\" }", want: Want::Reads("kept[s_enum] erased[] wrappers[] nodes[] enums[E=x] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Ts, text: b"enum E { [\"x\"] = 1, [\"y\"] = x + 1 }", want: Want::Reads("kept[s_enum] erased[] wrappers[] nodes[] enums[E=x,y] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Ts, text: b"enum E { [\"a-b\"] = 1, B = E[\"a-b\"] }", want: Want::Reads("kept[s_enum] erased[] wrappers[] nodes[] enums[E=a-b,B] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Ts, text: b"enum E { [`x`] = 1, [`y`] }", want: Want::Reads("kept[s_enum] erased[] wrappers[] nodes[] enums[E=x,y] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Ts, text: b"const enum E { [\"x\"] = 1 } var v = E.x;", want: Want::Reads("kept[s_enum s_local] erased[] wrappers[] nodes[] enums[E=x] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Ts, text: b"export enum E { [\"x\"] = 1 }", want: Want::Reads("kept[s_enum] erased[] wrappers[] nodes[] enums[E=x] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Ts, text: b"declare enum E { [\"x\"] = 1 }", want: Want::Reads("kept[] erased[enum [0,28) module#0 declare ambient name=E@[13,14)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Ts, text: b"namespace N { export enum E { [\"x\"] = 1 } }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[] enums[E=x] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "enum-member-in-brackets", dialect: Dialect::Tsx, text: b"enum E { [\"x\"] = 1 }", want: Want::Reads("kept[s_enum] erased[] wrappers[] nodes[] enums[E=x] types[] return_types[] type_parameters[] heritage[]") },
+    // statements that tsc parses: import starts an expression in a namespace
+    Row { family: "namespace-import-expression", dialect: Dialect::Ts, text: b"namespace N { import(\"x\").then(f); }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[e_call@14 e_import@14] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "namespace-import-expression", dialect: Dialect::Ts, text: b"namespace N { import\n(\"x\"); }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[e_import@14] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "namespace-import-expression", dialect: Dialect::Ts, text: b"namespace N { import.meta.url; }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[e_import_meta@14] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "namespace-import-expression", dialect: Dialect::Ts, text: b"namespace N.M { import(\"x\"); }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[e_import@16] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "namespace-import-expression", dialect: Dialect::Ts, text: b"export namespace N { import(\"x\"); }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[e_import@21] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "namespace-import-expression", dialect: Dialect::Tsx, text: b"namespace N { import(\"x\"); }", want: Want::Reads("kept[s_namespace] erased[] wrappers[] nodes[e_import@14] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    // statements that tsc parses: the attributes of a module path start on the next line
+    Row { family: "import-attributes-next-line", dialect: Dialect::Ts, text: b"import \"x\"\nwith { type: \"json\" };", want: Want::Reads("kept[s_import] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "type-import-attributes-next-line", dialect: Dialect::Ts, text: b"import type A from \"x\"\nwith { type: \"json\" };", want: Want::Reads("kept[] erased[import [0,45) module#0 type-only path=\"x\"@[19,22)] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "export-attributes-next-line", dialect: Dialect::Ts, text: b"export { a } from \"x\"\nwith { type: \"json\" };", want: Want::Fails(1005, 27, 28) },
+    Row { family: "export-attributes-next-line", dialect: Dialect::Ts, text: b"export * from \"x\"\nwith { type: \"json\" };", want: Want::Fails(1005, 23, 24) },
+    Row { family: "import-attributes-next-line", dialect: Dialect::Js, text: b"import A from \"x\"\nwith { type: \"json\" }; A;", want: Want::Reads("kept[s_import s_expr] erased[] wrappers[] nodes[] enums[] types[] return_types[] type_parameters[] heritage[]") },
+    Row { family: "export-attributes-next-line", dialect: Dialect::Js, text: b"export * from \"x\"\nwith { type: \"json\" };", want: Want::Fails(1005, 23, 24) },
+    // a cast after a declaration that as names: stays the cast of type, interface or namespace
+    Row { family: "cast-after-as-declaration", dialect: Dialect::Ts, text: b"type as = 1\ntype as any", want: Want::Fails(1005, 20, 23) },
+    Row { family: "cast-after-as-declaration", dialect: Dialect::Ts, text: b"type as = 1\ntype as <T>(x: T) => void", want: Want::Fails(1005, 23, 24) },
+    Row { family: "cast-after-as-declaration", dialect: Dialect::Ts, text: b"interface as {}\ninterface as any\nfoo()", want: Want::Fails(1005, 29, 32) },
+    Row { family: "cast-after-as-declaration", dialect: Dialect::Ts, text: b"interface as {}\ninterface as {} | X\nfoo()", want: Want::Fails(1109, 32, 33) },
+    Row { family: "cast-after-as-declaration", dialect: Dialect::Ts, text: b"namespace as {}\nnamespace as any", want: Want::Fails(1005, 29, 32) },
+    Row { family: "cast-after-as-declaration", dialect: Dialect::Ts, text: b"namespace as {}\nnamespace as { foo(): void }", want: Want::Fails(1005, 36, 37) },
+    // a cast after a declaration that as names: with ( after a module path starts a statement
+    Row { family: "import-attributes-next-line", dialect: Dialect::Js, text: b"import A from \"x\"\nwith { type: \"json\" };\nimport B from \"y\"\nwith (A) {}", want: Want::Fails(1005, 64, 65) },
+    // emitDecoratorMetadata of a type that is read with the tree of tsc: the operands of | and & are the check type of a conditional type
+    Row { family: "metadata-union-check-type", dialect: Dialect::Decorators, text: b"class C { @d p: number | A extends B ? string : string; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,54) UnionType[16,26) NumberKeyword[16,22) TypeReference[25,26) TypeReference[35,36) StringKeyword[39,45) StringKeyword[48,54)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-union-check-type", dialect: Dialect::Decorators, text: b"class C { @d p: number | A extends B ? string : never; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,53) UnionType[16,26) NumberKeyword[16,22) TypeReference[25,26) TypeReference[35,36) StringKeyword[39,45) NeverKeyword[48,53)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-union-check-type", dialect: Dialect::Decorators, text: b"class C { @d p: K & A extends B ? string : never; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,48) IntersectionType[16,21) TypeReference[16,17) TypeReference[20,21) TypeReference[30,31) StringKeyword[34,40) NeverKeyword[43,48)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-union-check-type", dialect: Dialect::Decorators, text: b"class C { @d p: string & A extends B ? never : string; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,53) IntersectionType[16,26) StringKeyword[16,22) TypeReference[25,26) TypeReference[35,36) NeverKeyword[39,44) StringKeyword[47,53)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-union-check-type", dialect: Dialect::Decorators, text: b"class C { @d p: K | A extends B ? string[] : number[]; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,53) UnionType[16,21) TypeReference[16,17) TypeReference[20,21) TypeReference[30,31) ArrayType[34,42) StringKeyword[34,40) ArrayType[45,53) NumberKeyword[45,51)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-union-check-type", dialect: Dialect::Decorators, text: b"class C { @d p: string | A extends B ? () => void : () => void; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,62) UnionType[16,26) StringKeyword[16,22) TypeReference[25,26) TypeReference[35,36) FunctionType[39,49) VoidKeyword[45,49) FunctionType[52,62) VoidKeyword[58,62)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-union-check-type", dialect: Dialect::Decorators, text: b"class C { @d p: K | A extends B ? null : K; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,42) UnionType[16,21) TypeReference[16,17) TypeReference[20,21) TypeReference[30,31) LiteralType[34,38) TypeReference[41,42)] return_types[] type_parameters[] heritage[]") },
+    // emitDecoratorMetadata of a type that is read with the tree of tsc: keyof, readonly and unique end before extends
+    Row { family: "metadata-operator-before-extends", dialect: Dialect::Decorators, text: b"class C { @d p: keyof A extends B ? string : never; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,50) TypeOperator[16,23) TypeReference[22,23) TypeReference[32,33) StringKeyword[36,42) NeverKeyword[45,50)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operator-before-extends", dialect: Dialect::Decorators, text: b"class C { @d p: keyof A extends B ? () => void : () => void; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,59) TypeOperator[16,23) TypeReference[22,23) TypeReference[32,33) FunctionType[36,46) VoidKeyword[42,46) FunctionType[49,59) VoidKeyword[55,59)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operator-before-extends", dialect: Dialect::Decorators, text: b"class C { @d p: readonly A[] extends B ? string : number; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,56) TypeOperator[16,28) ArrayType[25,28) TypeReference[25,26) TypeReference[37,38) StringKeyword[41,47) NumberKeyword[50,56)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operator-before-extends", dialect: Dialect::Decorators, text: b"class C { @d p: readonly A[] extends B ? unknown : string; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,57) TypeOperator[16,28) ArrayType[25,28) TypeReference[25,26) TypeReference[37,38) UnknownKeyword[41,48) StringKeyword[51,57)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operator-before-extends", dialect: Dialect::Decorators, text: b"class C { @d p: unique symbol extends B ? string : never; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,56) TypeOperator[16,29) SymbolKeyword[23,29) TypeReference[38,39) StringKeyword[42,48) NeverKeyword[51,56)] return_types[] type_parameters[] heritage[]") },
+    // emitDecoratorMetadata of a type that is read with the tree of tsc: the type after the colon of a conditional type takes | and &
+    Row { family: "metadata-false-type-union", dialect: Dialect::Decorators, text: b"class C { @d p: A extends B ? string : never | number; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,53) TypeReference[16,17) TypeReference[26,27) StringKeyword[30,36) UnionType[39,53) NeverKeyword[39,44) NumberKeyword[47,53)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-false-type-union", dialect: Dialect::Decorators, text: b"class C { @d p: A extends B ? never : string | number; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,53) TypeReference[16,17) TypeReference[26,27) NeverKeyword[30,35) UnionType[38,53) StringKeyword[38,44) NumberKeyword[47,53)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-false-type-union", dialect: Dialect::Decorators, text: b"class C { @d p: A extends B ? string : unknown | null; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,53) TypeReference[16,17) TypeReference[26,27) StringKeyword[30,36) UnionType[39,53) UnknownKeyword[39,46) LiteralType[49,53)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-false-type-union", dialect: Dialect::Decorators, text: b"class C { @d p: A extends B ? unknown : string & string; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,55) TypeReference[16,17) TypeReference[26,27) UnknownKeyword[30,37) IntersectionType[40,55) StringKeyword[40,46) StringKeyword[49,55)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-false-type-union", dialect: Dialect::Decorators, text: b"class C { @d p: A extends B ? string : never & K; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,48) TypeReference[16,17) TypeReference[26,27) StringKeyword[30,36) IntersectionType[39,48) NeverKeyword[39,44) TypeReference[47,48)] return_types[] type_parameters[] heritage[]") },
+    // emitDecoratorMetadata of a type that is read with the tree of tsc: a keyword before a dot is the first name of a type reference
+    Row { family: "metadata-keyword-dot", dialect: Dialect::Decorators, text: b"class C { @d p: any.b; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeReference[16,21)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-keyword-dot", dialect: Dialect::Decorators, text: b"class C { @d p: string.b; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeReference[16,24)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-keyword-dot", dialect: Dialect::Decorators, text: b"class C { @d p: never.b; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeReference[16,23)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-keyword-dot", dialect: Dialect::Decorators, text: b"class C { @d p: bigint.b<T>; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeReference[16,27)<25,26> TypeReference[25,26)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-keyword-dot", dialect: Dialect::Decorators, text: b"class C { @d p: undefined.b; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeReference[16,27)] return_types[] type_parameters[] heritage[]") },
+    // emitDecoratorMetadata of a type that is read with the tree of tsc: unique takes the whole type after it
+    Row { family: "metadata-unique-operand", dialect: Dialect::Decorators, text: b"class C { @d p: unique symbol[]; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeOperator[16,31) ArrayType[23,31) SymbolKeyword[23,29)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-unique-operand", dialect: Dialect::Decorators, text: b"class C { @d p: unique [A]; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypeOperator[16,26) TupleType[23,26) TypeReference[24,25)] return_types[] type_parameters[] heritage[]") },
+    // emitDecoratorMetadata of a type that tsc serializes in another way than Bun did: the branches of a conditional type merge as the operands of | do
+    Row { family: "metadata-conditional-branches", dialect: Dialect::Decorators, text: b"class C { @d p: X extends Y ? number : never; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,44) TypeReference[16,17) TypeReference[26,27) NumberKeyword[30,36) NeverKeyword[39,44)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-false-type-union", dialect: Dialect::Decorators, text: b"class C { @d p: X extends Y ? never : string & string; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,53) TypeReference[16,17) TypeReference[26,27) NeverKeyword[30,35) IntersectionType[38,53) StringKeyword[38,44) StringKeyword[47,53)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-false-type-union", dialect: Dialect::Decorators, text: b"class C { @d p: X extends Y ? string : never & string; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,53) TypeReference[16,17) TypeReference[26,27) StringKeyword[30,36) IntersectionType[39,53) NeverKeyword[39,44) StringKeyword[47,53)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-conditional-branches", dialect: Dialect::Decorators, text: b"class C { @d p: X extends Y ? K : K; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,35) TypeReference[16,17) TypeReference[26,27) TypeReference[30,31) TypeReference[34,35)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-conditional-branches", dialect: Dialect::Decorators, text: b"class C { @d p: X extends Y ? never : A.B; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,41) TypeReference[16,17) TypeReference[26,27) NeverKeyword[30,35) TypeReference[38,41)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-false-type-union", dialect: Dialect::Decorators, text: b"class C { @d p: X extends Y ? A : (A | null); }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,44) TypeReference[16,17) TypeReference[26,27) TypeReference[30,31) ParenthesizedType[34,44) UnionType[35,43) TypeReference[35,36) LiteralType[39,43)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-conditional-branches", dialect: Dialect::Decorators, text: b"class C { @d p: X extends Y ? A<B> : null; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,41) TypeReference[16,17) TypeReference[26,27) TypeReference[30,34)<32,33> TypeReference[32,33) LiteralType[37,41)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-conditional-branches", dialect: Dialect::Decorators, text: b"class C { @d p: (X extends Y ? string : unknown); }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ParenthesizedType[16,48) ConditionalType[17,47) TypeReference[17,18) TypeReference[27,28) StringKeyword[31,37) UnknownKeyword[40,47)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-conditional-branches", dialect: Dialect::Decorators, text: b"class C { @d p: X extends infer U extends V ? string : never; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[ConditionalType[16,60) TypeReference[16,17) InferType[26,43) TypeReference[42,43) StringKeyword[46,52) NeverKeyword[55,60)] return_types[] type_parameters[] heritage[]") },
+    // emitDecoratorMetadata of a type that tsc serializes in another way than Bun did: an operand of | and & counts as what it serializes to
+    Row { family: "metadata-operand-serialization", dialect: Dialect::Decorators, text: b"class C { @d p: string | (never | never); }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[UnionType[16,40) StringKeyword[16,22) ParenthesizedType[25,40) UnionType[26,39) NeverKeyword[26,31) NeverKeyword[34,39)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operand-serialization", dialect: Dialect::Decorators, text: b"class C { @d p: string | never & string; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[UnionType[16,39) StringKeyword[16,22) IntersectionType[25,39) NeverKeyword[25,30) StringKeyword[33,39)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operand-serialization", dialect: Dialect::Decorators, text: b"class C { @d p: (null | undefined) | string; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[UnionType[16,43) ParenthesizedType[16,34) UnionType[17,33) LiteralType[17,21) UndefinedKeyword[24,33) StringKeyword[37,43)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operand-serialization", dialect: Dialect::Decorators, text: b"class C { @d p: string & (unknown & unknown); }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[IntersectionType[16,44) StringKeyword[16,22) ParenthesizedType[25,44) IntersectionType[26,43) UnknownKeyword[26,33) UnknownKeyword[36,43)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operand-serialization", dialect: Dialect::Decorators, text: b"class C { @d p: A.B | C.D; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[UnionType[16,25) TypeReference[16,19) TypeReference[22,25)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-operand-serialization", dialect: Dialect::Decorators, text: b"class C { @d p: A.B & A.C; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[IntersectionType[16,25) TypeReference[16,19) TypeReference[22,25)] return_types[] type_parameters[] heritage[]") },
+    // emitDecoratorMetadata of a type that tsc serializes in another way than Bun did: an import type and unique symbol are Object
+    Row { family: "metadata-import-and-unique", dialect: Dialect::Decorators, text: b"class C { @d p: A | unique symbol; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[UnionType[16,33) TypeReference[16,17) TypeOperator[20,33) SymbolKeyword[27,33)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-import-and-unique", dialect: Dialect::Decorators, text: b"class C { @d p: unique symbol & A; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[IntersectionType[16,33) TypeOperator[16,29) SymbolKeyword[23,29) TypeReference[32,33)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-import-and-unique", dialect: Dialect::Decorators, text: b"class C { @d p: A | import(\"x\"); }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[UnionType[16,31) TypeReference[16,17) ImportType[20,31) LiteralType[27,30)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-import-and-unique", dialect: Dialect::Decorators, text: b"class C { @d p: import(\"x\") | A; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[UnionType[16,31) ImportType[16,27) LiteralType[23,26) TypeReference[30,31)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-import-and-unique", dialect: Dialect::Decorators, text: b"class C { @d p: import(\"x\")[\"y\"]; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[IndexedAccessType[16,32) ImportType[16,27) LiteralType[23,26) LiteralType[28,31)] return_types[] type_parameters[] heritage[]") },
+    // emitDecoratorMetadata of a type that tsc serializes in another way than Bun did: a predicate on this is Boolean
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d p: this is B; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypePredicate[16,25) ThisType[16,20) TypeReference[24,25)] return_types[] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d p: this is this; }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[TypePredicate[16,28) ThisType[16,20) ThisType[24,28)] return_types[] type_parameters[] heritage[]") },
+    // emitDecoratorMetadata of a type that tsc serializes in another way than Bun did: a predicate in a return type is Boolean and an assertion is undefined
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): a is B { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,24) TypeReference[23,24)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): a is B | C { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,28) UnionType[23,28) TypeReference[23,24) TypeReference[27,28)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): a is B extends C ? D : E { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,42) ConditionalType[23,42) TypeReference[23,24) TypeReference[33,34) TypeReference[37,38) TypeReference[41,42)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): string is B { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,29) TypeReference[28,29)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): this is B { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,27) ThisType[18,22) TypeReference[26,27)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): asserts a { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,27)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): asserts a is B { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,32) TypeReference[31,32)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): asserts this { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,30) ThisType[26,30)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): asserts this is B { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[TypePredicate[18,35) ThisType[26,30) TypeReference[34,35)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): asserts a | B { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[UnionType[18,31) TypePredicate[18,27) TypeReference[30,31)] type_parameters[] heritage[]") },
+    Row { family: "metadata-predicates", dialect: Dialect::Decorators, text: b"class C { @d m(): A | asserts a { throw 0 } }", want: Want::Reads("kept[s_class] erased[] wrappers[] nodes[] enums[] types[] return_types[UnionType[18,31) TypeReference[18,19) TypePredicate[22,31)] type_parameters[] heritage[]") },
+];
+
+const _: () = assert!(ROWS.len() == 366);

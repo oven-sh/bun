@@ -1,8 +1,3 @@
-10-02_15:08:48 anon=290MB pids=51 load=408.19 top=cachegrind-amd6:314MB
-10-02_15:09:19 anon=472MB pids=65 load=355.54 top=rustc:456MB
-10-02_15:09:49 anon=1272MB pids=47 load=314.35 top=cachegrind-amd6:290MB
-10-02_15:10:19 anon=567MB pids=59 load=337.87 top=cachegrind-amd6:320MB
-10-02_15:10:50 anon=1350MB pids=50 load=322.31 top=cachegrind-amd6:382MB
 10-02_15:11:21 anon=682MB pids=66 load=316.85 top=cachegrind-amd6:321MB
 10-02_15:11:51 anon=387MB pids=55 load=294.45 top=cachegrind-amd6:303MB
 10-02_15:12:22 anon=1116MB pids=65 load=288.46 top=cachegrind-amd6:334MB
@@ -398,3 +393,9 @@
 10-03_02:41:13 anon=98MB pids=35 load=1932.36 top=clippy-driver:194MB
 10-03_02:42:53 anon=116MB pids=34 load=1928.04 top=clippy-driver:246MB
 10-03_02:44:50 anon=165MB pids=34 load=2038.81 top=clippy-driver:313MB
+10-03_02:45:50 anon=217MB pids=38 load=1868.46 top=clippy-driver:365MB
+10-03_02:47:04 anon=251MB pids=36 load=1588.42 top=clippy-driver:403MB
+10-03_02:48:32 anon=338MB pids=34 load=1771.28 top=clippy-driver:510MB
+10-03_02:49:40 anon=72MB pids=35 load=1694.65 top=rustc:151MB
+10-03_02:50:47 anon=103MB pids=35 load=1751.70 top=rustc:213MB
+10-03_02:52:31 anon=131MB pids=35 load=1807.12 top=rustc:268MB

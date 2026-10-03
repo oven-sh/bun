@@ -1487,6 +1487,166 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
   });
 });
 
+// After `fs.closeSync(N)` with N = 0, 1 or 2, the next open(2) of the process returns N. So a file
+// that Bun.write opens itself can get that number. The write must still close the file at its end:
+// the number does not make it the stdio of the process. A fd of the caller stays open.
+// On Windows libuv's close does nothing for fd 0, 1 and 2, so the number is never free there.
+describe.skipIf(isWindows)("Bun.write while fd 0, 1 or 2 is closed", () => {
+  // `at(fd)` tells what is open at a number: "closed", or the name of the file.
+  // `report(fd, value)` passes the result on a fd that the script did not close.
+  const prelude = dir => `
+    import fs from "node:fs";
+    import { basename, join } from "node:path";
+    const dir = ${JSON.stringify(dir)};
+    const src = join(dir, "src.txt");
+    const dst = join(dir, "dst.txt");
+    const mine = join(dir, "mine.txt");
+    const at = fd => {
+      let stat;
+      try {
+        stat = fs.fstatSync(fd);
+      } catch (e) {
+        return e.code === "EBADF" ? "closed" : e.code;
+      }
+      const file = [src, dst, mine].find(file => {
+        const s = fs.statSync(file, { throwIfNoEntry: false });
+        return s && s.dev === stat.dev && s.ino === stat.ino;
+      });
+      return file ? basename(file) : "open";
+    };
+    const report = (fd, value) => fs.writeSync(fd, "REPORT " + JSON.stringify(value) + "\\n");
+    // The thread pool starts before a fd number is free.
+    await Bun.write(dst, new Blob(["warm"]));
+    await Bun.write(dst, Bun.file(src));
+  `;
+
+  function files() {
+    const dir = tempDir("bun-write-closed-stdio", { "src.txt": "hello world", "dst.txt": "", "mine.txt": "my file" });
+    // No directory can be made at a symlink that points nowhere.
+    fs.symlinkSync(join(String(dir), "nowhere"), join(String(dir), "dangling"));
+    return dir;
+  }
+
+  async function run(cmd) {
+    await using proc = Bun.spawn({ cmd, env: bunEnv, stdio: ["ignore", "pipe", "pipe"] });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Match the line: a sanitizer build can add its own warnings to stderr.
+    const line = (stdout + "\n" + stderr).match(/^REPORT (.*)$/m)?.[1];
+    return { report: line ? JSON.parse(line) : { stdout, stderr }, exitCode };
+  }
+
+  it.concurrent.each([0, 1, 2])("each kind of write closes the file it opened at fd %d", async fd => {
+    using dir = files();
+    const script = `
+      // The caller opens these before the number is free, so they are 3 or higher.
+      const srcFd = fs.openSync(src, "r");
+      const dstFd = fs.openSync(join(dir, "fd-dst.txt"), "w");
+      const writes = {
+        "Blob": () => Bun.write(dst, new Blob(["hello"])),
+        "512 KiB string": () => Bun.write(dst, Buffer.alloc(512 * 1024, "a").toString()),
+        "string, directory to make": () => Bun.write(join(dir, "made/by/write.txt"), "hello"),
+        "empty Blob, new file": () => Bun.write(join(dir, "empty.txt"), new Blob([])),
+        "Bun.file(path)": () => Bun.write(dst, Bun.file(src)),
+        "Bun.file(fd)": () => Bun.write(dst, Bun.file(srcFd)),
+        "Bun.file(path) to Bun.file(fd)": () => Bun.write(Bun.file(dstFd), Bun.file(src)),
+        "Bun.file(path), directory that cannot be made": () => Bun.write(join(dir, "dangling/out.txt"), Bun.file(src)),
+        "Bun.file(path) to a directory": () => Bun.write(dir, Bun.file(src)),
+      };
+      fs.closeSync(${fd});
+      const result = {};
+      for (const [name, write] of Object.entries(writes)) {
+        const outcome = await write().catch(e => e.code);
+        result[name] = [outcome, at(${fd})];
+        // A file that this write left there must not hide what the next write does.
+        if (at(${fd}) !== "closed") fs.closeSync(${fd});
+      }
+      report(${fd === 2 ? 1 : 2}, result);
+    `;
+    expect(await run([bunExe(), "-e", prelude(String(dir)) + script])).toEqual({
+      report: {
+        "Blob": [5, "closed"],
+        "512 KiB string": [512 * 1024, "closed"],
+        "string, directory to make": [5, "closed"],
+        "empty Blob, new file": [0, "closed"],
+        "Bun.file(path)": [11, "closed"],
+        "Bun.file(fd)": [11, "closed"],
+        "Bun.file(path) to Bun.file(fd)": [11, "closed"],
+        "Bun.file(path), directory that cannot be made": ["ENOENT", "closed"],
+        "Bun.file(path) to a directory": ["EISDIR", "closed"],
+      },
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("a copy closes both files it opened, and no write closes a fd of the caller", async () => {
+    using dir = files();
+    const script = `
+      fs.closeSync(0);
+      fs.closeSync(1);
+      // The copy opens its source at fd 0 and its destination at fd 1.
+      const copied = await Bun.write(dst, Bun.file(src));
+      const afterCopy = [at(0), at(1)];
+      for (const fd of [0, 1]) if (at(fd) !== "closed") fs.closeSync(fd);
+
+      // The caller opens a file at fd 0. A write that opens a path gets fd 1.
+      const fd = fs.openSync(mine, "r+");
+      const written = await Bun.write(dst, new Blob(["hello"]));
+      const afterWrite = at(1);
+      if (afterWrite !== "closed") fs.closeSync(1);
+
+      // A read, a write and a copy that get fd 0 from the caller leave it open.
+      const text = await Bun.file(fd).text();
+      const appended = await Bun.write(fd, new Blob(["!"]));
+      await Bun.write(dst, Bun.file(fd));
+      report(2, { copied, afterCopy, fd, written, afterWrite, text, appended, afterCopyFromFd: at(1), callerFd: at(fd) });
+    `;
+    expect(await run([bunExe(), "-e", prelude(String(dir)) + script])).toEqual({
+      report: {
+        copied: 11,
+        afterCopy: ["closed", "closed"],
+        fd: 0,
+        written: 5,
+        afterWrite: "closed",
+        text: "my file",
+        appended: 1,
+        afterCopyFromFd: "closed",
+        callerFd: "mine.txt",
+      },
+      exitCode: 0,
+    });
+    expect(fs.readFileSync(join(String(dir), "mine.txt"), "utf8")).toBe("my file!");
+  });
+
+  // With every other number taken, the file of the write is at fd 1 for as long as the write runs.
+  it.concurrent.skipIf(process.platform !== "linux")(
+    "a write closes the file it opened at fd 1 when no other fd is free",
+    async () => {
+      using dir = files();
+      const script = `
+        const held = [];
+        for (;;) {
+          try {
+            held.push(fs.openSync("/dev/null", "r"));
+          } catch {
+            break;
+          }
+        }
+        fs.closeSync(1);
+        const written = await Bun.write(dst, new Blob(["hello"]));
+        const after = at(1);
+        // LeakSanitizer opens /proc files when the process exits, and aborts when it cannot.
+        for (const fd of held) fs.closeSync(fd);
+        report(2, { atTheLimit: held.length > 0, written, after });
+      `;
+      const limited = ["sh", "-c", 'ulimit -n 64 && exec "$@"', "sh", bunExe(), "-e", prelude(String(dir)) + script];
+      expect(await run(limited)).toEqual({
+        report: { atTheLimit: true, written: 5, after: "closed" },
+        exitCode: 0,
+      });
+    },
+  );
+});
+
 // These writes fail before any I/O is scheduled, so the write returns a promise
 // that is already rejected. Those rejections must carry the error itself and be
 // reported the same way as the ones produced later by the async path.

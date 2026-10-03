@@ -202,14 +202,14 @@ impl CopyFile {
     pub(crate) fn do_close_file<const WHICH: IOWhich>(&mut self) {
         match WHICH {
             IOWhich::Both => {
-                self.destination_fd.close();
-                self.source_fd.close();
+                close_owned(self.destination_fd);
+                close_owned(self.source_fd);
             }
             IOWhich::Destination => {
-                self.destination_fd.close();
+                close_owned(self.destination_fd);
             }
             IOWhich::Source => {
-                self.source_fd.close();
+                close_owned(self.source_fd);
             }
         }
     }
@@ -278,7 +278,7 @@ impl CopyFile {
                             Retry::Continue => continue,
                             Retry::Fail => {
                                 if matches!(WHICH, IOWhich::Both) {
-                                    self.source_fd.close();
+                                    close_owned(self.source_fd);
                                     self.source_fd = Fd::INVALID;
                                 }
                                 return Err(bun_errno::from_errno(errno.errno as i32).into());
@@ -287,7 +287,7 @@ impl CopyFile {
                         }
 
                         if matches!(WHICH, IOWhich::Both) {
-                            self.source_fd.close();
+                            close_owned(self.source_fd);
                             self.source_fd = Fd::INVALID;
                         }
 
@@ -1026,6 +1026,15 @@ const OPEN_DESTINATION_FLAGS: i32 =
     bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC;
 #[cfg(not(windows))]
 const OPEN_SOURCE_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::RDONLY;
+
+/// Closes a descriptor that this job opened. `FdExt::close` skips fd 0, 1 and 2 to protect the
+/// process's stdio, and after `fs.closeSync(0)` the job's own `open` returns 0.
+#[cfg(not(windows))]
+#[inline]
+fn close_owned(fd: Fd) {
+    let err = fd.close_allowing_standard_io(None);
+    debug_assert!(err.is_none()); // use after close!
+}
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
 #[cfg(any(target_os = "linux", target_os = "android"))]

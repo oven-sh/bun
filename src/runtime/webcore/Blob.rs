@@ -4222,7 +4222,9 @@ fn write_file_with_empty_source_to_destination(
                                         break 'err;
                                     }
                                     bun_sys::Result::Ok(f) => {
-                                        let _ = f.close(); // close error is non-actionable
+                                        // Not `File::close`: it skips fd 0, 1 and 2, and this
+                                        // descriptor can have one of those numbers.
+                                        let _ = bun_sys::close(f.into_raw());
                                         return Ok(JSPromise::resolved_promise_value(
                                             cx.global(),
                                             JSValue::js_number(0.0),
@@ -6684,16 +6686,15 @@ pub(crate) trait FileCloser: Sized {
             }
         }
 
-        if is_allowed_to_close_fd
-            && self.opened_fd() != Fd::INVALID
-            && self.opened_fd().stdio_tag().is_none()
-        {
+        if is_allowed_to_close_fd && self.opened_fd() != Fd::INVALID {
             #[cfg(windows)]
             bun_io::Closer::close(self.opened_fd(), self.loop_());
             #[cfg(not(windows))]
             {
                 use bun_sys::FdExt as _;
-                let _ = self.opened_fd().close_allowing_bad_file_descriptor(None);
+                // The job opened this descriptor, so it closes it whatever its number: after
+                // `fs.closeSync(0)` the job's own open returns 0.
+                let _ = self.opened_fd().close_allowing_standard_io(None);
             }
             self.set_opened_fd(Fd::INVALID);
         }

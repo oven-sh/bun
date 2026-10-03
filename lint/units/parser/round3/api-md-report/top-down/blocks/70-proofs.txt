@@ -1,0 +1,116 @@
+## Proofs of round 3
+
+Two binaries. Base: the release build of main at `[[FILL base]]`, `/workspace/base/bun.f4d755a9c` (stripped) and
+`/workspace/base/bun-profile.f4d755a9c` (with symbols), both links to the canary release that
+`/workspace/base/README.txt` names. Head: `build/release/bun` and `build/release/bun-profile` of the worktree at
+`[[FILL head]]`, made by `/workspace/tools/lk bun run build:release -j10` after that commit was pushed
+(`build/release/bun --revision` names it). linux-x64.
+
+### Behaviour: a parse without lint equals main (R2)
+
+```sh
+cd /workspace/wt/parser && git status --short -- src test          # nothing: the binary is the commit
+SAVE=/workspace/notes/lint/units/parser/round3/proof-behaviour/parity \
+  /workspace/tools/lk bash /workspace/notes/lint/units/parser/grammar-diff/parity.sh [[FILL r2-tag]] /workspace/wt/parser/build/release/bun
+```
+
+`grammar-diff/parity.sh` runs both binaries over every corpus and compares record by record. It gets no cause
+list: one differing record fails the run. A record is one source in one configuration: the output, or the errors
+with message, line, column, length, offset, level and notes. The summary is `[[FILL r2-summary: the path of summary.<time>.txt under SAVE/<tag>/]]`.
+
+| step | what | sources | records | differ |
+| --- | --- | ---: | ---: | ---: |
+| `seams` | the sites outside the type grammar that round 1 changed, from the lists of the sites | 1,089 | 37,026 | [[FILL r2-seams]] |
+| `seams-bu` | the same sites, from the diff of main..round 1 under `src/js_parser` and `src/ast` | 744 | 25,296 | [[FILL r2-seams-bu]] |
+| `testrows` | the sources of the four removed test files | 301 | 10,234 | [[FILL r2-testrows]] |
+| `comments` | sources with a comment inside a construct | 122 | 4,148 | [[FILL r2-comments]] |
+| `targeted` | sources by construct | 3,952 | 134,368 | [[FILL r2-targeted]] |
+| `probes` | the probe inputs of round 2, at the sites where round 1 and main differ | 3,361 | 114,274 | [[FILL r2-probes]] |
+| `small-sub` | a part of `small` | 7,089 | 241,026 | [[FILL r2-small-sub]] |
+| `check` | the probe inputs of round 1, two parts of `small`, `targeted` again | 18,390 | 625,260 | [[FILL r2-check]] |
+| `bench` | the inputs of the transpiler benchmark | 329 | 11,186 | [[FILL r2-bench]] |
+| `tscases` | the single-file units of TypeScript's own tests | 14,635 | 497,590 | [[FILL r2-tscases]] |
+| `repo-ts`, `repo-js` | the tracked TypeScript and JavaScript files under `test/` and `src/js`, below 300 KB | [[FILL r2-repo-sources: 3,157 and 7,365 at 2102fb058f]] | [[FILL r2-repo-records: 107,338 and 250,410 at 2102fb058f]] | [[FILL r2-repo]] |
+| `small` | 11,646 type forms in 18 contexts | 209,628 | 7,127,352 | [[FILL r2-small]] |
+| `files` | every tracked TypeScript and JavaScript file under `test/` and `src/js`, with the configurations of its loader | [[FILL r2-files: "10,777 files, 104,438 records" at 2102fb058f]] | | [[FILL r2-files-differ]] |
+| `runtime` | the small corpora as modules that the runtime loads and never evaluates: the entries of the runtime transpiler cache | | versions 33 on both sides | [[FILL r2-runtime]] |
+| `bundle` | the small corpora, each source as the one entry point of `Bun.build`, as `.ts`, `.tsx` and `.js` | | | [[FILL r2-bundle]] |
+| `pmdiff` | the small corpora through `bun pm diff`: the parser with its default features and the visit pass | | | [[FILL r2-pmdiff]] |
+| `order` | the small corpora and the JavaScript files of the tree through `bytecodeOrderNames`: `Parser::parse_only` | | | [[FILL r2-order]] |
+
+The corpus steps are 34 configurations of `Bun.Transpiler` each (`harness.all.mjs`): 270,162 sources and 9,185,508
+records with the tree of 2102fb058f. [[FILL r2-total: the sum at the final commit, and the last line of the summary: "RESULT  ZERO differing records in <n> pairs of runs"]]
+
+The harness against itself and against round 1, as a test of the proof: the base against the base gives
+`RESULT  ZERO differing records in 42 pairs of runs` (`round3/proof-behaviour/parity/self-all-bc7a813b1/`), and the
+base against the release build of round 1 (`23a20afa7e`) differs in every corpus: 3,556 of 4,515 records of
+`testrows`, 2,423 of 59,280 of `targeted` and 111,240 of 3,144,420 of `small` with the 15 configurations of
+`harness.mjs` (`round3/proof-behaviour/parity/round1/`).
+
+### Cost: what a parse without lint pays (R3)
+
+```sh
+export BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
+python3 /workspace/notes/lint/tools/symsizes.py /workspace/base/bun-profile.f4d755a9c
+python3 /workspace/notes/lint/tools/symsizes.py /workspace/wt/parser/build/release/bun-profile
+stat -c '%s %n' /workspace/base/bun.f4d755a9c /workspace/wt/parser/build/release/bun
+/workspace/tools/lk /workspace/notes/lint/tools/cgbench.sh /workspace/base/bun-profile.f4d755a9c [[FILL r3-out]] base 20
+/workspace/tools/lk /workspace/notes/lint/tools/cgbench.sh /workspace/wt/parser/build/release/bun-profile [[FILL r3-out]] head 20
+python3 /workspace/notes/lint/tools/cgsum.py [[FILL r3-out]]/head.tsx.cg --top 60        # and base, and each group
+# the whole report: sizes, machine code by function, counts in both VEX modes, the executed tests by site, the text audit
+sh /workspace/notes/lint/units/parser/round3/proof-cost/tools/mkref.sh /tmp/costproof/root /workspace/wt/parser
+/workspace/tools/lk sh /workspace/notes/lint/units/parser/round3/proof-cost/top-down-1b/r3cycle.sh ref /tmp/costproof/root/reflink
+/workspace/tools/lk sh /workspace/notes/lint/units/parser/round3/proof-cost/top-down-1b/r3report.sh [[FILL r3-out]]
+```
+
+`cgbench.sh` runs the transpiler benchmark of this pull request (`bench/snippets/transpiler-typescript.mjs`, fixed
+inputs under `/workspace/notes/lint/benchroot`) once per group under cachegrind, 20 passes, JIT off. The counts are
+those of the symbols of `bun_js_parser`. `r3report.sh` puts a third binary between the two, the reference: main's
+parser text with the sink form, the boxed table and `Metadata::MDot` in the arena, linked into the crates of the
+head. Head against reference is the work of this round; reference against base is what the branch changes outside
+it, named function by function.
+
+Sizes (`symsizes.py`: symbols by address, bytes):
+
+| | base | head |
+| --- | ---: | ---: |
+| `bun_js_parser` text | 863 symbols, 1,400,688 | [[FILL r3-text]] |
+| of it, code that only a lint parse reaches (`r3report.sh`, `head.sym2.txt`) | 0 | [[FILL r3-lint-only]] |
+| `P<false, false>` | 281 symbols, 412,477 | [[FILL r3-p-ff]] |
+| `P<true, false>` | 319 symbols, 475,578 | [[FILL r3-p-tf]] |
+| `P<false, true>` | 91 symbols, 133,717 | [[FILL r3-p-ft]] |
+| `P<true, true>` | 131 symbols, 191,090 | [[FILL r3-p-tt]] |
+| `skip_type_script_type_with_opts`, `Discard` | 3,446 | [[FILL r3-discard]] |
+| `skip_type_script_type_with_opts`, `DecoratorMetadata` | 7,045 | [[FILL r3-metadata]] |
+| `Lexer::next` | 15,372 | [[FILL r3-lexer-next]] |
+| stripped binary | 80,868,992 | [[FILL r3-stripped]] |
+
+The base column is main at fa467dcae2, measured on 2026-10-03. [[CHECK r3-base-column: measure it again when the base binary is another commit]]
+[[FILL r3-size-notes: every row where head differs from base, explained. The lint parse is new code in `P<true, false>` and `P<false, false>` (its entry and its cold functions) and in the text: say how many bytes of the difference `head.sym2.txt` attributes to lint-only symbols, and that the rest is zero or name it. `P<true, true>` and `P<false, true>`, the scan-only parsers, hold no lint code]]
+
+Counts of the parser, default VEX, 20 passes (`table.base-head.txt` of `r3report.sh`; KB is 1,000 bytes of source):
+
+| | bun-types | typescript-lib | src-js | tsx | js-control |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| input bytes per pass | 1,076,221 | 3,784,758 | 3,268,179 | 7,003 | 1,506,667 |
+| passes | 20 | 20 | 20 | 2,000 | 20 |
+| instructions, base | [[FILL r3-ir-base-bun-types]] | [[FILL r3-ir-base-typescript-lib]] | [[FILL r3-ir-base-src-js]] | [[FILL r3-ir-base-tsx]] | [[FILL r3-ir-base-js-control]] |
+| instructions, head - base | [[FILL r3-ir-delta-bun-types]] | [[FILL r3-ir-delta-typescript-lib]] | [[FILL r3-ir-delta-src-js]] | [[FILL r3-ir-delta-tsx]] | [[FILL r3-ir-delta-js-control: required +0]] |
+| conditional branches, base | [[FILL r3-bc-base-bun-types]] | [[FILL r3-bc-base-typescript-lib]] | [[FILL r3-bc-base-src-js]] | [[FILL r3-bc-base-tsx]] | [[FILL r3-bc-base-js-control]] |
+| conditional branches, head - base | [[FILL r3-bc-delta-bun-types]] | [[FILL r3-bc-delta-typescript-lib]] | [[FILL r3-bc-delta-src-js]] | [[FILL r3-bc-delta-tsx]] | [[FILL r3-bc-delta-js-control: required +0]] |
+| executed tests of the side table | [[FILL r3-tests-bun-types]] | [[FILL r3-tests-typescript-lib]] | [[FILL r3-tests-src-js]] | [[FILL r3-tests-tsx]] | 0 |
+| branches that are no such test | [[FILL r3-excess-bun-types: required 0]] | [[FILL r3-excess-typescript-lib: required 0]] | [[FILL r3-excess-src-js: required 0]] | [[FILL r3-excess-tsx: required 0]] | 0 |
+| tests per KB of source | [[FILL r3-per-kb-bun-types]] | [[FILL r3-per-kb-typescript-lib]] | [[FILL r3-per-kb-src-js]] | [[FILL r3-per-kb-tsx]] | 0 |
+
+[[FILL r3-notes: one sentence for each of these, from the report:
+- js-control: +0 instructions and +0 conditional branches, in both VEX modes; "strict ref-head IDENT <n> ... DIFF 0 | PASS": every function that JavaScript and a scan-only parse run has the machine code of the reference.
+- The executed tests are counted as the conditional branches of the head on the source lines of the sites (`sites.cg.<group>.txt`), with `--vex-guest-chase=no`, where one conditional jump is one count; name the second count if a counting build was made.
+- "skipper ref-head IDENT <n> ... DIFF 0 | PASS": both sinks of the skipper have the machine code of the reference.
+- Every instruction of "head - base" that is no test: the function and the reason (`fnclass.base-ref.txt`, `cgclass.raw.<group>.base-ref.txt`). Before round 3 the same table had +10.7% and +14.6% instructions in the two groups of declaration files and +203,340 branches in js-control (parser3.md).
+- "siteaudit.txt": "<n> sites, 0 violations / PASS": the shared files are the reference text plus sites; `src/ast/ts.rs` is main's plus `MDot` and the lines that declare the type nodes.]]
+
+`P` does not grow: `P::starts_for_parse_only` is an `Option<Box<StartsForParseOnly>>` (main holds the three maps of
+`Parser::parse_only` inline), and `src/js_parser/p.rs` asserts `size_of::<P<'static, true, false>>() <= 3808` in a
+release build and `<= 3888` with debug assertions. No AST struct changed: the `const` layout assertions of the AST
+files pass unchanged.
+[[CHECK sizes: the two assertions are at p.rs:786-789 at b882bfc32f and came with c5aaa06d78; `cargo check -p bun_ast -p bun_js_parser` evaluates them. `git diff <base> HEAD -- src/ast` touches lib.rs (the code on `Msg`, owner: cli), ts.rs, ts_nodes.rs and walk.rs only]]

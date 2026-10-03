@@ -1,0 +1,23 @@
+ts "a + b = c;" | parse pass: ok | full: Invalid assignment target
+ts "-a = b;" | parse pass: ok | full: Invalid assignment target
+ts "a++ = b;" | parse pass: ok | full: Invalid assignment target
+ts "async function f() { await x = y; }" | parse pass: ok | full: Invalid assignment target
+ts "a++ ++;" | parse pass: ok | full: Invalid assignment target
+ts "a--.b;" | parse pass: ok | full: ok
+ts "++ delete a.b;" | parse pass: ok | full: Invalid assignment target
+ts "new A?.b();" | parse pass: ok | full: ok
+ts "function* g() { yield*; }" | parse pass: ok | full: ok
+ts "a.\nb in c;" | parse pass: ok | full: ok
+ts "for (using of of []) {}" | parse pass: ok | full: ok
+js "a + b = c;" | parse pass: ok | full: Invalid assignment target
+js "-a = b;" | parse pass: ok | full: Invalid assignment target
+js "a++ = b;" | parse pass: ok | full: Invalid assignment target
+js "async function f() { await x = y; }" | parse pass: ok | full: Invalid assignment target
+js "a++ ++;" | parse pass: ok | full: Invalid assignment target
+js "a--.b;" | parse pass: ok | full: ok
+js "++ delete a.b;" | parse pass: ok | full: Invalid assignment target
+js "new A?.b();" | parse pass: ok | full: ok
+js "function* g() { yield*; }" | parse pass: ok | full: ok
+js "a.\nb in c;" | parse pass: ok | full: ok
+js "for (using of of []) {}" | parse pass: ok | full: ok
+fa467dcae2b596164728402f8e262948658d8166

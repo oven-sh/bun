@@ -1,0 +1,241 @@
+## Syntax errors of a lint parse: the codes of the reference
+
+File `src/js_parser/parse/syntax_errors.rs`, module `bun_js_parser::parse::syntax_errors`.
+[[FILL syntax-tests-count: "`cargo test -p bun_js_parser --lib parse::syntax_errors`: <n> passed" at the final commit (nine at b882bfc32f)]]
+
+### Entry
+
+```rust
+impl<'a> Parser<'a> {
+    /// `parse_for_lint`. Where the parse fails, `errors` gets what the reference reports for the messages that it logged.
+    pub fn parse_for_lint_with_codes<R>(
+        self,
+        errors: &mut SyntaxErrors,
+        f: impl FnOnce(&ParsedForLint<'_, 'a>) -> R,
+    ) -> Result<R, Error>;
+}
+```
+
+`Parser::parse_for_lint(f)` is `parse_for_lint_with_codes(&mut SyntaxErrors::default(), f)`. The parse is the same in
+both. `errors` is left as it was when the parse succeeds.
+
+```rust
+/// The diagnostics of the reference for the messages that a lint parse left in the log.
+#[derive(Default)]
+pub struct SyntaxErrors { /* private */ }
+
+impl SyntaxErrors {
+    /// Every entry, by rising `msg`.
+    pub fn entries(&self) -> &[SyntaxError];
+    /// The entry of the message at index `msg` of the log.
+    pub fn get(&self, msg: usize) -> Option<&SyntaxError>;
+}
+
+/// What the reference reports for one message that a lint parse left in the log.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SyntaxError {
+    /// The index of the message in `Log::msgs`.
+    pub msg: u32,
+    /// The number of the diagnostic: 1005 is TS1005.
+    pub code: u32,
+    /// The offset of the first byte that the diagnostic marks.
+    pub start: u32,
+    /// The offset after the last byte that it marks: `start` where it marks a position.
+    pub end: u32,
+    /// The text of the diagnostic, its argument filled in.
+    pub text: Cow<'static, [u8]>,
+}
+```
+
+[[CHECK syntax-error-shape: syntax_errors.rs:86-165 at b882bfc32f. After R5 (B2) write the types as they are, and `Parser::init_for_lint` / `Parser::init_for_lint_with_codes` if they exist]]
+
+### What a caller reads from where
+
+[[PICK codes-on-msg: R5 (B2). Check: a test that reads `log.msgs[i].code()` after a lint parse that fails; `grep -n "Metadata::Code\|add_range_error_with_code" src/js_parser -r`]]
+The log that `Parser::init` got holds the messages of Bun as before, with their text unchanged. After a lint parse
+that failed:
+
+| what | where |
+| --- | --- |
+| the code of tsc | `log.msgs[i].code()`: `Some(1005)` for TS1005, `None` where the parser knows no code for the message. `bun_ast::Msg::metadata` is `Metadata::Code(code)` |
+| the text and the location of Bun | `log.msgs[i].data.text`, `log.msgs[i].data.location`, as in every parse |
+| the range of the reference | `errors.get(i)`: `start` and `end` |
+| the text of the reference, its argument filled in (`';' expected.`) | `errors.get(i)`: `text` |
+
+`errors.get(i)` is `None` exactly where `log.msgs[i].code()` is `None`. A caller that prints as tsc prints takes the
+code from the message and the range and the text from the entry; a caller that only needs the code needs no
+`SyntaxErrors`: `Parser::parse_for_lint` puts the codes on the messages too. A parse without lint puts no code on a
+message: `Msg::code()` is `None` for every message of `Parser::parse`.
+[[OR]]
+`bun_ast::Msg` can carry a code since `4d9b8e5139` (`Metadata::Code(u32)`, `Msg::code()`). The parser does not write
+it: for the message at index `i` of `log.msgs`, `errors.get(i)` is the diagnostic of the reference (`code`, `start`,
+`end`, `text`), or `None` when the parser knows none for it. A caller that wants a code reads `errors.get(i)`, not
+`msg.code()`. The log holds the messages of Bun as before, with their text unchanged.
+[[END]]
+
+`text` is the text of `diagnosticMessages.json` (`';' expected.`), `code` its number. `start` and `end` are the range
+of the message of Bun, which is the token the lexer was on, with three exceptions that follow the reference: TS1002
+and TS1160 are at the offset where the line or the file ends, TS1385 to TS1388 run from the end of the token before
+the type to the end of the type.
+
+### No error recovery
+
+The parser stops at its first error as today: error recovery is out of scope. A lint parse that fails returns `Err`
+and no tree, no node stands for what is missing, and `f` is not called. The log can hold more than one message,
+because some errors are logged and the parse goes on to the end of the statement or of the file before it fails: the
+first message of the parse is the error, the others are what followed from it. The reference recovers and reports
+more diagnostics for the same file: only its first one can be compared.
+
+### What an entry means
+
+An entry is the diagnostic that the reference has for the condition that Bun's parser found. Bun finds errors with
+its own grammar: where the reference decides in another place or has a more specific diagnostic, its first diagnostic
+for the same file is another one. The list "Known differences" below names the cases that are known.
+
+| Condition in Bun's parser | Message of Bun | Entry |
+| --- | --- | --- |
+| a token that the grammar requires is missing (`Lexer::expect`, `expect_contextual_keyword`, `expect_or_insert_semicolon`, `expect_greater_than`) | `Expected "x" but found ...` | TS1005 `'x' expected.` |
+| a name is missing and the lexer is on a reserved word | `Expected identifier but found "class"` | TS1359 `Identifier expected. 'class' is a reserved word that cannot be used here.` |
+| a name is missing | `Expected identifier but found ...` | TS1003 `Identifier expected.` |
+| a string has no closing quote | `Unterminated string literal` | TS1002 `Unterminated string literal.` |
+| a template has no closing backtick | `Unterminated string literal` | TS1160 `Unterminated template literal.` |
+| a comment has no `*/` | `Expected "*/" to terminate multi-line comment` | TS1010 `'*/' expected.` |
+| the token starts no expression (the last arm of `parse_prefix`) | `Unexpected x` | TS1109 `Expression expected.` |
+| the same at the first token of a statement of a block, of a function body or of the file, unless the token is a binary operator | `Unexpected x` | TS1128 `Declaration or statement expected.` |
+| the same for `default` at the top of the file | `Unexpected default` | TS1005 `'export' expected.` |
+| the same for `catch` and `finally` | `Unexpected catch` | TS1005 `'try' expected.` |
+| the token starts no type (the lint grammar) | `Unexpected x` | TS1110 `Type expected.` |
+| a function or constructor type is an operand of `\|` or `&` (the lint grammar) | the text of the entry | TS1385, TS1386, TS1387, TS1388 |
+| the token starts no member of an object type (the lint grammar) | `Unexpected x` | TS1131 `Property or signature expected.` |
+[[FILL codes-added: one row for each code that R5 (B3, B4) added, with the test that holds it]]
+
+The first six rows are read from the text of the message when the parse ends, because the lexer logs them and has
+no way to the table. The others are recorded where they are logged. Every other message has no entry: the
+`Syntax Error` of the lexer (numbers, escapes, regular expressions, characters), `Unexpected x` of the other call
+sites of `Lexer::unexpected`, and every message that the parser logs itself.
+
+The two rows about `parse_prefix` and about the first token of a statement are decided in code that every parse
+runs, on a path that only a syntax error takes: the last arm of `parse_prefix` and the error of
+`parse_stmt_fallthrough`. [[CHECK error-path-sites: these two calls must leave `P<false, false>::parse_prefix` and `parse_stmt_fallthrough` with the machine code of the reference (round3/r5-codes-on-msg/commands.sh measured the forms la0, la1, st0, st1); r3report.sh "strict ref-head ... DIFF 0" covers it. Name the form the code has]]
+
+### What a lint parse rejects that a parse without lint accepts
+
+How the parser knows that it is a lint parse: "How a site knows which parse it is". The checks below are in the lint
+grammar, which only a lint parse runs, or on a path that only an error takes. A parse without lint accepts, rejects
+and logs what main does.
+
+- A type that is missing inside an attempt. The skipper of main turns the log of the lexer off in an attempt and
+  goes on as if the type stood, so a parse without lint takes `let x: (a: ) => void`, `f<A | >(x)`, `f<,>;` and
+  `new A<B | >()`. The lint grammar records TS1110 for the missing type. If the attempt goes back, the message goes
+  with it. If the attempt stays, the parse fails, as the reference fails when it keeps type arguments that it read
+  with an error.
+- `typeHasArrowFunctionBlockingParseError`: inside an attempt, a return type that is missing before `=>` ends the
+  attempt, so `(a): => a` is no arrow function and the `:` is the error (TS1005 at the `:`).
+- `parseFunctionOrConstructorTypeToError`: `A | () => void`, `| new () => A`, `A & <T>() => T`,
+  `A | abstract new () => B` log the text of TS1385 to TS1388 and the parse goes on, as the reference goes on.
+- `|` or `&` where `parseTypeOperatorOrHigher` reads a type is TS1110: `A & | B`, `| | A`, `& | A`, `keyof | A`.
+  The skipper of main takes any run of these operators.
+- `isListElement` of `PCTypeMembers` (type literals and what follows the mapping of a mapped type): a token that
+  starts no member is TS1131 at that token, so `{ a A }` fails at `a` as in the reference, and not at `A`.
+[[CHECK rejects-tests: each item is a row of syntax_errors::tests::a_lint_parse_rejects_what_an_attempt_lets_pass or a_type_that_is_built_is_read_as_the_reference_reads_it at b882bfc32f. Run both at the final commit. An item holds only for a type that the lint parse reads with the lint grammar: see "What a lint parse reads with which grammar" for what it still reads with the skipper]]
+
+[[PICK b3-rejections: R5 (B3). The table is the first diagnostic of typescript-go 89d5d5b and of tsc 6.0.2 (round2/decompose-facts-B.txt, round2/b3-operand-strictness/bottom-up/table.rows.be1ebe5295.txt). Keep a row only when a test of the final commit asserts its code and range]]
+What typescript-go rejects outside the type grammar, and a lint parse with it (`typecheck/NEEDS.md`, L2):
+
+| source | the first diagnostic of the reference, offset and length |
+| --- | --- |
+| `a + b = c;` | TS1005 `';' expected.` at 6, 1 |
+| `-a = b;` | TS1005 `';' expected.` at 3, 1 |
+| `a++ = b;` | TS1005 `';' expected.` at 4, 1 |
+| `async function f() { await x = y; }` | TS1005 `';' expected.` at 29, 1 |
+| `a++ ++;` | TS1005 `';' expected.` at 4, 2 |
+| `a--.b;` | TS1005 `';' expected.` at 3, 1 |
+| `++ delete a.b;` | TS1109 `Expression expected.` at 3, 6 |
+| `new A?.b();` | TS1209 `Invalid optional chain from new expression. Did you mean to call 'A()'?` at 5, 2 |
+| `function* g() { yield*; }` | TS1109 `Expression expected.` at 22, 1 |
+| `a.` before a line `b in c;` | TS1003 `Identifier expected.` at 2, 0 |
+| `for (using of of []) {}` | TS1011 `An element access expression should take an argument.` at 18, 0 |
+
+The argument of TS1005 follows what holds the expression: `(a + b = c);` is `')' expected.`, `f(a + b = c);` is
+`',' expected.`, `x ? a + b = c : d;` is `':' expected.`. [[FILL b3-how: where the check is made (after the parse, from the tree and the wrapper records, or at a site), what it costs a parse without lint (nothing), and the test]]
+A parse without lint stays as it is. Its parse pass accepts all eleven. Its visit pass rejects `a + b = c`,
+`-a = b`, `a++ = b`, `await x = y`, `a++ ++` and `++ delete a.b` with `Invalid assignment target` and accepts
+`a--.b`, `new A?.b()`, `yield*` without an operand, the `a.` case and the `for` case.
+(Run on 2026-10-03 with the base binary, main at fa467dcae2, loaders `ts` and `js`: `scanImports` against `transformSync` of `Bun.Transpiler`, `round3/api-md-report/top-down/l2-main.mjs`.) [[CHECK b3-main: run l2-main.mjs again when the base binary is another commit of main]]
+[[OR]]
+Not done: what typescript-go rejects outside the type grammar (`typecheck/NEEDS.md`, L2). A lint parse accepts
+`a + b = c`, `-a = b`, `a++ = b`, `await x = y`, `a++ ++`, `a--.b`, `++ delete a.b`, `new A?.b()`, `yield*` without an
+operand, `a.` before a line `b in c`, and `for (using of of [])`, as `Parser::parse_only` does. The reference reports
+TS1005, TS1109, TS1209, TS1003 and TS1011 for them.
+[[END]]
+
+What a lint parse accepts that a parse without lint rejects: everything of "Valid TypeScript that a parse without
+lint rejects", but the sources of "Known differences of the lint grammar". And `isListTerminator` of
+`PCTypeArguments`: a token that starts no type and is no `,` ends a list of type arguments without an error where an
+element starts (after `<` or `,`), so `let x: A<>;` parses as it does in the reference (the checker reports TS1099),
+`f<>()` and `f<A,>(x)` are accepted, and `let x: A<;` is TS1005 `'>' expected.` and not `Unexpected ;`.
+[[CHECK type-argument-option: at b882bfc32f this is `SkipTypeOptions::IsTypeArgument` (src/js_parser/typescript.rs:316), a variant of an enum that the skipper shares. Say where the lint grammar keeps it after R1 and that the skipper does not test it]]
+
+typescript-go and tsc 6.0.2 disagree on `typeof x.#y`: typescript-go parses it (`parseTypeQuery` calls
+`parseEntityName` with `allowPrivateName`), tsc reports TS1003 at the offset after the private name. A lint parse
+follows typescript-go and accepts it. `const a: typeof #a = 1;` is `Expected identifier but found "#a"` in a parse
+without lint, as on main (`test/bundler/transpiler/transpiler.test.js` expects it).
+[[CHECK typeof-private: what a lint parse does with `const a: typeof #a = 1;` (at b882bfc32f only the `Build` sink read it)]]
+
+### How the table follows the log
+
+The parser drops and restores messages of the log while it backtracks. A record holds the index of its message and
+the address and the length of the text of the message. When the parse ends, a record counts only if the message at
+its index still has that text, and the last such record of a message wins. So no backtracking site has to know the
+table. A site that logs past the lexer inside an attempt must be one whose attempt truncates the log when it goes
+back. [[FILL log-truncation: the attempts of the lint grammar that truncate the log, by name. At b882bfc32f: `restore_parser_snapshot`, the lexer backtrackers, `set_aside_failed_read`, `build_in_type`, and `lexer_backtracker_kept` only in a parse that has a side table (parse_skip_typescript.rs:3396-3428, `rewind_lint_attempt`). R1 puts the backtrackers of the skipper back to main's text]]
+
+### Known differences from the first diagnostic of the reference
+
+- In a list the reference asks for `,` where Bun asks for the token that closes the list or for `;`: the code is
+  TS1005 in both, the argument differs (`let f = (a): => a` is `',' expected.` in the reference, `';' expected.` here).
+- Where a statement that is one name is followed by a token on the same line, the reference reports TS1434, TS1435,
+  TS1440, TS1228 or a name diagnostic for the name (`parseErrorForMissingSemicolonAfter`). Here it is TS1005
+  `';' expected.` at the token.
+- After a property of a class the reference reports TS1442, TS1441 or TS1436 (`parseSemicolonAfterPropertyName`),
+  and for a function without a body TS1144. Here it is TS1005.
+- The reference reports a token that starts no element of a list with the diagnostic of the list
+  (`parsingContextErrors`: TS1135, TS1137, TS1136, TS1138, TS1139, TS1131, TS1132, TS1134, TS1180, TS1181) or, where
+  the token ends the list, with TS1005 for the closing token (`f(` is `')' expected.`). Here an expression that is
+  missing is TS1109 and a type that is missing is TS1110.
+- A statement of a `case` clause that starts with a token that starts none is TS1129 in the reference, TS1128 here.
+- TS1130 (`'case' or 'default' expected.`) and TS1472 (`'catch' or 'finally' expected.`) are TS1005 with one token here.
+- At the end of the file the reference puts TS1003 at the end of the last token. Here it is at the end of the file.
+- The codes of the scanner for numbers, escapes and characters (TS1121, TS1124, TS1125, TS1127, TS1198, TS1199,
+  TS1351, TS1489, TS6188, TS6189) and TS1161 have no entry.
+[[CHECK known-differences-list: delete each item that R5 (B4) closed, with the test that proves it; add what the tests of R4 and R5 showed (grammar_rows_tests.rs has ten rows whose first diagnostic is tsc's: each passes, or is listed here)]]
+
+### Not done
+
+[[FILL not-done: the list at the final commit. At b882bfc32f it was the four items below; delete what R5 (B4) did, each with its test, and keep the rest word for word]]
+- The checks of the reference that sit on a path that a valid program takes and are outside the type grammar:
+  TS1477 (`a<b>.c`), TS17007 and TS17006 (`<A>x ** 2`, `-x ** 2`), TS1209 (`new A?.b()`), TS18030 (`this?.#a`),
+  TS2754 and TS1034 (`super<T>.x`, `super;`), TS2880 (`import ... assert {}`), TS1357 (`enum E { A B }`), TS1260 (a
+  keyword spelled with an escape), TS1011 (`a[]`), the list diagnostics above. A lint parse accepts these inputs as
+  before, or rejects them without an entry.
+- The members of classes, parameters and heritage clauses are strict only as far as the lint grammar reads them:
+  their types. Their messages have the entries of the table above and no other. The grammar errors of the checker
+  (`grammarchecks.go`: duplicate or misplaced modifiers, empty lists, `extends` twice) are no parse errors: the
+  typecheck unit reports them from the side table.
+- The checks that need the lint grammar are tested through `x as T`, and for the nodes by `type_sink_tests.rs` and
+  `parse::grammar_rows_tests`.
+- An error in the first token of a file fails `Parser::init`, before the table exists: its message has no entry.
+- Error recovery, and JSDoc parsing: out of scope (parser.md).
+
+### Probe
+
+`probes/diag-codes/`: `run.sh` prints, for each source of `inputs.txt`, the parse diagnostics of typescript-go
+(`/tmp/rr/parsediag`), of tsc 6.0.2 and the errors of the `bun` on PATH. `expected.txt` is its output with
+`bun` 1.4.3-canary.1+367d939d9, a binary of main.
+
+### Tests
+
+`mod tests` in `src/js_parser/parse/syntax_errors.rs`. [[FILL syntax-tests: the tests at the final commit. At b882bfc32f nine, all passing: five need no parser (the texts, the reading of `Expected a but found b`, the end of a string without a closing quote, a record whose message the log drops, a record whose message is set aside and put back). Three run `Parser::parse_for_lint_with_codes`: 19 sources with the code, range and text of their first error, 5 sources that only a lint parse rejects, 6 sources that the reference parses and a lint parse must take. A fourth reads types with the lint grammar through `x as T`: 7 sources for TS1385, TS1388, TS1110, TS1131 and TS1005, and 4 that parse]]
+The code and the range of each are the first diagnostic of typescript-go 89d5d5b, which is also the one of tsc
+6.0.2. Two sources differ from that on purpose: for `let f = (a): => a` the text is `';' expected.` (the reference:
+`',' expected.`), and `class C { #y = 1; m(x: C) { let a: typeof x.#y; } }` parses as in typescript-go (tsc: TS1003).

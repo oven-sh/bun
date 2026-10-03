@@ -197,12 +197,9 @@ async function fetch(
   return response;
 }
 
-class AbortError extends DOMException {
-  constructor(message) {
-    super(message, "AbortError");
-  }
-}
-
+// node-fetch names each error after its class and keeps the system error's code and syscall:
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/errors/base.js
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/errors/fetch-error.js
 class FetchBaseError extends Error {
   type: string;
 
@@ -210,12 +207,34 @@ class FetchBaseError extends Error {
     super(message);
     this.type = type;
   }
+
+  get name() {
+    return this.constructor.name;
+  }
+
+  get [Symbol.toStringTag]() {
+    return this.constructor.name;
+  }
 }
 
 class FetchError extends FetchBaseError {
+  declare code?: string;
+  declare errno?: string;
+  declare erroredSysCall?: string;
+
   constructor(message, type, systemError) {
     super(message, type);
-    this.code = systemError?.code;
+    if (systemError) {
+      this.code = this.errno = systemError.code;
+      this.erroredSysCall = systemError.syscall;
+    }
+  }
+}
+
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/errors/abort-error.js
+class AbortError extends FetchBaseError {
+  constructor(message, type = "aborted") {
+    super(message, type);
   }
 }
 

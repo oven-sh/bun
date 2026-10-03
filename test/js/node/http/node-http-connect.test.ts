@@ -1924,6 +1924,97 @@ test("a half-open tunnel with bytes left to send keeps the process alive until t
   }
 });
 
+// The listener ended the tunnel and never reads it, so the full buffer stopped the reads and the
+// peer's FIN stays unread. In Node.js a handle that does not read and has nothing to send is not
+// active. Every expectation is Node v26.3.0's.
+describe.each(["http", "https"])("%s: a tunnel that its listener ended and that stopped reading", proto => {
+  const fixture = /* js */ `
+    const { PROTO, READ_LATER, CERT, KEY } = process.env;
+    const requests = {
+      upgrade: "GET / HTTP/1.1\\r\\nHost: a\\r\\nConnection: Upgrade\\r\\nUpgrade: raw\\r\\n\\r\\n",
+      // The tunnel starts behind the body.
+      upgradeWithBody: "POST / HTTP/1.1\\r\\nHost: a\\r\\nConnection: Upgrade\\r\\nUpgrade: raw\\r\\nContent-Length: 4\\r\\n\\r\\nBODY",
+      connect: "CONNECT example.com:443 HTTP/1.1\\r\\nHost: example.com:443\\r\\n\\r\\n",
+    };
+    const shapes = Object.keys(requests);
+    const results = {};
+    const clients = {};
+    let open = shapes.length;
+    const server = PROTO === "https" ? require("node:https").createServer({ cert: CERT, key: KEY }) : require("node:http").createServer();
+    for (const shape of shapes) results[shape] = { events: [], received: 0 };
+    for (const event of ["upgrade", "connect"]) {
+      server.on(event, (req, socket) => {
+        const shape = event === "connect" ? "connect" : req.method === "POST" ? "upgradeWithBody" : "upgrade";
+        const result = results[shape];
+        result.events.push(event);
+        socket.on("error", () => {});
+        socket.on("end", () => result.events.push("end"));
+        socket.on("close", () => result.events.push("close"));
+        socket.end("HTTP/1.1 400 Bad Request\\r\\n\\r\\n");
+        (function untilReadsStop() {
+          if (socket.readableLength < socket.readableHighWaterMark) return setImmediate(untilReadsStop);
+          clients[shape].once("close", () => {
+            if (--open === 0) server.close(() => (results.server = "close"));
+            if (READ_LATER) setImmediate(() => socket.on("data", chunk => (result.received += chunk.length)));
+          });
+          clients[shape].end();
+        })();
+      });
+    }
+    server.listen(0, "127.0.0.1", () => {
+      for (const shape of shapes) {
+        const to = { port: server.address().port, host: "127.0.0.1", allowHalfOpen: true, rejectUnauthorized: false };
+        const client = (clients[shape] = PROTO === "https" ? require("node:tls").connect(to) : require("node:net").connect(to));
+        client.on("error", () => {});
+        client.once(PROTO === "https" ? "secureConnect" : "connect", () => client.write(requests[shape]));
+        // The server's FIN: the listener has run.
+        client.once("end", () => client.write(Buffer.alloc(2 * 65536, "x")));
+        client.resume();
+      }
+    });
+    process.on("exit", () => console.log(JSON.stringify(results)));
+  `;
+
+  async function run(readLater: boolean) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, PROTO: proto, READ_LATER: readLater ? "1" : "", CERT: tlsCert.cert, KEY: tlsCert.key },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim() && JSON.parse(stdout), stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  test.concurrent("does not keep the process alive after server.close()", async () => {
+    // The sockets are still open, so neither they nor the server emit 'close'.
+    expect(await run(false)).toEqual({
+      stdout: {
+        upgrade: { events: ["upgrade"], received: 0 },
+        upgradeWithBody: { events: ["upgrade"], received: 0 },
+        connect: { events: ["connect"], received: 0 },
+      },
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test.concurrent("keeps the process alive again from a later read, up to 'close'", async () => {
+    expect(await run(true)).toEqual({
+      stdout: {
+        upgrade: { events: ["upgrade", "end", "close"], received: 2 * 65536 },
+        upgradeWithBody: { events: ["upgrade", "end", "close"], received: 2 * 65536 },
+        connect: { events: ["connect", "end", "close"], received: 2 * 65536 },
+        server: "close",
+      },
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 // A listener with nothing to send ends its side in the listener. It still reads: an http.Server
 // socket has allowHalfOpen. Every expectation below is Node v26.3.0's.
 describe("a tunnel behind a request head that took more than one read", () => {

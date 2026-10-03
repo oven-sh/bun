@@ -562,7 +562,7 @@ class Session extends EventEmitter {
     try {
       callback(null, result);
     } catch (error) {
-      process.emitWarning(error);
+      process.emitWarning(error as Error);
     }
   }
 

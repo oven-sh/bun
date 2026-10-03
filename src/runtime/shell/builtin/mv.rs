@@ -507,6 +507,9 @@ impl ShellMvBatchedTask {
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::{Dir, E, File, O, S, Tag};
 
+        // The copy belongs to the mover until `copy_owner_and_mode` runs.
+        const OWNER_ONLY: bun_core::Mode = 0o700;
+
         let st = bun_sys::lstatat(src_dir, src)?;
         let mode = st.st_mode as bun_core::Mode;
 
@@ -545,15 +548,13 @@ impl ShellMvBatchedTask {
                 return Err(bun_sys::Error::from_code(E::ENOENT, Tag::rename));
             }
             let st = sst;
-            let mode = st.st_mode as bun_core::Mode;
-            // `| 0o700` so children can be written even when the source mode is read-only; restored via `fchmod` below.
-            if let Err(e) = bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700) {
+            if let Err(e) = bun_sys::mkdirat(dst_dir, dst, OWNER_ONLY) {
                 if e.get_errno() != E::EEXIST {
                     return Err(e);
                 }
                 // Refuse to merge into a non-empty dest (matches same-device `ENOTEMPTY`).
                 bun_sys::rmdirat(dst_dir, dst)?;
-                bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700)?;
+                bun_sys::mkdirat(dst_dir, dst, OWNER_ONLY)?;
             }
             let dd = Dir::from_fd(shell_openat(
                 dst_dir,
@@ -561,23 +562,14 @@ impl ShellMvBatchedTask {
                 O::RDONLY | O::DIRECTORY | O::NOFOLLOW,
                 0,
             )?);
-            // Boxed: `WrappedIterator` embeds an 8 KB inline readdir buffer.
-            let mut iter = Box::new(bun_sys::dir_iterator::iterate(sd.fd()));
-            let mut nbuf = bun_paths::path_buffer_pool::get();
-            while let Some(entry) = iter.next()? {
-                let name = entry.name.slice_u8();
-                if name.len() >= bun_paths::MAX_PATH_BYTES {
-                    return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
-                }
-                nbuf[..name.len()].copy_from_slice(name);
-                nbuf[name.len()] = 0;
-                let name_z = ZStr::from_buf(&nbuf[..], name.len());
-                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z)?;
-            }
+            let moved = Self::move_entries_across_devices(sd.fd(), dd.fd());
+            // Also after a failure: the entries already moved exist only in the copy.
             #[cfg(unix)]
-            let _ = bun_sys::fchown(dd.fd(), st.st_uid as _, st.st_gid as _);
-            let _ = bun_sys::fchmod(dd.fd(), mode & 0o7777);
+            Self::copy_owner_and_mode(dd.fd(), &st);
+            #[cfg(windows)]
+            let _ = bun_sys::fchmod(dd.fd(), st.st_mode as bun_core::Mode & 0o7777);
             drop((sd, dd));
+            moved?;
             return bun_sys::rmdirat(src_dir, src);
         }
 
@@ -604,7 +596,7 @@ impl ShellMvBatchedTask {
             dst_dir,
             dst.as_bytes(),
             O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC | O::NOFOLLOW,
-            mode & 0o7777,
+            mode & OWNER_ONLY,
         )?;
         let _ = bun_sys::preallocate_file(out.fd().native(), 0, st.st_size as _);
         if let Err(e) = bun_sys::copy_file(in_.fd(), out.fd()) {
@@ -613,13 +605,45 @@ impl ShellMvBatchedTask {
             return Err(e);
         }
         #[cfg(unix)]
-        {
-            // `fchown` first: Linux clears S_ISUID/S_ISGID on chown.
-            let _ = bun_sys::fchown(out.fd(), st.st_uid as _, st.st_gid as _);
-            let _ = bun_sys::fchmod(out.fd(), mode & 0o7777);
-        }
+        Self::copy_owner_and_mode(out.fd(), &st);
         drop((in_, out));
         bun_sys::unlinkat(src_dir, src)
+    }
+
+    fn move_entries_across_devices(
+        src_dir: bun_sys::Fd,
+        dst_dir: bun_sys::Fd,
+    ) -> Result<(), bun_sys::Error> {
+        // Boxed: `WrappedIterator` embeds an 8 KB inline readdir buffer.
+        let mut iter = Box::new(bun_sys::dir_iterator::iterate(src_dir));
+        let mut nbuf = bun_paths::path_buffer_pool::get();
+        while let Some(entry) = iter.next()? {
+            let name = entry.name.slice_u8();
+            if name.len() >= bun_paths::MAX_PATH_BYTES {
+                return Err(bun_sys::Error::from_code(
+                    bun_sys::E::ENAMETOOLONG,
+                    bun_sys::Tag::rename,
+                ));
+            }
+            nbuf[..name.len()].copy_from_slice(name);
+            nbuf[name.len()] = 0;
+            let name_z = ZStr::from_buf(&nbuf[..], name.len());
+            Self::move_across_devices(src_dir, name_z, dst_dir, name_z)?;
+        }
+        Ok(())
+    }
+
+    /// POSIX `mv`: the copy gets set-uid and set-gid only if it also gets the owner.
+    #[cfg(unix)]
+    fn copy_owner_and_mode(fd: bun_sys::Fd, st: &bun_sys::Stat) {
+        let mode = st.st_mode as bun_core::Mode & 0o7777;
+        let set_id = mode & (bun_sys::S::ISUID | bun_sys::S::ISGID);
+        // Before `fchown`: a mover with CAP_CHOWN but no CAP_FOWNER cannot `fchmod` a copy it gave away.
+        let _ = bun_sys::fchmod(fd, mode & !set_id);
+        // After `fchown`: Linux clears S_ISUID/S_ISGID on chown.
+        if bun_sys::fchown(fd, st.st_uid as _, st.st_gid as _).is_ok() && set_id != 0 {
+            let _ = bun_sys::fchmod(fd, mode);
+        }
     }
 
     /// `renameat(cwd, src, target_fd, basename(src))`. A free fn over the

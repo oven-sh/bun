@@ -222,7 +222,7 @@ impl TagHandler {
     }
 }
 
-const TAG_HANDLERS: [TagHandler; 16] = [
+const TAG_HANDLERS: [TagHandler; 17] = [
     // Module scripts with src
     TagHandler::new("script[src]", "src", ImportKind::Stmt),
     // CSS Stylesheets
@@ -255,6 +255,8 @@ const TAG_HANDLERS: [TagHandler; 16] = [
     ),
     // Images with src
     TagHandler::new("img[src]", "src", ImportKind::Url),
+    // SVG images with href (e.g. <image href="./thing.jpg"> inside inline svg)
+    TagHandler::new("image[href]", "href", ImportKind::Url),
     // Images with srcset
     TagHandler::new("img[srcset]", "srcset", ImportKind::Url),
     // Videos with src

@@ -2231,7 +2231,20 @@ impl<'p> Checker<'p> {
             };
         }
         if self.variances_in_progress.contains(&sym) {
+            self.variance_cycles += 1;
             return Arc::from([]);
+        }
+        // The value of the first task in serial order, for a task that is retried (`Program::validate`).
+        let serial = self.p.serial_variances.lock().get(&sym).cloned();
+        if let Some(variances) = serial {
+            let scope = self.begin_scope();
+            return match self.end_scope_as(scope, false) {
+                Ok(stored) => self
+                    .p
+                    .variances
+                    .insert(&mut self.task, sym, variances, stored),
+                Err(_) => variances,
+            };
         }
         let (cuts, outermost) = (
             self.cuts(),
@@ -2247,6 +2260,10 @@ impl<'p> Checker<'p> {
         }
         self.variances_in_progress.push(sym);
         let was_computing = std::mem::replace(&mut self.in_variance_computation, true);
+        let variance_cycles = self.variance_cycles;
+        if !was_computing {
+            self.variances_measured.clear();
+        }
         // `resolutionStart`: what was under way when the outermost measurement began is asked afresh if it is needed, with the
         // measurement under way to stop it from going round for ever.
         let resolution_start = self.resolution_start;
@@ -2308,11 +2325,13 @@ impl<'p> Checker<'p> {
         self.resolution_start = resolution_start;
         self.variances_in_progress.pop();
         let variances: Arc<[u8]> = variances.into();
-        match self.end_scope(scope) {
-            Ok(stored) => self
-                .p
-                .variances
-                .insert(&mut self.task, sym, variances, stored),
+        let variances = match self.end_scope(scope) {
+            Ok(stored) => {
+                self.variances_measured.push((sym, variances.clone()));
+                self.p
+                    .variances
+                    .insert(&mut self.task, sym, variances, stored)
+            }
             Err(_) => {
                 if self.cuts() != cuts {
                     self.variances_cut_short
@@ -2320,6 +2339,75 @@ impl<'p> Checker<'p> {
                 }
                 variances
             }
+        };
+        if !was_computing && self.variance_cycles != variance_cycles {
+            for (sym, variances) in self.variances_measured.drain(..) {
+                let at = self.task.order_dependent_variances.len() as u32;
+                self.order_dependent.insert(sym, at);
+                self.order_dependent_filter |= Self::order_dependent_bit(sym);
+                self.task.order_dependent_variances.push(OrderDependent {
+                    sym,
+                    variances,
+                    compared: 0,
+                    failed: 0,
+                    void_targets: 0,
+                    inferred: 0,
+                });
+            }
+        }
+        variances
+    }
+
+    #[inline]
+    fn order_dependent_bit(sym: Sym) -> u64 {
+        1 << ((sym.id.0 ^ sym.file.0) & 63)
+    }
+
+    /// Call right after `relate_variances` on the type arguments `sources` and `targets` of `sym`. `holds`: they are related.
+    #[inline]
+    fn note_compared_by_variances<const REPORT: bool>(
+        &mut self,
+        sym: Sym,
+        sources: &[TypeId],
+        targets: &[TypeId],
+        holds: bool,
+    ) {
+        if self.order_dependent_filter & Self::order_dependent_bit(sym) != 0
+            && let Some(&at) = self.order_dependent.get(&sym)
+        {
+            // How many pairs were compared.
+            let count = match holds {
+                true => sources.len().min(targets.len()),
+                false => self.failed_type_argument as usize,
+            };
+            let pairs = || sources.iter().zip(targets).enumerate();
+            let bits = |bits: u32, i: usize| bits | 1 << i.min(31);
+            // During a variance computation, every variance that is read can set `reliability`.
+            let is_measuring = self.in_variance_computation;
+            let passed = (pairs().take(count))
+                .filter(|(_, (source, target))| is_measuring || source != target)
+                .fold(0, |so_far, (i, _)| bits(so_far, i));
+            let noted = &mut self.task.order_dependent_variances[at as usize];
+            // With other variances an earlier pair could fail first. That changes only the error elaboration.
+            if holds || REPORT || is_measuring {
+                noted.compared |= passed;
+            }
+            if !holds {
+                noted.failed |= bits(0, count);
+                noted.void_targets |= (pairs().filter(|(_, pair)| *pair.1 == TypeId::VOID))
+                    .fold(0, |so_far, (i, _)| bits(so_far, i));
+            }
+        }
+    }
+
+    /// `infer_from_type_arguments` has read the variances of the first `count` type parameters of `sym`.
+    #[inline]
+    pub(super) fn note_inferred_by_variances(&mut self, sym: Sym, count: usize) {
+        if self.order_dependent_filter & Self::order_dependent_bit(sym) != 0
+            && let Some(&at) = self.order_dependent.get(&sym)
+        {
+            let all = u32::MAX.checked_shr(32 - count.min(32) as u32).unwrap_or(0);
+            self.task.order_dependent_variances[at as usize].inferred |= all;
         }
     }
 
@@ -3976,8 +4064,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `propertiesRelatedTo`, as `structuredTypeRelatedTo` calls it. `getPropertyOfType` reads the apparent type, which is a union for
-    /// an intersection with a type parameter that has a union constraint. A union has the properties that all of its members have
-    /// (`CheckFlagsReadPartial`), each with the union of their types.
+    /// an intersection with a member whose constraint is a union.
     pub(super) fn properties_of_apparent_type_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -4006,43 +4093,64 @@ impl<'p> Checker<'p> {
         // `!c.isErrorType(t) && t.flags&TypeFlagsNever == 0`
         members.retain(|member| !self.is_error_type(*member) && !member.is_never());
         if members.len() < 2 {
-            let source = members.first().copied().unwrap_or(source);
+            let apparent = members.first().copied().unwrap_or(source);
+            // `getPropertyOfType` finds nothing in what is no object type: `any`, which `T & U` comes to where `U` extends `any`.
+            if self.members(apparent).is_none() {
+                let none = self.synth(Shape::default());
+                return self.properties_related_to_noting::<REPORT>(
+                    r,
+                    source,
+                    Some(none),
+                    target,
+                    &[],
+                    optionals_only,
+                    state,
+                    &mut None,
+                );
+            }
             return self.properties_related_to::<REPORT>(
                 r,
-                source,
+                apparent,
                 target,
                 &[],
                 optionals_only,
                 state,
             );
         }
-        let mut partial: SmallVec<[Atom; 4]> = SmallVec::new();
-        if let Some(wanted) = self.members(target) {
-            for prop in &wanted.shape().props {
-                if prop.flags.contains(PropFlags::OPTIONAL)
-                    && members
-                        .iter()
-                        .any(|&member| self.prop_ref(member, prop.name).is_none())
+        // `getPropertiesOfUnionOrIntersectionType`: "The properties of a union type are those that are present in all constituent
+        // types, so we only need to check the properties of the first type without index signature".
+        let mut props: Vec<Prop> = Vec::new();
+        for &current in &members {
+            let Some(of_current) = self.members(current) else {
+                continue;
+            };
+            for prop in &of_current.shape().props {
+                if props.iter().all(|it| it.name != prop.name)
+                    && let Some((combined, mapper)) = self.get_property_of_type(apparent, prop.name)
                 {
-                    partial.push(prop.name);
+                    let mut combined = combined.clone();
+                    self.instantiate_prop(&mut combined, mapper);
+                    props.push(combined);
                 }
             }
-        }
-        let mut result = Ternary::TRUE;
-        for &member in &members {
-            result &= self.properties_related_to::<REPORT>(
-                r,
-                member,
-                target,
-                &partial,
-                optionals_only,
-                state,
-            );
-            if !result.holds() {
+            if of_current.shape().index.is_empty() {
                 break;
             }
         }
-        result
+        let properties = self.synth(Shape {
+            props,
+            ..Shape::default()
+        });
+        self.properties_related_to_noting::<REPORT>(
+            r,
+            source,
+            Some(properties),
+            target,
+            &[],
+            optionals_only,
+            state,
+            &mut None,
+        )
     }
 
     /// `isSourceIntersectionNeedingExtraCheck`
@@ -4252,14 +4360,17 @@ impl<'p> Checker<'p> {
             if variances.is_empty() {
                 return Ternary::UNKNOWN;
             }
-            if let Some(result) = self.relate_variances::<REPORT>(
+            let result = self.relate_variances::<REPORT>(
                 r,
                 &source_args,
                 &target_args,
                 &variances,
                 state,
                 &mut shared,
-            ) {
+            );
+            let holds = result.is_some_and(Ternary::holds);
+            self.note_compared_by_variances::<REPORT>(alias, &source_args, &target_args, holds);
+            if let Some(result) = result {
                 return result;
             }
         }
@@ -4823,9 +4934,10 @@ impl<'p> Checker<'p> {
                     return Ternary::UNKNOWN;
                 }
                 let (sa, ta) = (self.type_arguments(source), self.type_arguments(target));
-                if let Some(result) =
-                    self.relate_variances::<REPORT>(r, sa, ta, &variances, state, shared)
-                {
+                let result = self.relate_variances::<REPORT>(r, sa, ta, &variances, state, shared);
+                let holds = result.is_some_and(Ternary::holds);
+                self.note_compared_by_variances::<REPORT>(*st, sa, ta, holds);
+                if let Some(result) = result {
                     return result;
                 }
             }
@@ -4959,6 +5071,7 @@ impl<'p> Checker<'p> {
         let mut result = self.properties_related_to_noting::<REPORT>(
             r,
             source,
+            None,
             target,
             &[],
             false,
@@ -5041,6 +5154,7 @@ impl<'p> Checker<'p> {
         state: u8,
     ) -> Ternary {
         if sources.len() != targets.len() && r.relation == Relation::Identity {
+            self.failed_type_argument = 0;
             return Ternary::FALSE;
         }
         let mut result = Ternary::TRUE;
@@ -5085,6 +5199,7 @@ impl<'p> Checker<'p> {
                 }
             };
             if !related.holds() {
+                self.failed_type_argument = i as u32;
                 return Ternary::FALSE;
             }
             result &= related;
@@ -5257,6 +5372,7 @@ impl<'p> Checker<'p> {
         self.properties_related_to_noting::<REPORT>(
             r,
             source,
+            None,
             target,
             excluded,
             optionals_only,
@@ -5265,12 +5381,14 @@ impl<'p> Checker<'p> {
         )
     }
 
+    /// `properties`: an object type that has what `getPropertiesOfType(source)` returns, where `members(source)` has not.
     /// `both`: left with what `members` says of `source` and of `target`, if it was asked and will say the same from now on.
     #[allow(clippy::too_many_arguments)]
     fn properties_related_to_noting<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
+        properties: Option<TypeId>,
         target: TypeId,
         excluded: &[Atom],
         optionals_only: bool,
@@ -5459,7 +5577,10 @@ impl<'p> Checker<'p> {
             }
         }
         let for_now = self.shapes_for_now.len();
-        let (Some(sm), Some(tm)) = (self.members(source), self.members(target)) else {
+        let (Some(sm), Some(tm)) = (
+            self.members(properties.unwrap_or(source)),
+            self.members(target),
+        ) else {
             return Ternary::FALSE;
         };
         // A shape that is kept stays as it is.

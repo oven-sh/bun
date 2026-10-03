@@ -86,6 +86,7 @@ use crate::table::{Bases, Buffered, ById, ByIdKept, ByKey, ByNode, ByNodeKept, F
 use crate::types::Prop;
 use crate::types::*;
 use crate::util::{FxHashMap, List};
+use bun_threading::Guarded;
 use errors_modules::{root_declaration, root_pattern};
 use errors_x_aliases::SpecifierSite;
 pub use errors_x_regexp_scanner::get_spelling_suggestion;
@@ -104,7 +105,7 @@ use spans::{skip_trivia_back, trim_trivia_end};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use symbols::AliasTarget;
-use task::{Open, Stored, Task};
+use task::{Open, OrderDependent, Stored, Task};
 
 pub use call::ResolvedCall;
 pub use shape::Members;
@@ -163,6 +164,9 @@ pub(crate) use file_local_fields;
 pub struct Program {
     /// Whether a query of any task has come back to itself. Written at a barrier, from `Finished::closed_a_cycle`.
     pub closed_a_circle: AtomicBool,
+    /// `Finished::order_dependent_variances` of the valid tasks so far: the first value in serial order for each symbol. Written at a
+    /// barrier (`Program::validate`), read on a cache miss in `variances_worker`.
+    serial_variances: Guarded<FxHashMap<Sym, Arc<[u8]>>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
     pub files: Arc<Files>,
@@ -348,6 +352,7 @@ impl Program {
             });
         let mut program = Program {
             closed_a_circle: Default::default(),
+            serial_variances: Guarded::new(FxHashMap::default()),
             auto_array_type,
             types,
             expr_types: ByNode::new(&exprs),
@@ -519,6 +524,11 @@ impl Program {
             is_marker_comparison: false,
             is_trial_comparison: false,
             variances_in_progress: Vec::new(),
+            variance_cycles: 0,
+            variances_measured: Vec::new(),
+            failed_type_argument: 0,
+            order_dependent: FxHashMap::default(),
+            order_dependent_filter: 0,
             simplified: FxHashMap::default(),
             inherited_names: [0; 4],
             cond_distributive_memo: FxHashMap::default(),
@@ -651,6 +661,9 @@ enum Query {
     InitializerIsUndefined(FileId, ParamId),
     /// `TypeSystemPropertyNameResolvedTypeArguments`
     TypeArguments(TypeId),
+    /// The relation cache entry for two types, keyed by a hash of their printed names, which is the same in every task. Never on the
+    /// stack: it only owns the diagnostic of a stack depth overflow (`error_at_current_expression`).
+    Comparison(u64),
 }
 
 /// The names that go with `Finished::foreign_evaluations`, for `--timing`.
@@ -699,7 +712,8 @@ impl Query {
             | Query::Constraint(_)
             | Query::InferredConstraint(_)
             | Query::MappedProp(..)
-            | Query::TypeArguments(_) => return None,
+            | Query::TypeArguments(_)
+            | Query::Comparison(_) => return None,
         })
     }
 }
@@ -914,6 +928,16 @@ pub struct Checker<'p> {
     /// The next `related` is the trial of `check_type_related_to_ex`: see `Relater::keeps_failures`.
     pub(super) is_trial_comparison: bool,
     variances_in_progress: Vec<Sym>,
+    /// How many times `variances_worker` was re-entered for a symbol in `variances_in_progress`.
+    variance_cycles: u32,
+    /// The entries cached since the outermost `variances_worker` call on the stack began.
+    variances_measured: Vec<(Sym, Arc<[u8]>)>,
+    /// After `type_arguments_related_to` returns false: the index of the pair that is not related.
+    failed_type_argument: u32,
+    /// The index of each symbol in `Task::order_dependent_variances`.
+    order_dependent: FxHashMap<Sym, u32>,
+    /// A 64-bit Bloom filter for the keys of `order_dependent`.
+    order_dependent_filter: u64,
     simplified: FxHashMap<(TypeId, bool), TypeId>,
     /// A bit for each of 256 numbers that the name of a property of `Object`, `Function`, `CallableFunction` or `NewableFunction` falls on:
     /// a name that falls on another is none of theirs. All zero: not made yet.
@@ -1747,7 +1771,11 @@ impl<'p> Checker<'p> {
                 self.error_end_inside_parentheses(file, e),
             );
             let diagnostic = self.new_diagnostic(at, code, args);
-            self.add_diagnostic_of(None, diagnostic);
+            // tsgo caches the overflow in the relation cache, so the next comparison of the two types is a cache hit and reports nothing.
+            let mut hasher = crate::util::FxHasher::default();
+            std::hash::Hash::hash(&(code, &diagnostic.args), &mut hasher);
+            let comparison = Query::Comparison(std::hash::Hasher::finish(&hasher));
+            self.add_diagnostic_of(Some(comparison), diagnostic);
         }
     }
 

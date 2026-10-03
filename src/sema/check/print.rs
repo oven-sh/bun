@@ -425,7 +425,10 @@ impl<'p> Checker<'p> {
                 Written::TypeParameter(tp) => {
                     (printer.visit_type_parameter_declaration(file, tp)).unwrap_or_default()
                 }
-                Written::BindingName(pat) => printer.binding_name_text(file, pat),
+                Written::BindingName(pat) => {
+                    printer.is_transformer = true;
+                    printer.binding_name_text(file, pat)
+                }
                 Written::PropertyName(name) => printer.property_key_text(file, name),
                 Written::EntityName(e) => printer.entity_name_text(file, e).unwrap_or_default(),
             },

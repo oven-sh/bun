@@ -590,9 +590,11 @@ impl<'p> Checker<'p> {
         targets: &[TypeId],
     ) {
         if let Some(known) = self.p.variances.get_ref(&mut self.task, &of) {
+            self.note_inferred_by_variances(of, sources.len().min(targets.len()));
             return self.infer_from_type_arguments(n, sources, targets, known);
         }
         let variances = self.variances_of(of);
+        self.note_inferred_by_variances(of, sources.len().min(targets.len()));
         self.infer_from_type_arguments(n, sources, targets, &variances);
     }
 

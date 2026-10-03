@@ -174,7 +174,8 @@ fn is_task_independent(q: Query) -> bool {
         | Query::Enum(..)
         | Query::Expr(..)
         | Query::Call(..)
-        | Query::InitializerIsUndefined(..) => true,
+        | Query::InitializerIsUndefined(..)
+        | Query::Comparison(_) => true,
         Query::ReturnOfSignature(_)
         | Query::Shape(_)
         | Query::Constraint(_)

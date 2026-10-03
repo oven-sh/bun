@@ -25,6 +25,37 @@ const TASK_STACK: usize = 3 << 20;
 
 /// THE BARRIER after a step. `finished`: the tasks of that step, in task order. No task is running.
 impl Program {
+    /// OPTIMISTIC CONCURRENCY CONTROL: validation, before link and publish. `getVariancesWorker` returns an empty list for a symbol whose
+    /// variances are being computed and caches whatever results from that, so the variances of mutually recursive types depend on
+    /// which type of the cycle is queried first. THE SERIAL ORDER is step order, then program order within a step, which is task order.
+    /// (Not quite program order: the warm-up steps are a sample of the program. Deferring what their tasks publish until all earlier
+    /// files are checked makes a check 17% slower.) A task is INVALID if it computed a different value than an earlier task or step
+    /// did and a result of the task depends on the difference (`OrderDependent`). The caller aborts an invalid task: it discards the
+    /// task's output and retries its files, which then read `serial_variances`. The first task to compute the variances of a symbol
+    /// is valid with respect to that symbol. Returns whether each task is invalid.
+    pub fn validate(&self, finished: &[Finished]) -> Vec<bool> {
+        let mut serial = self.serial_variances.lock();
+        let is_invalid = |finished: &Finished, serial: &FxHashMap<Sym, Arc<[u8]>>| {
+            let mut measured = finished.order_dependent_variances.iter();
+            measured.any(|it| {
+                serial
+                    .get(&it.sym)
+                    .is_some_and(|first| it.conflicts_with(first))
+            })
+        };
+        (finished.iter())
+            .map(|finished| {
+                if is_invalid(finished, &serial) {
+                    return true;
+                }
+                for it in &finished.order_dependent_variances {
+                    serial.entry(it.sym).or_insert_with(|| it.variances.clone());
+                }
+                false
+            })
+            .collect()
+    }
+
     /// The first half. Of the types, signatures, mappers and component lists that several tasks have created, the lowest task's stays.
     /// Each task gets its `Link`, through which `publish` rewrites its keys and values.
     pub fn link(&self, finished: &mut [Finished], in_parallel: InParallel<'_>) -> LinkCounts {
@@ -77,6 +108,8 @@ impl Checker<'_> {
     /// A checker for which this is not called is outside the plan: what it writes is dropped with it.
     pub fn begin_task(&mut self, step: u32, index: u32, is_read_later: bool) {
         self.task.begin(step, index, is_read_later);
+        self.order_dependent.clear();
+        self.order_dependent_filter = 0;
     }
 
     /// On the thread of the task, after everything else that this checker does.

@@ -1508,6 +1508,114 @@ export function g<N extends never>(part: { type: "a"; id: string } | { type: "b"
       const { stdout } = await check(dir);
       expect(stdout).toBe("");
     });
+
+    test("a type assertion to an intersection with a deferred conditional type", async () => {
+      using dir = project({
+        "a.ts": `
+type Output<O> = [O] extends [never] ? { a?: undefined } : { a: O };
+export function f<O>(x: { t?: string } & { a: { code: number } }) {
+  return x as { t?: string } & Output<O>;
+}
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toBe("");
+    });
+
+    // TypeScript keeps the variances it measures while one of them is still being measured, so they depend on which type of a cycle is
+    // compared first. `tsc --singleThreaded` reports the error in model.ts only if global.ts is checked before it.
+    describe("variances of mutually recursive types are measured in program order", () => {
+      const files = {
+        "directives.ts": `
+export interface Binding<Value = any, Modifiers extends string = string> {
+  value: Value;
+  modifiers: Partial<Record<Modifiers, boolean>>;
+  dir: ObjectDirective<any, Value, Modifiers>;
+}
+export type Hook<Host = any, Value = any, Modifiers extends string = string> = (
+  el: Host,
+  binding: Binding<Value, Modifiers>,
+) => void;
+export type SSRHook<Value = any, Modifiers extends string = string> = (
+  binding: Binding<Value, Modifiers>,
+) => object | undefined;
+export interface ObjectDirective<Host = any, Value = any, Modifiers extends string = string> {
+  __mod?: Modifiers;
+  created?: Hook<Host, Value, Modifiers>;
+  getSSRProps?: SSRHook<Value, Modifiers>;
+}
+export type FunctionDirective<Host = any, Value = any, Modifiers extends string = string> = Hook<Host, Value, Modifiers>;
+export type Directive<Host = any, Value = any, Modifiers extends string = string> =
+  | ObjectDirective<Host, Value, Modifiers>
+  | FunctionDirective<Host, Value, Modifiers>;
+`,
+        "global.ts": `
+import type { Directive } from "./directives";
+declare function register(name: string, directive: Directive): void;
+export function use<T>(directive: Directive<T, number>) {
+  register("x", directive);
+}
+`,
+        "model.ts": `
+import type { ObjectDirective } from "./directives";
+declare const select: ObjectDirective<{ s: 1 }, any, "number">;
+declare const checkbox: ObjectDirective<{ c: 1 }>;
+function pick(tag: string) {
+  return tag === "SELECT" ? select : checkbox;
+}
+export const dynamic: ObjectDirective<{ s: 1 } | { c: 1 }> = {};
+dynamic.getSSRProps = binding => {
+  const model = pick("a");
+  return model.getSSRProps ? model.getSSRProps(binding) : undefined;
+};
+`,
+      };
+
+      test.each([1, 8])("with the earlier file, on %d threads", async threads => {
+        using dir = project(files);
+        const { stdout } = await check(dir, ["--threads", String(threads)]);
+        expect(stdout).toMatchInlineSnapshot(`
+          "model.ts(11,48): error TS2345: Argument of type 'Binding<any, string>' is not assignable to parameter of type 'Binding<any, "number">'.
+            Types of property 'dir' are incompatible.
+              Type 'ObjectDirective<any, any, string>' is not assignable to type 'ObjectDirective<any, any, "number">'.
+                Type 'string' is not assignable to type '"number"'."
+        `);
+      });
+
+      test("without the earlier file", async () => {
+        const { "global.ts": _, ...rest } = files;
+        using dir = project(rest);
+        const { stdout } = await check(dir);
+        expect(stdout).toBe("");
+      });
+    });
+
+    test("an intersection with a conditional type whose constraint is any", async () => {
+      using dir = project({
+        "a.ts": `
+type Values = Record<string, any>;
+type OptionsIfAvailable<T> = T extends { Options: infer O } ? O : any;
+interface Model {
+  Options: { x?: number };
+}
+interface Runnable<I, O> {
+  invoke(input: I): O;
+}
+class Base {
+  call(values: Values & { signal?: string; timeout?: number }): Values {
+    return values;
+  }
+}
+export class Chain<M extends Model | Runnable<string, string>> extends Base {
+  call(values: Values & OptionsIfAvailable<M>): Values {
+    return super.call(values);
+  }
+}
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toBe("");
+    });
   });
 
   describe("compiler options as flags", () => {

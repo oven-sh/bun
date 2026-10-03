@@ -1188,13 +1188,19 @@ fn run_one(
         return None;
     }
 
+    // The types and symbols output of each file. An invalid task is retried, so a file can be visited twice: the last visit replaces the
+    // first, in place.
+    type Sections = Vec<(bun_sema::program::FileId, String, String)>;
+    let sections: Mutex<Sections> = Mutex::new(Vec::new());
     // One line per location: unit, line, offset, source text without line breaks, type.
     // `unit_text`: what the unit at `path` says, where that is not `file` itself.
     let write_unit = |checker: &mut bun_sema::check::Checker<'_>,
                       file: bun_sema::program::FileId,
                       path: &str,
                       unit_text: Option<&[u8]>| {
-        let Some(types) = types else { return };
+        if types.is_none() {
+            return;
+        }
         // The harness goes through the units of the test, whatever they are called.
         let mut units = roots.iter().chain(&others);
         if is_default_library(path) && !units.any(|unit| absolute(&unit.name, &cwd) == path) {
@@ -1232,8 +1238,16 @@ fn run_one(
         if checker.mark_linked_references_recursively(file) {
             lines.push_str(EMIT_ADDS_ERRORS);
         }
-        types.lock().unwrap().push_str(&lines);
-        let Some(symbols) = symbols else { return };
+        let section_of =
+            |sections: &mut Sections| sections.iter().position(|it| it.0 == file).unwrap();
+        {
+            let mut sections = sections.lock().unwrap();
+            let at = section_of(&mut sections);
+            sections[at].1.push_str(&lines);
+        }
+        if symbols.is_none() {
+            return;
+        }
         let mut lines = String::new();
         for found in checker.symbols_at_locations(file) {
             let (start, end) = (found.start as usize, (found.end as usize).min(text.len()));
@@ -1250,10 +1264,19 @@ fn run_one(
                 found.symbol_text
             ));
         }
-        symbols.lock().unwrap().push_str(&lines);
+        let mut sections = sections.lock().unwrap();
+        let at = section_of(&mut sections);
+        sections[at].2.push_str(&lines);
     };
     let write_types = |checker: &mut bun_sema::check::Checker<'_>,
                        file: bun_sema::program::FileId| {
+        {
+            let mut sections = sections.lock().unwrap();
+            match sections.iter_mut().find(|it| it.0 == file) {
+                Some(section) => (section.1.clear(), section.2.clear()).0,
+                None => sections.push((file, String::new(), String::new())),
+            }
+        }
         let files = &checker.p.files;
         let path = text(&files.modules[file.idx()].path);
         // `GetSourceFile` of a path in `redirectFilesByPath` is the copy of the package that is kept: the harness walks it once more,
@@ -1347,7 +1370,9 @@ fn run_one(
             .iter()
             .position(|&it| it == file)
             .unwrap_or(order.len());
-        dts.unwrap().lock().unwrap().push((place as u32, section));
+        let mut written = dts.unwrap().lock().unwrap();
+        written.retain(|it| it.0 != place as u32);
+        written.push((place as u32, section));
     };
     let closed_a_circle = AtomicBool::new(false);
     let note_circle = |program: &bun_sema::check::Program| {
@@ -1391,9 +1416,7 @@ fn run_one(
     // `compileFilesWithHost`: the diagnostics compared are those of a program that is only checked. The types and the symbols are read
     // from another, which has emitted first. The order of asking shows only where a circle closes, so the other is made only there.
     if closed_a_circle.load(Ordering::Relaxed) {
-        for written in [types, symbols].into_iter().flatten() {
-            written.lock().unwrap().clear();
-        }
+        sections.lock().unwrap().clear();
         let mut project = parsed_command_line();
         project.options.emits_first = true;
         bun_sema_driver::check_project(
@@ -1403,6 +1426,14 @@ fn run_one(
             Report::default(),
             std::time::Instant::now(),
         );
+    }
+    for (_, types_of_file, symbols_of_file) in sections.lock().unwrap().iter() {
+        if let Some(types) = types {
+            types.lock().unwrap().push_str(types_of_file);
+        }
+        if let Some(symbols) = symbols {
+            symbols.lock().unwrap().push_str(symbols_of_file);
+        }
     }
     let inputs = config_unit
         .iter()

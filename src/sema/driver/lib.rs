@@ -153,7 +153,15 @@ impl Plan {
         // ONE STEP WITH ALL OTHER FILES. The heaviest file of a program takes about as long as a thread's share of the whole check, so
         // there is one step in which heavy files run, and they are started first.
         let rest = (0..count).filter(|file| warm_up.binary_search(file).is_err());
-        let rest: Vec<usize> = rest.collect();
+        let chunks = Plan::cut(rest.collect(), size_of, options);
+        if !chunks.is_empty() {
+            steps.push(chunks);
+        }
+        Plan { steps }
+    }
+
+    /// The tasks of one step for `rest`, which is in program order.
+    fn cut(rest: Vec<usize>, size_of: &dyn Fn(usize) -> usize, options: PlanOptions) -> Vec<Task> {
         let bytes: usize = rest.iter().map(|&file| size_of(file)).sum();
         // About `min_tasks` tasks, whatever the size of the program: enough for any number of threads, and every further task computes
         // its own copy of what it shares with the others.
@@ -182,10 +190,7 @@ impl Plan {
                 }
             }
         }
-        if !chunks.is_empty() {
-            steps.push(chunks);
-        }
-        Plan { steps }
+        chunks
     }
 }
 
@@ -298,7 +303,8 @@ pub struct Request<'a> {
     /// Called with it again when all of it is checked.
     pub checked: Option<&'a (dyn Fn(&Program) + Sync)>,
     /// Called for each file right after it is checked, on the thread that checked it, while the types that are local to the file
-    /// are still alive. The way to read the type of every expression without `keeps_everything`.
+    /// are still alive. The way to read the type of every expression without `keeps_everything`. An invalid task is retried
+    /// (`Program::validate`), so this can be called more than once for a file: the last call counts.
     pub after_file: Option<&'a (dyn Fn(&mut bun_sema::check::Checker<'_>, FileId) + Sync)>,
     /// Called with the path and the text of each declaration file that a project of a `tsc -b` run leaves for those that reference it.
     /// Nothing is written to the disk: this is the way to see them.
@@ -1404,7 +1410,15 @@ fn check_what_is_named(
         /// The files in which the native stack ran out.
         incomplete: Vec<FileId>,
         generic_relation_entries_not_published: u64,
+        /// The files whose trees are freed once the task is validated: a retry reads them again.
+        trees_to_free: Vec<FileId>,
     }
+    let free_trees = |files: Vec<FileId>| {
+        for file in files {
+            // SAFETY: the only task that reads the tree has ended and will not be retried.
+            unsafe { program.files.free_tree(file) };
+        }
+    };
     // `task`: its step, its place in the step, and `is_read_later`. `None`: the files are checked outside the plan.
     let check_chunk = |files: &[FileId], wanted: Wanted, task: Option<(usize, usize, bool)>| {
         let mut checker = new_checker(wanted);
@@ -1430,23 +1444,23 @@ fn check_what_is_named(
             }
         }
         deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
-        let outcome = Outcome {
+        let mut outcome = Outcome {
             finished: task.map(|_| checker.end_task()),
             checked,
             incomplete,
             generic_relation_entries_not_published: checker
                 .generic_relation_entries_not_published(),
+            trees_to_free: Vec::new(),
         };
         // It holds references into trees.
         drop(checker);
         // At the end of the task, not of the file: an entry of the buffer can hold a value that is bound to an earlier file of the task.
         // A freed tree does not come back, and a file that is checked outside the plan is checked again by its task.
-        if task.is_some() {
-            for &file in files {
-                if program.files.modules[file.idx()].is_leaf {
-                    // SAFETY: this task is the only one that reads the tree, and it has ended.
-                    unsafe { program.files.free_tree(file) };
-                }
+        if let Some(finished) = &outcome.finished {
+            let is_leaf = |file: &&FileId| program.files.modules[file.idx()].is_leaf;
+            outcome.trees_to_free = files.iter().filter(is_leaf).copied().collect();
+            if !finished.can_be_invalid() {
+                free_trees(std::mem::take(&mut outcome.trees_to_free));
             }
         }
         outcome
@@ -1506,7 +1520,8 @@ fn check_what_is_named(
         for_each_parallel(threads, count, work);
     };
     let steps: Guarded<Vec<StepReport>> = Guarded::new(Vec::new());
-    let run_step = |number: usize, step: &[Task], wanted: Wanted| {
+    // Returns the invalid tasks.
+    let run_round = |number: usize, step: &[Task], wanted: Wanted| -> Vec<Task> {
         // After the last step the published state is read by the loop over the files that are not checked, which runs with `after_file`,
         // and by a caller that goes on to ask about the program.
         let is_read_later = number + 1 != plan.steps.len()
@@ -1538,6 +1553,29 @@ fn check_what_is_named(
         let mut finished: Vec<Finished> = (outcomes.iter_mut())
             .map(|outcome| outcome.finished.take().unwrap())
             .collect();
+        // The checkers of `checkerPool` share nothing, so there is no serial order to validate against.
+        let mut invalid: Vec<Task> = Vec::new();
+        if checker_count == 0 {
+            let is_invalid = program.validate(&finished);
+            let mut at = is_invalid.iter();
+            finished.retain(|_| !*at.next().unwrap());
+            let mut at = is_invalid.iter().zip(step);
+            outcomes.retain(|_| {
+                let (&is_invalid, task) = at.next().unwrap();
+                if is_invalid {
+                    if let Some(progress) = request.progress {
+                        let bytes = task.iter().map(|&file| bytes_of(file)).sum();
+                        progress.checked.fetch_sub(task.len(), Ordering::Relaxed);
+                        progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
+                    }
+                    invalid.push(task.clone());
+                }
+                !is_invalid
+            });
+        }
+        for outcome in &mut outcomes {
+            free_trees(std::mem::take(&mut outcome.trees_to_free));
+        }
         let mut foreign_evaluations = [0u64; FOREIGN_EVALUATION_KINDS.len()];
         for finished in &finished {
             for (sum, &more) in foreign_evaluations
@@ -1570,6 +1608,16 @@ fn check_what_is_named(
             generic_relation_entries_not_published,
             foreign_evaluations,
         });
+        invalid
+    };
+    // Retries the files of invalid tasks until every task is valid (`Program::validate`). They are partitioned again, because a few long
+    // tasks would leave most threads idle. The first task of a round is always valid, so every round has fewer files.
+    let run_step = |number: usize, step: &[Task], wanted: Wanted| {
+        let mut invalid = run_round(number, step, wanted);
+        while !invalid.is_empty() {
+            let again = Plan::cut(invalid.concat(), &size_of, request.plan_options);
+            invalid = run_round(number, &again, wanted);
+        }
     };
     let global_errors = || -> Vec<Diagnostic> {
         program

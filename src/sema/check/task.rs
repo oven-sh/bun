@@ -14,11 +14,12 @@ use super::sink::Reported;
 use super::{Program, Query};
 use crate::atom::Interner;
 use crate::local::{Buffer, FileLocalTables};
-use crate::program::FileId;
+use crate::program::{FileId, Sym};
 use crate::table::{Applied, Entries, Finishing, Handle, Payload, Publish, Share};
 use crate::types::{Link, Marks, OwnRecords, OwnStore};
 use crate::util::{InParallel, for_each_mut};
 use std::cell::UnsafeCell;
+use std::sync::Arc;
 
 /// Permission to store a finished result. `Checker::leave` and the scopes in check/mod.rs make one, and nothing else does.
 #[derive(Copy, Clone)]
@@ -51,6 +52,8 @@ pub struct Task {
     pub(super) closed_a_cycle: bool,
     /// How many queries about a source file of another component the task has evaluated, by `FOREIGN_EVALUATION_KINDS`.
     pub(super) foreign_evaluations: [u32; 14],
+    /// See `Finished::order_dependent_variances`.
+    pub(super) order_dependent_variances: Vec<OrderDependent>,
     /// The types, signatures, mappers and component lists that the task has created.
     pub(crate) own: OwnStore,
     /// Interior-mutable because every access to a table takes `&Task`: some are made under `&Checker`. See `Task::buffer`.
@@ -69,6 +72,7 @@ impl Task {
             diagnostics: Vec::new(),
             closed_a_cycle: false,
             foreign_evaluations: [0; 14],
+            order_dependent_variances: Vec::new(),
             own: OwnStore::default(),
             buffer: UnsafeCell::default(),
             file_local: UnsafeCell::default(),
@@ -115,6 +119,7 @@ impl Task {
         self.checker_count = 0;
         self.diagnostics.clear();
         (self.closed_a_cycle, self.foreign_evaluations) = (false, [0; 14]);
+        self.order_dependent_variances.clear();
         self.own = OwnStore::default();
         self.buffer.get_mut().clear();
         self.file_local.get_mut().clear();
@@ -175,6 +180,7 @@ impl Task {
 
         let own = self.own.finish(marks);
         let (closed_a_cycle, foreign_evaluations) = (self.closed_a_cycle, self.foreign_evaluations);
+        let order_dependent_variances = std::mem::take(&mut self.order_dependent_variances);
         self.drop_everything();
         Finished {
             step,
@@ -182,6 +188,7 @@ impl Task {
             diagnostics,
             closed_a_cycle,
             foreign_evaluations,
+            order_dependent_variances,
             own,
             link: Link::default(),
             tables: handed_over,
@@ -198,6 +205,8 @@ pub struct Finished {
     pub(super) diagnostics: Vec<(Option<Query>, Reported)>,
     pub closed_a_cycle: bool,
     pub foreign_evaluations: [u32; 14],
+    /// See `Program::validate`.
+    pub(super) order_dependent_variances: Vec<OrderDependent>,
     /// The own records that the entries mention, in creation order.
     pub own: OwnRecords,
     /// `Program::link` fills it in, `publish` follows it.
@@ -206,6 +215,49 @@ pub struct Finished {
     tables: Vec<Option<Entries>>,
     /// How many entries there are in `tables`.
     buffered: u64,
+}
+
+impl Finished {
+    /// Whether `Program::validate` can find the task invalid.
+    pub fn can_be_invalid(&self) -> bool {
+        let mut measured = self.order_dependent_variances.iter();
+        measured.any(|it| it.compared | it.failed | it.inferred != 0)
+    }
+}
+
+/// Variances that a task computed during a cycle (`variances_worker` was re-entered for a symbol in progress), so their value depends on
+/// the entry point into the cycle. The masks record how the task used them: one bit per type parameter, the last bit for the 32nd on.
+pub struct OrderDependent {
+    pub(super) sym: Sym,
+    pub(super) variances: Arc<[u8]>,
+    /// Two different type arguments were compared under this variance and are related.
+    pub(super) compared: u32,
+    /// Two type arguments were compared under this variance and are not related, so the comparison of the type argument lists fails
+    /// whatever the other variances are. `relateVariances` then tests three more properties of the list.
+    pub(super) failed: u32,
+    /// The target type argument was `void` in a comparison that failed (`hasCovariantVoidArgument`).
+    pub(super) void_targets: u32,
+    /// Inference read this variance. It only tests for contravariance.
+    pub(super) inferred: u32,
+}
+
+impl OrderDependent {
+    /// Whether a result of the task can differ under the variances `serial`.
+    pub(super) fn conflicts_with(&self, serial: &[u8]) -> bool {
+        // `VarianceFlagsVarianceMask`: invariant, covariant, contravariant. `VarianceFlagsAllowsStructuralFallback`.
+        let is = |variance: u8, kind: u8| variance & 7 == kind;
+        let some =
+            |variances: &[u8], test: &dyn Fn(u8) -> bool| variances.iter().any(|&it| test(it));
+        let pairs = self.variances.iter().zip(serial).enumerate();
+        pairs.into_iter().any(|(i, (&own, &serial))| {
+            let bit = 1 << i.min(31);
+            (self.compared | self.failed) & bit != 0 && own != serial
+                || self.void_targets & bit != 0 && is(own, 1) != is(serial, 1)
+                || self.inferred & bit != 0 && is(own, 2) != is(serial, 2)
+        }) || self.failed != 0
+            && (some(&self.variances, &|it| it & 24 != 0) != some(serial, &|it| it & 24 != 0)
+                || some(&self.variances, &|it| is(it, 0)) != some(serial, &|it| is(it, 0)))
+    }
 }
 
 /// What a barrier did, for `--timing`. Each is a function of the program. `buffered == published + lost`.

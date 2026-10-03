@@ -5,6 +5,7 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
+import type net from "node:net";
 import {
   listeningServer,
   mysqlAckSessionSetup,
@@ -74,6 +75,25 @@ test("frontend message builders encode per §55.7", () => {
   expect(pgExecute()).toEqual(Buffer.from("E\x00\x00\x00\x09\x00\x00\x00\x00\x00", "binary"));
   expect(pgFlush()).toEqual(Buffer.from("H\x00\x00\x00\x04", "binary"));
   expect(pgSync()).toEqual(Buffer.from("S\x00\x00\x00\x04", "binary"));
+});
+
+test("listeningServer rejects when the bind fails", async () => {
+  // A port that is in use: the second bind fails on every platform, whatever the network setup is.
+  const occupant = await listeningServer(() => {});
+  let second: net.Server | undefined;
+  try {
+    const outcome = await listeningServer(() => {}, "127.0.0.1", occupant.port).then(
+      ({ server }) => {
+        second = server;
+        return "listening";
+      },
+      error => error.code,
+    );
+    expect(outcome).toBe("EADDRINUSE");
+  } finally {
+    second?.close();
+    occupant.server.close();
+  }
 });
 
 test("postgres: pgAuthenticationOk + pgReadyForQuery are accepted by Bun's parser", async () => {

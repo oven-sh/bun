@@ -345,6 +345,89 @@ describe("package imports Bun built-in targets", () => {
     });
   });
 
+  const arrayTargets: { name: string; target: unknown; expected: string[]; key?: string; specifier?: string }[] = [
+    {
+      name: "recognized builtin before fallback",
+      target: ["bun:sqlite", "./fallback.cjs"],
+      expected: Array(3).fill("fallback"),
+    },
+    {
+      name: "unknown builtin before fallback",
+      target: ["bun:not-a-builtin", "./fallback.cjs"],
+      expected: Array(3).fill("fallback"),
+    },
+    { name: "nested array", target: [["bun:sqlite"], "./fallback.cjs"], expected: Array(3).fill("fallback") },
+    {
+      name: "condition inside array",
+      target: [{ default: "bun:sqlite" }, "./fallback.cjs"],
+      expected: Array(3).fill("fallback"),
+    },
+    {
+      name: "array inside condition",
+      target: { default: ["bun:sqlite", "./fallback.cjs"] },
+      expected: Array(3).fill("fallback"),
+    },
+    {
+      name: "pattern array",
+      key: "#target/*",
+      specifier: "#target/fallback",
+      target: ["bun:sqlite", "./*.cjs"],
+      expected: Array(3).fill("fallback"),
+    },
+    { name: "builtin only", target: ["bun:sqlite"], expected: Array(3).fill("ERR_INVALID_PACKAGE_TARGET") },
+    {
+      name: "invalid target before builtin",
+      target: ["../invalid.cjs", "bun:sqlite"],
+      expected: Array(3).fill("ERR_INVALID_PACKAGE_TARGET"),
+    },
+    {
+      name: "nested invalid target before conditional builtin",
+      target: [["../invalid.cjs"], { default: "bun:sqlite" }],
+      expected: Array(3).fill("ERR_INVALID_PACKAGE_TARGET"),
+    },
+    {
+      name: "missing file before builtin",
+      target: ["./missing.cjs", "bun:sqlite"],
+      expected: ["ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "MODULE_NOT_FOUND"],
+    },
+  ];
+  test.concurrent.each(arrayTargets)(
+    "keeps Node array-target semantics: $name",
+    async ({ target, expected, key = "#target", specifier = "#target" }) => {
+      using dir = tempDir("imports-bun-array", {
+        "package.json": JSON.stringify({ imports: { [key]: target } }),
+        "fallback.cjs": "exports.Database = 'fallback';",
+        "entry.mjs": `
+        import { createRequire } from "node:module";
+        const require = createRequire(import.meta.url);
+        const specifier = ${JSON.stringify(specifier)};
+        const results = [];
+        for (const load of [
+          async () => (await import(specifier)).Database,
+          () => require(specifier).Database,
+          () => require.resolve(specifier).endsWith("fallback.cjs") ? "fallback" : "wrong-target",
+        ]) {
+          try { results.push(await load()); } catch (error) { results.push(error.code); }
+        }
+        console.log(JSON.stringify(results));
+      `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(expected) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
   test.concurrent.each([
     "bun:not-a-builtin",
     "bun:test?query",

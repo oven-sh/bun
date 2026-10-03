@@ -1859,7 +1859,8 @@ impl<'a> ESModule<'a> {
 
             if let Some(main_export) = main_export {
                 if !matches!(main_export.data, EntryData::Null) {
-                    let result = self.resolve_target::<false>(package_url, main_export, b"", false);
+                    let result =
+                        self.resolve_target::<false>(package_url, main_export, b"", false, false);
                     if result.status != Status::Null && result.status != Status::Undefined {
                         return Self::attach_failure_key(result, b".");
                     }
@@ -1913,7 +1914,8 @@ impl<'a> ESModule<'a> {
                     log.add_note_fmt(format_args!("Found \"{}\"", bstr::BStr::new(match_key)));
                 }
 
-                let result = self.resolve_target::<false>(package_url, target, b"", is_imports);
+                let result =
+                    self.resolve_target::<false>(package_url, target, b"", is_imports, false);
                 return Self::attach_failure_key(result, match_key);
             }
         }
@@ -1955,6 +1957,7 @@ impl<'a> ESModule<'a> {
                                 target,
                                 subpath,
                                 is_imports,
+                                false,
                             );
                             return Self::attach_failure_key(result, &expansion.key);
                         }
@@ -1973,7 +1976,13 @@ impl<'a> ESModule<'a> {
                             ));
                         }
                         let mut result = Self::attach_failure_key(
-                            self.resolve_target::<false>(package_url, target, subpath, is_imports),
+                            self.resolve_target::<false>(
+                                package_url,
+                                target,
+                                subpath,
+                                is_imports,
+                                false,
+                            ),
                             &expansion.key,
                         );
                         if result.status == Status::Exact
@@ -2036,6 +2045,7 @@ impl<'a> ESModule<'a> {
         target: &Entry,
         subpath: &[u8],
         internal: bool,
+        in_array: bool,
     ) -> Resolution {
         match &target.data {
             EntryData::String(str) => {
@@ -2158,7 +2168,8 @@ impl<'a> ESModule<'a> {
                         && !strings::has_prefix(str, b"../")
                         && !strings::has_prefix(str, b"/")
                         && (!self.validate_package_config
-                            || (str.starts_with(b"bun:")
+                            || (!in_array
+                                && str.starts_with(b"bun:")
                                 && bun_resolve_builtins::Alias::has(
                                     str,
                                     bun_ast::Target::Bun,
@@ -2363,6 +2374,7 @@ impl<'a> ESModule<'a> {
                             &entry.value,
                             subpath,
                             internal,
+                            in_array,
                         );
                         if result.status.is_undefined() {
                             continue;
@@ -2414,6 +2426,7 @@ impl<'a> ESModule<'a> {
                         target_value,
                         subpath,
                         internal,
+                        true,
                     );
                     if result.status == Status::InvalidPackageTarget
                         || result.status == Status::Null

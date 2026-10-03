@@ -4938,6 +4938,125 @@ it("http2 hands out the cached name strings for pseudo-headers and known header 
   }
 });
 
+// node calls options.onError only from respondWithFile(): for a failed open or fstat, for a
+// directory, and for another non-regular file with an offset or a length. respondWithFD() never
+// reads it (doSendFD and processRespondWithFD in lib/internal/http2/core.js, checked on node v26.3.0).
+it("http2 respondWithFD never calls options.onError, like Node.js", async () => {
+  const badFd = 2 ** 30; // never a valid descriptor: fstat fails with EBADF
+  const fileFd = fs.openSync(import.meta.path, "r");
+  const dirFd = fs.openSync(import.meta.dir, "r");
+  const ok = { ":status": 200 };
+  const rejected = { ":status": 200, ":method": "GET" }; // respond() rejects a request pseudo-header
+  const headerError = { status: null, serverError: "ERR_HTTP2_INVALID_PSEUDOHEADER" };
+  const statCheck = () => {};
+  const ignoresOnError = [
+    {
+      name: "respondWithFD(bad fd), statCheck",
+      call: (stream, options) => stream.respondWithFD(badFd, ok, { ...options, statCheck }),
+    },
+    { name: "respondWithFD(bad fd)", call: (stream, options) => stream.respondWithFD(badFd, ok, options) },
+    {
+      name: "respondWithFD(directory fd), statCheck",
+      call: (stream, options) => stream.respondWithFD(dirFd, ok, { ...options, statCheck }),
+    },
+    { name: "respondWithFD(directory fd)", call: (stream, options) => stream.respondWithFD(dirFd, ok, options) },
+    {
+      name: "respondWithFD(file fd), rejected headers, statCheck",
+      call: (stream, options) => stream.respondWithFD(fileFd, rejected, { ...options, statCheck }),
+      ...headerError,
+    },
+    {
+      name: "respondWithFD(file fd), rejected headers",
+      call: (stream, options) => stream.respondWithFD(fileFd, rejected, options),
+      ...headerError,
+    },
+    // Two failures at once: the descriptor is bad, and respond() rejects the headers in the fstat callback.
+    {
+      name: "respondWithFD(bad fd), rejected headers",
+      call: (stream, options) => stream.respondWithFD(badFd, rejected, options),
+      ...headerError,
+    },
+    {
+      name: "respondWithFD(directory fd), rejected headers",
+      call: (stream, options) => stream.respondWithFD(dirFd, rejected, options),
+      ...headerError,
+    },
+  ];
+  // respondWithFile() does call onError for these, and the handler's response arrives.
+  const callsOnError = {
+    ENOENT: (stream, options) => stream.respondWithFile(path.join(import.meta.dir, "does-not-exist"), ok, options),
+    ERR_HTTP2_SEND_FILE: (stream, options) => stream.respondWithFile(import.meta.dir, ok, options),
+  };
+
+  const server = http2.createServer();
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+
+  // One request. `onError` is undefined, "answers 404" (the handler the node docs show), or
+  // "must not run" (the handler destroys the stream, so a call ends the request and fails an
+  // assertion below).
+  async function request(call, { onError }) {
+    const events = { onError: [], serverError: null, status: null, body: "", clientError: null };
+    const serverStreamClosed = Promise.withResolvers();
+    server.once("stream", stream => {
+      stream.on("error", err => (events.serverError = err.code));
+      stream.on("close", serverStreamClosed.resolve);
+      const handler = err => {
+        events.onError.push(err.code);
+        if (onError === "must not run") return stream.destroy();
+        stream.respond({ ":status": 404 });
+        stream.end("from onError");
+      };
+      call(stream, onError === undefined ? {} : { onError: handler });
+    });
+    const req = client.request({ ":path": "/" });
+    req.setEncoding("utf8");
+    req.on("response", headers => (events.status = headers[":status"]));
+    req.on("data", chunk => (events.body += chunk));
+    req.on("error", err => (events.clientError = err.message));
+    req.end();
+    await Promise.all([new Promise(resolve => req.on("close", resolve)), serverStreamClosed.promise]);
+    return events;
+  }
+
+  try {
+    for (const { name, call, ...reported } of ignoresOnError) {
+      // Without onError the stream is destroyed with an error and the client sees a reset.
+      const withoutOnError = { name, ...(await request(call, {})) };
+      expect(withoutOnError).toMatchObject({
+        body: "",
+        clientError: "Stream closed with error code NGHTTP2_INTERNAL_ERROR",
+        ...reported,
+      });
+      expect(withoutOnError.serverError).toBeString();
+      // With onError the outcome is the same, and nothing calls the handler.
+      const withOnError = { name, ...(await request(call, { onError: "must not run" })) };
+      expect(withOnError).toEqual({ ...withoutOnError, onError: [] });
+    }
+    // onError belongs to one call. A respondWithFile() that starts on the same stream before the
+    // fstat of respondWithFD() returns does not hand it to that fstat callback.
+    const bothInFlight = (stream, options) => {
+      stream.respondWithFD(badFd, ok, { ...options, statCheck });
+      stream.respondWithFile(import.meta.path, ok);
+    };
+    expect(await request(bothInFlight, { onError: "must not run" })).toMatchObject({ onError: [] });
+    for (const [code, call] of Object.entries(callsOnError)) {
+      expect(await request(call, { onError: "answers 404" })).toEqual({
+        onError: [code],
+        serverError: null,
+        status: 404,
+        body: "from onError",
+        clientError: null,
+      });
+    }
+  } finally {
+    client.close();
+    server.close();
+    fs.closeSync(fileFd);
+    fs.closeSync(dirFd);
+  }
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;

@@ -3232,6 +3232,112 @@ describe("interpolated values in reserved-word position", () => {
     .runAsTest("interpolated reserved words in argument position pass through");
 });
 
+// The message of the error that `$` throws when the script is created, before any command runs.
+function shellParseError(source: string): string | undefined {
+  try {
+    $`${{ raw: source }}`;
+  } catch (e) {
+    return (e as Error).message;
+  }
+  return undefined;
+}
+
+// Bun Shell does not implement these words. One in command position fails the
+// parse, so the lines of a loop body never run as plain commands.
+describe("unsupported reserved words", () => {
+  const words = ["for", "while", "until", "select", "case", "esac", "function", "do", "done"] as const;
+  const msg = (w: string) =>
+    `"${w}" is a reserved word that Bun Shell does not support yet. To run a command named "${w}", quote it.`;
+  const script = (source: string) => TestBuilder.command`${{ raw: source }}`;
+
+  test.each(words)("%s in command position fails the parse", w => {
+    expect(shellParseError(`${w} NEVER_RUNS`)).toBe(msg(w));
+  });
+
+  test("new $.Shell() throws the same error", () => {
+    const shell = new $.Shell();
+    expect(() => {
+      shell`while true; do echo NEVER_RUNS; done`;
+    }).toThrow(msg("while"));
+  });
+
+  test.each([
+    ["for: the body does not run", 'for f in one two three; do\n  echo "f=[$f]"\ndone', "for"],
+    ["while: the body does not run", "while false; do\n  echo BODY\ndone\necho tail", "while"],
+    ["until: the body does not run", "until true\ndo\n  echo BODY\ndone", "until"],
+    ["case: the body does not run", "case x in\n  (x) echo BODY;;\nesac", "case"],
+    ["an assignment before for: do fails, as in bash", "FOO=1 for f in a b\ndo\n  echo BODY\ndone", "do"],
+    ["after a semicolon", "echo before; while false; do echo b; done", "while"],
+    ["after a newline", "echo before\nwhile false; do echo b; done", "while"],
+    ["after &&", "true && while false; do echo b; done", "while"],
+    ["after ||", "false || while false; do echo b; done", "while"],
+    ["after a pipe", "echo a | while read l; do echo b; done", "while"],
+    ["in a subshell", "(while false; do echo b; done)", "while"],
+    ["in a command substitution", "echo $(while false; do echo b; done)", "while"],
+    ["in backticks", "echo `while false; do echo b; done`", "while"],
+    ["in an if condition", "if while false; do echo b; done; then echo c; fi", "while"],
+    ["in a then body", "if true; then while false; do echo b; done; fi", "while"],
+    ["in an else body", "if false; then echo a; else while false; do echo b; done; fi", "while"],
+  ])("%s", (_name, source, word) => {
+    expect(shellParseError(source)).toBe(msg(word));
+  });
+
+  describe("a word that is not a bare reserved word stays a plain word", () => {
+    for (const w of words) {
+      script(`"${w}"`).stderr(`bun: command not found: ${w}\n`).exitCode(1).runAsTest(`double-quoted ${w}`);
+      script(`'${w}'`).stderr(`bun: command not found: ${w}\n`).exitCode(1).runAsTest(`single-quoted ${w}`);
+      script(`\\${w}`).stderr(`bun: command not found: ${w}\n`).exitCode(1).runAsTest(`backslash-escaped ${w}`);
+      TestBuilder.command`${w}`.stderr(`bun: command not found: ${w}\n`).exitCode(1).runAsTest(`interpolated ${w}`);
+      TestBuilder.command`${{ raw: $.escape(w) }}`
+        .stderr(`bun: command not found: ${w}\n`)
+        .exitCode(1)
+        .runAsTest(`$.escape(${JSON.stringify(w)}) in a raw value`);
+    }
+
+    // A substring of a 16-bit string is a 16-bit string.
+    const utf16For = "for\u4e2d".slice(0, 3);
+    TestBuilder.command`${utf16For}`
+      .stderr("bun: command not found: for\n")
+      .exitCode(1)
+      .runAsTest("an interpolated 16-bit string");
+
+    TestBuilder.command`${["done"]}`.stderr("bun: command not found: done\n").exitCode(1).runAsTest("an array element");
+
+    TestBuilder.command`${Bun.file("done")}`
+      .stderr("bun: command not found: done\n")
+      .exitCode(1)
+      .runAsTest("a Bun.file path");
+
+    script("echo for while until select case esac function do done")
+      .stdout("for while until select case esac function do done\n")
+      .runAsTest("in argument position");
+
+    script("f\\or").stderr("bun: command not found: for\n").exitCode(1).runAsTest("a backslash inside the word");
+    script("\\echo a; \\for; f\\or; echo b; \\done")
+      .stdout("a\nb\n")
+      .stderr("bun: command not found: for\nbun: command not found: for\nbun: command not found: done\n")
+      .exitCode(1)
+      .runAsTest("several escaped words in one script");
+    script("forx").stderr("bun: command not found: forx\n").exitCode(1).runAsTest("a longer word");
+    script("x=1; for$x").stderr("bun: command not found: for1\n").exitCode(1).runAsTest("a word with a variable");
+    script("for=1; echo $for").stdout("1\n").runAsTest("an assignment");
+    script("FOO=1 for f in a b").stderr("bun: command not found: for\n").exitCode(1).runAsTest("after an assignment");
+  });
+
+  test("$.escape quotes every reserved word", () => {
+    for (const w of [...words, "if", "then", "elif", "else", "fi"]) {
+      expect($.escape(w)).toBe(`"${w}"`);
+    }
+    expect($.escape("for\u4e2d".slice(0, 3))).toBe('"for"');
+    expect($.escape("forx")).toBe("forx");
+  });
+
+  TestBuilder.command`${{ raw: $.escape("if") }} NEVER_RUNS`
+    .stderr("bun: command not found: if\n")
+    .exitCode(1)
+    .runAsTest('$.escape("if") in a raw value stays a plain word');
+});
+
 test("redirect target buffer stays attached while a builtin command is running", async () => {
   // A builtin with `> ${buf}` caches the buffer's raw pointer and length for
   // the whole (asynchronous) lifetime of the command. The backing store must

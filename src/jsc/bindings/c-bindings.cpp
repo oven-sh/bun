@@ -687,10 +687,9 @@ extern "C" struct mach_header __dso_handle;
 #endif
 
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
-// isatty() fails with EBADF on a closed fd and on an open O_PATH descriptor. Only a closed fd
-// becomes /dev/null. An open one stays what the parent passed.
 static NEVER_INLINE void openDevNullIfStdioIsClosed(int fd)
 {
+    // isatty() fails with EBADF on an open O_PATH descriptor too.
     if (fcntl(fd, F_GETFD) != -1 || errno != EBADF)
         return;
 

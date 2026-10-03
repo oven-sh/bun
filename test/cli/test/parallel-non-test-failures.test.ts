@@ -1,13 +1,5 @@
-// Kept separate from parallel.test.ts for the reason parallel-startup-failure.test.ts
-// gives: that file has tests that routinely exceed the default timeout under ASAN
-// debug, and file-level pass/fail is what the surrounding tooling checks. These
-// tests pin how `bun test --parallel` counts and reports a failure that is not a
-// finished test.
-//
-// Each test starts a coordinator and its workers, and two of them wait for a
-// worker to crash. On an ASAN debug build that takes longer than the default
-// timeout, so each test passes the timeout that the crash tests of
-// parallel.test.ts pass.
+// Not in parallel.test.ts: that file has timing tests that fail under ASAN debug, and tooling checks pass or fail per file.
+// Each test starts a coordinator and workers, which outlasts the default timeout on ASAN debug, as in parallel.test.ts:289.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";

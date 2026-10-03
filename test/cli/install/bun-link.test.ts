@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
-import { readlinkSync } from "fs";
+import { readlinkSync, rmSync, symlinkSync } from "fs";
 import { access, mkdir, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -499,7 +499,8 @@ describe("a symlink where the lockfile has a registry package", () => {
     },
   };
   const hoisted = `[install]\nlinker = "hoisted"\n`;
-  const rootDependencies = { "no-deps": "2.0.0" };
+  const dependencies = { "no-deps": "2.0.0", "one-dep": "1.0.0" };
+  const app = { "package.json": JSON.stringify({ name: "app", dependencies }), "bunfig.toml": hoisted };
 
   // Each test has its own global directory, so each has its own `bun link` registrations.
   function commands(root: string) {
@@ -509,7 +510,7 @@ describe("a symlink where the lockfile has a registry package", () => {
       BUN_INSTALL_CACHE_DIR: join(root, ".cache"),
       BUN_CONFIG_REGISTRY: registry.registryUrl(),
     };
-    return async (cwd: string, ...args: string[]) => {
+    async function run(cwd: string, ...args: string[]) {
       await using proc = spawn({
         cmd: [bunExe(), ...args],
         cwd: join(root, cwd),
@@ -519,10 +520,15 @@ describe("a symlink where the lockfile has a registry package", () => {
         stdin: "ignore",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    async function bun(cwd: string, ...args: string[]) {
+      const { stdout, stderr, exitCode } = await run(cwd, ...args);
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(0);
       return { stdout, stderr };
-    };
+    }
+    return { run, bun };
   }
 
   function isLink(path: string) {
@@ -534,82 +540,83 @@ describe("a symlink where the lockfile has a registry package", () => {
     }
   }
 
+  function linkToCheckout(root: string, slot: string) {
+    rmSync(slot, { recursive: true, force: true });
+    symlinkSync(join(root, "checkout"), slot, "junction");
+  }
+
   const versionOf = async (dir: string) => (await file(join(dir, "package.json")).json()).version;
 
-  async function stateOf(root: string, slot: string, checkoutDir = "checkout") {
-    const own = join(root, checkoutDir, "node_modules", "no-deps");
+  async function checkoutState(root: string) {
+    const own = join(root, "checkout", "node_modules", "no-deps");
+    return {
+      files: await readdirSorted(join(root, "checkout")),
+      "no-deps": { files: await readdirSorted(own), version: await versionOf(own) },
+    };
+  }
+  const untouched = {
+    files: ["checkout.txt", "node_modules", "package.json"],
+    "no-deps": { files: ["checkout.txt", "package.json"], version: "2.0.0" },
+  };
+
+  async function stateOf(root: string, slot: string) {
     return {
       slot: {
         link: isLink(slot),
         files: await readdirSorted(slot),
         "no-deps": await versionOf(join(slot, "node_modules", "no-deps")),
       },
-      checkout: {
-        files: await readdirSorted(join(root, checkoutDir)),
-        "no-deps": { files: await readdirSorted(own), version: await versionOf(own) },
-      },
+      checkout: await checkoutState(root),
     };
   }
-
   const replaced = {
     slot: { link: false, files: ["node_modules", "package.json"], "no-deps": "1.0.1" },
-    checkout: {
-      files: ["checkout.txt", "node_modules", "package.json"],
-      "no-deps": { files: ["checkout.txt", "package.json"], version: "2.0.0" },
-    },
+    checkout: untouched,
   };
 
   test.concurrent("bun add replaces the link that bun link --save wrote", async () => {
     using dir = tempDir("bun-link-slot-", {
       checkout,
-      app: { "package.json": JSON.stringify({ name: "app", dependencies: rootDependencies }), "bunfig.toml": hoisted },
+      app: {
+        "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "2.0.0" } }),
+        "bunfig.toml": hoisted,
+      },
     });
     const root = String(dir);
-    const bun = commands(root);
+    const { bun } = commands(root);
     const slot = join(root, "app", "node_modules", "one-dep");
 
     await bun("checkout", "link");
     await bun("app", "link", "--save", "one-dep");
-    await bun("app", "install");
     expect(isLink(slot)).toBe(true);
 
     await bun("app", "add", "one-dep@1.0.0");
     expect(await stateOf(root, slot)).toEqual(replaced);
   });
 
-  test.concurrent("bun install replaces the link that bun link wrote without --save", async () => {
-    using dir = tempDir("bun-link-slot-", {
-      checkout,
-      app: {
-        "package.json": JSON.stringify({ name: "app", dependencies: { ...rootDependencies, "one-dep": "1.0.0" } }),
-        "bunfig.toml": hoisted,
-      },
-    });
+  test.concurrent("bun install replaces a link to a folder with the name and the version of the package", async () => {
+    using dir = tempDir("bun-link-slot-", { checkout, app });
     const root = String(dir);
-    const bun = commands(root);
+    const { bun } = commands(root);
     const slot = join(root, "app", "node_modules", "one-dep");
 
-    await bun("checkout", "link");
     await bun("app", "install");
-    await bun("app", "link", "one-dep");
-    expect(isLink(slot)).toBe(true);
+    linkToCheckout(root, slot);
 
     await bun("app", "install");
     expect(await stateOf(root, slot)).toEqual(replaced);
   });
 
   test.concurrent("bun install replaces the link of a folder that is not a workspace any more", async () => {
-    const dependencies = { ...rootDependencies, "one-dep": "1.0.0" };
     using dir = tempDir("bun-link-slot-", {
       "package.json": JSON.stringify({ name: "root", workspaces: ["checkout"], dependencies }),
       "bunfig.toml": hoisted,
       checkout,
     });
     const root = String(dir);
-    const bun = commands(root);
+    const { bun } = commands(root);
     const slot = join(root, "node_modules", "one-dep");
 
-    await bun(".", "install");
     await bun(".", "install");
     expect(isLink(slot)).toBe(true);
 
@@ -618,10 +625,32 @@ describe("a symlink where the lockfile has a registry package", () => {
     expect(await stateOf(root, slot)).toEqual(replaced);
   });
 
+  test.concurrent("bun install does not install below a link when the package in its place fails", async () => {
+    using dir = tempDir("bun-link-slot-", { checkout, app });
+    const root = String(dir);
+    const { bun, run } = commands(root);
+    const slot = join(root, "app", "node_modules", "one-dep");
+    const lockfile = join(root, "app", "bun.lock");
+
+    await bun("app", "install");
+
+    // The lockfile names a tarball of one-dep that the registry does not have.
+    const missing = `${registry.registryUrl()}one-dep/-/one-dep-0.0.0.tgz`;
+    const lock = (await file(lockfile).text()).replace(/("one-dep": \["one-dep@1\.0\.0", ")[^"]*"/, `$1${missing}"`);
+    expect(lock).toContain(missing);
+    await writeFile(lockfile, lock);
+    rmSync(join(root, ".cache"), { recursive: true, force: true });
+    linkToCheckout(root, slot);
+
+    const { stderr, exitCode } = await run("app", "install");
+    expect(stderr).toContain("one-dep");
+    expect({ exitCode, checkout: await checkoutState(root) }).toEqual({ exitCode: 1, checkout: untouched });
+  });
+
   test.concurrent("bun add -g warns when it replaces a package that bun link registered", async () => {
     using dir = tempDir("bun-link-slot-", { checkout });
     const root = String(dir);
-    const bun = commands(root);
+    const { bun } = commands(root);
     const registration = join("install", "global", "node_modules", "one-dep");
     const slot = join(root, ".bun", registration);
 

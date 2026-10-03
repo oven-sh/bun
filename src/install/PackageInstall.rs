@@ -1949,15 +1949,13 @@ impl<'a> PackageInstall<'a> {
     /// `uninstall_before_install` ignores a failed rename. A symlink that stays
     /// would send every file of this install into the directory it points at,
     /// so its removal is checked.
-    fn remove_symlink_at_destination(&self, destination_dir: &Dir) -> Result<(), sys::Error> {
+    fn remove_symlink_at_destination(&self, destination_dir: &Dir) -> sys::Maybe<()> {
+        let result = sys::unlinkat(destination_dir, self.destination_dir_subpath);
+        // A junction and a directory symlink are removed as directories.
         #[cfg(windows)]
-        {
-            // `rmdir` removes a junction or a directory symlink. `unlink` removes a file symlink.
-            if sys::rmdirat(destination_dir.fd(), self.destination_dir_subpath).is_ok() {
-                return Ok(());
-            }
-        }
-        match sys::unlinkat(destination_dir, self.destination_dir_subpath) {
+        let result = result
+            .or_else(|_| sys::rmdirat(destination_dir.fd(), self.destination_dir_subpath));
+        match result {
             Err(err) if err.get_errno() != sys::E::ENOENT => Err(err),
             _ => Ok(()),
         }

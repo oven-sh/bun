@@ -56,6 +56,12 @@ pub(crate) struct Options {
     /// Skip installing the package, only running the target command if its
     /// already downloaded. If its not, `bunx` exits with an error.
     pub(crate) no_install: bool,
+    /// Raw `--minimum-release-age=<N>` value, forwarded verbatim to the
+    /// spawned `bun add`.
+    pub(crate) minimum_release_age: Option<&'static [u8]>,
+    /// The same gate as integer milliseconds. It is part of the bunx cache
+    /// key, so gated and ungated installs never share a directory.
+    pub(crate) minimum_release_age_ms: Option<u64>,
 }
 
 impl Default for Options {
@@ -68,6 +74,8 @@ impl Default for Options {
             verbose_install: false,
             silent_install: false,
             no_install: false,
+            minimum_release_age: None,
+            minimum_release_age_ms: None,
         }
     }
 }
@@ -150,6 +158,35 @@ impl Options {
                         Global::exit(1);
                     }
                     opts.specified_package = Some(package_value);
+                } else if positional == b"--minimum-release-age" {
+                    i += 1;
+                    if i >= argv.len() || argv[i].as_bytes().is_empty() {
+                        Output::err_generic(
+                            "--minimum-release-age requires a value",
+                            format_args!(""),
+                        );
+                        Global::exit(1);
+                    }
+                    let value = argv[i].as_bytes();
+                    opts.minimum_release_age_ms = Some(Self::validate_minimum_release_age(value));
+                    opts.minimum_release_age = Some(value);
+                } else if positional.starts_with(b"--minimum-release-age=") {
+                    let value = &positional[b"--minimum-release-age=".len()..];
+                    if value.is_empty() {
+                        Output::err_generic(
+                            "--minimum-release-age requires a value",
+                            format_args!(""),
+                        );
+                        Global::exit(1);
+                    }
+                    opts.minimum_release_age_ms = Some(Self::validate_minimum_release_age(value));
+                    opts.minimum_release_age = Some(value);
+                } else if positional == b"--help" || positional == b"-h" {
+                    BunxCommand::exit_with_usage();
+                } else if positional != b"--" && positional != b"--yes" && positional != b"-y" {
+                    // Nothing else is forwarded to `bun add`; say so instead of
+                    // dropping the flag silently.
+                    bun_core::warn!("bunx ignored unknown flag <b>{}<r>", BStr::new(positional));
                 }
             } else {
                 if !found_subcommand_name {
@@ -202,6 +239,22 @@ impl Options {
             opts.package_name = maybe_package_name.unwrap();
         }
         Ok(opts)
+    }
+
+    /// Match `bun add`'s validation of `--minimum-release-age=<N>`: reject
+    /// non-numeric and negative values with the same message. Returns the
+    /// gate as integer milliseconds.
+    fn validate_minimum_release_age(value: &[u8]) -> u64 {
+        match bun_core::parse_double(value) {
+            Ok(secs) if secs >= 0.0 => (secs * 1000.0) as u64,
+            _ => {
+                Output::err_generic(
+                    "Expected --minimum-release-age to be a positive number: {}",
+                    (BStr::new(value),),
+                );
+                Global::exit(1);
+            }
+        }
     }
 }
 
@@ -858,6 +911,14 @@ impl BunxCommand {
                 )
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             }
+            // Cache key grammar: `<name>@<version>` followed by zero or more
+            // `+key=value` tails, one per input that shapes the install.
+            if let Some(ms) = opts.minimum_release_age_ms {
+                // The gate decides which version lands here: a gated install
+                // is never served to an ungated run and keeps the 24h cache.
+                write!(&mut v, "+min-age={ms}")
+                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+            }
             break 'brk v;
         };
         bun_output::scoped_log!(bunx, "package_fmt: {}", BStr::new(&package_fmt));
@@ -1323,13 +1384,27 @@ impl BunxCommand {
             let _ = package_json.write_all(b"{}\n");
         }
 
+        // Declared before `args` so the backing buffer outlives `args`'s
+        // borrow (locals drop in reverse declaration order).
+        let min_age_arg: Vec<u8> = match opts.minimum_release_age {
+            Some(value) => {
+                let prefix: &[u8] = b"--minimum-release-age=";
+                let mut buf = Vec::with_capacity(prefix.len() + value.len());
+                buf.extend_from_slice(prefix);
+                buf.extend_from_slice(value);
+                buf
+            }
+            None => Vec::new(),
+        };
+
         let install_args: [&[u8]; 4] = [
             bun_core::self_exe_path()?.as_bytes(),
             b"add",
             install_param.as_slice(),
             b"--no-summary",
         ];
-        let mut args: BoundedArray<&[u8], 8> =
+        // 4 base + 2 cache-bust + 1 verbose + 1 silent + 1 minimum-release-age.
+        let mut args: BoundedArray<&[u8], 9> =
             BoundedArray::from_slice(&install_args).expect("unreachable"); // upper bound is known
 
         if do_cache_bust {
@@ -1347,6 +1422,10 @@ impl BunxCommand {
 
         if opts.silent_install {
             args.append(b"--silent").expect("unreachable"); // upper bound is known
+        }
+
+        if opts.minimum_release_age.is_some() {
+            args.append(min_age_arg.as_slice()).expect("unreachable"); // upper bound is known
         }
 
         let argv_to_use = args.slice();

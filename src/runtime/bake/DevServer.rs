@@ -954,11 +954,12 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 allow_layouts: fsr.allow_layouts,
                 server_file: to_opaque_file_id::<{ bake::Side::Server }>(server_file),
                 client_file: if let Some(client) = &fsr.entry_client {
-                    Some(to_opaque_file_id::<{ bake::Side::Client }>(
-                        // SAFETY: `client_graph` is disjoint from `framework`.
-                        unsafe { &mut (*dev_ptr).client_graph }
-                            .insert_stale(client, bake::Graph::Client)?,
-                    ))
+                    // SAFETY: `client_graph` is disjoint from `framework`.
+                    let client_graph = unsafe { &mut (*dev_ptr).client_graph };
+                    let client_file = client_graph.insert_stale(client, bake::Graph::Client)?;
+                    client_graph.bundled_files.values_mut()[client_file.get() as usize]
+                        .is_special_framework_file = true;
+                    Some(to_opaque_file_id::<{ bake::Side::Client }>(client_file))
                 } else {
                     None
                 },
@@ -3620,7 +3621,10 @@ impl DevServer {
                 self.server_graph.trace_imports(
                     from_opaque_file_id::<{ bake::Side::Server }>(rt_server_file),
                     gts,
-                    TraceImportGoal::FindCss,
+                    match goal {
+                        TraceImportGoal::FindErrors => goal,
+                        _ => TraceImportGoal::FindCss,
+                    },
                 )?;
                 if let Some(id) = rt_client_file {
                     self.client_graph.trace_imports(
@@ -5004,64 +5008,98 @@ impl DevServer {
             log.msgs.len(),
         );
 
-        let mut watch_for_route_file = false;
-        if matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound") {
+        let mut watch_for_root = false;
+        let mut log_with_note = None;
+        let is_reported = if matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound") {
             // Special-case files being deleted: the importers report them.
-            match graph {
-                bake::Graph::Server | bake::Graph::Ssr => {
-                    self.server_graph.on_file_deleted(abs_path, bv2)?
-                }
-                bake::Graph::Client => {
-                    self.client_graph.on_file_deleted(abs_path, bv2)?;
-                    // The html file of a route has no importer.
-                    if let Some(file) = self
-                        .client_graph
-                        .bundled_files
+            // Nothing reports a root, so the root reports itself.
+            macro_rules! delete_and_find_root {
+                ($g:expr, $side:expr) => {{
+                    $g.on_file_deleted(abs_path, bv2)?;
+                    $g.bundled_files
                         .get(abs_path)
-                        .filter(|file| file.html_route_bundle_index.is_some())
-                    {
-                        // `failed` is cleared by the next successful bundle.
-                        watch_for_route_file = !file.failed;
-                        self.client_graph.insert_failure(
-                            incremental_graph::InsertFailureKey::AbsPath(abs_path),
-                            log,
-                            false,
-                        )?;
-                    }
+                        .filter(|file| file.is_root($side))
+                        .map(|file| file.failed)
+                }};
+            }
+            let root_already_failed = match graph {
+                bake::Graph::Server | bake::Graph::Ssr => {
+                    delete_and_find_root!(self.server_graph, bake::Side::Server)
+                }
+                bake::Graph::Client => delete_and_find_root!(self.client_graph, bake::Side::Client),
+            };
+            let missing_root = root_already_failed
+                .and_then(|failed| Some((failed, self.classify_missing_root(graph, abs_path)?)));
+            if let Some((already_failed, kind)) = missing_root {
+                // `failed` is cleared by the next successful bundle.
+                watch_for_root = !already_failed;
+                if kind == MissingRoot::ScannedAndRequested {
+                    log_with_note = Some(log_with_startup_scan_note(log));
                 }
             }
+            missing_root.is_some()
         } else {
+            true
+        };
+        if is_reported {
+            let log = log_with_note.as_ref().unwrap_or(log);
+            let key = incremental_graph::InsertFailureKey::AbsPath(abs_path);
             match graph {
-                bake::Graph::Server => self.server_graph.insert_failure(
-                    incremental_graph::InsertFailureKey::AbsPath(abs_path),
-                    log,
-                    false,
-                )?,
-                bake::Graph::Ssr => self.server_graph.insert_failure(
-                    incremental_graph::InsertFailureKey::AbsPath(abs_path),
-                    log,
-                    true,
-                )?,
-                bake::Graph::Client => self.client_graph.insert_failure(
-                    incremental_graph::InsertFailureKey::AbsPath(abs_path),
-                    log,
-                    false,
-                )?,
+                bake::Graph::Server => self.server_graph.insert_failure(key, log, false)?,
+                bake::Graph::Ssr => self.server_graph.insert_failure(key, log, true)?,
+                bake::Graph::Client => self.client_graph.insert_failure(key, log, false)?,
             }
         }
-        // `track_resolution_failure` takes the graph lock itself.
+        // `track_missing_root` takes the graph lock itself.
         drop(graph_lock);
 
-        if watch_for_route_file {
-            // Bundles the route again once its html file exists, like a failed import.
-            self.directory_watchers.track_resolution_failure(
-                abs_path,
-                paths::basename(abs_path),
-                bake::Graph::Client,
-                Loader::Html,
-            )?;
+        if watch_for_root {
+            // Bundles the root again once its file exists, like a failed import.
+            self.directory_watchers
+                .track_missing_root(abs_path, graph)?;
         }
         Ok(())
+    }
+
+    /// A failure is global and sticky, and a scanned page can be deleted on purpose: only a waiting request reports it.
+    fn classify_missing_root(&self, graph: bake::Graph, abs_path: &[u8]) -> Option<MissingRoot> {
+        if graph == bake::Graph::Client {
+            let file = self.client_graph.bundled_files.get(abs_path)?;
+            // The routes of a client entry point stay loaded, so a failure must not free its last good code.
+            let keeps_last_good_code = file.is_special_framework_file
+                && !matches!(file.content, incremental_graph::Content::Unknown);
+            return (!keeps_last_good_code).then_some(MissingRoot::Configured);
+        }
+        let file = self.server_graph.get_file_index(abs_path)?.get();
+        let is_file =
+            |id: OpaqueFileId| from_opaque_file_id::<{ bake::Side::Server }>(id).get() == file;
+        if self.router.types.iter().any(|ty| is_file(ty.server_file)) {
+            return Some(MissingRoot::Configured);
+        }
+        self.route_bundles
+            .iter()
+            .any(|bundle| {
+                let route_bundle::Data::Framework(framework) = &bundle.data else {
+                    return false;
+                };
+                if bundle.server_state != route_bundle::State::Bundling {
+                    return false;
+                }
+                let mut route = self.router.route_ptr(framework.route_index);
+                if route.file_page.is_some_and(is_file) {
+                    return true;
+                }
+                loop {
+                    if route.file_layout.is_some_and(is_file) {
+                        return true;
+                    }
+                    let Some(parent) = route.parent else {
+                        return false;
+                    };
+                    route = self.router.route_ptr(parent);
+                }
+            })
+            .then_some(MissingRoot::ScannedAndRequested)
     }
 
     /// Return a log to write resolution failures into.
@@ -5093,6 +5131,32 @@ impl DevServer {
         }
         Ok(gop.value_ptr)
     }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum MissingRoot {
+    /// Named by the config: the html file of a route, or a framework entry point.
+    Configured,
+    /// A page or layout from the startup scan, and a request waits on a route that uses it.
+    ScannedAndRequested,
+}
+
+fn log_with_startup_scan_note(log: &Log) -> Log {
+    let mut noted = Log::init();
+    noted.msgs.extend(log.msgs.iter().map(bun_ast::Msg::clone));
+    noted.errors = log.errors;
+    noted.warnings = log.warnings;
+    if let Some(msg) = noted.msgs.first_mut() {
+        let mut notes = core::mem::take(&mut msg.notes).into_vec();
+        notes.push(bun_ast::Data {
+            text: std::borrow::Cow::Borrowed(
+                b"The routes directory is read once, when the server starts. Restore this file or restart the server.",
+            ),
+            location: None,
+        });
+        msg.notes = notes.into_boxed_slice();
+    }
+    noted
 }
 
 #[derive(Copy, Clone)]

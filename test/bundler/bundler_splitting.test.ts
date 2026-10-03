@@ -786,6 +786,22 @@ describe("bundler", () => {
     ["ImportMetaInEntryFile", { "/index.js": setupBeforeShared["/index.js"] + `console.log(import.meta.main);` }, {}],
     ["ImportMetaInFileOfEntry", { "/setup.js": `globalThis.APP = { name: import.meta.file };` }, {}],
     [
+      "RequireMainInEntryFile",
+      { "/index.js": setupBeforeShared["/index.js"] + `console.log(require.main === module);` },
+      {},
+    ],
+    ["DirectEvalInSharedFile", { "/store.js": setupBeforeShared["/store.js"] + `eval("NAME");` }, {}],
+    [
+      "ImportOfSharedPackageThatTreeShakingDrops",
+      {
+        "/setup.js": `import { v } from "pure"; globalThis.APP = { name: "app" };`,
+        "/store.js": `import { v } from "pure";\n` + setupBeforeShared["/store.js"] + `console.log(v);`,
+        "/node_modules/pure/package.json": `{ "name": "pure", "sideEffects": false }`,
+        "/node_modules/pure/index.js": `export const v = typeof APP;`,
+      },
+      {},
+    ],
+    [
       "ExternalImportInFileOfEntry",
       { "/setup.js": `import "ext"; globalThis.APP = { name: "app" };` },
       { external: ["ext"] },

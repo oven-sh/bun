@@ -724,8 +724,9 @@ fn entries_loaded_mid_evaluation(
     Ok(loads)
 }
 
-/// The load of `entry_file` evaluates a file that only this entry point loads (`is_own`) ahead of a file of the parent chunk (`is_in_parent`). The parent chunk runs first.
-fn runs_a_file_too_late(
+/// The parent chunk runs first. Whether the load of `entry_file` evaluates a file that only this entry point loads
+/// (`is_own`) ahead of a file of the parent chunk (`is_in_parent`), and one chunk with both keeps every other file in its place.
+fn moving_entry_files_repairs_order(
     this: &LinkerContext,
     entry_file: u32,
     is_own: impl Fn(u32) -> bool,
@@ -736,8 +737,11 @@ fn runs_a_file_too_late(
         Leave(u32),
     }
     let flags = this.graph.meta.items_flags();
+    let import_records = this.graph.ast.items_import_records();
+    let module_scopes = this.graph.ast.items_module_scope();
     let mut entered = AutoBitSet::init_empty(this.graph.files.len())?;
     let mut own_file_ran = false;
+    let mut repairs = false;
     let mut stack = vec![Frame::Enter(entry_file)];
     while let Some(frame) = stack.pop() {
         match frame {
@@ -745,10 +749,28 @@ fn runs_a_file_too_late(
                 if entered.is_set(file as usize) || !this.graph.files_live.is_set(file as usize) {
                     continue;
                 }
+                // It reads top-level names, and one chunk renames those that two files declare.
+                if module_scopes[file as usize].contains_direct_eval {
+                    return Ok(false);
+                }
                 entered.set(file as usize);
                 stack.push(Frame::Leave(file));
                 let mark = stack.len();
                 this.for_each_file_loaded_by(file, |other| stack.push(Frame::Enter(other)));
+                // Tree shaking dropped the `import`, so the chunk has that file later than here, maybe behind a file of the entry point.
+                if import_records[file as usize].iter().any(|record| {
+                    record.kind == ImportKind::Stmt
+                        && record.source_index.is_valid()
+                        && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                        && this.graph.files_live.is_set(record.source_index.get() as usize)
+                        && !entered.is_set(record.source_index.get() as usize)
+                        && !is_own(record.source_index.get())
+                        && !stack[mark..].iter().any(
+                            |frame| matches!(frame, Frame::Enter(other) if *other == record.source_index.get()),
+                        )
+                }) {
+                    return Ok(false);
+                }
                 stack[mark..].reverse();
             }
             Frame::Leave(file) => {
@@ -758,13 +780,13 @@ fn runs_a_file_too_late(
                         && file != Index::RUNTIME.value()
                         && (flags[file as usize].wrap != WrapKind::None
                             || !this.loading_file_has_no_side_effects(file));
-                } else if own_file_ran && is_in_parent(file) && this.order_can_matter(file) {
-                    return Ok(true);
+                } else {
+                    repairs |= own_file_ran && is_in_parent(file) && this.order_can_matter(file);
                 }
             }
         }
     }
-    Ok(false)
+    Ok(repairs)
 }
 
 /// Folds code-splitting chunks into other chunks where that is unobservable,
@@ -1299,10 +1321,7 @@ pub(crate) fn merge_small_chunks(
             let groups = groups.values();
             let entry_id = groups[own].bits.find_first_set().expect("one bit set");
             let joins_parent = |i: usize| {
-                members.contains(&i)
-                    && groups[i].pin == Pin::None
-                    && groups[i].target == Some(target_platform)
-                    && !groups[i].loads_entry_of(class)
+                unpinned().any(|member| member == i) && groups[i].target == Some(target_platform)
             };
             takes_entry_files = beside_chunks.is_set(entry_id)
                 && groups.iter().enumerate().all(|(i, group)| {
@@ -1311,7 +1330,7 @@ pub(crate) fn merge_small_chunks(
                         || !group.bits.is_set(entry_id)
                         || joins_parent(i)
                 })
-                && runs_a_file_too_late(
+                && moving_entry_files_repairs_order(
                     this,
                     entry_source_indices[entry_id],
                     |file| group_of_file[file as usize] == own,

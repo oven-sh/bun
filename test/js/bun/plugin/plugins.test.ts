@@ -1176,6 +1176,7 @@ describe.concurrent("what onResolve answers without a namespace", () => {
         "namespace.img": "served:thing",
         "absent.img": import.meta.dir + "/src/absent.served",
         "itself.img": "itself.img",
+        "bare.img": "bare",
         "symlink.img": join(import.meta.dir, "src", "link.img"),
         "long.img": "/" + Buffer.alloc(200_000, "a") + ".js",
       };
@@ -1189,7 +1190,7 @@ describe.concurrent("what onResolve answers without a namespace", () => {
             contents: "export default " + JSON.stringify(path),
             loader: "js",
           }));
-          build.onLoad({ filter: /(absent\\.served|(itself|link|real)\\.img)$/ }, ({ path }) => ({
+          build.onLoad({ filter: /(absent\\.served|(itself|link|real)\\.img|^bare)$/ }, ({ path }) => ({
             contents: "export default " + JSON.stringify(basename(path)),
             loader: "js",
           }));
@@ -1253,6 +1254,21 @@ describe.concurrent("what onResolve answers without a namespace", () => {
     ],
   ])("is resolved from the importer for %s", async (_, name, source, stdout) => {
     expect(await run(name, source)).toEqual({ stdout, stderr: "", exitCode: 0 });
+  });
+
+  // No onLoad is called for a key with no extension and no namespace.
+  it("is not found when only the filter of an onLoad that is not called for it matches", async () => {
+    const source = `
+      try { require.resolve("bare.img"); } catch (error) { console.log("require.resolve()", error.message.split("\\n")[0]); }
+      try { require("bare.img"); } catch (error) { console.log("require()", error.message.split("\\n")[0]); }
+      import("bare.img").catch(error => console.log("import()", error.message.split(" imported")[0]));
+    `;
+    expect(await run("entry.cjs", source)).toEqual({
+      stdout:
+        "require.resolve() Cannot find module 'bare'\nrequire() Cannot find module 'bare'\nimport() Cannot find package 'bare'\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("is the module of the real path when it is a symlink", async () => {

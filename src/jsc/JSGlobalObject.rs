@@ -751,8 +751,11 @@ impl JSGlobalObject {
         (!key.is_dead()).then_some(key)
     }
 
-    /// Whether an `onLoad` would be called for `path`.
-    pub(crate) fn has_on_load(&self, namespace_: &[u8], path: &[u8]) -> JsResult<bool> {
+    /// Whether an `onLoad` would be called to load `key`.
+    pub(crate) fn has_on_load(&self, key: &[u8]) -> JsResult<bool> {
+        let Some((namespace_, path)) = crate::module_loader::plugin_namespace_and_path(key) else {
+            return Ok(false);
+        };
         let namespace_ = BunString::from_bytes(namespace_);
         let ns = (namespace_.length() > 0).then_some(&namespace_);
         crate::from_js_host_call_generic(self, || {

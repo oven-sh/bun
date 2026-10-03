@@ -5233,7 +5233,7 @@ impl VirtualMachine {
                         mode,
                     )?;
                     // Not on disk, for an `onLoad` to serve.
-                    if resolved.is_err() && global.has_on_load(b"", &answer.to_utf8())? {
+                    if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
                         return Ok(Ok(answer));
                     }
                     return Ok(resolved);
@@ -5327,14 +5327,13 @@ impl VirtualMachine {
             return Ok(Ok(specifier.clone()));
         }
 
-        if has_plugins {
-            let namespace = ModuleLoader::extract_namespace(&specifier_utf8);
-            // (One letter is a Windows drive.)
-            if namespace.len() > 1
-                && global.has_on_load(namespace, &specifier_utf8[namespace.len() + 1..])?
-            {
-                return Ok(Ok(specifier.clone()));
-            }
+        // (One letter is a Windows drive.)
+        if has_plugins
+            && ModuleLoader::plugin_namespace_and_path(&specifier_utf8)
+                .is_some_and(|(namespace, _)| namespace.len() > 1)
+            && global.has_on_load(&specifier_utf8)?
+        {
+            return Ok(Ok(specifier.clone()));
         }
 
         // Swap in a fresh log so resolver errors don't pollute the VM's main log.
@@ -7634,14 +7633,8 @@ fn run_on_resolve(
     importer: &bun_core::String,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
     let specifier = specifier.to_utf8();
-    if !ModuleLoader::could_be_plugin(&specifier) {
+    let Some((namespace, path)) = ModuleLoader::plugin_namespace_and_path(&specifier) else {
         return Ok(None);
-    }
-    let namespace = ModuleLoader::extract_namespace(&specifier);
-    let path = if namespace.is_empty() {
-        &specifier[..]
-    } else {
-        &specifier[namespace.len() + 1..]
     };
     // The importer's key ends in the query it was imported with.
     let importer = importer.to_utf8();

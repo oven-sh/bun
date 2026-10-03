@@ -243,9 +243,22 @@ extern "C" fn Bun__getDefaultLoader(
     loader
 }
 
+/// The namespace (`b""` for `file`) and path that plugins are asked about for `specifier`, if they are asked.
+pub(crate) fn plugin_namespace_and_path(specifier: &[u8]) -> Option<(&[u8], &[u8])> {
+    if !could_be_plugin(specifier) {
+        return None;
+    }
+    let namespace = extract_namespace(specifier);
+    Some(if namespace.is_empty() {
+        (namespace, specifier)
+    } else {
+        (namespace, &specifier[namespace.len() + 1..])
+    })
+}
+
 /// The `namespace:` prefix of `specifier`, or `b""` if it has none
 /// (Windows drive-letter prefixes are not namespaces).
-pub(crate) fn extract_namespace(specifier: &[u8]) -> &[u8] {
+fn extract_namespace(specifier: &[u8]) -> &[u8] {
     let Some(colon) = bun_core::strings::index_of_char_usize(specifier, b':') else {
         return b"";
     };
@@ -262,7 +275,7 @@ pub(crate) fn extract_namespace(specifier: &[u8]) -> &[u8] {
 }
 
 /// Cheap pre-filter before calling into a plugin: has a file extension or a `namespace:`.
-pub(crate) fn could_be_plugin(specifier: &[u8]) -> bool {
+fn could_be_plugin(specifier: &[u8]) -> bool {
     if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
         let ext = &specifier[last_dot + 1..];
         // '.' followed by either a letter or a non-ascii character
@@ -291,17 +304,9 @@ unsafe extern "C" fn Bun__runVirtualModule(
 
     // SAFETY: C++ passed a valid `bun.String*`.
     let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
-    let specifier = specifier_slice.slice();
-
-    if !could_be_plugin(specifier) {
+    let Some((namespace, after_namespace)) = plugin_namespace_and_path(specifier_slice.slice())
+    else {
         return JSValue::ZERO;
-    }
-
-    let namespace = extract_namespace(specifier);
-    let after_namespace = if namespace.is_empty() {
-        specifier
-    } else {
-        &specifier[(namespace.len() + 1).min(specifier.len())..]
     };
 
     match global.run_on_load_plugins(

@@ -1,9 +1,3 @@
-10-02_14:59:53 anon=3057MB pids=80 load=414.48 top=ld.lld:3531MB
-10-02_15:00:23 anon=3170MB pids=79 load=353.70 top=ld.lld:3638MB
-10-02_15:00:54 anon=3232MB pids=76 load=328.73 top=ld.lld:3809MB
-10-02_15:01:26 anon=2062MB pids=62 load=345.72 top=ld.lld:2659MB
-10-02_15:01:58 anon=241MB pids=46 load=388.01 top=python3:113MB
-10-02_15:02:29 anon=57MB pids=42 load=376.59 top=llvm-nm:77MB
 10-02_15:03:01 anon=1080MB pids=70 load=382.01 top=cachegrind-amd6:318MB
 10-02_15:03:31 anon=282MB pids=50 load=378.24 top=cachegrind-amd6:303MB
 10-02_15:04:02 anon=1268MB pids=56 load=361.24 top=cachegrind-amd6:299MB
@@ -398,3 +392,9 @@
 10-03_02:21:20 anon=119MB pids=41 load=1659.64 top=rustc:165MB
 10-03_02:22:01 anon=149MB pids=41 load=1598.33 top=rustc:230MB
 10-03_02:22:43 anon=217MB pids=41 load=1511.39 top=rustc:316MB
+10-03_02:23:59 anon=88MB pids=49 load=1689.81 top=rustc:114MB
+10-03_02:25:03 anon=96MB pids=45 load=1787.42 top=rustc:134MB
+10-03_02:25:45 anon=139MB pids=47 load=1612.34 top=rustc:181MB
+10-03_02:27:36 anon=63MB pids=43 load=1859.17 top=rustc:69MB
+10-03_02:28:17 anon=82MB pids=41 load=1858.97 top=rustc:85MB
+10-03_02:29:13 anon=289MB pids=44 load=1808.32 top=rustc:369MB

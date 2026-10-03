@@ -412,6 +412,72 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
+// A failed import belongs to the graph of the file that has the import. The
+// package shows which graphs bundle the page: only a graph without the
+// "react-server" condition resolves it to ssr.js.
+{
+  const page = `
+    import { which } from "cond-pkg";
+    export default function () {
+      return Response.json({ which, loads: globalThis.loads });
+    }
+  `;
+  const oneServerGraph = { ...minimalFramework.serverComponents!, separateSSRGraph: false };
+  const separateSSRGraph = { ...minimalFramework.serverComponents!, separateSSRGraph: true };
+  for (const { name, serverComponents, failedImport, which } of [
+    { name: "no server components", serverComponents: undefined, failedImport: `import "./missing";`, which: "ssr" },
+    { name: "one server graph", serverComponents: oneServerGraph, failedImport: `import "./missing";`, which: "rsc" },
+    { name: "separate SSR graph", serverComponents: separateSSRGraph, failedImport: `import "./missing";`, which: "rsc" },
+    {
+      name: "bunBakeGraph attribute without an SSR graph",
+      serverComponents: oneServerGraph,
+      failedImport: `import "../other.ts" with { bunBakeGraph: "ssr" };`,
+      which: "rsc",
+    },
+    {
+      name: "bunBakeGraph attribute on a missing file",
+      serverComponents: separateSSRGraph,
+      failedImport: `import "./missing" with { bunBakeGraph: "ssr" };`,
+      which: "rsc",
+    },
+  ]) {
+    devTest(`a page is bundled once per save after a failed import (${name})`, {
+      framework: { fileSystemRouterTypes: minimalFramework.fileSystemRouterTypes, serverComponents },
+      pluginFile: `
+        import { basename } from "node:path";
+        export default [
+          {
+            name: "count-loads",
+            setup(build) {
+              build.onLoad({ filter: /(routes.index[.]ts|cond-pkg.(rsc|ssr)[.]js)$/ }, args => {
+                const loads = (globalThis.loads ??= {});
+                const file = basename(args.path);
+                loads[file] = (loads[file] ?? 0) + 1;
+              });
+            },
+          },
+        ];
+      `,
+      files: {
+        "node_modules/cond-pkg/package.json": JSON.stringify({
+          name: "cond-pkg",
+          exports: { ".": { "react-server": "./rsc.js", "default": "./ssr.js" } },
+        }),
+        "node_modules/cond-pkg/rsc.js": `export const which = "rsc";`,
+        "node_modules/cond-pkg/ssr.js": `export const which = "ssr";`,
+        "other.ts": `export default 1;`,
+        "routes/index.ts": failedImport + page,
+      },
+      async test(dev) {
+        expect((await dev.fetch("/")).status).toBe(500);
+        await dev.write("routes/index.ts", page);
+        await dev.fetch("/").equals({ which, loads: { "index.ts": 2, [`${which}.js`]: 1 } });
+        await dev.write("routes/index.ts", page + "// saved again");
+        await dev.fetch("/").equals({ which, loads: { "index.ts": 3, [`${which}.js`]: 1 } });
+      },
+    });
+  }
+}
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

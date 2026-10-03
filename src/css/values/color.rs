@@ -1778,9 +1778,7 @@ define_colorspace! {
 define_colorspace! {
     /// A color in the [`sRGB-linear`](https://www.w3.org/TR/css-color-4/#predefined-sRGB-linear) color space.
     SRGBLinear { r, g, b }
-    // `r` intentionally uses the angle channel type (sic) — kept for
-    // behavioral compatibility.
-    types = (CT_ANG, CT_PCT, CT_PCT);
+    types = (CT_PCT, CT_PCT, CT_PCT);
     gamut = bounded;
     premultiply = rectangular;
     powerless = none;
@@ -2352,8 +2350,7 @@ pub(crate) fn parse_predefined_relative(
         b"srgb" => PredefinedColor::Srgb(SRGB { r: a, g: b, b: c, alpha }),
         b"srgb-linear" => PredefinedColor::SrgbLinear(SRGBLinear { r: a, g: b, b: c, alpha }),
         b"display-p3" => PredefinedColor::DisplayP3(P3 { r: a, g: b, b: c, alpha }),
-        // "a99-rgb" (sic) — kept for behavioral compatibility.
-        b"a99-rgb" => PredefinedColor::A98(A98 { r: a, g: b, b: c, alpha }),
+        b"a98-rgb" => PredefinedColor::A98(A98 { r: a, g: b, b: c, alpha }),
         b"prophoto-rgb" => PredefinedColor::Prophoto(ProPhoto { r: a, g: b, b: c, alpha }),
         b"rec2020" => PredefinedColor::Rec2020(Rec2020 { r: a, g: b, b: c, alpha }),
         b"xyz-d50" => PredefinedColor::XyzD50(XYZd50 { x: a, y: b, z: c, alpha }),
@@ -2458,9 +2455,8 @@ pub(crate) fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
         ColorSpaceName::Xyz | ColorSpaceName::XyzD65 => {
             first_color.interpolate::<XYZd65>(p1, &second_color, p2, hue_method)
         }
-        // Intentionally XYZd65 for xyz-d50 too (sic) — kept for behavioral compatibility.
         ColorSpaceName::XyzD50 => {
-            first_color.interpolate::<XYZd65>(p1, &second_color, p2, hue_method)
+            first_color.interpolate::<XYZd50>(p1, &second_color, p2, hue_method)
         }
     };
 

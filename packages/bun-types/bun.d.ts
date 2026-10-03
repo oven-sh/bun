@@ -6393,7 +6393,11 @@ declare module "bun" {
      * In a runtime plugin, a path without a `namespace` is resolved from the
      * importing module like any other import, without running `onResolve`
      * callbacks on it. If nothing is found there, it is used as it is when an
-     * `onLoad` callback matches it, and such a path is never auto-installed.
+     * `onLoad` callback matches it.
+     *
+     * A bare name could also be a package in the registry, so `onResolve`
+     * callbacks run on it once more. If one of them returns a path, the name is
+     * the plugin's own and is never auto-installed.
      */
     path: string;
     /**

@@ -5226,9 +5226,12 @@ impl VirtualMachine {
                     if let Some(name) = global.resolve_virtual_module(&answer, source) {
                         return Ok(Ok(name));
                     }
-                    let has_on_load = global.has_on_load(&answer.to_utf8())?;
-                    // The plugin's own name for a module may be a package's in the registry.
-                    let global_cache = if has_on_load || answer.eql(specifier) {
+                    // A bare name may be a package's in the registry. It is the plugin's own, and not
+                    // installed, if `onResolve` answers about it as well.
+                    let global_cache = if bun_resolver::is_package_path(&answer.to_utf8())
+                        && (answer.eql(specifier)
+                            || run_on_resolve(global, &answer, source)?.is_some())
+                    {
                         bun_resolver::GlobalCache::disable
                     } else {
                         global.bun_vm().transpiler.resolver.opts.global_cache
@@ -5242,7 +5245,7 @@ impl VirtualMachine {
                         global_cache,
                     )?;
                     // Not on disk, for an `onLoad` to serve.
-                    if resolved.is_err() && has_on_load {
+                    if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
                         return Ok(Ok(answer));
                     }
                     return Ok(resolved);

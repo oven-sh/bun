@@ -725,8 +725,8 @@ fn entries_loaded_mid_evaluation(
 }
 
 /// The parent chunk runs ahead of the entry point's own chunk. The files that only this entry point loads (`is_own`) and
-/// that its load evaluates ahead of every file of the parent (`is_in_parent`): a chunk of their own runs ahead of the parent.
-/// Empty, or short of a file, where that would change more than the order of these files and the parent.
+/// that its load evaluates ahead of the files of the parent (`is_in_parent`): a chunk of their own runs ahead of the parent.
+/// Empty unless that puts all of these files in order and changes nothing else.
 fn entry_files_ahead_of_parent(
     this: &LinkerContext,
     entry_file: u32,
@@ -741,16 +741,14 @@ fn entry_files_ahead_of_parent(
     let ast_flags = this.graph.ast.items_flags();
     let import_records = this.graph.ast.items_import_records();
     let module_scopes = this.graph.ast.items_module_scope();
-    let is_import = |record: &bun_ast::ImportRecord| {
-        record.kind == ImportKind::Stmt && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
-    };
+    let is_live = |file: u32| this.graph.files_live.is_set(file as usize);
     let mut entered = AutoBitSet::init_empty(this.graph.files.len())?;
     let mut is_early = AutoBitSet::init_empty(this.graph.files.len())?;
     let mut early: Vec<u32> = Vec::new();
     let mut runs_something = false;
-    // No later file may run ahead of one that stays.
-    let mut open = true;
-    let mut parent_follows = false;
+    let mut parent_ran = false;
+    // The entry point's own chunk ran something since.
+    let mut own_chunk_followed = false;
     // Each runs something ahead of an early file, so it must be early too.
     let mut must_be_early: Vec<u32> = Vec::new();
     let mut stack = vec![Frame::Enter(entry_file)];
@@ -763,8 +761,7 @@ fn entry_files_ahead_of_parent(
                 entered.set(file as usize);
                 stack.push(Frame::Leave(file));
                 let mark = stack.len();
-                let runs = this.graph.files_live.is_set(file as usize);
-                for_each_edge(this, file, runs, |_, edge| {
+                for_each_edge(this, file, is_live(file), |_, edge| {
                     if let Edge::Import(other) = edge {
                         stack.push(Frame::Enter(other));
                     }
@@ -774,7 +771,7 @@ fn entry_files_ahead_of_parent(
             }
             Frame::Leave(file) => file,
         };
-        if file == Index::RUNTIME.value() || !this.graph.files_live.is_set(file as usize) {
+        if file == Index::RUNTIME.value() || file == entry_file || !is_live(file) {
             continue;
         }
         let ancestors = || {
@@ -785,27 +782,30 @@ fn entry_files_ahead_of_parent(
         };
         if !is_own(file) {
             if is_in_parent(file) && this.order_can_matter(file) {
-                parent_follows = true;
-                break;
-            }
-            // The file that imports a wrapped file starts it there.
-            if open
-                && flags[file as usize].wrap != WrapKind::None
-                && let Some(importer) = ancestors()
-                    .find(|&ancestor| this.graph.files_live.is_set(ancestor as usize))
-                    .filter(|&importer| is_own(importer))
+                if own_chunk_followed {
+                    return Ok(Vec::new());
+                }
+                parent_ran = true;
+            } else if flags[file as usize].wrap != WrapKind::None
+                && let Some(importer) = ancestors().find(|&ancestor| is_live(ancestor))
+                && is_own(importer)
             {
-                must_be_early.push(importer);
+                // The file that imports a wrapped file starts it there.
+                if parent_ran {
+                    own_chunk_followed = true;
+                } else {
+                    must_be_early.push(importer);
+                }
             }
             continue;
         }
-        // The chunk is elsewhere and runs ahead of `__chunks()` and of what a split `require()` loads. It imports neither the entry point's chunk, which no chunk
-        // may, nor the parent, which would run first. A wrapped file runs where it is called.
-        if !open {
+        if parent_ran {
+            own_chunk_followed = true;
             continue;
         }
-        let mut can_move = file != entry_file
-            && flags[file as usize].wrap == WrapKind::None
+        // The chunk is elsewhere, and runs ahead of `__chunks()` and of what a split `require()` loads. It imports neither the
+        // entry point's chunk, which no chunk may, nor the parent, which would run first. A wrapped file runs where it is called.
+        let mut can_move = flags[file as usize].wrap == WrapKind::None
             && !ast_flags[file as usize].contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
             && !module_scopes[file as usize].contains_direct_eval
             && !import_records[file as usize].iter().any(|record| {
@@ -816,15 +816,17 @@ fn entry_files_ahead_of_parent(
             can_move &= is_early.is_set(other as usize) || !(is_own(other) || is_in_parent(other));
         });
         if !can_move {
-            open = false;
-            continue;
+            return Ok(Vec::new());
         }
         // An external `import` runs ahead of its whole chunk, so it ran ahead of this file.
         let mut child = file;
         for ancestor in ancestors() {
             if import_records[ancestor as usize]
                 .iter()
-                .filter(|record| is_import(record))
+                .filter(|record| {
+                    record.kind == ImportKind::Stmt
+                        && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                })
                 .take_while(|record| record.source_index.get() != child)
                 .any(|record| !record.source_index.is_valid() && !record.path.is_disabled)
             {
@@ -832,19 +834,15 @@ fn entry_files_ahead_of_parent(
             }
             child = ancestor;
         }
-        if must_be_early.contains(&entry_file) {
-            open = false;
-            continue;
-        }
         is_early.set(file as usize);
         early.push(file);
         runs_something |= !this.loading_file_has_no_side_effects(file);
     }
     if !runs_something
-        || !parent_follows
+        || !parent_ran
         || must_be_early
             .iter()
-            .any(|&file| file != entry_file && !is_early.is_set(file as usize))
+            .any(|&file| !is_early.is_set(file as usize))
     {
         early.clear();
     }

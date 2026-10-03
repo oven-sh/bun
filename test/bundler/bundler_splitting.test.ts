@@ -656,6 +656,7 @@ describe("bundler", () => {
         import { name } from "./setup.js";
         import { Store } from "./store.js";
         import "ext";
+        import "shared";
         import "./after.js";
         console.log("index", new Store().name, name, import.meta.main);
         import("./settings.js");
@@ -670,6 +671,8 @@ describe("bundler", () => {
       "/setup.css": `.setup { color: red }`,
       "/util.js": `console.log("util"); export const prefix = "the ";`,
       "/after.js": `console.log("after", globalThis.EXT);`,
+      "/settings.js": `import "shared";\n` + setupBeforeShared["/settings.js"],
+      "/node_modules/shared/index.js": `console.log("shared"); module.exports = {};`,
     },
     runtimeFiles: { "/out/node_modules/ext/index.js": `console.log("ext"); globalThis.EXT = 1;` },
     external: ["ext"],
@@ -679,7 +682,10 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     onAfterBundle: noChunkImportsIndex,
-    run: { file: "/out/index.js", stdout: "util\nsetup\next\nafter 1\nindex the app the app true\nsettings the app" },
+    run: {
+      file: "/out/index.js",
+      stdout: "util\nsetup\next\nshared\nafter 1\nindex the app the app true\nsettings the app",
+    },
   });
   // The `import` of such a package counts where it is, not where its binding is used.
   itBundled("splitting/PackageWithoutSideEffectsRunsBeforeEntrySetupImport", {
@@ -774,6 +780,27 @@ describe("bundler", () => {
       {},
     ],
     [
+      "PrecedesFileThatStays",
+      {
+        "/index.js": setupBeforeShared["/index.js"].replace(
+          `import "./setup.js";`,
+          `import "./setup.js"; import "./meta.js";`,
+        ),
+        "/meta.js": `console.log(import.meta.url);`,
+      },
+      {},
+    ],
+    [
+      "FileOfEntryBetweenSharedFiles",
+      {
+        "/index.js": setupBeforeShared["/index.js"] + `import "./between.js"; import "./late.js";`,
+        "/between.js": `console.log("between");`,
+        "/late.js": `console.log("late");`,
+        "/settings.js": `import "./late.js";\n` + setupBeforeShared["/settings.js"],
+      },
+      {},
+    ],
+    [
       "FollowsFileThatStays",
       {
         "/index.js": `import "./meta.js";\n` + setupBeforeShared["/index.js"],
@@ -813,6 +840,16 @@ describe("bundler", () => {
     [
       "FollowsSharedPackage",
       { ...sharedPackage, "/index.js": `import "shared";\n` + setupBeforeShared["/index.js"] },
+      {},
+    ],
+    [
+      "FollowsSharedPackageBehindBarrel",
+      {
+        ...sharedPackage,
+        "/index.js": `import { shared } from "barrel"; console.log(shared);\n` + setupBeforeShared["/index.js"],
+        "/node_modules/barrel/package.json": `{ "name": "barrel", "sideEffects": false }`,
+        "/node_modules/barrel/index.js": `export { default as shared } from "shared";`,
+      },
       {},
     ],
     [

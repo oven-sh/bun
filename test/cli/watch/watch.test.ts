@@ -2,8 +2,17 @@ import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import {
+  copyFileSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
+import { basename, join } from "node:path";
 
 let watchee: Subprocess;
 
@@ -395,6 +404,56 @@ it("--watch forced restart clears the terminal when colors are enabled", async (
   expect(afterReload).toContain("iter second");
   expect(await stderr).toContain(clearScreen);
 }, 30000);
+
+// On Windows a --watch process does not replace itself. The first process
+// stays as a manager and starts the script in a child process, again after
+// every file change, from the path the manager was started from. Windows lets
+// a running executable be renamed, so that path can be gone by then (bun
+// uninstalled, an upgrade in progress, a version manager switched versions)
+// and CreateProcessW fails. That is the user's environment, so it is reported
+// as an error, not as a panic with a crash report.
+it.skipIf(!isWindows)(
+  "--watch reports an error when the executable it was started from is gone at a restart",
+  async () => {
+    // Not `using`: Windows can keep the renamed executable mapped for a moment
+    // after the manager exits, so a scoped delete races it.
+    const dir = tempDir("watch-exe-gone", {
+      "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+    });
+    try {
+      // The copy sits outside the watched directory.
+      const exe = join(String(dir), basename(bunExe()));
+      copyFileSync(bunExe(), exe);
+      await using proc = spawn({
+        cmd: [exe, "--watch", "entry.js"],
+        cwd: join(String(dir), "app"),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const { waitFor, release } = stdoutWaiter(proc);
+      await waitFor("iter first");
+      release();
+
+      renameSync(exe, exe + ".renamed");
+      await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter second");`);
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({
+        stderr:
+          `error: Failed to reload "${exe}": ENOENT: No such file or directory (CreateProcessW)\n` +
+          `note: Run the command again to restart.\n`,
+        exitCode: 1,
+      });
+    } finally {
+      try {
+        rmSync(String(dir), { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+      } catch {}
+    }
+  },
+  30000,
+);
 
 // execve replaces the process without reaching on_exit(), so the compile
 // cache must be flushed explicitly on the reload path; otherwise

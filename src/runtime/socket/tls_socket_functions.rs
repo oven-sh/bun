@@ -540,8 +540,9 @@ pub(super) fn get_peer_certificate(
     let mut last_is_self_issued = false;
     // SAFETY: the store ctx is created, initialized against the live SSL_CTX's
     // store, used only within this scope and freed before returning; every
-    // issuer returned by get1_issuer is a +1 reference collected in `extras`
-    // and released after its fields have been copied into JS values and the
+    // issuer returned by get1_issuer is a +1 reference, either released at
+    // once when it repeats the last certificate, or collected in `extras` and
+    // released after its fields have been copied into JS values and the
     // terminal self-issued check has run.
     unsafe {
         let mut store = ffi::SSL_CTX_get_cert_store(boringssl::SSL_CTX::opaque_ref(
@@ -580,10 +581,7 @@ pub(super) fn get_peer_certificate(
                     {
                         break;
                     }
-                    // The store hands back the certificate it was asked about
-                    // when a self-signed anchor lacks keyCertSign: it is its own
-                    // issuer by name but may not sign, so X509_check_issued
-                    // never ends the walk. Node stops there as well.
+                    // A self-signed anchor without keyCertSign comes back again. Stop, like Node.
                     if !extras.is_empty() && ffi::X509_cmp(issuer, last_cert) == 0 {
                         boringssl::X509_free(issuer);
                         break;

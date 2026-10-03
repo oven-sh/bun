@@ -593,7 +593,14 @@ impl PackageJSON {
             .map(|fields| fields.json_errors.clone())
             .unwrap_or_default();
 
-        let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
+        // Runtime resolution reports cached Node errors only when the scope is used.
+        let mut deferred_log = bun_ast::Log::default();
+        let parse_log = if r.validate_package_config {
+            &mut deferred_log
+        } else {
+            &mut *r_log
+        };
+        let parsed_json = match r.caches.json.parse_package_json(parse_log, &json_source) {
             Ok(Some(v)) => v,
             Ok(None) => {
                 return Some(Self::from_node_fields(

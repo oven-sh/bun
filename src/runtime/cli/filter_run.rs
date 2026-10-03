@@ -813,6 +813,7 @@ pub(crate) fn run_scripts_with_filter(
         ConfigureEnvOptions {
             log_errors: true,
             store_root_fd: false,
+            defer_package_errors: false,
         },
     )?;
     // SAFETY: configure_env_for_run fully initializes the out-param on Ok.

@@ -1727,6 +1727,20 @@ impl<'a> Resolver<'a> {
     ) -> ResultUnion {
         debug_assert!(bun_paths::is_absolute(source_dir));
 
+        // Node's CJS self lookup reads the parent scope even for relative requests.
+        // https://github.com/nodejs/node/blob/v24.21.0/lib/internal/modules/cjs/loader.js#L659-L664
+        if self.validate_package_config
+            && matches!(
+                kind,
+                ast::ImportKind::Require | ast::ImportKind::RequireResolve
+            )
+        {
+            if let Some(error) = self.node_package_scope_error_for_directory(source_dir) {
+                self.capture_node_module_error(error);
+                return ResultUnion::NotFound;
+            }
+        }
+
         let mut import_path = input_import_path;
 
         // This implements the module resolution algorithm from node.js, which is

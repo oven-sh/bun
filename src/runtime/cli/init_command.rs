@@ -83,14 +83,9 @@ impl InitCommand {
             bstr::BStr::new(label),
         );
 
-        if colors {
-            Output::print(format_args!("\x1b[?25l")); // hide cursor
-        }
-        scopeguard::defer! {
-            if colors {
-                Output::print(format_args!("\x1b[?25h")); // show cursor
-            }
-        };
+        // Hide the cursor until this returns or the process exits.
+        let _cursor =
+            colors.then(|| bun_core::tty::DecModesGuard::set(bun_core::tty::dec::HIDDEN_CURSOR));
 
         let mut selected: C = C::DEFAULT;
         let mut initial_draw = true;

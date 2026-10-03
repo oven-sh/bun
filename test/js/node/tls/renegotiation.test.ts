@@ -350,6 +350,588 @@ it("should terminate the connection when the peer exceeds the renegotiation limi
   expect(await outcome).toBe("closed");
 });
 
+// The server starts a renegotiation only when the client sends data, and writes "done N" when renegotiation N
+// completed. So each handshake report sits between two pieces of data, and request 4 is the one that the client
+// refuses (the limit is 3 in 600 s). For the message "data first" the server writes "before N" ahead of request N.
+// Two TCP proxies in front of the server shape what each side reads. The process prints three ports:
+// 1. The server.
+// 2. A proxy that gives the client "before 4" and request 4 in one write, so one read holds both.
+// 3. A proxy that gives the server the client's first message only after the client's close_notify, and nothing
+//    after that message. So the request reaches a client that already ended its write side.
+const pingPongRenegotiationServer = /* js */ `
+  const net = require("net");
+  const tls = require("tls");
+  // The server counts handshakes too. Only the limit of the client is under test.
+  tls.CLIENT_RENEG_LIMIT = 100;
+  const server = tls.createServer(
+    { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
+    socket => {
+      socket.on("error", () => {});
+      let asked = 0;
+      socket.on("data", chunk => {
+        const n = ++asked;
+        if (String(chunk) === "data first") socket.write("before " + n);
+        socket.renegotiate({ rejectUnauthorized: false }, err => {
+          if (!err) socket.write("done " + n);
+        });
+      });
+    },
+  );
+
+  const APPLICATION_DATA = 23;
+  const HANDSHAKE = 22;
+  const ALERT = 21;
+  // Takes the complete TLS records off the front of a buffer.
+  function takeRecords(buffer) {
+    const records = [];
+    while (buffer.length >= 5 && buffer.length >= 5 + buffer.readUInt16BE(3)) {
+      const length = 5 + buffer.readUInt16BE(3);
+      records.push(buffer.subarray(0, length));
+      buffer = buffer.subarray(length);
+    }
+    return { records, rest: buffer };
+  }
+  function proxy(allowHalfOpen, shape) {
+    return net.createServer({ allowHalfOpen }, client => {
+      const upstream = net.connect(server.address().port, "127.0.0.1");
+      client.on("error", () => {});
+      upstream.on("error", () => {});
+      client.on("close", () => upstream.destroy());
+      upstream.on("close", () => client.destroy());
+      shape(client, upstream);
+    });
+  }
+
+  const sameRead = proxy(false, (client, upstream) => {
+    let fromClient = Buffer.alloc(0);
+    let messages = 0;
+    let held = Buffer.alloc(0);
+    let released = false;
+    client.on("data", chunk => {
+      const { records, rest } = takeRecords(Buffer.concat([fromClient, chunk]));
+      fromClient = rest;
+      messages += records.filter(record => record[0] === APPLICATION_DATA).length;
+      upstream.write(chunk);
+    });
+    upstream.on("data", chunk => {
+      if (messages < 4 || released) return void client.write(chunk);
+      held = Buffer.concat([held, chunk]);
+      const { records, rest } = takeRecords(held);
+      const types = records.map(record => record[0]);
+      if (rest.length === 0 && types.length === 2 && types[0] === APPLICATION_DATA && types[1] === HANDSHAKE) {
+        released = true;
+        client.write(held);
+      }
+    });
+  });
+
+  // Half-open: the FIN of the client must not come back to it ahead of the request.
+  const afterEnd = proxy(true, (client, upstream) => {
+    let fromClient = Buffer.alloc(0);
+    let firstMessage;
+    client.on("data", chunk => {
+      const { records, rest } = takeRecords(Buffer.concat([fromClient, chunk]));
+      fromClient = rest;
+      for (const record of records) {
+        if (!firstMessage) {
+          if (record[0] === APPLICATION_DATA) firstMessage = record;
+          else upstream.write(record);
+        } else if (record[0] === ALERT) {
+          upstream.write(firstMessage);
+        }
+      }
+    });
+    upstream.on("data", chunk => client.write(chunk));
+  });
+
+  server.listen(0, "127.0.0.1", () =>
+    sameRead.listen(0, "127.0.0.1", () =>
+      afterEnd.listen(0, "127.0.0.1", () =>
+        console.log(server.address().port, sameRead.address().port, afterEnd.address().port),
+      ),
+    ),
+  );
+`;
+
+// Renegotiates 4 times in a row when the first request arrives, so the client refuses the last one while it waits
+// for an answer. An HTTP request gets its response after the 4 renegotiations. A RESP command (Valkey) gets none.
+// For "/response-first" a complete keep-alive response leaves ahead of request 4. The process prints two ports:
+// 1. The server.
+// 2. A TCP relay to the server. It forwards whole records, and it gives the client that response and request 4 in
+//    one write, so one read holds both.
+const backToBackRenegotiationServer = /* js */ `
+  const net = require("net");
+  const tls = require("tls");
+  tls.CLIENT_RENEG_LIMIT = 100;
+  const server = tls.createServer(
+    { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
+    socket => {
+      socket.on("error", () => {});
+      let head = "";
+      socket.on("data", function onHead(chunk) {
+        head += chunk.toString("latin1");
+        const isHttp = !head.startsWith("*");
+        if (isHttp && !head.includes("\\r\\n\\r\\n")) return;
+        socket.off("data", onHead);
+        socket.resume();
+        const responseFirst = head.startsWith("GET /response-first ");
+        let asked = 0;
+        (function ask() {
+          if (asked === 3 && responseFirst) socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok");
+          if (asked === 4) {
+            if (isHttp) socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok");
+            return;
+          }
+          asked++;
+          socket.renegotiate({ rejectUnauthorized: false }, err => {
+            if (!err) ask();
+          });
+        })();
+      });
+    },
+  );
+
+  const APPLICATION_DATA = 23;
+  const CHANGE_CIPHER_SPEC = 20;
+  const relay = net.createServer(client => {
+    const upstream = net.connect(server.address().port, "127.0.0.1");
+    client.on("error", () => {});
+    upstream.on("error", () => {});
+    client.on("close", () => upstream.destroy());
+    upstream.on("close", () => client.destroy());
+    client.on("data", chunk => upstream.write(chunk));
+    // The server finished 4 handshakes when its 4th ChangeCipherSpec passed. The application data record after
+    // that is the response. It waits here for the record behind it.
+    let fromServer = Buffer.alloc(0);
+    let handshakes = 0;
+    let held;
+    upstream.on("data", chunk => {
+      fromServer = Buffer.concat([fromServer, chunk]);
+      while (fromServer.length >= 5 && fromServer.length >= 5 + fromServer.readUInt16BE(3)) {
+        const record = fromServer.subarray(0, 5 + fromServer.readUInt16BE(3));
+        fromServer = fromServer.subarray(record.length);
+        if (record[0] === CHANGE_CIPHER_SPEC) handshakes++;
+        if (held) {
+          client.write(Buffer.concat([held, record]));
+          held = undefined;
+          handshakes = 0;
+        } else if (handshakes === 4 && record[0] === APPLICATION_DATA) {
+          held = record;
+        } else {
+          client.write(record);
+        }
+      }
+    });
+  });
+
+  server.listen(0, "127.0.0.1", () =>
+    relay.listen(0, "127.0.0.1", () => console.log(server.address().port, relay.address().port)),
+  );
+`;
+
+// A TCP relay in front of a TLS 1.2 server. The relay forwards whole records and stops reading a client for good
+// after that client's 3rd application data record, so the rest of an upload stays with the client. When those 3
+// records of an upload that starts with "B" arrived, the server asks that client for its first renegotiation.
+const stalledUploadRenegotiationServer = /* js */ `
+  const net = require("net");
+  const tls = require("tls");
+  const server = tls.createServer(
+    { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
+    socket => {
+      socket.on("error", () => {});
+      let tag;
+      let received = 0;
+      socket.on("data", chunk => {
+        tag ??= String.fromCharCode(chunk[0]);
+        received += chunk.length;
+        if (tag === "B" && received === 3 * 16384) socket.renegotiate({ rejectUnauthorized: false }, () => {});
+      });
+    },
+  );
+  const relay = net.createServer(client => {
+    const upstream = net.connect(server.address().port, "127.0.0.1");
+    client.on("error", () => {});
+    upstream.on("error", () => {});
+    client.on("close", () => upstream.destroy());
+    upstream.on("close", () => client.destroy());
+    upstream.on("data", chunk => client.write(chunk));
+    let fromClient = Buffer.alloc(0);
+    let applicationRecords = 0;
+    client.on("data", chunk => {
+      fromClient = Buffer.concat([fromClient, chunk]);
+      while (applicationRecords < 3 && fromClient.length >= 5 && fromClient.length >= 5 + fromClient.readUInt16BE(3)) {
+        const record = fromClient.subarray(0, 5 + fromClient.readUInt16BE(3));
+        fromClient = fromClient.subarray(record.length);
+        upstream.write(record);
+        if (record[0] === 23 && ++applicationRecords === 3) client.pause();
+      }
+    });
+  });
+  server.listen(0, "127.0.0.1", () => relay.listen(0, "127.0.0.1", () => console.log(relay.address().port)));
+`;
+
+// Each server keeps its state for each connection, so every test below uses the same three processes.
+let pingPongPort: number;
+let sameReadPort: number;
+let afterEndPort: number;
+let backToBackPort: number;
+let responseFirstRelayPort: number;
+let stalledUploadPort: number;
+const refusalServers: Subprocess[] = [];
+beforeAll(async () => {
+  [[pingPongPort, sameReadPort, afterEndPort], [backToBackPort, responseFirstRelayPort], [stalledUploadPort]] =
+    await Promise.all(
+      [pingPongRenegotiationServer, backToBackRenegotiationServer, stalledUploadRenegotiationServer].map(
+        async source => {
+          const server = Bun.spawn({
+            cmd: ["node", "-e", source],
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "ignore",
+            env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+          });
+          refusalServers.push(server);
+          const { value, done } = await server.stdout.getReader().read();
+          if (done) throw new Error("the server exited before it printed its ports");
+          return new TextDecoder().decode(value).trim().split(" ").map(Number);
+        },
+      ),
+    );
+});
+afterAll(() => {
+  for (const server of refusalServers) server.kill();
+});
+
+// A node:tls client over TCP, or over a Duplex in front of a TCP socket.
+function connectOver(transport: string, port: number, options: { rejectUnauthorized?: boolean; ca?: string }) {
+  if (transport === "TCP") {
+    return { socket: tlsConnect({ ...options, servername: "localhost", port, host: "127.0.0.1" }), raw: undefined };
+  }
+  const raw = netConnect(port, "127.0.0.1");
+  raw.on("error", () => {});
+  const duplex = new Duplex({
+    read() {},
+    write(chunk: Buffer, encoding: string, callback: () => void) {
+      raw.write(chunk, callback);
+    },
+    final(callback: () => void) {
+      raw.end();
+      callback();
+    },
+  });
+  raw.on("data", (chunk: Buffer) => duplex.push(chunk));
+  raw.on("end", () => duplex.push(null));
+  raw.on("close", () => duplex.destroy());
+  return { socket: tlsConnect({ ...options, servername: "localhost", socket: duplex }), raw };
+}
+
+// A refusal is not the result of a handshake: no 'secureConnect' reports it. With `sameRead`, one read of the client
+// holds "before 4" and, behind it, the request that the client refuses. That data came first, so it arrives first,
+// and its handler runs before the refusal: `call` is what the handler does to the socket. The request came before an
+// end() from that handler, so it is still refused. After a destroy() there is no socket to report to.
+it.concurrent.each([
+  { transport: "TCP", trusted: false, sameRead: false, call: "nothing" },
+  { transport: "TCP", trusted: true, sameRead: false, call: "nothing" },
+  { transport: "a Duplex", trusted: false, sameRead: false, call: "nothing" },
+  { transport: "a Duplex", trusted: true, sameRead: false, call: "nothing" },
+  { transport: "TCP", trusted: false, sameRead: true, call: "nothing" },
+  { transport: "a Duplex", trusted: false, sameRead: true, call: "nothing" },
+  { transport: "TCP", trusted: false, sameRead: true, call: "end" },
+  { transport: "a Duplex", trusted: false, sameRead: true, call: "end" },
+  { transport: "TCP", trusted: false, sameRead: true, call: "destroy" },
+  { transport: "a Duplex", trusted: false, sameRead: true, call: "destroy" },
+] as const)(
+  "a renegotiation that the client refuses is an 'error' and no 'secureConnect' over $transport (trusted chain: $trusted, data in the same read: $sameRead, its handler calls: $call)",
+  async ({ transport, trusted, sameRead, call }) => {
+    const { socket, raw } = connectOver(transport, sameRead ? sameReadPort : pingPongPort, {
+      rejectUnauthorized: false,
+      ...(trusted && { ca: tls.cert }),
+    });
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    let sent = 0;
+    const send = () => socket.write(sameRead && ++sent === 4 ? "data first" : "go");
+    socket.on("secureConnect", () => {
+      if (events.push(`secureConnect authorized=${socket.authorized}`) === 1) send();
+    });
+    socket.on("data", (chunk: Buffer) => {
+      events.push(`data ${chunk}`);
+      if (String(chunk).startsWith("done")) send();
+      else if (call !== "nothing") socket[call]();
+    });
+    socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}: ${err.message}`));
+    socket.on("close", (hadError: boolean) => {
+      events.push(`close hadError=${hadError}`);
+      closed.resolve();
+    });
+    try {
+      await closed.promise;
+      expect(events).toEqual([
+        `secureConnect authorized=${trusted}`,
+        `secureConnect authorized=${trusted}`,
+        "data done 1",
+        `secureConnect authorized=${trusted}`,
+        "data done 2",
+        `secureConnect authorized=${trusted}`,
+        "data done 3",
+        ...(sameRead ? ["data before 4"] : []),
+        ...(call === "destroy"
+          ? ["close hadError=false"]
+          : ["error EPROTO: TLS renegotiation limit exceeded", "close hadError=true"]),
+      ]);
+    } finally {
+      socket.destroy();
+      raw?.destroy();
+    }
+  },
+);
+
+// After its own close_notify the client cannot answer the request. That is the end of the client's own close, not an
+// error, and no second 'secureConnect'.
+it.concurrent.each(["TCP", "a Duplex"])(
+  "a request for a renegotiation after the client's own end() is not an 'error' over %s",
+  async transport => {
+    const { socket, raw } = connectOver(transport, afterEndPort, { ca: tls.cert });
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    socket.on("secureConnect", () => {
+      events.push(`secureConnect authorized=${socket.authorized}`);
+      socket.end("go");
+    });
+    socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}: ${err.message}`));
+    socket.on("close", (hadError: boolean) => {
+      events.push(`close hadError=${hadError}`);
+      closed.resolve();
+    });
+    socket.resume();
+    try {
+      await closed.promise;
+      expect(events).toEqual(["secureConnect authorized=true", "close hadError=false"]);
+    } finally {
+      socket.destroy();
+      raw?.destroy();
+    }
+  },
+);
+
+// BoringSSL refuses a renegotiation while a record of the client is only partly written. A record stays partly
+// written when another socket of the loop holds the buffer for ciphertext that the kernel did not take. So upload
+// "A" stalls first, and this test does not run beside other sockets.
+it("a renegotiation that BoringSSL refuses while a write is pending is an 'error' and no 'secureConnect'", async () => {
+  const events: string[] = [];
+  const closed = Promise.withResolvers<void>();
+  const open = (tag: string) => {
+    const connected = Promise.withResolvers<ReturnType<typeof tlsConnect>>();
+    const socket = tlsConnect({ port: stalledUploadPort, host: "127.0.0.1", servername: "localhost", ca: tls.cert });
+    socket.on("secureConnect", () => {
+      events.push(`${tag} secureConnect authorized=${socket.authorized}`);
+      connected.resolve(socket);
+    });
+    socket.on("error", (err: NodeJS.ErrnoException) => events.push(`${tag} error ${err.code}: ${err.message}`));
+    socket.on("close", (hadError: boolean) => {
+      events.push(`${tag} close hadError=${hadError}`);
+      connected.reject(new Error(`${tag} closed before its handshake`));
+      if (tag === "B") closed.resolve();
+    });
+    return connected.promise;
+  };
+  const a = await open("A");
+  const b = await open("B");
+  try {
+    // Far above what the socket buffers of both ends hold.
+    a.write(Buffer.alloc(24 * 1024 * 1024, "A"));
+    b.write(Buffer.alloc(24 * 1024 * 1024, "B"));
+    await closed.promise;
+    expect(events).toEqual([
+      "A secureConnect authorized=true",
+      "B secureConnect authorized=true",
+      "B error ERR_SSL_NO_RENEGOTIATION: error:100000b6:SSL routines:OPENSSL_internal:NO_RENEGOTIATION",
+      "B close hadError=true",
+    ]);
+  } finally {
+    a.destroy();
+    b.destroy();
+  }
+});
+
+// The handshake handler gets the refusal as a protocol failure, not as the certificate verdict of the session.
+it.concurrent.each([
+  { withErrorHandler: true, sameRead: false, call: "nothing" },
+  { withErrorHandler: false, sameRead: false, call: "nothing" },
+  { withErrorHandler: true, sameRead: true, call: "nothing" },
+  { withErrorHandler: true, sameRead: true, call: "end" },
+  { withErrorHandler: true, sameRead: true, call: "terminate" },
+] as const)(
+  "Bun.connect reports a renegotiation that the client refuses to its handshake handler (error handler: $withErrorHandler, data in the same read: $sameRead, its handler calls: $call)",
+  async ({ withErrorHandler, sameRead, call }) => {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const describe = (error: Error | null | undefined) =>
+      error ? `${(error as NodeJS.ErrnoException).code}: ${error.message}` : `${error}`;
+    let sent = 0;
+    const send = (socket: Bun.Socket) => socket.write(sameRead && ++sent === 4 ? "data first" : "go");
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: sameRead ? sameReadPort : pingPongPort,
+      tls: { ca: tls.cert, serverName: "localhost" },
+      socket: {
+        data(socket, chunk) {
+          events.push(`data ${chunk}`);
+          if (String(chunk).startsWith("done")) send(socket);
+          else if (call !== "nothing") socket[call]();
+        },
+        handshake(socket, success, error) {
+          if (events.push(`handshake ${success} ${describe(error)}`) === 1) send(socket);
+        },
+        ...(withErrorHandler && {
+          error(_socket: Bun.Socket, error: Error) {
+            events.push(`error ${describe(error)}`);
+          },
+        }),
+        close(socket, error) {
+          events.push(`close ${describe(error)} authorized=${socket.authorized}`);
+          closed.resolve();
+        },
+      },
+    });
+    await closed.promise;
+
+    expect(events).toEqual([
+      "handshake true null",
+      "handshake true null",
+      "data done 1",
+      "handshake true null",
+      "data done 2",
+      "handshake true null",
+      "data done 3",
+      ...(sameRead ? ["data before 4"] : []),
+      ...(call === "terminate"
+        ? ["close undefined authorized=true"]
+        : ["handshake false EPROTO: TLS renegotiation limit exceeded", "close undefined authorized=false"]),
+    ]);
+  },
+);
+
+it("https.request fails with the protocol error when the client refuses a renegotiation", async () => {
+  const outcome = Promise.withResolvers<string>();
+  const req = require("https").request(
+    { host: "localhost", port: backToBackPort, path: "/", agent: false, ca: tls.cert },
+    (res: IncomingMessage) => {
+      res.resume();
+      res.on("end", () => outcome.resolve(`status ${res.statusCode}`));
+    },
+  );
+  req.on("error", (err: NodeJS.ErrnoException) => outcome.resolve(`${err.code}: ${err.message}`));
+  req.end();
+  expect(await outcome.promise).toBe("EPROTO: TLS renegotiation limit exceeded");
+});
+
+// The chain is not trusted and the client accepts that. The refusal must not come back as that certificate verdict.
+it("fetch does not report a certificate error when the client refuses a renegotiation", async () => {
+  const outcome = await fetch(`https://localhost:${backToBackPort}/`, {
+    keepalive: false,
+    tls: { rejectUnauthorized: false },
+  }).then(
+    res => `status ${res.status}`,
+    (err: NodeJS.ErrnoException) => `${err.name} ${err.code}`,
+  );
+  expect(outcome).toBe("TypeError EPROTO");
+});
+
+// The response of "/response-first" and request 4 arrive in one read. The response is complete, so each fetch
+// succeeds. The refusal then closes the connection: it must not serve the next fetch from the pool, so the proxy sees
+// one CONNECT for each fetch. Direct is the path of a socket, the proxy is the path of a tunnel. In a child process:
+// a report to a tunnel in the pool uses freed memory, which only a sanitizer build shows.
+it.concurrent.each(["direct", "through a CONNECT proxy"])(
+  "fetch (%s) gets the response that arrives in the same read as a refused renegotiation",
+  async route => {
+    using proxy = route === "direct" ? undefined : await startRecordingProxy();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          // The environment must not choose the route.
+          const proxy = process.env.PROXY_PORT
+            ? { url: "http://127.0.0.1:" + process.env.PROXY_PORT, respectNoProxy: false }
+            : false;
+          for (let i = 0; i < 2; i++) {
+            const res = await fetch("https://localhost:" + process.env.SERVER_PORT + "/response-first", {
+              tls: { ca: process.env.SERVER_CERT },
+              proxy,
+            });
+            console.log(res.status, await res.text());
+          }
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        SERVER_PORT: String(responseFirstRelayPort),
+        PROXY_PORT: proxy ? String(proxy.port) : "",
+        SERVER_CERT: tls.cert,
+        ASAN_OPTIONS: ((bunEnv.ASAN_OPTIONS ?? "") + ":symbolize=0").replace(/^:/, ""),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const connect = `CONNECT localhost:${responseFirstRelayPort} HTTP/1.1`;
+    expect({
+      stdout,
+      exitCode,
+      signalCode: proc.signalCode,
+      tunnels: proxy?.requests.map(request => request.requestLine),
+      stderr,
+    }).toEqual({
+      stdout: "200 ok\n200 ok\n",
+      exitCode: 0,
+      signalCode: null,
+      tunnels: proxy && [connect, connect],
+      stderr: expect.any(String),
+    });
+  },
+);
+
+// In a child process: with no error to report, an assert-enabled build aborts when it makes an Error with no message.
+it("a Valkey client fails its command with the protocol error when the client refuses a renegotiation", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const client = new Bun.RedisClient("rediss://localhost:" + process.env.SERVER_PORT, {
+          tls: { ca: process.env.SERVER_CERT },
+          autoReconnect: false,
+        });
+        const outcome = await client.get("key").then(
+          value => "value " + value,
+          err => err.code + ": " + err.message,
+        );
+        console.log(outcome);
+        client.close();
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      SERVER_PORT: String(backToBackPort),
+      SERVER_CERT: tls.cert,
+      // An abort of an ASAN build must not spend the test's time on symbols.
+      ASAN_OPTIONS: ((bunEnv.ASAN_OPTIONS ?? "") + ":symbolize=0").replace(/^:/, ""),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode, stderr }).toEqual({
+    stdout: "EPROTO: TLS renegotiation limit exceeded",
+    exitCode: 0,
+    signalCode: null,
+    stderr: expect.any(String),
+  });
+});
+
 // A renegotiation reports the certificate check of its own handshake. The client ends its write side while the first
 // handshake still runs, which sends nothing but marks the TLS session as shut down. That state must not turn the
 // failed check of the renegotiated handshake into a pass. Runs the client over a Duplex, the SSLWrapper path.

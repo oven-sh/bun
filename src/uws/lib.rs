@@ -395,6 +395,8 @@ pub mod ssl_wrapper {
         HandshakeError,
         /// Closed before the handshake finished, or a renegotiation was refused.
         Aborted,
+        /// A renegotiation refused while our write side is open: a protocol failure.
+        RenegotiationRefused,
     }
 
     #[derive(Clone, Copy)]
@@ -940,10 +942,15 @@ pub mod ssl_wrapper {
                     (false, self.verify_error())
                 }
                 // node:tls reads a failure with no error after end() as its own close.
-                HandshakeOutcome::Aborted if self.is_shutdown() => {
-                    (false, us_bun_verify_error_t::default())
-                }
-                HandshakeOutcome::Aborted => (false, self.verify_error()),
+                HandshakeOutcome::Aborted => (false, us_bun_verify_error_t::default()),
+                HandshakeOutcome::RenegotiationRefused => (
+                    false,
+                    us_bun_verify_error_t {
+                        error_no: -71,
+                        code: c"EPROTO".as_ptr(),
+                        reason: c"TLS renegotiation limit exceeded".as_ptr(),
+                    },
+                ),
             };
             self.flags.set_authorized(success);
             // trigger the handshake callback
@@ -1115,6 +1122,35 @@ pub mod ssl_wrapper {
             }
         }
 
+        /// Reports the refusal, then closes. `decrypted` came before the request, so it goes first.
+        #[cold]
+        fn refuse_renegotiation(&self, decrypted: &[u8]) {
+            // Taken now: the callbacks below run JS, which can end the socket.
+            let was_shut_down = self.is_shutdown();
+            boring_sys::ERR_clear_error();
+            self.flags
+                .set_handshake_state(HandshakeState::HandshakeCompleted);
+            // As for a fatal read: an owner that finishes its request in the data callback must close, not keep, this wrapper.
+            self.flags.set_fatal_error(true);
+            if !decrypted.is_empty() {
+                self.trigger_data_callback(decrypted);
+                if self.ssl.get().is_none() || self.flags.closed_notified() {
+                    return;
+                }
+            }
+            self.flush_pending_events();
+            if self.ssl.get().is_none() || self.flags.closed_notified() {
+                return;
+            }
+            // After our own close_notify the request has no answer.
+            self.trigger_handshake_callback(if was_shut_down {
+                HandshakeOutcome::Aborted
+            } else {
+                HandshakeOutcome::RenegotiationRefused
+            });
+            self.trigger_close_callback();
+        }
+
         /// Handle reading data. Returns true if we can call handle_writing.
         fn handle_reading(&self, buffer: &mut IoBuffer) -> bool {
             let mut read: usize = 0;
@@ -1169,11 +1205,8 @@ pub mod ssl_wrapper {
                             let renegotiated = renegotiation_allowed
                                 && unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } != 0;
                             if !renegotiated {
-                                self.flags
-                                    .set_handshake_state(HandshakeState::HandshakeCompleted);
-                                // we failed to renegotiate
-                                self.trigger_handshake_callback(HandshakeOutcome::Aborted);
-                                self.trigger_close_callback();
+                                // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
+                                self.refuse_renegotiation(unsafe { buffer.filled(read) });
                                 return false;
                             }
                             // ok, we are done here, we need to call SSL_read again

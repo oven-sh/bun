@@ -1145,6 +1145,8 @@ void us_socket_set_inline_reject(struct us_socket_t *s) {
 
 void us_socket_set_first_flight_before_fin(struct us_socket_t *s) {
   if (!s->ssl || s->ssl_is_server || s->ssl_handshake_state == HANDSHAKE_COMPLETED) return;
+  /* A resumed handshake can complete after the FIN, and node offers no session for another server name. */
+  if (SSL_get_session(s_ssl(s))) return;
   s->ssl_first_flight_before_fin = 1;
 }
 
@@ -2097,8 +2099,6 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     return us_internal_socket_close_raw(s, code, reason);
   }
   ssl_set_loop_data(s);
-  /* The flight and its FIN leave first: the handshake of a half-closed socket is reported with no error, not as ECONNRESET. */
-  if (s->ssl_shutdown_after_first_flight) ssl_update_handshake(s, 1);
   ssl_update_handshake(s, 1);
   if (ssl_gone(s)) return s;
 

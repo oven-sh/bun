@@ -1057,9 +1057,7 @@ impl ByteRangeMapping {
         }
     }
 
-    /// `map` with the number of original lines to make room for. `None` when
-    /// no source text bounds that number: the report then has the lines of
-    /// the file itself, and a warning says so.
+    /// `None`, with a warning the first time, when no source text bounds the lines of `map`.
     fn original_line_bound<'m>(
         &self,
         map: &'m ParsedSourceMap,

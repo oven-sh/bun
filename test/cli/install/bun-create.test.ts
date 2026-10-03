@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, symlinkSync } from "fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, symlinkSync } from "fs";
 import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
@@ -363,6 +363,102 @@ it("should create template from an absolute folder path", async () => {
   expect(exitCode).toBe(0);
 });
 
+// A template given as a folder path is copied only into a new or empty destination.
+describe.concurrent("template from a folder path over an existing destination", () => {
+  const template = {
+    "tpl/index.js": "hi",
+    "tpl/package.json": JSON.stringify({ name: "tpl", version: "1.0.0" }),
+  };
+
+  async function create(cwd: string, args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "create", ...args, "--no-git", "--no-install"],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  // Every file under `dir` with its content: a removed, a changed and an added file all show.
+  async function filesIn(dir: string) {
+    const files: Record<string, string> = {};
+    for (const path of (await Array.fromAsync(new Bun.Glob("**").scan({ cwd: dir, dot: true }))).sort()) {
+      files[path.replaceAll("\\", "/")] = await Bun.file(join(dir, path)).text();
+    }
+    return files;
+  }
+
+  for (const flags of [[], ["--force"]]) {
+    for (const destination of ["mine", "."]) {
+      it(`keeps a destination that has files: create <folder> ${[destination, ...flags].join(" ")}`, async () => {
+        using dir = tempDir("create-path-keep", {
+          ...template,
+          "mine/notes.txt": "notes",
+          "mine/sub/deep.txt": "deep",
+        });
+        const root = String(dir);
+        const cwd = destination === "." ? join(root, "mine") : root;
+
+        const { stderr, exitCode } = await create(cwd, [join(root, "tpl"), destination, ...flags]);
+        expect({ files: await filesIn(join(root, "mine")), stderr, exitCode }).toEqual({
+          files: { "notes.txt": "notes", "sub/deep.txt": "deep" },
+          stderr: expect.stringContaining("is not empty"),
+          exitCode: 1,
+        });
+      });
+    }
+  }
+
+  it("copies into a destination folder that is empty", async () => {
+    using dir = tempDir("create-path-empty", template);
+    const root = String(dir);
+    mkdirSync(join(root, "mine"));
+
+    const { stderr, exitCode } = await create(root, [join(root, "tpl"), "mine"]);
+    const files = await filesIn(join(root, "mine"));
+    expect({ files: { ...files, "package.json": JSON.parse(files["package.json"]) }, stderr, exitCode }).toEqual({
+      files: { "index.js": "hi", "package.json": { name: "mine", version: "1.0.0" } },
+      stderr: expect.not.stringContaining("error"),
+      exitCode: 0,
+    });
+  });
+
+  it("keeps a destination that is a file", async () => {
+    using dir = tempDir("create-path-file", { ...template, "mine": "a file" });
+    const root = String(dir);
+
+    const { stderr, exitCode } = await create(root, [join(root, "tpl"), "mine"]);
+    expect({ isFile: lstatSync(join(root, "mine")).isFile(), stderr, exitCode }).toEqual({
+      isFile: true,
+      stderr: expect.stringContaining("opening dir"),
+      exitCode: 1,
+    });
+    expect(await Bun.file(join(root, "mine")).text()).toBe("a file");
+  });
+
+  it("keeps a destination that is a link to a folder that has files", async () => {
+    using dir = tempDir("create-path-link", { ...template, "real/notes.txt": "notes" });
+    const root = String(dir);
+    symlinkSync(join(root, "real"), join(root, "mine"), "junction");
+
+    const { stderr, exitCode } = await create(root, [join(root, "tpl"), "mine"]);
+    expect({
+      isLink: lstatSync(join(root, "mine")).isSymbolicLink(),
+      files: await filesIn(join(root, "real")),
+      stderr,
+      exitCode,
+    }).toEqual({
+      isLink: true,
+      files: { "notes.txt": "notes" },
+      stderr: expect.stringContaining("is not empty"),
+      exitCode: 1,
+    });
+  });
+});
+
 it("should refuse to copy a template into itself", async () => {
   const template = join(x_dir, "tmpl");
   await Bun.write(join(template, "index.js"), "hi");
@@ -405,28 +501,28 @@ it("should refuse a destination that reaches the template through a link", async
   expect(exitCode).toBe(1);
 });
 
-it("should refuse a destination that is the template in a different letter case", async () => {
-  const template = join(x_dir, "tmpl");
-  await Bun.write(join(template, "index.js"), "hi");
-  const dest = join(x_dir, "TMPL");
-  if (!(await exists(dest))) {
-    // A case-sensitive volume. The two paths are different directories here.
-    return;
-  }
+// On a case-sensitive volume the two paths are different directories.
+it.skipIf(!existsSync(tmpdirSync("cr8-case").toUpperCase()))(
+  "should refuse a destination that is the template in a different letter case",
+  async () => {
+    const template = join(x_dir, "tmpl");
+    await Bun.write(join(template, "index.js"), "hi");
+    const dest = join(x_dir, "TMPL");
 
-  await using proc = spawn({
-    cmd: [bunExe(), "create", template, dest, "--no-git", "--no-install"],
-    cwd: x_dir,
-    stdout: "pipe",
-    stderr: "pipe",
-    env,
-  });
+    await using proc = spawn({
+      cmd: [bunExe(), "create", template, dest, "--no-git", "--no-install"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
 
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("overlaps the template");
-  expect(await Bun.file(join(template, "index.js")).text()).toBe("hi");
-  expect(exitCode).toBe(1);
-});
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("overlaps the template");
+    expect(await Bun.file(join(template, "index.js")).text()).toBe("hi");
+    expect(exitCode).toBe(1);
+  },
+);
 
 // The lookup joins the name onto each template directory and folds `\` as well
 // as `/` on every platform, so `x\..` is `.bun-create` itself, like `.`.

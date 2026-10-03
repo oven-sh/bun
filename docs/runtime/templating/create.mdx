@@ -151,8 +151,8 @@ Bun then:
 ## From a local template
 
 <Warning>
-  Unlike remote templates, running `bun create` with a local template deletes the entire destination folder if it
-  already exists.
+  Unlike remote templates, running `bun create` with the name of a local template deletes the entire destination folder
+  if it already exists.
 </Warning>
 
 You can define custom templates on your local file system. Put them in one of the following directories:
@@ -179,6 +179,14 @@ Then, create a `package.json` file in that directory with the following contents
 ```
 
 Run `bun create foo` elsewhere on your file system to verify that Bun finds your local template.
+
+You can also pass the absolute path of a template folder in place of a name:
+
+```bash
+bun create /path/to/template my-app
+```
+
+Bun copies a template folder that you pass by path into a destination that is new or empty. If the destination holds files, Bun stops and changes nothing.
 
 #### Setup logic
 
@@ -249,7 +257,7 @@ IF GitHub repo
 ELSE IF local template
 
 1. Open local template folder
-2. Delete destination directory recursively
+2. Delete destination directory recursively. For a template passed as a folder path, Bun deletes nothing and stops if the destination is not empty
 3. Copy files recursively using the fastest system calls available (on macOS, `fcopyfile`; on Linux, `copy_file_range`). Do not copy or traverse into the `node_modules` folder if it exists (this alone makes it faster than `cp`)
 
 THEN, for remote templates, GitHub repos, and local templates alike:

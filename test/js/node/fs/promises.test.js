@@ -88,7 +88,7 @@ it("should be enumerable", () => {
 
 describe("access", () => {
   it("should work", async () => {
-    await access(__filename, 0);
+    expect(await access(__filename, 0)).toBeUndefined();
   });
 
   it("should fail on non-existant files", async () => {

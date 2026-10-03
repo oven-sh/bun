@@ -74,7 +74,7 @@ var access = function access(path, mode, callback?) {
     }
 
     callback = ensureCallback(callback);
-    fs.accessCb(err => callback(err), path, mode);
+    fs.accessCb(callback, path, mode);
   },
   appendFile = function appendFile(path, data, options, callback?) {
     if (!$isCallable(callback)) {
@@ -89,7 +89,7 @@ var access = function access(path, mode, callback?) {
   close = function close(fd, callback?) {
     if ($isCallable(callback)) {
       callback = wrapFsCallback(callback);
-      fs.closeCb(err => callback(err), fd);
+      fs.closeCb(callback, fd);
     } else if (callback === undefined) {
       fs.close(fd).then(() => {});
     } else {
@@ -104,7 +104,7 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
     // route through promises.rm for the JS-side ERR_FS_EISDIR validation
-    settleCallback(require("node:fs/promises").rm(path, options), callback);
+    settleCallbackWithNull(require("node:fs/promises").rm(path, options), callback);
   },
   rmdir = function rmdir(path, options, callback?) {
     if ($isCallable(options)) {
@@ -114,7 +114,7 @@ var access = function access(path, mode, callback?) {
     callback = ensureCallback(callback);
 
     // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
-    if (options?.recursive) settleCallback(require("node:fs/promises").rm(path, options), callback);
+    if (options?.recursive) settleCallbackWithNull(require("node:fs/promises").rm(path, options), callback);
     else fs.rmdirCb(callback, path, options);
   },
   copyFile = function copyFile(src, dest, mode, callback?) {
@@ -419,7 +419,7 @@ var access = function access(path, mode, callback?) {
       callback = wrapFsCallback(callback);
     }
 
-    if ($isCallable(callback)) fs.symlinkCb(err => callback(err === null ? undefined : err), target, path, type);
+    if ($isCallable(callback)) fs.symlinkCb(callback, target, path, type);
     else fs.symlink(target, path, type).then(callback, callback);
   },
   truncate = function truncate(path, len, callback?) {
@@ -998,7 +998,9 @@ function cp(src, dest, options, callback) {
   dest = getValidatedFsPath(dest, "dest");
   callback = guardCallback(callback);
 
-  settleCallbackWithNull(require("node:fs/promises").cp(src, dest, options), callback);
+  // node's fs.cp is util.callbackify(cpFn), so it calls back with (null, undefined):
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L1098
+  settleCallback(require("node:fs/promises").cp(src, dest, options), callback);
 }
 
 function _toUnixTimestamp(time: any, name = "time") {

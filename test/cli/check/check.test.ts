@@ -1820,11 +1820,26 @@ export const u = used;
         // To see whether this is a member of an enum, `policy.in` is resolved as an entity name, and `policy` as a namespace.
         "b.ts": file("policy.in.x", "{ in: { x: number } }"),
         "c.ts": file("policy.name", "{ name: string }"),
+        // Control flow analysis resolves the key of `k[policy.name]` where it compares references: at the assignment in d.ts.
+        "d.ts": `import { policy, used } from "./a";
+export function f(s: { data: { name: string } }, k: Record<string, number>) {
+  const policy = s.data;
+  return k[policy.name];
+}
+export const u = used;
+`,
+        "e.ts": `import { policy, used } from "./a";
+export function f(policy: { name: string }, k: Record<string, number>) {
+  return k[policy.name];
+}
+export const u = used;
+`,
       });
       const { stdout, exitCode } = await check(dir, ["--noUnusedLocals", "true"]);
-      expect(stdout).toMatchInlineSnapshot(
-        `"c.ts(1,10): error TS6133: 'policy' is declared but its value is never read."`,
-      );
+      expect(stdout).toMatchInlineSnapshot(`
+        "c.ts(1,10): error TS6133: 'policy' is declared but its value is never read.
+        e.ts(1,10): error TS6133: 'policy' is declared but its value is never read."
+      `);
       expect(exitCode).toBe(1);
     });
 

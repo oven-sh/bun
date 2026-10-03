@@ -7,7 +7,8 @@
 use super::errors_enums_names::Location;
 use super::*;
 use crate::bind::{
-    Bound, ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId,
+    Bound, ClassOwner, Decl, Flow, FlowId, FnOwner, MemberOwner, Parent, PatParent, ScopeId,
+    ScopeKind, SymbolId,
 };
 use crate::program::SymbolTable;
 
@@ -17,6 +18,29 @@ const TYPE: u8 = 2;
 const NAMESPACE: u8 = 4;
 const ALL: u8 = 7;
 const ALIAS: u8 = 8;
+
+/// Whether `getTypeAtFlowNode`, for a property or element access at `flow`, reaches a node where it
+/// calls `isMatchingReference` or `getFlowReferenceKey`. For such a reference it does not go past
+/// the start of the function.
+fn compares_references(bound: &Bound, mut flow: FlowId, depth: u32) -> bool {
+    loop {
+        flow = match bound.flow[flow.idx()] {
+            Flow::Unreachable | Flow::Start { .. } => return false,
+            Flow::Assign { .. } | Flow::Cond { .. } | Flow::Switch { .. } | Flow::Loop { .. } => {
+                return true;
+            }
+            Flow::Label { start, len } => {
+                let edges = &bound.flow_edges[start as usize..(start + len) as usize];
+                return depth < 64
+                    && (edges.iter()).any(|&edge| compares_references(bound, edge, depth + 1));
+            }
+            Flow::StartInvoked { outer: before, .. }
+            | Flow::Call { before, .. }
+            | Flow::Reduce { before, .. }
+            | Flow::ArrayMutation { before, .. } => before,
+        };
+    }
+}
 
 struct Unused<'a> {
     files: &'a Files,
@@ -169,6 +193,21 @@ impl Checker<'_> {
             };
             if is_tested {
                 self.note_qualified_name(file, u, obj);
+            }
+        }
+        // `getAccessedPropertyName(e)` resolves the key of `x[a.b]`. `getFlowTypeOfReference` asks
+        // for it where it compares `e` with another reference.
+        for &e in index.of(ExprTag::Index) {
+            let ExprKind::Index { index: key, .. } = hir[e].kind else {
+                continue;
+            };
+            if !is_parenthesized(hir, key)
+                && is_property_access_entity_name_expression(hir, key)
+                && is_checked(u, e)
+                && !self.is_definite_assignment_target(file, e)
+                && compares_references(bound, bound.expr_flow[e.idx()], 0)
+            {
+                self.note_qualified_name(file, u, key);
             }
         }
         // `checkTemplateExpression`

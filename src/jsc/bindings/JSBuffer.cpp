@@ -21,7 +21,6 @@
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
-// #include "JSBlob.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -72,7 +71,6 @@
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
-// #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/BufferAccessorRegistry.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 #include <JavaScriptCore/MathCommon.h>

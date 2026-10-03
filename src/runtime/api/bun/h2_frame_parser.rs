@@ -1662,12 +1662,7 @@ impl Stream {
                     } else {
                         let identifier = self.get_identifier();
                         identifier.ensure_still_alive();
-                        if self.state == StreamState::HALF_CLOSED_REMOTE {
-                            self.state = StreamState::CLOSED;
-                            self.free_resources::<false>(client);
-                        } else {
-                            self.state = StreamState::HALF_CLOSED_LOCAL;
-                        }
+                        self.end_local(client);
                         client.dispatch_with_extra(
                             JSH2FrameParser::Gc::onStreamEnd,
                             identifier,
@@ -1939,6 +1934,16 @@ impl Stream {
                 .set(client.outbound_queue_size.get() - 1);
         }
         // queue dropped here
+    }
+
+    /// This side wrote its END_STREAM.
+    fn end_local(&mut self, client: &H2FrameParser) {
+        if self.state == StreamState::HALF_CLOSED_REMOTE {
+            self.state = StreamState::CLOSED;
+            self.free_resources::<false>(client);
+        } else {
+            self.state = StreamState::HALF_CLOSED_LOCAL;
+        }
     }
 
     /// this can be called multiple times
@@ -5347,12 +5352,7 @@ impl H2FrameParser {
                 } else {
                     let identifier = stream.get_identifier();
                     identifier.ensure_still_alive();
-                    if stream.state == StreamState::HALF_CLOSED_REMOTE {
-                        stream.state = StreamState::CLOSED;
-                        stream.free_resources::<false>(self);
-                    } else {
-                        stream.state = StreamState::HALF_CLOSED_LOCAL;
-                    }
+                    stream.end_local(self);
                     settled_state = stream.state as u8;
                     if !(suppress_half_closed_local_dispatch
                         && stream.state == StreamState::HALF_CLOSED_LOCAL)
@@ -5848,12 +5848,7 @@ impl H2FrameParser {
         }
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
-        if stream.state == StreamState::HALF_CLOSED_REMOTE {
-            stream.state = StreamState::CLOSED;
-            stream.free_resources::<false>(this);
-        } else {
-            stream.state = StreamState::HALF_CLOSED_LOCAL;
-        }
+        stream.end_local(this);
         this.dispatch_with_extra(
             JSH2FrameParser::Gc::onStreamEnd,
             identifier,
@@ -7275,12 +7270,7 @@ impl H2FrameParser {
             // count) until socket close.
             let identifier = stream.get_identifier();
             identifier.ensure_still_alive();
-            if stream.state == StreamState::HALF_CLOSED_REMOTE {
-                stream.state = StreamState::CLOSED;
-                stream.free_resources::<false>(this);
-            } else {
-                stream.state = StreamState::HALF_CLOSED_LOCAL;
-            }
+            stream.end_local(this);
             this.dispatch_with_extra(
                 JSH2FrameParser::Gc::onStreamEnd,
                 identifier,

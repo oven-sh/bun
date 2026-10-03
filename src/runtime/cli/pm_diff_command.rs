@@ -16,7 +16,7 @@ use bun_install::lockfile::LoadResult;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::npm::{self, PackageManifest};
 use bun_install::{PackageManager, resolution};
-use bun_libarchive::lib::{ArchiveIterator, IteratorResult as ArchiveIterResult};
+use bun_libarchive::lib::{ArchiveIterator, DamagedBlock, IteratorResult as ArchiveIterResult};
 use bun_semver as Semver;
 use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
 use bun_url::URL;
@@ -485,7 +485,7 @@ fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Erro
 }
 
 fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> {
-    let mut iter = match ArchiveIterator::init(bytes) {
+    let mut iter = match ArchiveIterator::init(bytes, DamagedBlock::Skip) {
         ArchiveIterResult::Result(it) => it,
         ArchiveIterResult::Err { message, .. } => {
             Status::clear();

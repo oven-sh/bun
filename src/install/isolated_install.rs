@@ -226,14 +226,10 @@ fn links_into_hidden_node_modules(tag: ResolutionTag) -> bool {
     )
 }
 
-/// Grants `node_modules/.bun/node_modules/<dep_name>` to the first dependency that asks for it.
-fn claim_hidden_hoist(
-    manager: &PackageManager,
-    hidden_hoisted: &mut StringArrayHashMap<()>,
-    dep_name: &[u8],
-) -> Result<bool, AllocError> {
+/// Whether a dependency of this name can be linked as `node_modules/.bun/node_modules/<dep_name>`.
+fn can_hold_hidden_hoist(manager: &PackageManager, dep_name: &[u8]) -> bool {
     if !manager.options.hoist {
-        return Ok(false);
+        return false;
     }
     // `.bin` is on the `PATH` of store packages' scripts, and a bare scope is the directory that holds `<scope>/<name>`.
     let is_package_name = match dep_name.first() {
@@ -241,15 +237,22 @@ fn claim_hidden_hoist(
         Some(&b'@') => bun_core::strings::contains_char(dep_name, b'/'),
         _ => true,
     };
-    if !is_package_name {
-        return Ok(false);
-    }
-    if let Some(hoist_pattern) = &manager.options.hoist_pattern {
-        if !hoist_pattern.is_match(dep_name) {
-            return Ok(false);
-        }
-    }
-    Ok(!hidden_hoisted.get_or_put(dep_name)?.found_existing)
+    is_package_name
+        && manager
+            .options
+            .hoist_pattern
+            .as_ref()
+            .is_none_or(|hoist_pattern| hoist_pattern.is_match(dep_name))
+}
+
+/// Grants `node_modules/.bun/node_modules/<dep_name>` to the first dependency that asks for it.
+fn claim_hidden_hoist(
+    manager: &PackageManager,
+    hidden_hoisted: &mut StringArrayHashMap<()>,
+    dep_name: &[u8],
+) -> Result<bool, AllocError> {
+    Ok(can_hold_hidden_hoist(manager, dep_name)
+        && !hidden_hoisted.get_or_put(dep_name)?.found_existing)
 }
 
 pub(crate) fn build_store(
@@ -2225,15 +2228,19 @@ pub(crate) fn install_isolated_packages(
                     }
 
                     // A dependency that this install leaves out (`--filter`) can hold the name.
-                    let held_by_name = dependencies
-                        .iter()
-                        .zip(lockfile_ro.buffers.resolutions.iter())
-                        .any(|(dep, &res)| {
-                            dep.name_hash == pkg_name_hash
-                                && res != invalid_package_id
-                                && pkg_name_hashes[res as usize] == pkg_name_hash
-                                && links_into_hidden_node_modules(pkg_resolutions[res as usize].tag)
-                        });
+                    let pkg_name = pkg_names[pkg_id as usize].slice(string_buf);
+                    let held_by_name = can_hold_hidden_hoist(installer.manager(), pkg_name)
+                        && dependencies
+                            .iter()
+                            .zip(lockfile_ro.buffers.resolutions.iter())
+                            .any(|(dep, &res)| {
+                                dep.name_hash == pkg_name_hash
+                                    && res != invalid_package_id
+                                    && pkg_name_hashes[res as usize] == pkg_name_hash
+                                    && links_into_hidden_node_modules(
+                                        pkg_resolutions[res as usize].tag,
+                                    )
+                            });
                     if held_by_name {
                         continue;
                     }

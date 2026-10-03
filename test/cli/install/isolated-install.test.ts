@@ -4196,6 +4196,40 @@ describe("hoist", () => {
     });
   });
 
+  test("removes the package-name link an older version left for a name hoistPattern leaves out", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", hoistPattern: "an-*" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-upgraded-tree-pattern",
+        dependencies: {
+          "an-alias": "npm:no-deps@2.0.0",
+          // a dependency holds this name, and the pattern gives it no link
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const links = { "an-alias": inStore("no-deps@2.0.0", "no-deps") };
+    expect(await fallbackLinks(packageDir)).toEqual(links);
+
+    // older versions matched the pattern on `an-alias` and named the link after the package
+    await symlink(
+      inStore("no-deps@2.0.0", "no-deps"),
+      join(packageDir, "node_modules", ".bun", "node_modules", "no-deps"),
+      "dir",
+    );
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(await fallbackLinks(packageDir)).toEqual(links);
+  });
+
   test("an install of one workspace keeps the fallback link another workspace holds", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },

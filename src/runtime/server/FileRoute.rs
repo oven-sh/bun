@@ -230,7 +230,7 @@ impl FileRoute {
     }
 
     pub(crate) fn on_request(this: ThisPtr<FileRoute>, req: AnyRequest, resp: AnyResponse) {
-        let method = Method::find(req.method()).unwrap_or(Method::GET);
+        let method = req.method();
         Self::on(this, req, resp, method);
     }
 

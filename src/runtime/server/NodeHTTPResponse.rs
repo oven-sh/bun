@@ -2716,7 +2716,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     let request_ref = bun_opaque::opaque_deref(request.cast_const());
 
     let vm = bun_vm_mut(global_object);
-    let method = HttpMethod::which(request_ref.method()).unwrap_or(HttpMethod::OPTIONS);
+    let method = request_ref.method();
     // Like llhttp, the framing decides, not the method. CONNECT has no body: the parser tunnels every byte after its head.
     if method != HttpMethod::CONNECT {
         let req_len: usize = 'brk: {

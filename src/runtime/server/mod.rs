@@ -731,7 +731,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp: *mut uws_sys::NewAppResponse<SSL>,
         should_deinit_context: Option<request_context::DeferDeinitFlag>,
         create_js_request: CreateJsRequest,
-        method: Option<bun_http_types::Method::Method>,
     ) -> Option<PreparedRequest<SSL, DEBUG>> {
         jsc::mark_binding!();
         // SAFETY: `this`/`resp` are live for the duration of the uWS callback.
@@ -748,18 +747,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // we avoid needing to worry as much about what memory to free.
         // (RFC 9114 §4.2 transfer-encoding check is H3-only — skipped here.)
 
-        // Resolve once, reuse for both `has_request_body()` here and the
-        // forward to `RequestContext::create` below. With `Method::which` now
-        // a length-gated match (316a83f) the
-        // second call is cheap, but the resolved value is also what `create`
-        // wants — passing `None` made it parse a second time.
-        let method = method.or_else(|| bun_http_types::Method::Method::which(req.method()));
+        let method = req.method();
 
         let request_body_length: Option<usize> = 'len: {
-            if method
-                .unwrap_or(bun_http_types::Method::Method::OPTIONS)
-                .has_request_body()
-            {
+            if method.has_request_body() {
                 let len: usize = if let Some(cl) = req.header(b"content-length") {
                     bun_http_types::parse_content_length(cl)
                 } else {
@@ -980,7 +971,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     resp,
                     None,
                     CreateJsRequest::Bake,
-                    None,
                 ) {
                     Some(p) => p,
                     None => return,
@@ -1153,7 +1143,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::Yes,
-            None,
         ) else {
             return;
         };
@@ -1207,7 +1196,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
-            user_route.route.method.specific(),
         ) else {
             return;
         };
@@ -1314,21 +1302,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // request, so only the first request for a given method pays the FFI hop
         // into `Bun__HTTPMethod__toJS`. (`get(..)` falls back to a fresh intern
         // if a future method variant ever indexes past the cache.)
-        let method_string = match bun_http::Method::find(req.method()) {
-            Some(m) => match this_ref.method_name_cache.get(m as usize) {
-                Some(slot) => {
-                    let cached = slot.get();
-                    if cached == JSValue::ZERO {
-                        let v = m.to_js(global);
-                        slot.set(v);
-                        v
-                    } else {
-                        cached
-                    }
+        let method = req.method();
+        let method_string = match this_ref.method_name_cache.get(method as usize) {
+            Some(slot) => {
+                let cached = slot.get();
+                if cached == JSValue::ZERO {
+                    let v = method.to_js(global);
+                    slot.set(v);
+                    v
+                } else {
+                    cached
                 }
-                None => m.to_js(global),
-            },
-            None => JSValue::UNDEFINED,
+            }
+            None => method.to_js(global),
         };
         let callback = this_ref.config.on_node_http_request;
         // C++ forwards `any_server` to `NodeHTTPResponse::create`, which
@@ -4039,20 +4025,14 @@ impl AnyServer {
         req: &mut uws::Request,
         resp: uws::AnyResponse,
         global: &jsc::JSGlobalObject,
-        method: Option<bun_http::Method>,
     ) -> jsc::JsResult<Option<SavedRequest>> {
         let req: &mut uws_sys::Request = req;
         Ok(any_server_dispatch_resp!(self, resp, |s, r| {
             // `s` is the live `*mut NewServer` carried in `self.ptr`,
             // tagged at construction in `AnyServer::from`.
-            let Some(p) = NewServer::prepare_js_request_context(
-                s,
-                req,
-                r,
-                None,
-                CreateJsRequest::Bake,
-                method,
-            ) else {
+            let Some(p) =
+                NewServer::prepare_js_request_context(s, req, r, None, CreateJsRequest::Bake)
+            else {
                 return Ok(None);
             };
             Some(p.save(global, req, r))

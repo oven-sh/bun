@@ -57,11 +57,8 @@ impl Request {
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { bun_core::ffi::slice(p, n) }
     }
-    pub fn method(&mut self) -> &[u8] {
-        let mut p: *const u8 = ptr::null();
-        let n = c::uws_h3_req_get_method(self, &mut p);
-        // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { bun_core::ffi::slice(p, n) }
+    pub fn method(&mut self) -> bun_http_types::Method::Method {
+        crate::request::method_from_id(c::uws_h3_req_get_method_id(self))
     }
     pub fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         let mut p: *const u8 = ptr::null();
@@ -779,7 +776,7 @@ mod c {
         // shim only stores a pointer into request-owned storage and returns its
         // length — no read-through precondition, so `safe fn`.
         pub(super) safe fn uws_h3_req_get_url(req: &mut Request, out: &mut *const u8) -> usize;
-        pub(super) safe fn uws_h3_req_get_method(req: &mut Request, out: &mut *const u8) -> usize;
+        pub(super) safe fn uws_h3_req_get_method_id(req: &mut Request) -> u8;
         pub(super) fn uws_h3_req_get_header(
             req: *mut Request,
             name: *const u8,

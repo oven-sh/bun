@@ -339,6 +339,8 @@ pub(crate) trait JsSinkType: Sized + JsSinkAbi {
     const HAS_CONSTRUCT: bool = false;
     /// Mirrors `@hasDecl(SinkType, "flushFromJS")`.
     const HAS_FLUSH_FROM_JS: bool = false;
+    /// `end(error)` goes to `end_with_error_from_js` instead of `end_from_js`.
+    const HAS_END_WITH_ERROR_FROM_JS: bool = false;
     /// Mirrors `@hasDecl(SinkType, "protectJSWrapper")`.
     const HAS_PROTECT_JS_WRAPPER: bool = false;
     /// Mirrors `@hasDecl(SinkType, "updateRef")`.
@@ -396,6 +398,31 @@ pub(crate) trait JsSinkType: Sized + JsSinkAbi {
     ) -> sys::Result<()> {
         // SAFETY: caller contract; `end` does not free the sink.
         unsafe { (*this).end(None) }
+    }
+    /// `end(error)` from JS with a value that is `instanceof Error`: the
+    /// caller's source failed, so the bytes written so far are a truncated
+    /// body. Only reached when `HAS_END_WITH_ERROR_FROM_JS`; every other sink
+    /// keeps the clean end of `end_from_js` for any argument.
+    ///
+    /// Raw pointer: failing can re-enter the sink through its owner.
+    ///
+    /// # Safety
+    /// `this` is the cell's live sink.
+    unsafe fn end_with_error_from_js(
+        this: *mut Self,
+        cx: &bun_jsc::JsThread<'_>,
+        _err: JSValue,
+    ) -> bun_jsc::JsResult<JSValue> {
+        use bun_sys_jsc::ErrorJsc;
+        debug_assert!(
+            !Self::HAS_END_WITH_ERROR_FROM_JS,
+            "JsSinkType::end_with_error_from_js missing"
+        );
+        // SAFETY: caller contract; `end_from_js` does not free the sink.
+        match unsafe { (*this).end_from_js(cx) } {
+            sys::Result::Ok(value) => Ok(value),
+            sys::Result::Err(err) => Err(cx.global().throw_value(err.to_js(cx.global())?)),
+        }
     }
 
     fn construct(_this: &mut core::mem::MaybeUninit<Self>) {
@@ -458,6 +485,13 @@ pub(crate) trait JsSinkType: Sized + JsSinkAbi {
 // `impl_js_sink_abi!`. `write_utf8` is intentionally NOT re-added: it has
 // no lut entry and no C++ caller.
 // ──────────────────────────────────────────────────────────────────────────
+
+unsafe extern "C" {
+    /// `value instanceof Error` for the Error of any realm, also through a
+    /// Proxy. Runs no script. Defined in `generate-jssink.ts`.
+    #[link_name = "JSSink__isErrorValue"]
+    safe fn is_error_value(value: JSValue) -> bool;
+}
 
 impl<T: JsSinkType> JSSink<T> {
     /// `JSSink.getThis` — recover `&mut JSSink<T>` from `callframe.this()` or
@@ -671,6 +705,17 @@ impl<T: JsSinkType> JSSink<T> {
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
+        }
+
+        if T::HAS_END_WITH_ERROR_FROM_JS {
+            // Only an error value: `pipeTo` of `node:stream/iter` ends its
+            // writer with an options object, and that is a clean end.
+            let err = frame.argument(0);
+            if is_error_value(err) {
+                let sink: *mut T = &raw mut this.sink;
+                // SAFETY: `sink` is the cell's live sink; `this` is not used again.
+                return unsafe { T::end_with_error_from_js(sink, &cx, err) };
+            }
         }
 
         let result = match this.sink.end_from_js(&cx) {

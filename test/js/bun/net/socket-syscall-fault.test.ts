@@ -538,3 +538,98 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
     H2_TIMEOUT_MS,
   );
 });
+
+// A us_socket_t write wrapper shortens a request to INT_MAX bytes, and
+// us_socket_write arms the writable poll only when the kernel takes less than it
+// was given. A caller whose shortened request was taken whole saw a short count
+// and then no writable event, so the rest of a buffer over 2 GiB was never sent.
+// The "write_request" rule lowers the bound, so a 64 KiB request reaches the same
+// state. Each case runs in a child because the rule is process-wide. A child that
+// never gets the writable event hangs, and the test then times out.
+describe.skipIf(skip)("a write request the wrapper shortened is followed by a writable event", () => {
+  const arm = `fault.set({ syscall: "write_request", action: "short", bytes: 65536, repeat: -1 })`;
+
+  test.concurrent("Bun.connect drains one 8 MiB buffer", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+         const total = 8 * 1024 * 1024;
+         const payload = Buffer.alloc(total, "x");
+         const done = Promise.withResolvers();
+         let received = 0;
+         using server = Bun.listen({
+           hostname: "127.0.0.1",
+           port: 0,
+           socket: {
+             data(socket, chunk) {
+               received += chunk.length;
+               if (received === total) done.resolve();
+             },
+           },
+         });
+         let sent = 0;
+         let drains = 0;
+         const pump = socket => { sent += socket.write(payload.subarray(sent)); };
+         ${arm};
+         const client = await Bun.connect({
+           hostname: "127.0.0.1",
+           port: server.port,
+           socket: { open: pump, drain(socket) { drains++; pump(socket); }, data() {} },
+         });
+         await done.promise;
+         fault.clear();
+         client.end();
+         console.log(JSON.stringify({ received, sent, shortened: drains >= total / 65536 - 1 }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout: stdout.trim(),
+      signalCode: proc.signalCode,
+      exitCode,
+      stderrTail: exitCode === 0 ? "" : stderr.slice(-2000),
+    }).toEqual({
+      stdout: JSON.stringify({ received: 8388608, sent: 8388608, shortened: true }),
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+  });
+
+  test.concurrent("process.send delivers 50 messages of 1 MiB", async () => {
+    const count = 50;
+    const chunkLength = 1024 * 1024;
+    const { promise, resolve, reject } = Promise.withResolvers<number[]>();
+    const lengths: number[] = [];
+    await using child = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+         ${arm};
+         const chunk = Buffer.alloc(${chunkLength}, "x").toString();
+         for (let i = 0; i < ${count}; i++) process.send(chunk);
+         process.on("message", () => process.exit(0));`,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      ipc(message, subprocess) {
+        lengths.push(message.length);
+        if (lengths.length === count) {
+          resolve(lengths);
+          subprocess.send("stop");
+        }
+      },
+      onExit(_subprocess, exitCode, signalCode) {
+        reject(new Error(`child exited (${exitCode}, ${signalCode}) after ${lengths.length} of ${count} messages`));
+      },
+    });
+    expect(await promise).toEqual(Array(count).fill(chunkLength));
+    expect(await child.exited).toBe(0);
+  });
+});

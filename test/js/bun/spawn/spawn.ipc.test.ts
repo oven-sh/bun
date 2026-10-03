@@ -392,7 +392,8 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
 // at 4 to 6 GB of RSS. Inside a container os.totalmem() reports the host's RAM;
 // process.constrainedMemory() reports the cgroup limit there.
 // Not on Windows: the parent has to drain a whole 2 GiB write request before the next
-// one starts, and the sender copies each request, so the child peaks above 10 GB.
+// one starts, and the sender copies each request. A run by hand took 49 s on a debug
+// build and the child peaked at 10.45 GiB, against 16 GiB on the Windows test machines.
 const memory = Math.min(totalmem(), process.constrainedMemory() || Infinity);
 describe.skipIf(isWindows || memory < 16 * 1024 ** 3)("send queue past 2 GiB", () => {
   // The item has to pass 2^31 bytes, and the child copies each message three times to
@@ -412,7 +413,8 @@ describe.skipIf(isWindows || memory < 16 * 1024 ** 3)("send queue past 2 GiB", (
       const { promise, resolve, reject } = Promise.withResolvers<number[]>();
       const lengths: number[] = [];
       await using child = spawn([bunExe(), "-e", childSource], {
-        env: bunEnv,
+        // A build without the fix aborts here. It must not upload a crash report.
+        env: { ...bunEnv, BUN_ENABLE_CRASH_REPORTING: "0" },
         stdio: ["ignore", "inherit", "inherit"],
         serialization: "advanced",
         ipc(message, subprocess) {

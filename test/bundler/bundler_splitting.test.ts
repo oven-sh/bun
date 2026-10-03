@@ -732,6 +732,19 @@ describe("bundler", () => {
     format: "esm",
     run: { file: "/out/index.js", stdout: "setup\nstore\nx 1\nindex x\nsettings" },
   });
+  itBundled("splitting/EntrySetupImportWithImportCallOfExternalModule", {
+    files: {
+      ...setupBeforeShared,
+      "/setup.js": `globalThis.APP = { name: "app" }; globalThis.ext = () => import("ext");`,
+    },
+    external: ["ext"],
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "browser",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "index app\nsettings app" },
+  });
   itBundled("splitting/EntrySetupImportThatThrowsLeavesSharedCodeToLazyChunk", {
     files: {
       ...setupBeforeShared,

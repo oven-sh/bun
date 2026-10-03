@@ -810,7 +810,8 @@ fn entry_files_ahead_of_parent(
             && !ast_flags[file as usize].contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
             && !module_scopes[file as usize].contains_direct_eval
             && !import_records[file as usize].iter().any(|record| {
-                this.is_external_dynamic_import(record, file)
+                record.source_index.is_valid()
+                    && this.is_external_dynamic_import(record, file)
                     && (this.module_preload() || record.kind == ImportKind::Require)
             });
         this.for_each_file_loaded_by(file, |other| {

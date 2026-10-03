@@ -843,6 +843,7 @@ fn reached_chunks_in_order(
     }
 
     let entry_bits = chunk.entry_bits();
+    let is_early_chunk = c.is_early_entry_file(chunk.entry_point.source_index());
     let file_entry_bits = c.graph.files.items_entry_bits();
     let css = c.graph.ast.items_css();
     let parts = c.graph.ast.items_parts();
@@ -884,7 +885,8 @@ fn reached_chunks_in_order(
             visited.set(source_index as usize);
 
             let is_file_in_chunk = if css[source_index as usize].is_none() {
-                chunk_of_file[source_index as usize] == chunk_index
+                entry_bits.eql(&file_entry_bits[source_index as usize])
+                    && c.is_early_entry_file(source_index) == is_early_chunk
             } else {
                 entry_bits.has_intersection(&file_entry_bits[source_index as usize])
             };

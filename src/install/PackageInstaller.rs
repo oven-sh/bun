@@ -1517,10 +1517,30 @@ impl<'a> PackageInstaller<'a> {
                 installer.cache_dir = Fd::cwd();
             }
             resolution::Tag::Symlink => {
-                let directory = package_manager::global_link_dir(self.manager_mut());
-
                 let folder_str = *resolution.symlink();
                 let folder = folder_str.slice(string_buf!());
+
+                // Rows loaded from bun.lock skip the resolver's check.
+                if crate::dependency::link_path_escapes_root(folder)
+                    && !self.lockfile().is_trusted_folder_package(package_id)
+                {
+                    if log_level != Options::LogLevel::Silent {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r>: refusing to link dependency <b>{}<r> to \"{}\": only the root package.json, a workspace, or a top-level override may link to a path outside the project",
+                            bstr::BStr::new(pkg_name.slice(string_buf!())),
+                            bstr::BStr::new(folder),
+                        );
+                    }
+                    self.summary.fail += 1;
+                    self.increment_tree_install_count(
+                        !is_pending_package_install,
+                        self.current_tree_id,
+                        log_level,
+                    );
+                    return;
+                }
+
+                let directory = package_manager::global_link_dir(self.manager_mut());
 
                 if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                     installer.cache_dir_subpath = ZStr::from_static(b".\0");

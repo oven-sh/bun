@@ -1597,6 +1597,17 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         dependency::version::Tag::Symlink | dependency::version::Tag::Workspace => {
             let dependency_tag = version.tag;
 
+            // Same trust rule as the `file:` arm below and both installers.
+            if dependency_tag == dependency::version::Tag::Symlink
+                && dependency::link_path_escapes_root(this.lockfile.str(version.symlink()))
+                && !this.lockfile.is_trusted_folder_dependency(id)
+            {
+                if dependency.behavior.is_required() {
+                    reject_link_path_of_remote_package(this, id, dependency, &version);
+                }
+                return Ok(());
+            }
+
             let _result = match get_or_put_resolved_package(
                 this,
                 name_hash,
@@ -1850,6 +1861,40 @@ fn warn_unmet_peer_dependency(
         bstr::BStr::new(this.lockfile.str(&version.literal)),
         bstr::BStr::new(this.lockfile.str(&name)),
     );
+}
+
+#[cold]
+#[inline(never)]
+fn reject_link_path_of_remote_package(
+    this: &PackageManager,
+    dependency_id: DependencyID,
+    dependency: &Dependency,
+    version: &dependency::Version,
+) {
+    const REASON: &str = "only the root package.json, a workspace, or a top-level override may link to a path outside the project";
+    let buf = this.lockfile.buffers.string_bytes.as_slice();
+    let packages = this.lockfile.packages.slice();
+    let name = bstr::BStr::new(dependency.name.slice(buf));
+    let literal = bstr::BStr::new(version.literal.slice(buf));
+    match this.lockfile.get_parent_pkg_of_dependency(dependency_id) {
+        Some(declarer) => this.log_mut().add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "refusing to resolve \"{}@{}\" declared by {}@{}: {}",
+                name,
+                literal,
+                bstr::BStr::new(packages.items_name()[declarer as usize].slice(buf)),
+                packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix),
+                REASON,
+            ),
+        ),
+        None => this.log_mut().add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!("refusing to resolve \"{}@{}\": {}", name, literal, REASON),
+        ),
+    }
 }
 
 /// Allocate and initialise an `.extract` Task for an npm tarball.

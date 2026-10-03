@@ -1000,6 +1000,48 @@ describe("copyFileSync", () => {
     await expect(fs.promises.copyFile(src, dest)).rejects.toThrow(expected);
   });
 
+  // A FIFO or a device at the destination path is shared with other processes. fchmod on it
+  // changes that node, not a copy.
+  it.if(isPosix)("gives the source's mode to a regular destination, not to a FIFO", async () => {
+    using dir = tempDir("copyFile-dest-mode", { "src.txt": "hello\n" });
+    const src = join(String(dir), "src.txt");
+    fs.chmodSync(src, 0o751);
+
+    const copies: Record<string, (dest: string) => Promise<void>> = {
+      "copyFileSync": async dest => copyFileSync(src, dest),
+      "copyFile": dest => promisify(fs.copyFile)(src, dest),
+      "promises.copyFile": dest => fs.promises.copyFile(src, dest),
+    };
+    const results: Record<string, { fifoMode: string; fifoData: string; fileMode: string }> = {};
+    for (const [name, copy] of Object.entries(copies)) {
+      const fifo = join(String(dir), name + ".fifo");
+      mkfifo(fifo, 0o600);
+      // Without a reader, open(O_WRONLY) on a FIFO blocks.
+      const reader = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+      let fifoData: string;
+      try {
+        await copy(fifo);
+        const chunk = Buffer.alloc(16);
+        fifoData = chunk.toString("utf8", 0, readSync(reader, chunk, 0, chunk.length, null));
+      } finally {
+        closeSync(reader);
+      }
+
+      const file = join(String(dir), name + ".txt");
+      writeFileSync(file, "old contents", { mode: 0o600 });
+      await copy(file);
+
+      results[name] = {
+        fifoMode: statSync(fifo).mode.toString(8),
+        fifoData,
+        fileMode: statSync(file).mode.toString(8),
+      };
+    }
+
+    const expected = { fifoMode: "10600", fifoData: "hello\n", fileMode: "100751" };
+    expect(results).toEqual({ "copyFileSync": expected, "copyFile": expected, "promises.copyFile": expected });
+  });
+
   if (process.platform === "linux") {
     describe("should work when copyFileRange is not available", () => {
       it("on large files", () => {

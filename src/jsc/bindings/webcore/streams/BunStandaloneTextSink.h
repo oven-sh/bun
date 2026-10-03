@@ -11,6 +11,7 @@
 #include "root.h"
 #include "StreamsForward.h"
 #include "VectorSizeLimit.h"
+#include "WebStreamsInternals.h"
 
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
@@ -30,15 +31,44 @@ namespace WebStreams {
 // inside its ONE `Locker { cellLock() }` scope and proves that with the AbstractLocker
 // parameter (cellLock() is non-recursive — see StreamQueue.h's discipline comment).
 struct BunTextAccumulator {
-    // the pure-string fast-path rope. RecordOverflow: an append past
-    // StringImpl::MaxLength must surface as a catchable out-of-memory error at the
-    // write site, never as the default policy's process abort.
-    WTF::StringBuilder rope { WTF::OverflowPolicy::RecordOverflow };
     // string + typed-array-view pieces (the mixed path).
     WTF::Vector<JSC::WriteBarrier<JSC::Unknown>> pieces;
     double estimatedLength { 0 };
     bool hasString { false };
     bool hasBuffer { false };
+
+    // On false the rope did not take the chunk, and the caller throws.
+    ALWAYS_INLINE bool tryAppendString(const WTF::String& chunk)
+    {
+        if (m_rope.hasOverflowed() || exceedsStringLimit(static_cast<size_t>(m_rope.length()) + chunk.length())) [[unlikely]]
+            return false;
+        m_rope.append(chunk);
+        if (m_rope.hasOverflowed()) [[unlikely]] {
+            // The builder can keep the buffer that it could not grow. Nothing can read it now.
+            m_rope.clear();
+            m_rope.didOverflow();
+            return false;
+        }
+        hasString = true;
+        estimatedLength += chunk.length();
+        return true;
+    }
+
+    // The rope holds the string chunks that came after the last binary chunk. A rope that overflowed counts.
+    bool hasRope() const { return !m_rope.isEmpty(); }
+    // Null for a rope that overflowed, and the caller throws.
+    WTF::String tryRopeString()
+    {
+        if (m_rope.hasOverflowed()) [[unlikely]]
+            return {};
+        // toString() shrinks the buffer first, and asserts when that overflows the rope.
+        if (m_rope.capacity() != m_rope.length()) {
+            m_rope.shrinkToFit();
+            if (m_rope.hasOverflowed()) [[unlikely]]
+                return {};
+        }
+        return m_rope.toString();
+    }
 
     // Script adds a piece per write(), so growth is fallible. On false the caller throws after it drops the lock.
     bool tryAppendPieces(const WTF::AbstractLocker&, JSC::VM& vm, JSC::JSCell* owner, JSC::JSString* flushedRope, JSC::JSValue chunk)
@@ -47,7 +77,7 @@ struct BunTextAccumulator {
         if (flushedRope) {
             if (pieces.size() >= Bun::maxVectorSize<Piece>() || !pieces.tryAppend(Piece(vm, owner, flushedRope))) [[unlikely]]
                 return false;
-            rope.clear();
+            m_rope.clear();
         }
         return pieces.size() < Bun::maxVectorSize<Piece>() && pieces.tryAppend(Piece(vm, owner, chunk));
     }
@@ -60,7 +90,7 @@ struct BunTextAccumulator {
     {
         pieces.clear();
         pieces.shrinkToFit();
-        rope.clear();
+        m_rope.clear();
         estimatedLength = 0;
         hasString = false;
         hasBuffer = false;
@@ -85,6 +115,10 @@ struct BunTextAccumulator {
                 analyzer.analyzeIndexEdge(from, v.asCell(), i);
         }
     }
+
+private:
+    // An overflowed builder has lost its text and asserts in length() and toString(): check hasOverflowed() first.
+    WTF::StringBuilder m_rope { WTF::OverflowPolicy::RecordOverflow };
 };
 
 } // namespace WebStreams

@@ -241,6 +241,27 @@ describe("bun", () => {
         expect(exitCode).toBe(0);
       }
     });
+
+    // Extensionless files run as tsx, but `Makefile`/`LICENSE` are not useful
+    // `bun run <TAB>` suggestions, so the file scan only offers known extensions.
+    test("getcompletes j lists runnable source files, not extensionless ones", () => {
+      using dir = tempDir("getcompletes-files", {
+        "package.json": JSON.stringify({ name: "test", scripts: {} }),
+        "index.ts": "export {}",
+        "script.mjs": "export {}",
+        "Makefile": "all:\n\ttrue\n",
+        "LICENSE": "MIT",
+        "notes.txt": "hi",
+      });
+      const { stdout, exitCode } = spawnSync({
+        cmd: [bunExe(), "getcompletes", "j"],
+        env: bunEnv,
+        cwd: String(dir),
+      });
+      const lines = stdout.toString().split("\n").filter(Boolean).sort();
+      expect(lines).toEqual(["index.ts", "script.mjs"]);
+      expect(exitCode).toBe(0);
+    });
   });
   // On Windows `bun completions` installs bunx as a hardlink (or a .cmd shim) instead of a symlink.
   describe.skipIf(isWindows)("completions", () => {

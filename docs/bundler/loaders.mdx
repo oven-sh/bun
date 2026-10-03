@@ -9,7 +9,7 @@ The Bun bundler has a set of built-in loaders.
 
 `.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.css` `.json` `.jsonc` `.json5` `.toml` `.yaml` `.yml` `.xml` `.txt` `.text` `.md` `.markdown` `.wasm` `.node` `.html` `.sh`
 
-Bun uses the file extension to choose which built-in loader parses the file. Every loader has a name, such as `js`, `tsx`, or `json`. Plugins that extend Bun with custom loaders refer to these names.
+Bun uses the file extension to choose which built-in loader parses the file. Every loader has a name, such as `js`, `tsx`, or `json`. Plugins that extend Bun with custom loaders refer to these names. A file with no extension, such as a `bin/cli` script, uses the `tsx` loader. To change that, map the empty extension: `--loader :js` on the command line, `loader: { "": "js" }` in `Bun.build`, or `"" = "js"` under `[loader]` in `bunfig.toml`.
 
 To specify a loader explicitly, use the `'type'` import attribute.
 
@@ -53,7 +53,7 @@ Strips out all TypeScript syntax, then behaves identically to the `js` loader. B
 
 ### `tsx`
 
-**TypeScript + JSX loader.** Default for `.tsx`.
+**TypeScript + JSX loader.** Default for `.tsx` and for files with no extension.
 
 Transpiles both TypeScript and JSX to vanilla JavaScript.
 

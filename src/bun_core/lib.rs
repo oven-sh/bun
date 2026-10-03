@@ -16,6 +16,7 @@
 
 pub mod Global;
 pub mod atomic_cell;
+pub mod ci_info;
 pub mod comptime_string_map;
 pub mod error;
 pub mod hint;

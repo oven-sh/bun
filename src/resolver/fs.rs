@@ -193,8 +193,7 @@ impl Entry {
         }
     }
 
-    /// The only writer of `abs_path`: a double-checked fill under `self.mutex`, like
-    /// [`kind`](Self::kind). `fill` must not lock `mutex`; if it fails, nothing is published.
+    /// The only writer of `abs_path`. A failed `fill` publishes nothing. `fill` runs under `mutex`.
     pub fn abs_path_or_try_fill<E>(
         &self,
         fill: impl FnOnce() -> Result<Interned, E>,
@@ -1101,8 +1100,7 @@ mod tests {
         }
     }
 
-    // Miri reports a fill that is not ordered with another fill, or with a
-    // lock-free `abs_path()` read, as a data race.
+    // Miri fails this test if a fill races another fill or a lock-free `abs_path()` read.
     #[test]
     fn abs_path_fills_race_free_and_publish_once() {
         use core::sync::atomic::AtomicUsize;

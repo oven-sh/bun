@@ -4402,7 +4402,7 @@ describe.concurrent("verbose fetch logging curl line", () => {
           request.ansiC && !hasAnsiC
             ? "ran"
             : {
-                url: ["--http1.1", request.url, .../[\[\]{}]/.test(request.url) ? ["--globoff"] : []],
+                url: ["--http1.1", request.url, ...(/[\[\]{}]/.test(request.url) ? ["--globoff"] : [])],
                 header: request.headers?.["x-data"],
                 body: request.body === undefined ? undefined : [Buffer.from(request.body, "hex").latin1Slice()],
               },

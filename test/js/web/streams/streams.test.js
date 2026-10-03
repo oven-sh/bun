@@ -2664,6 +2664,99 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
   });
 });
 
+// epoll and kqueue refuse a character device with no poll support. The reader
+// must read such a device synchronously, not report the refusal as an error.
+describe.skipIf(isWindows)("Bun.file().stream() on a character device", () => {
+  it.each(["/dev/zero", "/dev/urandom"])("%s streams the sliced range", async path => {
+    let total = 0;
+    for await (const chunk of Bun.file(path)
+      .slice(0, 1 << 20)
+      .stream()) {
+      total += chunk.length;
+    }
+    expect(total).toBe(1 << 20);
+  });
+
+  it("/dev/null streams to a clean end", async () => {
+    const chunks = [];
+    for await (const chunk of Bun.file("/dev/null").stream()) chunks.push(chunk);
+    expect(chunks).toHaveLength(0);
+  });
+
+  it("Response(Bun.file(device).slice()).body delivers the slice", async () => {
+    let total = 0;
+    for await (const chunk of new Response(Bun.file("/dev/zero").slice(0, 1024)).body) {
+      total += chunk.length;
+    }
+    expect(total).toBe(1024);
+  });
+
+  it("a stream left mid-read does not keep the process alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const reader = Bun.file("/dev/urandom").stream().getReader();
+        const { value } = await reader.read();
+        console.log("read", value.length > 0);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("read true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // A pollable source holds a ref on its stream across the reads it waits for.
+  // A demoted reader waits for nothing, so it must give that ref back: without
+  // it the GC can never collect an abandoned stream, and its fd stays open.
+  // Linux only: the count comes from procfs.
+  it.skipIf(!isLinux)("abandoned streams release their file descriptors", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { readdirSync, readlinkSync } from "node:fs";
+        function openDevices() {
+          let n = 0;
+          for (const fd of readdirSync("/proc/self/fd")) {
+            try {
+              if (readlinkSync("/proc/self/fd/" + fd) === "/dev/urandom") n++;
+            } catch {}
+          }
+          return n;
+        }
+        for (let i = 0; i < 40; i++) {
+          const reader = Bun.file("/dev/urandom").stream().getReader();
+          await reader.read();
+        }
+        // The finalizer hands the fd to a thread that closes it, so wait for
+        // the count to drop. Without the ref release it never does, and the
+        // test times out.
+        let open = openDevices();
+        while (open >= 10) {
+          Bun.gc(true);
+          await Bun.sleep(10);
+          open = openDevices();
+        }
+        console.log("open", open);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The GC is not obliged to collect the most recent streams, so a handful
+    // can stay open.
+    expect(Number(stdout.match(/^open (\d+)$/m)?.[1])).toBeLessThan(10);
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("fs.createReadStream(filename) should be able to break inside async loop", async () => {
   for (let i = 0; i < 10; i++) {
     const fileStream = createReadStream(join(import.meta.dir, "..", "fetch", "fixture.png"));

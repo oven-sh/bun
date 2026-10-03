@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDirWithFiles } from "harness";
-import { unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { closeSync, openSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -1268,24 +1268,39 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
   });
 
   // No bytes to compete for: it is duped like a regular file, and each body fails when it is read.
-  test.each([
-    ["a fresh Bun.file()", (path: string) => Bun.file(path)],
-    [
-      "a Bun.file() whose size was read",
-      (path: string) => {
-        const file = Bun.file(path);
-        file.size;
-        return file;
-      },
-    ],
-  ])("clone() of a body over a directory does not throw, %s", async (_, open) => {
-    const original = new Response(open(tempDirWithFiles("body-clone-dir", {})));
-    const clone = original.clone();
-    const results = await Promise.allSettled([original.text(), clone.text()]);
-    expect(results.map(result => (result.status === "rejected" ? result.reason?.code : result.status))).toEqual([
-      "EISDIR",
-      "EISDIR",
-    ]);
+  describe("clone() of a body that cannot be read does not throw", () => {
+    const sizeRead = (file: Bun.BunFile) => (file.size, file);
+    const directory = () => tempDirWithFiles("body-clone-dir", {});
+
+    async function codes(file: Bun.BunFile) {
+      const original = new Response(file);
+      const clone = original.clone();
+      const results = await Promise.allSettled([original.text(), clone.text()]);
+      return results.map(result => (result.status === "rejected" ? result.reason?.code : result.status));
+    }
+
+    test("a directory by path", async () => {
+      expect({
+        fresh: await codes(Bun.file(directory())),
+        sizeRead: await codes(sizeRead(Bun.file(directory()))),
+      }).toEqual({ fresh: ["EISDIR", "EISDIR"], sizeRead: ["EISDIR", "EISDIR"] });
+    });
+
+    test.skipIf(isWindows)("a directory by file descriptor", async () => {
+      const fd = openSync(directory(), "r");
+      try {
+        expect({
+          fresh: await codes(Bun.file(fd)),
+          sizeRead: await codes(sizeRead(Bun.file(fd))),
+        }).toEqual({ fresh: ["EISDIR", "EISDIR"], sizeRead: ["EISDIR", "EISDIR"] });
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    test.skipIf(isWindows)("a file descriptor that is not open", async () => {
+      expect(await codes(Bun.file(1_000_000))).toEqual(["EBADF", "EBADF"]);
+    });
   });
 });
 

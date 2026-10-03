@@ -5836,17 +5836,20 @@ pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
     }
 }
 
-/// Whether two Blobs over `store` would compete for its bytes (an fd, a pipe, a terminal). A directory has none: each Blob fails with `EISDIR` when read.
+/// Whether two Blobs over `store` would compete for its bytes (an fd, a pipe, a terminal). A directory or a closed fd has none: each Blob fails when read.
 pub(crate) fn store_yields_bytes_once(store: &RefPtr<Store>) -> bool {
-    let store::Data::File(file) = Store::data_mut(store) else {
+    if !matches!(store.data, store::Data::File(_)) {
         return false;
-    };
-    let PathOrFileDescriptor::Path(path) = &file.pathlike else {
-        return true;
-    };
+    }
+    let is_fd = Store::data_mut(store).as_file().pathlike.is_fd();
+    // What the tee of an fd does next, so this costs no extra `fstat`.
+    if is_fd && Store::data_mut(store).as_file().seekable.is_none() {
+        resolve_file_stat(store);
+    }
+    let file = Store::data_mut(store).as_file_mut();
     let mode = if file.seekable.is_some() {
         Some(file.mode)
-    } else {
+    } else if let PathOrFileDescriptor::Path(path) = &file.pathlike {
         // Not `resolve_file_stat`: the `Bun.file()` sharing `store` answers from what that caches.
         if file.mode_seen_by_clone.is_none() {
             let mut buffer = bun_paths::path_buffer_pool::get();
@@ -5855,8 +5858,10 @@ pub(crate) fn store_yields_bytes_once(store: &RefPtr<Store>) -> bool {
             }
         }
         file.mode_seen_by_clone
+    } else {
+        None
     };
-    mode.is_some_and(|mode| !bun_sys::S::ISREG(mode) && !bun_sys::S::ISDIR(mode))
+    mode.is_some_and(|mode| !bun_sys::S::ISDIR(mode) && (is_fd || !bun_sys::S::ISREG(mode)))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

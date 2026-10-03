@@ -103,13 +103,22 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
                 continue;
             };
 
-            // A range names no source. It is allowed to bind to a package whose
-            // source the root or a workspace declares (a peer range on a tarball).
             // A peer installs as the root's own dependency of that name whatever
             // the lockfile bound it to (`Tree::hoist_dependency`).
+            let target = if dep.behavior.is_peer() {
+                root_resolution_of(&manager.lockfile, dep.name_hash).unwrap_or(dep_pkg_id)
+            } else {
+                dep_pkg_id
+            };
+            // A range names no source. It is allowed to bind to a package whose
+            // source the root or a workspace declares (a peer range on a tarball).
             if matches!(version.tag, dependency::Tag::Npm | dependency::Tag::DistTag)
-                && (project_names_source_of(manager, dep_pkg_id)
-                    || (dep.behavior.is_peer() && root_declares(&manager.lockfile, dep.name_hash)))
+                && ((target != dep_pkg_id
+                    && matches!(
+                        pkg_resolutions[target as usize].tag,
+                        ResolutionTag::Npm | ResolutionTag::Workspace
+                    ))
+                    || project_names_source_of(manager, target))
             {
                 continue;
             }
@@ -205,13 +214,15 @@ fn project_names_source_of(manager: &PackageManager, id: PackageID) -> bool {
     false
 }
 
-/// Does the root package declare a dependency with this name?
-fn root_declares(lockfile: &Lockfile, name_hash: PackageNameHash) -> bool {
+/// The package the root's own dependency of this name resolves to.
+fn root_resolution_of(lockfile: &Lockfile, name_hash: PackageNameHash) -> Option<PackageID> {
     let deps = lockfile.buffers.dependencies.as_slice();
-    lockfile.packages.items_dependencies()[0]
-        .get(deps)
-        .iter()
-        .any(|dep| dep.name_hash == name_hash)
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let root = lockfile.packages.items_dependencies()[0];
+    (root.begin() as usize..root.end() as usize)
+        .find(|&i| i < deps.len() && deps[i].name_hash == name_hash)
+        .and_then(|i| resolutions.get(i).copied())
+        .filter(|&id| id != invalid_package_id && (id as usize) < lockfile.packages.len())
 }
 
 /// The exotic-source label for this edge, or `None` when it is allowed.

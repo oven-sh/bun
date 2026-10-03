@@ -1193,11 +1193,13 @@ describe("BUN_OPTIONS and the internal install", () => {
   let registry: string;
   let tgzDir: string;
 
-  // Every bin reports what it is and what it finds in its own environment.
+  // Every bin reports what it is and the BUN_OPTIONS it got. Its arguments name
+  // more environment variables to report.
   const cli = `#!/usr/bin/env node
 const { name, version } = require("./package.json");
-const { BUN_OPTIONS = null, BUN_INTERNAL_BUNX_INSTALL = null } = process.env;
-console.log(JSON.stringify({ ran: name + "@" + version, BUN_OPTIONS, BUN_INTERNAL_BUNX_INSTALL }));
+const report = { ran: name + "@" + version, BUN_OPTIONS: process.env.BUN_OPTIONS ?? null };
+for (const key of process.argv.slice(2)) report[key] = process.env[key] ?? null;
+console.log(JSON.stringify(report));
 `;
 
   // Makes `<pkg>@<version>` the only version of `pkg` on the mock registry.
@@ -1290,7 +1292,7 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
   // The result of a run that installed `pkg` into the bunx cache and ran its bin.
   const ranFromCache = (pkg: string, BUN_OPTIONS: string | null = null, version = "1.0.0") => ({
     errors: [],
-    stdout: JSON.stringify({ ran: `${pkg}@${version}`, BUN_OPTIONS, BUN_INTERNAL_BUNX_INSTALL: null }),
+    stdout: JSON.stringify({ ran: `${pkg}@${version}`, BUN_OPTIONS }),
     project: ["package.json"],
     projectPackageJson,
     global: [],
@@ -1359,9 +1361,11 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
     expect(result).toEqual(ranFromCache(name, "--smol"));
   });
 
+  // The marker tells a process named `bunx` that it is the install. The bin can be such a process.
   it.concurrent("the bin does not inherit the marker of the internal install", async () => {
-    const { result } = await run(scratch(), name, [bunExe(), "x", name]);
-    expect(result).toEqual(ranFromCache(name));
+    const { result } = await run(scratch(), name, [bunExe(), "x", name, "BUN_INTERNAL_BUNX_INSTALL"]);
+    const report = { ran: `${name}@1.0.0`, BUN_OPTIONS: null, BUN_INTERNAL_BUNX_INSTALL: null };
+    expect(result).toEqual({ ...ranFromCache(name), stdout: JSON.stringify(report) });
   });
 
   // Install flags are not bunx flags. They do not reach the install through

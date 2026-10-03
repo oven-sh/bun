@@ -264,9 +264,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
                 err: None,
                 skipped_due_to_missing_bin: false,
             };
-            bin_linker.link(true);
-
-            if let Some(e) = bin_linker.err {
+            if let Err(e) = bin_linker.link(true) {
                 if manager.options.log_level != LogLevel::Silent {
                     bun_core::pretty_errorln!(
                         "<r><red>error:<r> failed to link bin due to error {}",

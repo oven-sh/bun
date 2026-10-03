@@ -510,7 +510,6 @@ impl<'a> PackageInstaller<'a> {
                 link_target_buf.as_mut_slice(),
                 link_dest_buf.as_mut_slice(),
                 link_rel_buf.as_mut_slice(),
-                log_level,
             );
         }
 
@@ -530,7 +529,6 @@ impl<'a> PackageInstaller<'a> {
         link_target_buf: &mut [u8],
         link_dest_buf: &mut [u8],
         link_rel_buf: &mut [u8],
-        log_level: Options::LogLevel,
     ) {
         let lockfile = self.lockfile();
         let manager = self.manager_mut();
@@ -686,10 +684,10 @@ impl<'a> PackageInstaller<'a> {
                     skipped_due_to_missing_bin: false,
                 };
 
-                bin_linker.link(global);
+                let linked = bin_linker.link(global);
 
                 if can_retry_without_native_binlink_optimization
-                    && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
+                    && (bin_linker.skipped_due_to_missing_bin || linked.is_err())
                 {
                     can_retry_without_native_binlink_optimization = false;
                     if PackageManager::verbose_install() {
@@ -704,17 +702,16 @@ impl<'a> PackageInstaller<'a> {
                     continue;
                 }
 
-                if let Some(err) = bin_linker.err {
-                    if log_level != Options::LogLevel::Silent {
-                        bun_ast::add_error_pretty!(
-                            manager.log_mut(),
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            "Failed to link <b>{}<r>: {}",
-                            bstr::BStr::new(alias),
-                            err.name(),
-                        );
-                    }
+                if let Err(err) = linked {
+                    // Logged at every log level: an error in the log is what fails the install.
+                    bun_ast::add_error_pretty!(
+                        manager.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Failed to link <b>{}<r>: {}",
+                        bstr::BStr::new(alias),
+                        err.name(),
+                    );
 
                     if manager.options.enable.fail_early() {
                         manager.crash();
@@ -730,7 +727,7 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    pub(crate) fn link_remaining_bins(&mut self, log_level: Options::LogLevel) {
+    pub(crate) fn link_remaining_bins(&mut self) {
         let mut depth_buf = lockfile::tree::depth_buf_uninit();
         let mut node_modules_rel_path_buf = bun_paths::path_buffer_pool::get();
         node_modules_rel_path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
@@ -772,7 +769,6 @@ impl<'a> PackageInstaller<'a> {
                     link_target_buf.as_mut_slice(),
                     link_dest_buf.as_mut_slice(),
                     link_rel_buf.as_mut_slice(),
-                    log_level,
                 );
             }
         }

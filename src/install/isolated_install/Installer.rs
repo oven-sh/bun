@@ -1826,10 +1826,10 @@ impl Task {
                         skipped_due_to_missing_bin: false,
                     };
 
-                    bin_linker.link(false);
+                    let mut linked = bin_linker.link(false);
 
                     if target_node_modules_path.is_some()
-                        && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
+                        && (bin_linker.skipped_due_to_missing_bin || linked.is_err())
                     {
                         bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                         bin_linker.target_package_name =
@@ -1843,10 +1843,10 @@ impl Task {
                             );
                         }
 
-                        bin_linker.link(false);
+                        linked = bin_linker.link(false);
                     }
 
-                    if let Some(err) = bin_linker.err {
+                    if let Err(err) = linked {
                         return Ok(Yield::failure(TaskError::Binaries(err)));
                     }
 
@@ -2400,10 +2400,10 @@ impl<'a> Installer<'a> {
                 skipped_due_to_missing_bin: false,
             };
 
-            bin_linker.link(false);
+            let mut linked = bin_linker.link(false);
 
             if target_node_modules_path.is_some()
-                && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
+                && (bin_linker.skipped_due_to_missing_bin || linked.is_err())
             {
                 bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                 bin_linker.target_package_name = package_name;
@@ -2416,12 +2416,10 @@ impl<'a> Installer<'a> {
                     );
                 }
 
-                bin_linker.link(false);
+                linked = bin_linker.link(false);
             }
 
-            if let Some(err) = bin_linker.err {
-                return Err(err);
-            }
+            linked?;
         }
 
         Ok(())

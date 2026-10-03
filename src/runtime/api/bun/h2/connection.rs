@@ -6,7 +6,7 @@
 
 #![allow(dead_code)]
 
-use super::flow_control::{RecvWindow, SendWindow};
+use super::flow_control::{RecvWindow, RecvWindowChange, SendWindow};
 use super::hpack;
 use super::settings::{self, Settings};
 use super::stream::{self, State};
@@ -254,6 +254,16 @@ pub(crate) trait Sink {
     /// counter moves, while the connection is mutably borrowed — the embedder must only
     /// store the values.
     fn on_frame_counters(&self, _received: u64, _sent: u64) {}
+    /// The connection-level receive window moved. Same contract as `on_frame_counters`.
+    fn on_recv_window(&self, _size: i64, _consumed: i64) {}
+    /// Receive-window changes that the embedder queued. `Connection::sync_recv_window` takes them.
+    fn take_recv_window_change(&self) -> RecvWindowChange {
+        RecvWindowChange::default()
+    }
+    /// True if a call found the connection borrowed since the last take (`replenish_windows`).
+    fn take_deferred(&self) -> bool {
+        false
+    }
     /// Transition shim while the outbound path still flows through the embedder's legacy encoder:
     /// returns true if `stream_id` was initiated locally (HEADERS already sent by the embedder), so
     /// inbound frames for it are not treated as frames on an idle stream.
@@ -470,6 +480,45 @@ impl Connection {
         );
     }
 
+    fn note_recv_window(&self, sink: &impl Sink) {
+        sink.on_recv_window(self.recv_window.size, self.recv_window.consumed);
+    }
+
+    /// Applies the queued `LocalWindow` changes. It writes nothing, so it runs no JS.
+    pub(crate) fn apply_recv_window_changes(&mut self, sink: &impl Sink) {
+        let change = sink.take_recv_window_change();
+        if change != RecvWindowChange::default() {
+            self.recv_window.apply(change);
+            self.note_recv_window(sink);
+        }
+    }
+
+    /// Applies the queued `LocalWindow` changes, and sends each WINDOW_UPDATE that comes due.
+    pub(crate) fn sync_recv_window(&mut self, sink: &impl Sink) {
+        loop {
+            self.apply_recv_window_changes(sink);
+            // A WINDOW_UPDATE write can run JS that queues another change.
+            if !self.replenish_connection_window(sink) {
+                return;
+            }
+        }
+    }
+
+    /// Sends a WINDOW_UPDATE on stream 0 once half the window is used. True if it wrote one.
+    fn replenish_connection_window(&mut self, sink: &impl Sink) -> bool {
+        if !self.recv_window.needs_update() {
+            return false;
+        }
+        let inc = self.recv_window.take_update();
+        if inc == 0 {
+            return false;
+        }
+        // Before the write: a JS transport can run user code inside it.
+        self.note_recv_window(sink);
+        self.send_window_update(sink, 0, inc);
+        true
+    }
+
     fn send_rst_stream(&mut self, sink: &impl Sink, stream_id: u32, code: ErrorCode) {
         self.write_frame(
             sink,
@@ -633,30 +682,33 @@ impl Connection {
     }
 
     /// Send WINDOW_UPDATE for every receive window that has consumed at least half its size.
-    fn replenish_windows(&mut self, sink: &impl Sink) {
-        if self.recv_window.needs_update() {
-            let inc = self.recv_window.take_update();
-            if inc > 0 {
-                self.send_window_update(sink, 0, inc);
-            }
-        }
-        let mut buf = std::mem::take(&mut self.replenish_buf);
-        buf.clear();
-        for (id, s) in self.streams.iter_mut() {
-            if s.state != State::Closed
-                && s.recv_window.needs_update()
-                && sink.is_stream_reading(*id)
-            {
-                let inc = s.recv_window.take_update();
-                if inc > 0 {
-                    buf.push((*id, inc));
+    pub(crate) fn replenish_windows(&mut self, sink: &impl Sink) {
+        loop {
+            // This pass covers every call that was deferred before it.
+            let _ = sink.take_deferred();
+            self.sync_recv_window(sink);
+            let mut buf = std::mem::take(&mut self.replenish_buf);
+            buf.clear();
+            for (id, s) in self.streams.iter_mut() {
+                if s.state != State::Closed
+                    && s.recv_window.needs_update()
+                    && sink.is_stream_reading(*id)
+                {
+                    let inc = s.recv_window.take_update();
+                    if inc > 0 {
+                        buf.push((*id, inc));
+                    }
                 }
             }
+            for (id, inc) in buf.iter() {
+                self.send_window_update(sink, *id, *inc);
+            }
+            self.replenish_buf = buf;
+            // JS that ran in those writes can have deferred a call. Only another pass covers it.
+            if !sink.take_deferred() {
+                break;
+            }
         }
-        for (id, inc) in buf.iter() {
-            self.send_window_update(sink, *id, *inc);
-        }
-        self.replenish_buf = buf;
         // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
         // A late DATA/RST/WINDOW_UPDATE for an evicted id takes the unknown-stream path, which
         // answers RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior. A late HEADERS for an
@@ -1473,6 +1525,7 @@ impl Connection {
 
         // §6.9: the whole declared frame counts against the connection recv window on receipt.
         self.recv_window.on_data(hdr.length as i64);
+        self.note_recv_window(sink);
         if self.recv_window.is_overflowed() {
             self.send_go_away(
                 sink,
@@ -1591,6 +1644,7 @@ impl Connection {
 
         // §6.9: the whole frame counts against the connection recv window.
         self.recv_window.on_data(consumed);
+        self.note_recv_window(sink);
         if self.recv_window.is_overflowed() {
             self.send_go_away(
                 sink,

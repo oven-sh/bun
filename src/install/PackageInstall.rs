@@ -18,7 +18,8 @@ use bun_threading::{ThreadPool, WaitGroup};
 use crate::package_installer::NodeModulesFolder;
 use crate::{
     BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Repository, Resolution,
-    TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
+    SCRIPTS_PENDING_FILE, TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make,
+    initialize_store, resolution,
 };
 
 bun_output::declare_scope!(install, hidden);
@@ -808,6 +809,20 @@ impl<'a> PackageInstall<'a> {
             &bun_tag_file.bytes,
             true,
         )
+    }
+
+    /// An earlier install stopped before this package's scripts finished; see [`SCRIPTS_PENDING_FILE`].
+    pub(crate) fn has_pending_scripts(&self, root_node_modules_dir: &Dir) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let marker_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+            buf.as_mut_slice(),
+            &[
+                self.destination_dir_subpath.as_bytes(),
+                SCRIPTS_PENDING_FILE.as_bytes(),
+            ],
+        );
+        self.node_modules
+            .has_scripts_pending_mark(root_node_modules_dir, marker_path)
     }
 
     pub(crate) fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: &Dir) -> bool {

@@ -152,7 +152,7 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     return jsString(vm, sb.toString());
 }
 
-static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, JSValue prepareStackTrace)
+static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, JSValue prepareStackTrace, JSObject* prepareStackTraceReceiver = nullptr)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::CallData prepareStackTraceCallData;
@@ -177,7 +177,7 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
             JSC::ProfilingReason::Other,
             prepareStackTrace,
             prepareStackTraceCallData,
-            lexicalGlobalObject->m_errorStructure.constructor(globalObject),
+            prepareStackTraceReceiver ? prepareStackTraceReceiver : lexicalGlobalObject->m_errorStructure.constructor(globalObject),
             arguments);
 
         RETURN_IF_EXCEPTION(scope, stackStringValue);
@@ -190,24 +190,6 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     }
 
     return stackStringValue;
-}
-
-static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
-{
-    JSValue prepareStackTrace = {};
-    if (lexicalGlobalObject->inherits<Zig::GlobalObject>()) {
-        if (auto prepare = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
-            prepareStackTrace = prepare;
-        }
-    } else {
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-        auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(globalObject);
-        prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "prepareStackTrace"_s));
-        CLEAR_IF_EXCEPTION(scope);
-    }
-
-    return formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, prepareStackTrace);
 }
 
 WTF::String formatStackTrace(
@@ -485,7 +467,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     RELEASE_AND_RETURN(scope, Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance));
 }
 
-static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
+static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace, JSObject* prepareStackTraceReceiver)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -570,7 +552,28 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     JSArray* callSitesArray = JSC::constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites);
     RETURN_IF_EXCEPTION(scope, {});
 
-    RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
+    RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace, prepareStackTraceReceiver));
+}
+
+static JSValue getErrorPrepareStackTrace(JSC::JSGlobalObject* globalObject, JSObject* errorConstructor, ASCIILiteral invocationError)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto name = Identifier::fromString(vm, "prepareStackTrace"_s);
+    JSValue value = errorConstructor->get(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!value.isCallable())
+        return {};
+
+    // Node checks callability, then reads the property again for the call.
+    // https://github.com/nodejs/node/blob/v24.21.0/lib/internal/errors.js
+    value = errorConstructor->get(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!value.isCallable()) {
+        throwTypeError(globalObject, scope, invocationError);
+        return {};
+    }
+    return value;
 }
 
 static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
@@ -583,32 +586,24 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
-    if (!globalObject) {
-        // node:vm will use a different JSGlobalObject
+    if (!globalObject)
         globalObject = defaultGlobalObject(vm);
-        if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
-            auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
-            auto prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s));
+
+    if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
+        globalObject->isInsideErrorPrepareStackTraceCallback = true;
+        auto reset = WTF::makeScopeExit([&] {
+            globalObject->isInsideErrorPrepareStackTraceCallback = false;
+        });
+        auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
+        JSValue prepareStackTrace = getErrorPrepareStackTrace(lexicalGlobalObject, errorConstructor, "globalThis.Error.prepareStackTrace is not a function"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!prepareStackTrace) {
+            errorConstructor = globalObject->errorConstructor();
+            prepareStackTrace = getErrorPrepareStackTrace(lexicalGlobalObject, errorConstructor, "MainContextError.prepareStackTrace is not a function"_s);
             RETURN_IF_EXCEPTION(scope, {});
-            if (prepareStackTrace) {
-                if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
-                }
-            }
         }
-    } else if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
-        if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
-            if (prepareStackTrace) {
-                if (prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
-                }
-            }
+        if (prepareStackTrace && prepareStackTrace != globalObject->m_errorConstructorPrepareStackTraceInternalValue.get(globalObject)) {
+            RELEASE_AND_RETURN(scope, computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject(), errorConstructor));
         }
     }
 

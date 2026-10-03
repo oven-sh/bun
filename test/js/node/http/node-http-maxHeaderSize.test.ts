@@ -288,6 +288,42 @@ describe("the head of a proxy's CONNECT response", () => {
 
   const { appendHeadChunk, indexOfHeadEnd, firstLineOfHead } = proxyResponseHead;
 
+  test("no buffer of a tunnel is larger than its limit", async () => {
+    const limit = 1_500_000;
+    // A head that does not end, of twice the limit.
+    const proxy = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.write("HTTP/1.1 200 Connection established\r\n");
+        socket.end(Buffer.alloc(2 * limit, "x-pad: a\r\n"));
+      });
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    const proxyUrl = `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`;
+    const agent = new https.Agent({ proxyEnv: { https_proxy: proxyUrl }, maxHeaderSize: limit } as any);
+    // The size of each buffer that the tunnel keeps after its first chunk.
+    const capacities: number[] = [];
+    proxyResponseHead.appendHeadChunk = (head, length, chunk, limit) => {
+      const kept = appendHeadChunk(head, length, chunk, limit);
+      if (head !== undefined) capacities.push(kept.length);
+      return kept;
+    };
+    try {
+      const { promise, resolve } = Promise.withResolvers<string>();
+      const req = https.get({ host: "example.invalid", port: 443, agent });
+      req.on("error", (err: any) => resolve(err.message));
+      expect(await promise).toBe(`Proxy response headers exceeded ${limit} bytes`);
+      // The last one is full when the head passes the limit.
+      expect(capacities.length).toBeGreaterThan(0);
+      expect(Math.max(...capacities)).toBe(limit);
+    } finally {
+      proxyResponseHead.appendHeadChunk = appendHeadChunk;
+      agent.destroy();
+      proxy.close();
+    }
+  });
+
   test("its end and its limit are where Node's concat-and-search puts them, for random chunks", () => {
     // xorshift32 with a fixed seed: the same chunks in every run.
     let state = 0x2545f491;

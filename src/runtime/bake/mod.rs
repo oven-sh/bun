@@ -193,6 +193,7 @@ impl Framework {
         renderer: Graph,
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
+        transform_options: &std::sync::Arc<bun_options_types::schema::api::TransformOptions>,
     ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
         use bun_options_types::schema as bun_schema;
 
@@ -202,9 +203,11 @@ impl Framework {
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
-            bun_schema::api::TransformOptions::default(),
+            (**transform_options).clone(),
             None,
         )?);
+        // A macro VM tells builds apart by this `Arc`: the graphs of one app are one build.
+        out.options.transform_options = std::sync::Arc::clone(transform_options);
 
         out.options.target = match renderer {
             Graph::Client => bun_ast::Target::Browser,

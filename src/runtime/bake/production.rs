@@ -426,6 +426,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // `vm.log` is set from `ctx.log` (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     let vm_log = vm.log_mut().unwrap();
+    let transform_options =
+        std::sync::Arc::new(bun_options_types::schema::api::TransformOptions::default());
     framework.init_transpiler_with_options(
         &options.arena,
         vm_log,
@@ -437,6 +439,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         options.bundler_options.server.minify_whitespace,
         options.bundler_options.server.minify_syntax,
         options.bundler_options.server.minify_identifiers,
+        &transform_options,
     )?;
     framework.init_transpiler_with_options(
         &options.arena,
@@ -449,6 +452,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         options.bundler_options.client.minify_whitespace,
         options.bundler_options.client.minify_syntax,
         options.bundler_options.client.minify_identifiers,
+        &transform_options,
     )?;
     if separate_ssr_graph {
         framework.init_transpiler_with_options(
@@ -462,6 +466,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             options.bundler_options.ssr.minify_whitespace,
             options.bundler_options.ssr.minify_syntax,
             options.bundler_options.ssr.minify_identifiers,
+            &transform_options,
         )?;
     }
     // SAFETY: written above by init_transpiler_with_options.

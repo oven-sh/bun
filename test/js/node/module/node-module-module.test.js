@@ -30,6 +30,117 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });
 
+  test("Module._initPaths() rebuilds globalPaths from HOME/USERPROFILE, NODE_PATH and execPath", async () => {
+    const delimiter = isWindows ? ";" : ":";
+    const home = isWindows ? "C:\\Users\\someone" : "/home/someone";
+    // Node's layout is $PREFIX/bin/node, or $PREFIX\node.exe on Windows.
+    const fakePrefix = isWindows ? "C:\\fake-prefix" : "/fake-prefix";
+    const fakeExecPath = isWindows ? path.join(fakePrefix, "node.exe") : path.join(fakePrefix, "bin", "node");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const M = require("module");
+         const execPath = process.execPath;
+         M._initPaths();
+         const first = M.globalPaths;
+         process.env.NODE_PATH = ["", "/a", "", "rel", ""].join(${JSON.stringify(delimiter)});
+         process.env.HOME = process.env.USERPROFILE = "";
+         M._initPaths();
+         const second = M.globalPaths;
+         process.execPath = ${JSON.stringify(fakeExecPath)};
+         M._initPaths();
+         const third = M.globalPaths;
+         process.execPath = 42;
+         let thrown;
+         try {
+           M._initPaths();
+         } catch (e) {
+           thrown = e.code;
+         }
+         console.log(JSON.stringify({ execPath, first, second, third, sameObject: first === second, thrown, keptThird: M.globalPaths === third }));`,
+      ],
+      env: { ...bunEnv, HOME: home, USERPROFILE: home, NODE_PATH: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { execPath, first, second, third, sameObject, thrown, keptThird } = JSON.parse(stdout);
+    const prefix = isWindows ? path.dirname(execPath) : path.dirname(path.dirname(execPath));
+    const lib = path.join(prefix, "lib", "node");
+    expect(first).toEqual([path.join(home, ".node_modules"), path.join(home, ".node_libraries"), lib]);
+    expect(second).toEqual(["/a", "rel", lib]);
+    expect(third).toEqual(["/a", "rel", path.join(fakePrefix, "lib", "node")]);
+    expect(sameObject).toBe(false);
+    // A non-string execPath makes path.resolve() throw. The error propagates and globalPaths is left as it was.
+    expect(thrown).toBe("ERR_INVALID_ARG_TYPE");
+    expect(keptThird).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test("Module._initPaths() reads the environment and assigns globalPaths the way Node does", async () => {
+    const home = isWindows ? "C:\\Users\\someone" : "/home/someone";
+    const replacedHome = isWindows ? "C:\\Users\\replaced" : "/home/replaced";
+    const fakePrefix = isWindows ? "C:\\fake-prefix" : "/fake-prefix";
+    const fakeExecPath = isWindows ? path.join(fakePrefix, "node.exe") : path.join(fakePrefix, "bin", "node");
+    const lib = path.join(fakePrefix, "lib", "node");
+    const homePaths = h => [path.join(h, ".node_modules"), path.join(h, ".node_libraries"), lib];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const M = require("module");
+         process.execPath = ${JSON.stringify(fakeExecPath)};
+         const out = {};
+
+         // Node assigns Module.globalPaths with a plain strict mode assignment.
+         let received;
+         Object.defineProperty(M, "globalPaths", { configurable: true, get: () => "getter", set: v => { received = v; } });
+         M._initPaths();
+         out.setter = { received, visible: M.globalPaths };
+         delete M.globalPaths;
+
+         Object.defineProperty(M, "globalPaths", { configurable: true, writable: false, value: "frozen" });
+         try {
+           M._initPaths();
+           out.readOnly = "no throw";
+         } catch (e) {
+           out.readOnly = { name: e.constructor.name, value: M.globalPaths };
+         }
+         delete M.globalPaths;
+
+         Object.defineProperty(M, "globalPaths", { configurable: true, writable: true, enumerable: false, value: [] });
+         M._initPaths();
+         const { enumerable, value } = Object.getOwnPropertyDescriptor(M, "globalPaths");
+         out.keepsAttributes = { enumerable, value };
+         delete M.globalPaths;
+
+         // Node reads process.env.USERPROFILE on Windows and safeGetenv("HOME") elsewhere, so a
+         // replaced process.env object only counts on Windows.
+         const realEnv = process.env;
+         process.env = { HOME: ${JSON.stringify(replacedHome)}, USERPROFILE: ${JSON.stringify(replacedHome)}, NODE_PATH: "/from-replaced" };
+         M._initPaths();
+         out.replacedEnv = M.globalPaths;
+         process.env = realEnv;
+
+         console.log(JSON.stringify(out));`,
+      ],
+      env: { ...bunEnv, HOME: home, USERPROFILE: home, NODE_PATH: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      setter: { received: homePaths(home), visible: "getter" },
+      readOnly: { name: "TypeError", value: "frozen" },
+      keepsAttributes: { enumerable: false, value: homePaths(home) },
+      replacedEnv: isWindows ? ["/from-replaced", ...homePaths(replacedHome)] : homePaths(home),
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("Module._findPath propagates an error thrown by an onResolve plugin", async () => {
     // Plugins are process-global; run in a child so the throwing resolver can't affect other tests.
     await using proc = Bun.spawn({

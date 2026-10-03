@@ -5159,7 +5159,10 @@ class ClientHttp2Session extends Http2Session {
         headersTuple: [string[], Record<string, any>, string[] | undefined],
         flags: number,
       ) => {
-        if (!self || typeof stream !== "object" || stream.rstCode) return;
+        // close() and destroy() close the stream at once, but the native side learns of it on a
+        // later turn at the earliest and still dispatches the rest of this read for the stream.
+        // node on a native socket emits nothing for it: nghttp2 ignores a closing stream.
+        if (!self || typeof stream !== "object" || stream.rstCode || stream.closed) return;
         let rawheaders = headersTuple[0];
         let headers = headersTuple[1];
         if (self.#strictFieldWhitespaceValidation) {

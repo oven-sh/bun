@@ -65,7 +65,8 @@ bun install <name>@<version>
 </ParamField>
 
 <ParamField path="--save-text-lockfile" type="boolean">
-  Save a text-based lockfile
+  Save a text-based lockfile (<code>bun.lock</code>). This is the default since Bun v1.2, so the flag only matters when
+  migrating an existing binary <code>bun.lockb</code>
 </ParamField>
 
 <ParamField path="--lockfile-only" type="boolean">
@@ -148,7 +149,9 @@ bun install <name>@<version>
 </ParamField>
 
 <ParamField path="--trust" type="boolean">
-  Add to trustedDependencies in the project's package.json and install the package(s)
+  Add the packages named on the command line to <code>trustedDependencies</code> in the project's package.json and
+  install them. Has no effect on a bare <code>bun install</code> with no package names; use <code>bun pm trust</code>
+  for packages that are already installed
 </ParamField>
 
 ### Concurrency & Performance

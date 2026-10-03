@@ -1644,6 +1644,15 @@ impl ScopeMode {
             Self::FilteredOut => "filtered_out",
         }
     }
+
+    /// `.skip`, or `.todo` without `--todo`: the test file says this scope does not run.
+    pub(crate) fn is_disabled(self) -> bool {
+        match self {
+            Self::Skip => true,
+            Self::Todo => !Jest::runner().is_some_and(|runner| runner.run_todo),
+            Self::Normal | Self::Failing | Self::FilteredOut => false,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1694,15 +1703,19 @@ impl BaseScope {
                 ConcurrentMode::No => false,
                 ConcurrentMode::Inherit => parent_base.is_some_and(|p| p.concurrent),
             },
-            mode: if let Some(p) = parent_base {
-                if p.mode != ScopeMode::Normal { p.mode } else { cfg.self_mode }
-            } else {
-                cfg.self_mode
-            },
+            mode: Self::inherited_mode(parent_base, cfg.self_mode),
             only: if cfg.self_only { Only::Yes } else { Only::No },
             has_callback,
             test_id_for_debugger: cfg.test_id_for_debugger,
             line_no: cfg.line_no,
+        }
+    }
+
+    /// A scope inside a skip or todo describe takes that mode.
+    fn inherited_mode(parent: Option<&BaseScope>, own: ScopeMode) -> ScopeMode {
+        match parent {
+            Some(p) if p.mode != ScopeMode::Normal => p.mode,
+            _ => own,
         }
     }
 
@@ -1712,13 +1725,36 @@ impl BaseScope {
             // SAFETY: parent backref valid; tree is single-threaded and parent
             // outlives child. Borrows are scoped to each call.
             unsafe {
-                if self.only != Only::No {
-                    (*parent).mark_contains_only();
-                }
                 if self.has_callback {
                     (*parent).mark_has_callback();
                 }
             }
+        }
+    }
+
+    /// Focus comes from tests, not from `describe.only`: marks the ancestors of the innermost `.only` at or above this scope.
+    pub(crate) fn mark_focus(&self) {
+        if self.mode.is_disabled() {
+            return;
+        }
+        let mut scope: &BaseScope = self;
+        loop {
+            match scope.only {
+                Only::Yes => {
+                    if let Some(parent) = scope.parent {
+                        // SAFETY: parent backref valid; tree is single-threaded and parent
+                        // outlives child. `scope` is a different node than the ones marked.
+                        unsafe { (*parent).mark_contains_only() };
+                    }
+                    return;
+                }
+                // `mark_contains_only` marks up to the root, so every ancestor is marked already.
+                Only::Contains => return,
+                Only::No => {}
+            }
+            let Some(parent) = scope.parent else { return };
+            // SAFETY: parent backref valid; tree is single-threaded and parent outlives child.
+            scope = unsafe { &(*parent).base };
         }
     }
 }
@@ -1790,8 +1826,7 @@ impl DescribeScope {
         name_not_owned: Option<&[u8]>,
         base: BaseScopeCfg,
     ) -> &mut DescribeScope {
-        let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(std::ptr::from_mut(self)), false));
-        child.base.propagate(false);
+        let child = Self::create(BaseScope::init(base, name_not_owned, Some(std::ptr::from_mut(self)), false));
         self.entries.push(TestScheduleEntry::Describe(child));
         match self.entries.last_mut().unwrap() {
             TestScheduleEntry::Describe(d) => &mut **d,
@@ -1808,6 +1843,13 @@ impl DescribeScope {
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
         let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
+        // Decided before `-t` applies, as in Jest: the filter never changes which tests focus a file.
+        if callback.is_some() {
+            entry.base.mark_focus();
+        }
+        if cfg.filtered_out {
+            entry.base.mode = BaseScope::inherited_mode(Some(&self.base), ScopeMode::FilteredOut);
+        }
         let has_cb = entry.callback.is_some();
         entry.base.propagate(has_cb);
         self.entries.push(TestScheduleEntry::TestCallback(entry));
@@ -1860,6 +1902,8 @@ pub(crate) struct ExecutionEntryCfg {
     pub(crate) retry_count: u32,
     /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
     pub(crate) repeat_count: u32,
+    /// The `-t` filter does not match this test.
+    pub(crate) filtered_out: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1912,14 +1956,9 @@ impl ExecutionEntry {
         });
 
         if let Some(c) = cb {
-            entry.callback = match entry.base.mode {
-                ScopeMode::Skip => None,
-                ScopeMode::Todo => {
-                    let run_todo = Jest::runner().is_some_and(|runner| runner.run_todo);
-                    if run_todo { Some(strong_create(c)) } else { None }
-                }
-                _ => Some(strong_create(c)),
-            };
+            if !cfg.filtered_out && !entry.base.mode.is_disabled() {
+                entry.callback = Some(strong_create(c));
+            }
         }
         entry
     }

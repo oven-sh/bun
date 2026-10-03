@@ -32,6 +32,9 @@ pub const REQUIRES_FILE_DESCRIPTORS: bool = true;
 #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
 pub const REQUIRES_FILE_DESCRIPTORS: bool = false;
 
+/// An item is matched by its path, so it still names a file that is deleted and made again.
+pub const WATCHES_BY_PATH: bool = cfg!(windows);
+
 /// Open flags for an fd that exists only to receive kqueue VNODE events.
 /// Darwin has O_EVTONLY (no read/write access requested); FreeBSD has no
 /// equivalent, so the watch fd is a plain O_RDONLY. `O_CLOEXEC` keeps the fd

@@ -221,8 +221,8 @@ pub(super) fn blob_payload<'a>(
 /// `options.binary`, so here the caller names it.
 ///
 /// Returns `undefined` for a `data` that is not a string, an ArrayBuffer, a view or a Blob, and throws what
-/// `send()` throws for a `compress` or a Blob that it does not take. Both come before the socket is read: a
-/// `ws` socket that is not open yet passes `null`, and its caller still gets them.
+/// `send()` throws for a `compress` or a Blob that it does not take. Neither depends on the socket: a `ws`
+/// socket that is not open yet passes `null`, and its caller still gets them.
 ///
 /// Returns `false` for a frame that did not go out, which the caller keeps and sends again on `open` or
 /// `drain`: there is no open socket, or uWS dropped the frame. Returns `true` for a frame that uWS wrote or
@@ -246,31 +246,27 @@ pub(crate) fn js_send_frame(
         Opcode::Text
     };
 
-    let buffer;
-    let bytes = if data.is_string_literal() {
-        None
-    } else if let Some(array_buffer) = data.as_array_buffer(global_this) {
-        buffer = array_buffer;
-        Some(buffer.slice())
+    let this = socket
+        .as_class_ref::<ServerWebSocket>()
+        .filter(|this| !this.is_closed());
+    let send = |payload: &[u8]| match this {
+        Some(this) => this.websocket().send(payload, opcode, compress, true),
+        None => SendStatus::Dropped,
+    };
+
+    let status = if data.is_string_literal() {
+        let view = data.to_js_string_view(global_this)?;
+        let utf8 = view.to_utf8();
+        send(utf8.slice())
+    } else if let Some(buffer) = data.as_array_buffer(global_this) {
+        send(buffer.slice())
     } else if let Some(slice) = blob_payload(global_this, "send", data)? {
-        Some(slice)
+        let status = send(slice);
+        data.ensure_still_alive();
+        status
     } else {
         return Ok(JSValue::UNDEFINED);
     };
-
-    let this = match socket.as_class_ref::<ServerWebSocket>() {
-        Some(this) if !this.is_closed() => this,
-        _ => return Ok(JSValue::FALSE),
-    };
-    let status = match bytes {
-        Some(bytes) => this.websocket().send(bytes, opcode, compress, true),
-        None => {
-            let view = data.to_js_string_view(global_this)?;
-            let utf8 = view.to_utf8();
-            this.websocket().send(utf8.slice(), opcode, compress, true)
-        }
-    };
-    data.ensure_still_alive();
 
     Ok(JSValue::js_boolean(!matches!(status, SendStatus::Dropped)))
 }

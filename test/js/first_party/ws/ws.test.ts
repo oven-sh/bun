@@ -1691,8 +1691,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
   const lastGet = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
   const unsupported = rejection("500 Internal Server Error", "WebSocket is not supported on this connection");
 
-  // A raw client. received(until) resolves with all that the server sent, once
-  // `until` is in it or the server has closed the connection.
+  // A raw client. received(until) resolves once `until` arrived or the server closed.
   function rawClient(port: number, secure = false) {
     const socket = secure
       ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] })
@@ -1736,8 +1735,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     };
   }
 
-  // next-ws and http-proxy hand handleUpgrade() the socket in a Proxy that
-  // hides its symbol properties. The request is the one node:http made.
+  // next-ws and http-proxy pass the socket in a Proxy that hides symbols.
   it("upgrades when the socket argument is a Proxy that hides symbol properties", async () => {
     await using upgrade = await receiveUpgrade(upgradeRequest());
     const { req, socket, head } = upgrade;
@@ -1886,12 +1884,9 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     });
   });
 
-  // node:http stops listening on close() and keeps the connections that have a
-  // request in flight. The next request on such a connection is served, as in
-  // Node.js, also when it is a handshake.
+  // After close(), a connection with a request in flight is still served, as in Node.js.
   describe("after http.Server#close()", () => {
-    // Sends a request, calls close() while that request is in flight, then
-    // lets it finish. The connection stays open.
+    // Calls close() while a request is in flight. The connection stays open.
     async function closeAround(server: HttpServer, held: Promise<ServerResponse>) {
       await once(server.listen(0, "127.0.0.1"), "listening");
       const client = rawClient((server.address() as AddressInfo).port);
@@ -1918,8 +1913,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       });
     }
 
-    // The 101, the frame of the 'connection' listener, then the close
-    // handshake. The server's 'close' must wait for the WebSocket.
+    // The server's 'close' must wait for the WebSocket.
     async function expectWebSocket(
       { client, events, closed }: Awaited<ReturnType<typeof closeAround>>,
       wss: WebSocketServer,
@@ -1946,8 +1940,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       await expectWebSocket(open, wss);
     });
 
-    // In a later task no request is in flight any more. The server must still
-    // count the WebSocket as its own.
+    // With no request in flight, the server must still count the WebSocket.
     it("upgrades when handleUpgrade() runs in a later task", async () => {
       const held = Promise.withResolvers<ServerResponse>();
       const server = createServer((_req, res) => held.resolve(res));
@@ -2014,8 +2007,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     listens?: boolean;
     secure?: boolean;
     http2?: boolean;
-    // Another listener accepts the connection: "emit" hands over its raw
-    // socket, "connect" and "upgrade" the socket of that event.
+    // Another listener accepts the connection and hands over its socket.
     front?: "emit" | "connect" | "upgrade";
   };
 
@@ -2075,8 +2067,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     return {
       wss,
       connections,
-      // Sends `bytes` on a new connection. Resolves with all that the server
-      // sent, once `until` is in it or the server has closed the connection.
+      // Sends `bytes` on a new connection. Resolves like received(until).
       async exchange(bytes: string, until?: string) {
         using client = await open();
         client.socket.write(bytes);
@@ -2166,12 +2157,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     });
   });
 
-  // node:http serves these connections from JS: their requests have no native
-  // request behind them. The shim upgrades through the native request, so it
-  // refuses the handshake. Only that client is refused, and each reply goes to
-  // the socket as with the npm package: the socket can still hold the response
-  // of the request ahead. The socket of a 'connect' or 'upgrade' event still
-  // holds the native request of that event. It is not the handshake's.
+  // node:http serves these from JS: no native request, so the handshake is refused.
   describe.each([
     ["http2 allowHTTP1", { listens: true, secure: true, http2: true }],
     ['server.emit("connection")', { front: "emit" }],

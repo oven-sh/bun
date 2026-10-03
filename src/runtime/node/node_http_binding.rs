@@ -75,7 +75,7 @@ pub(crate) fn get_bun_server_open_count(
     Err(global.throw_invalid_argument_type_value("server", "bun.Server", value))
 }
 
-/// The built-in `ws`: upgrades the native response of a request. False when `handle` is not one or cannot upgrade.
+/// The upgrade of the built-in `ws`. False when `handle` cannot upgrade.
 pub(crate) fn upgrade_node_http_response(
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -90,11 +90,10 @@ pub(crate) fn upgrade_node_http_response(
 
     let mut sec_websocket_protocol = Utf8Bytes::EMPTY;
     if !protocol.is_undefined_or_null() {
-        // A response that cannot upgrade gets false, not the TypeError of its protocol.
         if !response.can_upgrade() {
             return Ok(JSValue::FALSE);
         }
-        // Through `Headers`, like `server.upgrade(req, { headers })`: the same trim and TypeError.
+        // Through `Headers`: the trim and TypeError of `server.upgrade`.
         let protocol = protocol.to_bun_string(global)?;
         let headers = scopeguard::guard(FetchHeaders::create_empty(), |headers| {
             // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
@@ -108,7 +107,7 @@ pub(crate) fn upgrade_node_http_response(
         }
     }
 
-    // `toString()` of the protocol ran user code: `upgrade` asks `can_upgrade` again.
+    // `toString()` ran user code: `upgrade` checks again.
     Ok(JSValue::from(
         response.upgrade(data, sec_websocket_protocol.slice()),
     ))

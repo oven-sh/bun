@@ -22,14 +22,14 @@ function lazyHttp() {
 }
 
 let kHeaderSource;
-// The native response to upgrade through: the request's own (null when node:http parsed it in JS), else the socket's.
+// The request's native response, else the socket's.
 function nativeRequest(request, socket) {
   kHeaderSource ??= require("internal/http").kHeaderSource;
   const own = request?.[kHeaderSource];
   return own !== undefined ? own : socket[kBunInternals];
 }
 
-// Whether `response` answers `request`, or a wrapper that shares its native response.
+// Whether `response` belongs to `request` or to a wrapper of it.
 function answersRequest(response, request) {
   const own = response.req;
   if (!own || own === request) return true;
@@ -966,7 +966,7 @@ function abortHandshake(socket, code, message, headers, req) {
   };
 
   // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
-  // The socket can also hold the response of a request ahead: that one does not carry the reply.
+  // Not through the response of a request ahead.
   const response = socket._httpMessage;
   if (response && answersRequest(response, req)) {
     response.writeHead(code, headers);

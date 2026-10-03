@@ -611,7 +611,7 @@ impl NodeHTTPResponse {
         );
     }
 
-    /// What `upgrade` needs, asked before a byte is written. The connection first: this response can outlive its server.
+    /// What `upgrade` needs. Ask before writing anything.
     pub(crate) fn can_upgrade(&self) -> bool {
         if self
             .flags
@@ -627,14 +627,14 @@ impl NodeHTTPResponse {
         // `&mut self`-taking accessor can be called from this `&self` body.
         let mut server = self.server;
         !server.terminated()
-            // A drained server has cleared `handler.server`: a WebSocket opened from there is never counted.
+            // A drained server no longer counts WebSockets.
             && server
                 .web_socket_handler()
                 .is_some_and(|handler| handler.server.is_some())
             && !self.get_server_socket_value().is_empty()
     }
 
-    /// A false result has written nothing. An empty `sec_websocket_protocol` falls back to the request's header.
+    /// False: nothing was written. An empty protocol falls back to the request's.
     pub(crate) fn upgrade(&self, data_value: JSValue, sec_websocket_protocol: &[u8]) -> bool {
         if !self.can_upgrade() {
             return false;
@@ -697,7 +697,7 @@ impl NodeHTTPResponse {
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref
             // (`upgrade_ctx` checked non-null above).
             let ctx = bun_opaque::opaque_deref_mut(upgrade_ctx);
-            // uWS reports the connection closed before the WebSocket opens: a stopped server must not count itself drained in between.
+            // Keeps a stopped server from draining inside the uWS upgrade.
             server.on_pending_request();
             let _ = raw_response.upgrade::<ServerWebSocket>(
                 ws,

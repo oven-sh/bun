@@ -394,7 +394,7 @@ impl ServerWebSocket {
             .this_value
             .set(JsRef::init_strong(this_value, global_object));
         js::data_set_cached(this_value, global_object, data_value);
-        // Every caller (`on_upgrade`, `NodeHTTPResponse::can_upgrade`) makes the `handler.server.is_none()`
+        // Every caller makes the `handler.server.is_none()`
         // refusal, so this is normally `Some`; keep the `and_then` as
         // defense-in-depth (option getters between that guard and here can
         // re-enter JS and `stop(true)`, and `js_value_for_dispatch` returns

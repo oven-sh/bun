@@ -1,0 +1,31 @@
+{
+  "_id": "is-odd",
+  "name": "is-odd",
+  "dist-tags": {
+    "latest": "3.0.1"
+  },
+  "versions": {
+    "0.1.2": {
+      "name": "is-odd",
+      "version": "0.1.2",
+      "main": "index.js",
+      "_id": "is-odd@0.1.2",
+      "dist": {
+        "integrity": "sha512-YBP1qsL1KXiMgW5ZmbNiB30BlRlvTLcADeWU7k95dcroXkY25E9SZJTaITjZ4/lfPco+0/KFxCxQfW90nfZBxQ==",
+        "shasum": "37fdf4cf454ef7473981bd14f87299b4ddbc5bd8",
+        "tarball": "http://localhost:4873/is-odd/-/is-odd-0.1.2.tgz"
+      }
+    },
+    "3.0.1": {
+      "name": "is-odd",
+      "version": "3.0.1",
+      "main": "index.js",
+      "_id": "is-odd@3.0.1",
+      "dist": {
+        "integrity": "sha512-0Kh/WTLA5YAg9NMQdlFDgMwKYiLBbTo4fSn41+8Y+Qc9yCffnTaeyseWPLZFWVT9g6ypHe2Ar95W6g1bNKq3hg==",
+        "shasum": "1ed5fa2c4813bcead9103d29c89d7ab3575f715c",
+        "tarball": "http://localhost:4873/is-odd/-/is-odd-3.0.1.tgz"
+      }
+    }
+  }
+}

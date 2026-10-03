@@ -1,9 +1,3 @@
-10-02_15:18:33 anon=911MB pids=86 load=363.24 top=bun.bc7a813b1:238MB
-10-02_15:19:04 anon=884MB pids=94 load=341.05 top=bun.bc7a813b1:240MB
-10-02_15:19:34 anon=1026MB pids=155 load=333.50 top=bun.bc7a813b1:249MB
-10-02_15:20:05 anon=1370MB pids=107 load=342.65 top=bun.f4d755a9c:522MB
-10-02_15:20:36 anon=1030MB pids=99 load=339.13 top=bun.bc7a813b1:247MB
-10-02_15:21:07 anon=2179MB pids=110 load=383.26 top=bun.bc7a813b1:1215MB
 10-02_15:21:38 anon=1024MB pids=114 load=391.61 top=bun.bc7a813b1:248MB
 10-02_15:22:11 anon=375MB pids=75 load=411.38 top=bun.bc7a813b1:248MB
 10-02_15:22:43 anon=883MB pids=120 load=433.78 top=bun.bc7a813b1:226MB
@@ -398,3 +392,9 @@
 10-03_03:09:11 anon=330MB pids=37 load=1818.11 top=rustc:486MB
 10-03_03:10:04 anon=334MB pids=35 load=1856.15 top=rustc:486MB
 10-03_03:10:53 anon=326MB pids=37 load=1689.71 top=rustc:475MB
+10-03_03:11:26 anon=320MB pids=38 load=1519.70 top=rustc:468MB
+10-03_03:11:56 anon=345MB pids=45 load=1334.32 top=rustc:461MB
+10-03_03:14:33 anon=219MB pids=48 load=1709.29 top=rustc:362MB
+10-03_03:16:49 anon=161MB pids=45 load=1636.98 top=rustc:312MB
+10-03_03:19:03 anon=129MB pids=54 load=1516.11 top=ld.lld:226MB
+10-03_03:20:27 anon=17MB pids=42 load=1572.52 top=node-MainThread:49MB

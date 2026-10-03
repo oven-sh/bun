@@ -789,6 +789,62 @@ describe("bun", () => {
   });
 });
 
+describe.concurrent('"workspaces" entries that match the same package', () => {
+  function fixture(workspaces: string[] | { packages: string[] }) {
+    return tempDir("filter-workspaces-overlap", {
+      packages: {
+        app: { "package.json": JSON.stringify({ name: "app", scripts: { build: "echo ran-app" } }) },
+        legacy: { "package.json": JSON.stringify({ name: "legacy", scripts: { build: "echo ran-legacy" } }) },
+      },
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces }),
+    });
+  }
+
+  // `ran` has one element per script run, so a package that runs twice is listed twice.
+  async function run(cwd: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args, "build"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { ran: (stdout.match(/ran-\w+/g) ?? []).sort(), stderr, exitCode };
+  }
+
+  test.each([
+    ["a glob and a path", ["packages/*", "packages/legacy"]],
+    ["two globs", ["packages/*", "packages/l*"]],
+    ["one path written two ways", ["packages/app", "packages/legacy", "./packages/legacy/"]],
+    ['the { "packages": [...] } form', { packages: ["packages/*", "packages/legacy"] }],
+  ])("%s: each package runs once", async (_, workspaces) => {
+    using dir = fixture(workspaces);
+    const { ran, exitCode } = await run(String(dir), ["--filter", "*"]);
+    expect({ ran, exitCode }).toEqual({ ran: ["ran-app", "ran-legacy"], exitCode: 0 });
+  });
+
+  test.each([[["--workspaces"]], [["--parallel", "--workspaces"]], [["--sequential", "--filter", "*"]]])(
+    "%j runs each package once",
+    async args => {
+      using dir = fixture(["packages/*", "packages/legacy"]);
+      const { ran, exitCode } = await run(String(dir), args);
+      expect({ ran, exitCode }).toEqual({ ran: ["ran-app", "ran-legacy"], exitCode: 0 });
+    },
+  );
+
+  test("a package.json that fails to parse is reported once", async () => {
+    using dir = fixture(["packages/*", "packages/legacy"]);
+    await Bun.write(join(String(dir), "packages", "legacy", "package.json"), "this is { not valid json");
+    const { ran, stderr, exitCode } = await run(String(dir), ["--filter", "*"]);
+    expect({ ran, warnings: stderr.split("skipping this workspace package").length - 1, exitCode }).toEqual({
+      ran: ["ran-app"],
+      warnings: 1,
+      exitCode: 0,
+    });
+  });
+});
+
 describe("selectors", () => {
   test("'foo...' runs foo and the workspaces it depends on", () => {
     runInCwdSuccess({

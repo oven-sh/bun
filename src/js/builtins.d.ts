@@ -267,6 +267,8 @@ declare function $headers(): TODO;
 declare function $highWaterMark(): TODO;
 declare function $host(): TODO;
 declare function $hostname(): TODO;
+/** Set once `--hot` reloaded this global. `GlobalObject::reload()` sets it, so it is absent before the first reload. */
+declare var $hotReloaded: true | undefined;
 declare function $ignoreBOM(): TODO;
 declare function $importer(): TODO;
 declare function $internalRequire(id: string, parent: JSCommonJSModule, requireMap: RequireMap): TODO;

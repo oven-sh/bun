@@ -172,15 +172,21 @@ fn lint_parse<R>(
     let define = Define::default();
     let mut log = bun_ast::Log::init();
     let mut errors = SyntaxErrors::default();
-    let Ok(parser) = Parser::init(options, &mut log, &source, &define, &arena) else {
-        return Err((0, 0, 0));
-    };
-    if let Ok(found) = parser.parse_for_lint_with_codes(&mut errors, check) {
+    if let Ok(parser) = Parser::init(options, &mut log, &source, &define, &arena)
+        && let Ok(found) = parser.parse_for_lint_with_codes(&mut errors, check)
+    {
         return Ok(found);
     }
     let first = log.msgs.iter().position(|msg| msg.kind == bun_ast::Kind::Err);
     let entry = first.and_then(|first| errors.get(first));
-    Err(entry.map_or((0, 0, 0), |entry| (entry.code, entry.start, entry.end)))
+    let message = first.and_then(|first| log.msgs.get(first));
+    Err(Failure {
+        entry: entry.map_or((0, 0, 0), |entry| (entry.code, entry.start, entry.end)),
+        text: message.map_or_else(String::new, |msg| bstr::BStr::new(&*msg.data.text).to_string()),
+        offset: message
+            .and_then(|msg| msg.data.location.as_ref())
+            .map_or(0, |location| location.offset),
+    })
 }
 
 /// The line of a wrapper record, as the tests of \`wrappers\` print it.
@@ -388,11 +394,17 @@ fn a_lint_parse_reads_a_row_as_tsc_does() {
         let found = lint_parse(row.dialect, row.text, facts);
         let passed = match (&row.want, &found) {
             (Want::Reads(want), Ok(found)) => found == want,
-            (Want::Fails(code, start, end), Err(found)) => *found == (*code, *start, *end),
+            (Want::Fails(code, start, end), Err(found)) => found.entry == (*code, *start, *end),
             _ => false,
         };
         if !passed {
-            failed.push(format!("{} {:?} {}: {found:?}", row.family, row.dialect, bstr::BStr::new(row.text)));
+            failed.push(format!(
+                "{} {:?} {}: {}",
+                row.family,
+                row.dialect,
+                bstr::BStr::new(row.text),
+                said(&found)
+            ));
         }
     }
     assert!(failed.is_empty(), "{}", failed.join("\\n"));
@@ -405,13 +417,24 @@ fn is_known_difference(row: &Row) -> bool {
         .any(|&(dialect, text, _)| dialect == row.dialect && text == row.text)
 }
 
+/// What a lint parse makes of a source: the tag of each statement it keeps, or the text and the offset of its first message.
+type Made = Result<&'static [&'static str], (&'static [u8], usize)>;
+
 #[test]
 fn a_lint_parse_makes_this_of_a_source_that_it_does_not_read_as_tsc_does() {
     let mut failed = Vec::new();
     for &(dialect, text, made) in KNOWN_DIFFERENCES {
-        let found = lint_parse(dialect, text, kept).ok();
-        if found.as_deref() != made {
-            failed.push(format!("{dialect:?} {}: {found:?}", bstr::BStr::new(text)));
+        let found = lint_parse(dialect, text, kept);
+        let passed = match (&made, &found) {
+            (Ok(tags), Ok(found)) => found == tags,
+            (Err((message, offset)), Err(found)) => {
+                found.text.as_bytes() == *message && found.offset == *offset
+            }
+            _ => false,
+        };
+        if !passed {
+            let found = found.map(|tags| tags.join(" "));
+            failed.push(format!("{dialect:?} {}: {}", bstr::BStr::new(text), said(&found)));
         }
     }
     assert!(failed.is_empty(), "{}", failed.join("\\n"));
@@ -432,11 +455,11 @@ emit(`#[rustfmt::skip]`);
 emit(`const TYPE_PARAMETERS: &[(&[u8], &str, u32)] = &[`);
 for (const [text, e] of typeTables["type-parameters"]) emit(`    (${bytes(text)}, ${str(e.outline)}, ${e.closeEnd}),`);
 emit(`];\n`);
-const notReadRows = [...seen.values()].filter(e => notReadKeys.has(e.key));
-emit(`/// The sources that a lint parse does not read as tsc does, with what it makes of each: \`None\` where it fails, else the tag of each statement it keeps.`);
+const notReadRows = [...seen.values()].filter(e => known.has(e.key));
+emit(`/// The sources that a lint parse does not read as tsc does, with what it makes of each.`);
 emit(`#[rustfmt::skip]`);
-emit(`const KNOWN_DIFFERENCES: &[(Dialect, &[u8], Option<&[&str]>)] = &[`);
-for (const e of notReadRows) emit(`    (Dialect::${e.dialect}, ${bytes(e.text)}, ${e.without}),`);
+emit(`const KNOWN_DIFFERENCES: &[(Dialect, &[u8], Made)] = &[`);
+for (const e of notReadRows) emit(`    (Dialect::${e.dialect}, ${bytes(e.text)}, ${known.get(e.key)}),`);
 emit(`];\n`);
 emit(`/// The cases in groups, each group after the line that names it: a source, how it is read, and what tsc makes of it.`);
 emit(`#[rustfmt::skip]`);
@@ -455,7 +478,7 @@ if (notReadRows.length === 0) {
   drop("/// The sources that a lint parse does not read as tsc does", "/// The cases in groups, each group after the line");
   text = text.replace("    for row in ROWS.iter().filter(|row| !is_known_difference(row)) {", "    for row in ROWS {");
 }
-const outPath = process.env.OUT ?? here + "grammar_rows_tests.rs.out";
+const outPath = arg("out") || "grammar_rows_tests.rs";
 writeFileSync(outPath, text);
 const wants = { Reads: 0, Fails: 0 };
 for (const e of entries) wants[/^Want::(\w+)/.exec(e.want)[1]]++;

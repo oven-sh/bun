@@ -1,9 +1,3 @@
-10-02_14:37:05 anon=253MB pids=43 load=666.59 top=rustc:347MB
-10-02_14:37:36 anon=452MB pids=48 load=615.59 top=rustc:531MB
-10-02_14:38:07 anon=460MB pids=47 load=599.04 top=rustc:589MB
-10-02_14:38:38 anon=133MB pids=47 load=567.17 top=python3:102MB
-10-02_14:39:08 anon=141MB pids=46 load=565.89 top=bun.f4d755a9c:162MB
-10-02_14:39:38 anon=56MB pids=49 load=576.25 top=bun.f4d755a9c:77MB
 10-02_14:40:09 anon=98MB pids=48 load=588.32 top=bun.f4d755a9c:118MB
 10-02_14:40:41 anon=63MB pids=40 load=624.79 top=bun.f4d755a9c:84MB
 10-02_14:41:18 anon=69MB pids=40 load=740.86 top=bun.f4d755a9c:89MB
@@ -398,3 +392,9 @@
 10-03_01:38:36 anon=369MB pids=40 load=1649.55 top=rustc:533MB
 10-03_01:40:11 anon=217MB pids=37 load=1572.99 top=rustc:385MB
 10-03_01:40:58 anon=162MB pids=40 load=1511.01 top=rustc:332MB
+10-03_01:42:15 anon=80MB pids=41 load=1549.02 top=rustc:197MB
+10-03_01:43:24 anon=72MB pids=37 load=1634.04 top=rustc:205MB
+10-03_01:44:37 anon=72MB pids=38 load=1788.49 top=rustc:211MB
+10-03_01:46:02 anon=72MB pids=39 load=2240.94 top=rustc:222MB
+10-03_01:47:10 anon=78MB pids=39 load=1962.21 top=rustc:216MB
+10-03_01:48:21 anon=72MB pids=39 load=1792.54 top=rustc:217MB

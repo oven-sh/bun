@@ -234,29 +234,37 @@ for (const proxy_tls of [false, true]) {
 
 // fetch() uploads a Bun.file() of 32 KiB or more with sendfile(2), which needs a
 // plaintext connection, and decides that before a proxy from the environment
-// is applied. The HTTP client has to fall back to uploading the file as
-// ordinary bytes whenever the connection it ends up on is TLS (an https://
-// proxy) or a CONNECT tunnel (a redirect onto an https:// origin through a
-// proxy); it used to abort with "sendfile is only supported without SSL" in
-// the first case and send an empty body in the second.
+// is applied. When the connection it ends up on is TLS (an https:// proxy) or
+// a CONNECT tunnel (a redirect onto an https:// origin through a proxy), the
+// HTTP client has to read the file and write it in chunks instead. It used to
+// abort with "sendfile is only supported without SSL" in the first case and
+// send an empty body in the second.
 describe("Bun.file() body that would use sendfile, with a proxy from the environment", () => {
-  const SIZE = 64 * 1024;
+  // More than one 256 KiB chunk and not a multiple of one. Every 8 bytes
+  // encode their own offset, so a chunk that is lost, repeated or out of
+  // order changes the text.
+  const SIZE = 1_500_123;
+  const CONTENT = Buffer.alloc(SIZE);
+  for (let offset = 0; offset < SIZE; offset += 8)
+    CONTENT.write(offset.toString(16).padStart(8, "0"), offset, "latin1");
 
   // Subprocess: the proxy environment is read when the process starts.
   async function uploadFromChild(url: string, proxyEnv: Record<string, string>) {
-    using dir = tempDir("proxy-sendfile-body", { "body.bin": Buffer.alloc(SIZE, "a") });
+    using dir = tempDir("proxy-sendfile-body", { "body.bin": CONTENT });
     const env = { ...bunEnv };
     for (const key of PROXY_ENV_KEYS) delete env[key];
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `const res = await fetch(${JSON.stringify(url)}, {
+        `const file = Bun.file(${JSON.stringify(join(String(dir), "body.bin"))});
+        const res = await fetch(${JSON.stringify(url)}, {
           method: "POST",
-          body: Bun.file(${JSON.stringify(join(String(dir), "body.bin"))}),
+          body: file,
           tls: { rejectUnauthorized: false },
         });
-        console.log(res.status, (await res.text()).length);`,
+        const echoed = await res.text();
+        console.log(res.status, echoed.length, echoed === (await file.text()));`,
       ],
       env: { ...env, ...proxyEnv },
       stdout: "pipe",
@@ -268,7 +276,7 @@ describe("Bun.file() body that would use sendfile, with a proxy from the environ
 
   test.concurrent("is uploaded through a TLS proxy", async () => {
     expect(await uploadFromChild(String(httpServer.url), { http_proxy: httpsProxyServer.url })).toEqual({
-      stdout: `200 ${SIZE}\n`,
+      stdout: `200 ${SIZE} true\n`,
       stderr: "",
       exitCode: 0,
     });
@@ -284,7 +292,7 @@ describe("Bun.file() body that would use sendfile, with a proxy from the environ
     });
     const proxyEnv = { http_proxy: httpProxyServer.url, https_proxy: httpProxyServer.url };
     expect(await uploadFromChild(String(origin.url), proxyEnv)).toEqual({
-      stdout: `200 ${SIZE}\n`,
+      stdout: `200 ${SIZE} true\n`,
       stderr: "",
       exitCode: 0,
     });

@@ -693,6 +693,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// Ask for a writable event after a complete write, to yield to the loop with more to send.
+    pub fn request_writable_event(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).send_file_needs_more();
+        }
+    }
+
     pub fn mark_needs_more_for_sendfile(&self) {
         const { assert!(!IS_SSL, "SSL sockets do not support sendfile yet") };
         if let InternalSocket::Connected(s) = self.socket {

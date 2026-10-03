@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tls } from "harness";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
-import { createServer } from "node:net";
+import { createServer, type AddressInfo, type Socket } from "node:net";
 import { join } from "node:path";
 
 test("keepalive", async () => {
@@ -352,6 +353,91 @@ test("PUT with a ReadableStream body is not retried on keep-alive disconnect", a
     exitCode: 0,
   });
 });
+
+// An idempotent request on a reused keep-alive connection that the server
+// drops is sent again on a fresh connection. A Bun.file() of 32 KiB or more
+// is sent with sendfile(2) and was left out of that retry, so the same PUT
+// failed with ECONNRESET for a large file and succeeded for a small one.
+test.concurrent.each([
+  ["after it read the whole body", 64 * 1024, Infinity],
+  ["in the middle of the body", 8 * 1024 * 1024, 1],
+])(
+  "PUT with a Bun.file() body is retried when the server drops a reused connection %s",
+  async (_label, size, dropAfterBodyBytes) => {
+    const content = randomBytes(size);
+    using dir = tempDir("fetch-keepalive-file-retry", { "body.bin": content });
+    const KEEP_ALIVE_OK = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok";
+
+    const fileRequests: { connection: number; outcome: string }[] = [];
+    const sockets = new Set<Socket>();
+    let connections = 0;
+    const server = createServer(socket => {
+      const connection = ++connections;
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => {});
+      let served = 0;
+      let head = "";
+      let request: { path: string; contentLength: number; chunks: Buffer[]; bytes: number } | undefined;
+      socket.on("data", chunk => {
+        if (!request) {
+          head += chunk.toString("latin1");
+          const end = head.indexOf("\r\n\r\n");
+          if (end < 0) return;
+          const rest = Buffer.from(head.slice(end + 4), "latin1");
+          request = {
+            path: head.split(" ")[1],
+            contentLength: Number(/content-length: (\d+)/i.exec(head)![1]),
+            chunks: [rest],
+            bytes: rest.length,
+          };
+          head = "";
+        } else {
+          request.chunks.push(chunk);
+          request.bytes += chunk.length;
+        }
+        const isFile = request.path === "/file";
+        if (isFile && served > 0 && request.bytes >= Math.min(dropAfterBodyBytes, request.contentLength)) {
+          fileRequests.push({ connection, outcome: "dropped" });
+          socket.destroy();
+          return;
+        }
+        if (request.bytes < request.contentLength) return;
+        if (isFile) {
+          const matches = Buffer.concat(request.chunks).equals(content);
+          fileRequests.push({ connection, outcome: matches ? "received the file" : "received other bytes" });
+        }
+        request = undefined;
+        served++;
+        socket.write(KEEP_ALIVE_OK);
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    try {
+      // Park a keep-alive connection so the file PUT reuses it.
+      await (await fetch(`${base}/warm`, { method: "PUT", body: "warm" })).text();
+      const outcome = await fetch(`${base}/file`, {
+        method: "PUT",
+        body: Bun.file(join(String(dir), "body.bin")),
+      }).then(
+        async res => ({ status: res.status, text: await res.text() }),
+        e => ({ rejected: e.code ?? e.name }),
+      );
+      expect({ outcome, fileRequests }).toEqual({
+        outcome: { status: 200, text: "ok" },
+        fileRequests: [
+          { connection: 1, outcome: "dropped" },
+          { connection: 2, outcome: "received the file" },
+        ],
+      });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    }
+  },
+);
 
 // A server may send its final response (401, 413, ...) while a chunked
 // ReadableStream request body is still uploading. That connection is then

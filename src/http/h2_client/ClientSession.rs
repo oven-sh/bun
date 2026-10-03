@@ -1130,10 +1130,7 @@ impl ClientSession {
             if err == crate::Error::HTTP2RefusedStream
                 && stream.status_code == 0
                 && client.h2_retries < crate::MAX_H2_RETRIES
-                && matches!(
-                    client.state.original_request_body,
-                    HTTPRequestBody::Bytes(_)
-                )
+                && client.state.original_request_body.replay().is_some()
             {
                 client.h2_retry();
             } else {

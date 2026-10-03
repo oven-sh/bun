@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -448,6 +448,66 @@ describe("bun", () => {
       for (const re of expected) expect(out).toMatch(re);
       expect(out).not.toContain("bun list ");
       expect(exitCode).toBe(0);
+    });
+  });
+
+  // `bun discord` runs the opener by bare name, so bun searches PATH for it.
+  // Linux only: the opener is `xdg-open` there, and macOS runs the absolute
+  // `/usr/bin/open`.
+  describe.skipIf(!isLinux)("discord", () => {
+    type Opener = [content: string, mode: number] | "directory";
+    type Openers = { first?: Opener; second?: Opener };
+    // Records its arguments, so the test can tell that it ran.
+    const stub: Opener = [`#!/bin/sh\nprintf '%s' "$*" > "$OPENED"\n`, 0o755];
+
+    // Runs `bun discord` with PATH = [first, second], each holding the given
+    // `xdg-open`. `opened` is what the stub recorded, or null if it did not run.
+    async function open(openers: Openers) {
+      using dir = tempDir("discord-opener", { first: {}, second: {} });
+      const base = String(dir);
+      for (const [entry, opener] of Object.entries(openers)) {
+        const path = join(base, entry, "xdg-open");
+        if (opener === "directory") {
+          fs.mkdirSync(path);
+        } else {
+          fs.writeFileSync(path, opener[0]);
+          fs.chmodSync(path, opener[1]);
+        }
+      }
+      const marker = join(base, "opened");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "discord"],
+        env: { ...bunEnv, PATH: `${join(base, "first")}:${join(base, "second")}`, OPENED: marker },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { opened: fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : null, stderr, exitCode };
+    }
+
+    test.concurrent("runs the first xdg-open on PATH that exec accepts", async () => {
+      const cases: Record<string, Openers> = {
+        directory: { first: "directory", second: stub },
+        noInterpreter: { first: ["#!/nonexistent-interpreter\n", 0o755], second: stub },
+        fileInInterpreterPath: { first: ["#!/dev/null/sh\n", 0o755], second: stub },
+        notExecutable: { first: ["not executable\n", 0o644], second: stub },
+        noExecFormat: { first: ["not a program\n", 0o755], second: stub },
+        nowhere: {},
+      };
+      const results = Object.entries(cases).map(async ([name, openers]) => [name, await open(openers)]);
+      const ran = { opened: "https://bun.com/discord", stderr: "", exitCode: 0 };
+      const didNotRun = { opened: null, stderr: "", exitCode: 0 };
+      expect(Object.fromEntries(await Promise.all(results))).toEqual({
+        // exec refuses the first entry with EACCES, ENOENT and ENOTDIR. The search goes on to the stub.
+        directory: ran,
+        noInterpreter: ran,
+        fileInInterpreterPath: ran,
+        // access(X_OK) skips the first entry before exec.
+        notExecutable: ran,
+        // ENOEXEC: exec found the program and cannot run it. The search stops there, as in posix_spawnp.
+        noExecFormat: didNotRun,
+        nowhere: didNotRun,
+      });
     });
   });
 

@@ -62,14 +62,14 @@ extern "C" int32_t set_process_priority(int32_t pid, int32_t priority)
 #if !OS(WINDOWS)
 extern "C" bool is_executable_file(const char* path)
 {
-#if defined(O_EXEC)
-    // O_EXEC is macOS specific
+#if OS(DARWIN) && defined(O_EXEC)
+    // Apple only: musl defines O_EXEC as O_PATH, and open(O_PATH) succeeds for every path that exists.
     int fd = open(path, O_EXEC | O_CLOEXEC | O_NONBLOCK | O_NOCTTY, 0);
     if (fd < 0)
         return false;
     close(fd);
     return true;
-#endif // defined(O_EXEC)
+#endif // OS(DARWIN) && defined(O_EXEC)
 
     struct stat st;
     if (stat(path, &st) != 0)

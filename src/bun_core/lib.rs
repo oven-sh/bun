@@ -299,8 +299,7 @@ pub mod path_sep {
     /// — **no** alphabetic gate on the drive byte, and a
     /// bare `X:` with no trailing separator is **not** absolute.
     ///
-    /// Sunk from `bun_paths::is_absolute` so tier-0 (`util::which`) and
-    /// tier-2+ share a single impl.
+    /// `bun_paths::is_absolute` forwards here.
     #[inline]
     pub const fn is_absolute_native(p: &[u8]) -> bool {
         #[cfg(not(windows))]

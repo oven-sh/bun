@@ -413,15 +413,17 @@ impl FileReader {
             } else {
                 self.reader().start(self.fd.get(), pollable)
             };
-            // Its reads go by the fd's position, so a slice starts there. What cannot seek has no window to honour, like a pipe.
+            // Its reads go by the fd's position, so a slice starts there.
             #[cfg(unix)]
             if pollable && !watchable {
-                if let Some(offset) = self.start_offset.filter(|&offset| offset > 0) {
-                    let _ = sys::set_file_offset(self.fd.get(), offset as u64);
+                if let Some(offset @ 1..) = self.start_offset {
+                    if let Err(err) = sys::set_file_offset(self.fd.get(), offset as u64) {
+                        self.on_reader_error(err);
+                    }
                 }
             }
-            // No callback comes for an fd the event loop refuses to watch.
-            if need_io_ref && (start_result.is_err() || !watchable) {
+            // No callback comes for an fd the event loop refuses to watch. `on_reader_error` has released the ref already.
+            if self.waiting_for_on_reader_done.get() && (start_result.is_err() || !watchable) {
                 self.waiting_for_on_reader_done.set(false);
                 let parent = self.parent();
                 // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.

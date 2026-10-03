@@ -1138,3 +1138,54 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+// `bunx` roots its package cache at `<install cache>/.bunx-<uid>`, or at
+// `<temp dir>/.bunx-<uid>` when no install cache resolves. `bun pm cache rm`
+// reports and clears the packages in both, plus the per-package directories an
+// older bun wrote straight into the temp directory.
+test.skipIf(process.platform === "win32")("bun pm cache rm clears and counts every bunx cache layout", async () => {
+  const uid = process.getuid!();
+  using dir = tempDir("pm-cache-rm-bunx", {
+    "package.json": JSON.stringify({ name: "cache-rm-bunx", version: "1.0.0" }),
+    // Two packages in the per-user root under the install cache.
+    [`bun-install/install/cache/.bunx-${uid}/uglify-js@3.14.1/node_modules/.bin/keep`]: "bin",
+    [`bun-install/install/cache/.bunx-${uid}/cowsay@latest/node_modules/.bin/keep`]: "bin",
+    // One in the per-user root in the temp directory (the fallback layout).
+    [`tmp/.bunx-${uid}/prettier@latest/node_modules/.bin/keep`]: "bin",
+    // One written by an older bun, straight into the temp directory.
+    [`tmp/bunx-${uid}-eslint@latest/node_modules/.bin/keep`]: "bin",
+    // Another user's directory in the same temp directory is left alone.
+    [`tmp/bunx-${uid + 1}-someone-else@latest/keep`]: "theirs",
+  });
+  const dirStr = String(dir);
+  const installCache = join(dirStr, "bun-install", "install", "cache");
+  const tmpDir = join(dirStr, "tmp");
+
+  const spawnEnv: NodeJS.Dict<string> = {
+    ...env,
+    BUN_INSTALL: join(dirStr, "bun-install"),
+    TMPDIR: tmpDir,
+    TEMP: tmpDir,
+    BUN_TMPDIR: tmpDir,
+    HOME: dirStr,
+  };
+  delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+
+  await using proc = spawn({
+    cmd: [bunExe(), "pm", "cache", "rm"],
+    cwd: dirStr,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toInclude("Cleared 4 cached 'bunx' packages");
+  expect(stderr).not.toContain("error");
+  expect(exitCode).toBe(0);
+
+  expect(await exists(join(installCache, `.bunx-${uid}`))).toBeFalse();
+  expect(await exists(join(tmpDir, `.bunx-${uid}`))).toBeFalse();
+  expect(await exists(join(tmpDir, `bunx-${uid}-eslint@latest`))).toBeFalse();
+  expect(await exists(join(tmpDir, `bunx-${uid + 1}-someone-else@latest`, "keep"))).toBeTrue();
+});

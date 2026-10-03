@@ -6721,7 +6721,7 @@ describe.concurrent("http2 session idle timer", () => {
     }
   });
 
-  it("holds an expiry back only while a stream write is in flight and frames leave", async () => {
+  it("holds an expiry back only while a stream write is in flight and makes progress", async () => {
     const server = http2.createServer();
     const { promise: written, resolve: onWritten } = Promise.withResolvers();
     server.on("stream", stream => {
@@ -6745,12 +6745,12 @@ describe.concurrent("http2 session idle timer", () => {
         return timeouts;
       };
 
-      // Frames left since the write went out.
+      // The write went out since the last expiry.
       expect(expire()).toBe(0);
-      // No frame left since the last expiry.
+      // No byte left since the last expiry.
       expect(expire()).toBe(1);
 
-      // More than one window of data at the client means that frames left after that expiry.
+      // More than one window of data at the client means that bytes left after that expiry.
       const window = client.localSettings.initialWindowSize;
       for (let received = 0; received <= window; ) {
         const chunk = req.read();
@@ -6760,6 +6760,95 @@ describe.concurrent("http2 session idle timer", () => {
       expect(expire()).toBe(1);
     } finally {
       client.destroy();
+      server.close();
+    }
+  });
+
+  it("holds an expiry back only while the socket takes bytes of a write in flight", async () => {
+    const server = http2.createServer();
+    // The native socket of the server session. Its bytesWritten counts the bytes that it took.
+    let handle;
+    server.on("connection", socket => {
+      handle = socket._handle;
+    });
+    const { promise: written, resolve: onWritten } = Promise.withResolvers();
+    const size = 64 * 1024 * 1024;
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.session.setTimeout(never);
+      stream.respond({ ":status": 200 });
+      // The window of the client has room for the whole write, so only the socket limits it.
+      stream.write(Buffer.alloc(size, "a"));
+      onWritten(stream.session);
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    // This client reads only when the test tells it to.
+    const socket = net.connect(server.address().port, "127.0.0.1");
+    socket.on("error", () => {});
+    try {
+      await once(socket, "connect");
+      socket.pause();
+      socket.on("data", () => {});
+      const window = 2 ** 31 - 1;
+      // SETTINGS_INITIAL_WINDOW_SIZE
+      const settings = Buffer.alloc(6);
+      settings.writeUInt16BE(4, 0);
+      settings.writeUInt32BE(window, 2);
+      const windowUpdate = Buffer.alloc(4);
+      windowUpdate.writeUInt32BE(window - 65535, 0);
+      // GET http://localhost/
+      const headers = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x41, 0x09]), Buffer.from("localhost")]);
+      socket.write(
+        Buffer.concat([
+          http2utils.kClientMagic,
+          new http2utils.Frame(settings.length, 4, 0, 0).data,
+          settings,
+          new http2utils.Frame(windowUpdate.length, 8, 0, 0).data,
+          windowUpdate,
+          new http2utils.HeadersFrame(1, headers, 0, true, true).data,
+        ]),
+      );
+      const session = await written;
+      let timeouts = 0;
+      session.on("timeout", () => timeouts++);
+      // Runs the expiry handler of the timer. Tells whether it emitted 'timeout', and whether
+      // the socket took bytes since the run before.
+      let taken;
+      const expire = () => {
+        const before = timeouts;
+        const progressed = handle.bytesWritten !== taken;
+        taken = handle.bytesWritten;
+        session[kTimeout]._onTimeout(session);
+        return { emitted: timeouts > before, progressed };
+      };
+      const turn = () => new Promise(resolve => setImmediate(resolve));
+
+      // The socket fills up, because the client reads nothing. An expiry emits 'timeout' when
+      // the socket took no byte since the expiry before.
+      let result;
+      do {
+        result = expire();
+        expect(result.emitted).toBe(!result.progressed);
+        await turn();
+      } while (result.progressed);
+      expect(taken).toBeLessThan(size);
+
+      // The session answers a PING. The answer waits behind the full socket: no progress.
+      do {
+        const pinged = once(session, "ping");
+        socket.write(new http2utils.PingFrame().data);
+        await pinged;
+        result = expire();
+        expect(result.emitted).toBe(!result.progressed);
+      } while (result.progressed);
+
+      // The client reads, and the socket takes bytes again.
+      socket.resume();
+      while (handle.bytesWritten === taken) await turn();
+      socket.pause();
+      expect(expire()).toEqual({ emitted: false, progressed: true });
+    } finally {
+      socket.destroy();
       server.close();
     }
   });
@@ -6802,24 +6891,20 @@ describe.concurrent("http2 session idle timer", () => {
   };
 
   for (const transport of transports) {
-    it(
-      `refreshes the timers as often as node for each call and frame (${transport})`,
-      async () => {
-        const server = createServer(transport);
-        try {
-          const counts = await countTimerRefreshes(server, await dialer(server, transport));
-          // node sets up a session on a stream that has connected already inside connect(). The
-          // client has no timer at that time, so node counts no refresh for the connect.
-          const connect = transport === "duplexPair" ? { client: 0, server: 0 } : refreshesInNode.connect;
-          expect(counts).toEqual({ ...refreshesInNode, connect });
-        } finally {
-          server.close();
-        }
-      },
-      // The fixture has 31 steps. A debug build on a busy machine needs 1 to 5 s for them. Every
-      // other build keeps the default.
-      isDebug ? 30_000 : undefined,
-    );
+    // The fixture takes 31 steps on the one JS thread. Each run has the thread to itself, so
+    // that it stays far from the default time limit in a debug build.
+    it.serial(`refreshes the timers as often as node for each call and frame (${transport})`, async () => {
+      const server = createServer(transport);
+      try {
+        const counts = await countTimerRefreshes(server, await dialer(server, transport));
+        // node sets up a session on a stream that has connected already inside connect(). The
+        // client has no timer at that time, so node counts no refresh for the connect.
+        const connect = transport === "duplexPair" ? { client: 0, server: 0 } : refreshesInNode.connect;
+        expect(counts).toEqual({ ...refreshesInNode, connect });
+      } finally {
+        server.close();
+      }
+    });
   }
 
   it.skipIf(!nodeExe())("node gives the refresh counts that the tests above expect", async () => {
@@ -6870,20 +6955,6 @@ describe.concurrent("http2 session idle timer", () => {
       } finally {
         clearTimeout(reference);
       }
-    } finally {
-      client.destroy();
-      server.close();
-    }
-  });
-
-  it("removes the 'timeout' listeners when the session is destroyed", async () => {
-    const server = http2.createServer();
-    const client = await connectTo(server);
-    try {
-      client.setTimeout(never, () => {});
-      expect(client.listenerCount("timeout")).toBe(1);
-      client.destroy();
-      expect(client.listenerCount("timeout")).toBe(0);
     } finally {
       client.destroy();
       server.close();

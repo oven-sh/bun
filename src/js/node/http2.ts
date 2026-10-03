@@ -2088,9 +2088,8 @@ function deferWriteCallbackForSocket(nativeSocket) {
 }
 // What a session's idle timer knows about its stream DATA writes, like node's
 // handle.chunksSentSinceLastWrite. 0: a write went to the parser since the last expiry. Above 0:
-// the count of frames sent that the last expiry saw while a write was in flight. -1: no write is
-// in flight.
-const kTimeoutFramesSent = Symbol("timeoutFramesSent");
+// the progress that the last expiry saw while a write was in flight. -1: no write is in flight.
+const kTimeoutWriteProgress = Symbol("timeoutWriteProgress");
 const kWriteCallback = Symbol("writeCallback");
 const kOnWriteComplete = Symbol("onWriteComplete");
 // node's onWriteComplete refreshes the timer for a write that completed on a stream that is not
@@ -2100,14 +2099,21 @@ const kOnWriteComplete = Symbol("onWriteComplete");
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L101
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L607-L609
 function onStreamWriteComplete(this: Http2Stream, dropped?: null) {
-  const timer = this[bunHTTP2Session]?.[kTimeout];
-  if (
-    timer &&
-    dropped === undefined &&
-    !this.destroyed &&
-    !(isFinalWrite(this, this._writableState.writelen) && readableEndsInNode(this))
-  ) {
-    timer.refresh();
+  const session = this[bunHTTP2Session];
+  if (session) {
+    const timer = session[kTimeout];
+    if (
+      timer &&
+      dropped === undefined &&
+      !this.destroyed &&
+      !(isFinalWrite(this, this._writableState.writelen) && readableEndsInNode(this))
+    ) {
+      timer.refresh();
+    }
+    // This callback can run while the session still holds bytes of the write behind a full
+    // socket. Such a write stays in flight for the expiry of the timer.
+    const parser = session[bunHTTP2Native];
+    if (parser && !sessionHoldsBytes(session, parser)) session[kTimeoutWriteProgress] = -1;
   }
   const callback = this[kWriteCallback];
   this[kWriteCallback] = undefined;
@@ -2121,7 +2127,7 @@ function onStreamWriteComplete(this: Http2Stream, dropped?: null) {
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1944
 function trackTimedWrite(session: Http2Session, stream: Http2Stream, callback: () => void) {
   session[kTimeout].refresh();
-  session[kTimeoutFramesSent] = 0;
+  session[kTimeoutWriteProgress] = 0;
   stream[kWriteCallback] = callback;
   return (stream[kOnWriteComplete] ??= onStreamWriteComplete.bind(stream));
 }
@@ -3078,7 +3084,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
     if (onError) onError(err);
     else {
-      this.respond(headers, options, true);
+      this[kRespond](headers, options, false);
       this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
     }
     return;
@@ -3097,7 +3103,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
       if (ownsFd) tryClose(fd);
       if (onError) onError(err);
       else {
-        this.respond(headers, options, true);
+        this[kRespond](headers, options, false);
         this.destroy(err);
       }
       return;
@@ -3154,7 +3160,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
     headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
   }
   try {
-    this.respond(headers, options, true);
+    this[kRespond](headers, options, false);
   } catch (err) {
     // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
     // for the file never reaches a read stream, so close it here before the stream is destroyed.
@@ -3215,6 +3221,7 @@ function onFileStreamError(this: Http2Stream) {
   if (!this.destroyed && !this.closed) this.close(NGHTTP2_INTERNAL_ERROR);
 }
 const kFileResponseFinal = Symbol("fileResponseFinal");
+const kRespond = Symbol("respond");
 // node processRespondWithFD: a file response closes the user-facing writable side
 // (`self._final = null; self.end()`), so a stream.end() issued by the user afterwards cannot cut
 // the transfer short. Returns the original _final, which the file sink runs once the whole file
@@ -3621,7 +3628,12 @@ class ServerHttp2Stream extends Http2Stream {
 
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
   }
-  respond(headers?: HeadersObject | any[] | null, options?: any, forFileResponse?: boolean) {
+  respond(headers?: HeadersObject | any[] | null, options?: any) {
+    this[kRespond](headers, options, true);
+  }
+  // respondWithFile() and respondWithFD() refresh the idle timer when they run, and send their
+  // headers here with `refresh` false.
+  [kRespond](headers: HeadersObject | any[] | null | undefined, options: any, refresh: boolean) {
     if (this.destroyed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
@@ -3632,9 +3644,8 @@ class ServerHttp2Stream extends Http2Stream {
     if (this.sentTrailers) {
       throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
     }
-    // respondWithFile() and respondWithFD() refresh when they run, and send their headers here.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3010
-    if (session[kTimeout] && forFileResponse !== true) session[kTimeout].refresh();
+    if (refresh && session[kTimeout]) session[kTimeout].refresh();
 
     // Raw (flat [name, value, ...] array) headers form: the pairs are encoded
     // on the wire in their given order; a default :status is prepended and a
@@ -4857,8 +4868,6 @@ class ServerHttp2Session extends Http2Session {
         clearTimeout(this[kTimeout]);
         this[kTimeout] = null;
       }
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1229
-      this.removeAllListeners("timeout");
       cancelPendingPings(this.#pingCallbacks);
       this.#pingCallbacks = null;
       if (typeof error === "number") {
@@ -4962,7 +4971,7 @@ function setSessionTimeout(this: Http2Session, msecs, callback, connected: boole
       // unknown here. Bytes that the parser of a connected session holds count as that write.
       // (Before the socket connects, the parser holds the connection preface.)
       const parser = this[bunHTTP2Native];
-      this[kTimeoutFramesSent] = connected && parser && parser.bufferSize() > 0 ? 0 : -1;
+      this[kTimeoutWriteProgress] = connected && parser && parser.bufferSize() > 0 ? 0 : -1;
     }
     this[kTimeout] = setTimeout(sessionTimerExpired, msecs, this).unref();
     if (callback !== undefined) {
@@ -4990,41 +4999,51 @@ function endThenDestroySessionSocket(socket, error) {
 function checkFileResponse(this: { inFlight: boolean }, stream: Http2Stream) {
   if (stream[kFileResponseFinal] !== undefined) this.inFlight = true;
 }
+// Whether the session holds bytes to send: frames in the parser, which wait for flow-control
+// window or for the socket, or bytes in a JS transport.
+function sessionHoldsBytes(session: Http2Session, parser) {
+  if (parser.bufferSize() > 0) return true;
+  const socket = session[bunHTTP2Socket];
+  return !!socket && socket.writableLength > 0;
+}
 // node's `kState.writeQueueSize > 0`: a stream DATA write has not completed. `tracked` says
-// that such a write went to the parser and no expiry saw it complete.
+// that such a write went to the parser and nothing saw the session empty since. Bytes with no
+// tracked write behind them are frames without stream data (the preface before the socket
+// connects, HEADERS behind a full socket). node does not count those.
 function sessionHasWriteInFlight(session: Http2Session, parser, tracked: boolean) {
-  // A write is in flight while the parser holds its frames (they wait for flow-control window or
-  // for the socket) or a JS transport holds their bytes. Bytes with no tracked write behind them
-  // are frames without stream data (the preface before the socket connects, HEADERS behind a full
-  // socket). node does not count those.
-  if (tracked) {
-    if (parser.bufferSize() > 0) return true;
-    const socket = session[bunHTTP2Socket];
-    if (socket && socket.writableLength > 0) return true;
-  }
+  if (tracked && sessionHoldsBytes(session, parser)) return true;
   // node counts a file response for the life of its stream.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2749-L2752
   const state = { inFlight: false };
   parser.forEachStream(checkFileResponse, state);
   return state.inFlight;
 }
-// node callTimeout: an expiry emits 'timeout' unless a stream DATA write is in flight and frames
-// left since the previous expiry. So a write that does not move holds back one expiry.
+// The progress of the writes in flight: the bytes that the socket took. A JS transport has no
+// such count, so the frames that the parser gave to it stand in.
+function sessionWriteProgress(session: Http2Session, parser) {
+  const written = session[bunHTTP2Socket]?._handle?.bytesWritten;
+  return typeof written === "number" ? written : parser.getFrameCounters().framesSent;
+}
+// node callTimeout: an expiry emits 'timeout' unless a stream DATA write is in flight and made
+// progress since the previous expiry. So a write that does not move holds back one expiry.
+// For node, progress is a chunk that it gave to the socket. Here it is bytes that the socket
+// took: a write that drains from a full socket is not idle, and frames that wait behind a full
+// socket are not progress.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2556-L2578
 function sessionTimerExpired(session: Http2Session) {
   if (session.destroyed) return;
   const parser = session[bunHTTP2Native];
   if (parser) {
-    const snapshot = session[kTimeoutFramesSent];
-    if (sessionHasWriteInFlight(session, parser, snapshot >= 0)) {
-      const framesSent = parser.getFrameCounters().framesSent;
-      if (framesSent !== snapshot) {
-        session[kTimeoutFramesSent] = framesSent;
+    const snapshot = session[kTimeoutWriteProgress];
+    const inFlight = sessionHasWriteInFlight(session, parser, snapshot >= 0);
+    // A write whose last bytes left the socket since the previous expiry counts too.
+    if (inFlight || snapshot >= 0) {
+      const progress = sessionWriteProgress(session, parser);
+      session[kTimeoutWriteProgress] = inFlight ? progress : -1;
+      if (progress !== snapshot) {
         session[kTimeout]?.refresh();
         return;
       }
-    } else {
-      session[kTimeoutFramesSent] = -1;
     }
     parser.forEachStream(emitTimeout);
   }
@@ -5982,8 +6001,6 @@ class ClientHttp2Session extends Http2Session {
         clearTimeout(this[kTimeout]);
         this[kTimeout] = null;
       }
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1229
-      this.removeAllListeners("timeout");
       cancelPendingPings(this.#pingCallbacks);
       this.#pingCallbacks = null;
       if (error === undefined) {

@@ -1325,7 +1325,8 @@ declare module "bun" {
      * contain (U+0000, other C0 controls except tab/newline/carriage return,
      * U+FFFE, U+FFFF, unpaired surrogates); for `--` inside a comment or `?>`
      * inside processing-instruction data; for an array at the root or inside
-     * another array; and for circular structures.
+     * another array; for anything but whitespace in the first 10 characters
+     * of a `space` string; and for circular structures.
      *
      * Strings, numbers, booleans and bigints become text via `String()`, a
      * `Date` its ISO string; `null` becomes an empty element (or leaves an
@@ -1343,8 +1344,10 @@ declare module "bun" {
      * @param replacer Reserved; must be `undefined` or `null`
      * @param space Indentation for element-only content, as in `JSON.stringify`:
      * a number of spaces (at most 10) or a string (its first 10 characters).
-     * An element with any text child is written on one line so character data
-     * is unchanged.
+     * Those characters are written between elements as is, so they can only
+     * be XML whitespace (space, tab, newline, carriage return); anything else
+     * throws. An element with any text child is written on one line so
+     * character data is unchanged.
      * @returns The XML, or `undefined` if `value` is `undefined`, a function, or a symbol
      *
      * @example

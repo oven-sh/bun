@@ -1,3 +1,4 @@
+import type { Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { isLinux, isWindows, shellExe } from "harness";
 import { constants } from "os";
@@ -7,6 +8,7 @@ const inputs = {
   SIGKILL: [["SIGKILL"], [constants.signals.SIGKILL]],
 } as const;
 const fails = [["SIGGOD"], [{}], [() => {}], [Infinity], [-Infinity], [Symbol("what")]] as const;
+const signalNumbers: Record<string, number> = constants.signals;
 describe("subprocess.kill", () => {
   for (const key in inputs) {
     describe(key, () => {
@@ -77,6 +79,10 @@ describe("subprocess.kill", () => {
       const listed = Array.from(err.message.matchAll(/'(SIG\w+)'/g), (match: RegExpMatchArray) => match[1]);
       expect(listed.filter(name => !(name in constants.signals))).toEqual([]);
       expect(listed.includes("SIGSTKFLT")).toBe("SIGSTKFLT" in constants.signals);
+      // The list has one name for each signal number of this OS. An alias (SIGIOT for
+      // SIGABRT, SIGPOLL for SIGIO on Linux) is a valid name too, and the list leaves it out.
+      const numbers = (names: string[]) => names.map(name => signalNumbers[name]).sort((a, b) => a - b);
+      expect(numbers(listed)).toEqual([...new Set(numbers(Object.keys(signalNumbers)))]);
 
       const { promise, resolve, reject } = Promise.withResolvers();
       proc.exited.then(resolve, reject);
@@ -85,6 +91,28 @@ describe("subprocess.kill", () => {
 
       expect(proc.exitCode).toBe(null);
       expect(proc.signalCode).toBe("SIGTERM");
+    });
+
+    // `os.constants.signals` has every name this OS has. Before, SIGIOT, SIGPOLL (Linux),
+    // SIGUNUSED (musl), SIGINFO (macOS) and SIGBREAK (Windows) were unknown names.
+    test("every name in os.constants.signals is a valid signal name", async () => {
+      const proc = Bun.spawn({
+        cmd: [shellExe(), "-c", "exit 0"],
+        stdio: ["inherit", "inherit", "inherit"],
+      });
+      await proc.exited;
+
+      // After the exit, kill() still checks the name, and it sends nothing.
+      expect(() => proc.kill("SIGGOD" as NodeJS.Signals)).toThrow("must be one of");
+      const rejected = Object.keys(signalNumbers).filter(name => {
+        try {
+          proc.kill(name as NodeJS.Signals);
+          return false;
+        } catch {
+          return true;
+        }
+      });
+      expect(rejected).toEqual([]);
     });
   });
 });
@@ -95,8 +123,20 @@ describe("subprocess.kill", () => {
 // oracle. All three terminate the child without a core dump.
 const platformSignals = (["SIGUSR1", "SIGUSR2", "SIGSTKFLT"] as const).filter(name => name in constants.signals);
 
-// Names that are signals on Linux, but not on every OS (none are left on Linux).
-const unsupportedSignals = (["SIGSTKFLT", "SIGPWR"] as const).filter(name => !(name in constants.signals));
+// An alias is a second name of a signal number: SIGIOT is SIGABRT, and on Linux SIGPOLL is
+// SIGIO and SIGUNUSED (musl, Android) is SIGSYS. node reports the signal under the first name.
+const aliases = (
+  [
+    ["SIGIOT", "SIGABRT"],
+    ["SIGPOLL", "SIGIO"],
+    ["SIGUNUSED", "SIGSYS"],
+  ] as const
+).filter(([alias]) => alias in constants.signals);
+
+// Names that are signals on some OS, but not on every OS.
+const unsupportedSignals = (
+  ["SIGSTKFLT", "SIGPWR", "SIGIOT", "SIGPOLL", "SIGUNUSED", "SIGINFO", "SIGBREAK"] as const
+).filter(name => !(name in constants.signals));
 
 const quiet = { stdio: ["ignore", "ignore", "ignore"] } as const;
 
@@ -143,6 +183,45 @@ describe.concurrent.skipIf(isWindows)("signal names map to the OS's own numbers"
         killSignal: number,
       });
       expect({ exitCode, signalCode }).toEqual({ exitCode: null, signalCode: name });
+    });
+  });
+
+  describe.each(aliases)("%s is an alias of %s", (alias, name) => {
+    const number = signalNumbers[alias];
+
+    // SIGABRT and SIGSYS dump core, and CI fails a test that leaves a core file. The child
+    // turns core dumps off and then prints a line, so the signal cannot come before that.
+    const cmd = ["sh", "-c", "ulimit -c 0 && echo ready && exec sleep 1000"];
+    const stdio = ["ignore", "pipe", "ignore"] as const;
+
+    async function coreDumpsAreOff(proc: Subprocess<"ignore", "pipe", "ignore">) {
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let output = "";
+      while (!output.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        output += decoder.decode(value, { stream: true });
+      }
+      reader.releaseLock();
+      expect(output).toBe("ready\n");
+    }
+
+    test("kill(alias) sends the signal, and signalCode is the first name", async () => {
+      await using proc = Bun.spawn({ cmd, stdio });
+      await coreDumpsAreOff(proc);
+      proc.kill(alias);
+      expect(await proc.exited).toBe(128 + number);
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: null, signalCode: name });
+    });
+
+    test("killSignal: alias is delivered when the AbortSignal fires", async () => {
+      const controller = new AbortController();
+      await using proc = Bun.spawn({ cmd, stdio, killSignal: alias, signal: controller.signal });
+      await coreDumpsAreOff(proc);
+      controller.abort();
+      expect(await proc.exited).toBe(128 + number);
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: null, signalCode: name });
     });
   });
 });

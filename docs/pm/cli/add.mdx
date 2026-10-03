@@ -231,7 +231,7 @@ bun add zod@https://registry.npmjs.org/zod/-/zod-3.21.4.tgz
 }
 ```
 
-A tarball URL can carry credentials, such as `https://user:password@example.com/zod-3.21.4.tgz`. Bun sends them as an `Authorization: Basic` header and requests the URL without them, like npm. The URL, credentials included, is written to `package.json` and to the lockfile.
+A tarball URL can carry credentials, such as `https://user:password@example.com/zod-3.21.4.tgz`. Bun sends them as an `Authorization: Basic` header and requests the URL without them, like npm. The URL, credentials included, is written to `package.json` and to the lockfile. Percent-encode a character that cannot be written in a URL: the password `p@ss` is written `p%40ss`. Bun decodes the credentials before it sends them.
 
 ---
 

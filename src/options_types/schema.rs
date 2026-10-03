@@ -155,16 +155,19 @@ pub mod api {
     }
 
     impl NpmRegistry {
+        /// The credentials in the URL are percent-encoded (RFC 3986 section 3.2.1: a
+        /// password `p@ss` is written `p%40ss`), so they are decoded here. The
+        /// `username`, `password` and `token` config keys are not, and stay as written.
         pub fn from_url(str: &[u8]) -> NpmRegistry {
             let url = bun_url::URL::parse(str);
             let mut registry = NpmRegistry::default();
 
             if url.username.is_empty() && !url.password.is_empty() {
-                registry.token = Box::from(url.password);
+                registry.token = bun_url::PercentEncoding::decode_lenient_alloc(url.password);
                 registry.url = url.href_without_auth();
             } else if !url.username.is_empty() && !url.password.is_empty() {
-                registry.username = Box::from(url.username);
-                registry.password = Box::from(url.password);
+                registry.username = bun_url::PercentEncoding::decode_lenient_alloc(url.username);
+                registry.password = bun_url::PercentEncoding::decode_lenient_alloc(url.password);
                 registry.url = url.href_without_auth();
             } else {
                 // Do not include a trailing slash. There might be parameters at the end.

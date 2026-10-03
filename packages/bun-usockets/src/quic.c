@@ -127,6 +127,8 @@ struct us_quic_stream_s {
     int fin_delivered;
     /* Set by us_quic_flush_from_on_write, cleared by on_write. */
     int flush_on_write;
+    /* The code of the peer's RESET_STREAM or STOP_SENDING, -1 until it sends one. */
+    int64_t peer_reset_code;
     /* ext follows */
 };
 
@@ -682,6 +684,7 @@ static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t 
     if (!s) { lsquic_stream_close(stream); return NULL; }
     s->stream = stream;
     s->ctx = ctx;
+    s->peer_reset_code = -1;
     if (ctx->on_stream_open) ctx->on_stream_open(s, ctx->is_client);
     lsquic_stream_wantread(stream, 1);
     return (lsquic_stream_ctx_t *) s;
@@ -751,6 +754,8 @@ static void us_quic_on_close(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
 }
 
 static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, int how) {
+    us_quic_stream_t *s = (us_quic_stream_t *) h;
+    if (s && stream) s->peer_reset_code = (int64_t) lsquic_stream_get_error_code(stream);
     /* how=0 → peer sent RESET_STREAM (our read half is gone): nothing left
      *         to deliver, close so on_stream_close fires.
      * how=1 → peer sent STOP_SENDING (wants us to abort our write half):
@@ -1262,6 +1267,8 @@ void us_quic_stream_reset(us_quic_stream_t *s) {
 int us_quic_stream_has_unacked(us_quic_stream_t *s) {
     return s->stream ? lsquic_stream_has_unacked_data(s->stream) : 0;
 }
+
+int64_t us_quic_stream_peer_reset_code(us_quic_stream_t *s) { return s->peer_reset_code; }
 
 void *us_quic_stream_ext(us_quic_stream_t *s) { return s + 1; }
 

@@ -925,6 +925,17 @@ struct SendDataOptions {
     defer_write_callback: bool,
 }
 
+/// One read, as nghttp2_session_mem_recv sees it. A frame that a handler writes goes out after it.
+struct ReadScope<'a>(&'a H2FrameParser);
+
+impl Drop for ReadScope<'_> {
+    fn drop(&mut self) {
+        self.0.in_read.set(false);
+        self.0.closing_in_read.with_mut(|ids| ids.clear());
+        self.0.ended_in_read.with_mut(|ids| ids.clear());
+    }
+}
+
 struct DispatchGuard<'a>(&'a Cell<u32>);
 
 impl Drop for DispatchGuard<'_> {
@@ -1106,6 +1117,13 @@ pub(crate) struct H2FrameParser {
     /// borrow (the normal request path: receive() -> JS handler -> respond -> END_STREAM).
     /// Drained into Connection::close_stream on the next rewrite_read batch.
     pending_engine_stream_closes: JsCell<Vec<u32>>,
+    /// Streams with `holds_peer_slot`: what SETTINGS_MAX_CONCURRENT_STREAMS limits.
+    open_peer_streams: Cell<u32>,
+    /// Streams that a local frame closed in this read. nghttp2 sends that frame after the read.
+    closing_in_read: JsCell<Vec<u32>>,
+    /// Streams with a slot whose END_STREAM this side wrote in this read.
+    ended_in_read: JsCell<Vec<u32>>,
+    in_read: Cell<bool>,
     dispatch_depth: Cell<u32>,
     max_rejected_streams: Cell<u32>,
     max_session_invalid_frames: Cell<u32>,
@@ -1350,6 +1368,8 @@ pub(crate) struct Stream {
     // The JS readable for this stream is paused (setStreamReading(id, false)): the engine defers
     // replenishing the stream's receive window until reading resumes, backpressuring the peer.
     reading_paused: bool,
+    /// Counted in `open_peer_streams`. Not derived from `state`, which can leave CLOSED again.
+    holds_peer_slot: bool,
 
     // when we have backpressure we queue the data e round robin the Streams
     data_frame_queue: PendingQueue,
@@ -1846,6 +1866,7 @@ impl Stream {
             remote_used_window_size: 0,
             signal: None,
             reading_paused: false,
+            holds_peer_slot: false,
             data_frame_queue: PendingQueue::default(),
         }
     }
@@ -1936,6 +1957,24 @@ impl Stream {
         // queue dropped here
     }
 
+    /// Gives the slot back, once. Inside a read it stays held until the read ends, as in nghttp2.
+    fn release_peer_slot(&mut self, client: &H2FrameParser) {
+        if self.release_peer_slot_now(client) && client.holds_slots_in_read() {
+            client.closing_in_read.with_mut(|ids| ids.push(self.id));
+        }
+    }
+
+    /// For a stream that an inbound frame closed: nghttp2 closes it when it reads that frame.
+    fn release_peer_slot_now(&mut self, client: &H2FrameParser) -> bool {
+        let held = core::mem::take(&mut self.holds_peer_slot);
+        if held {
+            client
+                .open_peer_streams
+                .set(client.open_peer_streams.get() - 1);
+        }
+        held
+    }
+
     /// This side wrote its END_STREAM.
     fn end_local(&mut self, client: &H2FrameParser) {
         if self.state == StreamState::HALF_CLOSED_REMOTE {
@@ -1943,11 +1982,15 @@ impl Stream {
             self.free_resources::<false>(client);
         } else {
             self.state = StreamState::HALF_CLOSED_LOCAL;
+            if self.holds_peer_slot && client.holds_slots_in_read() {
+                client.ended_in_read.with_mut(|ids| ids.push(self.id));
+            }
         }
     }
 
     /// this can be called multiple times
     pub(crate) fn free_resources<const FINALIZING: bool>(&mut self, client: &H2FrameParser) {
+        self.release_peer_slot(client);
         // The rewrite engine only sees inbound traffic, so a completed request would leave
         // its engine entry as HalfClosedRemote and its legacy slot + Box behind forever —
         // one entry per request. Queue the id; the next rewrite_read batch evicts the engine
@@ -2200,6 +2243,7 @@ impl H2FrameParser {
     fn close_unsent(&self, stream: &mut Stream, code: ErrorCode) {
         stream.state = StreamState::CLOSED;
         stream.rst_code = code.0;
+        stream.release_peer_slot(self);
     }
 
     pub(crate) fn send_go_away(
@@ -3375,7 +3419,11 @@ impl H2FrameParser {
     }
 
     /// Returned *Stream is heap-allocated and stable for the lifetime of this H2FrameParser.
-    fn handle_received_stream_id(&self, stream_identifier: u32) -> Option<*mut Stream> {
+    fn handle_received_stream_id(
+        &self,
+        stream_identifier: u32,
+        admitted: bool,
+    ) -> Option<*mut Stream> {
         // connection stream
         if stream_identifier == 0 {
             return None;
@@ -3402,7 +3450,7 @@ impl H2FrameParser {
         } else {
             self.local_settings.get().initial_window_size
         };
-        let stream = bun_core::heap::into_raw(Box::new(Stream::init(
+        let mut stream = Stream::init(
             stream_identifier,
             local_window_size,
             self.remote_settings
@@ -3410,7 +3458,12 @@ impl H2FrameParser {
                 .map(|s| s.initial_window_size)
                 .unwrap_or(DEFAULT_WINDOW_SIZE as u32),
             self.padding_strategy.get(),
-        )));
+        );
+        if admitted && self.is_server.get() {
+            stream.holds_peer_slot = true;
+            self.open_peer_streams.set(self.open_peer_streams.get() + 1);
+        }
+        let stream = bun_core::heap::into_raw(Box::new(stream));
         self.streams
             .with_mut(|s| s.insert(stream_identifier, stream));
 
@@ -3463,28 +3516,8 @@ impl H2FrameParser {
             });
             self.enter_stream_dispatch(stream)
                 .set_context(returned, &global);
-        } else if returned.is_number() && self.count_rejected_stream(stream_identifier) {
-            // streamStart refused the stream and returned the RST_STREAM code that answers it.
-            let mut refused = self.enter_stream_dispatch(stream);
-            self.end_stream(&mut refused, ErrorCode(returned.to_u32()));
         }
         Some(stream)
-    }
-
-    /// Returns false when this used up maxSessionRejectedStreams and the session sent its GOAWAY.
-    fn count_rejected_stream(&self, stream_id: u32) -> bool {
-        self.rejected_streams.set(self.rejected_streams.get() + 1);
-        if self.max_rejected_streams.get() <= self.rejected_streams.get() {
-            self.send_go_away(
-                stream_id,
-                ErrorCode::ENHANCE_YOUR_CALM,
-                b"ENHANCE_YOUR_CALM",
-                self.last_stream_id.get(),
-                true,
-            );
-            return false;
-        }
-        true
     }
 
     fn to_writer(&self) -> DirectWriterStruct {
@@ -3583,6 +3616,29 @@ impl H2FrameParser {
         }
     }
 
+    /// A session with no limit holds nothing.
+    fn holds_slots_in_read(&self) -> bool {
+        self.in_read.get() && self.local_settings.get().max_concurrent_streams != u32::MAX
+    }
+
+    #[cfg(debug_assertions)]
+    fn assert_peer_slots(&self) {
+        let mut held = 0u32;
+        for &stream in self.streams.get().values() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            let stream = unsafe { &*stream };
+            if stream.holds_peer_slot {
+                debug_assert!(
+                    stream.state != StreamState::CLOSED,
+                    "closed stream {} holds a slot",
+                    stream.id
+                );
+                held += 1;
+            }
+        }
+        debug_assert_eq!(held, self.open_peer_streams.get());
+    }
+
     /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
     fn rewrite_read(&self, bytes: &[u8]) {
         bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
@@ -3669,8 +3725,12 @@ impl H2FrameParser {
                         }
                     }
                 });
+                #[cfg(debug_assertions)]
+                self.assert_peer_slots();
             }
         }
+        self.in_read.set(true);
+        let _read = ReadScope(self);
         if self.rewrite_tail.get().is_empty() {
             let feed = {
                 let mut guard = self.engine.borrow_mut();
@@ -3983,6 +4043,14 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         !self.is_over_session_memory_limit()
     }
 
+    fn open_peer_streams(&self) -> u32 {
+        self.open_peer_streams.get() + self.closing_in_read.get().len() as u32
+    }
+
+    fn max_concurrent_streams(&self) -> u32 {
+        self.local_settings.get().max_concurrent_streams
+    }
+
     fn is_local_stream(&self, stream_id: u32) -> bool {
         // The legacy outbound created an entry in the legacy streams map for every locally
         // initiated stream (request/respond), so membership there means "we sent HEADERS on it".
@@ -4067,7 +4135,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // rstStream/getStreamState — look streams up there) AND dispatch onStreamStart, which the
         // legacy helper already does. The JS streamStart handler then calls setStreamContext,
         // populating both `sctx` and the legacy stream context.
-        let _ = self.handle_received_stream_id(stream_id);
+        let _ = self.handle_received_stream_id(stream_id, true);
     }
 
     fn on_header(&self, _stream_id: u32, name: &[u8], value: &[u8], never_index: bool) {
@@ -4170,6 +4238,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                     7 => StreamState::CLOSED,
                     _ => legacy_state,
                 };
+                // The END_STREAM of this side went out before this read.
+                if effective == 7 && !self.ended_in_read.get().contains(&stream_id) {
+                    (*stream).release_peer_slot_now(self);
+                }
             }
         }
         let stream_ctx = self.rewrite_stream_ctx(stream_id);
@@ -4196,7 +4268,31 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_stream_rejected(&self, stream_id: u32) {
-        self.count_rejected_stream(stream_id);
+        // nghttp2 has opened a stream that node refuses for memory, until its RST_STREAM goes out.
+        if self.holds_slots_in_read() && !self.streams.get().contains_key(&stream_id) {
+            self.closing_in_read.with_mut(|ids| ids.push(stream_id));
+        }
+        // maxSessionRejectedStreams: counts only locally-initiated rejections (oversized or
+        // malformed header blocks) - peer-sent RST_STREAM frames must not consume the budget.
+        self.rejected_streams.set(self.rejected_streams.get() + 1);
+        if self.max_rejected_streams.get() <= self.rejected_streams.get() {
+            self.send_go_away(
+                stream_id,
+                ErrorCode::ENHANCE_YOUR_CALM,
+                b"ENHANCE_YOUR_CALM",
+                self.last_stream_id.get(),
+                true,
+            );
+        }
+    }
+
+    fn on_peer_reset(&self, stream_id: u32) {
+        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            unsafe { (*stream).release_peer_slot_now(self) };
+        }
+        self.closing_in_read
+            .with_mut(|ids| ids.retain(|&id| id != stream_id));
     }
 
     fn on_stream_reset(&self, stream_id: u32, code: u32) {
@@ -6009,7 +6105,7 @@ impl H2FrameParser {
         if id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
         }
-        if this.handle_received_stream_id(id).is_none() {
+        if this.handle_received_stream_id(id, false).is_none() {
             return Ok(JSValue::js_number(-1.0));
         }
         Ok(JSValue::js_number(id as f64))
@@ -6619,7 +6715,7 @@ impl H2FrameParser {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
-                        let Some(stream) = this.handle_received_stream_id(stream_id) else {
+                        let Some(stream) = this.handle_received_stream_id(stream_id, false) else {
                             return Ok(JSValue::js_number(-1.0));
                         };
                         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
@@ -6789,7 +6885,8 @@ impl H2FrameParser {
                                 return Err(global_object
                                     .throw(format_args!("Failed to allocate header buffer")));
                             }
-                            let Some(stream) = this.handle_received_stream_id(stream_id) else {
+                            let Some(stream) = this.handle_received_stream_id(stream_id, false)
+                            else {
                                 return Ok(JSValue::js_number(-1.0));
                             };
                             // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
@@ -6859,7 +6956,7 @@ impl H2FrameParser {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
-                        let Some(stream) = this.handle_received_stream_id(stream_id) else {
+                        let Some(stream) = this.handle_received_stream_id(stream_id, false) else {
                             return Ok(JSValue::js_number(-1.0));
                         };
                         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
@@ -6877,7 +6974,7 @@ impl H2FrameParser {
         }
         let encoded_size = encoded_headers.len();
 
-        let Some(stream_ptr) = this.handle_received_stream_id(stream_id) else {
+        let Some(stream_ptr) = this.handle_received_stream_id(stream_id, false) else {
             return Ok(JSValue::js_number(-1.0));
         };
         // The `options` getters below can run user JS while `stream` is borrowed.
@@ -7444,6 +7541,10 @@ impl H2FrameParser {
             pending_send_window_consumed: Cell::new(0),
             pending_stream_send_consumed: JsCell::new(Vec::new()),
             pending_engine_stream_closes: JsCell::new(Vec::new()),
+            open_peer_streams: Cell::new(0),
+            closing_in_read: JsCell::new(Vec::new()),
+            ended_in_read: JsCell::new(Vec::new()),
+            in_read: Cell::new(false),
             dispatch_depth: Cell::new(0),
             pending_settings_window_submissions: JsCell::new(Vec::new()),
             max_rejected_streams: Cell::new(100),

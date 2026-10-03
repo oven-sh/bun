@@ -380,7 +380,7 @@ impl WindowsNamedPipe {
             ctx: self.root_ptr(),
             on_open: Self::ssl_on_open,
             on_handshake: Self::ssl_on_handshake,
-            on_renegotiation: Some(Self::ssl_on_handshake),
+            on_renegotiated: Some(|this, error| Self::ssl_on_handshake(this, true, error)),
             on_data: Self::ssl_on_data,
             on_close: Self::ssl_on_close,
             write: Self::ssl_write,

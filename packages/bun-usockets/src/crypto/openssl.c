@@ -1703,7 +1703,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
 
   s->ssl = ssl;
   s->ssl_handshake_state = HANDSHAKE_PENDING;
-  s->ssl_handshake_reported = 0;
+  s->ssl_established = 0;
   s->ssl_write_wants_read = 0;
   s->ssl_write_parked = 0;
   s->ssl_read_wants_write = 0;
@@ -1871,17 +1871,18 @@ static void ssl_park_fatal_reason(struct us_socket_t *s) {
   s->ssl_fatal_error = 1;
 }
 
-/* A connection reports its handshake once: its owner starts the protocol
- * there (fetch sends the request, Redis and MySQL log in). Every later report
- * is the end of a renegotiation, a separate event that only the owners that
- * report each handshake consume. */
+/* on_handshake reports a completed handshake once for a connection: its owner
+ * starts the protocol there (fetch sends the request, Redis and MySQL log in).
+ * A handshake that completes later is a renegotiation, a separate event that
+ * only the owners that report each handshake consume. A failure always goes
+ * to on_handshake: the owner fails the connection. */
 static void ssl_dispatch_handshake(struct us_socket_t *s, int success,
                                    struct us_bun_verify_error_t verify_error) {
-  if (s->ssl_handshake_reported) {
-    us_dispatch_renegotiation(s, success, verify_error);
+  if (success && s->ssl_established) {
+    us_dispatch_renegotiated(s, verify_error);
     return;
   }
-  s->ssl_handshake_reported = 1;
+  if (success) s->ssl_established = 1;
   us_dispatch_handshake(s, success, verify_error);
 }
 

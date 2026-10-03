@@ -146,7 +146,7 @@ extern struct us_socket_t *us_dispatch_end(us_socket_r s);
 extern struct us_socket_t *us_dispatch_connect_error(us_socket_r s, int code);
 extern struct us_connecting_socket_t *us_dispatch_connecting_error(struct us_connecting_socket_t *c, int code);
 extern void us_dispatch_handshake(us_socket_r s, int success, struct us_bun_verify_error_t err);
-extern void us_dispatch_renegotiation(us_socket_r s, int success, struct us_bun_verify_error_t err);
+extern void us_dispatch_renegotiated(us_socket_r s, struct us_bun_verify_error_t err);
 extern void us_dispatch_session(us_socket_r s, const unsigned char *data, int length);
 extern void us_dispatch_keylog(us_socket_r s, const unsigned char *data, int length);
 struct ssl_session_st;
@@ -309,8 +309,8 @@ struct us_socket_t {
    * they cost nothing on epoll/kqueue (poll=4 + 4×u8 + 1 byte bits = 9, padded
    * to 16 anyway for the pointer). */
   unsigned char ssl_handshake_state : 2;
-  /* on_handshake ran for this connection. A handshake that completes after it is a renegotiation. */
-  unsigned char ssl_handshake_reported : 1;
+  /* on_handshake reported a completed handshake. The next handshake that completes is a renegotiation. */
+  unsigned char ssl_established : 1;
   unsigned char ssl_write_wants_read : 1;
   /* us_internal_ssl_write refused application data because the handshake was
    * not finished. ssl_write_wants_read cannot tell: every pending handshake

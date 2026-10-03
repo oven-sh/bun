@@ -6326,8 +6326,10 @@ impl RelaterId {
                         .flags
                         .intersects(TypeFlags::INDEXED_ACCESS)
                     && c.as_indexed_access_type(template_type).object_type == source
-                    && c.as_indexed_access_type(template_type).index_type
-                        == c.get_type_parameter_from_mapped_type(target)
+                    && {
+                        let index_type = c.as_indexed_access_type(template_type).index_type;
+                        index_type == c.get_type_parameter_from_mapped_type(target)
+                    }
                 {
                     return Ternary::TRUE;
                 }

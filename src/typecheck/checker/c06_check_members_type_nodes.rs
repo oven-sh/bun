@@ -547,7 +547,7 @@ impl<'a> Checker<'a> {
         if is_type_reference_node(a, node) && !a.flags(node).intersects(NodeFlags::JSDOC) {
             let data = a.as_type_reference_node(node);
             if !data.type_arguments.is_nil()
-                && a.end(data.type_name) != a.list_loc(data.type_arguments).pos
+                && a.end(data.type_name) != a.list_pos(data.type_arguments)
             {
                 // If there was a token between the type name and the type arguments, check if it was a DotToken
                 let source_file = get_source_file_of_node(a, node);

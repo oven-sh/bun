@@ -1,8 +1,17 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  lutimesSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+} from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -837,6 +846,233 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
       expect(out).not.toContain("EXECUTED: multi-tool (main binary)");
       expect(exited).toBe(0);
     });
+  });
+});
+
+// The `bun add` that bunx spawns into `<temp>/bunx-<uid>-<pkg>@<version>` passes
+// `--force` only for an untrusted tree or when the first install left no bin.
+describe("bunx cache", () => {
+  const cli = (label: string) =>
+    `#!/usr/bin/env node\nconsole.log(${JSON.stringify(label)} + " with " + require("dep"));\n`;
+
+  type Versions = Record<string, { manifest: Record<string, unknown>; files: Record<string, string> }>;
+  const registryPackages: Record<string, Versions> = {
+    "tool": {
+      "1.0.0": {
+        manifest: { bin: { tool: "cli.js" }, dependencies: { dep: "1.0.0" } },
+        files: { "cli.js": cli("tool 1.0.0") },
+      },
+      "1.1.0": {
+        manifest: { bin: { tool: "cli.js" }, dependencies: { dep: "1.0.0" } },
+        files: { "cli.js": cli("tool 1.1.0") },
+      },
+    },
+    "no-bin-file": {
+      "1.0.0": { manifest: { bin: { "no-bin-file": "cli.js" } }, files: { "index.js": "" } },
+    },
+    "no-bin": {
+      "1.0.0": { manifest: {}, files: { "index.js": "" } },
+    },
+    "env-probe": {
+      "1.0.0": {
+        manifest: { bin: { "env-probe": "cli.js" } },
+        files: { "cli.js": `#!/usr/bin/env node\nconsole.log(String(process.env.BUN_INTERNAL_BUNX_INSTALL));\n` },
+      },
+    },
+    "dep": {
+      "1.0.0": { manifest: { main: "index.js" }, files: { "index.js": `module.exports = "dep 1.0.0";\n` } },
+    },
+  };
+
+  // `<tgzDir>/<name>-<version>.tgz`, each packed from `<tgzDir>/<name>-<version>/package/`.
+  let staging: ReturnType<typeof tempDir>;
+  let tgzDir: string;
+
+  beforeAll(async () => {
+    const staged: Record<string, string> = {};
+    for (const [name, versions] of Object.entries(registryPackages)) {
+      for (const [version, { manifest, files }] of Object.entries(versions)) {
+        staged[`${name}-${version}/package/package.json`] = JSON.stringify({ name, version, ...manifest });
+        for (const [path, content] of Object.entries(files)) staged[`${name}-${version}/package/${path}`] = content;
+      }
+    }
+    staging = tempDir("bunx-registry", staged);
+    tgzDir = String(staging);
+    for (const [name, versions] of Object.entries(registryPackages)) {
+      for (const version of Object.keys(versions)) {
+        await Bun.$`tar -czf ${join(tgzDir, `${name}-${version}.tgz`)} package`
+          .cwd(join(tgzDir, `${name}-${version}`))
+          .quiet();
+      }
+    }
+  });
+
+  afterAll(() => staging[Symbol.dispose]());
+
+  // Each test gets a registry, a temp directory and an install cache of its
+  // own, so the tests can run at the same time.
+  function fixture() {
+    const { x_dir, env } = setup();
+    const requests: string[] = [];
+    const latest: Record<string, string> = { tool: "1.0.0" };
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = decodeURIComponent(new URL(req.url).pathname).slice(1);
+        requests.push(path);
+        if (path.endsWith(".tgz")) return new Response(Bun.file(join(tgzDir, path)));
+        const versions = registryPackages[path];
+        if (!versions) return new Response("not found", { status: 404 });
+        return Response.json({
+          name: path,
+          "dist-tags": { latest: latest[path] ?? Object.keys(versions).at(-1) },
+          versions: Object.fromEntries(
+            Object.entries(versions).map(([version, { manifest }]) => [
+              version,
+              { name: path, version, ...manifest, dist: { tarball: `${server.url}${path}-${version}.tgz` } },
+            ]),
+          ),
+        });
+      },
+    });
+
+    return {
+      latest,
+      // Runs `bunx`. `requests` holds what this run asked the registry for.
+      async run(...args: string[]) {
+        const first = requests.length;
+        await using proc = spawn({
+          cmd: [bunExe(), "x", ...args],
+          cwd: x_dir,
+          env: { ...env, npm_config_registry: server.url.href },
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode, requests: requests.slice(first) };
+      },
+      // The directory bunx keeps `spec` in. Found by its name, so the test
+      // does not depend on how each OS derives the uid.
+      tree(spec: string) {
+        const match = readdirSync(env.TMPDIR).filter(d => d.startsWith("bunx-") && d.endsWith(`-${spec}`));
+        expect(match).toHaveLength(1);
+        return join(env.TMPDIR, match[0]);
+      },
+      [Symbol.dispose]: () => void server.stop(true),
+    };
+  }
+
+  // An install with `--force` removes each package directory and links it
+  // again, so a file the test adds to a package tells the two apart.
+  async function plantMarkers(tree: string, ...packages: string[]) {
+    const markers = packages.map(pkg => join(tree, "node_modules", pkg, "MARKER"));
+    for (const marker of markers) await writeFile(marker, "");
+    return () => markers.map(marker => existsSync(marker));
+  }
+
+  it.concurrent("a warm dist-tag run asks the registry and links nothing again", async () => {
+    using bunx = fixture();
+    expect(await bunx.run("tool@latest")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
+
+    const markers = await plantMarkers(bunx.tree("tool@latest"), "tool", "dep");
+
+    expect(await bunx.run("tool@latest")).toMatchObject({
+      stdout: "tool 1.0.0 with dep 1.0.0\n",
+      exitCode: 0,
+      requests: ["tool"],
+    });
+    expect(markers()).toEqual([true, true]);
+  });
+
+  it.concurrent("a dist-tag run follows the tag when it moves", async () => {
+    using bunx = fixture();
+    expect(await bunx.run("tool@latest")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
+
+    bunx.latest.tool = "1.1.0";
+    expect(await bunx.run("tool@latest")).toMatchObject({ stdout: "tool 1.1.0 with dep 1.0.0\n", exitCode: 0 });
+
+    bunx.latest.tool = "1.0.0";
+    expect(await bunx.run("tool@latest")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
+  });
+
+  it.concurrent("a tree older than 24 hours asks the registry once and links nothing again", async () => {
+    using bunx = fixture();
+    expect(await bunx.run("tool")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
+    expect(await bunx.run("tool")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", requests: [] });
+
+    // The age of a tree is the age of its `.bin` entry: a link on POSIX, a
+    // shim on Windows. `lutimes` sets the time of the link, not of its target.
+    const tree = bunx.tree("tool@latest");
+    const old = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    for (const entry of readdirSync(join(tree, "node_modules", ".bin"))) {
+      (isWindows ? utimesSync : lutimesSync)(join(tree, "node_modules", ".bin", entry), old, old);
+    }
+    const markers = await plantMarkers(tree, "tool", "dep");
+
+    expect(await bunx.run("tool")).toMatchObject({
+      stdout: "tool 1.0.0 with dep 1.0.0\n",
+      exitCode: 0,
+      requests: ["tool"],
+    });
+    expect(markers()).toEqual([true, true]);
+
+    // That install made the `.bin` entry again, so the tree is new again.
+    expect(await bunx.run("tool")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", requests: [] });
+  });
+
+  it.concurrent("a tree an earlier install left without its bin file is linked again", async () => {
+    using bunx = fixture();
+    expect(await bunx.run("tool@latest")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
+
+    // The package keeps its package.json, so an install without `--force`
+    // skips it and removes the `.bin` entry that points at the missing file.
+    // A second install with `--force` puts the file back.
+    const tree = bunx.tree("tool@latest");
+    rmSync(join(tree, "node_modules", "tool", "cli.js"));
+    const markers = await plantMarkers(tree, "tool", "dep");
+
+    expect(await bunx.run("tool@latest")).toMatchObject({
+      stdout: "tool 1.0.0 with dep 1.0.0\n",
+      exitCode: 0,
+      requests: ["tool", "tool"],
+    });
+    expect(markers()).toEqual([false, false]);
+  });
+
+  it.concurrent("a package that does not ship the file its bin names fails after one forced install", async () => {
+    using bunx = fixture();
+    const first = await bunx.run("no-bin-file@latest");
+    expect(first.stderr).toContain("error: could not determine executable to run for package no-bin-file");
+    expect(first.exitCode).toBe(1);
+
+    const markers = await plantMarkers(bunx.tree("no-bin-file@latest"), "no-bin-file");
+
+    const second = await bunx.run("no-bin-file@latest");
+    expect(second.stderr).toContain("error: could not determine executable to run for package no-bin-file");
+    expect(second).toMatchObject({ exitCode: 1, requests: ["no-bin-file", "no-bin-file"] });
+    expect(markers()).toEqual([false]);
+  });
+
+  // The install bunx spawns carries the marker. The tool, and any install the
+  // tool spawns in the user's project, must not.
+  it.concurrent("the tool does not inherit the bunx install marker", async () => {
+    using bunx = fixture();
+    expect(await bunx.run("env-probe@latest")).toMatchObject({ stdout: "undefined\n", exitCode: 0 });
+  });
+
+  it.concurrent("a package that declares no bin fails after one install", async () => {
+    using bunx = fixture();
+    const first = await bunx.run("no-bin@latest");
+    expect(first.stderr).toContain("error: could not determine executable to run for package no-bin");
+    expect(first.exitCode).toBe(1);
+
+    const markers = await plantMarkers(bunx.tree("no-bin@latest"), "no-bin");
+
+    const second = await bunx.run("no-bin@latest");
+    expect(second.stderr).toContain("error: could not determine executable to run for package no-bin");
+    expect(second).toMatchObject({ exitCode: 1, requests: ["no-bin"] });
+    expect(markers()).toEqual([true]);
   });
 });
 

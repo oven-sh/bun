@@ -12,7 +12,6 @@
 //! borrow (e.g. `DOMFormData::for_each`) are generic over the caller's `Blob`.
 
 #![allow(deprecated, non_snake_case)]
-#![allow(unexpected_cfgs)]
 // `ConsoleObject::Formatter::print_as` dispatches on `const FORMAT: Tag`.
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
@@ -24,7 +23,6 @@
 // accessor inlining (every `VirtualMachine::get_or_null()` ≥3×/run_callback).
 // Precedent: 064951400fa4 did this for `bun_alloc`/`bun_ast`.
 #![feature(thread_local)]
-#![allow(incomplete_features)]
 
 extern crate alloc;
 // Allow `::bun_jsc::…` paths emitted by the proc-macros to resolve when used
@@ -414,8 +412,6 @@ pub mod http_server_agent;
 pub mod js_secrets;
 #[path = "NodeModuleModule.rs"]
 pub mod node_module_module;
-#[path = "PluginRunner.rs"]
-pub mod plugin_runner;
 #[path = "PosixSignalHandle.rs"]
 pub mod posix_signal_handle;
 #[path = "resolve_path_jsc.rs"]
@@ -429,6 +425,8 @@ pub mod virtual_machine_exports;
 #[path = "host_fn.rs"] pub mod host_fn;
 #[path = "AnyPromise.rs"]
 pub mod any_promise;
+#[path = "BytecodeOrderRecorder.rs"]
+pub mod bytecode_order_recorder;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
 #[path = "DOMFormData.rs"]
@@ -479,6 +477,8 @@ pub mod ffi;
 pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
+#[path = "ScriptExecutionContext.rs"]
+pub mod script_execution_context;
 
 /// Flags for `JSCInitialize` in ZigGlobalObject.cpp. JSC is set up once per process: the first call's flags win.
 #[derive(Clone, Copy, Default)]
@@ -766,6 +766,10 @@ pub use self::url::{URL, URLJsc};
 pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef};
+pub use script_execution_context::{
+    AbortCause, AbortHandle, AbortHandleOwner, ContextId, ContextTimer, ScriptExecutionContext,
+    StopReason,
+};
 
 // `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects. Defined
 // once in their dedicated port files (`VM.rs` / `JSGlobalObject.rs`) and
@@ -1053,12 +1057,6 @@ pub struct ValidateObjectOpts {
     pub(crate) nullable: bool,
 }
 
-/// `BunPluginTarget` is defined once
-/// in `bun_bundler::transpiler` (lowest tier) and re-exported via
-/// `js_global_object` so `crate::BunPluginTarget` and every consumer share one
-/// nominal type.
-pub use self::js_global_object::BunPluginTarget;
-
 // ──────────────────────────────────────────────────────────────────────────
 // JSObject (real module in JSObject.rs).
 // ──────────────────────────────────────────────────────────────────────────
@@ -1087,17 +1085,17 @@ impl FromJsEnum for bun_sys::SignalCode {
             );
         }
         let s = bun_core::String::from_js(v, global)?;
-        let hit = bun_sys::signal_code::from_name(s.to_utf8().slice());
+        let hit = bun_core::SignalCode::from_name(s.to_utf8().slice());
         match hit {
-            Some(code) => Ok(code),
+            Some(code) => Ok(bun_sys::SignalCode::of(code)),
             None => {
                 // Expected-names list
                 // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
                 // canonical signal X-macro so names are never re-spelled.
-                let names = &bun_core::SIGNAL_NAMES[1..];
+                let names = bun_core::SignalCode::ALL;
                 let mut one_of = std::string::String::from("'");
                 for (i, entry) in names.iter().enumerate() {
-                    one_of.push_str(entry);
+                    one_of.push_str(entry.name());
                     one_of.push('\'');
                     if i < names.len() - 2 {
                         one_of.push_str(", '");
@@ -1234,8 +1232,8 @@ pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
     AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
-    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, ManagedTask,
-    MiniEventLoop, PosixSignalHandle, PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
+    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
+    PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
 #[cfg(unix)]

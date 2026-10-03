@@ -852,6 +852,7 @@ describe("AggregateError .errors printing is guarded", () => {
 
   describe.each([
     ["console.error", e => `console.error(${e});`, 0],
+    ["Bun.inspect", e => `console.error(Bun.inspect(${e}));`, 0],
     ["uncaught throw", e => `throw ${e};`, 1],
   ])("via %s", (_, sink, expectedExitCode) => {
     test.concurrent.each(shapes)("$name", async ({ build, check }) => {
@@ -879,8 +880,9 @@ describe("AggregateError .errors printing is guarded", () => {
 });
 
 // Nesting deeper than the native stack allows must stop printing instead of
-// overflowing it. console.* and Bun.inspect report that as a RangeError; the
-// uncaught-exception and unhandled-rejection reporters truncate the output.
+// overflowing it. console.* and Bun.inspect stop at the console depth cap and
+// print `[Error ...]`; the uncaught-exception and unhandled-rejection reporters
+// truncate the output.
 describe("deeply nested error chains do not overflow the stack", () => {
   // A debug or ASAN build runs out of stack a few hundred levels down and
   // takes tens of microseconds to construct each error; a release build prints
@@ -901,13 +903,15 @@ describe("deeply nested error chains do not overflow the stack", () => {
   // lines contain `"level"` and so do not match.
   const printedLevels = stderr => count(stderr, ": level");
 
-  test.concurrent("AggregateError chain via console.error throws a RangeError", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      `${deepAggregate} try { console.error(e); } catch (err) { console.log("caught", err.name); }`,
-    );
-    expect(stderr).toContain("AggregateError: " + TOP);
+  test.concurrent.each([
+    ["AggregateError chain", deepAggregate, "AggregateError: " + TOP],
+    ["cause chain", deepCause, "error: " + TOP],
+  ])("%s via console.error stops at the depth cap", async (_, build, header) => {
+    const { stdout, stderr, exitCode } = await run(`${build} console.error(e);`);
+    expect(stderr).toContain(header);
+    expect(stderr).toContain("[Error ...]");
     expect(printedLevels(stderr)).toBeLessThan(DEPTH);
-    expect(stdout).toBe("caught RangeError\n");
+    expect(stdout).toBe("");
     expect(exitCode).toBe(0);
   });
 

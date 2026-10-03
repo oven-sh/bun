@@ -542,16 +542,7 @@ fn run_tasks_erased(
                             );
                         }
 
-                        if manager.subcommand != Subcommand::Remove {
-                            for request in manager.update_requests.iter_mut() {
-                                if strings::eql(request.name, name) {
-                                    request.failed = true;
-                                    manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                    manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                    manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                                }
-                            }
-                        }
+                        fail_update_requests(manager, task.task_id, name, None);
                     }
 
                     continue;
@@ -599,16 +590,7 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, name) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    fail_update_requests(manager, task.task_id, name, None);
 
                     continue;
                 }
@@ -677,24 +659,20 @@ fn run_tasks_erased(
                             );
                         }
 
-                        if cb.manifests_only {
-                            continue;
+                        // A task that `populate_manifest_cache` started has no entry.
+                        if let Some(dependency_list_entry) =
+                            manager.task_queue.get_mut(&task.task_id)
+                        {
+                            let dependency_list = core::mem::take(dependency_list_entry);
+
+                            process_dependency_list_for_ctx(
+                                cb,
+                                manager,
+                                dependency_list,
+                                extract_ctx,
+                                install_peer,
+                            )?;
                         }
-
-                        let dependency_list_entry = manager
-                            .task_queue
-                            .get_mut(&task.task_id)
-                            .expect("infallible: task queued");
-
-                        let dependency_list = core::mem::take(dependency_list_entry);
-
-                        process_dependency_list_for_ctx(
-                            cb,
-                            manager,
-                            dependency_list,
-                            extract_ctx,
-                            install_peer,
-                        )?;
 
                         continue;
                     }
@@ -853,16 +831,12 @@ fn run_tasks_erased(
                                 .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, extract.name.slice()) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    fail_update_requests(
+                        manager,
+                        task.task_id,
+                        extract.name.slice(),
+                        Some(extract.dependency_id),
+                    );
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -936,16 +910,12 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, extract.name.slice()) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    fail_update_requests(
+                        manager,
+                        task.task_id,
+                        extract.name.slice(),
+                        Some(extract.dependency_id),
+                    );
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -1086,30 +1056,25 @@ fn run_tasks_erased(
                     m
                 };
                 let name_hash = manifest.pkg.name.hash;
-                let progress_name: Option<Vec<u8>> = (!cb.manifests_only
-                    && log_level.show_progress()
-                    && !has_updated_this_run.get())
-                .then(|| manifest.name().to_vec());
+                let progress_name: Option<Vec<u8>> = (log_level.show_progress()
+                    && !has_updated_this_run.get()
+                    && !cb.manifests_only)
+                    .then(|| manifest.name().to_vec());
 
                 manager.manifests.insert(name_hash, manifest)?;
 
-                if cb.manifests_only {
-                    continue;
+                // A task that `populate_manifest_cache` started has no entry.
+                if let Some(dependency_list_entry) = manager.task_queue.get_mut(&task.id) {
+                    let dependency_list = core::mem::take(dependency_list_entry);
+
+                    process_dependency_list_for_ctx(
+                        cb,
+                        manager,
+                        dependency_list,
+                        extract_ctx,
+                        install_peer,
+                    )?;
                 }
-
-                let dependency_list_entry = manager
-                    .task_queue
-                    .get_mut(&task.id)
-                    .expect("infallible: task queued");
-                let dependency_list = core::mem::take(dependency_list_entry);
-
-                process_dependency_list_for_ctx(
-                    cb,
-                    manager,
-                    dependency_list,
-                    extract_ctx,
-                    install_peer,
-                )?;
 
                 if let Some(name) = progress_name {
                     manager.set_node_name::<true>(
@@ -1944,6 +1909,66 @@ pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) 
     this.network_dedupe_map
         .get(&task_id)
         .is_some_and(|e| e.failed)
+}
+
+/// `bun add` / `bun update <name>` exits 1 and saves nothing when a download for the request fails.
+fn fail_update_requests(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    package_name: &[u8],
+    tarball_dependency_id: Option<DependencyID>,
+) {
+    if this.subcommand == Subcommand::Remove {
+        return;
+    }
+    let lockfile = &*this.lockfile;
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let waiters = this.task_queue.get(&task_id).map_or(&[][..], Vec::as_slice);
+    // An npm tarball task has no waiters: the dependencies it was for already resolved to its package.
+    let package_id = tarball_dependency_id
+        .and_then(|id| resolutions.get(id as usize).copied())
+        .filter(|&package_id| package_id != INVALID_PACKAGE_ID);
+    let was_for = |id: DependencyID| {
+        package_id.is_some_and(|package_id| resolutions.get(id as usize) == Some(&package_id))
+            || waiters.iter().any(|waiter| {
+                matches!(
+                    waiter,
+                    bun_install::TaskCallbackContext::Dependency(waiting)
+                    | bun_install::TaskCallbackContext::RootDependency(waiting) if *waiting == id
+                )
+            })
+    };
+    let pending = this.pending_filtered_write.as_deref();
+
+    let mut any_failed = false;
+    for request in this.update_requests.iter_mut() {
+        // A request names a package.json key, which an `npm:` alias or an override spells differently from `package_name`.
+        let names_its_dependency = lockfile
+            .workspaces_of_update_request(pending, this.workspace_name_hash, request)
+            .into_iter()
+            .any(|workspace_id| {
+                let lists = lockfile.packages.items_dependencies();
+                lists.get(workspace_id as usize).is_some_and(|list| {
+                    (list.off..list.off + list.len).any(|id| {
+                        dependencies
+                            .get(id as usize)
+                            .is_some_and(|dependency| request.matches(dependency, string_buf))
+                            && was_for(id)
+                    })
+                })
+            });
+        if names_its_dependency || strings::eql(request.name, package_name) {
+            request.failed = true;
+            any_failed = true;
+        }
+    }
+    if any_failed {
+        this.options
+            .do_
+            .remove(Do::SAVE_LOCKFILE | Do::SAVE_YARN_LOCK | Do::INSTALL_PACKAGES);
+    }
 }
 
 /// The first failed download in a `run_tasks` pass halves the number of

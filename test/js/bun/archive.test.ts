@@ -5,16 +5,25 @@ import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
 // a Buffer so tests can put raw, non-UTF-8 byte sequences into the name field.
-function ustarHeader(name: string | Buffer, size: number, typeflag: string = "0"): Buffer {
+// `fields` overwrites the raw 8-byte mode / 12-byte mtime fields, for values the
+// octal text form cannot hold (see `base256`).
+function ustarHeader(
+  name: string | Buffer,
+  size: number,
+  typeflag: string = "0",
+  fields: { mode?: Uint8Array; mtime?: Uint8Array } = {},
+): Buffer {
   const nameBytes = typeof name === "string" ? Buffer.from(name) : name;
   if (nameBytes.length > 99) throw new Error("ustar name too long: " + name);
   const h = Buffer.alloc(512);
   nameBytes.copy(h, 0);
   h.write("0000644\0", 100);
+  if (fields.mode) h.set(fields.mode.subarray(0, 8), 100);
   h.write("0000000\0", 108);
   h.write("0000000\0", 116);
   h.write(size.toString(8).padStart(11, "0") + "\0", 124);
   h.write("00000000000\0", 136);
+  if (fields.mtime) h.set(fields.mtime.subarray(0, 12), 136);
   h.write("        ", 148);
   h.write(typeflag, 156);
   h.write("ustar\0", 257);
@@ -28,6 +37,20 @@ function ustarHeader(name: string | Buffer, size: number, typeflag: string = "0"
 function ustarEntry(name: string | Buffer, data: Buffer): Buffer {
   const pad = Buffer.alloc((512 - (data.length % 512)) % 512);
   return Buffer.concat([ustarHeader(name, data.length), data, pad]);
+}
+
+// GNU tar base-256 ("binary") form of a numeric header field: the top bit of
+// the first byte set, then `value` as big-endian two's complement in the rest.
+// Writers use it when a value does not fit the field's octal digits, so a
+// reader can see numbers far outside what the field normally carries.
+function base256(value: bigint, width: number): Uint8Array {
+  const out = new Uint8Array(width);
+  for (let i = width - 1; i >= 0; i--) {
+    out[i] = Number(value & 0xffn);
+    value >>= 8n;
+  }
+  out[0] |= 0x80;
+  return out;
 }
 
 function buildTarball(entries: Array<{ name: string | Buffer; data: Buffer | string }>): Uint8Array {
@@ -576,6 +599,48 @@ describe("Bun.Archive", () => {
           rmSync(windowsAbsPath, { force: true });
         }
       }
+    });
+
+    test("extracts entries whose mode field has bits above the permission bits", async () => {
+      // libarchive hands back whatever the header's mode field encoded, and a
+      // base-256 field can encode far more than the 12 mode bits. Only the
+      // permission bits may reach mkdirat()/openat(); the rest are dropped.
+      const high = 1n << 31n;
+      const tarball = Buffer.concat([
+        ustarHeader("dir/", 0, "5", { mode: base256(high | 0o755n, 8) }),
+        ustarHeader("dir/inner.txt", 5, "0", { mode: base256(high | 0o644n, 8) }),
+        Buffer.concat([Buffer.from("inner"), Buffer.alloc(512 - 5)]),
+        ustarEntry("top.txt", Buffer.from("top")),
+        Buffer.alloc(1024),
+      ]);
+
+      using dir = tempDir("archive-extract-wide-mode", {
+        "input.tar": tarball,
+        "extract.ts": `
+          const fs = require("node:fs");
+          const count = await new Bun.Archive(fs.readFileSync("input.tar")).extract("out");
+          console.log(JSON.stringify({
+            count,
+            dir: fs.statSync("out/dir").isDirectory(),
+            inner: fs.readFileSync("out/dir/inner.txt", "utf8"),
+            top: fs.readFileSync("out/top.txt", "utf8"),
+          }));
+        `,
+      });
+
+      // In a child process: the failure mode is a process abort.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "extract.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ count: 3, dir: true, inner: "inner", top: "top" });
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -1491,6 +1556,42 @@ describe("Bun.Archive", () => {
 
       expect(file!.lastModified).toBeGreaterThanOrEqual(beforeTime);
       expect(file!.lastModified).toBeLessThanOrEqual(afterTime);
+    });
+
+    test("lastModified is computed without overflow for any mtime the header can encode", async () => {
+      // A base-256 mtime field holds a full signed 64-bit value; seconds to
+      // milliseconds must not go through a 64-bit integer multiply.
+      const tarball = Buffer.concat([
+        ustarHeader("huge.txt", 0, "0", { mtime: base256(1n << 62n, 12) }),
+        ustarHeader("negative.txt", 0, "0", { mtime: base256(-1n, 12) }),
+        ustarHeader("epoch.txt", 0, "0"),
+        Buffer.alloc(1024),
+      ]);
+
+      using dir = tempDir("archive-files-wide-mtime", { "input.tar": tarball });
+
+      // In a child process: the failure mode is a process abort.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const files = await new Bun.Archive(await Bun.file("input.tar").bytes()).files();
+           console.log(JSON.stringify(Object.fromEntries([...files].map(([name, file]) => [name, file.lastModified]))));`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        "huge.txt": 2 ** 62 * 1000,
+        "negative.txt": -1000,
+        "epoch.txt": 0,
+      });
+      expect(exitCode).toBe(0);
     });
 
     test("throws with non-string glob argument", async () => {

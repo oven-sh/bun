@@ -13,6 +13,7 @@
 #include "JavaScriptCore/JSType.h"
 
 #include "JSSQLStatement.h"
+#include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <limits>
 #include <wtf/text/ExternalStringImpl.h>
@@ -212,6 +213,8 @@ public:
     // The VM (main thread or worker) that opened this connection; only that VM's exit closes it
     // (Bun__closeAllSQLiteDatabasesForTermination).
     JSC::VM* const vm;
+    // The Bun.ModuleGraph context whose script opened it (0: none): closed when that graph is disposed.
+    WebCore::ScriptExecutionContextIdentifier graphContext = 0;
     std::atomic<uint64_t> version;
     size_t reference_count;
     WTF::HashSet<WebCore::JSSQLStatement*> statements;
@@ -226,8 +229,10 @@ public:
             sqlite3_close_v2(std::exchange(db, nullptr));
     }
 
-    // Defined after JSSQLStatement: needs its definition to inspect `stmt`.
+    // Defined after JSSQLStatement: they need its definition to inspect `stmt`.
     void closeIfDrained();
+    // close(true): every statement is finalized, so the file is released now.
+    int closeWithStatements();
 
     void release()
     {
@@ -317,6 +322,23 @@ extern "C" void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* 
     }
 }
 
+// The databases script of a Bun.ModuleGraph opened, when that graph is disposed: as close(true).
+extern "C" void Bun__closeSQLiteDatabasesOfGraphContext(WebCore::ScriptExecutionContextIdentifier graphContext)
+{
+    if (!_instance)
+        return;
+    Vector<VersionSqlite3*> owned;
+    {
+        WTF::Locker locker { databasesLock };
+        for (auto& db : _instance->databases) {
+            if (db->graphContext == graphContext && db->db)
+                owned.append(db);
+        }
+    }
+    for (auto* db : owned)
+        db->closeWithStatements();
+}
+
 namespace WebCore {
 using namespace JSC;
 
@@ -392,16 +414,15 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
 class SQLiteBindingsMap {
 public:
     SQLiteBindingsMap() = default;
-    SQLiteBindingsMap(uint16_t count = 0, bool trimLeadingPrefix = false)
+    SQLiteBindingsMap(unsigned count = 0, bool trimLeadingPrefix = false)
     {
         this->trimLeadingPrefix = trimLeadingPrefix;
         hasLoadedNames = false;
         reset(count);
     }
 
-    void reset(uint16_t count = 0)
+    void reset(unsigned count = 0)
     {
-        ASSERT(count <= std::numeric_limits<uint16_t>::max());
         if (this->count != count) {
             hasLoadedNames = false;
             bindingNames.clear();
@@ -459,7 +480,7 @@ public:
     }
 
     Vector<Identifier> bindingNames;
-    uint16_t count = 0;
+    unsigned count = 0;
     bool hasLoadedNames : 1 = false;
     bool isOnlyIndexed : 1 = false;
     bool trimLeadingPrefix : 1 = false;
@@ -1335,7 +1356,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return {};
     }
 
-    auto count = registerDatabase(new VersionSqlite3(db, &vm));
+    auto* versionDB = new VersionSqlite3(db, &vm);
+    versionDB->graphContext = WebCore::ScriptExecutionContext::ownerOfSQLiteDatabase(lexicalGlobalObject);
+    auto count = registerDatabase(versionDB);
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(count)));
 }
 
@@ -1375,7 +1398,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
     }
 
     sqlite3_int64 length = -1;
-    unsigned char* data = sqlite3_serialize(db, attachedName.utf8().data(), &length, 0);
+    unsigned char* data = sqlite3_serialize(db, attachedName.utf8().legacyCStringPointer(), &length, 0);
     if (data == nullptr && length) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Out of memory"_s));
         return {};
@@ -1427,10 +1450,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     auto entryPointStr = callFrame->argumentCount() > 2 && callFrame->argument(2).isString() ? callFrame->argument(2).toWTFString(lexicalGlobalObject) : String();
     RETURN_IF_EXCEPTION(scope, {});
     auto entryPointUtf8 = entryPointStr.utf8();
-    const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointUtf8.data();
+    const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointUtf8.legacyCStringPointer();
     auto extensionStringUtf8 = extensionString.utf8();
     char* error;
-    int rc = sqlite3_load_extension(db, extensionStringUtf8.data(), entryPoint, &error);
+    int rc = sqlite3_load_extension(db, extensionStringUtf8.legacyCStringPointer(), entryPoint, &error);
 
     // TODO: can we disable loading extensions after this?
     if (rc != SQLITE_OK) {
@@ -1555,7 +1578,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
             if (bindingsAliveScope.value().isObject()) {
                 int count = sqlite3_bind_parameter_count(sql.stmt);
 
-                SQLiteBindingsMap bindings { static_cast<uint16_t>(count > -1 ? count : 0), strict };
+                SQLiteBindingsMap bindings { static_cast<unsigned>(count > -1 ? count : 0), strict };
                 JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, db, versionDB, sql.stmt, bindings, safeIntegers, nullptr);
                 if (versionDB->handle() != db) [[unlikely]] {
                     // close() during binding deferred sqlite3_close via close_v2;
@@ -1801,7 +1824,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     JSValue finalizationTarget = callFrame->argument(2);
 
     sqlite3* db = nullptr;
-    int statusCode = sqlite3_open_v2(path.utf8().data(), &db, openFlags, nullptr);
+    int statusCode = sqlite3_open_v2(path.utf8().legacyCStringPointer(), &db, openFlags, nullptr);
 
     if (statusCode != SQLITE_OK) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
@@ -1820,6 +1843,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
         // TODO: log a warning here that defensive mode is unsupported.
     }
     auto* versionDB = new VersionSqlite3(db, &vm);
+    versionDB->graphContext = WebCore::ScriptExecutionContext::ownerOfSQLiteDatabase(lexicalGlobalObject);
     auto index = registerDatabase(versionDB);
     if (finalizationTarget.isObject()) {
         vm.heap.addFinalizer(finalizationTarget.getObject(), [versionDB](JSC::JSCell* ptr) -> void {
@@ -1871,12 +1895,21 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
+    if (force) {
+        int statusCode = versionDB->closeWithStatements();
+        if (statusCode != SQLITE_OK) {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(statusCode))));
+            return {};
+        }
+        return JSValue::encode(jsUndefined());
+    }
+
     // close(false) keeps db.prepare() statements usable and defers sqlite3_close until they drain; everything else bun owns is finalized now.
     bool keptAny = false;
     for (auto* statement : versionDB->statements) {
         if (!statement->stmt)
             continue;
-        if (!force && !statement->ownedByDatabase) {
+        if (!statement->ownedByDatabase) {
             keptAny = true;
             continue;
         }
@@ -1894,17 +1927,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
     // finalize their cached statements during disconnect inside sqlite3_close*,
     // and a re-entrant close() from a bound-parameter getter leaves db.run()'s
     // transient statement live on this stack (close_v2 defers until it drains).
-    int statusCode = force ? sqlite3_close(db) : sqlite3_close_v2(db);
-    if (statusCode == SQLITE_BUSY) {
-        sqlite3_close_v2(db);
-        statusCode = SQLITE_OK;
-    }
+    sqlite3_close_v2(db);
     versionDB->db = nullptr;
-
-    if (statusCode != SQLITE_OK && force) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(statusCode))));
-        return {};
-    }
     return JSValue::encode(jsUndefined());
 }
 
@@ -3015,6 +3039,29 @@ JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
 }
 
 } // namespace WebCore
+
+int VersionSqlite3::closeWithStatements()
+{
+    for (auto* statement : statements) {
+        if (!statement->stmt)
+            continue;
+        sqlite3_finalize(statement->stmt);
+        statement->stmt = nullptr;
+        statement->finalizedByClose = true;
+    }
+    closed = true;
+    // Remaining statements are not bun's to finalize: vtab modules (FTS5)
+    // finalize their cached statements during disconnect inside sqlite3_close*,
+    // and a re-entrant close() from a bound-parameter getter leaves db.run()'s
+    // transient statement live on this stack (close_v2 defers until it drains).
+    int statusCode = sqlite3_close(db);
+    if (statusCode == SQLITE_BUSY) {
+        sqlite3_close_v2(db);
+        statusCode = SQLITE_OK;
+    }
+    db = nullptr;
+    return statusCode;
+}
 
 // Drained = every bun-tracked statement finalized. Statements sqlite3 still
 // holds (vtab modules' cached ones) don't count; close_v2 finalizes those.

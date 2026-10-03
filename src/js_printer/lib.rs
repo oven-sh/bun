@@ -67,15 +67,6 @@ use renamer as rename;
 // revisit if profiling shows allocation pressure during link.
 pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 
-/// The namespace the printed specifier of `record` starts with (`namespace:path`), if any.
-fn printed_namespace(record: &ImportRecord) -> Option<&'static [u8]> {
-    (record
-        .flags
-        .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
-        && !record.path.is_file())
-    .then_some(record.path.namespace)
-}
-
 /// js_printer is the sole producer of ModuleInfo records; the bundler/runtime
 /// only consume the serialized form.
 pub mod analyze_transpiled_module {
@@ -707,16 +698,6 @@ pub mod analyze_transpiled_module {
             // PERF: owned-key dupe; revisit with a raw-entry API.
             self.strings_map.insert(value.to_vec(), idx);
             StringID(idx)
-        }
-
-        /// Interns the specifier `print_import_record_path` prints for `record`, so the
-        /// module record requests the same module as the printed source.
-        pub(crate) fn str_for_import_record(&mut self, record: &super::ImportRecord) -> StringID {
-            let path = record.path.text;
-            match super::printed_namespace(record) {
-                Some(namespace) => self.str(&[namespace, b":".as_slice(), path].concat()),
-                None => self.str(path),
-            }
         }
 
         pub(crate) fn request_module(
@@ -5621,7 +5602,7 @@ pub(crate) mod __gated_printer {
 
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
-                            let irp_id = mi.str_for_import_record(import_record);
+                            let irp_id = mi.str(import_record.path.text);
                             mi.request_module(
                                 irp_id,
                                 analyze_transpiled_module::FetchParameters::None,
@@ -5805,7 +5786,7 @@ pub(crate) mod __gated_printer {
                         // `name_for_symbol` (which needs `&mut self`) can run between uses.
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let id = mi.str_for_import_record(import_record);
+                            let id = mi.str(import_record.path.text);
                             mi.request_module(id, analyze_transpiled_module::FetchParameters::None);
                             id
                         };
@@ -6332,7 +6313,7 @@ pub(crate) mod __gated_printer {
                         use analyze_transpiled_module::FetchParameters as FP;
                         let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let irp_id = mi.str_for_import_record(record);
+                            let irp_id = mi.str(record.path.text);
                             let fetch_parameters: FP = if IS_BUN_PLATFORM {
                                 if let Some(loader) = record.loader {
                                     use bun_ast::Loader;
@@ -6515,10 +6496,6 @@ pub(crate) mod __gated_printer {
 
             let quote = best_quote_char_for_string(import_record.path.text, false);
             self.print(quote);
-            if let Some(namespace) = printed_namespace(import_record) {
-                self.print_string_characters_utf8(namespace, quote);
-                self.print(b":");
-            }
             self.print_string_characters_utf8(import_record.path.text, quote);
             self.print(quote);
         }
@@ -7452,8 +7429,6 @@ pub struct BufferWriter {
     /// reslice on read (`written()` / `written_without_trailing_zero()`). Avoids the O(n)
     /// `to_vec().into_boxed_slice()` copy the previous port did on every `done()`.
     pub(crate) written_len: usize,
-    // `done()` appends a NUL terminator when `append_null_byte` is true.
-    pub append_null_byte: bool,
     pub append_newline: bool,
 }
 
@@ -7475,7 +7450,6 @@ impl BufferWriter {
         BufferWriter {
             buffer: MutableString::init_empty(),
             written_len: 0,
-            append_null_byte: false,
             append_newline: false,
         }
     }
@@ -7489,7 +7463,6 @@ impl BufferWriter {
         BufferWriter {
             buffer: MutableString::init(capacity).unwrap_or_else(|_| MutableString::init_empty()),
             written_len: 0,
-            append_null_byte: false,
             append_newline: false,
         }
     }
@@ -7554,16 +7527,6 @@ impl BufferWriter {
         if self.append_newline {
             self.append_newline = false;
             self.buffer.list.push(b'\n');
-        }
-        if self.append_null_byte {
-            // Append a NUL unless the buffer already ends with one; the NUL is
-            // *included* in `written` (consumers strip it via
-            // `written_without_trailing_zero`).
-            //
-            // For an *empty* buffer we still append the NUL.
-            if self.buffer.list.last().copied() != Some(0) {
-                self.buffer.list.push(0);
-            }
         }
         self.written_len = self.buffer.list.len();
     }
@@ -7714,7 +7677,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     _writer: W,
     bump: &'a bun_alloc::Arena,
     tree: &'a Ast,
-    symbols: js_ast::symbol::Map,
+    mut symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source,
     opts: Options<'a>,
 ) -> crate::Result<usize> {
@@ -7736,6 +7699,21 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let module_scope = &tree.module_scope;
     let stable_source_indices = [source.index.0];
     let renamer: rename::Renamer<'_, '_> = if opts.minify_identifiers {
+        // Pinned before the reserved names are computed so no slot takes one of these names.
+        let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref]
+            .into_iter()
+            .chain(tree.named_exports.values().iter().map(|export| export.ref_));
+        for mut ref_ in dont_break_the_code {
+            // `export var t; var t` exports a linked ref, and the renamer names the symbol it links to.
+            while let Some(symbol) = symbols.get_mut(ref_) {
+                symbol.set_must_not_be_renamed(true);
+                if !symbol.has_link() {
+                    break;
+                }
+                ref_ = symbol.link.get();
+            }
+        }
+
         let mut reserved_names = rename::compute_initial_reserved_names(opts.module_type)?;
         for child in module_scope.children.slice() {
             // `StoreRef<Scope>` has safe `DerefMut`; copy the handle to a mut
@@ -7758,21 +7736,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let exports_ref = tree.exports_ref;
         let module_ref = tree.module_ref;
         let parts = &tree.parts;
-
-        // `symbols` was moved into `minify_renamer`; reach it through
-        // the renamer for the post-init `must_not_be_renamed` pass.
-        let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref];
-        for ref_ in dont_break_the_code {
-            if let Some(symbol) = minify_renamer.symbols.get_mut(ref_) {
-                symbol.set_must_not_be_renamed(true);
-            }
-        }
-
-        for named_export in tree.named_exports.values() {
-            if let Some(symbol) = minify_renamer.symbols.get_mut(named_export.ref_) {
-                symbol.set_must_not_be_renamed(true);
-            }
-        }
 
         if uses_exports_ref {
             minify_renamer.accumulate_symbol_use_count(

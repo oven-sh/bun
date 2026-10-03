@@ -99,6 +99,13 @@ impl Drop for JSMySQLConnection {
 }
 
 impl JSMySQLConnection {
+    pub fn server_identity(
+        &self,
+        ssl: &mut bun_boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        self.connection.get().server_identity(ssl)
+    }
+
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     #[inline]
     fn ref_guard(&self) -> RefPtr<Self> {
@@ -423,6 +430,8 @@ impl JSMySQLConnection {
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
         // no other live borrow in this scope.
         let vm = global_object.bun_vm().as_mut();
+        // The connection is the calling script's.
+        let context = global_object.bun_vm().context_of_caller(callframe);
         let arguments = callframe.arguments();
         let Some(args) = ConnectionCtorArgs::<SSLMode>::parse(global_object, &mut *vm, arguments)?
         else {
@@ -499,7 +508,7 @@ impl JSMySQLConnection {
 
             // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
             // group after the SSLRequest exchange.
-            let group = vm.mysql_socket_group::<false>();
+            let group = vm.mysql_socket_group::<false>(context);
             let result = if !path.is_empty() {
                 SocketTCP::connect_unix_group(
                     group,
@@ -523,7 +532,6 @@ impl JSMySQLConnection {
             let socket = match result {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = this;
                     // SAFETY: `ptr` is the freshly-boxed allocation; sole owner.
                     // `this` (a `ParentRef`) is not used past this point, so no
                     // borrow outlives the `heap::take` inside `deinit`.
@@ -575,12 +583,8 @@ impl JSMySQLConnection {
         }
         use my_sql_connection::Status as S;
         match this.connection.get().status {
-            // A close while the connect/handshake is still in flight gets no
-            // socket event (uws skips the on_close dispatch for sockets whose
-            // connect never completed), so the socket-close -> on_close ->
-            // fail chain never runs: fail directly so the JS onclose callback
-            // fires and the status goes terminal instead of staying
-            // Connecting forever.
+            // The socket event this close raises would report a connect that
+            // failed; say what happened first.
             S::Connecting
             | S::Handshaking
             | S::Authenticating
@@ -588,10 +592,7 @@ impl JSMySQLConnection {
             | S::SessionSetup => {
                 this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
             }
-            S::Connected | S::Disconnected | S::Failed => {
-                let queries = this.get_queries_array();
-                this.connection_mut().clean_queue_and_close(None, queries);
-            }
+            S::Connected | S::Disconnected | S::Failed => this.clean_queue_and_close(None),
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -633,6 +634,11 @@ impl JSMySQLConnection {
     pub(crate) fn can_execute_query(&self) -> bool {
         self.connection_mut().can_execute_query()
     }
+    /// Connecting or connected: not failed, and not closed.
+    #[inline]
+    pub(crate) fn is_active(&self) -> bool {
+        self.connection.get().is_active()
+    }
     #[inline]
     pub(crate) fn get_writer(&self) -> NewWriter<my_sql_connection::Writer> {
         self.connection_mut().writer()
@@ -649,6 +655,18 @@ impl JSMySQLConnection {
         self.fail_with_js_value(err);
     }
 
+    /// Rejecting a query runs JS and closing the socket raises its close event. Both reach back
+    /// into the connection, so neither runs under a `connection_mut()` borrow.
+    fn clean_queue_and_close(&self, js_reason: Option<JSValue>) {
+        self.connection
+            .get()
+            .queue
+            .clean(js_reason, self.get_queries_array());
+        let socket = self.connection.get().socket();
+        socket.close(uws::CloseKind::Normal);
+        self.connection_mut().discard_write_buffer();
+    }
+
     fn fail_with_js_value(&self, value: JSValue) {
         // Runs on every exit path. Re-enter through a raw pointer so no
         // reference is live across the potential free in `deref()`. LIFO drop
@@ -658,8 +676,7 @@ impl JSMySQLConnection {
         scopeguard::defer! {
             // `_guard` has not yet dropped, so `*p` is still live; `ParentRef`
             // yields a fresh `&Self` per access (R-2: every callee is `&self`).
-            let queries = p.get_queries_array();
-            p.connection_mut().clean_queue_and_close(Some(value), queries);
+            p.clean_queue_and_close(Some(value));
             p.update_reference_type();
         }
         self.stop_timers();
@@ -689,6 +706,7 @@ impl JSMySQLConnection {
         queries_array.ensure_still_alive();
         // self.global_object.queue_microtask(on_close, &[js_error, queries_array]);
         loop_.run_callback(
+            bun_event_loop::ContextId::NONE,
             on_close,
             &self.global_object,
             JSValue::UNDEFINED,
@@ -943,8 +961,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32) {
-        // The dispatch trampoline already closed the connecting socket; it is
-        // freed at end-of-tick, so detach before any user-visible callback.
+        // As in `on_close`.
         this.connection_mut()
             .set_socket(AnySocket::SocketTcp(SocketTCP::detached()));
         this.fail(b"Failed to connect", AnyMySQLErrorT::ConnectionRefused);

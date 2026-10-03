@@ -301,7 +301,7 @@ static ScopedCFRef createQuery(const CString& service, const CString& name)
     return ScopedCFRef(query);
 }
 
-Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess)
+Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess, Persist)
 {
     Error err;
 

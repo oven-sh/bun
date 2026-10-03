@@ -47,7 +47,6 @@ impl BackendError {
     /// `codecs.rs` (`Ok(None)` = BackendUnavailable → fall through to the
     /// pure-Rust codec path).
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn split<T>(r: Result<T, Self>) -> Result<Option<T>, codecs::Error> {
         match r {
             Ok(v) => Ok(Some(v)),
@@ -72,7 +71,6 @@ unsafe extern "C" {
         out: *mut u8, // nullable
     ) -> i32;
 
-    #[allow(dead_code)]
     fn bun_coregraphics_encode(
         rgba: *const u8,
         width: u32,
@@ -168,7 +166,6 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
     })
 }
 
-#[allow(dead_code)]
 pub(crate) fn encode(
     rgba: &[u8],
     width: u32,
@@ -225,7 +222,6 @@ pub(crate) fn encode(
 // .or_else(|_| fallback.x())`.
 
 unsafe extern "C" {
-    #[allow(dead_code)]
     fn bun_coregraphics_scale(
         src: *const u8,
         sw: u32,
@@ -234,7 +230,6 @@ unsafe extern "C" {
         dw: u32,
         dh: u32,
     ) -> i32;
-    #[allow(dead_code)]
     fn bun_coregraphics_rotate90(
         src: *const u8,
         w: u32,
@@ -242,7 +237,6 @@ unsafe extern "C" {
         dst: *mut u8,
         quarters: u32,
     ) -> i32;
-    #[allow(dead_code)]
     fn bun_coregraphics_reflect(
         src: *const u8,
         w: u32,
@@ -255,7 +249,6 @@ unsafe extern "C" {
 /// vImageScale's default kernel is Lanczos-3 (the HQ flag widens to L5), so
 /// we only take this path for the `.lanczos3` default — explicit non-Lanczos
 /// filters fall through to the Highway kernel which honours them exactly.
-#[allow(dead_code)]
 pub(crate) fn scale(
     src: &[u8],
     sw: u32,
@@ -276,7 +269,6 @@ pub(crate) fn scale(
     Ok(out)
 }
 
-#[allow(dead_code)]
 pub(crate) fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8>, BackendError> {
     // PERF: zero-fill alloc — profile if hot.
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
@@ -288,7 +280,6 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8
     Ok(out)
 }
 
-#[allow(dead_code)]
 pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, BackendError> {
     // PERF: zero-fill alloc — profile if hot.
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
@@ -307,13 +298,11 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
 // before constructing the Image — the heavy decode still goes to WorkPool).
 
 unsafe extern "C" {
-    #[allow(dead_code)]
     fn bun_coregraphics_clipboard(out: *mut u8, out_len: *mut usize, probe_only: i32) -> i32;
 }
 
 /// `None` ⇔ no image on the pasteboard. Returned bytes are an opaque container
 /// (PNG/TIFF/HEIC/…); feed straight to `new Bun.Image(…)`.
-#[allow(dead_code)]
 pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     let mut len: usize = 0;
     // SAFETY: out=null + probe_only=0 → shim fills len with required byte count.
@@ -333,7 +322,6 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     Ok(Some(out))
 }
 
-#[allow(dead_code)]
 pub(crate) fn has_clipboard_image() -> bool {
     let mut len: usize = 0;
     // SAFETY: out=null + probe_only=1 → shim only checks for image presence.
@@ -343,10 +331,8 @@ pub(crate) fn has_clipboard_image() -> bool {
 }
 
 unsafe extern "C" {
-    #[allow(dead_code)]
     fn bun_coregraphics_clipboard_change_count() -> i64;
 }
-#[allow(dead_code)]
 pub(crate) fn clipboard_change_count() -> i64 {
     // SAFETY: pure getter, no preconditions.
     unsafe { bun_coregraphics_clipboard_change_count() }

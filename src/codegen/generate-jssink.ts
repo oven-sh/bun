@@ -232,8 +232,8 @@ public:
     SinkID m_sinkId;
     SinkSource m_sourceKind { SinkSource::None };
     mutable WriteBarrier<JSC::JSCell> m_source;
-    mutable WriteBarrier<JSC::JSPromise> m_closePromise; // DirectStream: readDirectStream's result while pull() is sync and open
-    mutable WriteBarrier<JSC::Unknown> m_failReason; // close(error)'s error, so the owner's promise rejects even though pull() itself resolved
+    mutable WriteBarrier<JSC::JSPromise> m_closePromise; // DirectStream: readDirectStream's result, taken by whatever closes the controller
+    mutable WriteBarrier<JSC::Unknown> m_failReason; // close(error)'s error, so the owner's promise rejects with it even when detach() or readDirectStream only see it afterwards
     // Strong, and cleared as soon as the pipe is over, so a controller the user still holds does not keep the stream alive.
     mutable WriteBarrier<JSC::JSObject> m_readableStream;
     // While a native sink pipes a stream in, it roots only this cell; this and m_readableStream hold the rest (streams.rs PipeCell).
@@ -332,6 +332,7 @@ using namespace JSC;
 
 ${classes.map(name => `extern "C" size_t ${name}__memoryCost(void* sinkPtr);`).join("\n")}
 ${classes.map(name => `extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue controllerValue);`).join("\n")}
+${classes.map(name => `extern "C" void ${name}__controllerFinalize(void* sinkPtr);`).join("\n")}
 
 const ClassInfo JSReadableSinkControllerBase::s_info = { "ReadableSinkController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableSinkControllerBase) };
 `;
@@ -691,7 +692,7 @@ ${controller}::~${controller}()
 
     if (m_sinkPtr) {
         ${name}__controllerDetached(m_sinkPtr, JSC::JSValue::encode(this));
-        ${name}__finalize(m_sinkPtr);
+        ${name}__controllerFinalize(m_sinkPtr);
     }
 }
 
@@ -1197,7 +1198,7 @@ use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue};
 
 /// Native backing type for \`JS${name}.m_sinkPtr\`.
 #[allow(dead_code, unreachable_pub, unused)]
-pub use ${rustPath} as ${name};
+pub(crate) use ${rustPath} as ${name};
 
 `;
 
@@ -1240,7 +1241,7 @@ pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
 `;
 
     // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from
-    // JS${name}::~JS${name}, ~JSReadable${name}Controller and ${name}__doClose.
+    // JS${name}::~JS${name} and ${name}__doClose.
     // C++ caller null-checks `m_sinkPtr` / `ptr` before calling. `*mut`, not
     // `&mut`: this call may free the sink (see `JsSinkType::finalize`).
     symbols.push(`${name}__finalize`);
@@ -1249,6 +1250,18 @@ pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
 pub unsafe extern "C" fn ${name}__finalize(this: *mut ${name}) {
     // SAFETY: C++ hands over its live \`m_sinkPtr\` once and never uses it again.
     unsafe { ${JSSinkT}::js_finalize(this) }
+}
+
+`;
+
+    // extern "C" void ${name}__controllerFinalize(void* sinkPtr) — called from
+    // ~JSReadable${name}Controller when the controller dies still attached.
+    symbols.push(`${name}__controllerFinalize`);
+    templ += `#[allow(dead_code, unreachable_pub, unused)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ${name}__controllerFinalize(this: *mut ${name}) {
+    // SAFETY: as \`__finalize\`: the controller's live \`m_sinkPtr\`, handed over once.
+    unsafe { ${JSSinkT}::js_controller_finalize(this) }
 }
 
 `;

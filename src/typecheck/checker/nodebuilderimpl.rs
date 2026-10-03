@@ -4332,7 +4332,7 @@ impl NodeBuilderImpl {
                     self.get_resolved_type_without_abstract_construct_signatures(c, resolved),
                 );
             }
-            let intersection = c.get_intersection_type(&types);
+            let intersection = c.get_intersection_type(List::from_slice(&types));
             return self.type_to_type_node(c, intersection);
         }
 

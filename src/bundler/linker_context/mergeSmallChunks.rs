@@ -3,6 +3,7 @@ use bun_alloc::Arena;
 use bun_ast::{ImportKind, ImportRecordFlags};
 use bun_collections::{ArrayHashMap, AutoBitSet, MapEntry};
 
+use crate::linker_context::compute_chunks::entry_point_is_beside_chunks;
 use crate::linker_context::find_all_imported_parts_in_js_order::{Edge, for_each_edge};
 use crate::linker_context_mod::debug;
 use crate::options::{Loader, Target};
@@ -889,13 +890,12 @@ fn entry_files_ahead_of_parent(
 /// Runs before `compute_chunks` groups files by `entry_bits`; it rewrites
 /// `File.entry_bits` in place so everything downstream (chunk membership,
 /// cross-chunk imports) sees the merged layout. Returns `LinkerContext::early_entry_files`.
-/// `beside_chunks`: the entry points whose chunk is written into the directory
-/// of the chunks that are no entry point's.
+/// `naming`: of entry points and of other chunks, when the build has one of each.
 pub(crate) fn merge_small_chunks(
     this: &mut LinkerContext,
     temp: &Arena,
     min_chunk_size: u64,
-    beside_chunks: &AutoBitSet,
+    naming: Option<(&[u8], &[u8])>,
 ) -> crate::Result<Option<AutoBitSet>> {
     let _trace = bun_core::perf::trace("Bundler.mergeSmallChunks");
     debug_assert!(this.graph.code_splitting);
@@ -1356,24 +1356,27 @@ pub(crate) fn merge_small_chunks(
             let joins_parent = |i: usize| {
                 unpinned().any(|member| member == i) && groups[i].target == Some(target_platform)
             };
+            let early = entry_files_ahead_of_parent(
+                this,
+                entry_source_indices[entry_id],
+                |file| group_of_file[file as usize] == own,
+                |file| joins_parent(group_of_file[file as usize]),
+            )?;
             // Another chunk that evaluates code has its place among the imports of the entry point, by its first file alone.
-            if beside_chunks.is_set(entry_id)
+            if !early.is_empty()
                 && groups.iter().enumerate().all(|(i, group)| {
                     i == own
                         || !group.order_can_matter
                         || !group.bits.is_set(entry_id)
                         || joins_parent(i)
                 })
+                && let Some(naming) = naming
+                && entry_point_is_beside_chunks(this, naming, entry_id)?
             {
-                for file in entry_files_ahead_of_parent(
-                    this,
-                    entry_source_indices[entry_id],
-                    |file| group_of_file[file as usize] == own,
-                    |file| joins_parent(group_of_file[file as usize]),
-                )? {
-                    if early_entry_files.is_none() {
-                        early_entry_files = Some(AutoBitSet::init_empty(this.graph.files.len())?);
-                    }
+                if early_entry_files.is_none() {
+                    early_entry_files = Some(AutoBitSet::init_empty(this.graph.files.len())?);
+                }
+                for file in early {
                     early_entry_files
                         .as_mut()
                         .expect("set above")

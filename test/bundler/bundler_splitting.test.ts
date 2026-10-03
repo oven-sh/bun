@@ -822,6 +822,37 @@ describe("bundler", () => {
       },
       {},
     ],
+    // The runtime is in a chunk that both entry points import, so setup.js could import it.
+    [
+      "HasImportCallInBrowserBuildWithRuntimeElsewhere",
+      {
+        "/setup.js": `globalThis.APP = { name: "app" }; import("./settings.js");`,
+        "/admin.js": `import("./admin-lazy.js");`,
+        "/admin-lazy.js": `console.log("admin");`,
+      },
+      { target: "browser", entryPoints: ["/index.js", "/admin.js"] },
+    ],
+    // index.js starts w.js, through a file that prints nothing.
+    [
+      "FollowsWrappedSharedFileBehindBarrel",
+      {
+        "/index.js": `import { w } from "barrel"; console.log(w);\n` + setupBeforeShared["/index.js"],
+        "/settings.js": `console.log(require("./w.js").w);\n` + setupBeforeShared["/settings.js"],
+        "/w.js": `console.log("w"); export const w = 1;`,
+        "/node_modules/barrel/package.json": `{ "name": "barrel", "sideEffects": false }`,
+        "/node_modules/barrel/index.js": `export { w } from "../../w.js";`,
+      },
+      { target: "browser" },
+    ],
+    // index.js and lazy.js share the runtime alone.
+    [
+      "NoSharedCodeRuns",
+      {
+        "/index.js": `import "./setup.js"; { using x = { [Symbol.dispose]() {} }; } import("./lazy.js");`,
+        "/lazy.js": `{ using x = { [Symbol.dispose]() {} }; } console.log("lazy");`,
+      },
+      { target: "node" },
+    ],
     [
       "FollowsFileThatStays",
       {

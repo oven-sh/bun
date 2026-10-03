@@ -71,12 +71,12 @@ fn dir_placeholder(this: &LinkerContext, dir: &[u8]) -> crate::Result<Box<[u8]>>
     Ok(resolve_path::relative_alloc(root_dir, real_dir)?)
 }
 
-/// The user's entry points (by id) whose chunk is written into the directory of the chunks that are no entry point's.
-fn entry_points_beside_chunks(
+/// The chunk of the user's entry point is written into the directory of the chunks that are no entry point's.
+pub(crate) fn entry_point_is_beside_chunks(
     this: &LinkerContext,
-    entry_naming: &[u8],
-    chunk_naming: &[u8],
-) -> crate::Result<AutoBitSet> {
+    (entry_naming, chunk_naming): (&[u8], &[u8]),
+    entry_point_id: usize,
+) -> crate::Result<bool> {
     let output_paths = this.graph.entry_points.items_output_path();
     let directory = |naming: &[u8], entry_point_id: usize| -> crate::Result<Option<Vec<u8>>> {
         let pathname = bun_fs::PathName::init(output_paths[entry_point_id].slice());
@@ -108,25 +108,8 @@ fn entry_points_beside_chunks(
             resolve_path::dirname::<bun_paths::platform::Auto>(path).to_vec(),
         ))
     };
-    let mut beside_chunks = AutoBitSet::init_empty(output_paths.len())?;
-    let Some(chunks) = directory(chunk_naming, 0)? else {
-        return Ok(beside_chunks);
-    };
-    let kinds = this.graph.files.items_entry_point_kind();
-    for (entry_point_id, &source_index) in this
-        .graph
-        .entry_points
-        .items_source_index()
-        .iter()
-        .enumerate()
-    {
-        if kinds[source_index as usize] == crate::EntryPoint::Kind::UserSpecified
-            && directory(entry_naming, entry_point_id)?.as_ref() == Some(&chunks)
-        {
-            beside_chunks.set(entry_point_id);
-        }
-    }
-    Ok(beside_chunks)
+    let chunks = directory(chunk_naming, 0)?;
+    Ok(chunks.is_some() && chunks == directory(entry_naming, entry_point_id)?)
 }
 
 #[inline(never)]
@@ -376,21 +359,17 @@ pub(crate) fn compute_chunks(
         }
     }
     if code_splitting && this.options.fold_chunks {
-        // A build with chunks for two targets has two sets of names.
-        let beside_chunks = if could_be_browser_target_from_server_build || has_server_html_imports
-        {
-            AutoBitSet::init_empty(this.graph.entry_points.len())?
-        } else {
-            // SAFETY: `this` is the `linker` field of the `BundleV2`; only `transpiler` is read.
-            let options = unsafe {
-                &(*LinkerContext::bundle_v2_ptr(this_ptr))
-                    .transpiler()
-                    .options
-            };
-            entry_points_beside_chunks(this, &options.entry_naming, &options.chunk_naming)?
+        // SAFETY: `this` is the `linker` field of the `BundleV2`; only `transpiler` is read.
+        let options = unsafe {
+            &(*LinkerContext::bundle_v2_ptr(this_ptr))
+                .transpiler()
+                .options
         };
+        // A build with chunks for two targets has two sets of names.
+        let naming = (!could_be_browser_target_from_server_build && !has_server_html_imports)
+            .then_some((&*options.entry_naming, &*options.chunk_naming));
         let min_chunk_size = this.options.min_chunk_size;
-        this.early_entry_files = merge_small_chunks(this, temp, min_chunk_size, &beside_chunks)?;
+        this.early_entry_files = merge_small_chunks(this, temp, min_chunk_size, naming)?;
     }
     let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();

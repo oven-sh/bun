@@ -6,8 +6,75 @@ let testEnv: NodeJS.Dict<string>;
 
 beforeAll(() => {
   testEnv = { ...bunEnv };
-  delete testEnv.AGENT;
+  for (const name of [
+    "AGENT",
+    "AI_AGENT",
+    "CLAUDECODE",
+    "REPL_ID",
+    "GEMINI_CLI",
+    "CODEX_THREAD_ID",
+    "CODEX_CI",
+    "RUNNER_DEBUG",
+  ]) {
+    delete testEnv[name];
+  }
 });
+
+// `AGENT` is the explicit override: any truthy value turns the quiet output on,
+// and a falsy value turns it off even when an agent-specific variable is set.
+const agentEnvCases: [env: Record<string, string>, quiet: boolean][] = [
+  [{ AGENT: "1" }, true],
+  [{ AGENT: "crush" }, true],
+  [{ AGENT: "0" }, false],
+  [{ AGENT: "false" }, false],
+  [{ AGENT: "crush", CLAUDECODE: "1" }, true],
+  [{ AGENT: "0", AI_AGENT: "pi" }, false],
+  [{ AGENT: "false", CLAUDECODE: "1" }, false],
+  [{ AI_AGENT: "pi" }, true],
+  [{ AI_AGENT: "claude-code_2-1-284_agent" }, true],
+  [{ AI_AGENT: "" }, false],
+  [{ GEMINI_CLI: "1" }, true],
+  [{ CODEX_THREAD_ID: "019a8f1e-2a3b-7c4d-8e5f-0123456789ab" }, true],
+  [{ CODEX_CI: "1" }, true],
+  [{ REPL_ID: "1" }, true],
+  [{ RUNNER_DEBUG: "1", AI_AGENT: "pi" }, false],
+  [{ RUNNER_DEBUG: "1", AGENT: "crush" }, true],
+];
+
+for (const [env, quiet] of agentEnvCases) {
+  const label = Object.entries(env)
+    .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+    .join(" ");
+  test.concurrent(`${label} => ${quiet ? "quiet" : "normal"} test output`, async () => {
+    await using dir = tempDir("agent-env-detect", {
+      "a.test.js": `
+        import { test, expect } from "bun:test";
+        test("passing test", () => {
+          expect(1).toBe(1);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "a.test.js"],
+      env: { ...testEnv, ...env },
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const output = stderr + stdout;
+
+    expect(output).toContain("1 pass");
+    if (quiet) {
+      expect(output).not.toContain("(pass)");
+    } else {
+      expect(output).toContain("(pass)");
+    }
+    expect(exitCode).toBe(0);
+  });
+}
 
 test("CLAUDECODE=1 shows quiet test output (only failures)", async () => {
   await using dir = tempDir("claudecode-test-quiet", {

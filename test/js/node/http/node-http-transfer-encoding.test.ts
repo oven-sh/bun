@@ -866,6 +866,37 @@ describe("bad Content-Length fires clientError with node's code and reason", () 
   });
 });
 
+// Bun's limit is 2^59 - 1 (node's is 2^64 - 1). The second row reaches it with 19 bytes.
+test.each([
+  ["576460752303423487", "576460752303423488"],
+  ["0576460752303423487", "0576460752303423488"],
+])("Content-Length %s is dispatched and %s overflows", async (atLimit, pastLimit) => {
+  const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
+  await using server = createServer(req => resolve(req.headers["content-length"]));
+  server.on("clientError", (err: any, socket) => {
+    socket.destroy();
+    reject(new Error(`clientError ${err.code}: ${err.reason}`));
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(`POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: ${atLimit}\r\n\r\n`);
+  });
+  socket.on("error", () => {});
+  try {
+    expect(await promise).toBe(atLimit);
+  } finally {
+    socket.destroy();
+  }
+
+  expect(await clientErrorFor(`POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: ${pastLimit}\r\n\r\n`)).toMatchObject({
+    dispatched: [],
+    code: "HPE_INVALID_CONTENT_LENGTH",
+    reason: "Content-Length overflow",
+  });
+});
+
 describe("clientError carries llhttp's reason where the parser error maps to one", () => {
   const chunked = "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
   const fill = (n: number) => Buffer.alloc(n, "a").toString();

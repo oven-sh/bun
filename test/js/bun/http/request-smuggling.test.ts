@@ -353,28 +353,36 @@ test("rejects empty-valued Content-Length followed by smuggled Content-Length", 
   expect(seen).not.toContain("GET /admin");
 });
 
-// RFC 9110 8.6: Content-Length = 1*DIGIT. This 19-byte value is 5.
-const zeroPaddedPost = "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 0000000000000000005\r\n\r\nhello";
-
-test("Bun.serve rejects a Content-Length longer than 18 bytes", async () => {
+// RFC 9110 8.6: Content-Length = 1*DIGIT, so each zero-padded value below is 5.
+test.each([
+  [18, "HTTP/1.1 200", "000000000000000005", ["hello"]],
+  [19, "HTTP/1.1 400", "0000000000000000005", []],
+])("Bun.serve answers a %d-byte zero-padded Content-Length with %s", async (_, status, value, bodies) => {
   const seen: string[] = [];
   await using server = Bun.serve({
     port: 0,
-    fetch(req) {
-      seen.push(new URL(req.url).pathname);
+    async fetch(req) {
+      seen.push(await req.text());
       return new Response("OK");
     },
   });
 
   const { promise, resolve, reject } = Promise.withResolvers<string>();
-  const client = net.connect(server.port, "127.0.0.1", () => client.write(zeroPaddedPost));
+  const client = net.connect(server.port, "127.0.0.1", () => {
+    client.write(`POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: ${value}\r\n\r\nhello`);
+  });
   let raw = "";
-  client.on("data", data => (raw += data));
+  client.on("data", data => {
+    raw += data;
+    if (raw.includes("\r\n\r\n")) resolve(raw);
+  });
   client.on("error", reject);
   client.on("close", () => resolve(raw));
+  const response = await promise;
+  client.destroy();
 
-  expect(await promise).toStartWith("HTTP/1.1 400");
-  expect(seen).toEqual([]);
+  expect(response).toStartWith(status);
+  expect(seen).toEqual(bodies);
 });
 
 test("node:http frames a zero-padded Content-Length by its digits (llhttp parity)", async () => {
@@ -392,7 +400,10 @@ test("node:http frames a zero-padded Content-Length by its digits (llhttp parity
 
   const { promise, resolve, reject } = Promise.withResolvers<string>();
   const client = net.connect(port, "127.0.0.1", () => {
-    client.write(zeroPaddedPost + "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    client.write(
+      "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 0000000000000000005\r\n\r\nhello" +
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
   });
   let raw = "";
   client.on("data", data => (raw += data));

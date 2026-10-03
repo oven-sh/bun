@@ -435,8 +435,7 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
 /// infallible: the destination is always a `PathBuffer` (`MAX_PATH_BYTES`,
 /// asserted ≥ 1024 elsewhere) and the longest possible payload here —
 /// `name@u64.u64.u64-16hex+16HEX@@@<ver>_patch_hash=16hex\0` plus an
-/// `@@host__16hex` scope suffix — is bounded well under that, or it is the
-/// exact-size buffer of `cached_git_clone_folder_name_print`. Debug builds
+/// `@@host__16hex` scope suffix — is bounded well under that. Debug builds
 /// keep the bounds check; release elides it so no panic-format code is
 /// reachable from this module.
 struct ByteCursor<'a> {

@@ -9,13 +9,13 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
     JsError, JsResult, MarkedArgumentBuffer, wtf,
 };
-use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
+use bun_parsers::yaml::{CyclicAliases, ParseLimits, YAML, YamlParseError};
 
 pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
         global_this,
         &[
-            ("parse", __jsc_host_parse, 1),
+            ("parse", __jsc_host_parse, 2),
             ("stringify", __jsc_host_stringify, 3),
         ],
     )
@@ -1062,8 +1062,87 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
         || (a == 0x49 /* 'I' */ && b == 0x4e /* 'N' */ && c == 0x46/* 'F' */)
 }
 
+/// `None` is the parser's own budget. The `yaml` package's default is `Some(100.0)`.
+const DEFAULT_MAX_ALIAS_COUNT: Option<f64> = None;
+
+/// The `maxAliasCount` and `maxDepth` options of `parse`.
+fn parse_limits_from_options(global: &JSGlobalObject, options: JSValue) -> JsResult<ParseLimits> {
+    // `docs.map(Bun.YAML.parse)` passes an index here.
+    if !options.is_object() {
+        return Ok(ParseLimits {
+            max_alias_count: DEFAULT_MAX_ALIAS_COUNT,
+            max_depth: None,
+        });
+    }
+    // A function here is reserved for a reviver.
+    if options.is_callable() {
+        return Err(global.throw_invalid_argument_type_value("options", "object", options));
+    }
+    // The `yaml` package ignores these, which would leave a mistyped limit unnoticed.
+    const MAX_ALIAS_COUNT: &[u8] = b"maxAliasCount";
+    let max_alias_count = match options.get(global, MAX_ALIAS_COUNT)? {
+        None => DEFAULT_MAX_ALIAS_COUNT,
+        Some(value) if !value.is_number() => {
+            return Err(global.throw_invalid_property_type_value(
+                MAX_ALIAS_COUNT,
+                b"number",
+                value,
+            ));
+        }
+        Some(value) if value.as_number().is_nan() => {
+            return Err(global.throw_range_error(
+                f64::NAN,
+                jsc::RangeErrorOptions {
+                    field_name: MAX_ALIAS_COUNT,
+                    msg: b"a number",
+                    ..Default::default()
+                },
+            ));
+        }
+        Some(value) => Some(value.as_number()),
+    };
+    Ok(ParseLimits {
+        max_alias_count,
+        max_depth: parse_limit(global, options, b"maxDepth")?,
+    })
+}
+
+fn parse_limit(
+    global: &JSGlobalObject,
+    options: JSValue,
+    field_name: &'static [u8],
+) -> JsResult<Option<usize>> {
+    let Some(value) = options.get(global, field_name)? else {
+        return Ok(None);
+    };
+    // `validate_integer_range` takes NaN for the default, here no limit at all.
+    if value.is_number() && value.as_number().is_nan() {
+        return Err(global.throw_range_error(
+            f64::NAN,
+            jsc::RangeErrorOptions {
+                field_name,
+                min: 0,
+                max: jsc::MAX_SAFE_INTEGER,
+                ..Default::default()
+            },
+        ));
+    }
+    Ok(Some(global.validate_integer_range::<usize>(
+        value,
+        0,
+        jsc::IntegerRange {
+            min: 0,
+            field_name,
+            ..Default::default()
+        },
+    )?))
+}
+
 #[bun_jsc::host_fn]
 pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    // Read before the input is borrowed: getters on the options run JS.
+    let limits = parse_limits_from_options(global, call_frame.argument(1))?;
+
     // `NullishInput::ToString` preserves YAML's coerce-undefined-to-"undefined" behavior.
     super::with_text_format_source(
         global,
@@ -1074,10 +1153,17 @@ pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
         |arena, log, source| {
             // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
             // once by pointer identity, so a cyclic graph is fine here.
-            let root = match YAML::parse(source, log, arena, CyclicAliases::Allow) {
+            let parsed = YAML::parse_with_limits(source, log, arena, CyclicAliases::Allow, limits);
+            let root = match parsed {
                 Ok(root) => root,
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
+                Err(
+                    e @ (YamlParseError::ExcessiveAliasCount | YamlParseError::AliasesDisabled),
+                ) => {
+                    return Err(global
+                        .throw_value(global.create_reference_error_instance(format_args!("{e}"))));
+                }
                 Err(YamlParseError::SyntaxError) => {
                     if !log.msgs.is_empty() {
                         let first_msg = &log.msgs[0];

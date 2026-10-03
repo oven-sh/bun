@@ -39,6 +39,7 @@ pub enum ErrorKind {
     TypeError = 1,
     SyntaxError = 2,
     RangeError = 3,
+    ReferenceError = 4,
 }
 
 /// `new <kind>(string)`: a WTF-backed message is shared, a static one

@@ -35,6 +35,15 @@ pub enum CyclicAliases {
     Reject,
 }
 
+/// Bounds on one parse of untrusted input. `None` leaves only the parser's own guards.
+#[derive(Clone, Copy, Default)]
+pub struct ParseLimits {
+    /// `maxAliasCount` of the `yaml` package. `None` is `Parser::MAX_ALIAS_EXPANSION` instead.
+    pub max_alias_count: Option<f64>,
+    /// Nesting of collections, aliased ones counted where the alias stands; rejects cycles.
+    pub max_depth: Option<usize>,
+}
+
 impl YAML {
     pub fn parse(
         source: &bun_ast::Source,
@@ -42,10 +51,21 @@ impl YAML {
         bump: &bun_alloc::Arena,
         cyclic_aliases: CyclicAliases,
     ) -> Result<Expr, YamlParseError> {
+        Self::parse_with_limits(source, log, bump, cyclic_aliases, ParseLimits::default())
+    }
+
+    pub fn parse_with_limits(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+        bump: &bun_alloc::Arena,
+        cyclic_aliases: CyclicAliases,
+        limits: ParseLimits,
+    ) -> Result<Expr, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
         source.check_parseable_len(log, "YAML document")?;
 
-        let mut parser: Parser<Utf8> = Parser::init(bump, source.contents(), cyclic_aliases);
+        let mut parser: Parser<Utf8> =
+            Parser::init(bump, source.contents(), cyclic_aliases, limits);
 
         let stream = match parser.parse() {
             Ok(s) => s,
@@ -86,6 +106,10 @@ pub enum YamlParseError {
     SyntaxError,
     #[error("stack overflow")]
     StackOverflow,
+    #[error("Excessive alias count indicates a resource exhaustion attack")]
+    ExcessiveAliasCount,
+    #[error("Alias resolution is disabled")]
+    AliasesDisabled,
 }
 
 bun_core::oom_from_alloc!(YamlParseError);
@@ -101,7 +125,9 @@ impl From<YamlParseError> for crate::Error {
     fn from(e: YamlParseError) -> Self {
         match e {
             YamlParseError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
-            YamlParseError::SyntaxError => crate::Error::SyntaxError,
+            YamlParseError::SyntaxError
+            | YamlParseError::ExcessiveAliasCount
+            | YamlParseError::AliasesDisabled => crate::Error::SyntaxError,
             YamlParseError::StackOverflow => crate::Error::StackOverflow,
         }
     }
@@ -715,6 +741,12 @@ pub enum ParseError {
     StackOverflow,
     #[error("ExcessiveAliasing")]
     ExcessiveAliasing,
+    #[error("ExcessiveAliasCount")]
+    ExcessiveAliasCount,
+    #[error("AliasesDisabled")]
+    AliasesDisabled,
+    #[error("TooDeeplyNested")]
+    TooDeeplyNested,
     #[error("CyclicAlias")]
     CyclicAlias,
     #[error("CyclicMerge")]
@@ -1940,6 +1972,9 @@ pub enum ParseResultError {
     UnexpectedDocumentEnd { pos: Pos },
     MultipleYamlDirectives { pos: Pos },
     ExcessiveAliasing { pos: Pos },
+    ExcessiveAliasCount,
+    AliasesDisabled,
+    TooDeeplyNested { pos: Pos, limit: usize },
     CyclicAlias { pos: Pos },
     CyclicMerge { pos: Pos },
 }
@@ -1953,6 +1988,10 @@ impl ParseResultError {
         match self {
             ParseResultError::Oom => return Err(YamlParseError::OutOfMemory),
             ParseResultError::StackOverflow => return Err(YamlParseError::StackOverflow),
+            ParseResultError::ExcessiveAliasCount => {
+                return Err(YamlParseError::ExcessiveAliasCount);
+            }
+            ParseResultError::AliasesDisabled => return Err(YamlParseError::AliasesDisabled),
             ParseResultError::UnexpectedEof { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Unexpected EOF");
             }
@@ -1998,6 +2037,13 @@ impl ParseResultError {
             }
             ParseResultError::ExcessiveAliasing { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Excessive aliasing");
+            }
+            ParseResultError::TooDeeplyNested { pos, limit } => {
+                log.add_error_fmt(
+                    Some(source),
+                    pos.loc(),
+                    format_args!("YAML document is too deeply nested (maxDepth: {limit})"),
+                );
             }
             ParseResultError::CyclicAlias { pos } => {
                 log.add_error(
@@ -2072,6 +2118,12 @@ impl ParseResultError {
             ParseError::ExcessiveAliasing => ParseResultError::ExcessiveAliasing {
                 pos: parser.token.start,
             },
+            ParseError::ExcessiveAliasCount => ParseResultError::ExcessiveAliasCount,
+            ParseError::AliasesDisabled => ParseResultError::AliasesDisabled,
+            ParseError::TooDeeplyNested => ParseResultError::TooDeeplyNested {
+                pos: parser.token.start,
+                limit: parser.limits.max_depth.unwrap_or(usize::MAX),
+            },
             ParseError::CyclicAlias => ParseResultError::CyclicAlias {
                 pos: parser.token.start,
             },
@@ -2123,7 +2175,7 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub(crate) explicit_document_start_line: Option<Line>,
 
-    pub(crate) anchors: StringHashMap<Expr>,
+    pub(crate) anchors: StringHashMap<Anchor>,
     /// Anchored collections enclosing the current position, innermost last.
     /// Pushed/popped only by `parse_collection`.
     pub(crate) open_collections: Vec<OpenCollection>,
@@ -2140,11 +2192,20 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub(crate) merge_props_budget: usize,
     pub(crate) alias_expansion_budget: usize,
+
+    pub(crate) alias_check: AliasCheck,
+    pub(crate) limits: ParseLimits,
+    /// Collections enclosing the current position.
+    pub(crate) depth: usize,
+    /// The deepest `depth` reached inside the innermost of them so far.
+    pub(crate) deepest: usize,
+    /// `deepest` of the collection or alias that was completed last.
+    pub(crate) closed_deepest: usize,
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// Total number of nodes that may be reached through alias expansion in a
-    /// single document. Repeated merges of the same anchor (`<<: [*a, *a, ...]`)
+    /// single parse. Repeated merges of the same anchor (`<<: [*a, *a, ...]`)
     /// charge the anchor's full subtree per occurrence even though merge keys
     /// deduplicate, so this needs enough headroom for legitimate documents that
     /// reuse a large anchor many times while still rejecting exponential
@@ -2155,6 +2216,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         bump: &'i bun_alloc::Arena,
         input: &'i [Enc::Unit],
         cyclic_aliases: CyclicAliases,
+        limits: ParseLimits,
     ) -> Self {
         // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
         let start = Pos::from(Enc::bom_len(input));
@@ -2183,6 +2245,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             stack_check: StackCheck::init(),
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
+            alias_check: AliasCheck::new(limits.max_alias_count),
+            limits,
+            depth: 0,
+            deepest: 0,
+            closed_deepest: 0,
         }
     }
 
@@ -2360,6 +2427,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     pub(crate) fn parse_document(&mut self) -> Result<Document, ParseError> {
         self.anchors.clear();
         self.has_cyclic_alias = false;
+        if let AliasCheck::Count(counter) = &mut self.alias_check {
+            counter.anchors.clear();
+            counter.events.clear();
+            counter.alias_at.clear();
+            counter.deferred = false;
+            counter.holds = 0;
+        }
         self.tag_handles.clear();
 
         let mut has_directives = false;
@@ -2389,6 +2463,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let root = self.parse_node(ParseNodeOptions::default())?;
 
         debug_assert!(self.open_collections.is_empty());
+
+        if let AliasCheck::Count(counter) = &mut self.alias_check
+            && counter.deferred
+        {
+            for anchor in &mut counter.anchors {
+                anchor.visited = false;
+            }
+            let end = counter.events.len();
+            self.replay_alias_events(0, end, None)?;
+        }
 
         // If document_start it needs to create a new document.
         // If document_end, consume as many as possible. They should
@@ -2542,7 +2626,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 let item = if matches!(self.token.data, TokenData::MappingKey) {
                     // [150] ns-flow-pair ::= '?' s-separate ns-flow-map-explicit-entry
                     let pair_start = self.token.start;
+                    let outer_deepest = self.enter_collection()?;
                     let key = self.parse_flow_explicit_key()?;
+                    self.hold_merge_value(&key);
                     let value = if matches!(self.token.data, TokenData::MappingValue) {
                         self.scan(ScanOptions::default())?;
                         if matches!(
@@ -2566,6 +2652,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     };
                     let mut props = MappingProps::init();
                     self.append_entry(&mut props, key, value)?;
+                    self.leave_collection(outer_deepest);
+                    self.charge_collection_keys(props.list.slice())?;
                     Expr::init(
                         E::Object {
                             properties: props.move_list(),
@@ -2696,6 +2784,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // arm's cmi==scalar_indent check return the bare scalar
                     // instead of consuming a trailing `: …` as a nested
                     // mapping (`{a: b: c}`).
+                    self.hold_merge_value(&key);
                     let value = self.parse_node(ParseNodeOptions {
                         current_mapping_indent: Some(self.token.indent),
                         ..Default::default()
@@ -2830,11 +2919,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         key
     }
 
-    /// `anchor` is the [200] block collection's own anchor; an anchor on
-    /// `first_key` has already been bound by the caller.
+    /// `anchor` is the [200] block collection's own anchor; `key_anchor` is
+    /// that of a scalar `first_key`, a collection's being bound already.
     fn parse_block_mapping(
         &mut self,
         anchor: Option<PendingAnchor>,
+        key_anchor: Option<PendingAnchor>,
         first_key: Expr,
         mapping_start: Pos,
         mapping_indent: Indent,
@@ -2842,6 +2932,19 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         flow_pair_allowed: bool,
     ) -> Result<Expr, ParseError> {
         self.parse_collection::<E::Object>(anchor, mapping_start.loc(), |p| {
+            // Parsed before this mapping was entered, so counted a level short.
+            if collection_id(&first_key).is_some() {
+                p.reach_depth(p.closed_deepest + 1)?;
+            }
+            if let AliasCheck::Count(counter) = &mut p.alias_check
+                && (collection_id(&first_key).is_some() || counter.alias_site(&first_key).is_some())
+                && let Some(start) = counter.starts.last_mut()
+            {
+                *start = counter.closed_start;
+            }
+            if let Some(key_anchor) = key_anchor {
+                p.bind_anchor(key_anchor, first_key)?;
+            }
             p.parse_block_mapping_entries(
                 first_key,
                 mapping_indent,
@@ -2887,6 +2990,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 let mapping_value_start = self.token.start;
                 let mapping_value_line = self.token.line;
 
+                self.hold_merge_value(&first_key);
                 let value: Expr = match self.token.data {
                     // it's a !!set entry
                     TokenData::MappingKey => {
@@ -3039,6 +3143,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         previous_line = mapping_value_line;
                     }
 
+                    self.hold_merge_value(&key);
                     let value: Expr = match self.token.data {
                         // it's a !!set entry
                         TokenData::MappingKey => {
@@ -3094,6 +3199,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 // ───────────────────────────────────────────────────────────────────────────
 // MappingProps
 // ───────────────────────────────────────────────────────────────────────────
+
+fn is_merge_key(key: &Expr) -> bool {
+    match &key.data {
+        ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
+        _ => false,
+    }
+}
 
 pub(crate) struct MappingProps {
     list: G::PropertyList,
@@ -3185,22 +3297,21 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         key: Expr,
         value: Expr,
     ) -> Result<(), ParseError> {
-        let is_merge_key = match &key.data {
-            ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
-            _ => false,
-        };
-
-        if is_merge_key {
+        if is_merge_key(&key) {
             self.reject_open_merge_source(&value)?;
+            self.count_merge(&value)?;
             match &value.data {
                 ast::ExprData::EObject(value_obj) => {
+                    self.charge_merge(value_obj.properties.slice().len())?;
                     props.merge(value_obj.properties.slice(), &mut self.merge_props_budget)?;
                     return Ok(());
                 }
                 ast::ExprData::EArray(value_arr) => {
+                    self.charge_merge(value_arr.items.slice().len())?;
                     for item in value_arr.items.slice() {
                         if let ast::ExprData::EObject(item_obj) = &item.data {
                             self.reject_open_merge_source(item)?;
+                            self.charge_merge(item_obj.properties.slice().len())?;
                             props
                                 .merge(item_obj.properties.slice(), &mut self.merge_props_budget)?;
                         }
@@ -3218,10 +3329,70 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         })?)
     }
 
+    /// A merge goes over all of its source, which only under `AliasCheck::Budget` its alias has paid for.
+    fn charge_merge(&mut self, len: usize) -> Result<(), ParseError> {
+        if matches!(
+            self.alias_check,
+            AliasCheck::Count(_) | AliasCheck::Unlimited
+        ) {
+            self.alias_expansion_budget = self
+                .alias_expansion_budget
+                .checked_sub(len)
+                .ok_or(ParseError::ExcessiveAliasing)?;
+        }
+        Ok(())
+    }
+
+    /// Marks the aliases `value` merges from, then applies what `hold_merge_value` kept back.
+    fn count_merge(&mut self, value: &Expr) -> Result<(), ParseError> {
+        let AliasCheck::Count(counter) = &mut self.alias_check else {
+            return Ok(());
+        };
+        let is_map = |node: &Expr| matches!(node.data, ast::ExprData::EObject(_));
+        let aliased = counter.alias_site(value);
+        // A source written in place is converted without its anchor, which is left to its first alias.
+        if aliased.is_none() && collection_id(value).is_some() {
+            for event in &mut counter.events[counter.closed_start..] {
+                if let AliasEvent::Define(id) = *event
+                    && let anchor = &mut counter.anchors[id]
+                    && (collection_id(&anchor.node) == collection_id(value)
+                        || (!is_map(value)
+                            && is_map(&anchor.node)
+                            && anchor.depth == self.depth + 1))
+                {
+                    anchor.visited = false;
+                    *event = AliasEvent::Source;
+                }
+            }
+        }
+        counter.events.push(AliasEvent::MergeKey);
+        if let Some(site) = aliased {
+            if collection_id(value).is_some() {
+                counter.events[site.event] = AliasEvent::MergeAlias(site.anchor);
+            }
+        } else if let ast::ExprData::EArray(sources) = &value.data {
+            for source in sources.items.slice().iter().filter(|source| is_map(source)) {
+                if let Some(site) = counter.alias_site(source) {
+                    counter.events[site.event] = AliasEvent::MergeAlias(site.anchor);
+                }
+            }
+        }
+        counter.holds = counter.holds.saturating_sub(1);
+        if counter.holds > 0 || counter.deferred {
+            return Ok(());
+        }
+        let (start, end) = (counter.held_from, counter.events.len());
+        self.replay_alias_events(start, end, None)
+    }
+
     fn reject_open_merge_source(&mut self, node: &Expr) -> Result<(), ParseError> {
         // An open collection is only reachable through a cyclic alias.
         if !self.has_cyclic_alias || !self.is_open_collection(node) {
             return Ok(());
+        }
+        // There it merges itself again and again until the count exceeds any limit.
+        if matches!(self.alias_check, AliasCheck::Count(_)) {
+            return Err(ParseError::ExcessiveAliasCount);
         }
         if let Ok(start) = usize::try_from(node.loc.start) {
             self.token.start = Pos::from(start);
@@ -3263,6 +3434,139 @@ impl PendingAnchor {
 pub(crate) struct OpenCollection {
     anchor: StringRange,
     node: Expr,
+    id: usize,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct Anchor {
+    node: Expr,
+    /// Collections nested in `node`, itself included.
+    height: usize,
+    /// Index in `AliasCounter::anchors`.
+    id: usize,
+}
+
+pub(crate) enum AliasCheck {
+    /// `Parser::alias_expansion_budget` alone.
+    Budget,
+    Unlimited,
+    RejectAll,
+    Count(Box<AliasCounter>),
+}
+
+impl AliasCheck {
+    fn new(max_alias_count: Option<f64>) -> Self {
+        match max_alias_count {
+            None => AliasCheck::Budget,
+            Some(0.0) => AliasCheck::RejectAll,
+            Some(limit) if limit > 0.0 && limit.is_finite() => {
+                AliasCheck::Count(Box::new(AliasCounter {
+                    limit,
+                    anchors: Vec::new(),
+                    events: Vec::new(),
+                    alias_at: bun_collections::HashMap::default(),
+                    starts: Vec::new(),
+                    closed_start: 0,
+                    deferred: false,
+                    holds: 0,
+                    held_from: 0,
+                }))
+            }
+            // Negative or NaN turns the check off there; Infinity is never exceeded.
+            Some(_) => AliasCheck::Unlimited,
+        }
+    }
+}
+
+/// One document's anchors and aliases, counted as `Alias.resolve` of the `yaml` package does.
+pub(crate) struct AliasCounter {
+    limit: f64,
+    anchors: Vec<AnchorCount>,
+    /// In document order, which is the order that package converts nodes in.
+    events: Vec<AliasEvent>,
+    /// Where each alias stands: its `Expr` is a copy of the anchored node's but for `loc`.
+    alias_at: bun_collections::HashMap<i32, AliasSite>,
+    /// `events.len()` when each open collection was entered.
+    starts: Vec<usize>,
+    /// That of the collection or alias that was completed last.
+    closed_start: usize,
+    /// A cyclic alias needs the rest of its collection: `events` are applied at the document's end.
+    deferred: bool,
+    /// `<<` values being parsed, and the first of the `events` kept back until they are complete.
+    holds: usize,
+    held_from: usize,
+}
+
+#[derive(Clone, Copy)]
+struct AliasSite {
+    anchor: usize,
+    event: usize,
+}
+
+impl AliasCounter {
+    fn alias_site(&self, node: &Expr) -> Option<AliasSite> {
+        // A block mapping has the `loc` of its first key, which may be an alias.
+        self.alias_at
+            .get(&node.loc.start)
+            .copied()
+            .filter(|site| collection_id(&self.anchors[site.anchor].node) == collection_id(node))
+    }
+
+    /// Whether a scalar that is not an alias is written in `root`, and the nodes visited to tell.
+    fn has_own_leaf(&self, root: Expr) -> (bool, usize) {
+        let mut stack = vec![root];
+        let mut visited = 0;
+        while let Some(node) = stack.pop() {
+            visited += 1;
+            match &node.data {
+                ast::ExprData::EArray(arr) => stack.extend(
+                    arr.items
+                        .slice()
+                        .iter()
+                        .filter(|item| self.alias_site(item).is_none()),
+                ),
+                ast::ExprData::EObject(obj) => {
+                    for prop in obj.properties.slice() {
+                        stack.extend(
+                            [prop.key, prop.value]
+                                .iter()
+                                .flatten()
+                                .filter(|item| self.alias_site(item).is_none()),
+                        );
+                    }
+                }
+                _ => return (true, visited),
+            }
+        }
+        (false, visited)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AnchorCount {
+    node: Expr,
+    /// The collections around `node`.
+    depth: usize,
+    count: f64,
+    alias_count: f64,
+    visited: bool,
+    /// `has_own_leaf` of `node`, once an alias has asked.
+    own_leaf: Option<bool>,
+    /// The `events` inside the node. Until it is complete, `start` is its `Define`.
+    start: usize,
+    end: usize,
+}
+
+#[derive(Clone, Copy)]
+enum AliasEvent {
+    Define(usize),
+    Alias(usize),
+    /// The source of a `<<`, which converts its contents once more.
+    MergeAlias(usize),
+    /// A `<<`, which is a scalar written in the node but not kept in it.
+    MergeKey,
+    /// Where the anchor of a source of a `<<` is written in place.
+    Source,
 }
 
 /// A collection node's identity, for pointer comparison.
@@ -3280,6 +3584,9 @@ trait CollectionData: Sized {
     /// Allocates an empty node, returning it with the slot to move the parsed
     /// entries into.
     fn alloc_empty(loc: Loc) -> (Expr, ast::StoreRef<Self>);
+    fn properties(&self) -> &[G::Property] {
+        &[]
+    }
 }
 
 impl CollectionData for E::Array {
@@ -3306,14 +3613,67 @@ impl CollectionData for E::Object {
             slot,
         )
     }
+    fn properties(&self) -> &[G::Property] {
+        self.properties.slice()
+    }
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
     // By value so binding consumes the `#[must_use]` anchor token.
     #[allow(clippy::needless_pass_by_value)]
     fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr) -> Result<(), AllocError> {
-        self.anchors
-            .put(Enc::key_bytes(anchor.name.slice(self.input)), node)
+        let id = self.define_anchor(node);
+        self.bind_defined_anchor(anchor, node, id)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn bind_defined_anchor(
+        &mut self,
+        anchor: PendingAnchor,
+        node: Expr,
+        id: usize,
+    ) -> Result<(), AllocError> {
+        let is_collection = collection_id(&node).is_some();
+        if let AliasCheck::Count(counter) = &mut self.alias_check {
+            let end = counter.events.len();
+            let anchor = &mut counter.anchors[id];
+            anchor.end = end;
+            if is_collection {
+                // Its `Define` belongs to what contains the node.
+                let defined_at = core::mem::replace(&mut anchor.start, counter.closed_start);
+                counter.closed_start = counter.closed_start.min(defined_at);
+            } else {
+                anchor.start = end;
+            }
+        }
+        let height = if is_collection {
+            self.closed_deepest.saturating_sub(self.depth)
+        } else {
+            0
+        };
+        self.anchors.put(
+            Enc::key_bytes(anchor.name.slice(self.input)),
+            Anchor { node, height, id },
+        )
+    }
+
+    fn define_anchor(&mut self, node: Expr) -> usize {
+        let AliasCheck::Count(counter) = &mut self.alias_check else {
+            return 0;
+        };
+        let id = counter.anchors.len();
+        counter.anchors.push(AnchorCount {
+            node,
+            depth: self.depth,
+            count: 1.0,
+            alias_count: 0.0,
+            visited: true,
+            own_leaf: None,
+            start: counter.events.len(),
+            end: 0,
+        });
+        counter.events.push(AliasEvent::Define(id));
+        id
     }
 
     /// Parses a collection node: it is allocated (empty) before `body` parses
@@ -3330,6 +3690,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loc: Loc,
         body: impl FnOnce(&mut Self) -> Result<T, ParseError>,
     ) -> Result<Expr, ParseError> {
+        let body = |p: &mut Self| -> Result<T, ParseError> {
+            let outer_deepest = p.enter_collection()?;
+            let result = body(p);
+            p.leave_collection(outer_deepest);
+            let data = result?;
+            p.charge_collection_keys(data.properties())?;
+            Ok(data)
+        };
+
         let (node, mut slot) = T::alloc_empty(loc);
 
         let Some(anchor) = anchor else {
@@ -3337,29 +3706,270 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             return Ok(node);
         };
 
+        let id = self.define_anchor(node);
         self.open_collections.push(OpenCollection {
             anchor: anchor.name,
             node,
+            id,
         });
         let result = body(self);
         let closed = self.open_collections.pop();
         debug_assert!(closed.is_some_and(|c| collection_id(&c.node) == collection_id(&node)));
 
         *slot = result?;
-        self.bind_anchor(anchor, node)?;
+        self.bind_defined_anchor(anchor, node, id)?;
         Ok(node)
+    }
+
+    /// Counts a collection nested `depth` deep, a document's root being 1.
+    fn reach_depth(&mut self, depth: usize) -> Result<(), ParseError> {
+        if self.limits.max_depth.is_some_and(|max| depth > max) {
+            return Err(ParseError::TooDeeplyNested);
+        }
+        self.deepest = self.deepest.max(depth);
+        Ok(())
+    }
+
+    /// Ends the `deepest` of one collection or alias and resumes the enclosing one's.
+    fn close_deepest(&mut self, outer_deepest: usize) {
+        self.closed_deepest = self.deepest;
+        self.deepest = self.deepest.max(outer_deepest);
+    }
+
+    /// Returns the enclosing collection's `deepest`, for `leave_collection`.
+    fn enter_collection(&mut self) -> Result<usize, ParseError> {
+        self.reach_depth(self.depth + 1)?;
+        self.depth += 1;
+        if let AliasCheck::Count(counter) = &mut self.alias_check {
+            counter.starts.push(counter.events.len());
+        }
+        Ok(core::mem::replace(&mut self.deepest, self.depth))
+    }
+
+    fn leave_collection(&mut self, outer_deepest: usize) {
+        self.depth -= 1;
+        self.close_deepest(outer_deepest);
+        if let AliasCheck::Count(counter) = &mut self.alias_check {
+            counter.closed_start = counter.starts.pop().unwrap_or(0);
+        }
+    }
+
+    /// Checks the alias at `start` against both limits. `open`: it is cyclic.
+    fn count_alias(&mut self, anchor: Anchor, open: bool, start: Pos) -> Result<(), ParseError> {
+        match &mut self.alias_check {
+            AliasCheck::Budget => self.charge_alias_expansion(anchor.node)?,
+            AliasCheck::Unlimited => {}
+            AliasCheck::RejectAll => return Err(ParseError::AliasesDisabled),
+            AliasCheck::Count(counter) => {
+                counter.closed_start = counter.events.len();
+                let site = AliasSite {
+                    anchor: anchor.id,
+                    event: counter.events.len(),
+                };
+                counter.alias_at.put(start.loc().start, site)?;
+                counter.deferred |= open;
+                self.alias_event(AliasEvent::Alias(anchor.id))?;
+            }
+        }
+        if collection_id(&anchor.node).is_none() {
+            return Ok(());
+        }
+        // A cycle nests without end.
+        if open && self.limits.max_depth.is_some() {
+            return Err(ParseError::TooDeeplyNested);
+        }
+        self.reach_depth(self.depth + anchor.height)?;
+        self.closed_deepest = self.depth + anchor.height;
+        Ok(())
+    }
+
+    fn alias_event(&mut self, event: AliasEvent) -> Result<(), ParseError> {
+        let AliasCheck::Count(counter) = &mut self.alias_check else {
+            return Ok(());
+        };
+        counter.events.push(event);
+        if counter.deferred || counter.holds > 0 {
+            return Ok(());
+        }
+        self.apply_alias_event(event, None)
+    }
+
+    /// `within`: the anchor whose contents are being converted again, which is not itself.
+    fn apply_alias_event(
+        &mut self,
+        event: AliasEvent,
+        within: Option<usize>,
+    ) -> Result<(), ParseError> {
+        self.charge_alias_node()?;
+        let AliasCheck::Count(counter) = &mut self.alias_check else {
+            return Ok(());
+        };
+        match event {
+            AliasEvent::Define(id) => {
+                // A sequence is converted item by item, so neither are its items.
+                let is_source = within.is_some_and(|within| {
+                    let (source, anchor) = (&counter.anchors[within], &counter.anchors[id]);
+                    id == within
+                        || (matches!(source.node.data, ast::ExprData::EArray(_))
+                            && anchor.depth == source.depth + 1)
+                });
+                if !is_source {
+                    let anchor = &mut counter.anchors[id];
+                    (anchor.count, anchor.alias_count, anchor.visited) = (1.0, 0.0, true);
+                }
+            }
+            AliasEvent::Alias(id) | AliasEvent::MergeAlias(id) => {
+                let anchor = &mut counter.anchors[id];
+                if !core::mem::replace(&mut anchor.visited, true) {
+                    (anchor.count, anchor.alias_count) = (1.0, 0.0);
+                    let (start, end) = (anchor.start, anchor.end);
+                    self.replay_alias_events(start, end, None)?;
+                }
+                let AliasCheck::Count(counter) = &mut self.alias_check else {
+                    return Ok(());
+                };
+                counter.anchors[id].count += 1.0;
+                if counter.anchors[id].alias_count == 0.0 {
+                    let alias_count = self.alias_count_of(id)?;
+                    let AliasCheck::Count(counter) = &mut self.alias_check else {
+                        return Ok(());
+                    };
+                    counter.anchors[id].alias_count = alias_count;
+                }
+                let AliasCheck::Count(counter) = &self.alias_check else {
+                    return Ok(());
+                };
+                let anchor = &counter.anchors[id];
+                if anchor.count * anchor.alias_count > counter.limit {
+                    return Err(ParseError::ExcessiveAliasCount);
+                }
+                if matches!(event, AliasEvent::MergeAlias(_)) {
+                    let AnchorCount {
+                        node,
+                        mut start,
+                        end,
+                        ..
+                    } = *anchor;
+                    // Each alias in a sequence is a source in turn, between what is written there.
+                    if let ast::ExprData::EArray(sources) = &node.data {
+                        let sources = sources.items.slice();
+                        self.alias_expansion_budget = self
+                            .alias_expansion_budget
+                            .checked_sub(sources.len())
+                            .ok_or(ParseError::ExcessiveAliasing)?;
+                        for source in sources {
+                            let AliasCheck::Count(counter) = &self.alias_check else {
+                                break;
+                            };
+                            let Some(site) = counter.alias_site(source) else {
+                                continue;
+                            };
+                            self.replay_alias_events(start, site.event, Some(id))?;
+                            start = site.event + 1;
+                            if matches!(source.data, ast::ExprData::EObject(_)) {
+                                self.apply_alias_event(AliasEvent::MergeAlias(site.anchor), None)?;
+                            }
+                        }
+                    }
+                    self.replay_alias_events(start, end, Some(id))?;
+                }
+            }
+            AliasEvent::MergeKey | AliasEvent::Source => {}
+        }
+        Ok(())
+    }
+
+    fn replay_alias_events(
+        &mut self,
+        start: usize,
+        end: usize,
+        within: Option<usize>,
+    ) -> Result<(), ParseError> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(ParseError::StackOverflow);
+        }
+        for i in start..end {
+            let AliasCheck::Count(counter) = &self.alias_check else {
+                break;
+            };
+            self.apply_alias_event(counter.events[i], within)?;
+        }
+        Ok(())
+    }
+
+    /// That package's `getAliasCount`: the largest count among the leaves written in the node.
+    fn alias_count_of(&mut self, id: usize) -> Result<f64, ParseError> {
+        let AliasCheck::Count(counter) = &mut self.alias_check else {
+            return Ok(0.0);
+        };
+        let AnchorCount {
+            node,
+            own_leaf,
+            start,
+            end,
+            ..
+        } = counter.anchors[id];
+        if collection_id(&node).is_none() {
+            return Ok(1.0);
+        }
+        let (own_leaf, visited) =
+            own_leaf.map_or_else(|| counter.has_own_leaf(node), |known| (known, 0));
+        counter.anchors[id].own_leaf = Some(own_leaf);
+        let mut largest: f64 = if own_leaf { 1.0 } else { 0.0 };
+        for event in &counter.events[start..end] {
+            if let AliasEvent::Alias(target) | AliasEvent::MergeAlias(target) = *event
+                && counter.anchors[target].visited
+            {
+                let target = &counter.anchors[target];
+                largest = largest.max(target.count * target.alias_count);
+            }
+            if matches!(event, AliasEvent::MergeKey) {
+                largest = largest.max(1.0);
+            }
+        }
+        self.alias_expansion_budget = self
+            .alias_expansion_budget
+            .checked_sub(end - start + visited)
+            .ok_or(ParseError::ExcessiveAliasing)?;
+        Ok(largest)
+    }
+
+    /// A consumer writes a collection key out in full, whatever `max_alias_count` lets through.
+    fn charge_collection_keys(&mut self, properties: &[G::Property]) -> Result<(), ParseError> {
+        if matches!(self.alias_check, AliasCheck::Budget) {
+            return Ok(());
+        }
+        for key in properties.iter().filter_map(|property| property.key) {
+            if collection_id(&key).is_some() {
+                self.charge_alias_expansion(key)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Before the value of `key` is parsed; `append_entry` ends it.
+    fn hold_merge_value(&mut self, key: &Expr) {
+        if let AliasCheck::Count(counter) = &mut self.alias_check
+            && is_merge_key(key)
+        {
+            if counter.holds == 0 {
+                counter.held_from = counter.events.len();
+            }
+            counter.holds += 1;
+        }
     }
 
     /// Anchors bind when their node completes, so a name found in `anchors`
     /// resolves exactly as it would without cycle support. Only a name that
     /// would otherwise be unresolved is looked up among the enclosing
     /// collections still being parsed (innermost first): a cyclic alias.
-    fn resolve_alias(&mut self, name: StringRange) -> Result<Expr, ParseError> {
+    /// The `bool` is whether the alias is cyclic.
+    fn resolve_alias(&mut self, name: StringRange) -> Result<(Anchor, bool), ParseError> {
         let name = name.slice(self.input);
-        if let Some(node) = self.anchors.get(Enc::key_bytes(name)) {
-            return Ok(*node);
+        if let Some(anchor) = self.anchors.get(Enc::key_bytes(name)) {
+            return Ok((*anchor, false));
         }
-        let Some(OpenCollection { node, .. }) = self
+        let Some(OpenCollection { node, id, .. }) = self
             .open_collections
             .iter()
             .rev()
@@ -3372,7 +3982,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             CyclicAliases::Reject => Err(ParseError::CyclicAlias),
             CyclicAliases::Allow => {
                 self.has_cyclic_alias = true;
-                Ok(node)
+                let height = 0;
+                Ok((Anchor { node, height, id }, true))
             }
         }
     }
@@ -3901,9 +4512,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     }
 
-                    let mut copy = self.resolve_alias(alias)?;
+                    let (anchor, cyclic) = self.resolve_alias(alias)?;
+                    let mut copy = anchor.node;
 
-                    self.charge_alias_expansion(copy)?;
+                    self.count_alias(anchor, cyclic, alias_start)?;
 
                     // update position from the anchor node to the alias node.
                     copy.loc = alias_start.loc();
@@ -3949,6 +4561,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let map = self.parse_block_mapping(
                             node_props.take_block_mapping_anchor(alias_line)?,
+                            None,
                             copy,
                             alias_start,
                             alias_indent,
@@ -4007,6 +4620,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let map = self.parse_block_mapping(
                             node_props.take_block_mapping_anchor(sequence_line)?,
+                            None,
                             seq,
                             sequence_start,
                             sequence_indent,
@@ -4088,6 +4702,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let parent_map = self.parse_block_mapping(
                             node_props.take_block_mapping_anchor(mapping_line)?,
+                            None,
                             map,
                             mapping_start,
                             mapping_indent,
@@ -4176,12 +4791,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let first_key = key_tag.resolve_null(self.token.start.loc());
 
                     let anchors = node_props.take_implicit_key_anchors(colon_line)?;
-                    if let Some(key_anchor) = anchors.key_anchor {
-                        self.bind_anchor(key_anchor, first_key)?;
-                    }
 
                     let mapping = self.parse_block_mapping(
                         anchors.mapping_anchor,
+                        anchors.key_anchor,
                         first_key,
                         self.token.start,
                         self.token.indent,
@@ -4284,12 +4897,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         let implicit_key = scalar.data.to_expr(scalar_start, self.input, self.bump);
 
                         let anchors = node_props.take_implicit_key_anchors(scalar_line)?;
-                        if let Some(key_anchor) = anchors.key_anchor {
-                            self.bind_anchor(key_anchor, implicit_key)?;
-                        }
 
                         let mapping = self.parse_block_mapping(
                             anchors.mapping_anchor,
+                            anchors.key_anchor,
                             implicit_key,
                             scalar_start,
                             scalar_indent,

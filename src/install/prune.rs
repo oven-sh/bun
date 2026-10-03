@@ -1468,8 +1468,7 @@ pub(crate) fn remove_collapsed_copies(
     if unplaced.is_empty() {
         return (0, 0);
     }
-    // Only the install tree applies the self-contained barrier. It carries every dependency type, so a copy under
-    // a dependency that `--production` / `--omit` skipped stays.
+    // The install tree applies the self-contained barrier, with every dependency type: a copy under one `--omit` skipped stays.
     let Ok(saved) = hoist_install_tree(manager, full_install_features(install_features(manager)))
     else {
         return (0, 0);

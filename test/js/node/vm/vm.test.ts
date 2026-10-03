@@ -2679,32 +2679,40 @@ test.concurrent("a FinalizationRegistry cleanup job is dropped when its context 
     const nextTurn = () => new Promise(resolve => setImmediate(resolve));
     const liveContextCleanedUp = Promise.withResolvers();
     let liveContext;
-    let deadContextCleanups = 0;
+    const cleanups = [0, 0, 0, 0]; // The cleanup callbacks that each context setup() drops has run.
+    const dropped = []; // A WeakRef to each of those contexts.
 
     function setup() {
       // A collection sweeps the first 8 cells of a type itself and leaves the rest for later. ~JSGlobalObject
       // cancels the job too, so these contexts are past the first 8 and their registries are not.
       const swept = Array.from({ length: 8 }, () => vm.createContext({}));
-      const contexts = Array.from({ length: 4 }, () => vm.createContext({ onCleanup: () => deadContextCleanups++ }));
+      const contexts = Array.from(cleanups, (_, index) => vm.createContext({ onCleanup: () => cleanups[index]++ }));
+      for (const context of contexts) dropped.push(new WeakRef(context));
       liveContext = vm.createContext({ onCleanup: liveContextCleanedUp.resolve });
       contexts.push(liveContext);
       for (const context of contexts) vm.runInContext("globalThis.registry = new FinalizationRegistry(onCleanup)", context);
       edenGC(); // Old generation now: the next eden collection leaves them marked.
       for (const context of contexts) for (let i = 0; i < 5; i++) context.registry.register({ i }, i);
+      contexts.length = 0; // A stale reference to the array itself keeps no context alive.
     }
 
     await nextTurn().then(setup);
     await nextTurn();
     edenGC(); // The registered objects are dead: every registry posts its cleanup job.
     fullGC(); // All contexts but one are dead, and their registries are destroyed.
+    // The stack scan is conservative: a stale word can keep a dropped context alive, and that context keeps its job.
+    const collected = dropped.map(context => context.deref() === undefined);
     await liveContextCleanedUp.promise;
     await nextTurn(); // A job posted after the live context's has run by now too.
-    console.log({ deadContextCleanups });
+    console.log({
+      someContextCollected: collected.includes(true),
+      cleanupsOfCollectedContexts: cleanups.reduce((sum, count, index) => sum + (collected[index] ? count : 0), 0),
+    });
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "{\n  deadContextCleanups: 0,\n}\n",
+    stdout: "{\n  someContextCollected: true,\n  cleanupsOfCollectedContexts: 0,\n}\n",
     stderr: "",
     exitCode: 0,
   });
@@ -2719,26 +2727,33 @@ test.concurrent("Atomics.notify does not wake the Atomics.waitAsync of a context
     const shared = new Int32Array(new SharedArrayBuffer(4));
     const liveContextWoke = Promise.withResolvers();
     let liveContext;
+    const dropped = []; // A WeakRef to each context that setup() drops.
 
     function setup() {
       // ~JSGlobalObject unregisters the waiter too. A collection sweeps the first 8 globals itself and leaves the rest for later.
       const swept = Array.from({ length: 8 }, () => vm.createContext({}));
       const contexts = Array.from({ length: 4 }, () => vm.createContext({ shared, onWake() {} }));
+      for (const context of contexts) dropped.push(new WeakRef(context));
       liveContext = vm.createContext({ shared, onWake: liveContextWoke.resolve });
       contexts.push(liveContext);
       for (const context of contexts) vm.runInContext("Atomics.waitAsync(shared, 0, 0).value.then(onWake)", context);
+      contexts.length = 0; // A stale reference to the array itself keeps no context alive.
     }
 
     await nextTurn().then(setup);
     await nextTurn();
     fullGC();
-    console.log("woken:", Atomics.notify(shared, 0));
+    // The stack scan is conservative: a stale word can keep a dropped context alive, and that context keeps its waiter.
+    const alive = dropped.filter(context => context.deref()).length;
+    console.log("a dropped context was collected:", alive < dropped.length);
+    console.log("woken in collected contexts:", Atomics.notify(shared, 0) - alive - 1);
     console.log("the live context's wait resolved:", await liveContextWoke.promise);
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "woken: 1\nthe live context's wait resolved: ok\n",
+    stdout:
+      "a dropped context was collected: true\nwoken in collected contexts: 0\nthe live context's wait resolved: ok\n",
     stderr: "",
     exitCode: 0,
   });

@@ -186,7 +186,8 @@ impl ErrorLocation {
             line: i32::try_from(self.line + 1).expect("int cast"),
             column: i32::try_from(self.column).expect("int cast"),
             line_text,
-            ..Default::default()
+            length: 0,
+            offset: 0,
         })
     }
 }

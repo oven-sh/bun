@@ -823,9 +823,12 @@ fn lower_one_date_time_literal<'a>(
 
 impl<'a> Parser<'a> {
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
-        let _action_guard = bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(
-            self.source.path.text,
-        ));
+        // SAFETY: a local, so it drops in reverse order of declaration.
+        let _action_guard = unsafe {
+            bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(
+                self.source.path.text,
+            ))
+        };
 
         // `parse()` consumes `self` by value, so we
         // destructure here and hand the owned `lexer`/`options` straight to
@@ -951,8 +954,10 @@ impl<'a> Parser<'a> {
         }
 
         // A second guard dropped at end of `_parse` restores the previous action.
-        let _visit_action_guard =
-            bun_crash_handler::scoped_action(bun_crash_handler::Action::Visit(source.path.text));
+        // SAFETY: a local, so it drops in reverse order of declaration.
+        let _visit_action_guard = unsafe {
+            bun_crash_handler::scoped_action(bun_crash_handler::Action::Visit(source.path.text))
+        };
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;

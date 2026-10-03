@@ -903,7 +903,7 @@ pub mod parse_worker {
                         .ok_or(AnyError::ParserError)?,
                     ))
                 })();
-                let _ = temp_log.clone_to(log);
+                temp_log.append_to(log);
                 return result;
             }
             Loader::Yaml => {
@@ -929,7 +929,7 @@ pub mod parse_worker {
                         .ok_or(AnyError::ParserError)?,
                     ))
                 })();
-                let _ = temp_log.clone_to(log);
+                temp_log.append_to(log);
                 return result;
             }
             Loader::Json5 => {
@@ -951,7 +951,7 @@ pub mod parse_worker {
                         .ok_or(AnyError::ParserError)?,
                     ))
                 })();
-                let _ = temp_log.clone_to(log);
+                temp_log.append_to(log);
                 return result;
             }
             Loader::Xml => {
@@ -982,7 +982,7 @@ pub mod parse_worker {
                         .ok_or(AnyError::ParserError)?,
                     ))
                 })();
-                let _ = temp_log.clone_to(log);
+                temp_log.append_to(log);
                 return result;
             }
             Loader::Text => {
@@ -1305,7 +1305,7 @@ pub mod parse_worker {
                     Err(e) => {
                         // Surface the actual CSS parse diagnostic.
                         let _ = e.add_to_logger(&mut temp_log, source);
-                        let _ = temp_log.append_to(log);
+                        temp_log.append_to(log);
                         return Err(crate::Error::SyntaxError);
                     }
                 };
@@ -1326,7 +1326,7 @@ pub mod parse_worker {
                 ) {
                     // Surface the actual minify diagnostic.
                     let _ = e.add_to_logger(&mut temp_log, source);
-                    let _ = temp_log.append_to(log);
+                    temp_log.append_to(log);
                     return Err(crate::Error::MinifyError);
                 }
                 if css_ast.local_scope.count() > 0 {
@@ -1352,7 +1352,7 @@ pub mod parse_worker {
                     b"",
                     symbols,
                 );
-                let _ = temp_log.append_to(log);
+                temp_log.append_to(log);
                 let mut ast = JSAst::init(lazy?.ok_or(AnyError::ParserError)?);
                 let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 ast.css = Some(css_ast_heap);
@@ -2428,13 +2428,12 @@ pub mod parse_worker {
                 is_symlink: file_path.is_symlink,
             },
             index: bun_ast::Index(task.source_index.get()),
-            // `entry.contents` is owned by `task.stage` (written back by
-            // the caller after parse — see `ParseTask::run`). `Source` is stored in
-            // `Success` which lives no longer than the `ParseTask` itself, so this
-            // borrow is sound. Routed through the audited `StoreStr` arena-erasure
-            // path (single `from_raw_parts` in `StoreStr::slice`); replace with
-            // `Source<'arena>` once that lifetime is threaded through `Success`/Graph.
-            contents: std::borrow::Cow::Borrowed(ast::StoreStr::new(entry_contents).slice()),
+            // SAFETY: `entry.contents` is owned by `task.stage` (written back by the
+            // caller after parse — see `ParseTask::run`), and the task lives in the
+            // arena of the bundle whose graph this `Source` ends up in.
+            contents: std::borrow::Cow::Borrowed(unsafe {
+                bun_ptr::detach_lifetime(entry_contents)
+            }),
             contents_is_recycled: false,
             ..Default::default()
         });
@@ -2913,30 +2912,13 @@ pub mod parse_worker {
         worker.unget();
     }
 
-    // The struct-only `dealloc` below skips field Drop; the `Log` is the only
-    // heap-owning field `on_parse_task_complete` doesn't move out, so take it here.
-    fn drop_result_owned_fields(result: &mut Result) {
-        match &mut result.value {
-            ResultValue::Success(s) => drop(core::mem::take(&mut s.log)),
-            ResultValue::Err(e) => drop(core::mem::take(&mut e.log)),
-            ResultValue::Empty { .. } => {}
-        }
-    }
-
     fn on_complete_mini(result: *mut Result, ctx: *mut BundleV2<'static>) {
         // SAFETY: callback contract — `result` was heap-allocated above; `ctx` is
         // the BACKREF stashed in `result.ctx`.
         BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
-        // SAFETY: `result` is uniquely owned (callback contract).
-        drop_result_owned_fields(unsafe { &mut *result });
-        // `drop(heap::take(result))` would run full Drop glue over what
-        // `on_parse_task_complete` left in `result.value`, and free plugin-/
-        // loader-provided bytes the graph still references (asan use-after-poison
-        // in `process_files_to_copy`, bundler_loader/_plugin tests). So: dealloc
-        // the box without running Drop.
         // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
-        // above; uniquely owned. Dealloc with the same layout, no field Drop.
-        unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
+        // above; uniquely owned.
+        drop(unsafe { bun_core::heap::take(result) });
     }
 
     /// # Safety
@@ -2954,11 +2936,9 @@ pub mod parse_worker {
         // pass and no other `&mut BundleV2` is live on this (main) thread when the
         // event-loop callback fires. `r` and `*ctx` are disjoint allocations.
         BundleV2::on_parse_task_complete(r, unsafe { ctx.assume_mut() });
-        drop_result_owned_fields(r);
-        // See `on_complete_mini` for why this is `dealloc`, not `drop(take(_))`.
         // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
-        // above; uniquely owned. Dealloc with the same layout, no field Drop.
-        unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
+        // above; uniquely owned.
+        drop(unsafe { bun_core::heap::take(result) });
     }
 } // end mod parse_worker
 

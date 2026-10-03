@@ -8,9 +8,8 @@
 #![feature(thread_local)]
 //! Ownership: a `Source<'a>` borrows its path, and usually its contents, for
 //! `'a`. A `Msg` borrows nothing: `Location` owns its bytes and `Data.text` is
-//! owned or a literal.
-//!
-//! TODO: `PathContentsPair` and the AST's string fields still erase to `'static`.
+//! owned or a literal. `PathContentsPair` and the AST's string fields erase to
+//! `'static`.
 
 use core::fmt;
 use std::borrow::Cow;
@@ -1293,14 +1292,12 @@ impl Log {
 
     // `to_js`/`to_js_aggregate_error`/`to_js_array` live in `bun_logger_jsc`.
 
-    pub fn clone_to(&self, other: &mut Log) {
-        other.msgs.extend_from_slice(&self.msgs);
-        other.warnings += self.warnings;
-        other.errors += self.errors;
-    }
-
     pub fn append_to(&mut self, other: &mut Log) {
-        other.msgs.append(&mut core::mem::take(&mut self.msgs));
+        if other.msgs.is_empty() {
+            other.msgs = core::mem::take(&mut self.msgs);
+        } else {
+            other.msgs.append(&mut core::mem::take(&mut self.msgs));
+        }
         other.warnings += core::mem::take(&mut self.warnings);
         other.errors += core::mem::take(&mut self.errors);
         // See `reset` — the scan cache goes with the messages.
@@ -2007,8 +2004,7 @@ pub struct Source<'a> {
     pub path: bun_paths::fs::Path<'a>,
 
     /// `Cow` so `source_from_file` / `File::to_source_at` can hand
-    /// back a heap buffer without leaking (PORTING.md §Forbidden). Borrowed
-    /// arm covers parser/transpiler-fed
+    /// back a heap buffer. Borrowed arm covers parser/transpiler-fed
     /// arena slices. Prefer the `.contents()` accessor at
     /// call-sites — it derefs to `&[u8]` regardless of arm.
     pub contents: Cow<'a, [u8]>,
@@ -2018,8 +2014,7 @@ pub struct Source<'a> {
     /// Avoid accessing this directly most of the  time
     ///
     /// `Cow` because the cached value is produced by
-    /// `MutableString::ensure_valid_identifier` (owned `Box<[u8]>`); per
-    /// PORTING.md §Forbidden this cannot be `&'static [u8]` + leak.
+    /// `MutableString::ensure_valid_identifier` (owned `Box<[u8]>`).
     pub identifier_name: Cow<'a, [u8]>,
 
     pub index: Index,
@@ -3297,7 +3292,9 @@ mod msg_ownership_tests {
             log.add_debug_fmt(Some(source), r.loc, format_args!("text"));
         }
         let located = locations(&log).count();
-        assert!(located >= log.msgs.len());
+        let messages_and_notes: usize = log.msgs.iter().map(|msg| 1 + msg.notes.len()).sum();
+        // `add_warning_with_note` locates its note only.
+        assert_eq!(located, messages_and_notes - 1);
 
         {
             let source = Source::init_path_string(&path[..], &contents[..]);
@@ -3323,37 +3320,27 @@ mod msg_ownership_tests {
     }
 
     #[test]
-    fn clone_to_copies_and_append_to_moves() {
+    fn append_to_moves() {
         let source = Source::init_path_string(PATH, CONTENTS);
         let mut from = Log::default();
         from.add_error(Some(&source), usize2loc(28), b"an error");
         from.add_warning(Some(&source), usize2loc(28), b"a warning");
 
         let mut to = Log::default();
-        to.add_error(None, Loc::EMPTY, b"already here");
-
-        from.clone_to(&mut to);
-        assert_eq!((from.msgs.len(), from.errors, from.warnings), (2, 1, 1));
-        assert_eq!((to.msgs.len(), to.errors, to.warnings), (3, 2, 1));
-
         from.append_to(&mut to);
         assert_eq!((from.msgs.len(), from.errors, from.warnings), (0, 0, 0));
-        assert_eq!((to.msgs.len(), to.errors, to.warnings), (5, 3, 2));
+        assert_eq!((to.msgs.len(), to.errors, to.warnings), (2, 1, 1));
 
         from.append_to(&mut to);
-        assert_eq!((to.msgs.len(), to.errors, to.warnings), (5, 3, 2));
+        assert_eq!((to.msgs.len(), to.errors, to.warnings), (2, 1, 1));
+
+        from.add_error(Some(&source), usize2loc(28), b"another error");
+        from.append_to(&mut to);
+        assert_eq!((from.msgs.len(), from.errors, from.warnings), (0, 0, 0));
+        assert_eq!((to.msgs.len(), to.errors, to.warnings), (3, 2, 1));
 
         let texts: Vec<&[u8]> = to.msgs.iter().map(|msg| &*msg.data.text).collect();
-        assert_eq!(
-            texts,
-            [
-                &b"already here"[..],
-                b"an error",
-                b"a warning",
-                b"an error",
-                b"a warning"
-            ]
-        );
+        assert_eq!(texts, [&b"an error"[..], b"a warning", b"another error"]);
         assert!(locations(&to).all(|location| &*location.file == PATH));
     }
 }

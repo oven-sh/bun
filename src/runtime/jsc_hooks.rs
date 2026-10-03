@@ -2565,8 +2565,9 @@ fn transpile_source_code_inner(
                     },
                     // SAFETY: the VM's `Transpiler<'static>` pins this lifetime to
                     // `'static`. The caller holds the source's bytes for this call,
-                    // which prints `parse_result` before it returns, unless it is
-                    // queued as an `AsyncModule` below.
+                    // which prints `parse_result` before it returns. NOT upheld when
+                    // it is queued as an `AsyncModule` below: nothing there keeps a
+                    // virtual source's bytes alive.
                     virtual_source: virtual_source.map(|source| unsafe { source.as_static() }),
                     dont_bundle_twice: true,
                     allow_commonjs: true,

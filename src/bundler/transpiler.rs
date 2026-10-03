@@ -810,7 +810,7 @@ pub struct ParseResult<'a> {
     /// `cache::Fs::read_file_with_allocator` (non-shared-buffer path) or a
     /// decoded `data:` URL. The backing must live at least as long as
     /// the `ParseResult`; threading it here means it drops when the result is
-    /// recycled instead of leaking via `mem::forget` (PORTING.md §Forbidden).
+    /// recycled.
     /// `Contents::Empty`/`SharedBuffer` for the virtual-source / shared-buffer
     /// paths (no-op on drop).
     pub source_contents_backing: resolver::cache::Contents,

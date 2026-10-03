@@ -3326,10 +3326,8 @@ impl<'a> LinkerContext<'a> {
         self.top_level_symbols_to_parts(Index::RUNTIME.get(), r#ref)
     }
 
-    /// The reference is not tied to `&self`, so that callers can hold the source
-    /// across a `&mut self.log` borrow.
     #[inline]
-    pub(crate) fn get_source<I: TryInto<usize>>(&self, index: I) -> &'a Source<'a> {
+    pub(crate) fn get_source<I: TryInto<usize>>(&self, index: I) -> &Source<'a> {
         // Note: callers pass both `u32` and
         // `usize`. Route through `TryInto<usize>` so the SoA index works for
         // either width without forcing `as`-casts at every call site.
@@ -3337,10 +3335,7 @@ impl<'a> LinkerContext<'a> {
             Ok(i) => i,
             Err(_) => unreachable!(),
         };
-        // SAFETY: parse_graph backref into BundleV2.graph; the input_files SoA
-        // is monotonically grown and never freed for the link step's lifetime,
-        // so the element address is stable. The outer `'a` overstates that.
-        unsafe { &*core::ptr::from_ref(&(*self.parse_graph).input_files.items_source()[index]) }
+        &self.parse_graph().input_files.items_source()[index]
     }
 
     /// `log` is an explicit parameter (not `self.log`) because the dev-server

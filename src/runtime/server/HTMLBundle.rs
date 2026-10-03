@@ -516,7 +516,7 @@ impl Route {
                     bun_output::scoped_log!(debug, "onComplete: err - {}", err);
                 }
                 let mut log = Log::init();
-                completion_task.log.clone_to(&mut log);
+                completion_task.log.append_to(&mut log);
                 self.set_build_error(server, log);
             }
             BundleV2Result::Value(bundle) => 'bundle: {

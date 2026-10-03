@@ -81,7 +81,7 @@ impl JavaScript {
         let parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
             Err(_) => {
-                let _ = temp_log.append_to(log);
+                temp_log.append_to(log);
                 return Ok(None);
             }
         };
@@ -103,12 +103,12 @@ impl JavaScript {
                 if temp_log.errors == 0 {
                     log.add_range_error(Some(source), bun_ast::Range::None, err.name().as_bytes());
                 }
-                let _ = temp_log.append_to(log);
+                temp_log.append_to(log);
                 return Ok(None);
             }
         };
 
-        let _ = temp_log.append_to(log);
+        temp_log.append_to(log);
         Ok(Some(result))
     }
 
@@ -132,14 +132,14 @@ impl JavaScript {
         let mut parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
             Err(_) => {
-                let _ = temp_log.append_to(log);
+                temp_log.append_to(log);
                 return Ok(());
             }
         };
 
         let res = parser.scan_imports(scan_pass_result);
         drop(parser);
-        let _ = temp_log.append_to(log);
+        temp_log.append_to(log);
         res.map_err(Into::into)
     }
 }

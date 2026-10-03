@@ -2241,9 +2241,6 @@ impl<'a> Lexer<'a> {
     /// lexer's lifetime. The looser bound lets `'a` (which `Ast<'a>` borrows
     /// through `arena`) outlive a stack-local scratch log.
     pub fn init_without_reading(log: &mut Log, source: &'a Source<'a>, arena: &'a Arena) -> Self {
-        // Deref `Cow<'static,[u8]>` once; the resulting `&[u8]` borrows
-        // `*source` (lifetime `'a`) regardless of Cow arm, so it is sound to
-        // cache for the lexer's lifetime.
         let contents: &'a [u8] = source.contents();
         Self {
             log: core::ptr::NonNull::from(log),

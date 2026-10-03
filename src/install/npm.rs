@@ -2030,9 +2030,8 @@ impl PackageManifest {
         let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
             Ok(j) => j,
             Err(_) => {
-                let mut cloned_log = bun_ast::Log::init();
-                log.clone_to(&mut cloned_log);
-                *log = cloned_log;
+                // It identifies a source by address, and `json_buffer` is the caller's.
+                log.line_column_tracker = None;
                 return Ok(None);
             }
         };

@@ -7681,8 +7681,10 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
 ) -> crate::Result<usize> {
-    let _restore =
-        bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
+    // SAFETY: a local, so it drops in reverse order of declaration.
+    let _restore = unsafe {
+        bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text))
+    };
 
     // `Renamer<'r,'src>` is invariant in `'src` (it holds `&'r mut`
     // NoOpRenamer<'src>`), so the two arms must agree on `'src`; constructing the
@@ -8026,8 +8028,10 @@ pub(crate) fn print_with_writer_and_platform<
     parts: &[js_ast::Part],
     renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
-    let _restore =
-        bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
+    // SAFETY: a local, so it drops in reverse order of declaration.
+    let _restore = unsafe {
+        bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text))
+    };
 
     // See `print_ast`: pre-size the output buffer to avoid grow+memmove churn.
     writer.reserve(source.contents().len() as u64);

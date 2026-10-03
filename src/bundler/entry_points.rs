@@ -179,7 +179,10 @@ impl MacroEntryPoint {
         (bun_wyhash::hash(specifier) as u32) as i32
     }
 
-    pub fn generate(
+    /// # Safety
+    /// `entry.source` is left pointing into `entry.code_buffer`: `entry` must not
+    /// move while `entry.source`, or a clone of it, is in use.
+    pub unsafe fn generate(
         entry: &mut MacroEntryPoint,
         _: &mut Transpiler,
         import_path: &Fs::PathName,
@@ -278,9 +281,7 @@ impl MacroEntryPoint {
             cursor.position() as usize
         };
 
-        // SAFETY: self-referential — both slices point into `entry.code_buffer`
-        // and are stored in `entry.source`, so `entry` must not move while
-        // `entry.source` is in use. The one caller boxes it before this call.
+        // SAFETY: the caller's.
         let (macro_label, code): (&'static [u8], &'static [u8]) = unsafe {
             (
                 bun_ptr::detach_lifetime(&entry.code_buffer[..label_len]),

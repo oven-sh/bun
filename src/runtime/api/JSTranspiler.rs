@@ -1185,7 +1185,9 @@ impl JSTranspiler {
 
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn get_parse_result(
+    /// # Safety
+    /// `arena` and `code` must outlive the returned `ParseResult`.
+    unsafe fn get_parse_result(
         &self,
         arena: &'static Arena,
         code: &[u8],
@@ -1213,8 +1215,7 @@ impl JSTranspiler {
             code
         };
 
-        // SAFETY: as for `arena`: both callers hold `code` in the frame that
-        // holds the arena and the returned `ParseResult`.
+        // SAFETY: the caller's.
         let source: &bun_ast::Source = arena.alloc(unsafe {
             bun_ast::Source::init_path_string(name, processed_code).into_static()
         });
@@ -1311,7 +1312,9 @@ impl JSTranspiler {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
+        // SAFETY: `arena`, `code` and `parse_result` are locals of this frame.
+        let parse_result =
+            unsafe { self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO) };
         let log_ref = self.transpiler.get().log_mut();
         let Some(mut parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
@@ -1496,7 +1499,8 @@ impl JSTranspiler {
 
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
-        let parse_result = self.get_parse_result(arena_ref, code, loader, macro_js_ctx);
+        // SAFETY: `arena`, `code` and `parse_result` are locals of this frame.
+        let parse_result = unsafe { self.get_parse_result(arena_ref, code, loader, macro_js_ctx) };
         let log_ref = self.transpiler.get().log_mut();
         let Some(parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {

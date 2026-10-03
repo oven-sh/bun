@@ -2019,14 +2019,17 @@ impl VirtualMachine {
             Entry::Occupied(e) => (*e.get()).cast(),
             Entry::Vacant(v) => {
                 let mut ep = Box::new(MacroEntryPoint::default());
-                MacroEntryPoint::generate(
-                    &mut *ep,
-                    &mut self.transpiler,
-                    &Fs::PathName::init(entry_path),
-                    function_name,
-                    hash,
-                    specifier,
-                )?;
+                // SAFETY: boxed, and kept in `macro_entry_points` for the VM's lifetime.
+                unsafe {
+                    MacroEntryPoint::generate(
+                        &mut *ep,
+                        &mut self.transpiler,
+                        &Fs::PathName::init(entry_path),
+                        function_name,
+                        hash,
+                        specifier,
+                    )
+                }?;
                 let raw = bun_core::heap::into_raw(ep);
                 v.insert(raw.cast());
                 raw

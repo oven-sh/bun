@@ -165,7 +165,6 @@ fn task_callback(
         .ctx
         .as_deref()
         .expect("ServerComponentParseTask.ctx set at enqueue");
-    // `Source` is not `Clone`; the original is consumed here.
     // Take it up-front so `ab`'s borrow of it ends
     // (via NLL) before we move it into `Success`.
     let source = core::mem::take(&mut task.source);

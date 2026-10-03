@@ -409,9 +409,8 @@ const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 pub(crate) type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
 
 pub struct TranspilerJob {
-    // Note: stored as the lower-tier `bun_paths::fs::Path<'static>` (the type
-    // `ParseOptions.path` / `bun_ast::Source.path` use). The slices borrow the
-    // Box'd buffer allocated in `transpile()` and freed in `reset_for_pool()`.
+    // The slices borrow the Box'd buffer allocated in `transpile()` and freed in
+    // `reset_for_pool()`.
     pub path: bun_paths::fs::Path<'static>,
     pub(crate) non_threadsafe_input_specifier: bun_core::String,
     pub(crate) non_threadsafe_referrer: bun_core::String,
@@ -682,7 +681,7 @@ impl TranspilerJob {
                 // SAFETY: dst/src point at locals that outlive this guard; no aliases at drop.
                 unsafe {
                     *dst = bun_ast::Log::init();
-                    (*src).clone_to(&mut *dst);
+                    (*src).append_to(&mut *dst);
                 }
             },
         );

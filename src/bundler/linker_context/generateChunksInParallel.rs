@@ -343,7 +343,8 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                     } else {
                         None
                     };
-                    c.log_mut().add_error(source, bun_ast::Loc::EMPTY, message);
+                    c.log_disjoint()
+                        .add_error(source, bun_ast::Loc::EMPTY, message);
                 }
             }
             if had_print_error {

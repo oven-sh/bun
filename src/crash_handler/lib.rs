@@ -738,7 +738,8 @@ mod draft {
     /// action's path borrowed until then.
     pub struct ActionGuard<'a>(
         Option<Action<'static>>,
-        core::marker::PhantomData<Action<'a>>,
+        // `*const ()`: the thread-local it restores is this thread's.
+        core::marker::PhantomData<(Action<'a>, *const ())>,
     );
     impl Drop for ActionGuard<'_> {
         #[inline]
@@ -750,13 +751,15 @@ mod draft {
     /// Scoped `CURRENT_ACTION = action`. Snapshots the previous value, installs
     /// `action`, and returns an [`ActionGuard`] that restores the previous value
     /// on drop.
+    ///
+    /// # Safety
+    /// The guard must be dropped, and before any guard that was live when it was
+    /// made: otherwise the thread-local keeps `action` past `'a`.
     #[inline]
     #[must_use]
-    pub fn scoped_action(action: Action<'_>) -> ActionGuard<'_> {
+    pub unsafe fn scoped_action(action: Action<'_>) -> ActionGuard<'_> {
         let prev = current_action();
-        // SAFETY: the returned guard borrows the path for `'a` and takes the
-        // action back out of the thread-local when it drops. A leaked guard
-        // leaves it there, read only while reporting a crash.
+        // SAFETY: the guard borrows the path for `'a`; the rest is the caller's.
         set_current_action(Some(unsafe {
             core::mem::transmute::<Action<'_>, Action<'static>>(action)
         }));
@@ -767,7 +770,8 @@ mod draft {
     #[inline]
     #[cfg(debug_assertions)]
     pub fn set_current_action_resolver() -> ActionGuard<'static> {
-        scoped_action(Action::Resolver)
+        // SAFETY: `Action::Resolver` borrows nothing.
+        unsafe { scoped_action(Action::Resolver) }
     }
 
     /// Where the crash trace is seeded from. Each call site has exactly one.

@@ -475,7 +475,7 @@ pub struct LoaderResult<'a> {
 pub fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: &'a VmLoaderCtx,
-    virtual_source_to_use: &'a mut Option<bun_ast::Source>,
+    virtual_source_to_use: &'a mut Option<bun_ast::Source<'a>>,
     blob_to_deinit: &mut Option<OpaqueBlob>,
     type_attribute_str: Option<&[u8]>,
 ) -> Result<LoaderResult<'a>, GetLoaderAndVirtualSourceErr> {
@@ -529,12 +529,8 @@ pub fn get_loader_and_virtual_source<'a>(
             }
 
             if !jsc_vm.blob_needs_read_file(blob) {
-                // SAFETY: `path.text` aliases jsc_vm-owned storage (blob filename
-                // or normalized specifier), which outlives the `virtual_source`
-                // returned to the caller.
-                let static_text: &'static [u8] = bun_ast::StoreStr::new(path.text).slice();
                 *virtual_source_to_use = Some(bun_ast::Source {
-                    path: bun_paths::fs::Path::init(static_text),
+                    path: bun_paths::fs::Path::init(path.text),
                     contents: Cow::Borrowed(jsc_vm.blob_shared_view(blob)),
                     ..Default::default()
                 });

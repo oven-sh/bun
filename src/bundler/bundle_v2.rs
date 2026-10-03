@@ -2981,8 +2981,7 @@ pub mod bv2_impl {
             })?;
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(&result, source_index, self);
-            // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
-            let task: &mut ParseTask = self.arena_create(task_val);
+            let task: &mut ParseTask = self.arena().alloc(task_val);
             task.loader = Some(loader);
             task.task.node.next = core::ptr::null_mut();
             task.known_target = target;
@@ -3075,8 +3074,7 @@ pub mod bv2_impl {
             })?;
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(result, source_index, self);
-            // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
-            let task: &mut ParseTask = self.arena_create(task_val);
+            let task: &mut ParseTask = self.arena().alloc(task_val);
             task.loader = Some(loader);
             task.task.node.next = core::ptr::null_mut();
             task.is_entry_point = is_entry_point;
@@ -3352,11 +3350,6 @@ pub mod bv2_impl {
 
         pub(crate) fn arena(&self) -> &'a bun_alloc::Arena {
             self.graph.heap
-        }
-
-        #[inline]
-        fn arena_create<T: 'a>(&self, value: T) -> &'a mut T {
-            self.arena().alloc(value)
         }
 
         /// # Safety
@@ -3990,8 +3983,7 @@ pub mod bv2_impl {
                 bun_ast::Index::init(source_index.get()),
                 self,
             );
-            // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
-            let task: &mut ParseTask = self.arena_create(task_val);
+            let task: &mut ParseTask = self.arena().alloc(task_val);
             task.loader = Some(loader);
             task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
             task.task.node.next = core::ptr::null_mut();
@@ -5243,8 +5235,7 @@ pub mod bv2_impl {
                                 ..Default::default()
                             };
                             // Arena-owned.
-                            // SAFETY: arena outlives the bundle pass.
-                            let task: &mut ParseTask = this.arena_create(task_val);
+                            let task: &mut ParseTask = this.arena().alloc(task_val);
                             task.task.node.next = core::ptr::null_mut();
                             task.io_task.node.next = core::ptr::null_mut();
                             this.increment_scan_counter();
@@ -6067,9 +6058,8 @@ pub mod bv2_impl {
                     // Arena-owned; the dispatch
                     // chain holds the raw `*mut Resolve` until the JS thread calls
                     // back, at which point the bundle pass is still alive.
-                    // SAFETY: arena outlives the bundle pass.
                     let resolve: &mut jsc_api::JSBundler::Resolve =
-                        self.arena_create(jsc_api::JSBundler::Resolve::default());
+                        self.arena().alloc(jsc_api::JSBundler::Resolve::default());
                     *resolve = jsc_api::JSBundler::Resolve::init(
                         self,
                         jsc_api::JSBundler::MiniImportRecord {
@@ -6111,9 +6101,8 @@ pub mod bv2_impl {
                     );
 
                     // Arena-owned.
-                    // SAFETY: arena outlives the bundle pass.
                     let resolve: &mut jsc_api::JSBundler::Resolve =
-                        self.arena_create(jsc_api::JSBundler::Resolve::default());
+                        self.arena().alloc(jsc_api::JSBundler::Resolve::default());
                     self.increment_scan_counter();
 
                     *resolve = jsc_api::JSBundler::Resolve::init(
@@ -6191,8 +6180,7 @@ pub mod bv2_impl {
                     // Arena-owned; the dispatch
                     // chain holds the raw `*mut Load` until the JS thread calls back.
                     let load_val = jsc_api::JSBundler::Load::init(self, parse);
-                    // SAFETY: arena outlives the bundle pass.
-                    let load: &mut jsc_api::JSBundler::Load = self.arena_create(load_val);
+                    let load: &mut jsc_api::JSBundler::Load = self.arena().alloc(load_val);
                     load.dispatch();
                     return true;
                 }
@@ -6230,19 +6218,8 @@ pub mod bv2_impl {
             self.graph.ast.ensure_unused_capacity(2)?;
             self.graph.input_files.ensure_unused_capacity(2)?;
 
-            // The statics are `LazyLock<Source>` and `Source` is not `Clone`, so
-            // rebuild an owned `Source` from the static's clonable fields
-            // (`path`, `index`).
-            let server_source = bun_ast::Source {
-                path: bake::SERVER_VIRTUAL_SOURCE.path,
-                index: bake::SERVER_VIRTUAL_SOURCE.index,
-                ..Default::default()
-            };
-            let client_source = bun_ast::Source {
-                path: bake::CLIENT_VIRTUAL_SOURCE.path,
-                index: bake::CLIENT_VIRTUAL_SOURCE.index,
-                ..Default::default()
-            };
+            let server_source = bake::SERVER_VIRTUAL_SOURCE.clone();
+            let client_source = bake::CLIENT_VIRTUAL_SOURCE.clone();
 
             // OOM/capacity: fire-and-forget
             let _ = self.graph.input_files.append(crate::Graph::InputFile {
@@ -6676,8 +6653,7 @@ pub mod bv2_impl {
                         // Arena-owned.
                         let resolve_task_val =
                             ParseTask::init(&file_map_result, bun_ast::Index::INVALID, self);
-                        // SAFETY: arena outlives the bundle pass.
-                        let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
+                        let resolve_task: &mut ParseTask = self.arena().alloc(resolve_task_val);
                         resolve_task.known_target = target;
                         // Use transpiler JSX options, applying force_node_env like the disk path does
                         resolve_task.jsx = transpiler.options.jsx.clone();
@@ -7037,8 +7013,7 @@ pub mod bv2_impl {
                 // Arena-owned.
                 let resolve_task_val =
                     ParseTask::init(&resolve_result, bun_ast::Index::INVALID, self);
-                // SAFETY: arena outlives the bundle pass.
-                let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
+                let resolve_task: &mut ParseTask = self.arena().alloc(resolve_task_val);
 
                 resolve_task.known_target = if import_record.kind == ImportKind::HtmlManifest {
                     Target::Browser
@@ -7310,12 +7285,13 @@ pub mod bv2_impl {
             // Re-borrow `self.graph`
             // at each use so the `self.*` method calls below don't conflict.
             let heap = self.graph.heap;
-            let empty_html_file_source: &mut bun_ast::Source = self.arena_create(bun_ast::Source {
-                path: *path,
-                index: bun_ast::Index(self.graph.input_files.len() as u32),
-                contents: std::borrow::Cow::Borrowed(&b""[..]),
-                ..Default::default()
-            });
+            let empty_html_file_source: &mut bun_ast::Source =
+                self.arena().alloc(bun_ast::Source {
+                    path: *path,
+                    index: bun_ast::Index(self.graph.input_files.len() as u32),
+                    contents: std::borrow::Cow::Borrowed(&b""[..]),
+                    ..Default::default()
+                });
             let mut js_parser_options = bun_js_parser::ParserOptions::init(
                 self.transpiler_for_target(target).options.jsx.clone(),
                 Loader::Html,
@@ -7485,8 +7461,7 @@ pub mod bv2_impl {
                     }
                 }
                 parse_task::ResultValue::Success(result) => {
-                    // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
-                    result.log.clone_to(this.transpiler.log_mut());
+                    result.log.append_to(this.transpiler.log_mut());
 
                     this.has_any_top_level_await_modules = this.has_any_top_level_await_modules
                         || !result.ast.top_level_await_keyword.is_empty();
@@ -7502,7 +7477,7 @@ pub mod bv2_impl {
                     // will later `mem::take` it.
                     if matches!(previous.contents, std::borrow::Cow::Owned(_)) {
                         // The AST points into what this assignment drops.
-                        debug_assert!(matches!(slot.contents, std::borrow::Cow::Borrowed(_)));
+                        assert!(matches!(slot.contents, std::borrow::Cow::Borrowed(_)));
                         slot.contents = previous.contents;
                     }
                     // Borrowck forbids holding `&input_files.source[i]` while writing
@@ -7782,8 +7757,7 @@ pub mod bv2_impl {
                                 )
                                 .expect("oom");
                         } else if !err.log.msgs.is_empty() {
-                            // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
-                            err.log.clone_to(this.transpiler.log_mut());
+                            err.log.append_to(this.transpiler.log_mut());
                         } else {
                             let step_name = match err.step {
                                 crate::parse_task::Step::Pending => "pending",

@@ -62,8 +62,7 @@ pub struct PackageJSON {
     pub name: Box<[u8]>,
     pub source: bun_ast::Source<'static>,
     /// Owns the file bytes that `source.contents` (and the
-    /// `&'static [u8]` map values below) borrow. Replaces the prior
-    /// `mem::forget` leak — forbidden per docs/PORTING.md §Forbidden patterns.
+    /// `&'static [u8]` map values below) borrow.
     /// The `PackageJSON` itself is the owner so the bytes free if it ever drops.
     /// (`source` is a `Source<'static>`, so this separate owner
     /// field is what keeps that borrow — and the map values above — alive.)
@@ -438,10 +437,6 @@ impl PackageJSON {
             ));
         }
 
-        // `bun_ast::Source.path` is the lightweight `bun_paths::fs::Path<'static>` (no
-        // `pretty`/`is_node_module`); `key_path` is only used for `text`, so init the
-        // source directly from the interned path.
-        //
         // `PackageJSON.source` is a `Source<'static>`, so `json_source`
         // re-borrows `entry_contents` (lifetime-erased) instead of owning it.
         //

@@ -687,7 +687,8 @@ impl Watcher {
         let file_path = watch_path.bytes();
         debug_assert!(file_path.len() > 1);
 
-        let parent_dir = watch_path.parent_dir().bytes();
+        let parent_watch_path = watch_path.parent_dir();
+        let parent_dir = parent_watch_path.bytes();
         let parent_dir_hash: HashType = Self::get_hash(parent_dir);
 
         let mut parent_watch_item: Option<WatchItemIndex> = None;
@@ -723,7 +724,7 @@ impl Watcher {
                 Some(v) => v,
                 None => match self.append_directory_assume_capacity(
                     dir_fd,
-                    watch_path.parent_dir(),
+                    parent_watch_path,
                     parent_dir_hash,
                 ) {
                     Err(err) => {

@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "path";
+
+// Root ignores permission bits, so a test that depends on them proves nothing as root.
+const isRoot = process.getuid?.() === 0;
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
 // a Buffer so tests can put raw, non-UTF-8 byte sequences into the name field.
@@ -12,6 +15,7 @@ function ustarHeader(
   size: number,
   typeflag: string = "0",
   fields: { mode?: Uint8Array; mtime?: Uint8Array } = {},
+  linkname: string = "",
 ): Buffer {
   const nameBytes = typeof name === "string" ? Buffer.from(name) : name;
   if (nameBytes.length > 99) throw new Error("ustar name too long: " + name);
@@ -26,12 +30,18 @@ function ustarHeader(
   if (fields.mtime) h.set(fields.mtime.subarray(0, 12), 136);
   h.write("        ", 148);
   h.write(typeflag, 156);
+  if (linkname) h.write(linkname, 157, 100);
   h.write("ustar\0", 257);
   h.write("00", 263);
   let sum = 0;
   for (let i = 0; i < 512; i++) sum += h[i];
   h.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
   return h;
+}
+
+// A one-member tarball that holds a single symlink entry (typeflag '2').
+function symlinkTarball(name: string, target: string): Uint8Array {
+  return new Uint8Array(Buffer.concat([ustarHeader(name, 0, "2", {}, target), Buffer.alloc(1024)]));
 }
 
 function ustarEntry(name: string | Buffer, data: Buffer): Buffer {
@@ -788,6 +798,389 @@ describe("Bun.Archive", () => {
   });
 
   describe("path safety", () => {
+    // `extract()` has two implementations: the default one, and the one the
+    // `glob` option selects.
+    const extractModes = [
+      ["default", (archive: Bun.Archive, path: string) => archive.extract(path)],
+      ["glob", (archive: Bun.Archive, path: string) => archive.extract(path, { glob: "**" })],
+    ] as const;
+
+    // Symlinks need a privilege Windows does not give the test process, and the
+    // extractor only creates symlink entries on POSIX.
+    describe.skipIf(isWindows)("symlinks already in the destination", () => {
+      describe.each(extractModes)("%s extraction", (_mode, extract) => {
+        test("replaces a symlink under an entry's own name", async () => {
+          using dir = tempDir("archive-symlink-leaf", { "victim/f.txt": "ORIGINAL" });
+          const root = String(dir);
+          const out = join(root, "out");
+          mkdirSync(out);
+          symlinkSync("../victim/f.txt", join(out, "cfg"));
+
+          const count = await extract(new Bun.Archive({ cfg: "OVERWRITTEN" }), out);
+
+          expect(await Bun.file(join(root, "victim", "f.txt")).text()).toBe("ORIGINAL");
+          expect(await Bun.file(join(out, "cfg")).text()).toBe("OVERWRITTEN");
+          expect(lstatSync(join(out, "cfg")).isSymbolicLink()).toBe(false);
+          expect(count).toBe(1);
+        });
+
+        // The link that stays inside is refused all the same.
+        test.each([
+          ["points outside the destination", "../victim"],
+          ["stays inside the destination", "real"],
+        ])("rejects an entry below a symlink that %s, and names the entry", async (_where, target) => {
+          using dir = tempDir("archive-symlink-parent", { "victim/keep.txt": "KEEP", "out/real/keep.txt": "KEEP" });
+          const root = String(dir);
+          const out = join(root, "out");
+          symlinkSync(target, join(out, "shared"));
+
+          const extracted = extract(new Bun.Archive({ "inside.txt": "INSIDE", "shared/f.txt": "F" }), out);
+          await expect(extracted).rejects.toMatchObject({ code: "ELOOP", path: "shared/f.txt" });
+
+          expect(readdirSync(join(root, "victim"))).toEqual(["keep.txt"]);
+          expect(readdirSync(join(out, "real"))).toEqual(["keep.txt"]);
+          expect(await Bun.file(join(out, "inside.txt")).text()).toBe("INSIDE");
+          expect(lstatSync(join(out, "shared")).isSymbolicLink()).toBe(true);
+        });
+
+        test("does not make a directory at the target of a dangling symlink", async () => {
+          using dir = tempDir("archive-symlink-dangling", {});
+          const root = String(dir);
+          const out = join(root, "out");
+          mkdirSync(out);
+          symlinkSync("../outside", join(out, "d"));
+          // The name of a directory entry ends in `/`. POSIX lets `mkdir` go
+          // through the link then. Linux does not.
+          const tarball = new Uint8Array(Buffer.concat([ustarHeader("d/", 0, "5"), Buffer.alloc(1024)]));
+
+          await extract(new Bun.Archive(tarball), out);
+
+          expect(existsSync(join(root, "outside"))).toBe(false);
+          expect(lstatSync(join(out, "d")).isSymbolicLink()).toBe(true);
+        });
+      });
+
+      // The report: three archives into one directory. The glob extractor
+      // refuses the second one earlier, for the `..` in its target.
+      test("does not write through a symlink that an earlier archive created", async () => {
+        using dir = tempDir("archive-symlink-chain", { "victim/file.txt": "ORIGINAL" });
+        const root = String(dir);
+        const out = join(root, "out");
+
+        // `d1 -> .` points at the extraction root, which is inside it.
+        expect(await new Bun.Archive(symlinkTarball("d1", ".")).extract(out)).toBe(1);
+
+        // `d1/d2/up -> ../..` is the extraction root when the name is read
+        // lexically. It is not: `d1` is a symlink to the root, so the link
+        // would land in `out/d2` and point at the parent of the root.
+        const link = new Bun.Archive(symlinkTarball("d1/d2/up", "../..")).extract(out);
+        await expect(link).rejects.toMatchObject({ code: "ELOOP", path: "d1/d2/up" });
+        expect(existsSync(join(out, "d2"))).toBe(false);
+
+        // A plain file member through that link.
+        const member = "d1/d2/up/victim/file.txt";
+        const file = new Bun.Archive(buildTarball([{ name: member, data: "OVERWRITTEN" }])).extract(out);
+        await expect(file).rejects.toMatchObject({ code: "ELOOP", path: member });
+
+        expect(await Bun.file(join(root, "victim", "file.txt")).text()).toBe("ORIGINAL");
+        expect(existsSync(join(out, "d2"))).toBe(false);
+      });
+    });
+
+    test("extracts entries nested deeper than the extractor keeps directories open", async () => {
+      // Where the kernel does not refuse symlinks itself, the extractor keeps
+      // one fd open per directory level, up to a fixed depth, and reopens the
+      // levels below that for each entry.
+      const deep = Buffer.alloc(150 * 2, "d/").toString();
+      const archive = new Bun.Archive({
+        [deep + "one.txt"]: "ONE",
+        [deep + "two.txt"]: "TWO",
+        [deep + "e/three.txt"]: "THREE",
+        "top.txt": "TOP",
+      });
+
+      using dir = tempDir("archive-deep-nesting", {});
+      const plain = join(String(dir), "plain");
+      const globbed = join(String(dir), "globbed");
+      await archive.extract(plain);
+      await archive.extract(globbed, { glob: "**" });
+
+      for (const out of [plain, globbed]) {
+        expect(await Bun.file(join(out, deep, "one.txt")).text()).toBe("ONE");
+        expect(await Bun.file(join(out, deep, "two.txt")).text()).toBe("TWO");
+        expect(await Bun.file(join(out, deep, "e", "three.txt")).text()).toBe("THREE");
+        expect(await Bun.file(join(out, "top.txt")).text()).toBe("TOP");
+      }
+    });
+
+    // On Linux, `openat2` refuses symlinks for the extractor. A kernel or a
+    // sandbox without it gets a walk that opens one directory at a time and
+    // keeps those directories open. The flag selects the walk.
+    const resolvers: [string, Record<string, string>][] = [["the kernel", {}]];
+    if (isLinux) resolvers.push(["a walk of the components", { BUN_FEATURE_FLAG_DISABLE_OPENAT2: "1" }]);
+
+    describe.each(resolvers)("symlinks refused by %s", (_resolver, resolverEnv) => {
+      // The walk keeps fewer directories open when descriptors run out.
+      test.skipIf(isWindows)("extracts a deep tree when few file descriptors are free", async () => {
+        using dir = tempDir("archive-few-descriptors", {
+          "extract.ts": `
+            const deep = Buffer.alloc(70 * 2, "d/").toString();
+            const archive = new Bun.Archive({ [deep + "f.txt"]: "F", [deep + "g.txt"]: "G", "top.txt": "T" });
+            const count = await archive.extract("out");
+            console.log(count, await Bun.file("out/" + deep + "g.txt").text());
+          `,
+        });
+
+        await using proc = Bun.spawn({
+          cmd: ["sh", "-c", 'ulimit -n 40 && exec "$0" extract.ts', bunExe()],
+          env: { ...bunEnv, ...resolverEnv },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ stdout, stderr }).toEqual({ stdout: "3 G\n", stderr: "" });
+        expect(exitCode).toBe(0);
+      });
+
+      test.skipIf(isWindows)("gives the same results", async () => {
+        using dir = tempDir("archive-resolver", {
+          "victim/f.txt": "ORIGINAL",
+          "extract.ts": `
+            import { lstatSync, mkdirSync, readdirSync, symlinkSync } from "node:fs";
+            // 150 levels: more than the walk keeps open.
+            const deep = Buffer.alloc(150 * 2, "d/").toString();
+            const outcome = (extracted: Promise<number>) => extracted.then(count => count, e => e.code ?? e.message);
+            const results: Record<string, unknown> = {};
+            for (const mode of ["default", "glob"]) {
+              const extract = (files: Record<string, string>) =>
+                outcome(new Bun.Archive(files).extract(mode, mode === "glob" ? { glob: "**" } : undefined));
+              mkdirSync(mode + "/real", { recursive: true });
+              symlinkSync("../victim", mode + "/outside");
+              symlinkSync("real", mode + "/inside");
+              symlinkSync("../victim/f.txt", mode + "/cfg");
+              await Bun.write(mode + "/file", "FILE");
+              results[mode] = {
+                belowLinkOutside: await extract({ "outside/new.txt": "NEW" }),
+                belowLinkInside: await extract({ "inside/new.txt": "NEW" }),
+                overLink: await extract({ cfg: "CFG" }),
+                belowFile: await extract({ "file/new.txt": "NEW" }),
+                tree: await extract({ "a/1": "1", "a/2": "2", "a/b/3": "3", "c/4": "4", [deep + "5"]: "5" }),
+                cfg: lstatSync(mode + "/cfg").isSymbolicLink() ? "still a link" : await Bun.file(mode + "/cfg").text(),
+                real: readdirSync(mode + "/real"),
+                deep: await Bun.file(mode + "/" + deep + "5").text(),
+              };
+            }
+            results.victim = [readdirSync("victim"), await Bun.file("victim/f.txt").text()];
+            console.log(JSON.stringify(results));
+          `,
+        });
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "extract.ts"],
+          env: { ...bunEnv, ...resolverEnv },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        const refused = { belowLinkOutside: "ELOOP", belowLinkInside: "ELOOP", overLink: 1, tree: 5 };
+        const disk = { cfg: "CFG", real: [], deep: "5" };
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+          // The glob extractor skips an entry below a file. The default one rejects.
+          default: { ...refused, belowFile: "ReadError", ...disk },
+          glob: { ...refused, belowFile: 0, ...disk },
+          victim: [["f.txt"], "ORIGINAL"],
+        });
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    // The umask of the test run hides the mode the extractor asks for. Under
+    // umask 0 the directory shows it.
+    test.skipIf(isWindows)("makes a directory 0755 when its parent has no entry of its own", async () => {
+      using dir = tempDir("archive-dir-mode-umask", {
+        // What `tar -cf x.tar a/b` writes: an entry for `a/b/`, and none for `a/`.
+        "a.tar": Buffer.concat([ustarHeader("a/b/", 0, "5", { mode: Buffer.from("0000755\0") }), Buffer.alloc(1024)]),
+        "extract.ts": `
+          import { lstatSync } from "node:fs";
+          process.umask(0);
+          const archive = new Bun.Archive(await Bun.file("a.tar").bytes());
+          await archive.extract("default");
+          await archive.extract("glob", { glob: "**" });
+          console.log(["default", "glob"].map(out => (lstatSync(out + "/a/b").mode & 0o777).toString(8)).join(" "));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "extract.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr }).toEqual({ stdout: "755 755\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    // Linux (O_PATH) and macOS (O_SEARCH) resolve parent directories without
+    // read permission on them. Elsewhere they are opened for reading.
+    test.skipIf(!(isLinux || isMacOS) || isRoot)(
+      "extracts under a directory the process can search but not read",
+      async () => {
+        using dir = tempDir("archive-search-only", {});
+        const out = join(String(dir), "out");
+        const wx = join(out, "wx");
+        mkdirSync(wx, { recursive: true });
+        chmodSync(wx, 0o311);
+        try {
+          await new Bun.Archive({ "wx/f.txt": "F", "wx/sub/g.txt": "G" }).extract(out);
+          expect(await Bun.file(join(wx, "f.txt")).text()).toBe("F");
+          expect(await Bun.file(join(wx, "sub", "g.txt")).text()).toBe("G");
+        } finally {
+          // Let the temp dir cleanup list it.
+          chmodSync(wx, 0o755);
+        }
+      },
+    );
+
+    // Without a symlink in the way, an entry that cannot be created makes the
+    // default extractor reject, and the glob extractor skip it.
+    describe.skipIf(isWindows)("destinations without symlinks", () => {
+      // What `extract()` rejects with for a symlink in the way. Not here.
+      const symlinkRefusal = { code: "ELOOP" };
+      const directoryTarball = (name: string) =>
+        new Uint8Array(Buffer.concat([ustarHeader(name, 0, "5"), Buffer.alloc(1024)]));
+
+      test("rejects when a parent directory cannot be made", async () => {
+        using dir = tempDir("archive-parent-error", {});
+        // Longer than NAME_MAX, so the directory cannot exist.
+        const tooLong = Buffer.alloc(300, "x").toString();
+        const archive = new Bun.Archive({ [tooLong + "/f.txt"]: "F", "ok.txt": "OK" });
+
+        await expect(archive.extract(join(String(dir), "default"))).rejects.not.toMatchObject(symlinkRefusal);
+        // The glob extractor skips every entry it cannot create.
+        expect(await archive.extract(join(String(dir), "glob"), { glob: "**" })).toBe(1);
+      });
+
+      test.skipIf(isRoot)("rejects in a destination that is not writable", async () => {
+        using dir = tempDir("archive-readonly-dest", {});
+        const out = join(String(dir), "out");
+        mkdirSync(out);
+        chmodSync(out, 0o555);
+        try {
+          // An entry for a file, then an entry for a directory alone.
+          for (const archive of [new Bun.Archive({ "a/f.txt": "F" }), new Bun.Archive(directoryTarball("a/b/"))]) {
+            await expect(archive.extract(out)).rejects.not.toMatchObject(symlinkRefusal);
+          }
+          expect(readdirSync(out)).toEqual([]);
+        } finally {
+          chmodSync(out, 0o755);
+        }
+      });
+
+      test("rejects when a file holds the name of a parent directory", async () => {
+        using dir = tempDir("archive-file-in-the-way", { "default/a": "FILE", "glob/a": "FILE" });
+        const archive = new Bun.Archive({ "a/b.txt": "B", "ok.txt": "OK" });
+
+        await expect(archive.extract(join(String(dir), "default"))).rejects.not.toMatchObject(symlinkRefusal);
+        // The glob extractor skips every entry it cannot create.
+        expect(await archive.extract(join(String(dir), "glob"), { glob: "**" })).toBe(1);
+        expect(await Bun.file(join(String(dir), "default", "a")).text()).toBe("FILE");
+        expect(await Bun.file(join(String(dir), "glob", "a")).text()).toBe("FILE");
+      });
+
+      describe.each(extractModes)("%s extraction", (_mode, extract) => {
+        test("makes no directory for a symlink it refuses", async () => {
+          using dir = tempDir("archive-refused-symlink", {});
+          const out = join(String(dir), "out");
+
+          await extract(new Bun.Archive(symlinkTarball("x/y/bad", "/etc")), out);
+
+          expect(readdirSync(out)).toEqual([]);
+        });
+
+        test("keeps a directory writable when its parent has no entry of its own", async () => {
+          // What `tar -cf x.tar a/b` writes for a read-only `a/b`: an entry for
+          // `a/b/`, and none for `a/`.
+          const tarball = new Uint8Array(
+            Buffer.concat([
+              ustarHeader("a/b/", 0, "5", { mode: Buffer.from("0000555\0") }),
+              ustarEntry("a/b/f.txt", Buffer.from("F")),
+              Buffer.alloc(1024),
+            ]),
+          );
+          using dir = tempDir("archive-readonly-subdir", {});
+          const out = join(String(dir), "out");
+
+          await extract(new Bun.Archive(tarball), out);
+
+          expect(await Bun.file(join(out, "a", "b", "f.txt")).text()).toBe("F");
+          expect(lstatSync(join(out, "a", "b")).mode & 0o200).toBe(0o200);
+        });
+
+        test("creates the symlinks of an archive after its other entries", async () => {
+          // `current -> releases/v1`, then a member under `current/`. The member
+          // gets a real directory, and the symlink finds its name taken.
+          const tarball = new Uint8Array(
+            Buffer.concat([
+              ustarHeader("current", 0, "2", {}, "releases/v1"),
+              ustarEntry("current/config", Buffer.from("CONFIG")),
+              ustarEntry("releases/v1/keep", Buffer.from("KEEP")),
+              Buffer.alloc(1024),
+            ]),
+          );
+          using dir = tempDir("archive-symlink-last", {});
+          const out = join(String(dir), "out");
+
+          await extract(new Bun.Archive(tarball), out);
+
+          expect(lstatSync(join(out, "current")).isDirectory()).toBe(true);
+          expect(await Bun.file(join(out, "current", "config")).text()).toBe("CONFIG");
+          expect(readdirSync(join(out, "releases", "v1"))).toEqual(["keep"]);
+        });
+
+        test("makes the parent of a symlink before it creates any symlink", async () => {
+          // `a -> b`, then `a/c -> d`. `a` becomes a directory for `a/c`, and
+          // `a -> b` finds its name taken.
+          const tarball = new Uint8Array(
+            Buffer.concat([
+              ustarHeader("a", 0, "2", {}, "b"),
+              ustarHeader("a/c", 0, "2", {}, "d"),
+              ustarEntry("b/keep", Buffer.from("KEEP")),
+              Buffer.alloc(1024),
+            ]),
+          );
+          using dir = tempDir("archive-symlink-parents-first", {});
+          const out = join(String(dir), "out");
+
+          await extract(new Bun.Archive(tarball), out);
+
+          expect(lstatSync(join(out, "a")).isDirectory()).toBe(true);
+          expect(readlinkSync(join(out, "a", "c"))).toBe("d");
+          expect(readdirSync(join(out, "b"))).toEqual(["keep"]);
+        });
+      });
+
+      test("glob extraction counts a directory that is already there", async () => {
+        const archive = new Bun.Archive(
+          new Uint8Array(
+            Buffer.concat([ustarHeader("d/", 0, "5"), ustarEntry("d/f.txt", Buffer.from("F")), Buffer.alloc(1024)]),
+          ),
+        );
+        using dir = tempDir("archive-glob-directory-count", {});
+        const out = join(String(dir), "out");
+
+        expect(await archive.extract(out, { glob: "**" })).toBe(2);
+        expect(await archive.extract(out, { glob: "**" })).toBe(2);
+      });
+    });
+
     test("skips tar entries whose pathname exceeds the platform path limit", async () => {
       // GNU `@LongLink` ('L') records let a tar entry carry a pathname of
       // arbitrary length, far beyond what fits in the extractor's fixed-size

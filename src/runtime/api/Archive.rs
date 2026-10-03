@@ -709,6 +709,18 @@ impl<C: TaskContext> AsyncTask<C> {
 pub enum ExtractError {
     #[error("ReadError")]
     ReadError,
+    /// A symlink in the destination stands where this entry needs a directory.
+    #[error("ELOOP")]
+    LinkInTheWay(Box<[u8]>),
+}
+
+impl From<libarchive::Error> for ExtractError {
+    fn from(e: libarchive::Error) -> Self {
+        match e {
+            libarchive::Error::LinkInTheWay(entry) => Self::LinkInTheWay(entry),
+            _ => Self::ReadError,
+        }
+    }
 }
 
 pub(crate) enum ExtractResult {
@@ -733,6 +745,11 @@ impl TaskContext for ExtractContext {
             ExtractResult::Success(count) => {
                 PromiseResult::Resolve(JSValue::js_number(*count as f64))
             }
+            ExtractResult::Err(ExtractError::LinkInTheWay(entry)) => PromiseResult::Reject(
+                bun_sys::Error::from_code(bun_sys::E::ELOOP, bun_sys::Tag::open)
+                    .with_path(entry)
+                    .to_js(global),
+            ),
             ExtractResult::Err(e) => PromiseResult::Reject(
                 global.create_error_instance(format_args!("{}", <&'static str>::from(e))),
             ),
@@ -744,15 +761,14 @@ impl ExtractContext {
     fn do_run(&mut self) -> ExtractResult {
         // If we have glob patterns, use filtered extraction
         if self.glob_patterns.is_some() {
-            let count = match extract_to_disk_filtered(
+            return match extract_to_disk_filtered(
                 self.store.shared_view(),
                 &self.path,
                 self.glob_patterns.as_deref(),
             ) {
-                Ok(c) => c,
-                Err(_) => return ExtractResult::Err(ExtractError::ReadError),
+                Ok(count) => ExtractResult::Success(count),
+                Err(e) => ExtractResult::Err(e),
             };
-            return ExtractResult::Success(count);
         }
 
         // Otherwise use the fast path without filtering
@@ -766,10 +782,11 @@ impl ExtractContext {
                 close_handles: true,
                 log: false,
                 npm: false,
+                destination: libarchive::DestinationKind::CallerProvided,
             },
         ) {
             Ok(c) => c,
-            Err(_) => return ExtractResult::Err(ExtractError::ReadError),
+            Err(e) => return ExtractResult::Err(e.into()),
         };
         ExtractResult::Success(count)
     }
@@ -1291,13 +1308,13 @@ fn extract_to_disk_filtered(
     file_buffer: &[u8],
     root: &[u8],
     glob_patterns: Option<&[Box<[u8]>]>,
-) -> crate::Result<u32> {
+) -> Result<u32, ExtractError> {
     use libarchive::lib;
     let archive = lib::ReadArchive::new();
     configure_archive_reader(&archive);
 
     if archive.read_open_memory(file_buffer) != lib::Result::Ok {
-        return Err(crate::Error::ReadError);
+        return Err(ExtractError::ReadError);
     }
 
     // Open/create target directory using bun.sys
@@ -1307,7 +1324,7 @@ fn extract_to_disk_filtered(
         if bun_paths::is_absolute(root) {
             break 'brk match bun_sys::open_a(root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
                 Ok(fd) => fd,
-                Err(_) => return Err(crate::Error::OpenError),
+                Err(_) => return Err(ExtractError::ReadError),
             };
         } else {
             break 'brk match bun_sys::openat_a(
@@ -1317,7 +1334,7 @@ fn extract_to_disk_filtered(
                 0,
             ) {
                 Ok(fd) => fd,
-                Err(_) => return Err(crate::Error::OpenError),
+                Err(_) => return Err(ExtractError::ReadError),
             };
         }
     };
@@ -1325,6 +1342,11 @@ fn extract_to_disk_filtered(
 
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
+    #[cfg(not(windows))]
+    let mut destination = libarchive::ContainedDir::new(dir_fd);
+    // Created last, as in `extract_to_dir`: no entry finds a symlink of its own archive in its way.
+    #[cfg(unix)]
+    let mut deferred_symlinks: Vec<libarchive::DeferredSymlink> = Vec::new();
     let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
     // SAFETY: `archive_read_data` is the only writer of `buf`; each chunk reads back only `buf[..bytes_read]`.
     let buf = unsafe { stack_buf.as_bytes_mut() };
@@ -1336,8 +1358,7 @@ fn extract_to_disk_filtered(
         let raw_pathname_z = entry_ref.pathname();
         #[cfg(windows)]
         let raw_pathname_zbox = ZBox::from_vec_with_nul(
-            entry_pathname_utf8(entry_ref)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
+            entry_pathname_utf8(entry_ref).map_err(|_| ExtractError::ReadError)?,
         );
         #[cfg(windows)]
         let raw_pathname_z = raw_pathname_zbox.as_zstr();
@@ -1371,7 +1392,17 @@ fn extract_to_disk_filtered(
 
         match kind {
             bun_sys::FileKind::Directory => {
-                match dir_fd.make_path(pathname) {
+                #[cfg(windows)]
+                let created = dir_fd.make_path(pathname);
+                // As `make_path`: 0o755, and a name that is taken is not an error.
+                #[cfg(not(windows))]
+                let created = match destination.make_dir(pathname_z, |_| 0o755) {
+                    Ok(Some(())) => Ok(()),
+                    Ok(None) => return Err(libarchive::link_in_the_way(pathname, false).into()),
+                    Err(e) if e.get_errno() == bun_sys::E::EEXIST => Ok(()),
+                    Err(e) => Err(e),
+                };
+                match created {
                     // Directory already exists - don't count as extracted
                     Err(e) if e.get_errno() == bun_sys::E::EEXIST => continue,
                     Err(_) => continue,
@@ -1390,6 +1421,7 @@ fn extract_to_disk_filtered(
                 };
 
                 // Create parent directories if needed (ignore expected errors)
+                #[cfg(windows)]
                 if let Some(parent_dir) = bun_core::dirname(pathname) {
                     match dir_fd.make_path(parent_dir) {
                         // Expected: directory already exists
@@ -1403,6 +1435,7 @@ fn extract_to_disk_filtered(
                 }
 
                 // Create and write the file using bun.sys
+                #[cfg(windows)]
                 let file_fd: Fd = match bun_sys::openat(
                     dir_fd,
                     pathname_z,
@@ -1410,6 +1443,12 @@ fn extract_to_disk_filtered(
                     mode,
                 ) {
                     Ok(fd) => fd,
+                    Err(_) => continue,
+                };
+                #[cfg(not(windows))]
+                let file_fd: Fd = match destination.create_file(pathname_z, mode) {
+                    Ok(Some(fd)) => fd,
+                    Ok(None) => return Err(libarchive::link_in_the_way(pathname, false).into()),
                     Err(_) => continue,
                 };
 
@@ -1453,7 +1492,10 @@ fn extract_to_disk_filtered(
                     count += 1;
                 } else {
                     // Remove partial file on failure
+                    #[cfg(windows)]
                     let _ = bun_sys::unlinkat(dir_fd, pathname_z);
+                    #[cfg(not(windows))]
+                    let _ = destination.unlink(pathname_z);
                 }
             }
             bun_sys::FileKind::SymLink => {
@@ -1465,27 +1507,20 @@ fn extract_to_disk_filtered(
                 // Symlinks are only extracted on POSIX systems (Linux/macOS).
                 // On Windows, symlinks are skipped since they require elevated privileges.
                 #[cfg(unix)]
-                {
-                    match bun_sys::symlinkat(link_target_z, dir_fd, pathname_z) {
-                        Err(err) => {
-                            if matches!(err.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) {
-                                if let Some(parent) = bun_core::dirname(pathname) {
-                                    let _ = dir_fd.make_path(parent);
-                                }
-                                if bun_sys::symlinkat(link_target_z, dir_fd, pathname_z).is_err() {
-                                    continue;
-                                }
-                            } else {
-                                continue;
-                            }
-                        }
-                        Ok(()) => {}
-                    }
-                    count += 1;
-                }
+                deferred_symlinks.push(libarchive::DeferredSymlink::new(
+                    pathname,
+                    link_target_z.as_bytes(),
+                ));
             }
             _ => {}
         }
+    }
+
+    #[cfg(unix)]
+    {
+        // Its descriptors are free for the directories of the symlinks.
+        drop(destination);
+        count += libarchive::create_deferred_symlinks(dir_fd, &deferred_symlinks, false)?;
     }
 
     Ok(count)

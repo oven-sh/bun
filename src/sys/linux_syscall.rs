@@ -106,6 +106,24 @@ pub(crate) fn openat2_beneath(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> R
     .map(own_fd)
 }
 
+#[cfg(target_os = "linux")]
+#[inline]
+pub(crate) fn openat2_no_symlinks(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
+    let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
+    let mode = rustix::fs::Mode::from_raw_mode(mode);
+    let dir = dir.as_borrowed_fd();
+    retry(|| {
+        rustix::fs::openat2(
+            dir,
+            path.as_cstr(),
+            oflags,
+            mode,
+            rustix::fs::ResolveFlags::NO_SYMLINKS,
+        )
+    })
+    .map(own_fd)
+}
+
 #[inline]
 pub(crate) fn openat2_in_root(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);

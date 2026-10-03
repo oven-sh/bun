@@ -2949,7 +2949,7 @@ function advanceResponsePipeline(server, socket) {
           // Buffered 1xx bytes: route through the same AsyncSocket buffer the
           // response's own writeHead/end use so they precede the final response.
           handle.writeInformational(op[1], op[2]);
-          if (typeof op[3] === "function") process.nextTick(op[3]);
+          if (typeof op[3] === "function") process.nextTick(op[3], null);
         } else if (kind === "write") {
           if (ServerResponsePrototypeWrite.$call(res, op[1], op[2], op[3]) === false) hitBackpressure = true;
         } else {
@@ -3285,12 +3285,17 @@ Object.defineProperty(ServerResponse.prototype, "headersSent", {
 });
 
 ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
-  if (!this[kHandle]) {
+  const handle = this[kHandle];
+  if (!handle) {
     // Standalone path: OutgoingMessage._writeRaw buffers to outputData while
     // no socket is assigned yet (kSocket is null) and flushes the buffer
     // ahead of the chunk once one is - writing through the auto-creating
     // `socket` getter here would drop the bytes into a FakeSocket.
     return OutgoingMessagePrototype._writeRaw.$apply(this, arguments);
+  }
+  if (typeof encoding === "function") {
+    callback = encoding;
+    encoding = null;
   }
   const queued = this[kPipelinedQueuedState];
   if (queued !== undefined) {
@@ -3305,11 +3310,16 @@ ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
     addPipelineOutgoingData(queued, bytes);
     return queued.bytes < this.writableHighWaterMark;
   }
+  // Socket already gone: like Node's _writeRaw(), report false and drop the callback.
+  if (handle.flags & NodeHTTPResponseFlags.closed_or_completed) return false;
+  // Node keeps a 1xx for a socket that ended in outputData: no bytes, and the callback never runs.
+  const socket = this[fakeSocketSymbol];
+  if (socket && !socket.writable) return true;
   // Write through the response handle's AsyncSocket buffer (same path as
   // writeHead/end) so 1xx lines share ordering with the final response bytes;
   // socket.write() would land in the socket handle's separate stream buffer.
-  this[kHandle].writeInformational(chunk, encoding);
-  if (typeof callback === "function") process.nextTick(callback);
+  handle.writeInformational(chunk, encoding);
+  if (typeof callback === "function") process.nextTick(callback, null);
   return true;
 };
 
@@ -3393,14 +3403,15 @@ ServerResponse.prototype.writeInformation = function writeInformation(statusCode
 };
 
 ServerResponse.prototype.writeProcessing = function (cb) {
-  return this.writeInformation(102, null, cb);
+  this.writeInformation(102, null, cb);
 };
 
 ServerResponse.prototype.writeContinue = function (cb) {
   if (this.headersSent) {
     throw $ERR_HTTP_HEADERS_SENT("write");
   }
-  if (!this[kHandle] || this[kPipelinedQueuedState] !== undefined) {
+  const handle = this[kHandle];
+  if (!handle || this[kPipelinedQueuedState] !== undefined) {
     // Standalone path (no native handle) or queued pipelined response (no
     // socket yet): route through writeInformation like Node.js v26.3.0 so the
     // 100 Continue line is buffered and written once a socket is assigned.
@@ -3408,11 +3419,14 @@ ServerResponse.prototype.writeContinue = function (cb) {
     this._sent100 = true;
     return;
   }
-  const native = this.socket?.[kHandle]?.response;
-  if (native) native.writeContinue();
-  else this[kHandle]?.writeContinue?.();
   this._sent100 = true;
-  cb?.();
+  // As in _writeRaw(): a socket that is gone or ended gets no bytes and no callback.
+  if (handle.flags & NodeHTTPResponseFlags.closed_or_completed) return;
+  const socket = this[fakeSocketSymbol];
+  if (socket && !socket.writable) return;
+  // The response's own handle: it writes nothing once another response has the connection.
+  handle.writeContinue();
+  if (typeof cb === "function") process.nextTick(cb, null);
 };
 
 // This end method is actually on the OutgoingMessage prototype in Node.js

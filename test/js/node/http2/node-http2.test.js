@@ -4721,6 +4721,110 @@ it("http2 pushStream throws ERR_HTTP2_HEADER_SINGLE_VALUE synchronously without 
   expect(blocks.map(({ id, path }) => ({ id, path }))).toEqual([{ id: 2, path: "/after" }]);
 });
 
+// The error fn() throws, or null. node's pushStream() checks for a disabled push, then for a nested
+// push, then it validates callback. When a call fails more than one check, the first one decides
+// the error. Every expected error below is verified on node v26.3.0.
+function thrownError(fn) {
+  try {
+    fn();
+    return null;
+  } catch (err) {
+    return { name: err.constructor.name, code: err.code, message: err.message };
+  }
+}
+
+it("http2 pushStream throws ERR_HTTP2_PUSH_DISABLED before it validates its arguments", async () => {
+  const { promise: thrown, resolve, reject } = Promise.withResolvers();
+  const server = http2.createServer();
+  server.on("error", reject);
+  server.on("sessionError", reject);
+  server.on("stream", stream => {
+    resolve({
+      pushAllowed: stream.pushAllowed,
+      "bad callback": thrownError(() => stream.pushStream({}, {}, 1)),
+      "no callback": thrownError(() => stream.pushStream({})),
+      "bad options": thrownError(() => stream.pushStream({}, "x", () => {})),
+      "bad headers": thrownError(() => stream.pushStream("x", () => {})),
+    });
+    stream.respond({ ":status": 200 });
+    stream.end();
+  });
+  let client;
+  try {
+    await Promise.race([thrown, new Promise(listening => server.listen(0, "127.0.0.1", listening))]);
+    // The client's SETTINGS frame precedes its request, so the server knows that push is off
+    // before the 'stream' event.
+    client = http2.connect(`http://127.0.0.1:${server.address().port}`, { settings: { enablePush: false } });
+    client.on("error", reject);
+    const req = client.request({ ":path": "/" });
+    req.on("error", reject);
+    req.resume();
+
+    const pushDisabledError = {
+      name: "Error",
+      code: "ERR_HTTP2_PUSH_DISABLED",
+      message: "HTTP/2 client has disabled push streams",
+    };
+    expect(await thrown).toEqual({
+      pushAllowed: false,
+      "bad callback": pushDisabledError,
+      "no callback": pushDisabledError,
+      "bad options": pushDisabledError,
+      "bad headers": pushDisabledError,
+    });
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
+it("http2 pushStream validates callback after the nested-push check and before options", async () => {
+  let onRequestStream;
+  let onPushedStream;
+  const blocks = await pushedHeaderBlocks(stream => {
+    // The request stream can push, so the argument checks decide: callback comes before options.
+    onRequestStream = thrownError(() => stream.pushStream({}, "x", 1));
+    stream.pushStream({ ":path": "/pushed" }, (err, push) => {
+      if (err) {
+        stream.destroy(err);
+        return;
+      }
+      onPushedStream = {
+        "bad callback": thrownError(() => push.pushStream({}, {}, 1)),
+        "no callback": thrownError(() => push.pushStream({})),
+        "bad options": thrownError(() => push.pushStream({}, "x", () => {})),
+        "bad headers": thrownError(() => push.pushStream("x", () => {})),
+      };
+      push.respond({ ":status": 200 });
+      push.end("pushed");
+      // node still reports the nested push here, not a closed stream.
+      onPushedStream["after end()"] = thrownError(() => push.pushStream({}, () => {}));
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+  });
+
+  expect(onRequestStream).toEqual({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: 'The "callback" argument must be of type function. Received type number (1)',
+  });
+  const nestedPushError = {
+    name: "Error",
+    code: "ERR_HTTP2_NESTED_PUSH",
+    message: "A push stream cannot initiate another push stream.",
+  };
+  expect(onPushedStream).toEqual({
+    "bad callback": nestedPushError,
+    "no callback": nestedPushError,
+    "bad options": nestedPushError,
+    "bad headers": nestedPushError,
+    "after end()": nestedPushError,
+  });
+  // Only the valid call reserved a stream.
+  expect(blocks.map(({ id, path }) => ({ id, path }))).toEqual([{ id: 2, path: "/pushed" }]);
+});
+
 it("http2 pushStream sends each element of a single-value header when strictSingleValueFields is off", async () => {
   const blocks = await pushedHeaderBlocks(
     stream => {

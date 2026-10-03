@@ -738,34 +738,6 @@ pub(crate) fn compute_chunks(
         }
     }
 
-    // The files of an early chunk stay in the directory of their entry point's chunk, so a relative path in their code keeps its meaning.
-    for chunk_index in 0..chunks.len() {
-        if !this.is_early_entry_file(chunks[chunk_index].entry_point.source_index()) {
-            continue;
-        }
-        let entry_point_id = chunks[chunk_index].entry_bits().find_first_set();
-        let entry_chunk = chunks
-            .iter()
-            .find(|chunk| {
-                chunk.entry_point.is_entry_point()
-                    && matches!(chunk.content, chunk::Content::Javascript(_))
-                    && Some(chunk.entry_point.entry_point_id() as usize) == entry_point_id
-            })
-            .expect("an early chunk has the key of its entry point's chunk");
-        let PathTemplate { data, placeholder } = entry_chunk.template.clone();
-        let ext = bun_fs::PathName::init(&data).ext;
-        chunks[chunk_index].template = PathTemplate {
-            data: [
-                &data[..data.len() - ext.len()],
-                b"-[hash]",
-                if ext.is_empty() { b".[ext]" } else { ext },
-            ]
-            .concat()
-            .into_boxed_slice(),
-            placeholder,
-        };
-    }
-
     // Transfer ownership of the single backing buffer; every `chunk.unique_key`
     // above borrows into it. (The builder `Drop`s on error and `unique_key_buf`
     // is only assigned here on success, so no rollback guard is needed.)

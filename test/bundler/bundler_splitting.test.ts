@@ -778,83 +778,24 @@ describe("bundler", () => {
     format: "esm",
     run: { file: "/out/index.js", stdout: "index LoggerLogger\nsettings LoggerLogger" },
   });
-  // The chunk with setup.js is written next to the entry point's file, whatever `naming` says: a relative path in it keeps its meaning.
-  const setupWithRelativePaths = /* js */ `
-    import "./local.js";
-    globalThis.APP = { name: "app" };
-    const name = "plugin";
-    globalThis.plugin = import("./" + name + ".js").then(m => console.log(m.default));
-  `;
-  const settingsAfterPlugin = /* js */ `
-    import { Store } from "./store.js";
-    globalThis.plugin.then(() => console.log("settings", new Store().name));
-  `;
-  for (const [name, chunkNaming] of [
-    ["Default", undefined],
-    ["ChunksInOtherDirectory", "chunks/[name]-[hash].[ext]"],
-    ["ChunksWithoutHash", "chunks/[name].[ext]"],
-    ["ChunksInDirectoryWithHash", "[hash]/[name].[ext]"],
+  // Where the files are written has no part in the order.
+  for (const [name, options] of [
+    ["ChunksInOtherDirectory", { chunkNaming: "chunks/[name]-[hash].[ext]" }],
+    ["ChunksInDirectoryWithHash", { chunkNaming: "[hash]/[name].[ext]" }],
+    ["EntryInOtherDirectory", { entryNaming: "app/[name].[ext]", outputPaths: ["/out/app/index.js"] }],
   ] as const) {
-    itBundled("splitting/EntrySetupImportStaysInDirectoryOfEntryFile/" + name, {
-      files: {
-        "/src/api/index.js": setupBeforeShared["/index.js"],
-        "/src/api/setup.js": setupWithRelativePaths,
-        "/src/api/store.js": setupBeforeShared["/store.js"],
-        "/src/api/settings.js": settingsAfterPlugin,
-        "/src/jobs/index.js": `console.log("jobs");`,
-      },
-      external: ["*local.js"],
-      runtimeFiles: {
-        "/out/api/local.js": `console.log("local");`,
-        "/out/api/plugin.js": `export default "imported";`,
-      },
-      entryPoints: ["/src/api/index.js", "/src/jobs/index.js"],
-      outputPaths: ["/out/api/index.js", "/out/jobs/index.js"],
-      chunkNaming,
+    itBundled("splitting/EntrySetupImportRunsBeforeSharedCodeWithNaming/" + name, {
+      files: setupBeforeShared,
+      entryPoints: ["/index.js"],
       splitting: true,
       target: "bun",
       outdir: "/out",
       format: "esm",
-      onAfterBundle(api) {
-        expect(outputsWith(api, "globalThis.APP = ")).toEqual([expect.stringMatching(/^api\/index-[a-z0-9]{8}\.js$/)]);
+      ...options,
+      run: {
+        file: "outputPaths" in options ? options.outputPaths[0] : "/out/index.js",
+        stdout: "index app\nsettings app",
       },
-      run: { file: "/out/api/index.js", stdout: "local\nindex app\nimported\nsettings app" },
-    });
-  }
-  for (const [name, entryNaming, entry, chunk] of [
-    ["DirectoryInFileName", "[name]-[dir].[ext]", "index-app/deep.js", /^index-app\/deep-[a-z0-9]{8}\.js$/],
-    [
-      "NameInDirectory",
-      "[dir]/[name]/main.[ext]",
-      "app/deep/index/main.js",
-      /^app\/deep\/index\/main-[a-z0-9]{8}\.js$/,
-    ],
-    ["NoExtension", "[dir]/[name]", "app/deep/index", /^app\/deep\/index-[a-z0-9]{8}\.js$/],
-  ] as const) {
-    itBundled("splitting/EntrySetupImportStaysInDirectoryOfEntryFile/" + name, {
-      files: {
-        "/src/app/deep/index.js": setupBeforeShared["/index.js"],
-        "/src/app/deep/setup.js": setupWithRelativePaths,
-        "/src/app/deep/store.js": setupBeforeShared["/store.js"],
-        "/src/app/deep/settings.js": settingsAfterPlugin,
-        "/src/other.js": `console.log("other");`,
-      },
-      external: ["*local.js"],
-      runtimeFiles: {
-        ["/out/" + entry.replace(/[^/]+$/, "local.js")]: `console.log("local");`,
-        ["/out/" + entry.replace(/[^/]+$/, "plugin.js")]: `export default "imported";`,
-      },
-      entryPoints: ["/src/app/deep/index.js", "/src/other.js"],
-      outputPaths: ["/out/" + entry],
-      entryNaming,
-      splitting: true,
-      target: "bun",
-      outdir: "/out",
-      format: "esm",
-      onAfterBundle(api) {
-        expect(outputsWith(api, "globalThis.APP = ")).toEqual([expect.stringMatching(chunk)]);
-      },
-      run: { file: "/out/" + entry, stdout: "local\nindex app\nimported\nsettings app" },
     });
   }
   // A chunk of its own for setup.js would change something else than the order of setup.js and store.js. So it stays in index.js.

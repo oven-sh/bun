@@ -644,14 +644,20 @@ impl<'a> Checker<'a> {
         let links = self.symbol_container_links.get(ctx.symbol);
         let link_key = AccessibleChainCacheKey {
             use_only_external_aliasing: ctx.use_only_external_aliasing,
-            first_relevant_location,
+            location: first_relevant_location,
             meaning: ctx.meaning,
         };
+        if self.symbol_container_links[links]
+            .accessible_chain_cache
+            .is_nil()
+        {
+            self.symbol_container_links[links].accessible_chain_cache = Map::make();
+        }
         if let Some(existing) = self.symbol_container_links[links]
             .accessible_chain_cache
-            .get(&link_key)
+            .get_ok(&link_key)
         {
-            return existing.clone();
+            return existing.as_slice().to_vec();
         }
 
         let mut result: Vec<SymbolId> = Vec::new();
@@ -673,9 +679,11 @@ impl<'a> Checker<'a> {
                 false
             },
         );
-        self.symbol_container_links[links]
+        let list = self.list(&result);
+        let ok = self.symbol_container_links[links]
             .accessible_chain_cache
-            .insert(link_key, result.clone());
+            .set(link_key, list);
+        self.map_set(ok);
         result
     }
 
@@ -725,22 +733,27 @@ impl<'a> Checker<'a> {
         let cached =
             kind == ST_KIND_GLOBALS || kind == ST_KIND_EXPORTS || kind == ST_KIND_RESOLVED_EXPORTS;
         if cached {
-            if let Some(aliases) = self.symbol_table_alias_cache.get(&table_id) {
-                return aliases.clone();
+            if let Some(aliases) = self.symbol_table_alias_cache.get_ok(&table_id) {
+                return aliases.as_slice().to_vec();
             }
         }
         let mut aliases: Vec<SymbolId> = Vec::new();
         if !symbols.is_nil() {
-            for entry in 0..a.table_len(symbols) {
-                let (_, sym) = a.table_entry_at(symbols, entry);
+            let mut position = 0;
+            while let Some((_, sym)) = a.table_entry_at(symbols, position) {
+                position += 1;
                 if a.sym(sym).flags.intersects(SymbolFlags::ALIAS) {
                     aliases.push(sym);
                 }
             }
         }
         if cached {
-            self.symbol_table_alias_cache
-                .insert(table_id, aliases.clone());
+            if self.symbol_table_alias_cache.is_nil() {
+                self.symbol_table_alias_cache = Map::make();
+            }
+            let list = self.list(&aliases);
+            let ok = self.symbol_table_alias_cache.set(table_id, list);
+            self.map_set(ok);
         }
         aliases
     }
@@ -1118,8 +1131,9 @@ impl<'a> Checker<'a> {
                     let sym = self.get_symbol_of_declaration(location);
                     let members = a.sym(sym).members;
                     if !members.is_nil() {
-                        for entry in 0..a.table_len(members) {
-                            let (key, member_symbol) = a.table_entry_at(members, entry);
+                        let mut position = 0;
+                        while let Some((key, member_symbol)) = a.table_entry_at(members, position) {
+                            position += 1;
                             if a.sym(member_symbol)
                                 .flags
                                 .intersects(SymbolFlags::TYPE.without(SymbolFlags::ASSIGNMENT))
@@ -1178,8 +1192,8 @@ impl<'a> Checker<'a> {
     // getClassExpressionNameTable returns a cached one-entry symbol table mapping the class expression's name to its symbol.
     fn get_class_expression_name_table(&mut self, location: NodeId) -> SymbolTableId {
         let a = self.ast;
-        if let Some(table) = self.class_expression_name_tables.get(&location) {
-            return *table;
+        if let Some(table) = self.class_expression_name_tables.get_ok(&location) {
+            return table;
         }
         let class_symbol = self.get_symbol_of_declaration(location);
         let name_text = a.text(a.name(location));
@@ -1188,7 +1202,11 @@ impl<'a> Checker<'a> {
         }
         let table = a.new_table();
         a.table_set(table, name_text, class_symbol);
-        self.class_expression_name_tables.insert(location, table);
+        if self.class_expression_name_tables.is_nil() {
+            self.class_expression_name_tables = Map::make();
+        }
+        let ok = self.class_expression_name_tables.set(location, table);
+        self.map_set(ok);
         table
     }
 

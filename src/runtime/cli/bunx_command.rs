@@ -181,6 +181,12 @@ impl Options {
                     }
                     opts.minimum_release_age_ms = Some(Self::validate_minimum_release_age(value));
                     opts.minimum_release_age = Some(value);
+                } else if positional == b"--help" || positional == b"-h" {
+                    BunxCommand::exit_with_usage();
+                } else if positional != b"--" && positional != b"--yes" && positional != b"-y" {
+                    // Nothing else is forwarded to `bun add`; say so instead of
+                    // dropping the flag silently.
+                    bun_core::warn!("bunx ignored unknown flag <b>{}<r>", BStr::new(positional));
                 }
             } else {
                 if !found_subcommand_name {
@@ -905,10 +911,11 @@ impl BunxCommand {
                 )
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             }
+            // Cache key grammar: `<name>@<version>` followed by zero or more
+            // `+key=value` tails, one per input that shapes the install.
             if let Some(ms) = opts.minimum_release_age_ms {
-                // The gate decides which version lands here, so it is part
-                // of the cache key: a gated install is never served to an
-                // ungated run, and a gated run keeps the normal 24h cache.
+                // The gate decides which version lands here: a gated install
+                // is never served to an ungated run and keeps the 24h cache.
                 write!(&mut v, "+min-age={ms}")
                     .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             }

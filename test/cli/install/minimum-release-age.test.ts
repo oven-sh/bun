@@ -1,7 +1,7 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // These tests drive real `bun install` runs against a mock registry, which is
@@ -3131,6 +3131,51 @@ export const scanner = {
       expect(rmExit).toBe(0);
       expect(existsSync(gatedRoot)).toBe(false);
       expect(existsSync(ungatedRoot)).toBe(false);
+    });
+
+    test("unknown leading flags warn instead of vanishing", async () => {
+      using dir = tempDir("bunx-unknown-flag", {});
+      // No package name, so bunx prints usage after parsing; nothing is installed.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "x", "--registry=http://127.0.0.1:9/", "--yes"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("ignored unknown flag");
+      expect(stderr).toContain("--registry=http://127.0.0.1:9/");
+      expect(stderr).not.toContain("--yes");
+      expect(exitCode).not.toBe(0);
+    });
+
+    // Runs on every platform: no pre-seeded cache and no uid assumption, and the
+    // exit code is not asserted because the fixture bin is a sh script.
+    test("age-gated install creates a cache dir keyed on the gate", async () => {
+      using dir = tempDir("bunx-min-age-key-name", {});
+      using cacheDir = tempDir("bunx-min-age-cache-key-name", {});
+      using tmp = tempDir("bunx-min-age-tmp-key-name", {});
+      const gateSeconds = 3 * 24 * 60 * 60;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "x", `--minimum-release-age=${gateSeconds}`, "bunx-package"],
+        cwd: String(dir),
+        env: bunxEnv(String(cacheDir), String(tmp)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const entries = readdirSync(String(tmp));
+      const gated = entries.filter(
+        n => n.startsWith("bunx-") && n.endsWith(`-bunx-package@latest+min-age=${gateSeconds * 1000}`),
+      );
+      expect(gated).toHaveLength(1);
+      expect(
+        JSON.parse(readFileSync(join(String(tmp), gated[0], "node_modules", "bunx-package", "package.json"), "utf8"))
+          .version,
+      ).toBe("2.1.0");
+      expect(entries.some(n => n.endsWith("-bunx-package@latest"))).toBe(false);
     });
 
     test.skipIf(isWindows)("concurrent age-gated runs share a warm cache without racing", async () => {

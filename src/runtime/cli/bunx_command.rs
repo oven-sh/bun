@@ -613,7 +613,7 @@ impl BunxCommand {
         );
         if in_temp_dir {
             bun_core::note!(
-                "another user owns that directory. Set <b>BUN_INSTALL_CACHE_DIR<r> (or <b>HOME<r>) to a directory you own."
+                "set <b>BUN_INSTALL_CACHE_DIR<r> (or <b>HOME<r>) to a directory you own"
             );
         } else {
             bun_core::note!("remove it and try again");
@@ -808,35 +808,43 @@ impl BunxCommand {
                 root.from_install_cache = true;
                 root
             }
-            // A run that installs creates it, or takes the temp directory if
-            // it cannot. Take the temp directory here too when a run already
-            // did, so this one finds what that one installed.
+            // Not there yet. A run that installs creates it, and takes the
+            // temp directory only if it cannot: one run that had no usable
+            // cache directory must not send later runs to the shared
+            // directory.
             CacheRootState::Missing => {
-                let temp = Self::temp_cache_root(temp_dir);
-                if Self::cache_root_state(&temp.path, uid) == CacheRootState::Private {
-                    temp
-                } else {
-                    root.from_install_cache = true;
-                    root
-                }
+                root.from_install_cache = true;
+                root
             }
             // Somebody else's, reported world-writable by the filesystem
             // (drvfs, ntfs-3g, CIFS without `uid=`), or not statable. Each
             // would refuse every run.
-            CacheRootState::Foreign => {
-                Self::warn_weaker_root(&root.path);
-                Self::temp_cache_root(temp_dir)
-            }
+            CacheRootState::Foreign => Self::temp_cache_root(temp_dir),
         }
     }
 
-    /// The temp directory is shared, so say so when bunx is pushed into it.
+    /// True when the last install into `cache_dir` is more than a day old.
+    /// Read from the package.json bunx rewrites before every install: the
+    /// installed files are hard links into the install cache, whose mtime a
+    /// reinstall never moves, so a bin would stay stale forever.
     #[cfg(unix)]
-    fn warn_weaker_root(unusable: &[u8]) {
-        bun_core::warn!(
-            "bunx cannot use <b>{}<r> as its cache and is using the shared temp directory instead. Set <b>BUN_INSTALL_CACHE_DIR<r> to a directory only you can write.",
-            BStr::new(unusable),
-        );
+    fn install_is_stale(cache_dir: &[u8]) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let name = b"/package.json";
+        if cache_dir.len() + name.len() >= buf.len() {
+            return true;
+        }
+        buf[..cache_dir.len()].copy_from_slice(cache_dir);
+        buf[cache_dir.len()..cache_dir.len() + name.len()].copy_from_slice(name);
+        let len = cache_dir.len() + name.len();
+        buf[len] = 0;
+        match bun_sys::stat(ZStr::from_buf(&buf[..], len)) {
+            Ok(st) => {
+                bun_core::time::timestamp() - bun_sys::stat_mtime(&st).sec
+                    > Self::SECONDS_CACHE_VALID
+            }
+            Err(_) => true,
+        }
     }
 
     /// `GetTempPath` is per-user, so the layout stays as it was.
@@ -1335,13 +1343,7 @@ impl BunxCommand {
                             }
                             #[cfg(not(windows))]
                             {
-                                let stat = match bun_sys::stat(destination) {
-                                    Ok(s) => s,
-                                    Err(_) => break 'is_stale true,
-                                };
-                                break 'is_stale bun_core::time::timestamp()
-                                    - bun_sys::stat_mtime(&stat).sec
-                                    > Self::SECONDS_CACHE_VALID;
+                                break 'is_stale Self::install_is_stale(bunx_cache_dir);
                             }
                         };
 
@@ -1520,7 +1522,6 @@ impl BunxCommand {
             if !cache_root.from_install_cache {
                 Self::refuse_cache_root(&cache_root.path, true);
             }
-            Self::warn_weaker_root(&cache_root.path);
             let tail = if path.len() > path_tail_at {
                 path[path_tail_at..].to_vec()
             } else {
@@ -1536,6 +1537,14 @@ impl BunxCommand {
             {
                 Self::refuse_cache_root(bunx_cache_dir, true);
             }
+        }
+        // The temp directory is shared, so what bunx installs there can be
+        // reached from files other users put beside it.
+        #[cfg(unix)]
+        if !cache_root.from_install_cache {
+            bun_core::warn!(
+                "bunx is installing into the shared temp directory because no cache directory of your own is usable. Set <b>BUN_INSTALL_CACHE_DIR<r> to a directory only you can write."
+            );
         }
         // The root exists and is 0700; this creates the package directory.
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;

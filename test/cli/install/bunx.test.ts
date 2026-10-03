@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isLinux, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, existsSync, readdirSync, statSync, symlinkSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, readdirSync, statSync, symlinkSync, utimesSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, dirname, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -1782,4 +1782,157 @@ it.concurrent.skipIf(isWindows)("creates nothing when it does not install", asyn
 
   expect(existsSync(join(env.HOME, ".bun"))).toBe(false);
   expect(readdirSync(env.TMPDIR).filter(entry => entry.includes("bunx-"))).toEqual([]);
+});
+
+// Counts what a run asks the registry for, so a test can tell a warm cache
+// hit from a reinstall.
+function fixtureRegistry(pkg: string, tgzDir: string) {
+  let requests = 0;
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      requests++;
+      const path = decodeURIComponent(new URL(req.url).pathname);
+      if (path === `/${pkg}`) {
+        return Response.json({
+          name: pkg,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: pkg,
+              version: "1.0.0",
+              bin: { [pkg]: "cli.js" },
+              dist: { tarball: `http://localhost:${server.port}/${pkg}/-/${pkg}-1.0.0.tgz` },
+            },
+          },
+        });
+      }
+      if (path === `/${pkg}/-/${pkg}-1.0.0.tgz`) return new Response(Bun.file(join(tgzDir, `${pkg}-1.0.0.tgz`)));
+      return new Response("not found", { status: 404 });
+    },
+  });
+  return {
+    server,
+    url: `http://localhost:${server.port}/`,
+    get requests() {
+      return requests;
+    },
+    reset() {
+      requests = 0;
+    },
+    [Symbol.dispose]() {
+      server.stop(true);
+    },
+  };
+}
+
+async function packFixture(pkg: string, body: string) {
+  using buildDir = tempDir(`${pkg}-build`, {
+    "package/package.json": JSON.stringify({ name: pkg, version: "1.0.0", bin: { [pkg]: "cli.js" } }),
+    "package/cli.js": body,
+  });
+  chmodSync(join(String(buildDir), "package", "cli.js"), 0o755);
+  const tgzDir = tmpdirSync();
+  await Bun.$`tar -czf ${join(tgzDir, `${pkg}-1.0.0.tgz`)} -C ${String(buildDir)} package`.quiet();
+  return tgzDir;
+}
+
+// The cache holds hard links into the install cache, whose mtime a reinstall
+// never moves, so bunx measures the age of the install from the package.json
+// it writes itself. Reading it off an installed file instead leaves every run
+// after the first day reinstalling, which also fails with no network.
+it.concurrent.skipIf(isWindows)("serves a day-old package from the cache instead of reinstalling", async () => {
+  const { x_dir, env } = setup();
+  delete env.BUN_INSTALL_CACHE_DIR;
+  delete env.BUN_INSTALL;
+  delete env.XDG_CACHE_HOME;
+  env.HOME = tmpdirSync();
+
+  const pkg = "bunx-stale-fixture";
+  const tgzDir = await packFixture(pkg, `#!/bin/sh\necho stale-ok\n`);
+  using registry = fixtureRegistry(pkg, tgzDir);
+
+  const run = async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), "x", pkg],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: { ...env, npm_config_registry: registry.url },
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("stale-ok");
+    expect(exitCode).toBe(0);
+  };
+
+  await run();
+  registry.reset();
+  await run();
+  expect(registry.requests).toBe(0);
+
+  // Age every file of the cache, the way a package installed yesterday looks.
+  const twoDaysAgo = new Date(Date.now() - 2 * 86400_000);
+  const age = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) age(p);
+      else utimesSync(p, twoDaysAgo, twoDaysAgo);
+    }
+  };
+  age(env.HOME);
+
+  // One reinstall, because the install really is a day old.
+  registry.reset();
+  await run();
+  expect(registry.requests).toBeGreaterThan(0);
+
+  // And then warm again, rather than reinstalling on every run.
+  registry.reset();
+  await run();
+  expect(registry.requests).toBe(0);
+});
+
+// A run with no usable cache directory installs into the shared temp
+// directory. It must not send later runs there: those have a cache directory
+// of their own and the protection this file tests belongs to them.
+it.concurrent.skipIf(isWindows)("does not keep using the temp directory once a cache directory works", async () => {
+  const { x_dir, env } = setup();
+  const uid = process.getuid!();
+  delete env.BUN_INSTALL_CACHE_DIR;
+  delete env.BUN_INSTALL;
+  delete env.XDG_CACHE_HOME;
+
+  const pkg = "bunx-sticky-fixture";
+  const tgzDir = await packFixture(pkg, `#!/bin/sh\necho sticky-ok\n`);
+  using registry = fixtureRegistry(pkg, tgzDir);
+
+  const run = async (runEnv: Record<string, string>) => {
+    await using proc = spawn({
+      cmd: [bunExe(), "x", pkg],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: { ...runEnv, npm_config_registry: registry.url },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("sticky-ok");
+    expect(exitCode).toBe(0);
+    return stderr;
+  };
+
+  // No HOME: the temp directory is all that is left, and bunx says so.
+  const noHome = { ...env };
+  delete noHome.HOME;
+  const warned = await run(noHome);
+  expect(statSync(join(env.TMPDIR, `.bunx-${uid}`, `${pkg}@latest`)).isDirectory()).toBe(true);
+  expect(warned).toContain("shared temp directory");
+
+  // With a HOME, the cache belongs under it, even though the temp root is
+  // there and holds this package.
+  const home = tmpdirSync();
+  await run({ ...env, HOME: home });
+  expect(statSync(join(home, ".bun", "install", "cache", `.bunx-${uid}`, `${pkg}@latest`)).isDirectory()).toBe(true);
 });

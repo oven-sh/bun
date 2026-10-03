@@ -2042,6 +2042,7 @@ pub(crate) fn install_isolated_packages(
             manager: manager_ptr,
             command_ctx,
             installed,
+            pending_scripts_entries: DynamicBitSet::init_empty(store.entries.len())?,
             install_node: if show_progress {
                 Some(&mut install_node)
             } else {
@@ -2218,7 +2219,17 @@ pub(crate) fn install_isolated_packages(
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
-                    let needs_install = installer.manager().options.enable.force_install()
+                    // An earlier install linked this entry and then failed or died before its
+                    // lifecycle scripts finished.
+                    let left_pending = !uses_global_store
+                        && installer.manager().pending_scripts.has_stale()
+                        && installer
+                            .manager()
+                            .pending_scripts
+                            .is_stale(&installer.pending_scripts_key(entry_id));
+
+                    let needs_install = left_pending
+                        || installer.manager().options.enable.force_install()
                         // A freshly-created `node_modules/.bun` only implies the
                         // *project-local* entries are missing; global virtual-
                         // store entries persist across `rm -rf node_modules` and
@@ -2328,6 +2339,34 @@ pub(crate) fn install_isolated_packages(
                             .store(installer::Step::Done as u32, Ordering::Relaxed);
                         installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                         continue;
+                    }
+
+                    // Written before the entry is linked: from here until its last script
+                    // exits 0 the entry is verifiable but not finished.
+                    if !uses_global_store && installer.manager().pending_scripts.is_enabled() {
+                        let is_trusted = installer
+                            .trusted_dependencies_from_update_requests
+                            .contains(&pkg_id)
+                            || {
+                                // a started task's `RunPreinstall` may be inserting a `--trust`ed name
+                                let _unlock = installer.trusted_dependencies_mutex.lock_guard();
+                                lockfile_ro.has_trusted_dependency(
+                                    lockfile_ro.buffers.dependencies[dep_id as usize]
+                                        .name
+                                        .slice(string_buf),
+                                    pkg_name.slice(string_buf),
+                                    &pkg_res,
+                                )
+                            };
+                        if is_trusted || left_pending {
+                            let key = installer.pending_scripts_key(entry_id);
+                            if !is_trusted {
+                                // no longer trusted: no script will run for it
+                                installer.manager_mut().pending_scripts.done(&key);
+                            } else if installer.manager_mut().pending_scripts.begin(&key) {
+                                installer.pending_scripts_entries.set(entry_id.get() as usize);
+                            }
+                        }
                     }
 
                     // Downloads only produce the unpatched folder; `apply_package_patch` derives the rest.

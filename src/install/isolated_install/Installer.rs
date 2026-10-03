@@ -75,6 +75,8 @@ pub struct Installer<'a> {
 
     pub(crate) summary: InstallSummary,
     pub(crate) installed: Bitset,
+    /// Entries with an open record in the pending-scripts journal. Main thread only.
+    pub(crate) pending_scripts_entries: Bitset,
     pub(crate) install_node: Option<&'a mut ProgressNode>,
     pub(crate) is_new_bun_modules: bool,
 
@@ -508,6 +510,15 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread
     pub(crate) fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
+        if state != CompleteState::Fail
+            && self.pending_scripts_entries.is_set(entry_id.get() as usize)
+        {
+            self.pending_scripts_entries
+                .unset(entry_id.get() as usize);
+            let key = self.pending_scripts_key(entry_id);
+            self.manager_mut().pending_scripts.done(&key);
+        }
+
         let state = match self.tasks[entry_id.get() as usize].relink {
             Relink::Unchanged => CompleteState::Skipped,
             Relink::Off | Relink::Pending | Relink::Changed => state,
@@ -1601,6 +1612,8 @@ impl Task {
                         {
                             break 'brk (true, true);
                         }
+                        // another task's `RunPreinstall` may be inserting a `--trust`ed name
+                        let _unlock = installer.trusted_dependencies_mutex.lock_guard();
                         if lockfile.has_trusted_dependency(
                             dep.name.slice(string_buf),
                             pkg_name.slice(string_buf),
@@ -2707,6 +2720,14 @@ impl<'a> Installer<'a> {
             return;
         }
         self.append_store_path(buf, entry_id);
+    }
+
+    /// The name of `entry_id` in the pending-scripts journal: its package directory relative
+    /// to the project root.
+    pub(crate) fn pending_scripts_key(&self, entry_id: StoreEntryId) -> Vec<u8> {
+        let mut path = AutoRelPath::init();
+        self.append_store_path(&mut path, entry_id);
+        path.slice().to_vec()
     }
 
     pub(crate) fn append_store_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {

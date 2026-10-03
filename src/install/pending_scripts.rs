@@ -62,6 +62,12 @@ impl PendingScripts {
         }
     }
 
+    /// This install records the packages it links and retries the ones left pending.
+    #[inline]
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     #[inline]
     pub fn has_stale(&self) -> bool {
         !self.stale.is_empty()

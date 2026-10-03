@@ -105,9 +105,7 @@ bitflags::bitflags! {
         const IS_EXECUTABLE = 1 << 0;
         const HAS_HTML_CHUNK = 1 << 1;
         const IS_BROWSER_CHUNK_FROM_SERVER_BUILD = 1 << 2;
-        /// An entry point's chunk that holds no file: the parent chunk of its class runs them (`merge_small_chunks`).
-        const FILES_IN_PARENT_CHUNK = 1 << 3;
-        // _padding: u4 = 0
+        // _padding: u5 = 0
     }
 }
 
@@ -1320,6 +1318,8 @@ pub struct JavaScriptChunk {
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
     // for code splitting
+    /// Of an entry point's chunk that holds no file: the parent chunk of its class, which runs them (`merge_small_chunks`).
+    pub(crate) parent_chunk: Option<u32>,
     /// The other chunks with top-level side effects that the walk ordering
     /// this chunk reaches, in the order it finishes their first file with
     /// side effects: the order the unbundled modules would run them in.

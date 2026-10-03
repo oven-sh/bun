@@ -867,6 +867,38 @@ describe("bundler", () => {
     onAfterBundle: noChunkImportsIndex,
     run: { file: "/out/index.js", stdout: "polyfill\nsetup 1\nstore 1\nindex app\nsettings app" },
   });
+  // util.js runs nothing, so index.js needs no import of its chunk. Without one, a browser finds that chunk only behind the chunk with the code of index.js.
+  itBundled("splitting/EntryFileImportsWhatItsCodeImports", {
+    files: {
+      "/index.js": /* js */ `
+        import { util } from "./util.js";
+        import { s } from "./store.js";
+        console.log("index", util(), s);
+        import("./route.js");
+      `,
+      "/admin.js": `import { util } from "./util.js"; console.log("admin", util());`,
+      "/util.js": `export function util() { return "util"; }`,
+      "/store.js": `console.log("store"); export const s = 1;`,
+      "/route.js": `import { s } from "./store.js"; console.log("route", s);`,
+    },
+    entryPoints: ["/index.js", "/admin.js"],
+    splitting: true,
+    minChunkSize: 0,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(
+        api
+          .readFile("/out/index.js")
+          .match(/"\.\/[^"]+"/g)!
+          .sort(),
+      ).toEqual(
+        [chunkContaining(api, `"index"`), chunkContaining(api, `return "util"`)].map(file => `"./${file}"`).sort(),
+      );
+    },
+    run: { file: "/out/index.js", stdout: "store\nindex util 1\nroute 1" },
+  });
   // index.js holds no file, so a walk from its files gives its imports no order.
   for (const [name, index, lazy, stdout] of [
     [

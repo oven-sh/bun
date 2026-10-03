@@ -568,6 +568,27 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         }
     }
 
+    // The chunk that held the entry point's files imported these itself. A browser finds them one round trip later behind the parent chunk.
+    for chunk_index in 0..chunks.len() {
+        let chunk::Content::Javascript(js) = &chunks[chunk_index].content else {
+            continue;
+        };
+        let Some(parent) = js.parent_chunk else {
+            continue;
+        };
+        let imported: Vec<u32> = chunks[parent as usize]
+            .content
+            .javascript()
+            .imports_from_other_chunks
+            .keys()
+            .to_vec();
+        let js = chunks[chunk_index].content.javascript_mut();
+        for other_chunk_index in imported {
+            js.imports_from_other_chunks
+                .get_or_put_value(other_chunk_index, CrossChunkImportItemList::default())?;
+        }
+    }
+
     // Generate cross-chunk export clauses. Aliases are left empty here and in
     // the import clauses below; `cross_chunk_names` fills both in once every
     // chunk's renamer has run.

@@ -731,7 +731,7 @@ The renamed symbols are then used during final code generation to produce output
 - Handles CSS chunking strategies
 - Manages HTML chunk creation
 - Assigns unique keys and templates to chunks
-- Names the parent chunk that runs an entry point's files (`FILES_IN_PARENT_CHUNK`) after the entry point's own chunk, with `-[hash]`, so relative paths in its code keep their meaning
+- Names the parent chunk that runs an entry point's files (`JavaScriptChunk::parent_chunk`) after the entry point's own chunk, with `-[hash]`, so relative paths in its code keep their meaning
 
 #### `mergeSmallChunks.rs`
 
@@ -769,7 +769,7 @@ The renamed symbols are then used during final code generation to produce output
 - One walk per entry point, in parallel. A chunk has one owner: the entry point that loads first among the chunk's entry points (`load_rank`). `load_rank` and `EntryWalk` read the same edges (`for_each_edge`). The owner's walk places the files of the chunk, so no two walks write the same list. Without code splitting, each chunk is owned by its own entry point
 - Places the parts of a file in runs: a part prints after the files it imports and before the files that the next part imports
 - Collects the live parts of each run into part ranges
-- Records the other chunks in the order a walk from the chunk's files reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements. An entry point's chunk whose files are in the parent chunk (`FILES_IN_PARENT_CHUNK`) walks from the entry point's file, and imports the parent chunk last
+- Records the other chunks in the order a walk from the chunk's files reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements. An entry point's chunk whose files are in the parent chunk walks from the entry point's file, and imports the parent chunk last
 
 #### `findImportedCSSFilesInJSOrder.rs`
 

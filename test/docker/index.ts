@@ -14,7 +14,6 @@ export type ServiceName =
   | "mysql_native_password"
   | "mysql_tls"
   | "mariadb_plain"
-  | "redis_plain"
   | "redis_unified"
   | "autobahn"
   | "squid";
@@ -59,7 +58,6 @@ const serviceMeta: Record<ServiceName, { ports: number[]; tls?: ServiceInfo["tls
       key: join(__dirname, "../js/sql/mysql-tls/ssl/server-key.pem"),
     },
   },
-  redis_plain: { ports: [6379] },
   redis_unified: {
     ports: [6379, 6380],
     tls: {
@@ -217,9 +215,9 @@ class DockerComposeHelper {
   }
 
   private async doUp(service: ServiceName): Promise<void> {
-    // Pre-build the service (a no-op for image-only services) so build time
-    // doesn't eat into the `up --wait` timeout below. CI pre-bakes everything
-    // via buildServices(); this covers local dev where that wasn't run.
+    // Pre-build the service so build time doesn't eat into the `up --wait`
+    // timeout below. CI pre-bakes everything via buildServices(); this covers
+    // local dev where that wasn't run.
     const buildResult = await this.exec(["build", service]);
     if (buildResult.exitCode !== 0) {
       throw new Error(`Failed to build service ${service}: ${buildResult.stderr}`);
@@ -244,13 +242,29 @@ class DockerComposeHelper {
     // mysqld`); 180 is generous headroom so a slow host or a service whose
     // init regresses surfaces as a single diagnosable failure here rather than
     // cascading through every test file that asks for it.
-    const { exitCode, stderr } = await this.exec(["up", "-d", "--wait", "--wait-timeout", "180", service]);
+    // --pull never: an image comes from `compose build` only, above or in the
+    // bake of a CI machine image (buildServices()). Without it, compose pulls
+    // the image of a service with no `build:` section on every test machine.
+    const { exitCode, stderr } = await this.exec([
+      "up",
+      "-d",
+      "--wait",
+      "--wait-timeout",
+      "180",
+      "--pull",
+      "never",
+      service,
+    ]);
 
     if (exitCode !== 0) {
       const ps = await this.exec(["ps", "-a", service]);
       const logs = await this.exec(["logs", "--tail", "50", service]);
+      const note = stderr.includes("No such image")
+        ? `note: \`compose up\` runs with \`--pull never\`. The image of ${service} has to come from a \`build:\` section in ${this.composeFile}.\n`
+        : "";
       throw new Error(
-        `Failed to start service ${service}: ${stderr}\n` + `--- ps ---\n${ps.stdout}\n--- logs ---\n${logs.stdout}`,
+        `Failed to start service ${service}: ${stderr}\n${note}` +
+          `--- ps ---\n${ps.stdout}\n--- logs ---\n${logs.stdout}`,
       );
     }
 
@@ -418,7 +432,6 @@ class DockerComposeHelper {
         }
         break;
 
-      case "redis_plain":
       case "redis_unified":
         env.REDIS_HOST = info.host;
         env.REDIS_PORT = info.ports[6379].toString();
@@ -484,37 +497,16 @@ class DockerComposeHelper {
   }
 
   /**
-   * Pull all Docker images explicitly - useful for CI
-   */
-  async pullImages(): Promise<void> {
-    console.log("Pulling Docker images...");
-    const { exitCode, stderr } = await this.exec(["pull", "--ignore-pull-failures"]);
-
-    if (exitCode !== 0) {
-      // Don't fail on pull errors since some services need building
-      console.warn(`Warning during image pull: ${stderr}`);
-    }
-  }
-
-  /**
-   * Build all services that need building - useful for CI
+   * Build the image of every service - what the bake of a CI machine image runs
    */
   async buildServices(): Promise<void> {
     // Bare `compose build` builds every service that has a `build:` section,
-    // so there's no hardcoded list to keep in sync as services are converted.
+    // which is every service: doUp() starts none that compose would pull.
     console.log("Building all services with a build section...");
     const { exitCode, stderr } = await this.exec(["build"]);
     if (exitCode !== 0) {
       throw new Error(`Failed to build services: ${stderr}`);
     }
-  }
-
-  /**
-   * Prepare all images (pull and build) - useful for CI
-   */
-  async prepareImages(): Promise<void> {
-    await this.pullImages();
-    await this.buildServices();
   }
 }
 
@@ -553,16 +545,8 @@ export async function waitTcp(host: string, port: number, timeout?: number): Pro
   return getHelper().waitTcp(host, port, timeout);
 }
 
-export async function pullImages(): Promise<void> {
-  return getHelper().pullImages();
-}
-
 export async function buildServices(): Promise<void> {
   return getHelper().buildServices();
-}
-
-export async function prepareImages(): Promise<void> {
-  return getHelper().prepareImages();
 }
 
 // Higher-level wrappers for tests
@@ -597,24 +581,6 @@ export async function withMySQL(
 
   try {
     await fn({ ...info, url });
-  } finally {
-    // Services persist - no teardown
-  }
-}
-
-export async function withRedis(
-  opts: { variant?: "plain" | "unified" },
-  fn: (info: ServiceInfo & { url: string; tlsUrl?: string }) => Promise<void>,
-): Promise<void> {
-  const variant = opts.variant || "plain";
-  const serviceName = `redis_${variant}` as ServiceName;
-  const info = await ensure(serviceName);
-
-  const url = `redis://${info.host}:${info.ports[6379]}`;
-  const tlsUrl = info.ports[6380] ? `rediss://${info.host}:${info.ports[6380]}` : undefined;
-
-  try {
-    await fn({ ...info, url, tlsUrl });
   } finally {
     // Services persist - no teardown
   }

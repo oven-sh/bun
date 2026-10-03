@@ -287,7 +287,10 @@ A: No! `ensure()` starts them automatically if needed.
 A: Add it to docker-compose.yml and create a PR.
 
 **Q: How do I update a service version?**
-A: Edit docker-compose.yml and run `docker-compose pull`.
+A: Edit the `FROM` line of the service's Dockerfile. The next `ensure()` builds the image again.
+
+**Q: When do the CI machines get a new or changed image?**
+A: At the next bake of the CI machine images. A change under `test/docker` starts no bake. Until then, each CI test machine builds the image before it starts the service. `scripts/build/ci-images/CLAUDE.md` ("Refresh what is prefetched") says how to start a bake.
 
 **Q: Can I run tests in parallel?**
 A: Yes! Each service can handle multiple connections.
@@ -320,7 +323,7 @@ A: This tells Docker to pick any available port, preventing conflicts.
 
 To add a new service:
 
-1. Add service definition to `docker-compose.yml`
+1. Add service definition to `docker-compose.yml`, with a `build:` section (a Dockerfile of one line, `FROM <image>`, is enough)
 2. Use dynamic ports unless specific port required
 3. Add health check if possible
 4. Document in this README

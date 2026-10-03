@@ -58,8 +58,6 @@ public:
     uint64_t prevDeltaTime = 0;
     size_t exceedsCount = 0;
     uint64_t totalCount = 0; // Manual count to track all values (Node.js behavior)
-    int64_t manualMin = std::numeric_limits<int64_t>::max(); // Manual min tracking
-    int64_t manualMax = 0; // Manual max tracking
 
     HistogramData(hdr_histogram* histogram)
         : histogram(histogram)
@@ -79,16 +77,12 @@ public:
         , prevDeltaTime(other.prevDeltaTime)
         , exceedsCount(other.exceedsCount)
         , totalCount(other.totalCount)
-        , manualMin(other.manualMin)
-        , manualMax(other.manualMax)
     {
         // Invalidate other's histogram pointer to avoid double free
         other.histogram = nullptr;
         other.prevDeltaTime = 0;
         other.exceedsCount = 0;
         other.totalCount = 0;
-        other.manualMin = std::numeric_limits<int64_t>::max();
-        other.manualMax = 0;
     }
 };
 

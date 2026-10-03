@@ -7420,6 +7420,27 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // A `--cwd` longer than the path buffer must fail like any other path the OS rejects.
+  // Windows is left out: its buffer holds more than any path the OS accepts.
+  it.skipIf(isWindows).each([
+    ["relative", "./"],
+    ["absolute", "/"],
+  ])("should report a %s --cwd longer than the path buffer as ENAMETOOLONG", async (_, prefix) => {
+    using dir = tempDir("cwd-too-long", { "package.json": JSON.stringify({ name: "foo", version: "0.1.0" }) });
+    const cwd = prefix + Buffer.alloc(4200, "a").toString();
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--cwd", cwd],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain(`failed to change directory to "${cwd}": ENAMETOOLONG`);
+    expect(out).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
   // https://github.com/oven-sh/bun/issues/19088
   //
   // Workspace package.jsons are parsed without the root's duplicate check, so a name listed in

@@ -406,6 +406,60 @@ describe("certificate authority", () => {
     expect(await exited).toBe(1);
   });
 
+  // A relative `cafile` is joined onto the cwd into a path buffer of MAX_PATH_BYTES (4096 bytes on
+  // Linux, 1024 on macOS). A joined path that fits reaches the HTTP thread, which reports it in
+  // full. One that does not fit is reported under the name the user gave. Windows is left out: its
+  // buffer holds more than any path the OS accepts.
+  describe.skipIf(isWindows)("relative cafile near the path buffer length", () => {
+    const maxPathBytes = isLinux ? 4096 : 1024;
+
+    // A file name that brings `<packageDir>/<name>` to `maxPathBytes + delta` bytes.
+    const nameFor = (delta: number) =>
+      Buffer.alloc(maxPathBytes + delta - Buffer.byteLength(packageDir + "/"), "a").toString();
+
+    // `--silent` keeps the main thread's "Resolving dependencies" line off stderr. Each thread
+    // writes to stderr on its own, so that line can otherwise land inside the HTTP thread's
+    // error message when the path is longer than the write buffer.
+    async function install(args: string[]) {
+      await write(
+        packageJson,
+        JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--silent", ...args],
+        cwd: packageDir,
+        stderr: "pipe",
+        stdout: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(out).not.toContain("no-deps");
+      return { err, exitCode };
+    }
+
+    test.each([
+      ["fits the buffer exactly", 0, (cafile: string) => join(packageDir, cafile)],
+      ["is one byte past the buffer", 1, (cafile: string) => cafile],
+      ["is far past the buffer", 4090, (cafile: string) => cafile],
+    ])("non-existent --cafile that %s", async (_, delta, expectedPath) => {
+      const cafile = nameFor(delta);
+      const { err, exitCode } = await install(["--cafile", cafile]);
+      expect(err).toContain(`HTTPThread: could not find CA file: '${expectedPath(cafile)}'`);
+      expect(exitCode).toBe(1);
+    });
+
+    test("non-existent cafile from bunfig that is one byte past the buffer", async () => {
+      const cafile = nameFor(1);
+      await write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({ install: { cache: false, registry: `http://localhost:${port}/`, cafile } }),
+      );
+      const { err, exitCode } = await install([]);
+      expect(err).toContain(`HTTPThread: could not find CA file: '${cafile}'`);
+      expect(exitCode).toBe(1);
+    });
+  });
+
   test("non-existent --cafile with workspaces exits 1 without crashing", async () => {
     // The workspace walk in `PackageManager::init()` populates the workspace
     // package.json cache before the HTTP thread starts. When the HTTP thread

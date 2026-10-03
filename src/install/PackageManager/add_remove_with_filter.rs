@@ -10,7 +10,9 @@ use bun_core::{Global, Output, strings};
 use bun_install::dependency;
 use bun_install::{Lockfile, PackageID, PackageNameHash};
 use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{self, Platform, join_abs_string_buf, platform};
+use bun_paths::resolve_path::{
+    self, Platform, join_abs_string_buf, join_abs_string_buf_checked, platform,
+};
 use bun_sys::{Fd, File};
 
 use super::add_catalog;
@@ -401,8 +403,18 @@ fn assign_requests(
             requests.push(request);
             continue;
         };
-        let abs: Box<[u8]> =
-            join_abs_string_buf::<platform::Auto>(original_cwd, &mut buf.0, &[path]).into();
+        let Some(abs) =
+            join_abs_string_buf_checked::<platform::Auto>(original_cwd, &mut buf.0, &[path])
+        else {
+            Output::err_generic(
+                "Dependency \"{}\" has an unsafe folder path",
+                (BStr::new(
+                    request.version.literal.slice(request.version_buf()),
+                ),),
+            );
+            Global::crash();
+        };
+        let abs: Box<[u8]> = abs.into();
         slots.push(Slot::PerTarget(
             targets
                 .iter()

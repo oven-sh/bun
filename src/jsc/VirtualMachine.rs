@@ -3536,9 +3536,10 @@ impl VirtualMachine {
             self.entry_evaluation_started = false;
             let global = self.global;
             let main_str = bun_core::String::from_bytes(self.main());
-            let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str)
-                .map(NonNull::as_ptr)
-                .ok_or(crate::CrateError::JSError)?;
+            let promise =
+                jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
+                    .map(NonNull::as_ptr)
+                    .ok_or(crate::CrateError::JSError)?;
             self.set_pending_internal_promise(Some(promise));
             Ok(promise)
         }
@@ -5588,7 +5589,9 @@ impl VirtualMachine {
         // Note: reshaped for borrowck.
         let global = self.global;
         let main_str = bun_core::String::from_bytes(self.main());
-        let promise = match jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str) {
+        let promise = match jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
+            global, &main_str,
+        ) {
             Some(promise) => promise.as_ptr(),
             // Not resolving is this file's failure, like not loading.
             None => {

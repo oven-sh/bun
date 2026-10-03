@@ -31,7 +31,6 @@
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/Completion.h>
-#include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
@@ -926,20 +925,15 @@ JSValue fetchCommonJSModuleNonBuiltin(
     RELEASE_AND_RETURN(scope, jsNumber(-1));
 }
 
-JSC::JSPromise* resolveAndEvaluateModule(JSC::JSGlobalObject* globalObject, const WTF::String& specifier)
+extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* specifier)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // JSC::loadAndEvaluateModule() takes a key: WebCore gives it the URL it has parsed from <script src>.
-    auto key = globalObject->globalObjectMethodTable()->moduleLoaderResolve(globalObject, globalObject->moduleLoader(), JSC::jsString(vm, specifier), JSC::jsUndefined(), nullptr, /* useImportMap */ true);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_AND_RETURN(scope, JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr));
-}
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, specifier->toWTFString()), {}, nullptr, /* useImportMap */ true);
+    if (scope.exception()) [[unlikely]]
+        return nullptr;
 
-extern "C" JSC::JSPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* specifier)
-{
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
-    auto* promise = resolveAndEvaluateModule(globalObject, specifier->toWTFString());
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
     EXCEPTION_ASSERT(!!promise == !scope.exception());
     return promise;
 }

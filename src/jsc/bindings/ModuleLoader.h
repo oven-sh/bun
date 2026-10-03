@@ -98,9 +98,6 @@ JSValue fetchESMSourceCodeAsync(
     BunString* referrer,
     BunString* typeAttribute);
 
-// Resolves `specifier` with no importer, then loads and evaluates it. Null, with the exception pending, if it does not resolve.
-JSC::JSPromise* resolveAndEvaluateModule(JSC::JSGlobalObject*, const WTF::String& specifier);
-
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* moduleObject,

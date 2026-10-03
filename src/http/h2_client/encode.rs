@@ -523,17 +523,21 @@ pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
         None => false,
     };
     #[cfg(debug_assertions)]
-    for &stream in session.streams.values() {
-        let s = super::client_session::stream_mut(stream);
-        debug_assert!(
-            s.queued
-                || s.pending_body.is_empty()
-                || s.local_closed()
-                || s.fatal_error.is_some()
-                || s.client.is_none(),
-            "h2 stream {} has unsent body bytes and is not in the send queue",
-            s.id
-        );
+    {
+        let queued = session.send_queue.as_ref().map_or(0, |q| q.ids.len());
+        debug_assert!(queued <= session.streams.count());
+        for &stream in session.streams.values() {
+            let s = super::client_session::stream_mut(stream);
+            debug_assert!(
+                s.queued
+                    || s.pending_body.is_empty()
+                    || s.local_closed()
+                    || s.fatal_error.is_some()
+                    || s.client.is_none(),
+                "h2 stream {} has unsent body bytes and is not in the send queue",
+                s.id
+            );
+        }
     }
     more
 }

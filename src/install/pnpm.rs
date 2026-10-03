@@ -1306,7 +1306,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                         bun_core::warn!(
                                             "fetching pnpm registry \"{}\" packages from {}; add it to bunfig.toml or .npmrc if it needs authentication",
                                             bstr::BStr::new(registry_name),
-                                            bstr::BStr::new(url)
+                                            bun_core::fmt::redacted_npm_url(url)
                                         );
                                     }
                                     &**url

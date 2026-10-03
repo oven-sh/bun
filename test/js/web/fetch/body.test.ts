@@ -595,6 +595,23 @@ for (const { body, fn } of bodyTypes) {
         }).toThrow(TypeError);
         expect(cancelled).toBeInstanceOf(TypeError);
       });
+      test("releases the source stream when a read of it throws", async () => {
+        // The close() hook of a direct source throws out of the second read of the source.
+        const source = new ReadableStream({
+          type: "direct",
+          pull(controller) {
+            controller.write("a");
+            controller.close();
+          },
+          close() {
+            throw new Error("close hook");
+          },
+        } as Bun.DirectUnderlyingSource);
+        const reader = fn(source).textStream().getReader();
+        expect(await reader.read()).toEqual({ value: "a", done: false });
+        await expect(reader.read()).rejects.toThrow("close hook");
+        expect(source.locked).toBe(false);
+      });
       test("treats a detached BufferSource chunk as empty", async () => {
         const view = new Uint8Array([0x68, 0x69]);
         structuredClone(view, { transfer: [view.buffer] });

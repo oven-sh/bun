@@ -5171,6 +5171,13 @@ declare module "bun" {
      * backpressure instead of the client buffering in memory. Messages
      * already received may still be dispatched. A pause before the
      * connection opens takes effect once it does.
+     *
+     * A paused client reads nothing from the socket. It does not answer
+     * Ping frames. It does not see a Close frame or the end of the
+     * connection, so the `close` event can wait until `resume()`. A server
+     * with an idle timeout (`Bun.serve`: 120 seconds by default) closes a
+     * connection that stays paused and silent for longer than the timeout.
+     * `send()`, `ping()`, and `pong()` still work while paused.
      * @returns `true` if the socket was paused (or will be on open), `false` if there is no socket to pause
      */
     pause(): boolean;

@@ -33,6 +33,7 @@ type ArrayType =
   | "DOUBLE PRECISION"
   | "NUMERIC"
   | "MONEY"
+  | "UUID"
   | "OID"
   | "TID"
   | "XID"

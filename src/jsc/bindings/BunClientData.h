@@ -273,6 +273,8 @@ public:
     // Stopping: the stop has been requested (any thread; `!scriptAllowed()`). Stopped: it has been carried out on
     // this thread and JSC forbids execution. Either way no script may be entered on this VM.
     ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
+    // WorkerGlobalScope.close() was called; the checkpoint that ends the task consumes it. JS thread only.
+    bool workerCloseRequested { false };
     Bun::JSCTaskScheduler deferredWorkTimer;
 
     // One slot per string of the executable's module-info string table,

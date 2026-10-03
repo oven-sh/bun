@@ -1437,6 +1437,17 @@ declare function structuredClone<T>(value: T, options?: Bun.StructuredSerializeO
  */
 declare function postMessage(message: any, transfer?: Bun.Transferable[]): void;
 
+/**
+ * Stop this worker once the currently running script returns. Queued tasks
+ * (timers, messages) are discarded. The script that called `close()` runs to
+ * its end, so a `postMessage()` after it still reaches the parent.
+ *
+ * Only available in a Web Worker (`new Worker()`), as
+ * [`WorkerGlobalScope.close()`](https://developer.mozilla.org/docs/Web/API/WorkerGlobalScope/close).
+ * The main thread and `node:worker_threads` workers do not have it.
+ */
+declare function close(): void;
+
 interface EventSourceInit {
   withCredentials?: boolean;
 }

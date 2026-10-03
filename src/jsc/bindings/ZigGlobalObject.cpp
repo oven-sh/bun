@@ -637,6 +637,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
             }
 
+            // DedicatedWorkerGlobalScope.close(): not on node:worker_threads workers, as in Node.
+            if (options.kind == WebCore::WorkerOptions::Kind::Web)
+                globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "close"_s), 0, WebCore::jsFunctionWorkerGlobalScopeClose, ImplementationVisibility::Public, NoIntrinsic, 0);
+
             // Ensure that the TerminationException singleton is constructed. Workers need this so
             // that we can request their termination from another thread. For the main thread, we
             // can delay this until we are actually requesting termination (until and unless we ever
@@ -3088,6 +3092,15 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JS
 
 // ====================== end conditional builtin globals ======================
 
+// The task that called WorkerGlobalScope.close() has ended: stop the worker, as process.exit() does.
+extern "C" void WebWorker__close(void* bunVM);
+
+// The worker loop reads this flag between tasks, one load a read. Valid while the VM lives.
+extern "C" const bool* Zig__GlobalObject__workerCloseRequested(Zig::GlobalObject* globalObject)
+{
+    return &WebCore::clientData(globalObject->vm())->workerCloseRequested;
+}
+
 uint8_t GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
@@ -3127,8 +3140,9 @@ uint8_t GlobalObject::drainMicrotasks()
     if (!vm.entryScope)
         m_asyncContextData.get()->putInternalField(vm, 0, m_moduleGraphs ? Bun::moduleGraphAsyncContextAtEventLoop(this) : jsUndefined());
 
-    // The result of the checkpoint when an exception ends it.
-    auto endedByException = [&]() -> std::optional<uint8_t> {
+    // The result of the checkpoint when an exception ends it. Forced inline: the inliner outlines it for its
+    // use in the cold close() block, and then every call builds the capture block on the stack.
+    auto endedByException = [&]() ALWAYS_INLINE_LAMBDA -> std::optional<uint8_t> {
         auto* exception = scope.exception();
         if (!exception)
             return std::nullopt;
@@ -3142,30 +3156,47 @@ uint8_t GlobalObject::drainMicrotasks()
     };
 
     // Scheduled ticks run first, and processTicksAndRejections runs the microtasks after them.
-    auto* nextTickQueue = this->m_nextTickQueue.get();
-    if (nextTickQueue && !nextTickQueue->isEmpty()) {
-        nextTickQueue->drain(vm, this);
+    auto checkpoint = [&]() ALWAYS_INLINE_LAMBDA -> uint8_t {
+        auto* nextTickQueue = this->m_nextTickQueue.get();
+        if (nextTickQueue && !nextTickQueue->isEmpty()) {
+            nextTickQueue->drain(vm, this);
+            if (auto result = endedByException())
+                return *result;
+        }
+
+        vm.drainMicrotasks();
         if (auto result = endedByException())
             return *result;
+
+        // A microtask can schedule a tick, and it can create the queue.
+        nextTickQueue = this->m_nextTickQueue.get();
+        if (nextTickQueue && !nextTickQueue->isEmpty()) {
+            nextTickQueue->drain(vm, this);
+            if (auto result = endedByException())
+                return *result;
+        }
+        return 0;
+    };
+    uint8_t result = checkpoint();
+    if (result == 1)
+        return 1;
+
+    // close() stops the worker at the checkpoint that ends the calling task (no script on the stack),
+    // whether or not that checkpoint reported an error.
+    auto* clientData = WebCore::clientData(vm);
+    if (clientData->workerCloseRequested && !vm.entryScope) [[unlikely]] {
+        clientData->workerCloseRequested = false;
+        WebWorker__close(bunVM());
+        (void)endedByException();
+        return 1;
     }
 
-    vm.drainMicrotasks();
-    if (auto result = endedByException())
-        return *result;
-
-    // A microtask can schedule a tick, and it can create the queue.
-    nextTickQueue = this->m_nextTickQueue.get();
-    if (nextTickQueue && !nextTickQueue->isEmpty()) {
-        nextTickQueue->drain(vm, this);
-        if (auto result = endedByException())
-            return *result;
-    }
-
-    return 0;
+    return result;
 }
 
 // The Rust event loop's entry to drainMicrotasks() (`EventLoop::exit()` and the
-// drains between queued items): 0 drained, 1 the VM is terminating.
+// drains between queued items): 0 drained, 1 the VM is terminating (or the worker
+// just stopped itself through close()).
 //
 // One case is answered here instead: a Rust frame can be leaving through
 // `exit()` with a (non-termination) exception pending that the dispatcher above

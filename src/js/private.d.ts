@@ -73,6 +73,8 @@ declare module "bun" {
   namespace Serve {
     interface NodeHTTPServeOptions<WebSocketData> extends HostnamePortServeOptions<WebSocketData> {
       unix?: string;
+      // `listen({ fd })`: set in place of `port`, `hostname` and `unix`.
+      fd?: number;
       websocket: WebSocketHandler<WebSocketData>;
       onNodeHTTPRequest(
         bunServer: Server<WebSocketData>,

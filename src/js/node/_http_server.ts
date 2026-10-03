@@ -64,6 +64,7 @@ const {
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
+const NumberIsInteger = Number.isInteger;
 
 const { IncomingMessage, kReqShouldKeepAlive } = require("node:_http_incoming");
 const {
@@ -83,6 +84,7 @@ const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kPendingDrainClose = Symbol("http.server.pendingDrainClose");
 const kPendingCloseGenerations = Symbol("http.server.pendingCloseGenerations");
 const kListenerGeneration = Symbol("http.server.listenerGeneration");
+const kListenFd = Symbol("http.server.listenFd");
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
 const kHandedOff = Symbol("http.server.socketHandedOff");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
@@ -266,6 +268,19 @@ function emitListenErrorNextTick(self, err) {
   self.emit("error", err);
 }
 
+// Node reports each of these as EINVAL: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1905-L1911
+function listenFdError(code) {
+  if (code !== "EINVAL" && code !== "EBADF" && code !== "ENOTSOCK" && code !== "EOPNOTSUPP" && code !== "ENOTSUP") {
+    return undefined;
+  }
+  const err: any = new Error("listen EINVAL: invalid argument");
+  err.errno = process.platform === "win32" ? -4071 : -22; // UV_EINVAL
+  err.code = "EINVAL";
+  err.syscall = "listen";
+  err.address = null;
+  return err;
+}
+
 // Node.js only requests a client certificate when `requestCert: true`.
 // The uSockets SSL context treats `ca` alone as "verify peer", so without
 // these two flags an `https.Server({ ca })` would reject every client that
@@ -321,6 +336,7 @@ function Server(options, callback): void {
   this[kPendingDrainClose] = false;
   this[kPendingCloseGenerations] = new Set();
   this[kListenerGeneration] = undefined;
+  this[kListenFd] = false;
   this[tlsSymbol] = null;
   this.noDelay = true;
   if (typeof options === "function") {
@@ -590,7 +606,9 @@ Server.prototype[Symbol.asyncDispose] = function () {
 
 Server.prototype.address = function () {
   if (!this[serverSymbol]) return null;
-  return this[serverSymbol].address;
+  const address = this[serverSymbol].address;
+  // In node a unix socket that came as a descriptor has no address.
+  return typeof address === "string" && this[kListenFd] ? null : address;
 };
 
 Server.prototype.listen = function () {
@@ -599,6 +617,7 @@ Server.prototype.listen = function () {
   const server = this;
   let port, host;
   let socketPath;
+  let fd: number | undefined;
   let tls = this[tlsSymbol];
 
   // This logic must align with:
@@ -609,9 +628,19 @@ Server.prototype.listen = function () {
     if (($isObject(arg0) || $isCallable(arg0)) && arg0 !== null) {
       // (options[...][, cb])
       addServerAbortSignalOption(this, arg0);
-      port = arg0.port;
-      host = arg0.host;
-      socketPath = arg0.path;
+      const fdOption = arg0.fd;
+      // fd wins, as in node: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2140-L2143
+      if (typeof fdOption === "number" && fdOption >= 0) {
+        fd = fdOption;
+      } else {
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2222-L2227
+        if ("fd" in arg0 && !("port" in arg0) && !("path" in arg0)) {
+          throw $ERR_INVALID_ARG_VALUE("options", arg0, 'must have the property "port" or "path"');
+        }
+        port = arg0.port;
+        host = arg0.host;
+        socketPath = arg0.path;
+      }
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
@@ -631,7 +660,7 @@ Server.prototype.listen = function () {
 
   // Bun defaults to port 3000.
   // Node defaults to port 0.
-  if (port === undefined && !socketPath) {
+  if (port === undefined && !socketPath && fd === undefined) {
     port = 0;
   }
 
@@ -650,6 +679,18 @@ Server.prototype.listen = function () {
 
   try {
     // listenInCluster
+
+    if (fd !== undefined) {
+      if (!NumberIsInteger(fd) || fd > 0x7fffffff) throw listenFdError("EINVAL");
+      // In node the number names a descriptor of the primary. A process with no channel has no primary.
+      if (!isPrimary && process.connected) throw new ErrnoException(process.binding("uv").UV_ENOTSUP, "listen");
+      try {
+        server[kRealListen](tls, undefined, undefined, undefined, false, fd);
+      } catch (err: any) {
+        throw (err?.syscall === "listen" && listenFdError(err.code)) || err;
+      }
+      return this;
+    }
 
     if (isPrimary) {
       server[kRealListen](tls, port, host, socketPath, false);
@@ -684,7 +725,7 @@ Server.prototype.listen = function () {
   return this;
 };
 
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort) {
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, fd?: number) {
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
@@ -695,7 +736,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
-    this[serverSymbol] = Bun.serve<any>({
+    const serveOptions: Bun.Serve.NodeHTTPServeOptions<any> = {
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
       port,
@@ -1130,11 +1171,15 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         return pendingPromise;
       },
-    });
+    };
+    // Only a listen on a descriptor adds the key, so every other listen passes the same object shape.
+    if (fd !== undefined) serveOptions.fd = fd;
+    this[serverSymbol] = Bun.serve<any>(serveOptions);
+    this[kListenFd] = fd !== undefined;
 
     const handle = this[serverSymbol];
     listenerGeneration = {
-      isUnix: !!socketPath,
+      isUnix: fd === undefined ? !!socketPath : handle.port === undefined,
       nativeClosed: false,
       drainedAtClose: false,
     };

@@ -578,6 +578,7 @@ fn codegen_block_no_reset(
     cx: &mut Context,
     block: &ReactiveBlock,
 ) -> Result<Vec<Stmt>, CompilerError> {
+    crate::stack_guard::check()?;
     let mut statements: Vec<Stmt> = Vec::new();
     for item in block {
         match item {
@@ -1684,6 +1685,7 @@ fn codegen_instruction_value(
     cx: &mut Context,
     instr_value: &ReactiveValue,
 ) -> Result<Expr, CompilerError> {
+    crate::stack_guard::check()?;
     match instr_value {
         ReactiveValue::Instruction(iv) => {
             let mut result = codegen_base_instruction_value(cx, iv)?;
@@ -2806,6 +2808,7 @@ enum LvalueRef<'a> {
 }
 
 fn codegen_lvalue(cx: &mut Context, pattern: &LvalueRef) -> Result<Binding, CompilerError> {
+    crate::stack_guard::check()?;
     match pattern {
         LvalueRef::Place(place) => {
             let (r, loc) = convert_identifier(cx, place.identifier)?;
@@ -2819,6 +2822,7 @@ fn codegen_lvalue(cx: &mut Context, pattern: &LvalueRef) -> Result<Binding, Comp
 }
 
 fn codegen_assignment_target(cx: &mut Context, pattern: &LvalueRef) -> Result<Expr, CompilerError> {
+    crate::stack_guard::check()?;
     match pattern {
         LvalueRef::Place(place) => {
             let (r, loc) = convert_identifier(cx, place.identifier)?;

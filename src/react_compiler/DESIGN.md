@@ -136,6 +136,40 @@ with category `Unsupported`. `program.rs` catches that per-function, leaves the
 original `G::Fn` untouched, and logs a `CompileSkip` event — exactly what
 upstream does for its own unsupported cases.
 
+### Stack depth
+
+Upstream runs on a 64 MB stack and has no depth limit: its passes recurse as
+deep as the source nests. Bun compiles on the thread that parses the file (a
+bundler thread has 4 MB, 18 MB on Windows), so the port checks the stack itself
+(`stack_guard.rs`, over `bun_core::StackCheck`).
+
+Every function on a recursion cycle whose depth follows the source calls
+`stack_guard::check()?` when it returns a `Result`, or returns a neutral value
+when `stack_guard::is_safe_to_recurse()` is false. The first refusal latches
+until the next function starts. A pass with no error channel therefore stops
+descending and leaves partial state behind, and the `timed!` wrapper in
+`pipeline.rs` fails the compile right after that pass. The function then stays
+as written, as it does upstream when a pass throws `RangeError` under the
+default `panicThreshold`. A pass that reads its own partial state before it
+returns (an `expect` on a map the walk fills) must test
+`stack_guard::overflowed()` first.
+
+The latch is thread-local and not a field of `Environment`: many of these
+functions receive slices of the environment (`&[HirFunction]`, `&[Identifier]`),
+and the walkers in `program.rs` run before one exists.
+
+A walk that cannot stop part way keeps its own stack instead. The CFG walks
+(`get_reverse_postordered_blocks`, `mark_predecessors`, `dfs_postorder`) are as
+deep as the CFG is long, and their callers index the graph they return.
+`DisjointSet::find` follows a chain of unions. Upstream recurses in all four.
+
+What still recurses without a check: the derived `Clone`, `Drop` and
+`PartialEq` of the reactive tree and of `Type`, `type_equals`, and the
+`RefAccessType` helpers in `validate_no_ref_access_in_render`. Each walks a
+value that a checked recursion built (`build_reactive_function`,
+`Unifier::get`) with larger frames, or a value that grows by one level per
+statement at a quadratic cost in memory.
+
 ## Hook placement
 
 The compiler runs **per-function, post-visit** at the `S::Function` /

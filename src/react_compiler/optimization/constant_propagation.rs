@@ -85,6 +85,9 @@ fn constant_propagation_impl(
     env: &mut Environment,
     constants: &mut Constants,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     loop {
         let have_terminals_changed = apply_constant_propagation(func, env, constants);
         if !have_terminals_changed {

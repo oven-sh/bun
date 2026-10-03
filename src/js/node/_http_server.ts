@@ -1115,8 +1115,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (handle.finished || didFinish) {
           handle = undefined;
           http_res[kCloseCallback] = undefined;
-          // 'finish' finds the connection here: detachSocket() below empties
-          // the response's own slot and the stream destroyer nulls req.socket.
           // Set in time only because end() defers the 'finish' emit to a
           // process.nextTick (see ServerResponse.prototype.end) and nothing
           // between the 'request' emit and here drains the tick queue.
@@ -1492,9 +1490,7 @@ const kPipelinedQueuedState = Symbol("kPipelinedQueuedState");
 const kOutgoingData = Symbol("kOutgoingData");
 const kReplayingPipelinedOps = Symbol("kReplayingPipelinedOps");
 const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
-// The socket the dispatcher already detached a synchronously-finished response
-// from. The 'finish' listener runs its connection step on it and does not
-// detach/advance the pipeline a second time.
+// The socket the dispatcher detached a synchronously-finished response from, for its 'finish' listener.
 const kDetachedFrom = Symbol("kDetachedFrom");
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (socketOnError)
@@ -2614,9 +2610,7 @@ function emitResponseFinish() {
   if (req && !req._consuming && !req._readableState?.resumeScheduled) {
     req._dump();
   }
-  // The dispatcher detached a synchronously-finished response itself and left
-  // its connection here; detaching or advancing the pipeline again would skip
-  // a queued response.
+  // The dispatcher already detached this response and advanced the pipeline: only the connection step is left.
   const detachedFrom = this[kDetachedFrom];
   if (detachedFrom !== undefined) {
     // Node's clearIncoming: a request that ended before its response did. Any other one is cleared at its EOF.
@@ -2625,8 +2619,7 @@ function emitResponseFinish() {
     onResponseFinishHandleSocket(detachedFrom.server, detachedFrom, this);
     return;
   }
-  // The response still owns its server socket, unless user code emptied or
-  // replaced that slot: then the request's links lead to the connection.
+  // Else the response still owns its socket, unless user code emptied or replaced res.socket.
   let socket = this[kSocket];
   let server = socket?.server;
   if (server == null && req) {

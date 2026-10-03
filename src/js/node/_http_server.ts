@@ -2953,6 +2953,8 @@ function advanceResponsePipeline(server, socket) {
         } else if (kind === "write") {
           if (ServerResponsePrototypeWrite.$call(res, op[1], op[2], op[3]) === false) hitBackpressure = true;
         } else {
+          // The trailers that the queued end() call had. Both kinds of handle send res._trailer.
+          res._trailer = op[4];
           ServerResponsePrototypeEnd.$call(res, op[1], op[2], op[3]);
         }
       }
@@ -3068,7 +3070,8 @@ function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
     }
     chunk = undefined;
   }
-  queued.ops.push(["end", chunk, encoding, callback]);
+  // Node renders the trailers into its output buffer in this call. A later addTrailers() call does not change them.
+  queued.ops.push(["end", chunk, encoding, callback, res._trailer]);
   if (chunk) {
     const bytes = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
     queued.bytes += bytes;
@@ -3415,6 +3418,15 @@ ServerResponse.prototype.writeContinue = function (cb) {
   cb?.();
 };
 
+// The trailer section of a chunked body, as Node's end() writes it (lib/_http_outgoing.js, v26.3.0 line 1127).
+// A handle sends it only when the body that it writes is chunked.
+function trailerSectionOf(res, trailer) {
+  const req = res.req;
+  return res._hasBody && !res.hasHeader("content-length") && req?.httpVersionMajor === 1 && req?.httpVersionMinor >= 1
+    ? "0\r\n" + trailer + "\r\n"
+    : "";
+}
+
 // This end method is actually on the OutgoingMessage prototype in Node.js
 // But we don't want it for the fetch() response version.
 ServerResponse.prototype.end = function (chunk, encoding, callback) {
@@ -3469,22 +3481,6 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     }
   }
 
-  // Trailer fields added via res.addTrailers() are sent after the terminating
-  // 0 chunk of a chunked response body (RFC 9112 7.1.2). They force chunked
-  // framing, so they only apply when nothing pinned the framing to
-  // Content-Length and the response can carry a body - Node.js drops them in
-  // every other case (explicit Content-Length, HTTP/1.0, body-less statuses).
-  const trailer = this._trailer;
-  if (
-    trailer &&
-    this._hasBody &&
-    !this.hasHeader("content-length") &&
-    this.req?.httpVersionMajor === 1 &&
-    this.req?.httpVersionMinor >= 1
-  ) {
-    this.socket?.[kHandle]?.setResponseTrailers(trailer);
-  }
-
   const headerState = this[headerStateSymbol];
   callWriteHeadIfObservable(this, headerState, true);
 
@@ -3506,17 +3502,32 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       let contentLength;
       try {
         // One native crossing for cork + writeHead + end (writeHeadAndEnd
-        // corks natively around both phases).
-        contentLength = handle.writeHeadAndEnd(
-          this[kSnapshotStatusCode] ?? this.statusCode,
-          this[kSnapshotStatusMessage] ?? this.statusMessage,
-          renderedHeaders,
-          chunk,
-          encoding,
-          strictContentLength(this, headerState, true),
-          renderedAutoHeaders,
-          renderedKeepAliveSecs,
-        );
+        // corks natively around both phases). The trailers go with it.
+        let trailerSection = this._trailer;
+        if (trailerSection && (trailerSection = trailerSectionOf(this, trailerSection))) {
+          contentLength = handle.writeHeadAndEndWithTrailers(
+            this[kSnapshotStatusCode] ?? this.statusCode,
+            this[kSnapshotStatusMessage] ?? this.statusMessage,
+            renderedHeaders,
+            chunk,
+            encoding,
+            strictContentLength(this, headerState, true),
+            renderedAutoHeaders,
+            renderedKeepAliveSecs,
+            trailerSection,
+          );
+        } else {
+          contentLength = handle.writeHeadAndEnd(
+            this[kSnapshotStatusCode] ?? this.statusCode,
+            this[kSnapshotStatusMessage] ?? this.statusMessage,
+            renderedHeaders,
+            chunk,
+            encoding,
+            strictContentLength(this, headerState, true),
+            renderedAutoHeaders,
+            renderedKeepAliveSecs,
+          );
+        }
       } catch (e) {
         releaseRenderedHeaders(renderedHeaders);
         // Mirror the old two-call flow's headersSent semantics: errors from
@@ -3549,7 +3560,19 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // (no native call in between can change it), so reuse its bits instead of
     // paying two more native getter crossings.
     if (!(!chunk && flags & NodeHTTPResponseFlags.ended) && !(flags & NodeHTTPResponseFlags.socket_closed)) {
-      draining = handle.end(chunk, encoding, undefined, strictContentLength(this, headerState, true)) < 0;
+      let trailerSection = this._trailer;
+      if (trailerSection && (trailerSection = trailerSectionOf(this, trailerSection))) {
+        draining =
+          handle.endWithTrailers(
+            chunk,
+            encoding,
+            undefined,
+            strictContentLength(this, headerState, true),
+            trailerSection,
+          ) < 0;
+      } else {
+        draining = handle.end(chunk, encoding, undefined, strictContentLength(this, headerState, true)) < 0;
+      }
     }
   }
   this._header = " ";

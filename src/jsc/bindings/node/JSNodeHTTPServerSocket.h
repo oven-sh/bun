@@ -161,11 +161,6 @@ public:
      * flat [name, value, ...] JS array preserving wire casing; jsUndefined()
      * when there are none. Clears the captured section. */
 
-    /* Set the trailer fields (pre-rendered "name: value\r\n" lines) to write
-     * between the terminating 0 chunk and the final CRLF of the current
-     * response's chunked body. */
-    void setResponseTrailers(WTF::StringView trailers);
-
     ~JSNodeHTTPServerSocket();
 
     JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response);

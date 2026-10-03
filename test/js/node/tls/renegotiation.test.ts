@@ -762,22 +762,20 @@ it.each(["GET", "POST"])(
   async method => {
     await using origin = await startRecordingServer(renegotiatingOrigin);
     using proxy = await startRecordingProxy();
-    const answers = await withoutNoProxy(async () => {
-      const answers: string[] = [];
-      for (const [path, init] of [
-        ["/members", method === "POST" ? { method, body: "amount=100" } : {}],
-        ["/account?user=alice", {}],
-        ["/account?user=bob", {}],
-      ] as const) {
-        const res = await fetch(`https://localhost:${origin.port}${path}`, {
-          ...init,
-          tls: { ca: tls.cert },
-          proxy: `http://127.0.0.1:${proxy.port}`,
-        });
-        answers.push(await res.text());
-      }
-      return answers;
-    });
+    const ask = async (path: string, init: RequestInit = {}) => {
+      const res = await fetch(`https://localhost:${origin.port}${path}`, {
+        ...init,
+        tls: { ca: tls.cert },
+        // An ambient NO_PROXY would send the request direct.
+        proxy: { url: `http://127.0.0.1:${proxy.port}`, respectNoProxy: false },
+      });
+      return await res.text();
+    };
+    const answers = [
+      await ask("/members", method === "POST" ? { method, body: "amount=100" } : {}),
+      await ask("/account?user=alice"),
+      await ask("/account?user=bob"),
+    ];
     expect({ answers, received: await origin.received(), tunnels: proxy.requests.map(r => r.requestLine) }).toEqual({
       answers: [
         `the answer to ${method} /members`,
@@ -798,6 +796,7 @@ it("fetch with checkServerIdentity reads the answer of an origin that renegotiat
   await using origin = await startRecordingServer(renegotiatingOrigin);
   const res = await fetch(`https://localhost:${origin.port}/members`, {
     tls: { ca: tls.cert, checkServerIdentity: () => undefined },
+    proxy: false,
   });
   expect({ answer: await res.text(), received: await origin.received() }).toEqual({
     answer: "the answer to GET /members",

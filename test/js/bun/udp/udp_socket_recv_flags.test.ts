@@ -208,22 +208,30 @@ function errorIsPending(fd: number) {
   return (new Int16Array(pollfd.buffer)[3] & POLLERR) !== 0;
 }
 
+// Whether a send fails with the pending error of the socket.
+function refused(send: () => unknown) {
+  try {
+    send();
+    return false;
+  } catch (err: any) {
+    if (err.code !== "ECONNREFUSED") throw err;
+    return true;
+  }
+}
+
 // Sends `count` datagrams that reach the wire. The ICMP error of a datagram
 // sets the pending error of the socket, and the next send fails with it and
 // clears it. So every datagram is followed by one send that has to fail.
-// Returns how many of those did not: then the kernel delivered an ICMP error
-// late (its softirq was deferred) and the test cannot count on what is queued.
-function refusedSends(socket: { send(data: string): unknown }, count: number, afterEach?: () => void) {
+// Returns how many sends went another way: then the kernel delivered an ICMP
+// error late (its softirq was deferred) and the test cannot count on what is
+// queued. `afterEach` returns the same count for the sends that it makes.
+function refusedSends(socket: { send(data: string): unknown }, count: number, afterEach?: () => number) {
   let late = 0;
   for (let i = 0; i < count; i++) {
-    socket.send("refused");
-    try {
-      socket.send("refused");
-      late++;
-    } catch (err: any) {
-      if (err.code !== "ECONNREFUSED") throw err;
-    }
-    afterEach?.();
+    // The late ICMP error of an earlier datagram fails this send.
+    if (refused(() => socket.send("refused"))) late++;
+    if (!refused(() => socket.send("refused"))) late++;
+    late += afterEach?.() ?? 0;
   }
   return late;
 }
@@ -268,7 +276,9 @@ async function reportsAndDatagrams(
     try {
       socket.send(tooLarge);
     } catch (err: any) {
-      if (err.code === "EMSGSIZE") return;
+      if (err.code === "EMSGSIZE") return 0;
+      // A late ICMP error failed the send first.
+      if (err.code === "ECONNREFUSED") return 1;
       throw err;
     }
     throw new Error("the kernel accepted a datagram of 65535 bytes");
@@ -464,8 +474,7 @@ describe.skipIf(!isLinux)("error queue (IP_RECVERR)", () => {
             // fills the receive buffer, so the kernel cannot queue the report
             // of this send: its errno is only the pending error of the socket.
             try {
-              socket.send("no room");
-              if (!errorIsPending(socket.fd)) late++;
+              if (refused(() => socket.send("no room")) || !errorIsPending(socket.fd)) late++;
             } catch (err) {
               sendFailure = err;
             }
@@ -520,8 +529,7 @@ describe.skipIf(!isLinux)("error queue (IP_RECVERR)", () => {
             log.add(err);
             if (log.total !== 1) return;
             firstError = getEventLoopStats().iteration;
-            socket.send("retry");
-            if (!errorIsPending(socket.fd)) late++;
+            if (refused(() => socket.send("retry")) || !errorIsPending(socket.fd)) late++;
           }),
           data() {
             datagram = getEventLoopStats().iteration;
@@ -564,8 +572,7 @@ describe.skipIf(!isLinux)("error queue (IP_RECVERR)", () => {
         socket: {
           error() {
             if (++errors > 1) return;
-            socket.send("retry");
-            if (!errorIsPending(socket.fd)) late++;
+            if (refused(() => socket.send("retry")) || !errorIsPending(socket.fd)) late++;
             // Runs before the loop polls the socket again.
             setImmediate(() => {
               try {

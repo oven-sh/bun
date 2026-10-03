@@ -498,27 +498,24 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // these share pointers right now, so setting NODE_ENV == production on one should affect all
     debug_assert!(core::ptr::eq(server_transpiler.env, client_transpiler.env));
 
-    *framework = match framework.resolve(
-        &mut server_transpiler.resolver,
-        &mut client_transpiler.resolver,
-        &options.arena,
-    ) {
-        Ok(f) => f,
-        Err(_) => {
-            if framework.is_built_in_react {
-                // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
-                bake_body::Framework::add_react_install_command_note(unsafe {
-                    &mut *server_transpiler.log
-                })?;
-            }
-            bun_core::err_generic!("Failed to resolve all imports required by the framework");
-            Output::flush();
-            let _ = server_transpiler
-                .log()
-                .print(std::ptr::from_mut(Output::error_writer()));
-            Global::crash();
+    if framework
+        .resolve(
+            &mut server_transpiler.resolver,
+            &mut client_transpiler.resolver,
+        )
+        .is_err()
+    {
+        if framework.is_built_in_react {
+            // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
+            bake::Framework::add_react_install_command_note(unsafe { &mut *server_transpiler.log });
         }
-    };
+        bun_core::err_generic!("Failed to resolve all imports required by the framework");
+        Output::flush();
+        let _ = server_transpiler
+            .log()
+            .print(std::ptr::from_mut(Output::error_writer()));
+        Global::crash();
+    }
 
     bun_core::pretty_errorln!("Bundling routes");
     Output::flush();
@@ -544,7 +541,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     };
 
     for fsr in &framework.file_system_router_types {
-        let joined_root = resolve_path::join_abs::<platform::Auto>(cwd, fsr.root);
+        let joined_root = resolve_path::join_abs::<platform::Auto>(cwd, &fsr.root);
         let Some(entry) = server_transpiler
             .resolver
             .read_dir_info_ignore_error(joined_root)
@@ -552,8 +549,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             continue;
         };
         let server_file =
-            entry_points.get_or_put_entry_point(fsr.entry_server, bake::Side::Server)?;
-        let client_file = if let Some(client) = fsr.entry_client {
+            entry_points.get_or_put_entry_point(&fsr.entry_server, bake::Side::Server)?;
+        let client_file = if let Some(client) = &fsr.entry_client {
             Some(entry_points.get_or_put_entry_point(client, bake::Side::Client)?)
         } else {
             None
@@ -566,12 +563,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             ignore_dirs: fsr
                 .ignore_dirs
                 .iter()
-                .map(|s| Box::<[u8]>::from(*s))
+                .map(|s| Box::<[u8]>::from(&**s))
                 .collect(),
             extensions: fsr
                 .extensions
                 .iter()
-                .map(|s| Box::<[u8]>::from(*s))
+                .map(|s| Box::<[u8]>::from(&**s))
                 .collect(),
             style: fsr.style,
             allow_layouts: fsr.allow_layouts,
@@ -587,11 +584,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         framework_router::InsertionContext::wrap(&mut entry_points),
     )?;
 
-    // `bake_body::Framework` is the runtime-side superset; the bundler reads only
+    // `bake::Framework` is the runtime-side superset; the bundler reads only
     // `built_in_modules` / `server_components` / `react_fast_refresh` /
     // `is_built_in_react` via its lower-tier `bake_types::Framework` view.
-    // Project once here via the shared helper so the field-shape (e.g.
-    // `BuiltInModule` `&'static [u8]` → `Box<[u8]>`) stays in one place.
     // (The two Framework types could only merge if `FileSystemRouterType` /
     // `framework_router::Style` moved down to bun_bundler.)
     let bundler_framework = framework.as_bundler_view();

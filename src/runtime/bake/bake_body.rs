@@ -4,17 +4,16 @@
 //! role as a framework, Bake is tool for frameworks to build on top of.
 #![allow(unexpected_cfgs)] // `bun_codegen_embed` is set via RUSTFLAGS (scripts/build/rust.ts) for release/CI builds.
 
-use bun_alloc::ArenaVecExt as _;
 use core::ptr::NonNull;
+use std::borrow::Cow;
 
 use bun_alloc::Arena; // = bumpalo::Bump
-use bun_collections::ArrayHashMap;
+use bun_collections::StringArrayHashMap;
 use bun_core::Output;
-use bun_core::Utf8Bytes;
-use bun_core::{ZStr, strings};
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
+use bun_core::{ZBox, ZStr, strings};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_options_types::schema as bun_schema;
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths::PathBuffer;
 
 // `jsc.API.JSBundler.Plugin` — opaque FFI handle for the C++ JSBundlerPlugin.
 // Re-exported from `crate::api::js_bundler` so `SplitBundlerOptions.plugin`
@@ -26,7 +25,10 @@ use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 // as sibling modules of this file; pull them in instead of re-declaring (which
 // would duplicate the module tree and fail on `framework_router` having no
 // matching filename).
-use super::{dev_server, framework_router};
+use super::{
+    BuildConfigSubset, BuiltInModule, FileSystemRouterType, Framework, ReactFastRefresh,
+    ServerComponents, SplitBundlerOptions, dev_server, framework_router,
+};
 
 // Note: `pub use dev_server as DevServer` / `framework_router as
 // FrameworkRouter` are already provided by the parent `mod.rs` (lines 349/369);
@@ -34,61 +36,21 @@ use super::{dev_server, framework_router};
 
 use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
 
-/// Convert a `crate::Error` into a thrown JS exception in a `JsResult`
-/// context.
-#[inline]
-fn throw_core_error(global: &JSGlobalObject, e: crate::Error, ctx: &'static str) -> JsError {
-    global.throw_error(e, ctx)
-}
-
-/// Erase the `'bump` lifetime of an arena-backed slice. Arena-erasure
-/// convention (see file-level TODO(lifetime)): `UserOptions.arena` outlives every
-/// borrower, so the bytes are valid for the program-relevant lifetime.
-#[inline(always)]
-pub(crate) fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
-    // SAFETY: arena-backed; UserOptions owns the bump and is dropped last.
-    // PORTING.md sanctions this only inside the bake `from_js` self-referential
-    // pattern — do NOT generalize.
-    unsafe { bun_ptr::detach_ref(r) }
-}
-
-/// Copy `bytes` plus a trailing NUL into the bump arena.
-/// Returns `&'static ZStr` per the file-level `'static` convention
-/// (arena-backed; lifetime erased — see TODO(lifetime) at top of file).
-pub(crate) fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
-    let buf: &mut [u8] = arena.alloc_slice_fill_default(bytes.len() + 1);
-    buf[..bytes.len()].copy_from_slice(bytes);
-    buf[bytes.len()] = 0;
-    // SAFETY: buf is NUL-terminated; arena outlives all borrowers per the
-    // self-referential UserOptions pattern. Not `from_buf`: the `'static`
-    // return type intentionally erases the arena lifetime; threading a real
-    // `'bump` would replace this with `from_buf`.
-    unsafe { ZStr::from_raw(buf.as_ptr(), bytes.len()) }
-}
-
 /// export default { app: ... };
 const API_NAME: &str = "app";
 
-// TODO(lifetime): many `&'static [u8]` fields below are actually backed
-// by `UserOptions.arena` (bumpalo::Bump) or `UserOptions.allocations`
-// (StringRefList). `&'static` is used to avoid struct lifetime params per
-// PORTING.md; could thread `'bump` or introduce `ArenaStr`.
-
 /// Rust version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub(crate) struct UserOptions {
-    /// This arena contains some miscellaneous allocations at startup
+    /// Backs the transpilers set up from these options.
     pub(crate) arena: Arena,
-    pub(crate) _allocations: StringRefList,
 
-    pub(crate) root: &'static ZStr, // TODO(lifetime): arena-owned, self-referential with .arena
+    pub(crate) root: ZBox,
     pub(crate) framework: Framework,
     pub(crate) bundler_options: SplitBundlerOptions,
 }
 
 impl Drop for UserOptions {
     fn drop(&mut self) {
-        // arena: dropped by Bump's Drop
-        // allocations: dropped by StringRefList's Drop
         if let Some(p) = self.bundler_options.plugin {
             // `p` is the FFI handle returned by `Plugin::create` in
             // `parse_plugin_array`; `PluginJscExt::destroy` is its paired
@@ -103,10 +65,6 @@ impl UserOptions {
     /// Currently, this function must run at the top of the event loop.
     pub(crate) fn from_js(config: JSValue, global: &JSGlobalObject) -> JsResult<UserOptions> {
         let arena = Arena::new();
-        // errdefer arena.deinit() — handled by Drop
-
-        let mut allocations = StringRefList::EMPTY;
-        // errdefer allocations.free() — handled by Drop
         let mut bundler_options = SplitBundlerOptions::default();
 
         if !config.is_object() {
@@ -117,7 +75,7 @@ impl UserOptions {
 
                 if strings::eql(utf8_string.slice(), b"react") {
                     let root = match bun_sys::getcwd_alloc() {
-                        Ok(z) => arena_dupe_z(&arena, z.as_bytes()),
+                        Ok(z) => z,
                         Err(e) => {
                             return Err(global.throw_error(
                                 e.to_zig_err(),
@@ -126,15 +84,10 @@ impl UserOptions {
                         }
                     };
 
-                    let framework = Framework::react(&arena)
-                        .map_err(|e| throw_core_error(global, e, "Framework::react"))?;
-
                     return Ok(UserOptions {
-                        // TODO(lifetime): self-referential — `root`/`framework` borrow `arena`
                         root,
-                        framework,
+                        framework: Framework::react(),
                         bundler_options,
-                        _allocations: allocations,
                         arena,
                     });
                 }
@@ -167,16 +120,14 @@ impl UserOptions {
                 }
             },
             global,
-            &mut allocations,
             &mut bundler_options,
-            &arena,
         )?;
 
-        let root: &[u8] = if let Some(slice) = config.get_optional_slice(global, "root")? {
-            allocations.track(slice)
+        let root = if let Some(slice) = config.get_optional_slice(global, "root")? {
+            ZBox::from_bytes(slice.slice())
         } else {
             match bun_sys::getcwd_alloc() {
-                Ok(z) => arena_dupe_z(&arena, z.as_bytes()).as_bytes(),
+                Ok(z) => z,
                 Err(e) => {
                     return Err(global
                         .throw_error(e.to_zig_err(), "while querying current working directory"));
@@ -188,58 +139,13 @@ impl UserOptions {
             bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 
-        let root_z = arena_dupe_z(&arena, root);
-
         Ok(UserOptions {
-            root: root_z,
+            root,
             framework,
             bundler_options,
-            _allocations: allocations,
             arena,
         })
     }
-}
-
-/// Each string stores its allocator since some may hold reference counts to JSC
-#[derive(Default)]
-pub(crate) struct StringRefList {
-    pub(crate) strings: Vec<Utf8Bytes<'static>>,
-}
-
-impl StringRefList {
-    pub(crate) const EMPTY: StringRefList = StringRefList {
-        strings: Vec::new(),
-    };
-
-    // Note: returned slice borrows JSC-owned storage kept alive by the
-    // `Utf8Bytes` now stored in `self.strings`; it is valid only for as
-    // long as `self` is. Callers that store the result in `Framework` /
-    // `FileSystemRouterType` / `ServerComponents` fields must thread a `'bump`
-    // lifetime (or switch those fields to `Box<[u8]>` / `ArenaStr`) — see the
-    // file-level TODO(lifetime) above. Do NOT paper over this with a `'static`
-    // transmute (forbidden per PORTING.md §Forbidden — lifetime extension).
-    pub(crate) fn track(&mut self, str: Utf8Bytes<'static>) -> &'static [u8] {
-        self.strings.push(str);
-        let slice = self.strings.last().unwrap().slice();
-        // SAFETY: (`Interned::assume` — Population B, holder-backed) the
-        // `Utf8Bytes` is now owned by `self.strings` and lives exactly as
-        // long as the `StringRefList`, which is owned by `UserOptions` and
-        // dropped only when bake teardown runs (`UserOptions::deinit`). The
-        // returned slice is stored only in `Framework` / `FileSystemRouterType`
-        // / `ServerComponents` fields that are themselves owned by the same
-        // `UserOptions`, so no read outlives the holder. NOT process-lifetime
-        // — a real `'bump` lifetime should eventually be threaded here (see
-        // file-level TODO(lifetime)); `assume` makes the lie grep-able until then.
-        unsafe { bun_ptr::Interned::assume(slice) }.as_bytes()
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct SplitBundlerOptions {
-    pub plugin: Option<NonNull<Plugin>>,
-    pub client: BuildConfigSubset,
-    pub server: BuildConfigSubset,
-    pub ssr: BuildConfigSubset,
 }
 
 impl SplitBundlerOptions {
@@ -329,20 +235,6 @@ impl SplitBundlerOptions {
     }
 }
 
-pub(crate) struct BuildConfigSubset {
-    pub ignore_dce_annotations: Option<bool>,
-    pub conditions: ArrayHashMap<&'static [u8], ()>,
-    pub drop: ArrayHashMap<&'static [u8], ()>,
-    pub env: bun_schema::api::DotEnvBehavior,
-    pub env_prefix: Option<&'static [u8]>,
-    pub define: bun_schema::api::StringMap,
-    pub source_map: bun_schema::api::SourceMapMode,
-
-    pub minify_syntax: Option<bool>,
-    pub minify_identifiers: Option<bool>,
-    pub minify_whitespace: Option<bool>,
-}
-
 impl BuildConfigSubset {
     pub(crate) fn from_js(
         global: &JSGlobalObject,
@@ -393,116 +285,55 @@ impl BuildConfigSubset {
     }
 }
 
-impl Default for BuildConfigSubset {
-    fn default() -> Self {
-        // Note: was `pub const DEFAULT` — `ArrayHashMap::new()` is not
-        // `const fn`, so this lives behind `Default` instead.
-        BuildConfigSubset {
-            ignore_dce_annotations: None,
-            conditions: ArrayHashMap::new(),
-            drop: ArrayHashMap::new(),
-            env: bun_schema::api::DotEnvBehavior::_none,
-            env_prefix: None,
-            define: bun_schema::api::StringMap::EMPTY,
-            source_map: bun_schema::api::SourceMapMode::External,
-
-            minify_syntax: None,
-            minify_identifiers: None,
-            minify_whitespace: None,
-        }
-    }
-}
-
-/// A "Framework" in our eyes is simply set of bundler options that a framework
-/// author would set in order to integrate the framework with the application.
-/// Since many fields have default values which may point to static memory, this
-/// structure is always arena-allocated, usually owned by the arena in `UserOptions`
-///
-/// Full documentation on these fields is located in the TypeScript definitions.
-pub(crate) struct Framework {
-    pub is_built_in_react: bool,
-    /// `resolve()` rewrites this in place. Stored as an owned `Vec` so
-    /// `#[derive(Clone)]` deep-copies (a shared `&[T]` would alias and make
-    /// `resolve()`'s mutation UB).
-    pub file_system_router_types: Vec<FileSystemRouterType>,
-    // static_routers: &'static [&'static [u8]],
-    pub server_components: Option<ServerComponents>,
-    pub react_fast_refresh: Option<ReactFastRefresh>,
-    pub built_in_modules: ArrayHashMap<&'static [u8], BuiltInModule>,
-}
-
-impl Default for Framework {
-    fn default() -> Self {
-        Self {
-            is_built_in_react: false,
-            file_system_router_types: Vec::new(),
-            server_components: None,
-            react_fast_refresh: None,
-            built_in_modules: ArrayHashMap::new(),
-        }
-    }
-}
-
 impl Framework {
     /// Bun provides built-in support for using React as a framework.
     /// Depends on externally provided React
     ///
     /// $ bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun
-    pub(crate) fn react(arena: &Arena) -> crate::Result<Framework> {
+    pub(crate) fn react() -> Framework {
         // Cannot use .import because resolution must happen from the user's POV
-        let built_in_values: &[BuiltInModule] = &[
-            // Browser-side source: compressed in release builds.
-            BuiltInModule::Code(bun_zstd::embed_compressed!(
-                src "runtime/bake/bun-framework-react/client.tsx"
-            )),
-            BuiltInModule::Code(
+        let built_in: [(&[u8], &[u8]); 3] = [
+            (
+                b"bun-framework-react/client.tsx",
+                // Browser-side source: compressed in release builds.
+                bun_zstd::embed_compressed!(src "runtime/bake/bun-framework-react/client.tsx"),
+            ),
+            (
+                b"bun-framework-react/server.tsx",
                 bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/server.tsx")
                     .as_bytes(),
             ),
-            BuiltInModule::Code(
+            (
+                b"bun-framework-react/ssr.tsx",
                 bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/ssr.tsx")
                     .as_bytes(),
             ),
         ];
+        let mut built_in_modules = StringArrayHashMap::new();
+        for (path, code) in built_in {
+            bun_core::handle_oom(built_in_modules.put(path, BuiltInModule::Code(code.into())));
+        }
 
-        Ok(Framework {
+        Framework {
             is_built_in_react: true,
             server_components: Some(ServerComponents {
                 separate_ssr_graph: true,
-                server_runtime_import: b"react-server-dom-bun/server",
-                ..ServerComponents::default()
+                ..ServerComponents::new(Cow::Borrowed(b"react-server-dom-bun/server"))
             }),
             react_fast_refresh: Some(ReactFastRefresh::default()),
             file_system_router_types: vec![FileSystemRouterType {
-                root: b"pages",
-                prefix: b"/",
-                entry_client: Some(b"bun-framework-react/client.tsx"),
-                entry_server: b"bun-framework-react/server.tsx",
+                root: Cow::Borrowed(b"pages"),
+                prefix: Cow::Borrowed(b"/"),
+                entry_client: Some(Cow::Borrowed(b"bun-framework-react/client.tsx")),
+                entry_server: Cow::Borrowed(b"bun-framework-react/server.tsx"),
                 ignore_underscores: true,
-                ignore_dirs: &[b"node_modules", b".git"],
-                extensions: &[b".tsx", b".jsx"],
+                ignore_dirs: literals(&[b"node_modules", b".git"]),
+                extensions: literals(&[b".tsx", b".jsx"]),
                 style: framework_router::Style::NextjsPages,
                 allow_layouts: true,
             }],
-            // .static_routers = arena.alloc_slice_copy(&[b"public"]),
-            built_in_modules: {
-                // Note: was `ArrayHashMap::from_entries(arena, keys, vals)`;
-                // that constructor doesn't exist on the heap-backed
-                // `ArrayHashMap` — build it imperatively. `bun.handleOom`.
-                let keys: [&'static [u8]; 3] = [
-                    b"bun-framework-react/client.tsx",
-                    b"bun-framework-react/server.tsx",
-                    b"bun-framework-react/ssr.tsx",
-                ];
-                let mut m: ArrayHashMap<&'static [u8], BuiltInModule> = ArrayHashMap::new();
-                bun_core::handle_oom(m.ensure_total_capacity(keys.len()));
-                for (k, v) in keys.iter().zip(built_in_values.iter()) {
-                    m.put_assume_capacity(*k, *v);
-                }
-                let _ = arena; // arena param retained for API parity
-                m
-            },
-        })
+            built_in_modules,
+        }
     }
 
     /// Default that requires no packages or configuration.
@@ -511,189 +342,40 @@ impl Framework {
     ///     react-refresh so that it still works.
     /// - If any file system router types are provided, configure using
     ///   the above react configuration.
-    /// The provided allocator is not stored.
     pub(crate) fn auto(
-        arena: &Arena,
         resolver: &mut bun_resolver::Resolver,
         file_system_router_types: Vec<FileSystemRouterType>,
     ) -> crate::Result<Framework> {
-        let mut fw: Framework = Framework::none();
+        let mut fw = Framework::default();
 
         if !file_system_router_types.is_empty() {
-            fw = Self::react(arena)?;
+            fw = Self::react();
             fw.file_system_router_types = file_system_router_types;
         }
 
         if let Some(rfr) = resolve_or_null(resolver, b"react-refresh/runtime") {
-            fw.react_fast_refresh = Some(ReactFastRefresh { import_source: rfr });
+            fw.react_fast_refresh = Some(ReactFastRefresh {
+                import_source: Cow::Owned(rfr),
+            });
         } else if resolve_or_null(resolver, b"react").is_some() {
             fw.react_fast_refresh = Some(ReactFastRefresh {
-                import_source: b"react-refresh/runtime/index.js",
+                import_source: Cow::Borrowed(b"react-refresh/runtime/index.js"),
             });
-            let react_refresh_code = BuiltInModule::Code(
-                bun_zstd::embed_compressed!(codegen "node-fallbacks/react-refresh.js"),
-            );
-            let _ = arena;
+            let react_refresh_code: &[u8] =
+                bun_zstd::embed_compressed!(codegen "node-fallbacks/react-refresh.js");
             fw.built_in_modules.put(
-                b"react-refresh/runtime/index.js" as &[u8],
-                react_refresh_code,
+                b"react-refresh/runtime/index.js",
+                BuiltInModule::Code(react_refresh_code.into()),
             )?;
         }
 
         Ok(fw)
     }
 
-    /// Unopinionated default. Note: was `pub const NONE` —
-    /// `ArrayHashMap::new()` is not `const fn`.
-    pub(crate) fn none() -> Framework {
-        Framework {
-            is_built_in_react: false,
-            file_system_router_types: Vec::new(),
-            server_components: None,
-            react_fast_refresh: None,
-            built_in_modules: ArrayHashMap::new(),
-        }
-    }
-
-    /// `Framework.clone()` — manual because `ArrayHashMap` exposes a
-    /// fallible inherent `clone()` rather than `impl Clone`.
-    pub(crate) fn clone(&self) -> Framework {
-        Framework {
-            is_built_in_react: self.is_built_in_react,
-            file_system_router_types: self.file_system_router_types.clone(),
-            server_components: self.server_components,
-            react_fast_refresh: self.react_fast_refresh,
-            built_in_modules: bun_core::handle_oom(self.built_in_modules.clone()),
-        }
-    }
-
-    pub(crate) fn add_react_install_command_note(log: &mut bun_ast::Log) -> crate::Result<()> {
-        let clone_line_text = log.clone_line_text;
-        log.add_msg(bun_ast::Msg {
-            kind: bun_ast::Kind::Note,
-            data: bun_ast::range_data(
-                None,
-                bun_ast::Range::NONE,
-                // `range_data` takes `impl Into<Cow<'static, [u8]>>`;
-                // `concat!` yields `&'static str` — go via `.as_bytes()`.
-                concat!(
-                    "Install the built in react integration with \"",
-                    "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental",
-                    "\""
-                )
-                .as_bytes(),
-            )
-            .clone_line_text(clone_line_text),
-            ..Default::default()
-        });
-        Ok(())
-    }
-
-    /// Given a Framework configuration, this returns another one with all paths resolved.
-    /// New memory allocated into provided arena.
-    ///
-    /// All resolution errors will happen before returning error.ModuleNotFound
-    /// Errors written into `r.log`
-    pub(crate) fn resolve(
-        &self,
-        server: &mut bun_resolver::Resolver,
-        client: &mut bun_resolver::Resolver,
-        arena: &Arena,
-    ) -> crate::Result<Framework> {
-        let mut clone = self.clone();
-        let mut had_errors: bool = false;
-
-        if let Some(react_fast_refresh) = &mut clone.react_fast_refresh {
-            self.resolve_helper(
-                client,
-                &mut react_fast_refresh.import_source,
-                &mut had_errors,
-                b"react refresh runtime",
-            );
-        }
-
-        if let Some(sc) = &mut clone.server_components {
-            self.resolve_helper(
-                server,
-                &mut sc.server_runtime_import,
-                &mut had_errors,
-                b"server components runtime",
-            );
-            // self.resolve_helper(client, &mut sc.client_runtime_import, &mut had_errors);
-        }
-
-        for fsr in clone.file_system_router_types.iter_mut() {
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-            fsr.root = arena_erase(arena.alloc_slice_copy(paths::resolve_path::join_abs::<
-                paths::platform::Auto,
-            >(top_level_dir, fsr.root)));
-            if let Some(entry_client) = &mut fsr.entry_client {
-                self.resolve_helper(
-                    client,
-                    entry_client,
-                    &mut had_errors,
-                    b"client side entrypoint",
-                );
-            }
-            self.resolve_helper(
-                client,
-                &mut fsr.entry_server,
-                &mut had_errors,
-                b"server side entrypoint",
-            );
-        }
-
-        if had_errors {
-            return Err(crate::Error::ModuleNotFound);
-        }
-
-        Ok(clone)
-    }
-
-    #[inline]
-    fn resolve_helper(
-        &self,
-        r: &mut bun_resolver::Resolver,
-        path: &mut &'static [u8],
-        had_errors: &mut bool,
-        desc: &[u8],
-    ) {
-        if let Some(module) = self.built_in_modules.get(path) {
-            match module {
-                BuiltInModule::Import(p) => *path = p,
-                BuiltInModule::Code(_) => {}
-            }
-            return;
-        }
-
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let mut result = match r.resolve(top_level_dir, *path, bun_ast::ImportKind::Stmt) {
-            Ok(res) => res,
-            Err(err) => {
-                Output::err(
-                    err,
-                    "Failed to resolve '{}' for framework ({})",
-                    (bstr::BStr::new(path), bstr::BStr::new(desc)),
-                );
-                *had_errors = true;
-                return;
-            }
-        };
-        // `resolver::Result::path().text` is `&'static [u8]` already (resolver's
-        // `Path` alias is `bun_paths::fs::Path<'static>`, populated from the
-        // `FilenameStore` singleton). No widen needed; the previous
-        // `arena_erase` here laundered an already-`'static` slice and falsely
-        // implied arena ownership. See `bun_ptr::Interned` for the type that
-        // `Path::text` should eventually become.
-        *path = result.path().unwrap().text;
-    }
-
     fn from_js(
         opts: JSValue,
         global: &JSGlobalObject,
-        refs: &mut StringRefList,
         bundler_options: &mut SplitBundlerOptions,
-        arena: &Arena,
     ) -> JsResult<Framework> {
         if opts.is_string() {
             let str = opts.to_bun_string(global)?;
@@ -703,13 +385,11 @@ impl Framework {
                 bun_core::warn!(
                     "deprecation notice: 'react-server-components' will be renamed to 'react'"
                 );
-                return Framework::react(arena)
-                    .map_err(|e| throw_core_error(global, e, "Framework::react"));
+                return Ok(Framework::react());
             }
 
             if str.eq_ascii(b"react") {
-                return Framework::react(arena)
-                    .map_err(|e| throw_core_error(global, e, "Framework::react"));
+                return Ok(Framework::react());
             }
         }
 
@@ -758,7 +438,7 @@ impl Framework {
             let str = prop.to_bun_string(global)?;
 
             Some(ReactFastRefresh {
-                import_source: refs.track(str.into_utf8()),
+                import_source: Cow::Owned(str.into_utf8().into_vec()),
             })
         };
         let server_components: Option<ServerComponents> = 'sc: {
@@ -775,54 +455,51 @@ impl Framework {
                 )));
             }
 
-            Some(ServerComponents {
-                separate_ssr_graph: 'brk: {
-                    // Intentionally not using a truthiness check
-                    let prop = match sc.get_optional::<JSValue>(global, "separateSSRGraph")? {
-                        Some(p) => p,
-                        None => {
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "Missing 'framework.serverComponents.separateSSRGraph'"
-                            )));
-                        }
-                    };
-                    if prop == JSValue::TRUE {
-                        break 'brk true;
+            let separate_ssr_graph = 'brk: {
+                // Intentionally not using a truthiness check
+                let prop = match sc.get_optional::<JSValue>(global, "separateSSRGraph")? {
+                    Some(p) => p,
+                    None => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Missing 'framework.serverComponents.separateSSRGraph'"
+                        )));
                     }
-                    if prop == JSValue::FALSE {
-                        break 'brk false;
-                    }
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "'framework.serverComponents.separateSSRGraph' must be a boolean"
-                    )));
-                },
-                server_runtime_import: refs.track(
-                    match sc.get_optional_slice(global, "serverRuntimeImportSource")? {
-                        Some(s) => s,
-                        None => {
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "Missing 'framework.serverComponents.serverRuntimeImportSource'"
-                            )));
-                        }
-                    },
-                ),
-                server_register_client_reference: if let Some(slice) =
-                    sc.get_optional_slice(global, "serverRegisterClientReferenceExport")?
-                {
-                    refs.track(slice)
-                } else {
-                    b"registerClientReference"
-                },
-                ..ServerComponents::default()
-            })
+                };
+                if prop == JSValue::TRUE {
+                    break 'brk true;
+                }
+                if prop == JSValue::FALSE {
+                    break 'brk false;
+                }
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'framework.serverComponents.separateSSRGraph' must be a boolean"
+                )));
+            };
+            let Some(server_runtime_import) =
+                get_optional_string(sc, global, b"serverRuntimeImportSource")?
+            else {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Missing 'framework.serverComponents.serverRuntimeImportSource'"
+                )));
+            };
+            let mut server_components = ServerComponents {
+                separate_ssr_graph,
+                ..ServerComponents::new(server_runtime_import)
+            };
+            if let Some(name) =
+                get_optional_string(sc, global, b"serverRegisterClientReferenceExport")?
+            {
+                server_components.server_register_client_reference = name;
+            }
+            Some(server_components)
         };
-        let built_in_modules: ArrayHashMap<&'static [u8], BuiltInModule> = 'built_in_modules: {
+        let built_in_modules: StringArrayHashMap<BuiltInModule> = 'built_in_modules: {
             let Some(array) = opts.get_array(global, "builtInModules")? else {
-                break 'built_in_modules ArrayHashMap::new();
+                break 'built_in_modules StringArrayHashMap::new();
             };
 
             let len = array.get_length(global)?;
-            let mut files: ArrayHashMap<&'static [u8], BuiltInModule> = ArrayHashMap::new();
+            let mut files: StringArrayHashMap<BuiltInModule> = StringArrayHashMap::new();
             bun_core::handle_oom(files.ensure_total_capacity(len as usize));
 
             let mut it = array.array_iterator(global)?;
@@ -835,7 +512,7 @@ impl Framework {
                     )));
                 }
 
-                let path = match get_optional_string(file, global, b"import", refs)? {
+                let path = match get_optional_string(file, global, b"import")? {
                     Some(p) => p,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -846,10 +523,10 @@ impl Framework {
                 };
 
                 let value: BuiltInModule =
-                    if let Some(str) = get_optional_string(file, global, b"path", refs)? {
-                        BuiltInModule::Import(str)
-                    } else if let Some(str) = get_optional_string(file, global, b"code", refs)? {
-                        BuiltInModule::Code(str)
+                    if let Some(str) = get_optional_string(file, global, b"path")? {
+                        BuiltInModule::Import(str.into_owned().into())
+                    } else if let Some(str) = get_optional_string(file, global, b"code")? {
+                        BuiltInModule::Code(str.into_owned().into())
                     } else {
                         return Err(global.throw_invalid_arguments(format_args!(
                             "'builtInModules[{}]' needs either 'path' or 'code'",
@@ -857,7 +534,7 @@ impl Framework {
                         )));
                     };
 
-                files.put_assume_capacity(path, value);
+                files.put_assume_capacity(&path, value);
                 i += 1;
             }
 
@@ -884,7 +561,7 @@ impl Framework {
             let mut it = array.array_iterator(global)?;
             let mut i: usize = 0;
             while let Some(fsr_opts) = it.next()? {
-                let root = match get_optional_string(fsr_opts, global, b"root", refs)? {
+                let root = match get_optional_string(fsr_opts, global, b"root")? {
                     Some(r) => r,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -894,7 +571,7 @@ impl Framework {
                     }
                 };
                 let server_entry_point =
-                    match get_optional_string(fsr_opts, global, b"serverEntryPoint", refs)? {
+                    match get_optional_string(fsr_opts, global, b"serverEntryPoint")? {
                         Some(s) => s,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -904,9 +581,9 @@ impl Framework {
                         }
                     };
                 let client_entry_point =
-                    get_optional_string(fsr_opts, global, b"clientEntryPoint", refs)?;
-                let prefix =
-                    get_optional_string(fsr_opts, global, b"prefix", refs)?.unwrap_or(b"/");
+                    get_optional_string(fsr_opts, global, b"clientEntryPoint")?;
+                let prefix = get_optional_string(fsr_opts, global, b"prefix")?
+                    .unwrap_or(Cow::Borrowed(b"/"));
                 let ignore_underscores = fsr_opts
                     .get_boolean_strict(global, "ignoreUnderscores")?
                     .unwrap_or(false);
@@ -928,24 +605,21 @@ impl Framework {
                 )?;
                 // errdefer style.deinit() — handled by Style's Drop
 
-                let extensions: &'static [&'static [u8]] = if let Some(exts_js) =
+                let extensions: Vec<Cow<'static, [u8]>> = if let Some(exts_js) =
                     fsr_opts.get(global, "extensions")?
                 {
                     'exts: {
                         if exts_js.is_string() {
                             let str = exts_js.to_utf8(global)?;
                             if str.slice() == b"*" {
-                                break 'exts &[] as &[&[u8]];
+                                break 'exts Vec::new();
                             }
                         } else if exts_js.is_array() {
                             let mut it_2 = exts_js.array_iterator(global)?;
                             let mut extensions =
-                                bun_alloc::ArenaVec::<&'static [u8]>::with_capacity_in(
-                                    exts_js.get_length(global)? as usize,
-                                    arena,
-                                );
+                                Vec::with_capacity(exts_js.get_length(global)? as usize);
                             while let Some(array_item) = it_2.next()? {
-                                let slice = refs.track(array_item.to_utf8(global)?);
+                                let mut slice = array_item.to_utf8(global)?.into_vec();
                                 if slice == b"*" {
                                     return Err(global.throw_invalid_arguments(format_args!(
                                             "'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array."
@@ -958,20 +632,12 @@ impl Framework {
                                     )));
                                 }
 
-                                extensions.push(if slice[0] == b'.' {
-                                    slice
-                                } else {
-                                    // Concatenate "." + slice into the arena.
-                                    let mut v = bun_alloc::ArenaVec::<u8>::with_capacity_in(
-                                        1 + slice.len(),
-                                        arena,
-                                    );
-                                    v.push(b'.');
-                                    v.extend_from_slice(slice);
-                                    arena_erase(v.into_bump_slice())
-                                });
+                                if slice[0] != b'.' {
+                                    slice.insert(0, b'.');
+                                }
+                                extensions.push(Cow::Owned(slice));
                             }
-                            break 'exts arena_erase(extensions.into_bump_slice());
+                            break 'exts extensions;
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -979,34 +645,30 @@ impl Framework {
                         )));
                     }
                 } else {
-                    &[
+                    literals(&[
                         b".jsx", b".tsx", b".js", b".ts", b".cjs", b".cts", b".mjs", b".mts",
-                    ]
+                    ])
                 };
 
-                let ignore_dirs: &'static [&'static [u8]] = if let Some(exts_js) =
-                    fsr_opts.get(global, "ignoreDirs")?
-                {
-                    'exts: {
-                        if exts_js.is_array() {
-                            let mut it_2 = array.array_iterator(global)?;
-                            let mut dirs = bun_alloc::ArenaVec::<&'static [u8]>::with_capacity_in(
-                                len as usize,
-                                arena,
-                            );
-                            while let Some(array_item) = it_2.next()? {
-                                dirs.push(refs.track(array_item.to_utf8(global)?));
+                let ignore_dirs: Vec<Cow<'static, [u8]>> =
+                    if let Some(exts_js) = fsr_opts.get(global, "ignoreDirs")? {
+                        'exts: {
+                            if exts_js.is_array() {
+                                let mut it_2 = array.array_iterator(global)?;
+                                let mut dirs = Vec::with_capacity(len as usize);
+                                while let Some(array_item) = it_2.next()? {
+                                    dirs.push(Cow::Owned(array_item.to_utf8(global)?.into_vec()));
+                                }
+                                break 'exts dirs;
                             }
-                            break 'exts arena_erase(dirs.into_bump_slice());
-                        }
 
-                        return Err(global.throw_invalid_arguments(format_args!(
+                            return Err(global.throw_invalid_arguments(format_args!(
                             "'ignoreDirs' must be an array of strings or \"*\" for all extensions"
                         )));
-                    }
-                } else {
-                    &[b".git", b"node_modules"]
-                };
+                        }
+                    } else {
+                        literals(&[b".git", b"node_modules"])
+                    };
 
                 file_system_router_types.push(FileSystemRouterType {
                     root,
@@ -1042,44 +704,6 @@ impl Framework {
         Ok(framework)
     }
 
-    /// Project the fields the bundler reads into the lower-tier
-    /// `bun_bundler::bake_types::Framework` view. The bundler crate cannot
-    /// name `bun_runtime::bake::Framework`, so it carries a TYPE_ONLY subset
-    /// that we populate here.
-    pub(crate) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
-        use bun_bundler::bake_types as bt;
-        let mut built_in_modules = bun_collections::StringArrayHashMap::new();
-        for (k, v) in self.built_in_modules.iter() {
-            let bv = match *v {
-                BuiltInModule::Import(p) => bt::BuiltInModule::Import(p.into()),
-                BuiltInModule::Code(c) => bt::BuiltInModule::Code(c.into()),
-            };
-            bun_core::handle_oom(built_in_modules.put(k, bv));
-        }
-        let server_components = self
-            .server_components
-            .as_ref()
-            .map(|sc| bt::ServerComponents {
-                separate_ssr_graph: sc.separate_ssr_graph,
-                server_runtime_import: sc.server_runtime_import.into(),
-                server_register_client_reference: sc.server_register_client_reference.into(),
-                server_register_server_reference: sc.server_register_server_reference.into(),
-                client_register_server_reference: sc.client_register_server_reference.into(),
-            });
-        let react_fast_refresh = self
-            .react_fast_refresh
-            .as_ref()
-            .map(|rfr| bt::ReactFastRefresh {
-                import_source: rfr.import_source.into(),
-            });
-        bt::Framework::new(
-            built_in_modules,
-            server_components,
-            react_fast_refresh,
-            self.is_built_in_react,
-        )
-    }
-
     pub(crate) fn init_transpiler_with_options<'a>(
         &mut self,
         arena: &'a Arena,
@@ -1092,7 +716,7 @@ impl Framework {
         minify_whitespace: Option<bool>,
         minify_syntax: Option<bool>,
         minify_identifiers: Option<bool>,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
         // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop`
         // runs `exit()` at end-of-fn.
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
@@ -1162,10 +786,11 @@ impl Framework {
         // The bundler crate (lower tier) carries a TYPE_ONLY projection
         // (`bake_types::Framework`); construct it here and give it arena
         // lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        // NOTE: interior `Box<[u8]>` in the projection are not dropped by
-        // bumpalo — bounded per-session, revisit when `bake_types::BuiltInModule`
-        // is reshaped to `&'a [u8]`.
-        out.options.framework = Some(&*arena.alloc(self.as_bundler_view()));
+        let framework_view: *mut bun_bundler::bake_types::Framework =
+            arena.alloc(self.as_bundler_view());
+        // SAFETY: `arena.alloc` returns a non-null, initialized pointer backed by `arena: &'a Arena`,
+        // which outlives `out: &mut Transpiler<'a>`, so borrowing it as `&'a Framework` is sound.
+        out.options.framework = Some(unsafe { &*framework_view });
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
             out.options.ignore_dce_annotations = ignore;
@@ -1174,7 +799,7 @@ impl Framework {
         out.options.source_map = source_map;
         if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
             out.options.env.behavior = bundler_options.env;
-            out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"").into();
+            out.options.env.prefix = bundler_options.env_prefix.clone().unwrap_or_default();
         }
         // The resolver crate carries a FORWARD_DECL subset of
         // `BundleOptions`, so re-project via the dedicated helper rather than
@@ -1232,71 +857,19 @@ impl Framework {
         // Re-sync after define/naming mutations so the resolver sees the
         // final option set.
         out.sync_resolver_opts();
-        Ok(())
+        Ok(framework_view)
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct FileSystemRouterType {
-    pub root: &'static [u8],
-    pub prefix: &'static [u8],
-    pub entry_server: &'static [u8],
-    pub entry_client: Option<&'static [u8]>,
-    pub ignore_underscores: bool,
-    pub ignore_dirs: &'static [&'static [u8]],
-    pub extensions: &'static [&'static [u8]],
-    pub style: framework_router::Style,
-    pub allow_layouts: bool,
-}
-
-#[derive(Clone, Copy)]
-pub enum BuiltInModule {
-    Import(&'static [u8]),
-    Code(&'static [u8]),
-}
-
-#[derive(Copy, Clone)]
-pub(crate) struct ServerComponents {
-    pub separate_ssr_graph: bool,
-    pub server_runtime_import: &'static [u8],
-    // pub client_runtime_import: &'static [u8],
-    pub server_register_client_reference: &'static [u8],
-    pub server_register_server_reference: &'static [u8],
-    pub client_register_server_reference: &'static [u8],
-}
-
-impl Default for ServerComponents {
-    fn default() -> Self {
-        Self {
-            separate_ssr_graph: false,
-            server_runtime_import: b"",
-            server_register_client_reference: b"registerClientReference",
-            server_register_server_reference: b"registerServerReference",
-            client_register_server_reference: b"registerServerReference",
-        }
-    }
-}
-
-#[derive(Copy, Clone)]
-pub(crate) struct ReactFastRefresh {
-    pub import_source: &'static [u8],
-}
-
-impl Default for ReactFastRefresh {
-    fn default() -> Self {
-        Self {
-            import_source: b"react-refresh/runtime",
-        }
-    }
+fn literals(list: &[&'static [u8]]) -> Vec<Cow<'static, [u8]>> {
+    list.iter().copied().map(Cow::Borrowed).collect()
 }
 
 #[inline]
-fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'static [u8]> {
+fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<Vec<u8>> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
-        // `path_const().text` is `&'static [u8]` already (`FilenameStore`-
-        // backed; see note in `resolve_helper` above and `bun_ptr::Interned`).
-        Ok(res) => Some(res.path_const().unwrap().text),
+        Ok(res) => Some(res.path_const().unwrap().text.to_vec()),
         Err(_) => {
             r.log_mut().reset();
             None
@@ -1315,11 +888,10 @@ fn get_optional_string(
     target: JSValue,
     global: &JSGlobalObject,
     property: &[u8],
-    allocations: &mut StringRefList,
-) -> JsResult<Option<&'static [u8]>> {
+) -> JsResult<Option<Cow<'static, [u8]>>> {
     Ok(target
         .get_optional_slice(global, property)?
-        .map(|slice| allocations.track(slice)))
+        .map(|slice| Cow::Owned(slice.into_vec())))
 }
 
 // Note: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`

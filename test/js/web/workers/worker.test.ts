@@ -554,7 +554,8 @@ describe("web worker", () => {
 
     for (const kind of ["Web", "node:worker_threads"] as const) {
       test(`closing a ${kind} MessagePort from its own handler after close() does not cut the handler`, async () => {
-        const channel = kind === "Web" ? "new MessageChannel()" : `new (require("node:worker_threads").MessageChannel)()`;
+        const channel =
+          kind === "Web" ? "new MessageChannel()" : `new (require("node:worker_threads").MessageChannel)()`;
         const listen = kind === "Web" ? "port1.onmessage = e => handle(e.data)" : `port1.on("message", handle)`;
         const { messages, code } = await messagesUntilClose(
           workerFromSource(`

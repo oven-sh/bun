@@ -40,6 +40,8 @@ const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
+// On an IncomingMessage: its native response, null when parsed in JS.
+const kHeaderSource = Symbol("kHeaderSource");
 // Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
 const kHandoffResponse = Symbol("kHandoffResponse");
 const kCloseCallback = Symbol("closeCallback");
@@ -542,6 +544,7 @@ export {
   kCloseCallback,
   kHandle,
   kHandoffResponse,
+  kHeaderSource,
   kInternalSocketData,
   kNeedDrain,
   kOnReadParsed,

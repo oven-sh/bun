@@ -1,9 +1,11 @@
 //! `node:http` native binding — `getBunServerAllClosedPromise` /
-//! `getBunServerOpenCount` / `{get,set}MaxHTTPHeaderSize`.
+//! `getBunServerOpenCount` / `upgradeNodeHTTPResponse` / `{get,set}MaxHTTPHeaderSize`.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_core::Utf8Bytes;
+use bun_jsc::{CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
 
-use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
+use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, NodeHTTPResponse};
+use crate::webcore::response::HeadersRef;
 
 pub(crate) fn get_bun_server_all_closed_promise(
     global: &JSGlobalObject,
@@ -72,6 +74,39 @@ pub(crate) fn get_bun_server_open_count(
     try_server!(DebugHTTPSServer);
 
     Err(global.throw_invalid_argument_type_value("server", "bun.Server", value))
+}
+
+/// The upgrade of the built-in `ws`. False when `handle` cannot upgrade.
+pub(crate) fn upgrade_node_http_response(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let [handle, data, protocol] = frame.arguments_as_array::<3>();
+    let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(handle) else {
+        return Ok(JSValue::FALSE);
+    };
+    // SAFETY: `from_js` returns a live `*mut NodeHTTPResponse`, rooted by the call frame; shared —
+    // its mutable state is `Cell`/`JsCell` and `upgrade` takes `&self`.
+    let response = unsafe { &*response };
+
+    let mut sec_websocket_protocol = Utf8Bytes::EMPTY;
+    if !protocol.is_undefined_or_null() {
+        if !response.can_upgrade() {
+            return Ok(JSValue::FALSE);
+        }
+        // Through `Headers`: the trim and TypeError of `server.upgrade`.
+        let protocol = protocol.to_bun_string(global)?;
+        let mut headers = HeadersRef::create_empty();
+        headers.put(HTTPHeaderName::SecWebSocketProtocol, &protocol, global)?;
+        if let Some(value) = headers.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
+            sec_websocket_protocol = value.to_utf8().into_owned();
+        }
+    }
+
+    // `toString()` ran user code: `upgrade` checks again.
+    Ok(JSValue::from(
+        response.upgrade(data, sec_websocket_protocol.slice()),
+    ))
 }
 
 pub(crate) fn get_max_http_header_size(

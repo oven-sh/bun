@@ -4290,6 +4290,186 @@ describe("*Write methods with NaN/invalid offset and length", () => {
   }
 });
 
+// Node's write() checks offset and length, then resolves the encoding (getEncodingOps). Only its
+// native writer rejects a non-string value, so an unknown encoding wins over a non-string value.
+// A result is the error code (or the return value) and the bytes of a 4-byte buffer that held 0xaa.
+// The expected values are the output of Node v26.3.0.
+describe("buf.write resolves the encoding before it checks the value", () => {
+  const write = (...args) => {
+    const buf = Buffer.alloc(4, 0xaa);
+    let result;
+    try {
+      result = buf.write(...args);
+    } catch (e) {
+      result = e.code ?? e.name;
+    }
+    return `${result} ${buf.toString("hex")}`;
+  };
+  // `label` names the value in a failure. String(value) would call the toString() that must not run.
+  const everyForm = (label, value, encoding, expected) => {
+    expect({
+      value: label,
+      encoding,
+      "write(value, encoding)": write(value, encoding),
+      "write(value, offset, encoding)": write(value, 0, encoding),
+      "write(value, offset, length, encoding)": write(value, 0, 1, encoding),
+    }).toEqual({
+      value: label,
+      encoding,
+      "write(value, encoding)": expected,
+      "write(value, offset, encoding)": expected,
+      "write(value, offset, length, encoding)": expected,
+    });
+  };
+
+  it("an unknown encoding wins, a known encoding rejects the value, and neither coerces it", () => {
+    let toStringCalls = 0;
+    const object = {
+      toString() {
+        toStringCalls++;
+        return "ab";
+      },
+    };
+    for (const [label, value] of [
+      ["123", 123],
+      ["null", null],
+      ["undefined", undefined],
+      ["true", true],
+      ["object with toString", object],
+      ["new String('ab')", new String("ab")],
+      ["['ab']", ["ab"]],
+    ]) {
+      everyForm(label, value, "bogus", "ERR_UNKNOWN_ENCODING aaaaaaaa");
+      for (const encoding of ["utf8", "latin1", "ascii", "ucs2", "utf16le", "hex", "base64", "base64url", "HEX"]) {
+        everyForm(label, value, encoding, "ERR_INVALID_ARG_TYPE aaaaaaaa");
+      }
+    }
+    expect(toStringCalls).toBe(0);
+  });
+
+  it("reads a falsy encoding as utf8 and coerces a truthy one of any type", () => {
+    const results = {};
+    for (const [label, encoding] of [
+      ["''", ""],
+      ["null", null],
+      ["undefined", undefined],
+      ["0", 0],
+      ["false", false],
+      ["5", 5],
+      ["true", true],
+      ["{}", {}],
+      ["[]", []],
+      ["['hex']", ["hex"]],
+      ["new String('hex')", new String("hex")],
+      ["new String('bogus')", new String("bogus")],
+      ["Symbol('hex')", Symbol("hex")],
+    ]) {
+      results[label] = [write(123, 0, 2, encoding), write("6162", 0, 2, encoding)];
+    }
+    const utf8 = ["ERR_INVALID_ARG_TYPE aaaaaaaa", "2 3631aaaa"];
+    const hex = ["ERR_INVALID_ARG_TYPE aaaaaaaa", "2 6162aaaa"];
+    const unknown = ["ERR_UNKNOWN_ENCODING aaaaaaaa", "ERR_UNKNOWN_ENCODING aaaaaaaa"];
+    expect(results).toEqual({
+      "''": utf8,
+      "null": utf8,
+      "undefined": utf8,
+      "0": utf8,
+      "false": utf8,
+      "5": unknown,
+      "true": unknown,
+      "{}": unknown,
+      "[]": unknown,
+      "['hex']": hex,
+      "new String('hex')": hex,
+      "new String('bogus')": unknown,
+      "Symbol('hex')": ["TypeError aaaaaaaa", "TypeError aaaaaaaa"],
+    });
+  });
+
+  // "é" is c3 a9 in utf8 and the single byte e9 in latin1, so the bytes show which encoding ran.
+  it("reads an empty string encoding as utf8 in every form", () => {
+    expect({
+      "write(string, '')": write("h\u00e9", ""),
+      "write(string, offset, '')": write("h\u00e9", 1, ""),
+      "write(string, offset, length, '')": write("h\u00e9", 1, 1, ""),
+      "write(123, '')": write(123, ""),
+      "write(123, offset, '')": write(123, 0, ""),
+      "on a Uint8Array": Buffer.prototype.write.call(new Uint8Array(3), "h\u00e9", ""),
+    }).toEqual({
+      "write(string, '')": "3 68c3a9aa",
+      "write(string, offset, '')": "3 aa68c3a9",
+      "write(string, offset, length, '')": "1 aa68aaaa",
+      "write(123, '')": "ERR_INVALID_ARG_TYPE aaaaaaaa",
+      "write(123, offset, '')": "ERR_INVALID_ARG_TYPE aaaaaaaa",
+      "on a Uint8Array": 3,
+    });
+  });
+
+  it("rejects every other unknown name, however short", () => {
+    for (const encoding of [" ", "x", "xx", "utf"]) {
+      everyForm("'abc'", "abc", encoding, "ERR_UNKNOWN_ENCODING aaaaaaaa");
+    }
+  });
+
+  it("calls an object encoding's toString() before it rejects the value", () => {
+    const calls = [];
+    const encoding = name => ({
+      toString() {
+        calls.push(`encoding ${name}`);
+        return name;
+      },
+    });
+    const value = {
+      toString() {
+        calls.push("value");
+        return "61";
+      },
+    };
+    expect([write(value, 0, 1, encoding("hex")), write(value, 0, 1, encoding("utf8"))]).toEqual([
+      "ERR_INVALID_ARG_TYPE aaaaaaaa",
+      "ERR_INVALID_ARG_TYPE aaaaaaaa",
+    ]);
+    expect(calls).toEqual(["encoding hex", "encoding utf8"]);
+
+    const throws = {
+      toString() {
+        throw new RangeError("from the encoding");
+      },
+    };
+    expect(() => Buffer.alloc(4).write(123, 0, 1, throws)).toThrow(
+      expect.objectContaining({ name: "RangeError", message: "from the encoding" }),
+    );
+  });
+
+  it("validates offset and length before the encoding", () => {
+    expect({
+      negativeOffset: write(123, -1, "bogus"),
+      offsetPastEnd: write(123, 5, "bogus"),
+      fractionalOffset: write(123, 1.5, "bogus"),
+      negativeLength: write(123, 0, -1, "bogus"),
+      lengthPastEnd: write(123, 0, 5, "bogus"),
+    }).toEqual({
+      negativeOffset: "ERR_OUT_OF_RANGE aaaaaaaa",
+      offsetPastEnd: "ERR_OUT_OF_RANGE aaaaaaaa",
+      fractionalOffset: "ERR_OUT_OF_RANGE aaaaaaaa",
+      negativeLength: "ERR_OUT_OF_RANGE aaaaaaaa",
+      lengthPastEnd: "ERR_OUT_OF_RANGE aaaaaaaa",
+    });
+    expect(() => Buffer.alloc(4).write(123, "0", 1, "bogus")).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "offset" argument must be of type number. Received type string ('0')`,
+      }),
+    );
+    expect(() => Buffer.alloc(4).write(123, 0, null, "bogus")).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "length" argument must be of type number. Received null`,
+      }),
+    );
+  });
+});
+
 describe("utf8 write of a string ending in a lone high surrogate", () => {
   function hasAVX2() {
     if (process.arch !== "x64" || process.platform !== "linux") return false;
@@ -4677,6 +4857,78 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
         });
       });
     });
+  });
+});
+
+// Node checks the value in the native writer (THROW_AND_RETURN_IF_NOT_STRING in
+// src/node_buffer.cc): one static message, nothing read from the value, and the
+// check runs after write() resolves the encoding.
+describe("write() with a non-string value", () => {
+  const NOT_A_STRING = expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "argument must be a string",
+  });
+  const UNKNOWN_ENCODING = expect.objectContaining({
+    code: "ERR_UNKNOWN_ENCODING",
+    message: "Unknown encoding: bogus",
+  });
+  const values = [123, undefined, null, new String("ab"), Symbol("s"), { toString: () => "ab" }];
+
+  it("throws ERR_INVALID_ARG_TYPE with Node's message in every form", () => {
+    for (const value of values) {
+      const buf = Buffer.alloc(8, 0xcc);
+      expect(() => buf.write(value)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, "utf8")).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, "hex")).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, 4)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, 4, "hex")).toThrow(NOT_A_STRING);
+      expect(buf.toString("hex")).toBe("cccccccccccccccc");
+    }
+  });
+
+  it("resolves the encoding before it checks the value", () => {
+    const buf = Buffer.alloc(8);
+    expect(() => buf.write(123, "bogus")).toThrow(UNKNOWN_ENCODING);
+    expect(() => buf.write(123, 0, "bogus")).toThrow(UNKNOWN_ENCODING);
+    expect(() => buf.write(123, 0, 4, "bogus")).toThrow(UNKNOWN_ENCODING);
+  });
+
+  it("checks the offset and length before the value", () => {
+    const OUT_OF_RANGE = expect.objectContaining({ code: "ERR_OUT_OF_RANGE" });
+    const buf = Buffer.alloc(8);
+    expect(() => buf.write(123, 9)).toThrow(OUT_OF_RANGE);
+    expect(() => buf.write(123, 0, 9)).toThrow(OUT_OF_RANGE);
+    expect(() => buf.write(123, 9, "hex")).toThrow(OUT_OF_RANGE);
+    expect(() => buf.write(123, 8, "hex")).toThrow(NOT_A_STRING);
+  });
+
+  it("reads nothing from the rejected value", () => {
+    const ran = [];
+    const proxy = new Proxy(
+      {},
+      {
+        get(_, key) {
+          ran.push(`get ${String(key)}`);
+        },
+      },
+    );
+    class Named {
+      static get name() {
+        ran.push("constructor.name getter");
+        return "Named";
+      }
+    }
+    const buf = Buffer.alloc(8);
+    for (const value of [proxy, new Named()]) {
+      expect(() => buf.write(value)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, "hex")).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, "hex")).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, 4, "hex")).toThrow(NOT_A_STRING);
+    }
+    expect(ran).toEqual([]);
   });
 });
 

@@ -1421,7 +1421,7 @@ impl NodeBuilderImpl {
             }
             let name_type_flags = c.types[name_type].flags;
             if name_type_flags.intersects(TypeFlags::STRING_OR_NUMBER_LITERAL) {
-                let value = c.as_literal_type(name_type).value;
+                let value = c.as_literal_type(name_type).value.clone();
                 let name: Vec<u8> = match value {
                     LiteralValue::String(v) => v.to_vec(),
                     LiteralValue::Number(v) => crate::jsnum::Number(v).string(),
@@ -1540,7 +1540,7 @@ impl NodeBuilderImpl {
         if !name.is_empty() {
             return name;
         }
-        escape_internal_symbol_name(sym.name)
+        escape_internal_symbol_name(sym.name).into_owned()
     }
 
     // The full set of type parameters for a generic class or interface type consists of its outer type parameters plus its locally declared type parameters.
@@ -1911,7 +1911,7 @@ impl NodeBuilderImpl {
             resolution_mode = c.program.get_default_resolution_mode_for_file(context_file);
         }
         let cache_key = (
-            a.as_source_file(context_file).path().to_vec(),
+            a.as_source_file(context_file).path().0.clone(),
             resolution_mode,
         );
         if let Some(result) = c
@@ -2056,7 +2056,7 @@ impl NodeBuilderImpl {
             enclosing_declaration,
             name,
             SymbolFlags::TYPE,
-            None,
+            MessageId::NIL,
             false,
             false,
         );
@@ -2214,7 +2214,9 @@ impl NodeBuilderImpl {
                     c.get_type_parameter_from_mapped_type(target),
                     c.get_modifiers_type_from_mapped_type(target),
                 ];
-                let mapper = new_type_mapper(c, &sources, &[type_parameter, new_constraint_param]);
+                let sources = c.list_of(&sources);
+                let targets = c.list_of(&[type_parameter, new_constraint_param]);
+                let mapper = new_type_mapper(c, sources, targets);
                 template_type = c.instantiate_type(target_template, mapper);
             }
             let mut index_target = new_type_variable;
@@ -2352,11 +2354,12 @@ impl NodeBuilderImpl {
         let parameter_name_text = c.type_predicates[predicate].parameter_name;
         let predicate_type = c.type_predicates[predicate].t;
         let mut asserts_modifier = NodeId::NIL;
-        if kind == TypePredicateKind::AssertsIdentifier || kind == TypePredicateKind::AssertsThis {
+        if kind == TypePredicateKind::ASSERTS_IDENTIFIER || kind == TypePredicateKind::ASSERTS_THIS
+        {
             asserts_modifier = self.f(c).new_token(Kind::AssertsKeyword);
         }
         let parameter_name;
-        if kind == TypePredicateKind::Identifier || kind == TypePredicateKind::AssertsIdentifier {
+        if kind == TypePredicateKind::IDENTIFIER || kind == TypePredicateKind::ASSERTS_IDENTIFIER {
             parameter_name = self.f(c).new_identifier(parameter_name_text);
             c.node_builder
                 .impl_

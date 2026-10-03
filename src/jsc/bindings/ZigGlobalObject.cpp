@@ -3510,6 +3510,17 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    String preparedKey;
+    if (key.isString() && (!referrer || referrer.isUndefinedOrNull() || (referrer.isString() && !asString(referrer)->length()))) {
+        auto name = asString(key)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isAbsolutePath(name)) {
+            auto moduleKey = Identifier::fromString(vm, name);
+            if (auto* entry = loader->registryEntry(moduleKey); entry && entry->record())
+                preparedKey = name;
+        }
+    }
+
     WTF::String keyString;
     if (key.isString()) {
         auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
@@ -3591,11 +3602,14 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
     auto resolved = res.result.value.transferToWTFString();
     auto query = queryZ.transferToWTFString();
-
-    if (!query.isEmpty()) {
-        return Identifier::fromString(vm, makeString(resolved, query));
-    }
-    return Identifier::fromString(vm, resolved);
+    auto resolvedKey = query.isEmpty() ? resolved : makeString(resolved, query);
+    // The loader revisits require(esm)'s prepared key as a top-level request.
+    // Keep that record when only path spelling changed, or its environment is
+    // never linked. Actual plugin redirects must still select their new target.
+    if (!preparedKey.isEmpty() && isAbsolutePath(resolvedKey)
+        && URL::fileURLWithFileSystemPath(preparedKey) == URL::fileURLWithFileSystemPath(resolvedKey))
+        return Identifier::fromString(vm, preparedKey);
+    return Identifier::fromString(vm, resolvedKey);
 }
 
 JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSModuleLoader* loader, JSValue key, JSValue referrer, RefPtr<JSC::ScriptFetcher> fetcher, bool b)

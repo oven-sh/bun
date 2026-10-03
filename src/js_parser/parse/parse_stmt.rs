@@ -682,9 +682,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// block is empty and no `}` is looked for.
     #[inline]
     fn open_block(p: &mut Self) -> Result<bool> {
-        let is_there = p.lexer.token == T::TOpenBrace || !p.lexer.tolerant;
+        let exists = p.lexer.token == T::TOpenBrace || !p.lexer.tolerant;
         p.lexer.expect(T::TOpenBrace)?;
-        Ok(is_there)
+        Ok(exists)
     }
 
     #[inline(never)]
@@ -2910,7 +2910,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // The statements inside are dropped.
                         p.discard_scopes_up_to(scope_index);
                     }
-                    if p.keeps_type_syntax() {
+                    if p.preserves_type_syntax() {
                         let body = Some(body.into_bump_slice_mut());
                         return Ok(Some(p.keep_global(loc, loc, body, opts.is_export)));
                     }
@@ -2974,7 +2974,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // The statements inside are dropped, so discard any scopes they
                     // recorded or the visit pass will hit a scope order mismatch.
                     p.discard_scopes_up_to(scope_index);
-                    if p.keeps_type_syntax() {
+                    if p.preserves_type_syntax() {
                         let body = Some(body.into_bump_slice_mut());
                         return Ok(Some(p.keep_global(
                             name_loc,
@@ -3011,7 +3011,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let scope_index = p.scopes_in_order.len();
                 let stmt = p.parse_stmt(opts)?;
                 // The type checker is told of every declaration. That it says `declare` is among its modifiers.
-                if p.keeps_type_syntax() {
+                if p.preserves_type_syntax() {
                     return Ok(Some(stmt));
                 }
                 // Anything unexpected is a syntax error ("declare foo", "declare type \n Foo").

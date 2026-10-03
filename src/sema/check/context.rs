@@ -104,7 +104,7 @@ impl<'p> Checker<'p> {
                             // The call may be an argument itself: resolve the outermost enclosing call first. As the outermost query,
                             // `resolved_signature` does that itself. Doing it twice doubles the work per nesting level if the enclosing
                             // calls are non-cacheable.
-                            if !self.is_asked_from_outside() {
+                            if !self.is_top_level_query() {
                                 self.prepare_context(file, parent);
                             }
                             self.resolved_signature(file, parent);
@@ -455,7 +455,7 @@ impl<'p> Checker<'p> {
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(file, e, ..),
                 ..
-            } if self.is_assignment_target(file, e) => {
+            } if self.is_definite_assignment_target(file, e) => {
                 let hir = self.hir(file);
                 let ExprKind::Object(props) = hir[e].kind else {
                     return None;
@@ -486,7 +486,7 @@ impl<'p> Checker<'p> {
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(file, e, ..),
                 ..
-            } => self.is_assignment_target(*file, *e),
+            } => self.is_definite_assignment_target(*file, *e),
             // What is written as a type has none.
             TypeData::Tuple {
                 elems: TypeArguments::Given(parts),
@@ -794,9 +794,9 @@ impl<'p> Checker<'p> {
         if let Some(&found) = self.contextual_properties.get(&(context, name)) {
             return found;
         }
-        let before = self.what_only_holds_for_now();
+        let before = self.non_cacheable_mark();
         let found = self.contextual_property(context, name);
-        if self.holds_whenever_asked(before) {
+        if self.is_cacheable_since(before) {
             self.contextual_properties.insert((context, name), found);
         }
         found
@@ -1174,9 +1174,9 @@ impl<'p> Checker<'p> {
         f: impl FnOnce(&mut Self, &mut Inference) -> R,
     ) -> Option<R> {
         let context = self.inference_contexts[level].context.as_mut()?;
-        let mut stand_in = Inference::for_params(&[], None);
-        stand_in.return_mapper = context.return_mapper;
-        let mut context = std::mem::replace(context, stand_in);
+        let mut placeholder = Inference::for_params(&[], None);
+        placeholder.return_mapper = context.return_mapper;
+        let mut context = std::mem::replace(context, placeholder);
         let result = f(self, &mut context);
         self.inference_contexts[level].context = Some(context);
         Some(result)
@@ -1204,9 +1204,9 @@ impl<'p> Checker<'p> {
         if let Some(&narrowed) = self.discriminated.get(&(file, literal, context)) {
             return narrowed;
         }
-        let before = self.what_only_holds_for_now();
+        let before = self.non_cacheable_mark();
         let (narrowed, is_given_for_good) = self.discriminate_by_members(file, props, context);
-        if is_given_for_good && self.holds_whenever_asked(before) {
+        if is_given_for_good && self.is_cacheable_since(before) {
             self.discriminated
                 .insert((file, literal, context), narrowed);
         }
@@ -1234,11 +1234,11 @@ impl<'p> Checker<'p> {
                     && Self::is_possibly_discriminant_value(hir, hir[p].value)
             })
         {
-            let (given, is_for_good) = self.context_free_discriminant_type(file, hir[p].value);
+            let (given, is_final) = self.context_free_discriminant_type(file, hir[p].value);
             if let Some(&member) = constituents.get(&self.regular(given))
                 && member != TypeId::UNKNOWN
             {
-                return (member, is_for_good);
+                return (member, is_final);
             }
         }
         // Only names the binder knows count. A computed name is skipped.
@@ -1260,22 +1260,22 @@ impl<'p> Checker<'p> {
                     _ => false,
                 };
             if counts && self.is_discriminant_property(context, name) {
-                let (given, is_for_good) = self.context_free_discriminant_type(file, prop.value);
-                is_given_for_good &= is_for_good;
+                let (given, is_final) = self.context_free_discriminant_type(file, prop.value);
+                is_given_for_good &= is_final;
                 items.push((name, given));
             }
         }
-        self.push_left_out_discriminants(context, &written, &mut items);
+        self.push_omitted_discriminants(context, &written, &mut items);
         (
             self.discriminate_by_items(context, &items),
             is_given_for_good,
         )
     }
 
-    /// Whether what has been made of types since `before`, which is what `what_only_holds_for_now` gave then, is what anybody is told
+    /// Whether what has been made of types since `before`, which is what `non_cacheable_mark` gave then, is what anybody is told
     /// who asks at any other time, with nothing raised or marked on the way.
-    fn holds_whenever_asked(&self, before: (u64, u64)) -> bool {
-        self.what_only_holds_for_now() == before
+    fn is_cacheable_since(&self, before: (u64, u64)) -> bool {
+        self.non_cacheable_mark() == before
             // What goes by a call that is being resolved marks the questions asked since the call. If the call is the last of
             // them there is nothing to mark.
             && !self.is_innermost_tainted()
@@ -1369,7 +1369,7 @@ impl<'p> Checker<'p> {
         {
             written.push(children);
         }
-        self.push_left_out_discriminants(context, &written, &mut items);
+        self.push_omitted_discriminants(context, &written, &mut items);
         self.discriminate_by_items(context, &items)
     }
 
@@ -1408,7 +1408,7 @@ impl<'p> Checker<'p> {
             ),
         };
         // What is written out does not go by who asks.
-        let is_for_good = matches!(
+        let is_final = matches!(
             kind,
             ExprKind::String(_)
                 | ExprKind::Number(_)
@@ -1417,13 +1417,13 @@ impl<'p> Checker<'p> {
                 | ExprKind::False
                 | ExprKind::Null
         ) || self.every_type(given, |c, t| c.is_primitive(t))
-            && self.kept_type_of_expr(file, e) == Some(given);
-        (given, is_for_good)
+            && self.cached_type_of_expr(file, e) == Some(given);
+        (given, is_final)
     }
 
     /// The second half of the discriminators: a property of the union `context` that may be left out, tells its members apart and
     /// is not `written` is as good as `undefined`.
-    fn push_left_out_discriminants(
+    fn push_omitted_discriminants(
         &mut self,
         context: TypeId,
         written: &[Atom],
@@ -1431,7 +1431,7 @@ impl<'p> Checker<'p> {
     ) {
         // `getPropertiesOfType`
         let reduced = self.reduced(context);
-        let mut gone_through: SmallVec<[Members<'p>; 2]> = SmallVec::new();
+        let mut visited: SmallVec<[Members<'p>; 2]> = SmallVec::new();
         for &part in self.parts(reduced) {
             let Some(members) = self.members(part) else {
                 break;
@@ -1439,7 +1439,7 @@ impl<'p> Checker<'p> {
             for prop in &members.shape().props {
                 let name = prop.name;
                 // Each name once.
-                if gone_through
+                if visited
                     .iter()
                     .any(|earlier| earlier.resolved.prop(name).is_some())
                     || members
@@ -1468,7 +1468,7 @@ impl<'p> Checker<'p> {
             if members.shape().index.is_empty() {
                 break;
             }
-            gone_through.push(members);
+            visited.push(members);
         }
     }
 

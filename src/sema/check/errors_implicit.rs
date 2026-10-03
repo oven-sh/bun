@@ -15,7 +15,7 @@ impl Checker<'_> {
         let is_private_ambient = self.is_private_within_ambient(file, func);
         // `getTypeOfAccessors`: what is written decides, a type on either or a body of the getter. What that comes to plays no part.
         if matches!(decl.kind, FnKind::Getter | FnKind::Setter) {
-            if is_private_ambient || !self.accessor_says_nothing(file, func) {
+            if is_private_ambient || !self.accessor_has_no_type_source(file, func) {
                 return;
             }
             let Some(start) = self.start_of_accessor_name(file, func) else {
@@ -25,7 +25,7 @@ impl Checker<'_> {
                 let getter = self.sibling_accessor(file, func, FnKind::Getter);
                 (
                     7032,
-                    getter.is_none_or(|g| self.accessor_says_nothing(file, g)),
+                    getter.is_none_or(|g| self.accessor_has_no_type_source(file, g)),
                 )
             } else {
                 // The setter is the one to be told, if it can be.
@@ -33,7 +33,7 @@ impl Checker<'_> {
                 (
                     7033,
                     setter.is_none_or(|s| {
-                        self.accessor_says_nothing(file, s)
+                        self.accessor_has_no_type_source(file, s)
                             && self.is_private_within_ambient(file, s)
                     }),
                 )
@@ -117,7 +117,7 @@ impl Checker<'_> {
 
     /// Whether the accessor `func` gives `getTypeOfAccessors` nothing to go by: a getter neither a type nor a body, a setter no type
     /// for what it takes.
-    fn accessor_says_nothing(&self, file: FileId, func: FnId) -> bool {
+    fn accessor_has_no_type_source(&self, file: FileId, func: FnId) -> bool {
         let hir = self.hir(file);
         let f = &hir[func];
         match f.kind {
@@ -173,7 +173,7 @@ impl Checker<'_> {
     /// `checkVariableLikeDeclaration` returns before it asks for the type of a renamed element in a function without a body. 7031
     /// comes from `getTypeFromBindingPattern`, which only runs once the type of the parameter is asked for: by another element of
     /// the pattern, by a call, or by a comparison with another signature.
-    pub(super) fn is_type_of_parameter_never_asked_for(
+    pub(super) fn is_parameter_type_never_requested(
         &self,
         file: FileId,
         func: FnId,

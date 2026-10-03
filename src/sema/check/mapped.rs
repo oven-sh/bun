@@ -330,7 +330,7 @@ impl<'p> Checker<'p> {
                 (
                     *file,
                     written.key,
-                    self.is_name_written_as_string(*file, written.pos),
+                    self.is_string_literal_name_in_source(*file, written.pos),
                 )
             }
             PropSource::Type(_)
@@ -393,7 +393,7 @@ impl<'p> Checker<'p> {
 
     /// Whether the name of a property of an object literal, which starts at `pos` of `file`, is a string: `"0"`, `["0"]`. Object
     /// literals are never in declaration files, so the text is there.
-    fn is_name_written_as_string(&self, file: FileId, pos: u32) -> bool {
+    fn is_string_literal_name_in_source(&self, file: FileId, pos: u32) -> bool {
         let text = &self.hir(file).text;
         let at = pos as usize;
         let first = match text.get(at) {
@@ -767,7 +767,7 @@ impl<'p> Checker<'p> {
     ) {
         if is_readonly
             && let Some((file, e)) = access_expression
-            && (self.is_written(file, e)
+            && (self.is_assignment_target(file, e)
                 || matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p)
                     if matches!(self.hir(file)[p].kind, ExprKind::Unary { op: UnOp::Delete, .. })))
         {
@@ -1128,7 +1128,7 @@ impl<'p> Checker<'p> {
                 (self.p.conditionals).insert(&mut self.task, (file, node, mapper), ty, stored)
             }
             (Err(open), None) => {
-                self.keep_provisionally(q, u64::from(ty.0), open);
+                self.cache_provisionally(q, u64::from(ty.0), open);
                 ty
             }
             (_, Some(_)) => ty,
@@ -2223,7 +2223,7 @@ impl<'p> Checker<'p> {
             return TypeId(raw as u32);
         }
         if !self.enter(q) {
-            return if self.came_full_circle {
+            return if self.found_cycle {
                 TypeId::ERROR
             } else {
                 TypeId::UNRESOLVED
@@ -2259,7 +2259,7 @@ impl<'p> Checker<'p> {
                 (self.p.mapped_prop_types).insert(&mut self.task, (of, prop.name), ty, stored)
             }
             Err(open) if !is_copy => {
-                self.keep_provisionally(q, u64::from(ty.0), open);
+                self.cache_provisionally(q, u64::from(ty.0), open);
                 ty
             }
             _ => ty,

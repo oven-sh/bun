@@ -171,14 +171,18 @@ impl<'p> Checker<'p> {
 
     /// `links.resolvedSignature` of `call`, if it is cached, with what the signature returns.
     #[inline]
-    pub(super) fn kept_call(&self, file: FileId, call: ExprId) -> Option<ResolvedCall> {
+    pub(super) fn cached_resolved_signature(
+        &self,
+        file: FileId,
+        call: ExprId,
+    ) -> Option<ResolvedCall> {
         let sig = self.p.calls.get(&self.task, &(file, call))?;
         let ret = self.p.call_return_types.get(&self.task, &(file, call))?;
         Some(ResolvedCall { sig, ret })
     }
 
     /// `links.resolvedSignature = result`. The first value stays.
-    fn keep_call(&mut self, file: FileId, call: ExprId, resolved: ResolvedCall, stored: Stored) {
+    fn cache_call(&mut self, file: FileId, call: ExprId, resolved: ResolvedCall, stored: Stored) {
         (self.p.call_return_types).insert(&self.task, (file, call), resolved.ret, stored);
         self.p
             .calls
@@ -186,7 +190,7 @@ impl<'p> Checker<'p> {
     }
 
     pub fn resolved_signature(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
-        if let Some(known) = self.kept_call(file, call) {
+        if let Some(known) = self.cached_resolved_signature(file, call) {
             return known;
         }
         if let Some(&(.., resolved)) = self
@@ -201,12 +205,12 @@ impl<'p> Checker<'p> {
             return crate::table::Packed::unpack(raw);
         }
         if self.prepare_question_about_expr(file, call)
-            && let Some(known) = self.kept_call(file, call)
+            && let Some(known) = self.cached_resolved_signature(file, call)
         {
             return known;
         }
         // `resolvingSignature`
-        let is_under_way = self
+        let is_in_progress = self
             .stack
             .iter()
             .any(|q| matches!(*q, Query::Call(f, c) if f == file && c == call));
@@ -220,7 +224,7 @@ impl<'p> Checker<'p> {
         // type depends on the call it is an argument of. It is asked about once more, this time with the call under way. Should
         // that lead to the call as an expression, the call is resolved again, without another reset: what comes round then is a circle.
         let resolution_start = self.resolution_start;
-        if !is_under_way {
+        if !is_in_progress {
             self.resolution_start = self.stack.len();
         }
         let around = self.call_resolution_errors.take();
@@ -234,31 +238,31 @@ impl<'p> Checker<'p> {
         // A nested resolution of a call in flight is not the result of the call.
         let left = self.leave(Query::Call(file, call));
         if let Err(open) = left
-            && !is_under_way
+            && !is_in_progress
         {
             let raw = crate::table::Packed::pack(resolved);
-            self.keep_provisionally(Query::Call(file, call), raw, open);
+            self.cache_provisionally(Query::Call(file, call), raw, open);
         }
         let is_tainted_by_patterns_only = !self.contextual_binding_patterns.is_empty()
             && self.taints == self.taints_before_patterns;
         let stored = (left.ok()).or_else(|| is_tainted_by_patterns_only.then(Stored::new));
         // A call that is asked for while it is being resolved is resolved once more, and `resolveCall` reports what is wrong with it
         // as things stand then. Only the first time is kept.
-        if is_under_way {
+        if is_in_progress {
             if let Some(said) = said
-                && (self.p.said_of_calls_resolved_again)
+                && (self.p.diagnostics_of_re_resolved_calls)
                     .get_ref(&mut self.task, &(file, call))
                     .is_none()
             {
                 let (key, stored) = ((file, call), Stored::new());
-                (self.p.said_of_calls_resolved_again).insert_ref(&self.task, key, said, stored);
+                (self.p.diagnostics_of_re_resolved_calls).insert_ref(&self.task, key, said, stored);
             }
         } else if let Some(stored) = stored {
             // A task that finds the call resolved finds this too: both go to one barrier.
             if let Some(said) = said {
-                (self.p.said_of_calls).insert_ref(&self.task, (file, call), said, stored);
+                (self.p.call_diagnostics).insert_ref(&self.task, (file, call), said, stored);
             }
-            self.keep_call(file, call, resolved, stored);
+            self.cache_call(file, call, resolved, stored);
         }
         resolved
     }
@@ -1886,7 +1890,7 @@ impl<'p> Checker<'p> {
         let p = self.p;
         let kept = p.candidate_orders.get_ref(&mut self.task, &first);
         if let Some(kept) = kept
-            && let Some(ordered) = Self::order_kept_for(kept, sigs)
+            && let Some(ordered) = Self::cached_candidate_order(kept, sigs)
         {
             return List::Kept(ordered);
         }
@@ -1902,7 +1906,7 @@ impl<'p> Checker<'p> {
                 .insert_ref(&mut self.task, first, both, stored)
                 .1;
             // The entry that stays may be another list that starts the same.
-            if let Some(ordered) = Self::order_kept_for(kept, sigs) {
+            if let Some(ordered) = Self::cached_candidate_order(kept, sigs) {
                 return List::Kept(ordered);
             }
         }
@@ -1910,7 +1914,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The second half of an entry of `candidate_orders`, if the first half is `sigs`.
-    fn order_kept_for<'a>(kept: &'a [SigId], sigs: &[SigId]) -> Option<&'a [SigId]> {
+    fn cached_candidate_order<'a>(kept: &'a [SigId], sigs: &[SigId]) -> Option<&'a [SigId]> {
         let (of, ordered) = kept.split_at(kept.len() / 2);
         (of == sigs).then_some(ordered)
     }
@@ -1966,7 +1970,12 @@ impl<'p> Checker<'p> {
     }
 
     /// FOR SPEED, see `CallState::checks_arguments_once`: `checkExpressionCached(e)` with `param` pushed for it.
-    pub(super) fn arg_type_kept_under(&mut self, file: FileId, e: ExprId, param: TypeId) -> TypeId {
+    pub(super) fn cached_arg_type_for_param(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        param: TypeId,
+    ) -> TypeId {
         let param = self.without_no_infer(param);
         self.contextual.push((file, e, param));
         self.inference_contexts.push(InferenceContextInfo {

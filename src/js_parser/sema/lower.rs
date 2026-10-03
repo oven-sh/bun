@@ -43,9 +43,9 @@ pub(crate) struct Lower<'p, 'a> {
     /// `parsingContexts&(1<<PCObjectLiteralMembers)`: how many object literals what is being lowered is written in.
     pub(super) object_literals_around: u32,
     /// `node.End()` of what `expr` made last, as it is written: with the parentheses around it.
-    written_end: u32,
+    source_end: u32,
     /// `GetTokenPosOfNode` of what `expr` made last, as it is written: with the parentheses around it.
-    written_start: u32,
+    source_start: u32,
     /// The functions that have a `FullSignature`.
     pub(super) full_signatures: bun_collections::HashMap<u32, ()>,
     /// The functions whose `@param` tags were compared with their parameters.
@@ -88,8 +88,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             reparsed_members: Vec::new(),
             member_modifiers: Vec::new(),
             object_literals_around: 0,
-            written_end: 0,
-            written_start: 0,
+            source_end: 0,
+            source_start: 0,
             full_signatures: Default::default(),
             documented_functions: Default::default(),
             is_ambient: is_declaration_file,
@@ -145,7 +145,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             .jsx_expressions
             .sort_unstable_by_key(|braces| braces.0.0);
         this.finish_jsdoc();
-        std::mem::take(&mut this.noted).leave_room();
+        std::mem::take(&mut this.noted).recycle();
         let positions = this.b.keyword_identifier_positions.take();
         if !positions.is_empty() {
             this.b.file.keyword_identifier_positions.extend(positions);
@@ -386,7 +386,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             StmtKind::Interface(i) => ((file[i].name_pos, 0), 8006, b"interface"),
             // `parseAmbientExternalModuleDeclaration` does not ask.
             StmtKind::Module(m) if !matches!(file[m].name, ModuleName::Ident(_)) => return,
-            StmtKind::Module(m) if file[m].says_module => ((file[m].name_pos, 0), 8006, b"module"),
+            StmtKind::Module(m) if file[m].specifies_module => {
+                ((file[m].name_pos, 0), 8006, b"module")
+            }
             StmtKind::Module(m) => ((file[m].name_pos, 0), 8006, b"namespace"),
             StmtKind::Enum(e) => ((file[e].name_pos, 0), 8006, b"enum"),
             StmtKind::TypeAlias(a) => ((file[a].name_pos, 0), 8008, b""),
@@ -1028,7 +1030,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     flags,
                     body,
                     has_body: self.note(s.name.loc, Mark::NoBody).is_none(),
-                    says_module: self.note(s.name.loc, Mark::ModuleKeyword).is_some(),
+                    specifies_module: self.note(s.name.loc, Mark::ModuleKeyword).is_some(),
                     stmt: StmtId::NONE,
                 }))
             }
@@ -1133,7 +1135,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                         is_rest,
                         start: dots.unwrap_or(self.b.file[pat].pos),
                         end: match default.is_some() {
-                            true => self.written_end,
+                            true => self.source_end,
                             false => self.b.file[pat].end,
                         },
                     });
@@ -1171,7 +1173,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                         pos,
                         key_pos,
                         end: match default.is_some() {
-                            true => self.written_end,
+                            true => self.source_end,
                             false => self.b.file[value].end,
                         },
                     });
@@ -1851,11 +1853,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             let pos = self.pos_of(expr.loc);
             self.b.file.syntax_errors += 1;
             self.b.file.ran_out_of_stack = true;
-            self.written_end = pos;
-            self.written_start = pos;
+            self.source_end = pos;
+            self.source_start = pos;
             return self.b.file.expr(ExprKind::Missing, pos, pos);
         }
-        self.written_end = 0;
+        self.source_end = 0;
         let mut id = self.expr_without_casts(expr);
         // Where what has been made of it so far starts.
         let mut pos = self.b.file[id].pos;
@@ -1938,8 +1940,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 id = self.b.file.expr(kind, pos, end);
             }
         }
-        self.written_end = end;
-        self.written_start = pos;
+        self.source_end = end;
+        self.source_start = pos;
         id
     }
 
@@ -2111,7 +2113,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                         };
                         self.check_js_type_arguments(type_args);
                         let callee = self.expr(tag);
-                        pos = pos.min(self.written_start);
+                        pos = pos.min(self.source_start);
                         // `callIsIncomplete`: the checker takes a `close_pos` where no `)` is for an incomplete call.
                         let close_pos = if self.note(expr.loc, Mark::IncompleteTemplate).is_some() {
                             u32::MAX - 1
@@ -2172,7 +2174,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             Data::EDot(e) => {
                 let obj = self.expr(&e.target);
-                pos = pos.min(self.written_start);
+                pos = pos.min(self.source_start);
                 self.refuse_access_to_instantiation(&e.target, obj);
                 let name_pos = self.pos_of(e.name_loc);
                 if end == 0 {
@@ -2187,7 +2189,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             Data::EIndex(e) => {
                 let obj = self.expr(&e.target);
-                pos = pos.min(self.written_start);
+                pos = pos.min(self.source_start);
                 let chain = Self::chain(e.optional_chain);
                 match &e.index.data {
                     Data::EPrivateIdentifier(id) => {
@@ -2208,7 +2210,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             Data::ECall(e) => {
                 let callee = self.expr(&e.target);
-                pos = pos.min(self.written_start);
+                pos = pos.min(self.source_start);
                 // `IsRequireCall`. `File::parens` is not in order yet: what was lowered last is at its end.
                 let is_require = self.b.is_js
                     && matches!(
@@ -2254,13 +2256,13 @@ impl<'p, 'a> Lower<'p, 'a> {
                     _ => UnOp::PostInc,
                 };
                 let operand = self.expr(&e.value);
-                pos = pos.min(self.written_start);
+                pos = pos.min(self.source_start);
                 ExprKind::Unary { op, operand }
             }
             Data::EBinary(_) => return self.binary(expr),
             Data::EIf(e) => {
                 let test = self.expr(&e.test);
-                pos = pos.min(self.written_start);
+                pos = pos.min(self.source_start);
                 let yes = self.expr(&e.yes);
                 let no = self.expr(&e.no);
                 ExprKind::Cond { test, yes, no }
@@ -2304,7 +2306,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     let id = self.expr(child);
                     if let Some(open) = self.note(child.loc, Mark::JsxExpression) {
                         let end = self.note(child.loc, Mark::JsxExpressionEnd);
-                        let braces = (id, open, end.unwrap_or(self.written_end));
+                        let braces = (id, open, end.unwrap_or(self.source_end));
                         self.b.file.jsx_expressions.push(braces);
                     }
                     self.list_ids.push(id.0);
@@ -2351,7 +2353,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             // `createMissingNode`: where the token before it ends. One that is made late does not know where.
             ExprKind::Missing if end != 0 => end,
             // It ends no earlier than its last part: JSX text that is left open is no trivia.
-            _ => end.max(pos).max(self.written_end),
+            _ => end.max(pos).max(self.source_end),
         };
         self.b.file.expr(kind, pos, end)
     }
@@ -2370,7 +2372,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             leftmost = &e.left;
         }
         let mut left = self.expr(leftmost);
-        let start = self.written_start;
+        let start = self.source_start;
         while let Some(node) = spine.pop() {
             let Data::EBinary(e) = &node.data else {
                 unreachable!()
@@ -2391,7 +2393,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 }
             };
             // What is put together of two expressions ends with the second.
-            let end = self.noted_end(node.loc).unwrap_or(0).max(self.written_end);
+            let end = self.noted_end(node.loc).unwrap_or(0).max(self.source_end);
             left = self.b.file.expr(kind, pos, end);
         }
         left
@@ -2472,7 +2474,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     value,
                     pos,
                     start,
-                    end: self.note(from, Mark::MemberEnd).unwrap_or(self.written_end),
+                    end: self.note(from, Mark::MemberEnd).unwrap_or(self.source_end),
                     postfix_token: 0,
                 });
                 continue;
@@ -2485,7 +2487,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 pos
             };
             let start = self.note(key.loc, Mark::MemberStart).unwrap_or(pos);
-            let written_key = key;
+            let key_in_source = key;
             let mut key = self.key(key, is_computed);
             // `getDeclarationName`: a private name with no class around it names nothing.
             if self.b.classes_around == 0 && matches!(key, PropKey::Private(_)) {
@@ -2501,7 +2503,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 _ => PropKind::Init,
             };
             // Neither does a bigint. `checkGrammarObjectLiteralExpression` objects to it on a property assignment only.
-            if !is_computed && matches!(written_key.data, Data::EBigInt(_)) {
+            if !is_computed && matches!(key_in_source.data, Data::EBigInt(_)) {
                 key = PropKey::None;
                 if matches!(kind, PropKind::Init | PropKind::Shorthand) {
                     self.b.file.error(DiagnosticKind::Checker, pos, 0, 1539);
@@ -2539,14 +2541,14 @@ impl<'p, 'a> Lower<'p, 'a> {
                         value: default,
                     },
                     pos,
-                    self.written_end,
+                    self.source_end,
                 );
             }
             let mut prop = Prop {
                 kind,
                 key,
                 name_kind: if is_literal {
-                    self.name_kind(written_key, is_computed)
+                    self.name_kind(key_in_source, is_computed)
                 } else {
                     NameKind::Jsx
                 },
@@ -2555,12 +2557,14 @@ impl<'p, 'a> Lower<'p, 'a> {
                 start,
                 // An import attribute ends with its value.
                 end: self
-                    .note(written_key.loc, Mark::MemberEnd)
-                    .unwrap_or(self.written_end),
-                postfix_token: self.note(written_key.loc, Mark::PostfixToken).unwrap_or(0),
+                    .note(key_in_source.loc, Mark::MemberEnd)
+                    .unwrap_or(self.source_end),
+                postfix_token: self
+                    .note(key_in_source.loc, Mark::PostfixToken)
+                    .unwrap_or(0),
             };
             if kind == PropKind::Method
-                && let Some(question) = self.note(written_key.loc, Mark::Optional)
+                && let Some(question) = self.note(key_in_source.loc, Mark::Optional)
             {
                 self.b.js_error_at_range((question, 0), 8009, b"?");
             }
@@ -2574,7 +2578,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             // `parseObjectLiteralElement`
             if is_literal && !self.jsdoc.list.is_empty() {
                 let mut host = Host::Property(prop, TypeNodeId::NONE);
-                let full_start = self.note(written_key.loc, Mark::MemberFullStart);
+                let full_start = self.note(key_in_source.loc, Mark::MemberFullStart);
                 self.with_noted_jsdoc(full_start, start, false, &mut host);
                 if let Host::Property(documented, ty) = host {
                     prop = documented;

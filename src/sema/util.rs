@@ -512,7 +512,7 @@ impl GrowingPlaces {
             return;
         }
         let mut writer = self.writer.lock();
-        self.make_room(&mut writer, count);
+        self.reserve(&mut writer, count);
         let places = writer.tables.last().unwrap();
         let mut put = 0;
         for (spread, index) in added {
@@ -524,7 +524,7 @@ impl GrowingPlaces {
     }
 
     /// Afterwards `more` places can be filled, and three quarters of the table at most are.
-    fn make_room(&self, writer: &mut Writer, more: usize) {
+    fn reserve(&self, writer: &mut Writer, more: usize) {
         let capacity = writer.tables.last().map_or(0, |t| t.mask + 1);
         if (writer.count + more) * 4 <= capacity * 3 {
             return;
@@ -560,7 +560,7 @@ impl GrowingPlaces {
         {
             return found;
         }
-        self.make_room(&mut writer, 1);
+        self.reserve(&mut writer, 1);
         let index = make();
         writer.tables.last().unwrap().put(spread, index);
         writer.count += 1;

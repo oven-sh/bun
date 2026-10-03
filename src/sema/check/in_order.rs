@@ -1339,7 +1339,7 @@ impl Checker<'_> {
                     self.check_type_nodes(file, hir[c].type_args);
                 }
                 // `getCandidateForOverloadFailure` begins with `checkNodeDeferred(node)`.
-                if (self.p.said_of_calls)
+                if (self.p.call_diagnostics)
                     .get_ref(&mut self.task, &(file, e))
                     .is_some()
                 {
@@ -1463,7 +1463,7 @@ impl Checker<'_> {
                 self.check_expression(file, value);
                 self.check_destructuring_assignment_target(file, target);
                 // One that is a default in a pattern is looked at with the pattern.
-                if !self.is_assignment_target(file, e) {
+                if !self.is_definite_assignment_target(file, e) {
                     let source_type = self.type_of_expr(file, value);
                     self.check_destructuring_assignment(file, target, source_type);
                 }
@@ -1551,12 +1551,12 @@ impl Checker<'_> {
                         self.check_expression(file, key);
                     }
                     // A rest that is not the last is refused, and not gone into. Neither is what is no property assignment.
-                    let goes_on = match hir[p].kind {
+                    let continues = match hir[p].kind {
                         PropKind::Init | PropKind::Shorthand => true,
                         PropKind::Spread => i + 1 == properties.len(),
                         _ => false,
                     };
-                    if goes_on {
+                    if continues {
                         self.check_destructuring_assignment_target(file, hir[p].value);
                     }
                 }

@@ -54,7 +54,10 @@ impl Checker<'_> {
             };
             let (value, literal) = (hir[p].value, bound.prop_owner[p.idx()]);
             // `checkDestructuringAssignment` does not get there.
-            if value.is_none() || literal.is_none() || self.is_assignment_target(file, literal) {
+            if value.is_none()
+                || literal.is_none()
+                || self.is_definite_assignment_target(file, literal)
+            {
                 continue;
             }
             let target = self.type_from_node(file, node);
@@ -125,7 +128,7 @@ impl Checker<'_> {
                 _ => continue,
             }
             // `[a = 1] = x`: a default, not an assignment.
-            if self.is_assignment_target(file, ExprId(i as u32)) {
+            if self.is_definite_assignment_target(file, ExprId(i as u32)) {
                 continue;
             }
             // `{ a = 1 }` that is no assignment target (1312): `checkObjectLiteral` checks the initializer and not the name.
@@ -203,7 +206,7 @@ impl Checker<'_> {
             return;
         }
         // Of what such a pattern is given all that is asked is that it is there.
-        if strict && Self::pattern_binds_nothing(hir, decl.pat) {
+        if strict && Self::is_pattern_without_names(hir, decl.pat) {
             return;
         }
         // `isInAmbientOrTypeNode`: the initializer of an ambient binding pattern is a grammar error and is not compared.
@@ -256,7 +259,7 @@ impl Checker<'_> {
         {
             self.check_literals_expected_by_pattern(file, param.default);
         }
-        if strict && Self::pattern_binds_nothing(hir, param.pat) {
+        if strict && Self::is_pattern_without_names(hir, param.pat) {
             return;
         }
         let target = self.param_default_target(file, p);
@@ -300,7 +303,7 @@ impl Checker<'_> {
         }
         if default.is_some()
             && !matches!(hir[pat].kind, PatKind::Missing)
-            && !(strict && Self::pattern_binds_nothing(hir, pat))
+            && !(strict && Self::is_pattern_without_names(hir, pat))
         {
             let target = self.type_of_pat(file, pat);
             let at = (file, hir[pat].pos, self.end_of_pat(file, pat));
@@ -383,7 +386,7 @@ impl Checker<'_> {
     }
 
     /// `needCheckWidenedType` of `checkVariableLikeDeclaration`: a pattern none of whose elements has a name.
-    pub(super) fn pattern_binds_nothing(hir: &hir::File, pat: PatId) -> bool {
+    pub(super) fn is_pattern_without_names(hir: &hir::File, pat: PatId) -> bool {
         match hir[pat].kind {
             PatKind::Object(props) => props.is_empty(),
             PatKind::Array(elems) => elems
@@ -1184,8 +1187,7 @@ impl Checker<'_> {
         head_message: Option<u32>,
         mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
-        let is_related =
-            self.is_type_related_to_if_told(source, target, Relation::Assignable, false);
+        let is_related = self.try_is_type_related_to(source, target, Relation::Assignable, false);
         match is_related {
             Ok(true) => return true,
             Ok(false) if error_node.is_none() => return false,
@@ -1769,7 +1771,7 @@ impl Checker<'_> {
         let Some(mut diagnostic) = diags.pop() else {
             return false;
         };
-        let related = self.where_expected_return_type_comes_from(file, func, given, target, all);
+        let related = self.related_info_for_expected_return_type(file, func, given, target, all);
         let related = related.into_iter();
         diagnostic
             .related_information
@@ -1780,7 +1782,7 @@ impl Checker<'_> {
 
     /// The end of `elaborateArrowFunction`. `given`: what the arrow function `func` returns. `wanted`: what the signatures of
     /// `target` return.
-    fn where_expected_return_type_comes_from(
+    fn related_info_for_expected_return_type(
         &mut self,
         file: FileId,
         func: FnId,
@@ -1801,9 +1803,9 @@ impl Checker<'_> {
             let unwrapped = self.map_type(given, |c, m| c.awaited_argument(m).unwrap_or(m));
             let awaited = self.awaited_no_alias(unwrapped).unwrap_or(TypeId::UNKNOWN);
             let promise = self.promise_of(awaited);
-            let is_meant_to_be_async = self.is_assignable(promise, wanted);
+            let is_intended_to_be_async = self.is_assignable(promise, wanted);
             self.relation_too_complex = too_complex;
-            if is_meant_to_be_async {
+            if is_intended_to_be_async {
                 let (start, end) = self.error_range_of_fn(file, func);
                 related.push(Reported::bare((file, start, end), 1356));
             }

@@ -127,7 +127,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     pub(crate) fn note_stray_decorators(&mut self, decorators: &[Expr], end: bun_ast::Loc) {
-        if !self.lexer.tolerant || self.lexer.is_log_disabled || !self.keeps_type_syntax() {
+        if !self.lexer.tolerant || self.lexer.is_log_disabled || !self.preserves_type_syntax() {
             return;
         }
         for decorator in decorators {
@@ -299,7 +299,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // word stays, and the name is missing.
             name_text = b"";
             if name_is_string {
-                if p.keeps_type_syntax() {
+                if p.preserves_type_syntax() {
                     string_name = p.lexer.to_utf8_e_string()?.data.slice();
                 }
                 p.lexer.next()?;
@@ -355,7 +355,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !p.stack_check.is_safe_to_recurse() {
                 return Err(crate::Error::StackOverflow);
             }
-            let inner_loc = if p.keeps_type_syntax() {
+            let inner_loc = if p.preserves_type_syntax() {
                 inner_start
             } else {
                 dot_loc
@@ -395,7 +395,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         // The rest serves code generation.
-        if p.keeps_type_syntax() {
+        if p.preserves_type_syntax() {
             use crate::sema::parse_declarations::ModuleNameKind;
             p.pop_and_discard_scope(scope_index);
             let (name, kind) = if name_is_string {
@@ -711,7 +711,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.expect_or_insert_semicolon()?;
 
-        if p.keeps_type_syntax() {
+        if p.preserves_type_syntax() {
             return Ok(p.keep_import_equals(names_base, external, loc));
         }
         if opts.is_typescript_declare {
@@ -832,7 +832,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name.ref_,
                 TSNamespaceMemberData::Namespace(exported_members),
             );
-        } else if p.keeps_type_syntax() {
+        } else if p.preserves_type_syntax() {
             name = p.keep_name(name_loc, name_text);
         }
 
@@ -985,7 +985,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if opts.scope.is_namespace() && opts.is_export {
                 p.has_non_local_export_declare_inside_namespace = true;
             }
-            if p.keeps_type_syntax() {
+            if p.preserves_type_syntax() {
                 return Ok(p.s(
                     S::Enum {
                         name,

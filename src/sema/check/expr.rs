@@ -12,7 +12,7 @@ use std::ops::ControlFlow;
 /// `getAssignmentTargetKind`
 #[derive(Copy, Clone)]
 pub(super) struct TargetKind {
-    /// `is_assignment_target`
+    /// `is_definite_assignment_target`
     assigned: bool,
     /// `AssignmentKindDefinite`: given a value by `=` or in a pattern there, or by `&&=`, `||=` or `??=`. It is what it is declared
     /// as, whatever has been found out about it on the way.
@@ -54,15 +54,15 @@ impl<'p> Checker<'p> {
     pub fn type_of_expr(&mut self, file: FileId, e: ExprId) -> TypeId {
         let check_mode = self.check_mode();
         if check_mode.is_empty() || e.is_none() {
-            return self.type_of_expr_as_written(file, e);
+            return self.check_expression_worker(file, e);
         }
-        let check_mode = self.check_mode_handed_on_to(file, e, check_mode);
+        let check_mode = self.check_mode_passed_to(file, e, check_mode);
         self.check_expression_ex(file, e, check_mode)
     }
 
     /// `checkExpressionWorker`: the `checkMode` that what it calls for the parent of `e`, which is checked under `check_mode`, hands on
     /// to `e`.
-    fn check_mode_handed_on_to(&self, file: FileId, e: ExprId, check_mode: CheckMode) -> CheckMode {
+    fn check_mode_passed_to(&self, file: FileId, e: ExprId, check_mode: CheckMode) -> CheckMode {
         let hir = self.hir(file);
         match self.bound(file).expr_parent[e.idx()] {
             Parent::Prop(p) if hir[p].kind == PropKind::Spread => {
@@ -92,7 +92,7 @@ impl<'p> Checker<'p> {
         check_mode: CheckMode,
     ) -> TypeId {
         let mode_outside = std::mem::replace(&mut self.mode_of_recheck, check_mode);
-        let ty = self.type_of_expr_as_written(file, e);
+        let ty = self.check_expression_worker(file, e);
         self.mode_of_recheck = mode_outside;
         if check_mode.intersects(CheckMode::INFERENTIAL | CheckMode::SKIP_GENERIC_FUNCTIONS) {
             self.instantiate_type_with_single_generic_call_signature(file, e, ty, check_mode)
@@ -204,13 +204,13 @@ impl<'p> Checker<'p> {
 
     /// The type that is kept for `e`.
     #[inline]
-    pub(super) fn kept_type_of_expr(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+    pub(super) fn cached_type_of_expr(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         self.p.expr_types.get(&mut self.task, &(file, e))
     }
 
     /// `links.resolvedType = c.checkExpressionEx(..)`: of two nested visits of `e` the outer one assigns last.
     #[inline]
-    fn keep_type_of_expr(&mut self, file: FileId, e: ExprId, ty: TypeId, stored: Stored) {
+    fn cache_type_of_expr(&mut self, file: FileId, e: ExprId, ty: TypeId, stored: Stored) {
         self.p
             .expr_types
             .rewrite(&mut self.task, (file, e), ty, stored);
@@ -233,18 +233,18 @@ impl<'p> Checker<'p> {
 
     /// `checkExpressionWorker`
     #[inline]
-    fn type_of_expr_as_written(&mut self, file: FileId, e: ExprId) -> TypeId {
+    fn check_expression_worker(&mut self, file: FileId, e: ExprId) -> TypeId {
         // Where something had to be written and nothing is.
         if e.is_none() {
             return TypeId::UNRESOLVED;
         }
         if self.contextual_binding_patterns.is_empty()
             && !self.is_rechecked(file, e)
-            && let Some(known) = self.kept_type_of_expr(file, e)
+            && let Some(known) = self.cached_type_of_expr(file, e)
         {
             return known;
         }
-        self.type_of_expr_not_kept(file, e)
+        self.type_of_expr_on_cache_miss(file, e)
     }
 
     /// Whether `e` is checked again, with nothing kept. tsgo checks everything in an argument again for every contextual type that
@@ -288,7 +288,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The same, of an `e` that is there and whose type is not kept, or may be looked at afresh.
-    fn type_of_expr_not_kept(&mut self, file: FileId, e: ExprId) -> TypeId {
+    fn type_of_expr_on_cache_miss(&mut self, file: FileId, e: ExprId) -> TypeId {
         // `getTypeFromBindingElement`: the defaults in a pattern are looked at afresh every time it is worked out what the pattern
         // implies its initializer to be. The names of the pattern are anything meanwhile.
         let is_rechecked = self.is_rechecked(file, e);
@@ -301,7 +301,7 @@ impl<'p> Checker<'p> {
         let mut visible_from = self.resolution_start;
         // `checkExpression` has no guard against re-entry. What was being checked when the members of a class were asked for is
         // checked again if their index signatures lead back to it, and finds the members in place (`resolveDeclaredMembers`).
-        if let Some(&(floor, ..)) = self.declared_index_infos_under_way.last() {
+        if let Some(&(floor, ..)) = self.declared_index_infos_in_progress.last() {
             visible_from = visible_from.max(floor);
         }
         if !self.contextual_binding_patterns.is_empty() {
@@ -309,7 +309,7 @@ impl<'p> Checker<'p> {
                 afresh = true;
                 visible_from = visible_from.max(floor.min(self.stack.len()));
             }
-            if !afresh && let Some(known) = self.kept_type_of_expr(file, e) {
+            if !afresh && let Some(known) = self.cached_type_of_expr(file, e) {
                 return known;
             }
         }
@@ -320,7 +320,7 @@ impl<'p> Checker<'p> {
         if !is_rechecked
             && self.prepare_question_about_expr(file, e)
             && !afresh
-            && let Some(known) = self.kept_type_of_expr(file, e)
+            && let Some(known) = self.cached_type_of_expr(file, e)
         {
             return known;
         }
@@ -368,7 +368,7 @@ impl<'p> Checker<'p> {
                 if let Err(open) = left
                     && !afresh
                 {
-                    self.keep_provisionally(Query::Expr(file, e), u64::from(ty.0), open);
+                    self.cache_provisionally(Query::Expr(file, e), u64::from(ty.0), open);
                 }
                 (ty, left.ok())
             }
@@ -377,7 +377,7 @@ impl<'p> Checker<'p> {
             && !afresh
             && (self.task.file == Some(file) || !self.is_noted_for_check_file(file, e))
         {
-            self.keep_type_of_expr(file, e, ty, stored);
+            self.cache_type_of_expr(file, e, ty, stored);
         }
         if stored.is_some() && is_memoised {
             self.rechecked_exprs.insert((file, e), ty);
@@ -414,7 +414,7 @@ impl<'p> Checker<'p> {
             }
             _ => return None,
         };
-        self.came_full_circle = false;
+        self.found_cycle = false;
         self.last_enter = EnterOutcome::Entered;
         self.left_a_circle = false;
         Some(ty)
@@ -598,7 +598,7 @@ impl<'p> Checker<'p> {
             _ => return,
         }
         for link in chain.into_iter().rev() {
-            self.type_of_expr_as_written(file, link);
+            self.check_expression_worker(file, link);
             // What is not kept would be worked out again by every link after it.
             if !self.has_type_of_expr(file, link) {
                 break;
@@ -1231,7 +1231,7 @@ impl<'p> Checker<'p> {
         // A `const` enum is only looked into by a name that is written out.
         if !is_string_literal_like(hir, index) && self.is_const_enum_object(receiver) {
             if !hir.has_errors {
-                self.error_at(self.place_of_written_expr(file, index), 2476, &[]);
+                self.error_at(self.span_of_parenthesized_expr(file, index), 2476, &[]);
             }
             return (TypeId::ERROR, stops);
         }
@@ -1343,7 +1343,7 @@ impl<'p> Checker<'p> {
                 self.error_at(access_node, code, &[Arg::Type(index), Arg::Type(obj)]);
             }
             None => {
-                if e.is_some_and(|e| self.is_written(access_node.0, e))
+                if e.is_some_and(|e| self.is_assignment_target(access_node.0, e))
                     && let Some((of, node, _)) = self.mapped_origin(obj)
                     && self.mapped_decl(of, node).readonly == MappedModifier::Add
                 {
@@ -1987,7 +1987,7 @@ impl<'p> Checker<'p> {
 
     /// Whether `e` is written to and not read: the left of `=`, or part of a pattern there.
     #[inline]
-    pub fn is_assignment_target(&self, file: FileId, e: ExprId) -> bool {
+    pub fn is_definite_assignment_target(&self, file: FileId, e: ExprId) -> bool {
         matches!(
             self.bound(file).get_assignment_target(self.hir(file), e),
             Some(AssignmentTarget::Assign(None) | AssignmentTarget::ForInOrOf)
@@ -2016,7 +2016,7 @@ impl<'p> Checker<'p> {
 
     /// `getAssignmentTargetKind(e) != AssignmentKindNone`: `e` is given a value, by `=` or in a pattern there, by an operator that
     /// reads it first, or by `++` and `--`.
-    pub(super) fn is_written(&self, file: FileId, e: ExprId) -> bool {
+    pub(super) fn is_assignment_target(&self, file: FileId, e: ExprId) -> bool {
         self.bound(file)
             .get_assignment_target(self.hir(file), e)
             .is_some()
@@ -2453,7 +2453,7 @@ impl<'p> Checker<'p> {
         if self.is_rechecking() {
             self.rechecked_exprs.contains_key(&(file, e))
         } else {
-            self.kept_type_of_expr(file, e).is_some()
+            self.cached_type_of_expr(file, e).is_some()
         }
     }
 
@@ -2533,8 +2533,8 @@ impl<'p> Checker<'p> {
     /// check, stands for it if the members are the same.
     fn recheck_object_literal(&mut self, file: FileId, e: ExprId, kept: TypeId) -> TypeId {
         let mut shape = self.build_object_literal_shape(file, e);
-        let has_nothing = shape.props.is_empty() && shape.index.is_empty();
-        if has_nothing
+        let is_empty_resolved_type = shape.props.is_empty() && shape.index.is_empty();
+        if is_empty_resolved_type
             || self.inference_contexts.is_empty()
                 && self
                     .members(kept)
@@ -2719,7 +2719,7 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         let is_const = self.is_const_context(file, e);
         // `IsAssignmentTarget`
-        let in_pattern = self.is_written(file, e);
+        let in_pattern = self.is_assignment_target(file, e);
         let context = self.apparent_type_of_contextual_type(file, e, ContextFlags::empty());
         let in_tuple_context = self.is_in_tuple_context(file, e, context);
         let wants_tuple = is_const || in_pattern || in_tuple_context;
@@ -2797,11 +2797,11 @@ impl<'p> Checker<'p> {
                         !self.is_any(m) && !self.is_nullish(m) && self.is_assignable(m, list)
                     })
                 });
-            let made_before = self.types().made_before();
+            let first_new_type_id = self.types().first_new_type_id();
             let ty = self.normalized_tuple(&types, &flags, is_readonly);
             // `createArrayLiteralType`, which what is assigned to does not get to.
             if !in_pattern {
-                self.types().mark_from_type_node(ty, made_before);
+                self.types().mark_from_type_node(ty, first_new_type_id);
                 self.note_array_literal_type(file, e, ty);
             }
             return ty;
@@ -2824,9 +2824,9 @@ impl<'p> Checker<'p> {
         } else {
             self.union_reduced(&types)
         };
-        let made_before = self.types().made_before();
+        let first_new_type_id = self.types().first_new_type_id();
         let ty = self.array_of(element);
-        self.types().mark_from_type_node(ty, made_before);
+        self.types().mark_from_type_node(ty, first_new_type_id);
         self.note_array_literal_type(file, e, ty);
         ty
     }
@@ -3028,7 +3028,7 @@ impl<'p> Checker<'p> {
         for p in props.iter() {
             let prop = &hir[p];
             if prop.kind == PropKind::Spread {
-                if let Some(segment) = self.written_segment(
+                if let Some(segment) = self.create_object_literal_segment(
                     file,
                     props,
                     Span::new(run, p.0 - run),
@@ -3048,7 +3048,7 @@ impl<'p> Checker<'p> {
                 if self.is_error_type(result) {
                     continue;
                 }
-                let spread = self.merge_object_or_nothing(spread);
+                let spread = self.try_merge_union_of_object_type_and_empty_object(spread);
                 result = self.spread_in_literal(result, spread, is_const);
                 if result == TypeId::UNRESOLVED {
                     return result;
@@ -3094,7 +3094,7 @@ impl<'p> Checker<'p> {
         if self.is_error_type(result) {
             return TypeId::ERROR;
         }
-        if let Some(segment) = self.written_segment(
+        if let Some(segment) = self.create_object_literal_segment(
             file,
             props,
             Span::new(run, props.start + props.len - run),
@@ -3121,7 +3121,7 @@ impl<'p> Checker<'p> {
     ) -> ObjectFlags {
         let hir = self.hir(file);
         // Outside a re-check `autoType` is the only non-inferrable type of a member: the declared type of an assignment target.
-        let in_destructuring_pattern = self.is_assignment_target(file, literal);
+        let in_destructuring_pattern = self.is_definite_assignment_target(file, literal);
         let mut object_flags = ObjectFlags::empty();
         for p in props.iter() {
             if let PropKey::Computed(key) = hir[p].key {
@@ -3315,7 +3315,7 @@ impl<'p> Checker<'p> {
             .rev()
             .find(|c| c.0 == (file, func))
         {
-            Some(under_way) => Some(under_way.1),
+            Some(in_progress) => Some(in_progress.1),
             None => self.p.context_checked.get(&mut self.task, &(file, func)),
         }
     }
@@ -3452,7 +3452,7 @@ impl<'p> Checker<'p> {
 
     /// `createObjectLiteralType` for the members `run` of the object literal `props`, written one after the other between two
     /// spreads. `named` has those with a name that can be told, and is left empty. `None`: nothing is written there.
-    fn written_segment(
+    fn create_object_literal_segment(
         &mut self,
         file: FileId,
         props: Span<PropId>,
@@ -3681,7 +3681,7 @@ impl<'p> Checker<'p> {
             return Shape::default();
         };
         let is_const = self.is_const_context(file, e);
-        let in_pattern = self.is_assignment_target(file, e);
+        let in_pattern = self.is_definite_assignment_target(file, e);
         // `patternForType`: what a pattern without computed names implies the literal to be.
         let implied = if self.may_be_expected_by_pattern(file, e) {
             self.apparent_type_of_contextual_type(file, e, ContextFlags::empty())
@@ -3753,9 +3753,8 @@ impl<'p> Checker<'p> {
                 }
             }
             let mut source = p;
-            let may_be_there = !has_many || !names.insert(name);
-            if may_be_there && let Some(existing) = shape.props.iter().position(|x| x.name == name)
-            {
+            let may_exist = !has_many || !names.insert(name);
+            if may_exist && let Some(existing) = shape.props.iter().position(|x| x.name == name) {
                 if prop.kind == PropKind::Setter {
                     // A getter and a setter: the getter says what it is.
                     if !shape.props[existing].flags.contains(PropFlags::METHOD) {
@@ -3847,7 +3846,7 @@ impl<'p> Checker<'p> {
                 (self.p.literal_prop_types).rewrite(&mut self.task, (file, p), ty, stored)
             }
             Err(open) => {
-                self.keep_provisionally(Query::LiteralProp(file, p), u64::from(ty.0), open);
+                self.cache_provisionally(Query::LiteralProp(file, p), u64::from(ty.0), open);
                 ty
             }
         }
@@ -3900,7 +3899,7 @@ impl<'p> Checker<'p> {
                     ExprKind::Assign {
                         op: None, target, ..
                     } if prop.kind == PropKind::Shorthand
-                        && self.is_assignment_target(file, prop.value) =>
+                        && self.is_definite_assignment_target(file, prop.value) =>
                     {
                         target
                     }
@@ -4000,7 +3999,7 @@ impl<'p> Checker<'p> {
                                 UnOp::Minus => "-",
                                 _ => "~",
                             };
-                            let at = self.place_of_written_expr(file, operand);
+                            let at = self.span_of_parenthesized_expr(file, operand);
                             self.error_at(at, 2469, &[Arg::Text(operator)]);
                         }
                         if op != UnOp::Plus {
@@ -4008,7 +4007,7 @@ impl<'p> Checker<'p> {
                         }
                         if self.maybe_type_of_kind_considering_base_constraint(ty, is_bigint) {
                             let base = self.base_of_literal(ty);
-                            let at = self.place_of_written_expr(file, operand);
+                            let at = self.span_of_parenthesized_expr(file, operand);
                             self.error_at(at, 2736, &[Arg::Bytes(b"+"), Arg::Type(base)]);
                         }
                         TypeId::NUMBER

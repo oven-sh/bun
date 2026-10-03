@@ -237,7 +237,7 @@ trait NarrowingSubjects {
         false
     }
     /// A key that it takes asking to know the name of. `true`: that is the end of it.
-    fn gives_up_on_key(&mut self) -> bool {
+    fn bails_on_computed_key(&mut self) -> bool {
         false
     }
 }
@@ -251,7 +251,7 @@ impl NarrowingSubjects for About {
         self.state & About::ANYTHING != 0
     }
 
-    fn gives_up_on_key(&mut self) -> bool {
+    fn bails_on_computed_key(&mut self) -> bool {
         self.state |= About::ANYTHING;
         true
     }
@@ -2045,7 +2045,7 @@ impl<'p> Checker<'p> {
                 ExprKind::Index { obj, index, .. } => {
                     // `access_key` asks what such a key holds.
                     if matches!(hir[index].kind, ExprKind::Ident(_) | ExprKind::Dot { .. })
-                        && about.gives_up_on_key()
+                        && about.bails_on_computed_key()
                     {
                         return;
                     }
@@ -4093,7 +4093,7 @@ impl<'p> Checker<'p> {
             Ok(stored) => {
                 (self.p.initializer_is_undefined).insert(&self.task, (file, p), contains, stored);
             }
-            Err(open) => self.keep_provisionally(q, u64::from(contains), open),
+            Err(open) => self.cache_provisionally(q, u64::from(contains), open),
         }
         contains
     }
@@ -4996,7 +4996,7 @@ impl<'p> Checker<'p> {
                 };
                 if is_parenthesized(hir, parent)
                     || !matches!(hir[assign].kind, ExprKind::Assign { op: None, target, .. } if target == parent)
-                    || self.is_assignment_target(file, assign)
+                    || self.is_definite_assignment_target(file, assign)
                 {
                     return false;
                 }
@@ -5114,7 +5114,7 @@ impl<'p> Checker<'p> {
                     break self.initial_of(walk);
                 }
                 Flow::StartInvoked { outer, arrow } => {
-                    let goes_on = walk.reference.path.is_empty()
+                    let continues = walk.reference.path.is_empty()
                         && match walk.reference.root {
                             Root::Symbol(_) | Root::Global(_) => true,
                             Root::This => arrow,
@@ -5125,7 +5125,7 @@ impl<'p> Checker<'p> {
                             | Root::Pattern(_)
                             | Root::Params(_) => false,
                         };
-                    if goes_on || self.settle_crossing(walk) {
+                    if continues || self.settle_crossing(walk) {
                         flow = outer;
                         continue;
                     }
@@ -5192,7 +5192,7 @@ impl<'p> Checker<'p> {
                 Flow::Call { before, call } => {
                     if !self.flow_memo.is_idle_call(file, flow) {
                         // `getTypeAtFlowCall`
-                        match self.effects_signature_and_is_kept(file, call) {
+                        match self.effects_signature_and_is_cached(file, call) {
                             (Some(sig), _) => match self.sig_predicate(sig) {
                                 Some(predicate) if predicate.asserts => {
                                     pending.push(Pending::Assert(call));
@@ -5623,7 +5623,7 @@ impl<'p> Checker<'p> {
         }
         let start = self.flow_invocation_count;
         let ty = self.type_of_declaration_initializer(file, e);
-        if self.flow_invocation_count != start && self.kept_type_of_expr(file, e).is_none() {
+        if self.flow_invocation_count != start && self.cached_type_of_expr(file, e).is_none() {
             self.flow_type_cache.insert((file, e, false), ty);
         }
         ty
@@ -5644,7 +5644,7 @@ impl<'p> Checker<'p> {
                 Parent::Expr(parent) => match hir[parent].kind {
                     // Not `[x = d] = v`, where `d` is only for want of anything better.
                     ExprKind::Assign { target, value, .. }
-                        if target == e && !self.is_assignment_target(file, parent) =>
+                        if target == e && !self.is_definite_assignment_target(file, parent) =>
                     {
                         Some(self.type_of_assigned_value(walk, value, false))
                     }
@@ -5693,7 +5693,9 @@ impl<'p> Checker<'p> {
                 return Some(self.get_type_of_expression(file, hir[d].init));
             }
             // `getInitialTypeOfVariableDeclaration`
-            PatParent::Var(d) => return self.type_given_in_for_head(file, bound.var_stmt[d.idx()]),
+            PatParent::Var(d) => {
+                return self.initial_type_of_for_head(file, bound.var_stmt[d.idx()]);
+            }
             PatParent::Param(_) | PatParent::None => return None,
             PatParent::Prop(parent, prop) => {
                 let parent_ty = self.initial_type_of_pat(file, parent)?;
@@ -5739,7 +5741,7 @@ impl<'p> Checker<'p> {
                     target,
                     value,
                 } if target == e => {
-                    if !self.is_assignment_target(file, p) {
+                    if !self.is_definite_assignment_target(file, p) {
                         return Some(self.get_type_of_expression(file, value));
                     }
                     // `x = d` as an element: `x` is given what the element is, or else the default.
@@ -5750,7 +5752,7 @@ impl<'p> Checker<'p> {
                     );
                     Some(self.union(&[ty, default]))
                 }
-                ExprKind::Array(items) if self.is_assignment_target(file, p) => {
+                ExprKind::Array(items) if self.is_definite_assignment_target(file, p) => {
                     let index = hir.ids(items).position(|i| i == e)?;
                     let ty = self.assigned_type(file, p)?;
                     if self.every_type(ty, |c, m| c.is_tuple(m)) {
@@ -5772,7 +5774,7 @@ impl<'p> Checker<'p> {
                         return None;
                     };
                     if !matches!(hir[list].kind, ExprKind::Array(_))
-                        || !self.is_assignment_target(file, list)
+                        || !self.is_definite_assignment_target(file, list)
                     {
                         return None;
                     }
@@ -5784,7 +5786,9 @@ impl<'p> Checker<'p> {
             },
             Parent::Prop(prop) => {
                 let owner = bound.prop_owner[prop.idx()];
-                if hir[prop].kind == PropKind::Spread || !self.is_assignment_target(file, owner) {
+                if hir[prop].kind == PropKind::Spread
+                    || !self.is_definite_assignment_target(file, owner)
+                {
                     return None;
                 }
                 let name = self.member_name(file, hir[prop].key)?;
@@ -5798,13 +5802,13 @@ impl<'p> Checker<'p> {
                         .unwrap_or(TypeId::ERROR),
                 )
             }
-            Parent::Stmt(left) => self.type_given_in_for_head(file, left),
+            Parent::Stmt(left) => self.initial_type_of_for_head(file, left),
             _ => None,
         }
     }
 
     /// `getInitialTypeOfVariableDeclaration`, `getAssignedType`: what `left`, the head of `for (x in o)` or `for (x of xs)`, is given.
-    fn type_given_in_for_head(&mut self, file: FileId, left: StmtId) -> Option<TypeId> {
+    fn initial_type_of_for_head(&mut self, file: FileId, left: StmtId) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Parent::Stmt(owner) = bound.stmt_parent[left.some()?.idx()] else {
             return None;
@@ -5966,9 +5970,9 @@ impl<'p> Checker<'p> {
                 // `isExpandoPropertyFunctionWithReturnTypeAnnotation`
                 Some((f, Decl::Expando(first) | Decl::ThisProperty(first))) => {
                     let h = self.hir(f);
-                    let says_what_it_returns = matches!(h[first].kind, ExprKind::Assign { value, .. }
+                    let has_return_type_annotation = matches!(h[first].kind, ExprKind::Assign { value, .. }
                         if !is_parenthesized(h, value) && matches!(h[value].kind, ExprKind::Fn(func) if h[func].ret.is_some()));
-                    if !says_what_it_returns {
+                    if !has_return_type_annotation {
                         return None;
                     }
                 }
@@ -6086,11 +6090,11 @@ impl<'p> Checker<'p> {
     /// `getEffectsSignature`, of a call that is a statement: the signature called, if it says that it asserts something or that it
     /// never returns.
     pub(super) fn effects_signature(&mut self, file: FileId, call: ExprId) -> Option<SigId> {
-        self.effects_signature_and_is_kept(file, call).0
+        self.effects_signature_and_is_cached(file, call).0
     }
 
     /// The same, and whether `effects_signatures` has it.
-    fn effects_signature_and_is_kept(
+    fn effects_signature_and_is_cached(
         &mut self,
         file: FileId,
         call: ExprId,
@@ -6098,11 +6102,11 @@ impl<'p> Checker<'p> {
         if let Some(known) = self.p.effects_signatures.get(&self.task, &(file, call)) {
             return (known, true);
         }
-        let mut took_resolving = false;
-        let (sig, stored) =
-            self.run_memoizable(|c| c.effects_signature_uncached(file, call, &mut took_resolving));
+        let mut required_resolution = false;
+        let (sig, stored) = self
+            .run_memoizable(|c| c.effects_signature_uncached(file, call, &mut required_resolution));
         // `explicit_type_of_symbol` says nothing where the stack is low.
-        let stored = stored.filter(|_| !took_resolving && !self.is_stack_low());
+        let stored = stored.filter(|_| !required_resolution && !self.is_stack_low());
         if let Some(stored) = stored {
             (self.p.effects_signatures).rewrite(&self.task, (file, call), sig, stored);
         }
@@ -6126,12 +6130,12 @@ impl<'p> Checker<'p> {
         memo.idle_calls[flow.idx() / 64] |= 1 << (flow.idx() % 64);
     }
 
-    /// `took_resolving`: the answer is as good as the resolution of the call, which keeps track of that itself.
+    /// `required_resolution`: the answer is as good as the resolution of the call, which keeps track of that itself.
     fn effects_signature_uncached(
         &mut self,
         file: FileId,
         call: ExprId,
-        took_resolving: &mut bool,
+        required_resolution: &mut bool,
     ) -> Option<SigId> {
         let hir = self.hir(file);
         let ExprKind::Call(c) = hir[call].kind else {
@@ -6147,7 +6151,7 @@ impl<'p> Checker<'p> {
                 if !sigs.iter().any(|&s| self.asserts_or_never_returns(s)) {
                     return None;
                 }
-                *took_resolving = true;
+                *required_resolution = true;
                 self.resolved_effects_signature(file, call)?
             }
         };

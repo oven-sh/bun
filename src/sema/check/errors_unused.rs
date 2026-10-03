@@ -322,8 +322,8 @@ impl Checker<'_> {
                 && let StmtKind::Expr(target) = hir[left].kind
                 && matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
             {
-                let gone_through = self.type_of_expr(file, expr);
-                let source = self.iterated_type(gone_through, is_await);
+                let visited = self.type_of_expr(file, expr);
+                let source = self.iterated_type(visited, is_await);
                 self.note_destructured(file, u, target, source, None);
             }
         }

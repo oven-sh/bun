@@ -49,10 +49,10 @@ impl Checker<'_> {
         );
         let names_fragment_factory = atoms.bytes(fragment_factory) != b"null";
         // `markJsxAliasReferenced`: a module that is not found is as good as none asked for.
-        let imports_nothing = runtime.is_none() || runtime_is_missing;
-        let checks_factory = imports_nothing && jsx == JsxEmit::React;
+        let has_no_imports = runtime.is_none() || runtime_is_missing;
+        let checks_factory = has_no_imports && jsx == JsxEmit::React;
         // `getJSXFragmentType`
-        let checks_fragment_type = imports_nothing
+        let checks_fragment_type = has_no_imports
             && names_fragment_factory
             && (jsx == JsxEmit::React || !options.jsx_fragment_factory.is_empty());
         // Where tags are kept as they are written an enum will not do.
@@ -65,11 +65,11 @@ impl Checker<'_> {
             c.files().resolve_name(file, scope, name, meaning).is_none()
         };
         // `checkJsxFragment`: whoever says what makes elements has to say what makes fragments.
-        let says_factory = !options.jsx_factory.is_empty();
+        let specifies_factory = !options.jsx_factory.is_empty();
         let lacks_fragment_factory = matches!(
             jsx,
             JsxEmit::React | JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
-        ) && (says_factory || hir.jsx_pragmas.factory.is_some())
+        ) && (specifies_factory || hir.jsx_pragmas.factory.is_some())
             && options.jsx_fragment_factory.is_empty()
             && hir.jsx_pragmas.fragment_factory.is_none();
         let intrinsic_elements = self.jsx_type(file, known::IntrinsicElements);
@@ -138,8 +138,8 @@ impl Checker<'_> {
             let scope = bound.expr_scope.get(&e).copied().unwrap_or(ScopeId(0));
             let factory_is_missing = checks_factory && is_missing(self, scope, factory);
             if element.tag.is_none() {
-                let gives_fragment_type = checks_fragment_type && first_fragment == Some(e);
-                let fragment_factory_is_missing = (checks_factory || gives_fragment_type)
+                let provides_fragment_type = checks_fragment_type && first_fragment == Some(e);
+                let fragment_factory_is_missing = (checks_factory || provides_fragment_type)
                     && names_fragment_factory
                     && is_missing(self, scope, fragment_factory);
                 if checks_factory && fragment_factory_is_missing {
@@ -155,7 +155,7 @@ impl Checker<'_> {
                 if factory_is_missing {
                     self.explain_missing_jsx_factory(file, e, scope, (start, end), factory, 2874);
                 }
-                if gives_fragment_type && fragment_factory_is_missing {
+                if provides_fragment_type && fragment_factory_is_missing {
                     self.explain_missing_jsx_factory(
                         file,
                         e,
@@ -167,7 +167,7 @@ impl Checker<'_> {
                 }
                 if lacks_fragment_factory {
                     let at = (file, start, self.end_inside_parentheses(file, e));
-                    self.error_at(at, if says_factory { 17016 } else { 17017 }, &[]);
+                    self.error_at(at, if specifies_factory { 17016 } else { 17017 }, &[]);
                 }
                 for child in hir.ids(element.children) {
                     self.check_jsx_expression(file, child);
@@ -461,7 +461,7 @@ impl Checker<'_> {
     }
 
     /// `checkExpressionWithContextualType(node.Attributes(), ..)`. `getContextNode`: it is pushed for the element, "so it encompasses
-    /// the attributes and the children". `is_checked_once`: FOR SPEED, see `CallState::checks_arguments_once` and `arg_type_kept_under`.
+    /// the attributes and the children". `is_checked_once`: FOR SPEED, see `CallState::checks_arguments_once` and `cached_arg_type_for_param`.
     fn check_jsx_attributes_with_contextual_type(
         &mut self,
         file: FileId,
@@ -934,7 +934,7 @@ impl Checker<'_> {
                 continue;
             }
             // `tryMergeUnionOfObjectTypeAndEmptyObject`
-            let merged = self.merge_object_or_nothing(ty);
+            let merged = self.try_merge_union_of_object_type_and_empty_object(ty);
             let parts = self.parts(merged);
             for &(name, overwritten) in &written {
                 // Neither optional nor partial: every alternative is sure to have it.

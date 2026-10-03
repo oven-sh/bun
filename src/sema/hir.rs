@@ -1142,7 +1142,7 @@ pub struct Module {
     /// `declare module "m";` has none.
     pub has_body: bool,
     /// `ModuleDeclaration.Keyword` is `module`. What holds for the `a` of `module a.b` holds for `b`.
-    pub says_module: bool,
+    pub specifies_module: bool,
     /// The statement it is.
     pub stmt: StmtId,
 }
@@ -2041,7 +2041,7 @@ impl File {
     }
 
     /// The same for a file that was made in vectors that serve again: `room` gets them, empty.
-    pub fn fit_leaving_room(&mut self, room: &mut File) {
+    pub fn shrink_to_fit_recycling(&mut self, room: &mut File) {
         macro_rules! each {
             ($($f:ident),*) => { $(
                 let exact = self.$f.as_slice().to_vec();

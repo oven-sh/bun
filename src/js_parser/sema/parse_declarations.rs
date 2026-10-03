@@ -86,7 +86,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         full_start: Loc,
         modifiers_base: usize,
     ) {
-        if !self.keeps_type_syntax() {
+        if !self.preserves_type_syntax() {
             return;
         }
         // What is said of a static block is said of its `{`, of any other member of its name.
@@ -195,7 +195,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             self.lexer.expect_or_insert_semicolon()?;
         }
-        if self.should_keep_types()
+        if self.should_save_types()
             && let Some(Ok(built)) = self.build_type_member(&member)
         {
             self.type_syntax_mut().last_index_signature = Some(built);
@@ -304,7 +304,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Whether the type `kept` is `A.B<C>`. True outside of type checking, and where no type could be made out.
     #[cold]
     #[inline(never)]
-    pub(crate) fn is_kept_entity_name(&self, kept: ts::TypeId) -> bool {
+    pub(crate) fn is_saved_entity_name(&self, kept: ts::TypeId) -> bool {
         match &self.type_syntax {
             // `number` is a name like any other to `parseLeftHandSideExpressionOrHigher`.
             Some(syntax) if kept.is_some() => matches!(
@@ -320,7 +320,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn tagged_template_contents(&mut self) -> E::TemplateContents {
         let raw = self.lexer.raw_template_contents();
-        if !self.keeps_type_syntax() {
+        if !self.preserves_type_syntax() {
             return E::TemplateContents::Raw(raw.into());
         }
         let cooked = self.lexer.cooked_template_contents(raw);
@@ -337,7 +337,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         body: Option<&'a mut [Stmt]>,
         is_export: bool,
     ) -> Stmt {
-        if !self.keeps_type_syntax() {
+        if !self.preserves_type_syntax() {
             return self.s(S::TypeScript::default(), loc);
         }
         self.keep_module(
@@ -390,7 +390,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Called before a statement that starts with `import` or `export` is parsed. `end_module_syntax` follows, whatever comes of it.
     #[inline]
     pub(crate) fn begin_module_syntax(&mut self, opts: &crate::parser::ParseStatementOptions) {
-        if self.keeps_type_syntax() {
+        if self.preserves_type_syntax() {
             self.type_syntax_mut().module_syntax.push(ModuleSyntax {
                 is_in_ambient_module: opts.scope.is_namespace() && opts.is_typescript_declare,
                 clause_loc: Loc::EMPTY,
@@ -409,7 +409,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[inline]
     pub(crate) fn end_module_syntax(&mut self) -> Option<ModuleSyntax> {
-        if !self.keeps_type_syntax() {
+        if !self.preserves_type_syntax() {
             return None;
         }
         self.type_syntax_mut().module_syntax.pop()
@@ -501,7 +501,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `parseNamespaceImport`, at the token after `as`.
     #[inline]
     pub(crate) fn note_namespace_import_name(&mut self) {
-        if self.keeps_type_syntax() {
+        if self.preserves_type_syntax() {
             let ts::Name { text, loc } = self.identifier_syntax();
             let end = if text.is_empty() {
                 loc
@@ -691,7 +691,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `parseEntityName`, at each name of it, before the token is consumed.
     #[inline]
     pub(crate) fn push_entity_name(&mut self) {
-        if self.keeps_type_syntax() {
+        if self.preserves_type_syntax() {
             let name = self.identifier_syntax();
             self.type_syntax_mut().name_stack.push(name);
         }
@@ -700,7 +700,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `parseExternalModuleReference`, at the string in `require("module")`. `None` in an ordinary build.
     #[inline]
     pub(crate) fn external_module_reference(&mut self) -> Option<ts::ModuleReference> {
-        if !self.keeps_type_syntax() {
+        if !self.preserves_type_syntax() {
             return None;
         }
         Some(ts::ModuleReference::External {
@@ -797,7 +797,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// `parseNamespaceExportDeclaration`: `export as namespace name`, whose `export` is at `loc`.
     pub(crate) fn keep_namespace_export_declaration(&mut self, name: ts::Name, loc: Loc) -> Stmt {
-        if !self.keeps_type_syntax() {
+        if !self.preserves_type_syntax() {
             return self.s(S::TypeScript::default(), loc);
         }
         self.emit_statement(ts::StatementData::ExportAsNamespace(name), loc);

@@ -268,7 +268,7 @@ fn main() {
                     .iter()
                     .find_map(|a| a.strip_prefix("--only="))
                     .map(str::as_bytes),
-                keeps_everything: args.iter().any(|a| a == "--keep"),
+                retains_everything: args.iter().any(|a| a == "--keep"),
                 order: args
                     .iter()
                     .find_map(|a| a.strip_prefix("--order="))
@@ -276,8 +276,8 @@ fn main() {
                     .unwrap_or(1),
                 digests: is_timed,
                 plan_options,
-                stops_where_tsc_does: !args.iter().any(|a| a == "--every-stage"),
-                says_it_as_typescript_does: false,
+                stops_like_tsc: !args.iter().any(|a| a == "--every-stage"),
+                uses_typescript_wording: false,
                 loaded: args
                     .iter()
                     .any(|a| a == "--memory")
@@ -285,7 +285,7 @@ fn main() {
                 checked: is_timed
                     .then_some(&list_largest_tables as &(dyn Fn(&bun_sema::check::Program) + Sync)),
                 after_file,
-                declaration_file_written: declarations_out
+                declaration_file_emitted: declarations_out
                     .is_some()
                     .then_some(&write_declaration_file as &(dyn Fn(&[u8], &[u8]) + Sync)),
             };

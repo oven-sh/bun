@@ -473,12 +473,12 @@ impl Checker<'_> {
         };
         let is_value_here = own.intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE);
         let mut excluded = SymFlags::empty();
-        for (is_meant, meaning) in [
+        for (is_intended, meaning) in [
             (is_value_here, SymFlags::VALUE),
             (own.intersects(SymFlags::TYPE), SymFlags::TYPE),
             (own.intersects(SymFlags::NAMESPACE), SymFlags::NAMESPACE),
         ] {
-            if is_meant {
+            if is_intended {
                 excluded |= meaning;
             }
         }
@@ -487,7 +487,7 @@ impl Checker<'_> {
             self.error_at(at, code, &[Arg::Sym(symbol)]);
         } else if !is_export_specifier
             // `compilerOptions.isolatedModules` itself, not `GetIsolatedModules`: `verbatimModuleSyntax` has its own error for the import.
-            && options.isolated_modules_said
+            && options.isolated_modules_reported
             && !is_type_only
             && is_value_here
         {
@@ -631,7 +631,7 @@ impl Checker<'_> {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `compilerOptions.isolatedModules` itself, not `GetIsolatedModules`. `IsExternalOrCommonJSModule`
-        if !files.options.isolated_modules_said || !files.module(file).is_module() {
+        if !files.options.isolated_modules_reported || !files.module(file).is_module() {
             return;
         }
         for &(e, scope) in &bound.alias_idents {

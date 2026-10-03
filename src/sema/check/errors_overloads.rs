@@ -362,7 +362,7 @@ impl Checker<'_> {
                 _ => self.files().statement_of_declaration(file, decl),
             };
             // `flags&ast.ModifierFlagsAmbient == 0`: it does not say `declare` itself.
-            let says_declare = statement.is_some_and(|s| {
+            let has_declare_keyword = statement.is_some_and(|s| {
                 hir.find_modifier(hir[s].modifiers, Flags::AMBIENT)
                     .is_some()
             });
@@ -378,7 +378,7 @@ impl Checker<'_> {
             };
             if container.is_some()
                 && bound.scopes[bound.container_scope(container).idx()].is_export_context
-                && !says_declare
+                && !has_declare_keyword
                 && !is_in_global_augmentation
             {
                 // "It is nested in an ambient export context, which means it is automatically exported"

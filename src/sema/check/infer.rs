@@ -722,15 +722,15 @@ impl<'p> Checker<'p> {
         if !any_matched {
             return;
         }
-        let keep_unmatched = |list: &mut Parts, matched: &[bool]| {
+        let retain_unmatched = |list: &mut Parts, matched: &[bool]| {
             let mut next = 0;
             list.retain(|_| {
                 next += 1;
                 !matched[next - 1]
             });
         };
-        keep_unmatched(sources, &matched_sources[..]);
-        keep_unmatched(targets, &matched_targets[..]);
+        retain_unmatched(sources, &matched_sources[..]);
+        retain_unmatched(targets, &matched_targets[..]);
     }
 
     /// `inferToMultipleTypes`. `sources_in_order`: the members of `source` in order, or `source` alone if it is no union, if that is
@@ -876,7 +876,7 @@ impl<'p> Checker<'p> {
                 && let Some(constraint) = self.base_constraint_of(n.params[index])
                 && !self.is_any(constraint)
                 && !self.some_type(constraint, |_, m| m == TypeId::STRING)
-                && let Some(spelled) = self.literal_spelled_by(value, source, constraint)
+                && let Some(spelled) = self.literal_matching_text(value, source, constraint)
             {
                 self.infer_types(n, spelled, target);
                 continue;
@@ -886,7 +886,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The member of `constraint` the text `value` is best taken for. The `choose` closure of `inferToTemplateLiteralType`.
-    fn literal_spelled_by(
+    fn literal_matching_text(
         &mut self,
         value: Atom,
         source: TypeId,
@@ -1533,7 +1533,7 @@ impl<'p> Checker<'p> {
             Some(last) if last.rest => usize::MAX,
             _ => tp.len(),
         };
-        let sp = self.sig_params_asked_for(source, asked);
+        let sp = self.sig_params_up_to(source, asked);
         let (source_count, target_count) = (self.parameter_count(&sp), self.parameter_count(&tp));
         let (source_rest, target_rest) =
             (self.effective_rest_type(&sp), self.effective_rest_type(&tp));
@@ -2447,12 +2447,17 @@ impl<'p> Checker<'p> {
         if let Some(inferred) = c.inferred.get() {
             return inferred;
         }
-        let inferred = self.get_inferred_type_anew(n, index, is_fixed);
+        let inferred = self.get_inferred_type_uncached(n, index, is_fixed);
         n.candidates[index].inferred.set(Some(inferred));
         inferred
     }
 
-    fn get_inferred_type_anew(&mut self, n: &Inference, index: usize, is_fixed: bool) -> TypeId {
+    fn get_inferred_type_uncached(
+        &mut self,
+        n: &Inference,
+        index: usize,
+        is_fixed: bool,
+    ) -> TypeId {
         let c = &n.candidates[index];
         let param = n.params[index];
         // What the signature was found in has been filled in. A clone knows.
@@ -2545,7 +2550,7 @@ impl<'p> Checker<'p> {
         let constraint = self.instantiate(constraint, so_far);
         if let Some(ty) = inferred
             && !self.is_assignable(ty, constraint)
-            && !self.fits_through_what_is_around(n, ty, constraint)
+            && !self.satisfies_constraint_in_outer_context(n, ty, constraint)
         {
             // Going by what is expected of the result alone is a guess anyway: what of it fits will do.
             let filtered = if c.priority == PRIORITY_RETURN {
@@ -2566,7 +2571,7 @@ impl<'p> Checker<'p> {
 
     /// Whether the type parameter `ty` of the signature that is inferred from extends something that fits `constraint`, once
     /// what is around that signature is filled in.
-    fn fits_through_what_is_around(
+    fn satisfies_constraint_in_outer_context(
         &mut self,
         n: &Inference,
         ty: TypeId,

@@ -297,7 +297,7 @@ pub struct Options {
     pub no_check: bool,
     /// A file nothing refers to is only parsed when it is checked, and forgotten afterwards with all that was found out about it. Not an
     /// option of TypeScript's. Whoever wants to ask about such a file afterwards leaves it off.
-    pub drops_what_nothing_refers_to: bool,
+    pub drops_unreferenced: bool,
     /// `GetSuggestionDiagnostics` are reported as well. Not an option of TypeScript's: its tests say `@captureSuggestions`.
     pub captures_suggestions: bool,
     /// Each file is emitted before it is checked. Not an option of TypeScript's: its tests read types and symbols from such a program.
@@ -352,7 +352,7 @@ pub struct Options {
     pub resolve_json_module: bool,
     pub no_unchecked_side_effect_imports: bool,
     /// `deduplicatePackages: false`: a package that is installed twice is two packages.
-    pub keeps_duplicate_packages: bool,
+    pub retains_duplicate_packages: bool,
     pub allow_js: bool,
     /// `maxNodeModuleJsDepth`: with `allowJs`, JavaScript is loaded up to this many imports deep into packages.
     pub max_node_module_js_depth: u32,
@@ -400,7 +400,7 @@ pub struct Options {
     pub writes_source_maps: bool,
     pub writes_declaration_maps: bool,
     /// `sourceRoot` or `mapRoot` is said.
-    pub says_source_or_map_root: bool,
+    pub specifies_source_or_map_root: bool,
     /// What `target` says, `None` if it says nothing.
     pub target: ScriptTarget,
     /// What `module` comes to, said or not.
@@ -425,7 +425,7 @@ pub struct Options {
     /// `GetIsolatedModules`: `isolatedModules`, or `verbatimModuleSyntax`.
     pub isolated_modules: bool,
     /// `isolatedModules` itself.
-    pub isolated_modules_said: bool,
+    pub isolated_modules_reported: bool,
     /// `preserveConstEnums` itself. `ShouldPreserveConstEnums` is this or `isolated_modules`.
     pub preserve_const_enums: bool,
     /// `verbatimModuleSyntax`
@@ -605,7 +605,7 @@ impl Options {
         options.no_implicit_this = strict_flag(b"noImplicitThis");
         options.no_unchecked_side_effect_imports =
             said(b"noUncheckedSideEffectImports").unwrap_or(true);
-        options.keeps_duplicate_packages = said(b"deduplicatePackages") == Some(false);
+        options.retains_duplicate_packages = said(b"deduplicatePackages") == Some(false);
         options.check_js = said(b"checkJs");
         options.allow_js = said(b"allowJs").unwrap_or_else(|| options.check_js == Some(true));
         if let Some(Json::Number(depth)) = compiler.get(b"maxNodeModuleJsDepth") {
@@ -668,9 +668,10 @@ impl Options {
         let use_define = said(b"useDefineForClassFields");
         options.use_define_for_class_fields = use_define.unwrap_or(has_class_fields);
         options.emit_standard_class_fields = use_define != Some(false) && has_class_fields;
-        options.isolated_modules_said = flag(b"isolatedModules");
+        options.isolated_modules_reported = flag(b"isolatedModules");
         options.verbatim_module_syntax = flag(b"verbatimModuleSyntax");
-        options.isolated_modules = options.isolated_modules_said || options.verbatim_module_syntax;
+        options.isolated_modules =
+            options.isolated_modules_reported || options.verbatim_module_syntax;
         options.preserve_const_enums = flag(b"preserveConstEnums");
         options.rewrite_relative_import_extensions = flag(b"rewriteRelativeImportExtensions");
         options.allow_importing_ts_extensions =
@@ -699,7 +700,7 @@ impl Options {
         options.emit_declaration_only = flag(b"emitDeclarationOnly");
         options.writes_source_maps = flag(b"sourceMap") && !flag(b"inlineSourceMap");
         options.writes_declaration_maps = flag(b"declarationMap") && options.emits_declarations;
-        options.says_source_or_map_root =
+        options.specifies_source_or_map_root =
             !text(b"sourceRoot").is_empty() || !text(b"mapRoot").is_empty();
         options.verify(compiler, b"");
         options
@@ -1903,7 +1904,7 @@ impl<'h> Resolver<'h> {
 
     /// `loadModuleFromFile`: what stands for `path` as it is written, or else `path` with an extension added.
     fn file(&self, path: &[u8], look: Look) -> Option<Vec<u8>> {
-        if let Some(found) = self.file_as_written(path, look) {
+        if let Some(found) = self.load_module_from_file_no_implicit_extensions(path, look) {
             return Some(found);
         }
         // To Node's `import` nothing is added.
@@ -1914,7 +1915,11 @@ impl<'h> Resolver<'h> {
     }
 
     /// `loadModuleFromFileNoImplicitExtensions`: the extension that is written comes off, and those it stands for are tried in its place.
-    fn file_as_written(&self, path: &[u8], look: Look) -> Option<Vec<u8>> {
+    fn load_module_from_file_no_implicit_extensions(
+        &self,
+        path: &[u8],
+        look: Look,
+    ) -> Option<Vec<u8>> {
         let name = &path[strings::last_index_of_char(path, b'/').map_or(0, |i| i + 1)..];
         let dot = strings::last_index_of_char(name, b'.')?;
         // `RemoveFileExtension`: `.d.ts` comes off as a whole.
@@ -1995,7 +2000,7 @@ impl<'h> Resolver<'h> {
                 .set(package_json_value.ends_with(b"*"));
             return Some(found);
         }
-        self.file_as_written(path, look)
+        self.load_module_from_file_no_implicit_extensions(path, look)
     }
 
     /// `loadNodeModuleFromDirectory`: what the directory `dir` resolves to, going by its own `package.json`.
@@ -2397,11 +2402,11 @@ impl<'h> Resolver<'h> {
             ..look
         };
         // `getOutputDirectoriesForBaseDirectory`
-        let mut written_to = vec![options.declaration_dir.as_slice()];
+        let mut assigned_to = vec![options.declaration_dir.as_slice()];
         if options.out_dir != options.declaration_dir {
-            written_to.push(options.out_dir.as_slice());
+            assigned_to.push(options.out_dir.as_slice());
         }
-        for dir in written_to {
+        for dir in assigned_to {
             if dir.is_empty() || !contains_path(dir, path, is_case_sensitive) {
                 continue;
             }

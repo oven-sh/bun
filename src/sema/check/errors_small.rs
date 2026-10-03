@@ -451,7 +451,7 @@ impl Checker<'_> {
     pub(super) fn check_spread(&mut self, file: FileId, owner: ExprId, p: PropId) {
         let hir = self.hir(file);
         let prop = &hir[p];
-        if prop.value.is_none() || self.is_assignment_target(file, owner) {
+        if prop.value.is_none() || self.is_definite_assignment_target(file, owner) {
             return;
         }
         let ty = self.type_of_expr(file, prop.value);
@@ -461,7 +461,7 @@ impl Checker<'_> {
         }
         // JSX reports on the spread expression, an object literal on the whole `SpreadAssignment`.
         if matches!(hir[owner].kind, ExprKind::Jsx(_)) {
-            self.error_at(self.place_of_written_expr(file, prop.value), 2698, &[]);
+            self.error_at(self.span_of_parenthesized_expr(file, prop.value), 2698, &[]);
         } else {
             self.error(file, p, 2698, &[]);
         }

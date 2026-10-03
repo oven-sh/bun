@@ -151,26 +151,26 @@ pub(crate) struct Notes {
 
 thread_local! {
     /// The notes of the last file, empty: they have about the room the next needs.
-    static ROOM: core::cell::Cell<Notes> = Default::default();
+    static RECYCLED: core::cell::Cell<Notes> = Default::default();
 }
 
 /// Replaces the room the last file of this thread left.
-pub(crate) fn replace_room(room: Notes) -> Notes {
-    ROOM.replace(room)
+pub(crate) fn replace_recycled(room: Notes) -> Notes {
+    RECYCLED.replace(room)
 }
 
 impl Notes {
     /// None, with the room the last file of this thread left.
-    pub(crate) fn with_room() -> Notes {
-        ROOM.take()
+    pub(crate) fn take_recycled() -> Notes {
+        RECYCLED.take()
     }
 
     /// They have served.
-    pub(crate) fn leave_room(mut self) {
+    pub(crate) fn recycle(mut self) {
         self.nodes.clear();
         self.notes.clear();
         self.ranges.clear();
-        ROOM.set(self);
+        RECYCLED.set(self);
     }
 
     /// Where the node whose `loc` is `loc` is.
@@ -326,9 +326,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The type that `parse_and_keep_type` parsed last, for `note_kept_type`. `NONE` outside of type checking.
+    /// The type that `parse_and_keep_type` parsed last, for `note_saved_type`. `NONE` outside of type checking.
     #[inline]
-    pub(crate) fn kept_type_or_error(&mut self) -> ts::TypeId {
+    pub(crate) fn saved_type_or_error(&mut self) -> ts::TypeId {
         match &mut self.type_syntax {
             Some(syntax) if TYPESCRIPT => syntax.last_type_or_error(),
             _ => ts::TypeId::NONE,
@@ -337,7 +337,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// The same. `NONE` also if the type is unusable.
     #[inline]
-    pub(crate) fn kept_type(&self) -> ts::TypeId {
+    pub(crate) fn saved_type(&self) -> ts::TypeId {
         match &self.type_syntax {
             Some(syntax) if TYPESCRIPT => syntax.last_type,
             _ => ts::TypeId::NONE,
@@ -346,13 +346,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// A note of a type that was parsed before the node was.
     #[inline]
-    pub(crate) fn note_kept_type(&mut self, at: &mut Loc, what: Mark, ty: ts::TypeId) {
+    pub(crate) fn note_saved_type(&mut self, at: &mut Loc, what: Mark, ty: ts::TypeId) {
         self.note(at, what, ty.0);
     }
 
     /// The type arguments that were parsed last, as the payload of a note. `None` if they are unusable.
     #[inline]
-    pub(crate) fn kept_type_arguments(&mut self) -> Option<u32> {
+    pub(crate) fn saved_type_arguments(&mut self) -> Option<u32> {
         if TYPESCRIPT
             && let Some(syntax) = &mut self.type_syntax
             && let Some(arguments) = syntax.last_type_args.take()
@@ -365,7 +365,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// The type arguments that were parsed last. Empty if they are unusable.
     #[inline]
-    pub(crate) fn take_kept_type_argument_list(&mut self) -> ts::Types {
+    pub(crate) fn take_saved_type_argument_list(&mut self) -> ts::Types {
         match &mut self.type_syntax {
             Some(syntax) if TYPESCRIPT => syntax.last_type_args.take().unwrap_or_default(),
             _ => ts::Types::EMPTY,
@@ -393,7 +393,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// A note of the type arguments that were parsed last. None if they are unusable.
     #[inline]
     pub(crate) fn note_type_arguments_of(&mut self, at: &mut Loc, what: Mark) {
-        if let Some(arguments) = self.kept_type_arguments() {
+        if let Some(arguments) = self.saved_type_arguments() {
             self.note(at, what, arguments);
         }
     }
@@ -401,7 +401,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// The type parameters that `skip_type_script_type_parameters` just parsed, for `note_type_parameters`. `None` if there are none
     /// or they are unusable.
     #[inline]
-    pub(crate) fn kept_type_parameters(
+    pub(crate) fn saved_type_parameters(
         &mut self,
         skipped: SkipTypeParameterResult,
     ) -> Option<ts::TypeParams> {
@@ -422,7 +422,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         flags: TypeParameterFlag,
     ) -> Result<Option<ts::TypeParams>, crate::Error> {
         let skipped = self.skip_type_script_type_parameters(flags)?;
-        Ok(self.kept_type_parameters(skipped))
+        Ok(self.saved_type_parameters(skipped))
     }
 
     /// A note of `parameters`, which are those of the node.
@@ -486,7 +486,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `finishNode`: a note of where the token before the current one ends.
     #[inline]
     pub(crate) fn note_token_full_start(&mut self, at: &mut Loc, what: Mark) {
-        if self.keeps_type_syntax() {
+        if self.preserves_type_syntax() {
             let place = self.lexer.full_start();
             self.note_loc(at, what, place);
         }
@@ -548,7 +548,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         type_arguments: Option<u32>,
         is_incomplete: bool,
     ) {
-        if !self.keeps_type_syntax() {
+        if !self.preserves_type_syntax() {
             return;
         }
         self.note_loc(&mut template.loc, Mark::Backtick, backtick);
@@ -822,7 +822,7 @@ impl TypeSyntax<'_> {
             self.last_binding = ts::PatternId::NONE;
         }
         // A list of nothing is where it was made all the same.
-        macro_rules! still_there {
+        macro_rules! remaining {
             ($list:expr, $rows:expr) => {
                 match $list {
                     Some(list) if list.is_empty() => Some(Default::default()),
@@ -830,9 +830,9 @@ impl TypeSyntax<'_> {
                 }
             };
         }
-        self.last_type_args = still_there!(self.last_type_args, file.ids);
-        self.last_params = still_there!(self.last_params, file.params);
-        self.last_type_params = still_there!(self.last_type_params, file.type_params);
+        self.last_type_args = remaining!(self.last_type_args, file.ids);
+        self.last_params = remaining!(self.last_params, file.params);
+        self.last_type_params = remaining!(self.last_type_params, file.type_params);
         self.last_object_type = self.last_object_type.filter(|body| match body {
             super::keep::ObjectTypeBody::Members(members) => {
                 members.range().end <= file.members.len()

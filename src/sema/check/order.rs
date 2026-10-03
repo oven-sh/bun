@@ -15,14 +15,14 @@ use crate::program::FileId;
 impl Checker<'_> {
     /// Whether nothing is being worked out: what is asked now is asked from outside.
     #[inline]
-    pub(super) fn is_asked_from_outside(&self) -> bool {
+    pub(super) fn is_top_level_query(&self) -> bool {
         self.stack.is_empty() && self.contextual.is_empty()
     }
 
     #[inline]
     /// Whether anything may have been worked out.
     pub(super) fn prepare_question_about_expr(&mut self, file: FileId, e: ExprId) -> bool {
-        if !self.is_asked_from_outside() || e.is_none() {
+        if !self.is_top_level_query() || e.is_none() {
             return false;
         }
         // Nothing is worked out without a question being asked.
@@ -33,7 +33,7 @@ impl Checker<'_> {
 
     #[inline]
     pub(super) fn prepare_question_about_fn(&mut self, file: FileId, func: FnId) -> bool {
-        let is_from_outside = self.is_asked_from_outside();
+        let is_from_outside = self.is_top_level_query();
         if is_from_outside {
             self.prepare_fn(file, func);
         }
@@ -42,7 +42,7 @@ impl Checker<'_> {
 
     #[inline]
     pub(super) fn prepare_question_about_pat(&mut self, file: FileId, pat: PatId) -> bool {
-        if !self.is_asked_from_outside() {
+        if !self.is_top_level_query() {
             return false;
         }
         let bound = self.bound(file);

@@ -350,7 +350,7 @@ impl<'p> Checker<'p> {
     }
 
     /// Where the decorator with the expression `e` is written.
-    pub(super) fn where_decorator_is(&self, file: FileId, e: ExprId) -> Written {
+    pub(super) fn decorator_position(&self, file: FileId, e: ExprId) -> Written {
         let start = self.start_of(file, e);
         Written {
             at_sign: start.saturating_sub(1),
@@ -373,7 +373,7 @@ impl<'p> Checker<'p> {
             if bound.is_unchecked(e.idx()) {
                 continue;
             }
-            let written = self.where_decorator_is(file, e);
+            let written = self.decorator_position(file, e);
             let at_sign = written.at_sign;
             // Where it cannot be: said once for what is decorated, and nothing else is said from there to what is decorated.
             if bound.refused_decorators.contains(&e) {

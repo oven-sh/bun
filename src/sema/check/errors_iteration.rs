@@ -31,8 +31,8 @@ impl Checker<'_> {
             return input_type;
         }
         // An array or a tuple can be gone through: where it is written is not looked for.
-        let error_node =
-            (!self.is_array_or_tuple(input_type)).then(|| self.place_of_written_expr(file, expr));
+        let error_node = (!self.is_array_or_tuple(input_type))
+            .then(|| self.span_of_parenthesized_expr(file, expr));
         self.iterated_type_or_element_type(usage, input_type, TypeId::UNDEFINED, error_node)
             .unwrap_or(TypeId::ANY)
     }
@@ -82,11 +82,10 @@ impl Checker<'_> {
         }
         // `isTypeAssignableToKind(rightType, NonPrimitive | InstantiableNonPrimitive)`. Without strictNullChecks `null` and
         // `undefined` are assignable to `object`.
-        let is_object = self.flags(right_type)
-            & (tf::NON_PRIMITIVE | tf::INSTANTIABLE_NON_PRIMITIVE)
-            != 0
-            || !self.p.files.options.strict_null_checks && self.is_nothing_but_nullish(right_type)
-            || self.is_assignable(right_type, TypeId::OBJECT);
+        let is_object =
+            self.flags(right_type) & (tf::NON_PRIMITIVE | tf::INSTANTIABLE_NON_PRIMITIVE) != 0
+                || !self.p.files.options.strict_null_checks && self.is_only_nullish(right_type)
+                || self.is_assignable(right_type, TypeId::OBJECT);
         if right_type.is_never() || !is_object {
             self.error_at(
                 self.error_range_of(file, expr),
@@ -105,13 +104,11 @@ impl Checker<'_> {
                 continue;
             };
             if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_) | ExprKind::Call(_) | ExprKind::New(_)))
-                && !self.is_assignment_target(file, e)
+                && !self.is_definite_assignment_target(file, e)
             {
                 let given = self.type_of_expr(file, inner);
-                if !self.is_nothing_but_nullish(given)
-                    && !self.is_spread_taken_whole(file, e, given)
-                {
-                    let error_node = self.place_of_written_expr(file, inner);
+                if !self.is_only_nullish(given) && !self.is_spread_of_array_like(file, e, given) {
+                    let error_node = self.span_of_parenthesized_expr(file, inner);
                     self.check_iterated(IterationUse::Spread, given, TypeId::UNDEFINED, error_node);
                 }
             }
@@ -140,7 +137,7 @@ impl Checker<'_> {
         }
     }
 
-    fn is_nothing_but_nullish(&self, ty: TypeId) -> bool {
+    fn is_only_nullish(&self, ty: TypeId) -> bool {
         !ty.is_never() && self.every_type(ty, |_, m| m.is_null() || m.is_undefined())
     }
 
@@ -180,7 +177,7 @@ impl Checker<'_> {
         spread: ExprId,
         given: TypeId,
     ) -> TypeId {
-        if self.is_nothing_but_nullish(given) || self.is_spread_taken_whole(file, spread, given) {
+        if self.is_only_nullish(given) || self.is_spread_of_array_like(file, spread, given) {
             return TypeId::NEVER;
         }
         self.iterated_type_or_element_type(IterationUse::Spread, given, TypeId::UNDEFINED, None)
@@ -190,7 +187,7 @@ impl Checker<'_> {
     /// Whether `isArrayLikeType` keeps `spread`, which spreads a `given`, from `checkIteratedTypeOrElementType`: what is like an array
     /// is taken as it is. `never` is like one, and cannot be gone through.
     /// `said`: the errors of the file so far.
-    fn is_spread_taken_whole(&mut self, file: FileId, spread: ExprId, given: TypeId) -> bool {
+    fn is_spread_of_array_like(&mut self, file: FileId, spread: ExprId, given: TypeId) -> bool {
         let Parent::Expr(parent) = self.bound(file).expr_parent[spread.idx()] else {
             return false;
         };
@@ -570,7 +567,7 @@ impl Checker<'_> {
     /// `pat` has a name, so no element asks what is taken apart.
     pub(super) fn check_empty_binding_pattern(&mut self, file: FileId, pat: PatId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !Self::pattern_binds_nothing(hir, pat) {
+        if !Self::is_pattern_without_names(hir, pat) {
             return;
         }
         let (node, mut initializer) = match bound.pat_parent[pat.idx()] {

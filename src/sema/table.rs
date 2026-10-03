@@ -544,7 +544,7 @@ impl Footprint {
         }
     }
 
-    fn with_kept<T>(self, kept: &AppendVec<T>) -> Footprint {
+    fn with_indirect<T>(self, kept: &AppendVec<T>) -> Footprint {
         let bytes = kept.len() as usize * size_of::<T>();
         Footprint {
             allocated: self.allocated + bytes,
@@ -643,25 +643,25 @@ impl<K: NodeKey> ByNode<K, RawWord, Frozen> {
 }
 
 /// Where a kept table has a value. With `LOCAL`: in the task. A HANDLE IS NOT A VALUE: it is not an id of the type store, and the link of
-/// a task says nothing about it. See `ByIdKept::hold_handles_of`.
+/// a task says nothing about it. See `ByIdIndirect::hold_handles_of`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Handle(pub u32);
 packed_ids!(Handle);
-crate::types::follows_nothing!(Handle);
+crate::types::has_no_references!(Handle);
 
 /// Something that does not fit a cell for some of the nodes of one kind. It is kept on the side and never moves.
-pub struct ByNodeKept<K, T, P: Policy = Frozen> {
+pub struct ByNodeIndirect<K, T, P: Policy = Frozen> {
     handles: ByNode<K, Handle, P>,
     kept: AppendVec<T>,
 }
 
-impl<K: NodeKey, T: 'static, P: Policy> ByNodeKept<K, T, P> {
+impl<K: NodeKey, T: 'static, P: Policy> ByNodeIndirect<K, T, P> {
     pub fn footprint(&self) -> Footprint {
-        self.handles.footprint().with_kept(&self.kept)
+        self.handles.footprint().with_indirect(&self.kept)
     }
 
     pub fn new(bases: &Bases) -> Self {
-        ByNodeKept {
+        ByNodeIndirect {
             handles: ByNode::new(bases),
             kept: AppendVec::new(),
         }
@@ -700,15 +700,15 @@ impl<I: Id, V: Packed, P: Policy> ById<I, V, P> {
 }
 
 /// Something that does not fit a cell for some of the things that are numbered as they are made.
-pub struct ByIdKept<I, T, P: Policy = Frozen> {
+pub struct ByIdIndirect<I, T, P: Policy = Frozen> {
     handles: ById<I, Handle, P>,
     kept: AppendVec<T>,
     holding: Holding<T>,
 }
 
-impl<I: Id, T, P: Policy> Default for ByIdKept<I, T, P> {
+impl<I: Id, T, P: Policy> Default for ByIdIndirect<I, T, P> {
     fn default() -> Self {
-        ByIdKept {
+        ByIdIndirect {
             handles: ById::default(),
             kept: AppendVec::new(),
             holding: Holding::default(),
@@ -716,9 +716,9 @@ impl<I: Id, T, P: Policy> Default for ByIdKept<I, T, P> {
     }
 }
 
-impl<I: Id, T: 'static, P: Policy> ByIdKept<I, T, P> {
+impl<I: Id, T: 'static, P: Policy> ByIdIndirect<I, T, P> {
     pub fn footprint(&self) -> Footprint {
-        self.handles.footprint().with_kept(&self.kept)
+        self.handles.footprint().with_indirect(&self.kept)
     }
 
     pub(crate) fn set_slot(&mut self, slot: u32) {
@@ -784,7 +784,7 @@ impl<K: NodeKey, V: Packed> ByNode<K, V, Frozen> {
     }
 }
 
-impl<K: NodeKey, T: 'static> ByNodeKept<K, T, Frozen> {
+impl<K: NodeKey, T: 'static> ByNodeIndirect<K, T, Frozen> {
     #[inline]
     pub fn get_ref(&self, key: &K) -> Option<&T> {
         self.handles.get(key).map(|handle| self.kept.get(handle.0))
@@ -923,12 +923,12 @@ impl<I: Id, V: Packed<Cell = AtomicU32>> ById<I, V, Buffered> {
 }
 
 /// The values that a task keeps for a kept table, each with its key as the task's half has it, by handle without `LOCAL`.
-type KeptInTask<T> = Chunked<(u64, T)>;
+type IndirectInTask<T> = Chunked<(u64, T)>;
 
 /// What `handle` stands for. THE REFERENCE HAS THE LIFETIME OF THE TABLE. One to a value that is in the task is good until the task ends
 /// (`Task::finish`, `Task::begin`, the drop): whoever holds on to one, in a cache of the checker for example, lets go of it by then.
 #[inline]
-fn kept_at<'p, T: 'static>(
+fn indirect_at<'p, T: 'static>(
     kept: &'p AppendVec<T>,
     slot: u32,
     task: &Task,
@@ -939,7 +939,7 @@ fn kept_at<'p, T: 'static>(
         Some(number) => {
             let half = task.buffer().half(slot).unwrap();
             // SAFETY: the slot is that of a kept table of `T`, which has given out the handle.
-            let value = &unsafe { half.typed::<KeptInTask<T>>() }
+            let value = &unsafe { half.typed::<IndirectInTask<T>>() }
                 .unwrap()
                 .get(number as usize)
                 .1;
@@ -949,17 +949,21 @@ fn kept_at<'p, T: 'static>(
     }
 }
 
-fn keep_in_task<T: Send + 'static>(slot: u32, task: &Task, key: u64, value: T) -> Handle {
+fn store_in_task<T: Send + 'static>(slot: u32, task: &Task, key: u64, value: T) -> Handle {
     // SAFETY: the slot is that of a kept table of `T`.
-    let kept = unsafe { task.buffer().half_mut(slot).typed_mut::<KeptInTask<T>>() };
+    let kept = unsafe {
+        task.buffer()
+            .half_mut(slot)
+            .typed_mut::<IndirectInTask<T>>()
+    };
     Handle(kept.push((key, value)) as u32 | LOCAL)
 }
 
-impl<K: NodeKey, T: Send + 'static> ByNodeKept<K, T, Buffered> {
+impl<K: NodeKey, T: Send + 'static> ByNodeIndirect<K, T, Buffered> {
     #[inline]
     pub fn get_ref(&self, task: &Task, key: &K) -> Option<&T> {
         let handle = self.handles.get(task, key)?;
-        Some(kept_at(&self.kept, self.handles.slot, task, handle))
+        Some(indirect_at(&self.kept, self.handles.slot, task, handle))
     }
 
     /// Keeps what is there already, and returns what is kept.
@@ -967,9 +971,9 @@ impl<K: NodeKey, T: Send + 'static> ByNodeKept<K, T, Buffered> {
         let slot = self.handles.slot;
         let handle = self.handles.get(task, &key).unwrap_or_else(|| {
             let word = node_word(key.file().0, key.index());
-            (self.handles).insert(task, key, keep_in_task(slot, task, word, value), stored)
+            (self.handles).insert(task, key, store_in_task(slot, task, word, value), stored)
         });
-        kept_at(&self.kept, slot, task, handle)
+        indirect_at(&self.kept, slot, task, handle)
     }
 
     #[inline]
@@ -988,7 +992,7 @@ impl<K: NodeKey, T: Send + 'static> ByNodeKept<K, T, Buffered> {
     }
 }
 
-impl<I: Id, T: Send + 'static> ByIdKept<I, T, Buffered> {
+impl<I: Id, T: Send + 'static> ByIdIndirect<I, T, Buffered> {
     #[inline]
     pub fn get_ref(&self, task: &Task, key: &I) -> Option<&T> {
         self.handles
@@ -1001,16 +1005,16 @@ impl<I: Id, T: Send + 'static> ByIdKept<I, T, Buffered> {
         self.handles.get(task, key)
     }
 
-    /// See `kept_at` for how long the reference is good.
+    /// See `indirect_at` for how long the reference is good.
     #[inline]
     pub fn at(&self, task: &Task, handle: Handle) -> &T {
-        kept_at(&self.kept, self.handles.slot, task, handle)
+        indirect_at(&self.kept, self.handles.slot, task, handle)
     }
 
     /// Keeps what is there already, and returns what is kept.
     pub fn insert_ref(&self, task: &Task, key: I, value: T, stored: Stored) -> (Handle, &T) {
         let handle = self.handles.get(task, &key).unwrap_or_else(|| {
-            let kept = keep_in_task(self.handles.slot, task, u64::from(key.number()), value);
+            let kept = store_in_task(self.handles.slot, task, u64::from(key.number()), value);
             self.handles.insert(task, key, kept, stored)
         });
         (handle, self.at(task, handle))
@@ -1036,7 +1040,7 @@ impl<I: Id, T: Send + 'static> ByIdKept<I, T, Buffered> {
     /// the field. `held` comes before this table in `buffered_fields!`. After `set_slot`.
     pub(crate) fn hold_handles_of<J: Id, U>(
         &mut self,
-        held: &mut ByIdKept<J, U, Buffered>,
+        held: &mut ByIdIndirect<J, U, Buffered>,
         field: fn(&mut T) -> &mut Handle,
     ) {
         assert!(held.handles.slot < self.handles.slot);
@@ -1136,7 +1140,7 @@ impl<'a> Finishing<'a> {
 
     /// Whether `key -> value` goes to the barrier. If it does, what it mentions is marked: THE ENTRIES ARE THE ROOTS.
     #[inline]
-    fn hands_over(&mut self, key: &impl Follow, value: &impl Follow) -> bool {
+    fn is_published(&mut self, key: &impl Follow, value: &impl Follow) -> bool {
         if key.is_bound(self.own) || value.is_bound(self.own) {
             return false;
         }
@@ -1334,7 +1338,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>> Dense for ByNode<K, V, Buffered> {
     ) -> Option<u32> {
         let file = FileId((key >> 32) as u32);
         let at = self.bases.at(file, key as u32)?;
-        finishing.hands_over(&file, value).then_some(at as u32)
+        finishing.is_published(&file, value).then_some(at as u32)
     }
 
     #[inline]
@@ -1382,7 +1386,7 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32>> Dense for ById<I, V, Buffered>
         value: &impl Follow,
         finishing: &mut Finishing<'_>,
     ) -> Option<u32> {
-        (finishing.hands_over(&I::from_number(key as u32), value)).then_some(key as u32)
+        (finishing.is_published(&I::from_number(key as u32), value)).then_some(key as u32)
     }
 
     #[inline]
@@ -1446,7 +1450,7 @@ impl<D: Dense<Value: Follow>> Publish for D {
     }
 }
 
-/// How the handles of one kept table get into the values of another: `ByIdKept::hold_handles_of`.
+/// How the handles of one kept table get into the values of another: `ByIdIndirect::hold_handles_of`.
 ///
 /// `finish` of the table that is held notes which of the task's handles are handed over, and in which place. `finish` of the holder
 /// drops an entry whose handle is not, and otherwise puts the place into the field, with `LOCAL`. `apply` of the table that is held
@@ -1467,7 +1471,7 @@ impl<T> Default for Holding<T> {
 }
 
 /// The entries of a kept table on the way to the barrier: `Vec<(u32, T)>`, a key and a value, IN INSERTION ORDER.
-fn finish_kept<D: Dense<Value = Handle>, T: Follow + Send + Sync + 'static>(
+fn finish_indirect<D: Dense<Value = Handle>, T: Follow + Send + Sync + 'static>(
     handles: &D,
     holding: &Holding<T>,
     half: &mut Half,
@@ -1476,7 +1480,7 @@ fn finish_kept<D: Dense<Value = Handle>, T: Follow + Send + Sync + 'static>(
     // Every handle in a cell is that of a value below.
     half.clear_cells();
     // SAFETY: the slot is that of a kept table of `T`.
-    let kept = unsafe { half.existing_typed_mut::<KeptInTask<T>>() }?;
+    let kept = unsafe { half.existing_typed_mut::<IndirectInTask<T>>() }?;
     let mut entries = Vec::new();
     let mut places = vec![0; if holding.is_held { kept.len() } else { 0 }];
     kept.drain(|handle, (key, mut value)| {
@@ -1503,7 +1507,7 @@ fn finish_kept<D: Dense<Value = Handle>, T: Follow + Send + Sync + 'static>(
     Entries::new(handles.table_slot(), entries.len(), entries)
 }
 
-fn follow_kept<D: Dense, T: Follow + 'static>(entries: &mut Entries, link: &Link) {
+fn follow_indirect<D: Dense, T: Follow + 'static>(entries: &mut Entries, link: &Link) {
     for (key, value) in entries.typed_mut::<Vec<(u32, T)>>() {
         *key = D::follow_key(*key, link);
         value.follow(link);
@@ -1511,7 +1515,7 @@ fn follow_kept<D: Dense, T: Follow + 'static>(entries: &mut Entries, link: &Link
 }
 
 /// A VALUE IS PUSHED WHEN ITS ENTRY WINS. A loser is dropped.
-fn apply_kept<D: Dense<Value = Handle>, T: Follow + 'static>(
+fn apply_indirect<D: Dense<Value = Handle>, T: Follow + 'static>(
     handles: &D,
     kept: &AppendVec<T>,
     holding: &Holding<T>,
@@ -1549,17 +1553,17 @@ fn apply_kept<D: Dense<Value = Handle>, T: Follow + 'static>(
     }
 }
 
-impl<K: NodeKey, T: Follow + Send + Sync + 'static> Publish for ByNodeKept<K, T, Buffered> {
+impl<K: NodeKey, T: Follow + Send + Sync + 'static> Publish for ByNodeIndirect<K, T, Buffered> {
     fn slot(&self) -> u32 {
         self.handles.slot
     }
 
     fn finish(&self, half: &mut Half, finishing: &mut Finishing<'_>) -> Option<Entries> {
-        finish_kept(&self.handles, &Holding::<T>::default(), half, finishing)
+        finish_indirect(&self.handles, &Holding::<T>::default(), half, finishing)
     }
 
     fn follow(&self, entries: &mut Entries, link: &Link) {
-        follow_kept::<ByNode<K, Handle, Buffered>, T>(entries, link);
+        follow_indirect::<ByNode<K, Handle, Buffered>, T>(entries, link);
     }
 
     fn apply(
@@ -1570,7 +1574,7 @@ impl<K: NodeKey, T: Follow + Send + Sync + 'static> Publish for ByNodeKept<K, T,
         applied: &mut Applied<'_>,
     ) {
         let holding = Holding::default();
-        apply_kept(
+        apply_indirect(
             &self.handles,
             &self.kept,
             &holding,
@@ -1581,7 +1585,7 @@ impl<K: NodeKey, T: Follow + Send + Sync + 'static> Publish for ByNodeKept<K, T,
     }
 }
 
-impl<I: Id + Follow, T: Follow + Send + Sync + 'static> Publish for ByIdKept<I, T, Buffered> {
+impl<I: Id + Follow, T: Follow + Send + Sync + 'static> Publish for ByIdIndirect<I, T, Buffered> {
     fn slot(&self) -> u32 {
         self.handles.slot
     }
@@ -1591,11 +1595,11 @@ impl<I: Id + Follow, T: Follow + Send + Sync + 'static> Publish for ByIdKept<I, 
     }
 
     fn finish(&self, half: &mut Half, finishing: &mut Finishing<'_>) -> Option<Entries> {
-        finish_kept(&self.handles, &self.holding, half, finishing)
+        finish_indirect(&self.handles, &self.holding, half, finishing)
     }
 
     fn follow(&self, entries: &mut Entries, link: &Link) {
-        follow_kept::<ById<I, Handle, Buffered>, T>(entries, link);
+        follow_indirect::<ById<I, Handle, Buffered>, T>(entries, link);
     }
 
     fn apply(
@@ -1606,7 +1610,7 @@ impl<I: Id + Follow, T: Follow + Send + Sync + 'static> Publish for ByIdKept<I, 
         applied: &mut Applied<'_>,
     ) {
         let (table, holding) = (&self.handles, &self.holding);
-        apply_kept(table, &self.kept, holding, shares, handles, applied);
+        apply_indirect(table, &self.kept, holding, shares, handles, applied);
     }
 }
 
@@ -1647,7 +1651,7 @@ where
     fn finish(&self, half: &mut Half, finishing: &mut Finishing<'_>) -> Option<Entries> {
         // SAFETY: the slot is this table's own.
         let mut entries = unsafe { half.existing_typed_mut::<Hashed<K, V>>() }?.take();
-        entries.retain(|(key, value)| finishing.hands_over(key, value));
+        entries.retain(|(key, value)| finishing.is_published(key, value));
         entries.shrink_to_fit();
         let len = entries.len();
         let keyed = Keyed {
@@ -1765,7 +1769,7 @@ impl<K: NodeKey, V: Packed> ByNode<K, V, FileLocal> {
     }
 }
 
-impl<K: NodeKey, T: 'static> ByNodeKept<K, T, FileLocal> {
+impl<K: NodeKey, T: 'static> ByNodeIndirect<K, T, FileLocal> {
     #[inline]
     pub fn get_ref(&self, task: &Task, key: &K) -> Option<&T> {
         let handle = self.handles.get(task, key)?;

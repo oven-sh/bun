@@ -21,7 +21,7 @@
 //! The summary of a file keeps neither modifiers nor keywords: they are read from the text, from a place the summary does have.
 //! Of a declaration file there is no text, and what can only be read is not looked for.
 
-use super::errors_x_enums_names::means_umd_global;
+use super::errors_x_enums_names::resolves_to_umd_global;
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent, ScopeId};
 use crate::resolve::{ModuleKind, is_relative};
@@ -314,7 +314,7 @@ impl Checker<'_> {
         if cx.grammar && !is_ambient && matches!(module.name, ModuleName::String(_)) {
             self.error_at((cx.file, name_pos, 0), 1035, &[]);
         }
-        if module.says_module {
+        if module.specifies_module {
             self.error_at((cx.file, name_pos, 0), 1540, &[]);
         }
         // Both are about options that keep `const enum`s, so that a namespace of nothing else counts as well.
@@ -602,13 +602,13 @@ impl Checker<'_> {
     /// (`resolveAlias`), or for the exports of the file (`getExportsOfModuleWorker`). 1211 for a class declaration.
     fn xm_statements_out_of_place(&mut self, cx: &Cx<'_>, top: Around) {
         let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
-        let says_grammar_errors = cx.grammar && !cx.text.is_empty();
+        let reports_grammar_errors = cx.grammar && !cx.text.is_empty();
         for (i, statement) in hir.stmts.iter().enumerate() {
             if matches!(bound.stmt_parent[i], Parent::None) {
                 continue;
             }
             // `checkClassDeclaration`: only `export default class` can do without a name.
-            if says_grammar_errors
+            if reports_grammar_errors
                 && let StmtKind::Class(c) = statement.kind
                 && hir[c].name.is_none()
                 && !hir[c].flags.contains(Flags::DEFAULT)
@@ -642,7 +642,7 @@ impl Checker<'_> {
                 StmtKind::ExportDefault(_) => 1258,
                 _ => continue,
             };
-            if says_grammar_errors {
+            if reports_grammar_errors {
                 self.error_at((cx.file, statement.start, 0), code, &[]);
             }
             let s = StmtId(i as u32);
@@ -932,7 +932,7 @@ impl Checker<'_> {
         if flags.intersects(SymFlags::VALUE) {
             // As a value, the first name may mean something nearer by that is no namespace.
             let wanted = SymFlags::VALUE | SymFlags::NAMESPACE;
-            if means_umd_global(files, cx.file, scope, first.text, wanted) {
+            if resolves_to_umd_global(files, cx.file, scope, first.text, wanted) {
                 self.error(cx.file, names.at(0), 2686, &[Arg::Atom(first.text)]);
             }
             let nearest = files
@@ -1039,7 +1039,7 @@ impl Checker<'_> {
         let is_found = files.resolve_name(cx.file, scope, name, all).is_some();
         if !is_found {
             self.on_failed_to_resolve_symbol(cx.file, location, None, scope, name, all, message);
-        } else if means_umd_global(files, cx.file, scope, name, all) {
+        } else if resolves_to_umd_global(files, cx.file, scope, name, all) {
             self.error(cx.file, location, 2686, &[Arg::Atom(name)]);
         }
         let is_global = files
@@ -1141,7 +1141,7 @@ impl Checker<'_> {
                 .find_modifier(hir[s].modifiers, Flags::AMBIENT)
                 .is_some();
         if is_ambient && cx.grammar && e.is_some() && !is_entity_name_expression(hir, e) {
-            self.error_at(self.place_of_written_expr(cx.file, e), 2714, &[]);
+            self.error_at(self.span_of_parenthesized_expr(cx.file, e), 2714, &[]);
         }
         // The rest is about what a compiler that sees one file at a time makes of it.
         if is_ambient || !self.p.files.options.isolated_modules {

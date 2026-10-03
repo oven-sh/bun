@@ -228,7 +228,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_identifier(p: &mut Self, level: Level, flags: EFlags) -> PResult<Expr> {
         let loc = p.lexer.loc();
         // For the parameter of `x => x`. Only the type checker asks.
-        let full_start = if p.keeps_type_syntax() {
+        let full_start = if p.preserves_type_syntax() {
             p.lexer.full_start()
         } else {
             bun_ast::Loc::EMPTY
@@ -1030,7 +1030,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && !p.lexer.is_javascript_file()
                 && p.try_skip_type_script_type_arguments_with_backtracking()?
             {
-                let more = p.kept_type_arguments();
+                let more = p.saved_type_arguments();
                 type_arguments = type_arguments.or(more);
             }
         }
@@ -1416,7 +1416,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match skipped {
                 SkipTypeParameterResult::DidNotSkipAnything => {}
                 result => {
-                    let type_parameters = p.kept_type_parameters(result);
+                    let type_parameters = p.saved_type_parameters(result);
                     let open_paren = p.lexer.loc();
                     p.lexer.expect(T::TOpenParen)?;
                     let mut value = p.parse_paren_expr(
@@ -1436,7 +1436,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.note_type_parameters(&mut value.loc, type_parameters);
                     }
                     // "<T>(x).y" turned out to be a cast, of "(x).y".
-                    if p.keeps_type_syntax() && !is_arrow {
+                    if p.preserves_type_syntax() && !is_arrow {
                         p.parse_suffix(&mut value, Level::Prefix, None, flags)?;
                         p.note_cast_to_type_parameter(&mut value, type_parameters, loc);
                         if p.lexer.token == T::TAsteriskAsterisk
@@ -1452,9 +1452,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // "<T>x"
             p.lexer.next()?;
-            if p.keeps_type_syntax() {
+            if p.preserves_type_syntax() {
                 p.skip_type_script_type(Level::Lowest)?;
-                let ty = p.kept_type_or_error();
+                let ty = p.saved_type_or_error();
                 p.lexer.expect_greater_than::<false>()?;
                 // The cast covers "x.y" in "<T>x.y", which the caller's suffix
                 // loop would otherwise apply to the annotated "x".
@@ -1462,7 +1462,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.parse_expr_with_flags(Level::Prefix, flags, &mut value)?;
                 p.note_token_full_start(&mut value.loc, crate::sema::Mark::End);
                 p.note_loc(&mut value.loc, crate::sema::Mark::LessThan, loc);
-                p.note_kept_type(&mut value.loc, crate::sema::Mark::As, ty);
+                p.note_saved_type(&mut value.loc, crate::sema::Mark::As, ty);
                 if p.lexer.token == T::TAsteriskAsterisk
                     && p.lexer.tolerant
                     && !p.lexer.is_log_disabled

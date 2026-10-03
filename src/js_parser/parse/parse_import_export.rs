@@ -65,7 +65,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let log = p.log();
             log.msgs.truncate(logged);
             log.errors = errors;
-            type_arguments = p.kept_type_arguments();
+            type_arguments = p.saved_type_arguments();
         }
 
         if level.gt(Level::Call) {

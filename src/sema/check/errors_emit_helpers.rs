@@ -223,18 +223,18 @@ impl Checker<'_> {
     /// kept track of what it is in.
     fn eh_place(&self, file: FileId, mut at: Parent) -> Option<u32> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut put_off = 0;
+        let mut deferred = 0;
         loop {
             at = match at {
-                Parent::File => return Some(put_off),
+                Parent::File => return Some(deferred),
                 Parent::Module(m) => {
-                    return (!hir[m].flags.contains(Flags::AMBIENT)).then_some(put_off);
+                    return (!hir[m].flags.contains(Flags::AMBIENT)).then_some(deferred);
                 }
                 Parent::VarInit(d) if hir[d].flags.contains(Flags::AMBIENT) => return None,
                 Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
-                Parent::FnBody(f) => self.eh_out_of_fn(file, f, false, &mut put_off)?,
+                Parent::FnBody(f) => self.eh_out_of_fn(file, f, false, &mut deferred)?,
                 Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
-                    self.eh_out_of_fn(file, bound.param_fn[p.idx()], true, &mut put_off)?
+                    self.eh_out_of_fn(file, bound.param_fn[p.idx()], true, &mut deferred)?
                 }
                 Parent::MemberInit(m) | Parent::Decorator(_, DecoratorOwner::Member(m)) => {
                     let MemberOwner::Class(class) = bound.member_owner[m.idx()] else {
@@ -244,7 +244,7 @@ impl Checker<'_> {
                         return None;
                     }
                     if let ClassOwner::Expr(_) = bound.class_owner[class.idx()] {
-                        put_off += 1;
+                        deferred += 1;
                     }
                     Parent::ClassExtends(class)
                 }
@@ -265,7 +265,7 @@ impl Checker<'_> {
                 }
                 Parent::Expr(e) if e.is_none() => return None,
                 Parent::Expr(e) => {
-                    put_off += match hir[e].kind {
+                    deferred += match hir[e].kind {
                         ExprKind::Unary { op: UnOp::Void, .. } => 1,
                         ExprKind::Jsx(element) if hir[element].tag.is_some() => 1,
                         _ => 0,
@@ -284,7 +284,7 @@ impl Checker<'_> {
         file: FileId,
         f: FnId,
         is_head: bool,
-        put_off: &mut u32,
+        deferred: &mut u32,
     ) -> Option<Parent> {
         if f.is_none() {
             return None;
@@ -296,7 +296,7 @@ impl Checker<'_> {
         match self.bound(file).fns[f.idx()].owner {
             FnOwner::Expr(e) => {
                 if !is_head || matches!(func.kind, FnKind::Getter | FnKind::Setter) {
-                    *put_off += 1;
+                    *deferred += 1;
                 }
                 Some(Parent::Expr(e))
             }
@@ -337,16 +337,16 @@ impl Checker<'_> {
                 continue;
             };
             let f = FnId(i as u32);
-            let mut put_off = 0;
+            let mut deferred = 0;
             let Some(place) = self
-                .eh_out_of_fn(file, f, true, &mut put_off)
+                .eh_out_of_fn(file, f, true, &mut deferred)
                 .and_then(|around| self.eh_place(file, around))
             else {
                 continue;
             };
             let (start, end) = self.error_range_of_fn(file, f);
             requests.push(Request {
-                order: (place + put_off, start),
+                order: (place + deferred, start),
                 start,
                 end,
                 helpers,
@@ -357,11 +357,11 @@ impl Checker<'_> {
                 && self
                     .containing_generator(file, e)
                     .is_some_and(|f| hir[f].flags.contains(Flags::ASYNC))
-                && let Some(put_off) = self.eh_place(file, bound.expr_parent[e.idx()])
+                && let Some(deferred) = self.eh_place(file, bound.expr_parent[e.idx()])
             {
                 let start = self.error_start_inside_parentheses(file, e);
                 requests.push(Request {
-                    order: (put_off, start),
+                    order: (deferred, start),
                     start,
                     end: self.error_end_inside_parentheses(file, e),
                     helpers: AWAIT | ASYNC_DELEGATOR | ASYNC_VALUES,
@@ -385,9 +385,9 @@ impl Checker<'_> {
             // `checkGrammarModuleElementContext`, `checkExternalImportOrExportDeclaration`: elsewhere a module can only be named in what
             // is ambient.
             let is_module_element = is_commonjs && around == Parent::File;
-            let mut ask = |put_off: u32, (start, end): (u32, u32), helpers: u32| {
+            let mut ask = |deferred: u32, (start, end): (u32, u32), helpers: u32| {
                 requests.push(Request {
-                    order: (put_off, stmt.start),
+                    order: (deferred, stmt.start),
                     start,
                     end,
                     helpers,
@@ -462,10 +462,10 @@ impl Checker<'_> {
                     if self
                         .enclosing_fn(file, around)
                         .is_some_and(|f| hir[f].flags.contains(Flags::ASYNC))
-                        && let Some(put_off) = self.eh_place(file, around)
+                        && let Some(deferred) = self.eh_place(file, around)
                     {
                         ask(
-                            put_off,
+                            deferred,
                             (stmt.start, self.end_of_stmt(file, s)),
                             ASYNC_VALUES,
                         );
@@ -478,11 +478,11 @@ impl Checker<'_> {
                     if !matches!(hir[first].kind, VarKind::Using | VarKind::AwaitUsing) {
                         continue;
                     }
-                    let Some(put_off) = self.eh_place(file, Parent::VarInit(first)) else {
+                    let Some(deferred) = self.eh_place(file, Parent::VarInit(first)) else {
                         continue;
                     };
                     ask(
-                        put_off,
+                        deferred,
                         (
                             self.start_after_modifiers(file, s),
                             self.end_of_var_decl_list(file, decls),
@@ -562,12 +562,12 @@ impl Checker<'_> {
         for (i, element) in hir.pat_props.iter().enumerate() {
             let p = PatPropId(i as u32);
             if element.is_rest
-                && let Some(put_off) =
+                && let Some(deferred) =
                     self.eh_place(file, self.outward(file, Parent::PatPropDefault(p)))
             {
                 let (start, end) = self.error_range_of_pat_prop(file, p);
                 requests.push(Request {
-                    order: (put_off, start),
+                    order: (deferred, start),
                     start,
                     end,
                     helpers: REST,
@@ -588,13 +588,13 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let Some(put_off) = self.eh_place(file, bound.expr_parent[e.idx()]) else {
+            let Some(deferred) = self.eh_place(file, bound.expr_parent[e.idx()]) else {
                 continue;
             };
             let dots_end = self.end_of_token_before(file, self.start_of(file, last.value));
             let start = dots_end.saturating_sub(3);
             requests.push(Request {
-                order: (put_off, start),
+                order: (deferred, start),
                 start,
                 end: self.end_of_expr(file, last.value),
                 helpers: REST,
@@ -641,7 +641,7 @@ impl Checker<'_> {
 
     /// From the `@` of the decorator whose expression is `e` to where it ends.
     fn eh_range_of_decorator(&self, file: FileId, e: ExprId) -> (u32, u32) {
-        let written = self.where_decorator_is(file, e);
+        let written = self.decorator_position(file, e);
         (written.at_sign, written.end)
     }
 
@@ -659,7 +659,7 @@ impl Checker<'_> {
             if bound.refused_decorators.contains(&e) {
                 continue;
             }
-            let Some(put_off) = self.eh_place(file, bound.expr_parent[e.idx()]) else {
+            let Some(deferred) = self.eh_place(file, bound.expr_parent[e.idx()]) else {
                 continue;
             };
             let mut helpers = 0;
@@ -705,7 +705,7 @@ impl Checker<'_> {
             }
             let (start, end) = self.eh_range_of_decorator(file, e);
             requests.push(Request {
-                order: (put_off, start),
+                order: (deferred, start),
                 start,
                 end,
                 helpers,
@@ -843,7 +843,7 @@ impl Checker<'_> {
                 }
                 _ => continue,
             };
-            let Some(put_off) = self.eh_place(file, bound.expr_parent[e.idx()]) else {
+            let Some(deferred) = self.eh_place(file, bound.expr_parent[e.idx()]) else {
                 continue;
             };
             let id = ClassId(i as u32);
@@ -864,7 +864,7 @@ impl Checker<'_> {
                 continue;
             };
             requests.push(Request {
-                order: (put_off, class.name_pos),
+                order: (deferred, class.name_pos),
                 start,
                 end,
                 helpers: if has_computed_name {
@@ -895,12 +895,12 @@ impl Checker<'_> {
             if !is_private_name_at(hir, name_pos) {
                 continue;
             }
-            let Some(put_off) = self.eh_place(file, bound.expr_parent[e.idx()]) else {
+            let Some(deferred) = self.eh_place(file, bound.expr_parent[e.idx()]) else {
                 continue;
             };
             let start = self.start_inside_parentheses(file, e);
             requests.push(Request {
-                order: (put_off, start),
+                order: (deferred, start),
                 start,
                 end: self.end_inside_parentheses(file, e),
                 helpers: match bound.get_assignment_target_kind(hir, e) {
@@ -923,10 +923,10 @@ impl Checker<'_> {
             if matches!(hir[left].kind, ExprKind::String(_))
                 && is_private_name_at(hir, start)
                 && !is_parenthesized(self.hir(file), left)
-                && let Some(put_off) = self.eh_place(file, bound.expr_parent[e.idx()])
+                && let Some(deferred) = self.eh_place(file, bound.expr_parent[e.idx()])
             {
                 requests.push(Request {
-                    order: (put_off, start),
+                    order: (deferred, start),
                     start,
                     end: self.end_of_name_at(file, start),
                     helpers: CLASS_PRIVATE_FIELD_IN,

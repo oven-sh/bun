@@ -380,7 +380,7 @@ thread_local! {
 /// What a thread keeps from one file to the next, to allocate less. A thread of a pool outlives a check, so this is owned by the check:
 /// a thread has one for as long as it works for the check.
 #[derive(Default)]
-pub struct ThreadCaches(notes::Notes, builder::Room);
+pub struct ThreadCaches(notes::Notes, builder::Recycled);
 
 impl ThreadCaches {
     /// Takes the caches from the calling thread, and frees the arena it parsed in. Only the thread that made an arena allocates in it.
@@ -391,7 +391,10 @@ impl ThreadCaches {
 
     /// Gives the caches to the calling thread. Returns the ones it had.
     pub fn install(self) -> ThreadCaches {
-        ThreadCaches(notes::replace_room(self.0), builder::replace_room(self.1))
+        ThreadCaches(
+            notes::replace_recycled(self.0),
+            builder::replace_recycled(self.1),
+        )
     }
 }
 
@@ -496,7 +499,7 @@ pub fn summarize(
     }
     // One that is very long would leave its room to all that come after.
     if text.len() < 4 << 20 {
-        builder::leave_room(&mut file);
+        builder::recycle(&mut file);
     }
     (file, parsing.get())
 }
@@ -515,7 +518,7 @@ pub(crate) struct TypeSyntax<'a> {
     /// `f<T>` was just parsed: the type arguments, in `Notes::ranges`, and where the next token is.
     pub(crate) pending_type_arguments: Option<(u32, Loc)>,
     /// Build type nodes instead of only recording where types are.
-    pub(crate) keep_types: bool,
+    pub(crate) save_types: bool,
     /// `withJSDoc`: only in JavaScript is anything made of the tags.
     pub(crate) has_jsdoc: bool,
     /// The tree of the file, which has the rows of the TypeScript syntax that was read so far.
@@ -561,12 +564,12 @@ pub(crate) struct TypeSyntax<'a> {
 impl<'a> TypeSyntax<'a> {
     pub(crate) fn new(b: builder::Builder<'a>) -> Self {
         TypeSyntax {
-            notes: notes::Notes::with_room(),
+            notes: notes::Notes::take_recycled(),
             after_skipped: Vec::new(),
             stray_decorators: Vec::new(),
             unclosed_literals: Vec::new(),
             pending_type_arguments: None,
-            keep_types: true,
+            save_types: true,
             has_jsdoc: false,
             b,
             comment_rows: Vec::new(),
@@ -593,7 +596,7 @@ impl<'a> TypeSyntax<'a> {
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT, SCAN_ONLY> {
     #[inline(always)]
-    pub(crate) fn keeps_type_syntax(&self) -> bool {
+    pub(crate) fn preserves_type_syntax(&self) -> bool {
         TYPESCRIPT && self.type_syntax.is_some()
     }
 

@@ -8,7 +8,7 @@ type Place = (bool, FileId, u32);
 /// The members of a union that is being put together.
 type Flat = smallvec::SmallVec<[TypeId; 16]>;
 
-// `union_anew` goes by these numbers.
+// `create_union` goes by these numbers.
 const _: () = assert!(
     TypeId::UNRESOLVED.0 == 0
         && TypeId::ANY.0 == 1
@@ -83,7 +83,7 @@ impl<'p> Checker<'p> {
         {
             return TypeId(known);
         }
-        let (union, is_plain) = self.union_anew(types, merge_constrained);
+        let (union, is_plain) = self.create_union(types, merge_constrained);
         if is_plain && let Some((a, b)) = pair {
             self.recent_unions.put(a.0, b.0, union.0);
         }
@@ -121,7 +121,7 @@ impl<'p> Checker<'p> {
     /// `getUnionTypeWorker` with `UnionReductionLiteral`. With it, whether nothing but the members was looked at: then the same types
     /// come to the same whoever asks.
     #[inline(never)]
-    fn union_anew(&mut self, given: &[TypeId], merge_constrained: bool) -> (TypeId, bool) {
+    fn create_union(&mut self, given: &[TypeId], merge_constrained: bool) -> (TypeId, bool) {
         let mut members = Flat::new();
         for &ty in given {
             self.add_to_union(&mut members, ty);
@@ -505,7 +505,7 @@ impl<'p> Checker<'p> {
         for &ty in types {
             given.extend_from_slice(self.parts(ty));
         }
-        let is_made_by_expression = |c: &Self, m: TypeId| {
+        let is_created_by_expression = |c: &Self, m: TypeId| {
             matches!(
                 c.data(m),
                 TypeData::Anon {
@@ -521,13 +521,15 @@ impl<'p> Checker<'p> {
         // that are subtypes of each other goes. Where that order comes down to ids, which depend on the thread here: what is
         // declared before what expressions make, and those in the order given.
         let key = |c: &Self, m: TypeId| {
-            let made_by_expression = match c.data(m) {
+            let created_by_expression = match c.data(m) {
                 // `{ ...t, a: 1 }`
-                TypeData::Intersection(parts) => parts.iter().any(|&p| is_made_by_expression(c, p)),
-                _ => is_made_by_expression(c, m),
+                TypeData::Intersection(parts) => {
+                    parts.iter().any(|&p| is_created_by_expression(c, p))
+                }
+                _ => is_created_by_expression(c, m),
             };
             (
-                made_by_expression,
+                created_by_expression,
                 given.iter().position(|&g| g == m).unwrap_or(usize::MAX),
             )
         };

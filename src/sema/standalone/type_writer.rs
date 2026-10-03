@@ -51,11 +51,11 @@ impl Checker<'_> {
         self.flow_analysis_disabled_in = self.is_flow_analysis_left_disabled(file).then_some(file);
         let mut found = Vec::new();
         for node in self.visited_nodes(file) {
-            if self.is_left_out_of_types(file, node.kind) {
+            if self.is_omitted_from_types(file, node.kind) {
                 continue;
             }
             let ty = self.get_type_of_visited_node(file, node);
-            if self.is_error_type(ty) && !self.is_error_type_written_as_any(file, node.node) {
+            if self.is_error_type(ty) && !self.is_error_type_printed_as_any(file, node.node) {
                 found.push((node.start, format!("{:?}", node.kind)));
             }
         }
@@ -72,11 +72,11 @@ impl Checker<'_> {
         walk: &mut TypeWalk,
         results: &mut Vec<TypeAtLocation>,
     ) {
-        if self.is_left_out_of_types(file, node.kind) {
+        if self.is_omitted_from_types(file, node.kind) {
             return;
         }
         let ty = self.get_type_of_visited_node(file, node);
-        let type_text = if ty == TypeId::ERROR && self.is_error_type_written_as_any(file, node.node)
+        let type_text = if ty == TypeId::ERROR && self.is_error_type_printed_as_any(file, node.node)
         {
             "any".to_owned()
         } else {
@@ -134,7 +134,7 @@ impl Checker<'_> {
     }
 
     /// What `writeTypeOrSymbol` leaves out of the walk for types.
-    fn is_left_out_of_types(&self, file: FileId, kind: VisitedKind) -> bool {
+    fn is_omitted_from_types(&self, file: FileId, kind: VisitedKind) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match kind {
             VisitedKind::Expression(e) => match hir[e].kind {
@@ -173,7 +173,7 @@ impl Checker<'_> {
     }
 
     /// The exceptions of `writeTypeOrSymbol`: whether the error type of the node is written `any` in a test without errors too.
-    fn is_error_type_written_as_any(&self, file: FileId, node: Node) -> bool {
+    fn is_error_type_printed_as_any(&self, file: FileId, node: Node) -> bool {
         let hir = self.hir(file);
         let parent = hir.parent(node);
         match hir.kind(parent) {

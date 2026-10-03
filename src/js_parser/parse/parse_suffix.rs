@@ -319,7 +319,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 let _ = p.skip_type_script_type_arguments::<false, false>()?;
-                let type_arguments = p.kept_type_arguments();
+                let type_arguments = p.saved_type_arguments();
                 if p.lexer.token != T::TOpenParen {
                     p.lexer.expected(T::TOpenParen)?;
                 }

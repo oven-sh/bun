@@ -167,14 +167,14 @@ impl Task {
         let mut marks = Marks::new(&self.own);
         let buffer = self.buffer.get_mut();
         let mut finishing = Finishing::new(&self.own, &mut marks);
-        let mut handed_over = Vec::new();
+        let mut published = Vec::new();
         // What nothing reads later is not even looked at. It is dropped below.
         if self.is_read_later {
             for table in tables {
-                handed_over.push(table.finish(buffer.half_mut(table.slot()), &mut finishing));
+                published.push(table.finish(buffer.half_mut(table.slot()), &mut finishing));
             }
         }
-        let buffered = (handed_over.iter().flatten())
+        let buffered = (published.iter().flatten())
             .map(|it| u64::from(it.len))
             .sum();
 
@@ -191,7 +191,7 @@ impl Task {
             order_dependent_variances,
             own,
             link: Link::default(),
-            tables: handed_over,
+            tables: published,
             buffered,
         }
     }
@@ -305,7 +305,7 @@ pub(super) fn number_tables(program: &mut Program) {
     }
     super::buffered_fields!(each);
     super::file_local_fields!(each);
-    (program.members).hold_handles_of(&mut program.shapes, super::shape::KeptMembers::shape_mut);
+    (program.members).hold_handles_of(&mut program.shapes, super::shape::CachedMembers::shape_mut);
 }
 
 /// The entries of all tasks for one table, or for one part of it.

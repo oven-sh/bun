@@ -1255,7 +1255,7 @@ impl Dump<'_> {
             flags,
             body,
             has_body,
-            says_module: _,
+            specifies_module: _,
             stmt: _,
         } = node!(self, depth, label, modules, id);
         let name = match name {

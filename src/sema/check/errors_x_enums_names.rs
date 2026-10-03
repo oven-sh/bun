@@ -74,7 +74,7 @@ impl Checker<'_> {
                 self.error_at((file, start, end), 2475, &[]);
             }
             if is_ambient
-                && (options.isolated_modules_said
+                && (options.isolated_modules_reported
                     || options.verbatim_module_syntax && is_ok(level) && !is_import)
             {
                 self.error_at((file, start, end), 2748, &[Arg::Bytes(flag_name)]);
@@ -153,8 +153,8 @@ impl Checker<'_> {
                 };
                 let flags = files.flags(found);
                 // `getSymbol`: an alias is found by what it stands for, and one that leads nowhere by anything.
-                let is_meant = files.symbol_flags(found).intersects(wanted);
-                if !is_meant || flags.contains(SymFlags::EXPORT_ONLY) {
+                let is_intended = files.symbol_flags(found).intersects(wanted);
+                if !is_intended || flags.contains(SymFlags::EXPORT_ONLY) {
                     continue;
                 }
                 let start = hir[e].pos;
@@ -221,13 +221,13 @@ impl Checker<'_> {
     /// `onSuccessfullyResolvedSymbol`: 2686, the name a module goes by globally is for scripts.
     fn check_x_umd_globals(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        let means_umd_global = |name: Atom, scope: ScopeId, meaning: SymFlags| {
-            means_umd_global(files, file, scope, name, meaning)
+        let resolves_to_umd_global = |name: Atom, scope: ScopeId, meaning: SymFlags| {
+            resolves_to_umd_global(files, file, scope, name, meaning)
         };
         for &(e, scope) in &bound.free_idents {
             if let ExprKind::Ident(name) = hir[e].kind
                 && !bound.is_unchecked(e.idx())
-                && means_umd_global(name, scope, SymFlags::VALUE)
+                && resolves_to_umd_global(name, scope, SymFlags::VALUE)
             {
                 self.error_at((file, hir[e].pos, 0), 2686, &[Arg::Atom(name)]);
             }
@@ -246,7 +246,7 @@ impl Checker<'_> {
         );
         // The scope a tag is written in is not kept: whatever the file declares by the name, wherever, may be what is meant.
         let is_umd_global = |name: Atom| {
-            means_umd_global(name, ScopeId(0), SymFlags::VALUE)
+            resolves_to_umd_global(name, ScopeId(0), SymFlags::VALUE)
                 && !bound.symbols.iter().any(|s| {
                     s.name == name
                         && s.flags.intersects(SymFlags::VALUE | SymFlags::ALIAS)
@@ -325,7 +325,7 @@ pub(super) fn is_declared_before_use(
 
 /// `onSuccessfullyResolvedSymbol`: whether `name`, looked for from `scope` of `file`, a module, is the name a module goes by globally,
 /// which is for scripts.
-pub(super) fn means_umd_global(
+pub(super) fn resolves_to_umd_global(
     files: &Files,
     file: FileId,
     scope: ScopeId,

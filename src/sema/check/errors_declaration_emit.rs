@@ -419,13 +419,13 @@ impl<'a> Writer<'a> {
 
     /// `emitLeadingComments`
     fn emit_leading_comments(&mut self, pos: usize) {
-        let mut has_written_comment = false;
+        let mut has_source_comment = false;
         for comment in super::spans::get_leading_comment_ranges(self.source, pos) {
             if !should_write_comment(&self.source[comment.0..comment.1]) {
                 continue;
             }
             // `emitNewLineBeforeLeadingCommentOfPosition`
-            if !std::mem::replace(&mut has_written_comment, true)
+            if !std::mem::replace(&mut has_source_comment, true)
                 && self.source[pos..comment.0].contains(&b'\n')
             {
                 self.write_line();
@@ -1551,9 +1551,9 @@ impl<'p> Checker<'p> {
         visited: &mut Vec<(Sym, Table)>,
     ) -> Rc<Vec<Sym>> {
         // What is found past the locals of a block that is made up holds for that block alone.
-        let is_kept = self.emit_resolver_links.fake_locals.is_empty();
+        let is_cached = self.emit_resolver_links.fake_locals.is_empty();
         let key = (symbol, at.file, at.scope, meaning);
-        if is_kept && let Some(known) = self.emit_resolver_links.chains.get(&key) {
+        if is_cached && let Some(known) = self.emit_resolver_links.chains.get(&key) {
             return Rc::clone(known);
         }
         let mut result = Vec::new();
@@ -1564,7 +1564,7 @@ impl<'p> Checker<'p> {
             }
         }
         let result = Rc::new(result);
-        if is_kept {
+        if is_cached {
             self.emit_resolver_links
                 .chains
                 .insert(key, Rc::clone(&result));
@@ -2684,7 +2684,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             return Vec::new();
         }
         let (file, enclosing) = (self.file(), self.enclosing);
-        self.c.text_of_written(file, what, enclosing)
+        self.c.text_of_reused_node(file, what, enclosing)
     }
 
     /// Nothing, of what has no name: `export default class {}`.
@@ -3677,11 +3677,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
         ) = saved;
         let mut written = written?;
         let comments = self.leading_comments(hir[s].loc.pos);
-        let keeps_comments = match kind {
+        let preserves_comments = match kind {
             StmtKind::Class(_) => written.last_mut(),
             _ => written.first_mut(),
         };
-        if let Some(statement) = keeps_comments {
+        if let Some(statement) = preserves_comments {
             statement.comments = comments;
         }
         Some(self.create_full_expando_block(s, written))

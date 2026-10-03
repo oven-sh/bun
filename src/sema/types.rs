@@ -1685,9 +1685,9 @@ impl<'p> Types<'p> {
                 negative,
                 fresh: false,
             };
-            self.intern_made((regular, None));
+            self.intern_new((regular, None));
         }
-        self.intern_made((data, None))
+        self.intern_new((data, None))
     }
 
     /// `intern` of a type that has an alias or an origin.
@@ -1695,7 +1695,7 @@ impl<'p> Types<'p> {
         if provenance == Provenance::default() {
             return self.intern(data);
         }
-        self.intern_made((data, Some(Box::new(provenance))))
+        self.intern_new((data, Some(Box::new(provenance))))
     }
 
     #[inline]
@@ -1703,7 +1703,7 @@ impl<'p> Types<'p> {
         self.record(id).made.1.as_deref()
     }
 
-    fn intern_made(&self, made: Made) -> TypeId {
+    fn intern_new(&self, made: Made) -> TypeId {
         TypeId(intern_record(
             (&self.published.types, self.own, Kind::Type),
             (|stores| &stores.types, |stores| &mut stores.types),
@@ -1721,20 +1721,20 @@ impl<'p> Types<'p> {
 
     /// For `mark_from_type_node`: every type that the task creates from now on has an id that is not below this.
     #[inline]
-    pub fn made_before(&self) -> TypeId {
+    pub fn first_new_type_id(&self) -> TypeId {
         TypeId(self.own.stores().types.records.len() as u32 | LOCAL)
     }
 
-    /// `ObjectFlagsFromTypeNode`, `ObjectFlagsArrayLiteral`: `id` is the type of a type node or an array literal. `made_before` is from
+    /// `ObjectFlagsFromTypeNode`, `ObjectFlagsArrayLiteral`: `id` is the type of a type node or an array literal. `first_new_type_id` is from
     /// before it was resolved. `createTypeReferenceEx` sets the flags only on a type that it creates: one that an instantiation created
     /// earlier stays as it is. Where two tasks of a step create the type, the record of the lower task is published, with its flag.
-    pub fn mark_from_type_node(&self, id: TypeId, made_before: TypeId) {
+    pub fn mark_from_type_node(&self, id: TypeId, first_new_type_id: TypeId) {
         if id.0 & LOCAL == 0 {
             return;
         }
         // NOT tsgo's rule: a type that is bound gets the flag even if an instantiation created it earlier.
         let index = (id.0 & !LOCAL) as usize;
-        if id.0 >= made_before.0 || self.own.stores().types.bound.has(index) {
+        if id.0 >= first_new_type_id.0 || self.own.stores().types.bound.has(index) {
             let record = self.record(id);
             record.is_from_type_node.store(true, Ordering::Relaxed);
         }
@@ -1913,7 +1913,7 @@ pub trait Follow {
 }
 
 /// For types that mention nothing: `visit` shows the whole value as something to hash.
-macro_rules! follows_nothing {
+macro_rules! has_no_references {
     ($($name:ty),* $(,)?) => {$(
         impl $crate::types::Follow for $name {
             #[inline]
@@ -1925,7 +1925,7 @@ macro_rules! follows_nothing {
         }
     )*};
 }
-pub(crate) use follows_nothing;
+pub(crate) use has_no_references;
 
 /// `follow_struct!(Name { every, field })`
 macro_rules! follow_struct {
@@ -2124,7 +2124,7 @@ follow_tuple! {
     (A 0, B 1, C 2, D 3);
 }
 
-follows_nothing!(
+has_no_references!(
     (),
     bool,
     u8,

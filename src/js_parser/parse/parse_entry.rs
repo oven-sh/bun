@@ -526,7 +526,7 @@ impl<'a> Parser<'a> {
         let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
         let builder = crate::sema::builder::Builder::new(p.lexer.is_javascript_file(), atoms);
         let mut type_syntax = Box::new(crate::sema::TypeSyntax::new(builder));
-        type_syntax.keep_types |= is_declaration_file;
+        type_syntax.save_types |= is_declaration_file;
         type_syntax.has_jsdoc = p.lexer.is_javascript_file();
         p.type_syntax = Some(type_syntax);
         // `parseSourceFileWorker`: nor is a declaration file ever read again for its top-level `await`.

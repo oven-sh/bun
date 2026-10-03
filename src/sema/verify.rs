@@ -278,8 +278,8 @@ pub fn verify_compiler_options(
         b"umd" => removed(&mut out, b"module", b"UMD"),
         _ => {}
     }
-    let resolution_said = lower(b"moduleResolution");
-    if resolution_said == b"classic" {
+    let resolution_reported = lower(b"moduleResolution");
+    if resolution_reported == b"classic" {
         removed(&mut out, b"moduleResolution", b"Classic");
     }
     if is_false(b"alwaysStrict") {
@@ -291,7 +291,7 @@ pub fn verify_compiler_options(
     if is_false(b"allowSyntheticDefaultImports") {
         removed(&mut out, b"allowSyntheticDefaultImports", b"false");
     }
-    if matches!(resolution_said.as_slice(), b"node10" | b"node") {
+    if matches!(resolution_reported.as_slice(), b"node10" | b"node") {
         removed(&mut out, b"moduleResolution", b"node10");
     }
     if flag(b"downlevelIteration").is_some() {
@@ -519,7 +519,7 @@ pub fn verify_compiler_options(
     }
     // `GetModuleResolutionKind`: `classic` and `node10` are as good as not said.
     let module = options.module;
-    let resolution: &[u8] = match resolution_said.as_slice() {
+    let resolution: &[u8] = match resolution_reported.as_slice() {
         b"node16" => b"Node16",
         b"nodenext" => b"NodeNext",
         b"bundler" => b"Bundler",

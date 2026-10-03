@@ -577,7 +577,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 },
                 body: self.b.file.list(&[statement]),
                 has_body: true,
-                says_module: false,
+                specifies_module: false,
                 stmt: StmtId::NONE,
             };
             let module = self.b.file.add_module(module);

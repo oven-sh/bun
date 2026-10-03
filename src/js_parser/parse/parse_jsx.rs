@@ -45,7 +45,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && !p.lexer.is_javascript_file()
                 && p.skip_type_script_type_arguments::<true, false>()?
             {
-                type_arguments = p.take_kept_type_argument_list();
+                type_arguments = p.take_saved_type_argument_list();
             }
         }
 
@@ -598,7 +598,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.list_contexts = saved_contexts;
                     // The type checker looks at both names (`checkJsxElementDeferred`).
                     let closing_tag = end_tag.data.as_expr();
-                    let kept_tag = if p.keeps_type_syntax() {
+                    let kept_tag = if p.preserves_type_syntax() {
                         start_tag
                     } else {
                         closing_tag

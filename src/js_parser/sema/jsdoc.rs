@@ -251,7 +251,7 @@ pub(crate) fn read_comments<'a>(
     mut syntax: TypeSyntax<'a>,
 ) -> (TypeSyntax<'a>, Comments) {
     let mut comments = Comments::default();
-    if !syntax.keep_types || !p.lexer.tolerant {
+    if !syntax.save_types || !p.lexer.tolerant {
         return (syntax, comments);
     }
     let source: &'a [u8] = p.lexer.contents;

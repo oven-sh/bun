@@ -196,7 +196,7 @@ impl Checker<'_> {
 
     /// `typeToString(t, t.symbol.ValueDeclaration)` if `symbolValueDeclarationIsContextSensitive`, which says the opposite of its
     /// name. Otherwise `typeToString(t)`.
-    fn type_to_string_where_it_is_declared(&mut self, ty: TypeId) -> Vec<u8> {
+    fn type_to_string_at_value_declaration(&mut self, ty: TypeId) -> Vec<u8> {
         let enclosing_declaration = self
             .value_declaration_expression_of_type(ty)
             .filter(|&(file, e, _)| !self.is_context_sensitive(file, e))
@@ -211,8 +211,8 @@ impl Checker<'_> {
         right: TypeId,
     ) -> (Vec<u8>, Vec<u8>) {
         let (left_text, right_text) = (
-            self.type_to_string_where_it_is_declared(left),
-            self.type_to_string_where_it_is_declared(right),
+            self.type_to_string_at_value_declaration(left),
+            self.type_to_string_at_value_declaration(right),
         );
         if left_text != right_text {
             return (left_text, right_text);
@@ -427,7 +427,7 @@ impl<'p> Checker<'p> {
 
     /// What the printer makes of `what`, a node of `file` that the declaration transformer takes over as it is written. The transformer
     /// has gone through it for what stands in the way, so nothing is tracked.
-    pub(super) fn text_of_written(
+    pub(super) fn text_of_reused_node(
         &mut self,
         file: FileId,
         what: Written,
@@ -480,7 +480,7 @@ impl<'p> Checker<'p> {
     }
 }
 
-/// See `Checker::text_of_written`.
+/// See `Checker::text_of_reused_node`.
 #[derive(Copy, Clone)]
 pub(super) enum Written {
     Type(TypeNodeId),
@@ -717,7 +717,7 @@ struct ReverseMappedProperty {
 
 /// How one declaration of a property writes its name.
 #[derive(Copy, Clone)]
-struct WrittenName {
+struct PropertyNameSyntax {
     is_string: bool,
     is_single_quoted: bool,
     /// The property has a `nameType`.
@@ -3418,7 +3418,11 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// How the declaration `written` of a property of an object literal writes its name.
-    fn written_name_of_literal_property(&mut self, file: FileId, written: PropId) -> WrittenName {
+    fn name_syntax_of_literal_property(
+        &mut self,
+        file: FileId,
+        written: PropId,
+    ) -> PropertyNameSyntax {
         let hir = self.c.hir(file);
         let written = &hir[written];
         let at = written.pos as usize;
@@ -3438,7 +3442,7 @@ impl<'p> Printer<'_, 'p> {
             ),
             _ => matches!(first, Some(b'"' | b'\'')),
         };
-        WrittenName {
+        PropertyNameSyntax {
             is_string,
             is_single_quoted: first == Some(b'\''),
             is_computed: in_brackets || matches!(written.key, PropKey::Computed(_)),
@@ -3446,8 +3450,8 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// How the declarations of `prop` write its name.
-    fn written_names(&mut self, prop: &Prop, out: &mut Vec<WrittenName>) {
-        let plain = WrittenName {
+    fn property_name_syntaxes(&mut self, prop: &Prop, out: &mut Vec<PropertyNameSyntax>) {
+        let plain = PropertyNameSyntax {
             is_string: false,
             is_single_quoted: false,
             is_computed: false,
@@ -3475,7 +3479,7 @@ impl<'p> Printer<'_, 'p> {
                             },
                             _ => false,
                         };
-                        out.push(WrittenName { is_string, ..plain });
+                        out.push(PropertyNameSyntax { is_string, ..plain });
                     }
                     for &(file, member) in list.iter() {
                         let hir = self.c.hir(file);
@@ -3487,7 +3491,7 @@ impl<'p> Printer<'_, 'p> {
                             }
                             _ => (member.flags.contains(Flags::STRING_NAME), false),
                         };
-                        out.push(WrittenName {
+                        out.push(PropertyNameSyntax {
                             is_string,
                             is_single_quoted: hir.text.get(member.name_pos as usize)
                                 == Some(&b'\''),
@@ -3498,7 +3502,7 @@ impl<'p> Printer<'_, 'p> {
                 PropSource::Literal(file, written) => {
                     for declaration in self.c.bound(*file).declarations_of_literal_member(*written)
                     {
-                        let name = self.written_name_of_literal_property(*file, declaration);
+                        let name = self.name_syntax_of_literal_property(*file, declaration);
                         out.push(name);
                     }
                 }
@@ -3557,7 +3561,7 @@ impl<'p> Printer<'_, 'p> {
         }
         let name = bytes.to_vec();
         let mut written = Vec::new();
-        self.written_names(prop, &mut written);
+        self.property_name_syntaxes(prop, &mut written);
         let is_string_named = !written.is_empty() && written.iter().all(|w| w.is_string);
         let quote = if !written.is_empty() && written.iter().all(|w| w.is_single_quoted) {
             b'\''
@@ -3573,7 +3577,7 @@ impl<'p> Printer<'_, 'p> {
         let has_name_type = matches!(prop.source, PropSource::Mapped(..))
             || match &made_of.source {
                 PropSource::Literal(file, member) => {
-                    self.written_name_of_literal_property(*file, *member)
+                    self.name_syntax_of_literal_property(*file, *member)
                         .is_computed
                 }
                 _ => written.first().is_some_and(|w| w.is_computed),
@@ -4102,7 +4106,7 @@ impl<'p> Printer<'_, 'p> {
             }
             count
         });
-        let is_left_out = |i: usize, parameter: &Param| {
+        let is_omitted = |i: usize, parameter: &Param| {
             given.is_some_and(|given| i >= given)
                 && parameter.ty.is_none()
                 && !parameter.flags.contains(Flags::REST)
@@ -4116,7 +4120,7 @@ impl<'p> Printer<'_, 'p> {
             types.push(self.c.instantiate(declared, mapper));
             if !parameter.flags.intersects(Flags::OPTIONAL | Flags::REST)
                 && parameter.default.is_none()
-                && !is_left_out(i, parameter)
+                && !is_omitted(i, parameter)
             {
                 minimum = i + 1;
             }
@@ -4392,7 +4396,7 @@ impl<'p> Printer<'_, 'p> {
         self.approximate_length += 3;
         let mut type_parameters = Vec::new();
         let own_type_parameters = self.c.sig_type_params(signature).into_vec();
-        let mut clones = self.type_parameters_taken_from_context(signature);
+        let mut clones = self.type_parameters_from_context(signature);
         if !clones.is_empty() && !self.has_inference_context(signature) {
             clones.clear();
         }
@@ -4476,11 +4480,9 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// `assignContextualParameterTypes`: `sig.typeParameters = context.typeParameters`
-    fn type_parameters_taken_from_context(&mut self, signature: SigId) -> Vec<TypeId> {
+    fn type_parameters_from_context(&mut self, signature: SigId) -> Vec<TypeId> {
         match *self.c.types().sig(signature) {
-            SigData::WithReturn { sig: inner, .. } => {
-                self.type_parameters_taken_from_context(inner)
-            }
+            SigData::WithReturn { sig: inner, .. } => self.type_parameters_from_context(inner),
             _ => self.c.adopted_type_params(signature),
         }
     }
@@ -4503,7 +4505,7 @@ impl<'p> Printer<'_, 'p> {
                 Parent::Prop(p) if bound.prop_owner[p.idx()].is_some() => bound.prop_owner[p.idx()],
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Call(call) | ExprKind::New(call) if hir[call].callee != at => {
-                        let resolved = self.c.kept_call(file, parent);
+                        let resolved = self.c.cached_resolved_signature(file, parent);
                         let declared = resolved
                             .and_then(|resolved| resolved.sig)
                             .and_then(|sig| self.c.sig_decl(sig));
@@ -4634,12 +4636,12 @@ impl<'p> Printer<'_, 'p> {
             b"{ ", readonly, b"[", name, b" in ", constraint, renamed, b"]", question, b": ",
             template.text, b"; }"
         };
-        let (Some(new_name), Some((declared, is_written_with_keyof)), Some(modifiers)) =
+        let (Some(new_name), Some((declared, is_declared_with_keyof)), Some(modifiers)) =
             (new_name, over_keyof, modifiers)
         else {
             return Node::simple(result);
         };
-        let (check, infer_constraint) = if is_written_with_keyof {
+        let (check, infer_constraint) = if is_declared_with_keyof {
             let original_constraint = match self.c.constraint_of_type_param(declared) {
                 Some(constraint) => self.c.instantiate(constraint, mapper),
                 None => TypeId::UNKNOWN,

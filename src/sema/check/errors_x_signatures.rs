@@ -25,7 +25,7 @@ use crate::util::FxHashSet;
 
 /// Where the type the summary has at `pos` starts as it is written. Neither the parentheses around a type are kept nor a `|` or a `&`
 /// before its only member. Only for a type that follows a `:`, a `=`, an `is` or a `<`, which none of these can be mistaken for.
-pub(super) fn start_of_written_type(text: &[u8], pos: u32) -> u32 {
+pub(super) fn start_of_type_in_source(text: &[u8], pos: u32) -> u32 {
     let mut start = pos as usize;
     if start > text.len() {
         return pos;
@@ -64,7 +64,7 @@ fn name_of_type_parameter_owner(hir: &hir::File, tp: TypeParamId) -> Option<u32>
 impl Checker<'_> {
     pub(super) fn check_x_signatures(&mut self, file: FileId) {
         self.check_type_parameter_declarations(file);
-        self.check_promise_constructor_is_there(file);
+        self.check_promise_constructor_exists(file);
     }
 
     // ───────────────────────────── type parameters ─────────────────────────────
@@ -83,11 +83,11 @@ impl Checker<'_> {
         let mut resolution = DefaultResolution::default();
         for i in order {
             let (tp, decl) = (TypeParamId(i as u32), &hir.type_params[i]);
-            self.work_out_written_type(file, decl.constraint, &mut resolution, 0);
-            self.work_out_written_type(file, decl.default, &mut resolution, 0);
+            self.resolve_type_node_eagerly(file, decl.constraint, &mut resolution, 0);
+            self.resolve_type_node_eagerly(file, decl.default, &mut resolution, 0);
             if decl.default.is_some() {
                 self.resolve_type_parameter_default((file, tp), &mut resolution, 0);
-                let start = start_of_written_type(&hir.text, hir[decl.default].pos);
+                let start = start_of_type_in_source(&hir.text, hir[decl.default].pos);
                 if resolution.states.get(&(file, tp)) == Some(&DefaultState::Circular) {
                     let end = self.end_of_type_node_from(file, decl.default, start);
                     {
@@ -142,7 +142,7 @@ impl Checker<'_> {
         }
         resolution.states.insert(param, DefaultState::Resolving);
         let default = self.hir(param.0)[param.1].default;
-        self.work_out_written_type(param.0, default, resolution, depth + 1);
+        self.resolve_type_node_eagerly(param.0, default, resolution, depth + 1);
         if let Some(state) = resolution.states.get_mut(&param)
             && *state == DefaultState::Resolving
         {
@@ -153,7 +153,7 @@ impl Checker<'_> {
     /// `getTypeFromTypeNode`, for the defaults of type parameters it asks for: those a generic type is named without arguments for
     /// (`fillMissingTypeArguments`). Only what is looked into at once counts: not what is in an object type or a function type, nor
     /// what a type alias stands for, where such a reference waits until it is needed.
-    fn work_out_written_type(
+    fn resolve_type_node_eagerly(
         &mut self,
         file: FileId,
         node: TypeNodeId,
@@ -167,27 +167,27 @@ impl Checker<'_> {
         match hir[node].kind {
             TypeNodeKind::Union(list) | TypeNodeKind::Intersection(list) => {
                 for t in hir.ids(list) {
-                    self.work_out_written_type(file, t, resolution, depth + 1);
+                    self.resolve_type_node_eagerly(file, t, resolution, depth + 1);
                 }
             }
             TypeNodeKind::Array(t)
             | TypeNodeKind::Keyof(t)
             | TypeNodeKind::Readonly(t)
             | TypeNodeKind::JSDoc { ty: t, .. } => {
-                self.work_out_written_type(file, t, resolution, depth + 1)
+                self.resolve_type_node_eagerly(file, t, resolution, depth + 1)
             }
             TypeNodeKind::Tuple(elems) => {
                 for e in elems.iter() {
-                    self.work_out_written_type(file, hir[e].ty, resolution, depth + 1);
+                    self.resolve_type_node_eagerly(file, hir[e].ty, resolution, depth + 1);
                 }
             }
             TypeNodeKind::IndexedAccess { obj, index } => {
-                self.work_out_written_type(file, obj, resolution, depth + 1);
-                self.work_out_written_type(file, index, resolution, depth + 1);
+                self.resolve_type_node_eagerly(file, obj, resolution, depth + 1);
+                self.resolve_type_node_eagerly(file, index, resolution, depth + 1);
             }
             TypeNodeKind::Ref { name, args } => {
                 for t in hir.ids(args) {
-                    self.work_out_written_type(file, t, resolution, depth + 1);
+                    self.resolve_type_node_eagerly(file, t, resolution, depth + 1);
                 }
                 let names: Vec<Atom> = hir.texts(name).collect();
                 let sym = self.files().resolve_entity(
@@ -304,7 +304,7 @@ impl Checker<'_> {
     // ───────────────────────────── signatures ─────────────────────────────
 
     /// Whether `f` is a member of a class or of an object literal, as opposed to one of an interface or a type literal.
-    fn is_member_with_room_for_a_body(&self, file: FileId, f: FnId) -> bool {
+    fn is_member_that_may_have_body(&self, file: FileId, f: FnId) -> bool {
         let bound = self.bound(file);
         match bound.fns[f.idx()].owner {
             FnOwner::Member(m) => matches!(bound.member_owner[m.idx()], MemberOwner::Class(_)),
@@ -383,7 +383,7 @@ impl Checker<'_> {
             self.prepare_fn(file, parent);
         }
         let (narrowed, declared) = (self.type_from_node(file, ty), self.type_of_param(file, p));
-        let start = start_of_written_type(text, hir[ty].pos);
+        let start = start_of_type_in_source(text, hir[ty].pos);
         let at = (file, start, self.end_of_type_node_from(file, ty, start));
         let mut diags = Vec::new();
         if !self.check_type_assignable_to_ex(narrowed, declared, Some(at), None, Some(&mut diags)) {
@@ -400,9 +400,9 @@ impl Checker<'_> {
             return;
         }
         let is_declaration = matches!(func.kind, FnKind::Decl | FnKind::Expr)
-            || func.kind == FnKind::Method && self.is_member_with_room_for_a_body(file, f);
+            || func.kind == FnKind::Method && self.is_member_that_may_have_body(file, f);
         if is_declaration && has_body(func) && self.type_from_node(file, func.ret) == TypeId::VOID {
-            let start = start_of_written_type(&hir.text, hir[func.ret].pos);
+            let start = start_of_type_in_source(&hir.text, hir[func.ret].pos);
             let end = self.end_of_type_node_from(file, func.ret, start);
             self.error_at((file, start, end), 2505, &[]);
         }
@@ -417,7 +417,7 @@ impl Checker<'_> {
             || func.flags.contains(Flags::GENERATOR)
             || matches!(bound.fns[f.idx()].owner, FnOwner::None)
             || !(matches!(func.kind, FnKind::Decl | FnKind::Expr | FnKind::Arrow)
-                || func.kind == FnKind::Method && self.is_member_with_room_for_a_body(file, f))
+                || func.kind == FnKind::Method && self.is_member_that_may_have_body(file, f))
         {
             return;
         }
@@ -428,7 +428,7 @@ impl Checker<'_> {
         if self.global_type_symbol(known::Promise).is_some()
             && self.is_global_ref(ret, known::Promise).is_none()
         {
-            let start = start_of_written_type(&hir.text, hir[func.ret].pos);
+            let start = start_of_type_in_source(&hir.text, hir[func.ret].pos);
             let end = self.end_of_type_node_from(file, func.ret, start);
             let awaited = self.awaited_no_alias(ret).unwrap_or(TypeId::VOID);
             self.error_at((file, start, end), 1064, &[Arg::Type(awaited)]);
@@ -443,7 +443,7 @@ impl Checker<'_> {
     }
 
     /// `createPromiseReturnType`, where there is a `Promise` to name as a type but none to make one with: 2712, 2705.
-    fn check_promise_constructor_is_there(&mut self, file: FileId) {
+    fn check_promise_constructor_exists(&mut self, file: FileId) {
         if self.global_type_symbol(known::Promise).is_none()
             || self
                 .files()

@@ -15,7 +15,7 @@ use bun_sema::atom::RecentAtoms;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::task::{Finished, Published};
-use bun_sema::check::{FOREIGN_EVALUATION_KINDS, Program, Wanted, compute_ecma_line_starts};
+use bun_sema::check::{FOREIGN_EVALUATION_KINDS, Program, Requested, compute_ecma_line_starts};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::{ExprTag, FileKind};
 use bun_sema::json::Json;
@@ -324,23 +324,23 @@ pub struct Request<'a> {
     pub digests: bool,
     pub plan_options: PlanOptions,
     /// Nothing is forgotten once it is checked: for whoever goes on to ask about the program. It takes several times the memory.
-    pub keeps_everything: bool,
+    pub retains_everything: bool,
     /// As `tsc` does: if something does not parse, that is all that is said. If the options do not go together, that is. Only then come the
     /// errors about types.
-    pub stops_where_tsc_does: bool,
+    pub stops_like_tsc: bool,
     /// Word for word, where Bun would put it otherwise (`bun add -d` for `npm i --save-dev`). For comparing with TypeScript.
-    pub says_it_as_typescript_does: bool,
+    pub uses_typescript_wording: bool,
     /// Called with everything that was loaded, before any of it is checked.
     pub loaded: Option<&'a (dyn Fn(&Program) + Sync)>,
     /// Called with it again when all of it is checked.
     pub checked: Option<&'a (dyn Fn(&Program) + Sync)>,
     /// Called for each file right after it is checked, on the thread that checked it, while the types that are local to the file
-    /// are still alive. The way to read the type of every expression without `keeps_everything`. An invalid task is retried
+    /// are still alive. The way to read the type of every expression without `retains_everything`. An invalid task is retried
     /// (`Program::validate`), so this can be called more than once for a file: the last call counts.
     pub after_file: Option<&'a (dyn Fn(&mut bun_sema::check::Checker<'_>, FileId) + Sync)>,
     /// Called with the path and the text of each declaration file that a project of a `tsc -b` run leaves for those that reference it.
     /// Nothing is written to the disk: this is the way to see them.
-    pub declaration_file_written: Option<&'a (dyn Fn(&[u8], &[u8]) + Sync)>,
+    pub declaration_file_emitted: Option<&'a (dyn Fn(&[u8], &[u8]) + Sync)>,
 }
 
 /// Something that is wrong, ready to be shown.
@@ -570,7 +570,7 @@ pub fn check_then<R>(request: &Request, then: impl FnOnce(Report) -> R) -> R {
     let disk = host::Disk::new(threads);
     // What is not done in a parallel region is done on this thread.
     let lent = disk.caches.lend();
-    let (mut report, program) = check_what_is_asked(&disk, request);
+    let (mut report, program) = check_request(&disk, request);
     if cfg!(windows) {
         for said in &mut report.diagnostics {
             host::show_drives(&mut said.text);
@@ -593,7 +593,7 @@ pub fn check(request: &Request) -> Report {
 }
 
 /// Returns the report and the last program that was checked. The caller decides when to drop the program.
-fn check_what_is_asked(disk: &host::Disk, request: &Request) -> (Report, Option<Box<Program>>) {
+fn check_request(disk: &host::Disk, request: &Request) -> (Report, Option<Box<Program>>) {
     let started = Instant::now();
     let cwd = host::from_native(request.cwd);
     let mut report = Report::default();
@@ -703,7 +703,7 @@ fn check_what_is_asked(disk: &host::Disk, request: &Request) -> (Report, Option<
     if named.is_none() && !project.references.is_empty() {
         check_with_references(disk, project, request, report, started)
     } else {
-        check_what_is_named(
+        check_named_files(
             disk,
             project,
             request,
@@ -802,7 +802,7 @@ fn check_workspaces(
         let (began, so_far) = (Instant::now(), Report::default());
         let checked = if project.references.is_empty() {
             let owned_elsewhere = Some(&owned_elsewhere);
-            check_what_is_named(disk, project, request, so_far, began, None, owned_elsewhere)
+            check_named_files(disk, project, request, so_far, began, None, owned_elsewhere)
         } else {
             check_with_references(disk, project, request, so_far, began)
         };
@@ -1110,7 +1110,7 @@ fn check_with_references(
         let no_emit_on_error = project.options.no_emit_on_error;
         // Not two programs at a time.
         drop(program.take());
-        let mut checked = check_what_is_named(
+        let mut checked = check_named_files(
             &host,
             project,
             request,
@@ -1126,8 +1126,8 @@ fn check_with_references(
                 .map(|it| (it.0.as_slice(), it.1.as_slice()));
             for (source, written) in std::mem::take(&mut checked.0.declaration_files) {
                 if let Some(path) = output_declaration_file_name(&source, output) {
-                    if let Some(declaration_file_written) = request.declaration_file_written {
-                        declaration_file_written(&path, &written);
+                    if let Some(declaration_file_emitted) = request.declaration_file_emitted {
+                        declaration_file_emitted(&path, &written);
                     }
                     host.add(path, written);
                 }
@@ -1160,12 +1160,12 @@ pub fn check_project(
     report: Report,
     started: Instant,
 ) -> Report {
-    check_what_is_named(host, project, request, report, started, None, None).0
+    check_named_files(host, project, request, report, started, None, None).0
 }
 
 /// `check_project`. `named`: of all that is loaded, only these files, sorted, and what they refer to is checked.
 /// `owned_elsewhere`: files of referenced projects, which are loaded but not checked.
-fn check_what_is_named(
+fn check_named_files(
     host: &dyn Host,
     mut project: config::Project,
     request: &Request,
@@ -1210,7 +1210,7 @@ fn check_what_is_named(
             .filter(|error| !error.is_about_options)
             .map(of_configuration),
     );
-    let said_at_any_rate = report.diagnostics.len();
+    let always_reported = report.diagnostics.len();
     let mut about_options: Vec<Diagnostic> = project
         .errors
         .iter()
@@ -1261,9 +1261,9 @@ fn check_what_is_named(
         project.options.skip_default_lib_check,
     );
 
-    let written = std::mem::take(&mut project.compiler_options_as_written);
+    let written = std::mem::take(&mut project.raw_compiler_options);
     let is_true = |name: &[u8]| written.contains(&(name.to_vec(), Json::Bool(true)));
-    project.options.drops_what_nothing_refers_to = !request.keeps_everything;
+    project.options.drops_unreferenced = !request.retains_everything;
     project.options.has_project_references = !project.references.is_empty();
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
@@ -1332,7 +1332,7 @@ fn check_what_is_named(
     if let Some(only) = request.only {
         to_check.retain(|&f| strings::contains(&program.files.modules[f.idx()].path, only));
     }
-    if is_true(b"listFilesOnly") && request.stops_where_tsc_does {
+    if is_true(b"listFilesOnly") && request.stops_like_tsc {
         to_check.clear();
     }
     // Program order (`program.files`): an imported file precedes its importers. The position of a file in `to_check` is its index.
@@ -1406,7 +1406,7 @@ fn check_what_is_named(
                     related,
                     code: e.code,
                     category: e.category,
-                    text: if request.says_it_as_typescript_does {
+                    text: if request.uses_typescript_wording {
                         e.text
                     } else {
                         in_terms_of_bun(e.text)
@@ -1421,9 +1421,9 @@ fn check_what_is_named(
         }
         found.lock().extend(shown);
     };
-    let new_checker = |wanted: Wanted| {
+    let new_checker = |wanted: Requested| {
         let mut checker = program.checker();
-        checker.set_wanted(wanted);
+        checker.set_requested(wanted);
         checker.begin_stack_budget();
         checker
     };
@@ -1453,7 +1453,7 @@ fn check_what_is_named(
         }
     };
     // `task`: its step, its place in the step, and `is_read_later`. `None`: the files are checked outside the plan.
-    let check_chunk = |files: &[FileId], wanted: Wanted, task: Option<(usize, usize, bool)>| {
+    let check_chunk = |files: &[FileId], wanted: Requested, task: Option<(usize, usize, bool)>| {
         let mut checker = new_checker(wanted);
         if let Some((step, index, is_read_later)) = task {
             checker.begin_task(step as u32, index as u32, is_read_later);
@@ -1463,7 +1463,7 @@ fn check_what_is_named(
         for &file in files {
             checked.push((file, checker.check_file(file)));
             if let Some(after_file) = request.after_file
-                && wanted == Wanted::All
+                && wanted == Requested::All
             {
                 after_file(&mut checker, file);
             }
@@ -1554,11 +1554,11 @@ fn check_what_is_named(
     };
     let steps: Guarded<Vec<StepReport>> = Guarded::new(Vec::new());
     // Returns the invalid tasks.
-    let run_round = |number: usize, step: &[Task], wanted: Wanted| -> Vec<Task> {
+    let run_round = |number: usize, step: &[Task], wanted: Requested| -> Vec<Task> {
         // After the last step the published state is read by the loop over the files that are not checked, which runs with `after_file`,
         // and by a caller that goes on to ask about the program.
         let is_read_later = number + 1 != plan.steps.len()
-            || request.keeps_everything
+            || request.retains_everything
             || request.after_file.is_some();
         let tasks = step.len();
         let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
@@ -1645,7 +1645,7 @@ fn check_what_is_named(
     };
     // Retries the files of invalid tasks until every task is valid (`Program::validate`). They are partitioned again, because a few long
     // tasks would leave most threads idle. The first task of a round is always valid, so every round has fewer files.
-    let run_step = |number: usize, step: &[Task], wanted: Wanted| {
+    let run_step = |number: usize, step: &[Task], wanted: Requested| {
         let mut invalid = run_round(number, step, wanted);
         while !invalid.is_empty() {
             let again = Plan::cut(invalid.concat(), &size_of, request.plan_options);
@@ -1661,8 +1661,8 @@ fn check_what_is_named(
     };
     // `GetDiagnosticsOfAnyProgram`: TypeScript's command line goes on to the next kind of error only if there is none of the last. What
     // does not parse, or is checked under options that make no sense, gives errors that are not worth reading.
-    let stops = request.stops_where_tsc_does;
-    let check_files = |wanted: Wanted| {
+    let stops = request.stops_like_tsc;
+    let check_files = |wanted: Requested| {
         for (number, step) in plan.steps.iter().enumerate() {
             run_step(number, step, wanted);
         }
@@ -1680,7 +1680,7 @@ fn check_what_is_named(
         };
     let emit_on_early_exit = || -> Vec<Diagnostic> {
         if emits_despite_errors {
-            check_files(Wanted::Declaration);
+            check_files(Requested::Declaration);
             found.lock().clear();
         }
         std::mem::take(&mut *emit_diagnostics.lock())
@@ -1698,7 +1698,7 @@ fn check_what_is_named(
                 .map(|i| FileId(i as u32))
                 .collect();
             host.parallel(suspects.len(), &|i| {
-                accept(check_chunk(&suspects[i..=i], Wanted::Syntactic, None));
+                accept(check_chunk(&suspects[i..=i], Requested::Syntactic, None));
             });
             finish_files();
             let syntactic = std::mem::take(&mut *found.lock());
@@ -1712,20 +1712,20 @@ fn check_what_is_named(
         report.diagnostics.append(&mut about_options);
         if stops {
             report.diagnostics.extend(global_errors());
-            if report.diagnostics.len() > said_at_any_rate {
+            if report.diagnostics.len() > always_reported {
                 report.files_checked = 0;
                 report.diagnostics.extend(emit_on_early_exit());
                 break 'stages;
             }
         }
-        check_files(Wanted::All);
+        check_files(Requested::All);
         report.diagnostics.append(&mut found.lock());
         report.diagnostics.extend(global_errors());
         // `GetDiagnosticsOfAnyProgram` collects them itself if there are no other errors. This list also contains suggestions.
         let is_error = |d: &Diagnostic| d.category == Category::Error;
         if !stops
             || emits_despite_errors
-            || !report.diagnostics[said_at_any_rate..].iter().any(is_error)
+            || !report.diagnostics[always_reported..].iter().any(is_error)
         {
             report.diagnostics.append(&mut emit_diagnostics.lock());
         }

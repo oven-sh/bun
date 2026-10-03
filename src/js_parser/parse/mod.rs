@@ -201,7 +201,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loop {
                     let start = p.lexer.loc();
                     p.skip_type_script_type(Level::Lowest)?;
-                    let implemented = p.kept_type();
+                    let implemented = p.saved_type();
                     p.note_implemented(
                         &mut class_keyword.loc,
                         Mark::Implements,
@@ -326,7 +326,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Discard any scopes recorded while parsing them or the visit pass
                 // will hit a scope order mismatch.
                 p.discard_scopes_up_to(property_scope_index);
-                if p.keeps_type_syntax() {
+                if p.preserves_type_syntax() {
                     p.finish_class_index_signature(
                         &mut class_keyword.loc,
                         first_decorator_loc,
@@ -445,12 +445,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let opts = crate::typescript::SkipTypeOptionsBitset::only(
                         crate::typescript::SkipTypeOptions::DisallowConditionalTypes,
                     );
-                    if p.should_keep_types() {
+                    if p.should_save_types() {
                         p.parse_and_keep_type(Level::Lowest, opts)?;
                     } else {
                         p.skip_type_script_type_with_opts::<false>(Level::Lowest, opts, None)?;
                     }
-                    let mut implemented = p.kept_type();
+                    let mut implemented = p.saved_type();
                     if matches!(
                         p.lexer.token,
                         T::TQuestionDot
@@ -468,7 +468,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.parse_rest_of_implemented(start.loc)?
                         };
                         p.ts_checker_error(expression, 2500);
-                    } else if !p.is_kept_entity_name(implemented) {
+                    } else if !p.is_saved_entity_name(implemented) {
                         // What reads as a type and is no `isEntityNameExpression`: `(I)`, `string[]`.
                         p.ts_checker_error(p.lexer.range_from(start.loc), 2500);
                         implemented = crate::sema::ts_syntax::TypeId::NONE;
@@ -1019,7 +1019,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 p.lexer.next()?;
                 p.skip_type_script_type(Level::Lowest)?;
-                item_type = p.kept_type_or_error();
+                item_type = p.saved_type_or_error();
             }
 
             // There may be a "=" after the type (but not after an "as" cast)
@@ -1047,7 +1047,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             items_list.push(item);
-            if p.keeps_type_syntax() {
+            if p.preserves_type_syntax() {
                 item_ends.push(p.lexer.full_start());
                 item_types.push(item_type);
                 item_starts.push(
@@ -1198,7 +1198,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc: item.loc,
                     })
                 };
-                if p.keeps_type_syntax() {
+                if p.preserves_type_syntax() {
                     item_dots.push(if is_spread { dots } else { bun_ast::Loc::EMPTY });
                 }
                 if is_this {
@@ -1275,7 +1275,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking()?;
                 }
                 if is_arrow_fn {
-                    return_type = p.kept_type_or_error();
+                    return_type = p.saved_type_or_error();
                 }
             }
 
@@ -1290,7 +1290,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc_.add_error(p.log(), p.source);
                     }
                 }
-                if p.keeps_type_syntax() {
+                if p.preserves_type_syntax() {
                     p.note_arrow_parameters(
                         &mut args,
                         &item_starts,
@@ -1323,7 +1323,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut arrow = p.new_expr(arrow, loc);
                 p.mark_comments_before(&mut arrow.loc, loc, opts.full_start);
                 if return_type.is_some() {
-                    p.note_kept_type(&mut arrow.loc, Mark::ReturnType, return_type);
+                    p.note_saved_type(&mut arrow.loc, Mark::ReturnType, return_type);
                 }
                 return Ok(arrow);
             }
@@ -1368,7 +1368,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     target: async_expr,
                     args: ExprNodeList::from_arena_slice(items),
                     // The type checker tells calls apart by it. The printer would add a mapping for it.
-                    close_paren_loc: if p.keeps_type_syntax() {
+                    close_paren_loc: if p.preserves_type_syntax() {
                         close_paren_loc
                     } else {
                         bun_ast::Loc::EMPTY
@@ -1466,7 +1466,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             self.note_range(at, full_start, ends[i]);
             if types[i].is_some() {
-                self.note_kept_type(at, Mark::Annotation, types[i]);
+                self.note_saved_type(at, Mark::Annotation, types[i]);
             }
         }
     }
@@ -1647,7 +1647,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name.as_mut().unwrap().ref_ = p
                     .declare_symbol(js_ast::symbol::Kind::Class, name_loc, name_text)
                     .expect("unreachable");
-            } else if p.keeps_type_syntax() {
+            } else if p.preserves_type_syntax() {
                 name = Some(p.keep_name(name_loc, name_text));
             }
         }
@@ -1676,7 +1676,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if opts.scope.is_namespace() && opts.is_export {
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
-                if p.keeps_type_syntax() {
+                if p.preserves_type_syntax() {
                     let is_export = opts.is_export;
                     return Ok(p.s(S::Class { class, is_export }, loc));
                 }
@@ -2874,7 +2874,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if Self::IS_TYPESCRIPT_ENABLED {
                 if matches!(stmt.data, js_ast::stmt::Data::STypeScript(_)) {
                     // The visit pass drops it.
-                    if p.keeps_type_syntax() {
+                    if p.preserves_type_syntax() {
                         stmts.push(stmt);
                     }
                     continue;
@@ -2882,7 +2882,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             // `parseEmptyStatement`: a node like any other to the type checker.
             let mut skip =
-                matches!(stmt.data, js_ast::stmt::Data::SEmpty(_)) && !p.keeps_type_syntax();
+                matches!(stmt.data, js_ast::stmt::Data::SEmpty(_)) && !p.preserves_type_syntax();
             // Parse one or more directives at the beginning
             if is_directive_prologue {
                 is_directive_prologue = false;
@@ -2890,14 +2890,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if let js_ast::expr::Data::EString(str_) = &expr.value.data {
                         // `isPrologueDirective`: not `("use strict")`, of which the parentheses are not kept here.
                         if !str_.prefer_template
-                            && (!p.keeps_type_syntax()
+                            && (!p.preserves_type_syntax()
                                 || p.real_loc(expr.value.loc) == p.real_loc(stmt.loc))
                         {
                             is_directive_prologue = true;
 
                             if str_.eql_comptime(b"use strict") {
                                 // To the type checker a directive is a statement like any other.
-                                skip = !p.keeps_type_syntax();
+                                skip = !p.preserves_type_syntax();
                                 // Track "use strict" directives
                                 p.current_scope_mut().strict_mode =
                                     StrictModeKind::ExplicitStrictMode;
@@ -2906,14 +2906,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             } else if str_.eql_comptime(b"use asm")
                                 && !p.options.repl_mode
-                                && !p.keeps_type_syntax()
+                                && !p.preserves_type_syntax()
                             {
                                 // In the REPL the directive stays a string
                                 // statement so it evaluates as the result,
                                 // like node ('use asm' prints 'use asm').
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
-                            } else if !p.keeps_type_syntax() {
+                            } else if !p.preserves_type_syntax() {
                                 let bytes = str_.string(p.arena).expect("OOM");
                                 stmt = Stmt::alloc(
                                     S::Directive {
@@ -3416,7 +3416,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             )? {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
-                                let type_parameters = p.kept_type_parameters(result);
+                                let type_parameters = p.saved_type_parameters(result);
                                 let opts = ParenExprOpts {
                                     is_async: true,
                                     full_start: async_full_start,

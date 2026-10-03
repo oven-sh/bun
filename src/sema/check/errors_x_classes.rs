@@ -252,10 +252,10 @@ impl Checker<'_> {
         let hir = self.hir(file);
         let class = &hir[c];
         // Otherwise only what says `override` is looked at.
-        let looks_at_all = self.p.files.options.no_implicit_override;
+        let visits_all = self.p.files.options.no_implicit_override;
         for m in class.members.iter() {
             let member = &hir[m];
-            if !looks_at_all
+            if !visits_all
                 && !member.flags.contains(Flags::OVERRIDE)
                 && (member.kind != MemberKind::Constructor
                     || member.func.is_some()

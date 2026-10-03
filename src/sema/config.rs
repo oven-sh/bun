@@ -76,13 +76,13 @@ pub struct Project {
     pub references: Vec<ProjectReference>,
     pub errors: Vec<ConfigError>,
     /// `compilerOptions` as it comes out of all that was read, which `options` is made of.
-    pub compiler_options_as_written: Vec<(Vec<u8>, Json)>,
+    pub raw_compiler_options: Vec<(Vec<u8>, Json)>,
 }
 
 impl Project {
     /// `GetBuildInfoFileName` under `tsc -b` (`options.Build`), where every project has one, incremental or not.
     pub fn get_build_info_file_name(&self) -> Vec<u8> {
-        let said = (self.compiler_options_as_written.iter())
+        let said = (self.raw_compiler_options.iter())
             .find(|(name, _)| name == b"tsBuildInfoFile")
             .and_then(|(_, said)| said.as_str());
         if let Some(said) = said.filter(|said| !said.is_empty()) {
@@ -258,7 +258,7 @@ fn parse_config(
         let problems =
             crate::config_options::problems(&file, written, compiler, as_typescript_does);
         // `convertJsonOption`: what is wrong is as good as not said.
-        let left_out: Vec<Vec<u8>> = problems
+        let omitted: Vec<Vec<u8>> = problems
             .iter()
             .map(|problem| problem.name.clone())
             .collect();
@@ -271,7 +271,7 @@ fn parse_config(
         }));
         let mut said = Vec::with_capacity(compiler.len());
         for (key, value) in compiler {
-            if left_out.contains(key) {
+            if omitted.contains(key) {
                 continue;
             }
             let value = match value {
@@ -602,8 +602,8 @@ fn project_from_raw(
             .map(|spec| substitute_if_template(&spec, base).unwrap_or(spec))
             .collect()
     };
-    let include_as_written = raw.include.clone().unwrap_or_default();
-    let exclude_as_written = raw.exclude.clone().unwrap_or_default();
+    let raw_include = raw.include.clone().unwrap_or_default();
+    let raw_exclude = raw.exclude.clone().unwrap_or_default();
     let validated_include = validate_specs(
         raw.include.take().unwrap_or_default(),
         b"include",
@@ -636,11 +636,7 @@ fn project_from_raw(
         };
         errors.push(ConfigError::new(
             18003,
-            &[
-                config_path,
-                &list(&include_as_written),
-                &list(&exclude_as_written),
-            ],
+            &[config_path, &list(&raw_include), &list(&raw_exclude)],
         ));
     }
     options.files.clone_from(&files);
@@ -650,7 +646,7 @@ fn project_from_raw(
         files,
         references: raw.references.unwrap_or_default(),
         errors,
-        compiler_options_as_written: match compiler {
+        raw_compiler_options: match compiler {
             Json::Object(options) => options,
             _ => Vec::new(),
         },

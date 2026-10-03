@@ -235,12 +235,12 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             // (`InternalSymbolNameMissing`), which is in no table.
             VisitedKind::MemberName(m) | VisitedKind::LiteralInMemberName(m) => {
                 let start = hir[m].name_pos;
-                (!matches!(hir[m].key, PropKey::None) || is_written_name(hir, start))
+                (!matches!(hir[m].key, PropKey::None) || is_literal_name_at(hir, start))
                     .then(|| self.property_of_member(m))
             }
             VisitedKind::PropertyName(p) | VisitedKind::LiteralInPropertyName(p) => {
                 let name = hir[p].key.name().unwrap_or(Atom::NONE);
-                (!matches!(hir[p].key, PropKey::None) || is_written_name(hir, hir[p].pos)).then(
+                (!matches!(hir[p].key, PropKey::None) || is_literal_name_at(hir, hir[p].pos)).then(
                     || {
                         Found::Property(Prop {
                             name,
@@ -1379,7 +1379,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
 }
 
 /// Whether a `#x` or a number is written at `pos`, where the tree keeps no name.
-fn is_written_name(hir: &hir::File, pos: u32) -> bool {
+fn is_literal_name_at(hir: &hir::File, pos: u32) -> bool {
     matches!(hir.text.get(pos as usize), Some(b'#' | b'0'..=b'9'))
 }
 

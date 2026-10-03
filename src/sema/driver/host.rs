@@ -204,14 +204,14 @@ impl Drop for Turn<'_> {
 }
 
 /// All that the file `name` in `directory` says.
-fn read_whole(directory: impl bun_sys::AsFd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
+fn read_file(directory: impl bun_sys::AsFd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     /// Few files are bigger.
-    const ROOM: usize = 64 * 1024;
+    const FIRST_READ: usize = 64 * 1024;
     let file = bun_sys::File::openat(directory, name, bun_sys::O::RDONLY, 0).ok()?;
-    buffer.resize(ROOM, 0);
+    buffer.resize(FIRST_READ, 0);
     let count = file.read(&mut buffer[..]).ok()?;
     // A short read means end of file, so neither the size nor a second read is needed.
-    if count < ROOM {
+    if count < FIRST_READ {
         return Some(buffer[..count].to_vec());
     }
     let size = file.get_end_pos().ok()?.max(count);
@@ -483,11 +483,11 @@ impl Host for Disk {
             let Reader { handle, buffer, .. } = &mut reader;
             handle
                 .as_ref()
-                .map(|directory| read_whole(directory, name, buffer))
+                .map(|directory| read_file(directory, name, buffer))
         };
         let read = read.unwrap_or_else(|| {
             let path = to_native(without_trailing_slash(path));
-            read_whole(Fd::cwd(), path, &mut reader.buffer)
+            read_file(Fd::cwd(), path, &mut reader.buffer)
         });
         self.return_reader(reader);
         read.map(decoded)

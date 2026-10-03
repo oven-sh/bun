@@ -35,7 +35,7 @@ impl Checker<'_> {
             if sym.file == file && sym.id.idx() != i {
                 continue;
             }
-            self.check_what_merges(file, sym);
+            self.check_namespace_merge_order(file, sym);
         }
         self.check_refused_merges(file);
         self.check_duplicate_umd_globals(file);
@@ -419,7 +419,7 @@ impl Checker<'_> {
     }
 
     /// From `checkModuleDeclaration`: 2433 2434, a namespace comes after the class or function it adds to, in the same file.
-    fn check_what_merges(&mut self, file: FileId, sym: Sym) {
+    fn check_namespace_merge_order(&mut self, file: FileId, sym: Sym) {
         let files = self.files();
         let mut decls: Vec<Declaration> = Vec::new();
         for &part in files.parts(sym).iter() {
@@ -454,7 +454,7 @@ impl Checker<'_> {
         });
         if let Some((home, start)) = first {
             // `ShouldPreserveConstEnums`
-            let keeps_const_enums =
+            let preserves_const_enums =
                 self.p.files.options.preserve_const_enums || self.p.files.options.isolated_modules;
             for &(of, decl, is_own) in decls {
                 let Decl::Module(m) = decl else { continue };
@@ -462,7 +462,9 @@ impl Checker<'_> {
                 if !is_own
                     || of != file
                     || is_ambient(self, of, module.flags)
-                    || !self.bound(of).is_instantiated_module(m, keeps_const_enums)
+                    || !self
+                        .bound(of)
+                        .is_instantiated_module(m, preserves_const_enums)
                 {
                     continue;
                 }

@@ -115,7 +115,7 @@ impl IterationUse {
     }
 
     /// What is said when `next` does not take what it will be sent.
-    fn code_for_what_is_sent(self) -> u32 {
+    fn code_for_sent_type(self) -> u32 {
         match self {
             IterationUse::ForOf | IterationUse::ForAwaitOf => 2763,
             IterationUse::Spread => 2764,
@@ -180,7 +180,7 @@ impl<'p> Checker<'p> {
             return TypeId(raw as u32);
         }
         if !self.enter(Query::Symbol(sym)) {
-            if !self.came_full_circle {
+            if !self.found_cycle {
                 return TypeId::UNRESOLVED;
             }
             let ty = self.type_of_circular_symbol(sym, None);
@@ -259,7 +259,7 @@ impl<'p> Checker<'p> {
             Ok(stored) => {
                 self.p.symbol_types.insert(&mut self.task, sym, ty, stored);
             }
-            Err(open) => self.keep_provisionally(Query::Symbol(sym), u64::from(ty.0), open),
+            Err(open) => self.cache_provisionally(Query::Symbol(sym), u64::from(ty.0), open),
         }
         ty
     }
@@ -1280,7 +1280,7 @@ impl<'p> Checker<'p> {
         {
             return cached;
         }
-        let before = self.what_only_holds_for_now();
+        let before = self.non_cacheable_mark();
         let result = match self.data(ty) {
             TypeData::Union(types) => {
                 let union_context = context.unwrap_or_else(|| {
@@ -1331,7 +1331,7 @@ impl<'p> Checker<'p> {
             },
             _ => return ty,
         };
-        if context.is_none() && before == self.what_only_holds_for_now() {
+        if context.is_none() && before == self.non_cacheable_mark() {
             self.widened_types.insert(ty, result);
         }
         result
@@ -1610,7 +1610,7 @@ impl<'p> Checker<'p> {
             return TypeId(raw as u32);
         }
         if !self.enter(Query::Pat(file, pat)) {
-            return if self.came_full_circle {
+            return if self.found_cycle {
                 circularity_error_type(self.type_annotation_of_pat(file, pat))
             } else {
                 TypeId::UNRESOLVED
@@ -1635,7 +1635,7 @@ impl<'p> Checker<'p> {
                     .pat_types
                     .insert(&mut self.task, (file, pat), (ty, false), stored);
             }
-            Err(open) => self.keep_provisionally(Query::Pat(file, pat), u64::from(ty.0), open),
+            Err(open) => self.cache_provisionally(Query::Pat(file, pat), u64::from(ty.0), open),
         }
         ty
     }
@@ -1975,7 +1975,7 @@ impl<'p> Checker<'p> {
                                     let key = self.type_of_expr(file, e);
                                     keys.push(self.regular(key));
                                 }
-                                _ if self.is_written_as_number(file, hir[p].pos) => {
+                                _ if self.is_numeric_literal_name_in_source(file, hir[p].pos) => {
                                     keys.extend(self.key_type_of_name(name))
                                 }
                                 _ => keys.push(self.string_literal(name, false)),
@@ -2140,7 +2140,7 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether the name of a property, which starts at `pos` of `file`, is written as a number: `0`, `.5`, `[0]`.
-    pub(super) fn is_written_as_number(&self, file: FileId, pos: u32) -> bool {
+    pub(super) fn is_numeric_literal_name_in_source(&self, file: FileId, pos: u32) -> bool {
         let text = &self.hir(file).text;
         let at = pos as usize;
         let first = match text.get(at) {
@@ -2179,7 +2179,7 @@ impl<'p> Checker<'p> {
         let apparent = self.reduced_apparent_type(ty);
         let members = self.members(apparent);
         // Which properties go into the rest, and the names of the others.
-        let (mut kept, mut left_out): (Vec<usize>, Vec<TypeId>) = (Vec::new(), Vec::new());
+        let (mut kept, mut excluded_keys): (Vec<usize>, Vec<TypeId>) = (Vec::new(), Vec::new());
         if let Some(members) = &members {
             for (i, prop) in members.shape().props.iter().enumerate() {
                 // `getLiteralTypeFromProperty`: what is not public, or goes by a `#name`, has no name to be left out by.
@@ -2197,7 +2197,7 @@ impl<'p> Checker<'p> {
                 if !is_omitted && self.is_spreadable_property(prop) {
                     kept.push(i);
                 } else {
-                    left_out.push(key);
+                    excluded_keys.push(key);
                 }
             }
         }
@@ -2208,12 +2208,12 @@ impl<'p> Checker<'p> {
         }
         if is_generic {
             // `Omit<T, "a" | K>`, and what could not go into the rest is left out by name as well.
-            let mut keys: Vec<TypeId> = Vec::with_capacity(omitted.len() + 1 + left_out.len());
+            let mut keys: Vec<TypeId> = Vec::with_capacity(omitted.len() + 1 + excluded_keys.len());
             for &name in omitted {
                 keys.extend(self.key_type_of_name(name));
             }
             keys.push(omitted_keys);
-            keys.extend(left_out);
+            keys.extend(excluded_keys);
             let keys = self.union(&keys);
             if keys.is_never() {
                 return ty;
@@ -2506,7 +2506,7 @@ impl<'p> Checker<'p> {
             };
         }
         // `getTypeFromBindingPattern`, of a rest parameter too: `any[]` is for one of which nothing at all is known.
-        let report_errors = !self.is_type_of_parameter_never_asked_for(file, func, p);
+        let report_errors = !self.is_parameter_type_never_requested(file, func, p);
         if let Some(implied) = self.implied_by_pattern(file, param.pat, false, report_errors) {
             return implied;
         }
@@ -2739,7 +2739,7 @@ impl<'p> Checker<'p> {
         }
         if !self.enter(Query::Return(file, func)) {
             // `getReturnTypeOfSignature`
-            return if self.came_full_circle {
+            return if self.found_cycle {
                 TypeId::ERROR
             } else {
                 TypeId::UNRESOLVED
@@ -2767,7 +2767,7 @@ impl<'p> Checker<'p> {
                     .fn_return_types
                     .insert(&mut self.task, (file, func), (ty, false), stored);
             }
-            Err(open) => self.keep_provisionally(Query::Return(file, func), u64::from(ty.0), open),
+            Err(open) => self.cache_provisionally(Query::Return(file, func), u64::from(ty.0), open),
         }
         ty
     }
@@ -3283,7 +3283,7 @@ impl<'p> Checker<'p> {
         // kept with it. tsgo keeps the answer in each checker and says it the first time only, which is a matter of who asks first.
         if error.is_some()
             || self.has_type_variables(ty)
-            || !self.is_nothing_about_types_under_way()
+            || !self.is_no_type_resolution_in_progress()
         {
             return self.awaited_no_alias_uncached(ty, error);
         }
@@ -3293,7 +3293,7 @@ impl<'p> Checker<'p> {
         let scope = self.begin_scope();
         let awaited = self.awaited_no_alias_uncached(ty, None);
         if let Ok(stored) = self.end_scope_by_counters(scope)
-            // A result that depends on one of these is not cacheable, and `what_only_holds_for_now` does not always show it.
+            // A result that depends on one of these is not cacheable, and `non_cacheable_mark` does not always show it.
             && self.inference_contexts.is_empty()
             && self.provisional.is_empty()
             // These are raised for whoever asked, each time.
@@ -3310,7 +3310,7 @@ impl<'p> Checker<'p> {
 
     /// What is being worked out about a type is passed over in silence by whoever comes upon it meanwhile. Whether there is nothing of
     /// the kind: what is made of a type now is made of it at any time.
-    fn is_nothing_about_types_under_way(&self) -> bool {
+    fn is_no_type_resolution_in_progress(&self) -> bool {
         self.awaiting.is_empty()
             && self.instantiation_depth == 0
             && self.never_in_progress.is_empty()
@@ -3595,7 +3595,7 @@ impl<'p> Checker<'p> {
             if error_node.is_some()
                 && let Some(next) = types.n
             {
-                let head_message = Some(usage.code_for_what_is_sent());
+                let head_message = Some(usage.code_for_sent_type());
                 self.check_type_assignable_to(sent, next, error_node, head_message);
             }
             if types.y.is_some() || iterable_exists {

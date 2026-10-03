@@ -121,7 +121,7 @@ pub(super) fn is_with_statement(hir: &File, s: StmtId) -> bool {
 
 /// What binder.go says. It goes through everything, whether or not the checker does. Not 1184: the binder only says it of
 /// `export as namespace`, and everywhere it is said here it is the checker's (`reportObviousModifierErrors`).
-fn is_said_by_the_binder(code: u32) -> bool {
+fn is_binder_diagnostic(code: u32) -> bool {
     matches!(
         code,
         1100 | 1101 | 1102 | 1210 | 1212..=1215 | 1250..=1252 | 1262 | 1314..=1316 | 1344 | 1359 | 2300 | 2451 | 2528 | 2567 | 2668 | 5061 | 18012
@@ -602,7 +602,7 @@ impl Checker<'_> {
         }
         // `GetImpliedNodeFormatForFile`: the extension decides however modules are resolved.
         let module = self.files().module(file);
-        let is_esm = module.says_esm || module.path.ends_with(b".mts");
+        let is_esm = module.specifies_esm || module.path.ends_with(b".mts");
         let has_it = kind.is_node()
             || matches!(
                 kind,
@@ -705,7 +705,7 @@ impl Checker<'_> {
 
     /// Removes the diagnostics reported inside ranges that `checkSourceFile` never visits. Parser and binder diagnostics stay. Runs
     /// after all passes.
-    pub(super) fn take_back_what_is_never_checked(&mut self, file: FileId) {
+    pub(super) fn remove_diagnostics_in_unchecked_ranges(&mut self, file: FileId) {
         let hir = self.hir(file);
         // These are noted while parsing, but they are the checker's to say.
         if has_parse_diagnostics(hir) {
@@ -724,7 +724,7 @@ impl Checker<'_> {
             self.reported.retain(|d| {
                 !(never_checked.iter()).any(|&(from, to)| (from..to).contains(&d.start))
                     || d.code == 1141
-                    || is_said_by_the_binder(d.code)
+                    || is_binder_diagnostic(d.code)
                     || hir.diagnostics.iter().any(|parsed| {
                         !matches!(
                             parsed.kind,
@@ -782,18 +782,18 @@ impl Checker<'_> {
             return again;
         }
         let is_noted = |s: StmtId| noted.iter().any(|n| n.0 == s);
-        let mut goes_on = false;
+        let mut continues = false;
         let mut statements = hir.ids(hir.body).peekable();
         while let Some(s) = statements.next() {
             let is_one = is_noted(s);
-            if is_one || goes_on {
+            if is_one || continues {
                 again.push(s);
             }
             if is_one {
                 if noted.iter().any(|n| n.0 == s && n.1) {
-                    goes_on = true;
+                    continues = true;
                 } else if !statements.peek().is_some_and(|&next| is_noted(next)) {
-                    goes_on = false;
+                    continues = false;
                 }
             }
         }

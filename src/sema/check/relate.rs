@@ -237,7 +237,7 @@ pub(super) struct Relater {
     cycles: u64,
     /// What fails is remembered in `failed` and not in the table: in a run with reports (P2), and in the run without reports that goes
     /// before one where tsgo makes none (`check_type_related_to_ex`), which is to leave the table as tsgo's run finds it.
-    pub(super) keeps_failures: bool,
+    pub(super) caches_failures: bool,
     failed: FxHashSet<Key>,
     /// `errorNode`. An end of `0`: with the token there. It and what follows are looked at with `reportErrors` only.
     pub(super) error_node: Place,
@@ -269,7 +269,7 @@ impl Relater {
             top_key: None,
             relation_count: 2_000_000,
             cycles,
-            keeps_failures: false,
+            caches_failures: false,
             failed: FxHashSet::default(),
             error_node: (FileId(0), 0, 0),
             head_message: None,
@@ -663,7 +663,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isEmptyResolvedType` of what `ty` has.
-    fn has_nothing(&mut self, ty: TypeId) -> bool {
+    fn is_empty_resolved_type(&mut self, ty: TypeId) -> bool {
         !self.is_any_function_type(ty)
             && self.members(ty).is_some_and(|m| {
                 let s = m.shape();
@@ -683,7 +683,7 @@ impl<'p> Checker<'p> {
             data => {
                 is_object_kind(data)
                     && !(is_mapped_kind(data) && self.is_generic(ty))
-                    && self.has_nothing(ty)
+                    && self.is_empty_resolved_type(ty)
             }
         }
     }
@@ -696,13 +696,13 @@ impl<'p> Checker<'p> {
         match self.data(ty) {
             // `getTypeWithSyntheticDefaultImportType` gives its result the symbol of a type literal without members.
             TypeData::Synth(shape) => {
-                shape.literal == Literalness::SyntheticDefault || self.has_nothing(ty)
+                shape.literal == Literalness::SyntheticDefault || self.is_empty_resolved_type(ty)
             }
             TypeData::Anon {
                 origin:
                     Origin::TypeLiteral(..) | Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..),
                 ..
-            } => self.has_nothing(ty),
+            } => self.is_empty_resolved_type(ty),
             _ => false,
         }
     }
@@ -740,7 +740,7 @@ impl<'p> Checker<'p> {
         } else if self.p.files.options.exact_optional_property_types {
             self.remove_missing_type(ty, true)
         } else {
-            self.optional_property_kept(ty)
+            self.cached_optional_property(ty)
         }
     }
 
@@ -839,7 +839,7 @@ impl<'p> Checker<'p> {
     /// `Checker::inherited_names`. They stay as they are if one of the four is not there, or not yet.
     #[cold]
     fn note_inherited_names(&mut self) {
-        let before = self.what_only_holds_for_now();
+        let before = self.non_cacheable_mark();
         let mut names = [0; 4];
         for global in [
             known::Object,
@@ -855,7 +855,7 @@ impl<'p> Checker<'p> {
                 names[prop.name.0 as usize / 64 % 4] |= 1 << (prop.name.0 % 64);
             }
         }
-        if self.what_only_holds_for_now() == before {
+        if self.non_cacheable_mark() == before {
             self.inherited_names = names;
         }
     }
@@ -961,7 +961,7 @@ impl<'p> Checker<'p> {
 
     /// `checkTypeRelatedToEx`, without the errors. `relation_too_complex` tells the caller to report 2859.
     /// `related` has found no simple rule for the two. `missed`: the key under which it has found nothing kept, if it looked.
-    /// `is_trial`: see `Relater::keeps_failures`.
+    /// `is_trial`: see `Relater::caches_failures`.
     fn check_type_related_to(
         &mut self,
         source: TypeId,
@@ -995,7 +995,7 @@ impl<'p> Checker<'p> {
         // Under the identity relation `related` goes by other rules.
         r.is_from_related = relation != Relation::Identity;
         r.top_key = missed;
-        r.keeps_failures = is_trial;
+        r.caches_failures = is_trial;
         let result = self.is_related_to_ex::<false>(&mut r, source, target, REC_BOTH, STATE_NONE);
         let overflow = r.overflow;
         // `relationCount <= 0`. Running out of nesting depth or native stack is not a complexity overflow.
@@ -1012,7 +1012,7 @@ impl<'p> Checker<'p> {
         r.overflow = false;
         r.hit_cached_overflow = false;
         if is_trial {
-            r.keeps_failures = false;
+            r.caches_failures = false;
             r.failed.clear();
         }
         self.free_relaters.push(r);
@@ -2608,17 +2608,17 @@ impl<'p> Checker<'p> {
                     } else {
                         target
                     };
-                    let mut is_meant_to_be_called = false;
+                    let mut is_intended_to_be_called = false;
                     for construct in [false, true] {
-                        if !is_meant_to_be_called
+                        if !is_intended_to_be_called
                             && let Some(&first) = self.signatures(source, construct).first()
                         {
                             let returned = self.sig_return(first);
-                            is_meant_to_be_called =
+                            is_intended_to_be_called =
                                 self.is_related_to(r, returned, target, REC_SOURCE).holds();
                         }
                     }
-                    let code = if is_meant_to_be_called { 2560 } else { 2559 };
+                    let code = if is_intended_to_be_called { 2560 } else { 2559 };
                     self.report_error(r, code, &[Arg::Type(shown_source), Arg::Type(shown_target)]);
                 }
                 return Ternary::FALSE;
@@ -3594,7 +3594,7 @@ impl<'p> Checker<'p> {
             }
             return Ternary::of(entry & SUCCEEDED != 0);
         }
-        if !REPORT && r.keeps_failures && r.failed.contains(&key) {
+        if !REPORT && r.caches_failures && r.failed.contains(&key) {
             return Ternary::FALSE;
         }
         if r.relation_count <= 0 {
@@ -3676,7 +3676,7 @@ impl<'p> Checker<'p> {
         } else {
             // What is false on assumptions is false without. A failure that follows from a comparison that was cut short is not kept.
             let is_cut_short = r.overflow || r.hit_cached_overflow;
-            if r.keeps_failures {
+            if r.caches_failures {
                 if !is_cut_short {
                     r.failed.insert(key);
                 }
@@ -4907,8 +4907,7 @@ impl<'p> Checker<'p> {
         }
         let source_is_primitive = self.has_primitive_flag_as(source, sd);
         // What stands for `object` is nobody's declaration: it is not known to have nothing else in it.
-        let source_is_object_keyword =
-            !is_object_kind(sd) && self.looks_like_the_object_keyword(source);
+        let source_is_object_keyword = !is_object_kind(sd) && self.is_object_keyword_like(source);
         let (mut source, mut sd) = (source, sd);
         if relation != Relation::Identity {
             // An object type other than a mapped one is its own apparent type.
@@ -5576,7 +5575,7 @@ impl<'p> Checker<'p> {
                 return Ternary::FALSE;
             }
         }
-        let for_now = self.shapes_for_now.len();
+        let provisional = self.provisional_shapes.len();
         let (Some(sm), Some(tm)) = (
             self.members(properties.unwrap_or(source)),
             self.members(target),
@@ -5584,7 +5583,7 @@ impl<'p> Checker<'p> {
             return Ternary::FALSE;
         };
         // A shape that is kept stays as it is.
-        if self.shapes_for_now.len() == for_now {
+        if self.provisional_shapes.len() == provisional {
             *both = Some((sm, tm));
         }
         // `anyFunctionType` has no `ObjectFlagsObjectLiteral`.
@@ -6870,14 +6869,14 @@ impl<'p> Checker<'p> {
         };
         if !parts
             .iter()
-            .any(|&p| self.intersection_member_looks_otherwise(p))
+            .any(|&p| self.intersection_member_has_other_apparent_type(p))
         {
             return ty;
         }
         let looks: Vec<TypeId> = parts
             .iter()
             .map(|&p| {
-                if self.intersection_member_looks_otherwise(p) {
+                if self.intersection_member_has_other_apparent_type(p) {
                     self.apparent_type(p)
                 } else {
                     p
@@ -6888,14 +6887,14 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether `apparent_type_of_intersection` puts something else for the member `p`.
-    fn intersection_member_looks_otherwise(&self, p: TypeId) -> bool {
+    fn intersection_member_has_other_apparent_type(&self, p: TypeId) -> bool {
         p == TypeId::OBJECT || self.is_deferred(p) || self.has_primitive_flag(p)
     }
 
     /// Whether `getApparentType(ty)` is `emptyObjectType`, which is what `object` looks like. It has no symbol, unlike a `{}` that
     /// is written, and here the two are one type. Of what counts as `{}` in an intersection `addTypeToIntersection` takes the
     /// first.
-    pub(super) fn looks_like_the_object_keyword(&mut self, ty: TypeId) -> bool {
+    pub(super) fn is_object_keyword_like(&mut self, ty: TypeId) -> bool {
         let ty = if self.is_deferred(ty) {
             self.base_constraint(ty)
         } else {
@@ -6918,7 +6917,7 @@ impl<'p> Checker<'p> {
                 return false;
             }
         }
-        first.is_some_and(|p| self.looks_like_the_object_keyword(p))
+        first.is_some_and(|p| self.is_object_keyword_like(p))
     }
 
     /// `isObjectTypeWithInferableIndex`: known to have nothing but what is seen.

@@ -38,7 +38,7 @@ fn is_at_start_of(
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     #[inline]
     pub(crate) fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
-        if self.should_keep_types() {
+        if self.should_save_types() {
             return self.parse_and_keep_type(
                 Level::Lowest,
                 SkipTypeOptionsBitset::only(SkipTypeOptions::IsReturnType),
@@ -65,7 +65,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn skip_type_script_type(&mut self, level: Level) -> Result<(), Error> {
         self.mark_type_script_only();
-        if self.should_keep_types() {
+        if self.should_save_types() {
             return self.parse_and_keep_type(level, SkipTypeOptionsBitset::empty());
         }
         self.skip_type_script_type_with_opts::<false>(level, SkipTypeOptionsBitset::empty(), None)
@@ -126,7 +126,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::StackOverflow);
         }
         // Keep mode stores the result in `TypeSyntax::last_binding`.
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         let pos = if keeps { self.token_start() } else { 0 };
         match self.lexer.token {
             T::TIdentifier | T::TThis => {
@@ -323,7 +323,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn skip_missing_binding_name(&mut self, has_modifiers: bool) -> Result<(), Error> {
         let is_private = self.lexer.token == T::TPrivateIdentifier;
         let name = self.parse_missing_parameter_name(has_modifiers)?;
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         // `createIdentifierWithDiagnostic`: a private name is reported and taken as the name.
         if is_private {
             if keeps {
@@ -343,7 +343,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.lexer.expect(T::TOpenParen)?;
         // Keep mode stores the result in `TypeSyntax::last_params`.
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         let mut parameters: Vec<Param> = Vec::new();
         let mut is_usable = true;
 
@@ -480,7 +480,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         member: u32,
     ) -> Result<[Option<(u32, u32)>; 2], Error> {
         self.lexer.expect(T::TOpenBracket)?;
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         let mut parameters: Vec<Param> = Vec::new();
         let mut is_usable = true;
         let mut trailing_comma = None;
@@ -601,7 +601,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             });
             self.lexer.next()?;
         }
-        if self.should_keep_types() {
+        if self.should_save_types() {
             parameter.modifiers = self.add_param_modifiers(&modifiers);
         }
         Ok(())
@@ -755,7 +755,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             // `parseParameters`: without a "(" the list is missing, and the token stays.
             self.lexer.expect(T::TOpenParen)?;
-            if self.should_keep_types() {
+            if self.should_save_types() {
                 self.finish_params(Some(&[]));
             }
         } else if has_head || self.is_unambiguously_start_of_function_type() {
@@ -901,7 +901,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn missing_type(&mut self) -> Result<(), Error> {
-        if self.should_keep_types() {
+        if self.should_save_types() {
             let pos = self.token_start();
             self.emit_type_ref(StoreStr::EMPTY, pos);
         }
@@ -927,7 +927,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn skip_type_reference_to_any_word(&mut self) -> Result<(), Error> {
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         if !self.lexer.is_identifier_or_keyword() {
             self.missing_type()?;
         } else {
@@ -1022,7 +1022,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<crate::sema::keep::ImportTypeAttributes, Error> {
         let open_brace = self.lexer.loc();
         self.lexer.expect(T::TOpenBrace)?;
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         let keyword_loc = self.lexer.loc();
         let mut assert_keyword_loc = None;
         if self.lexer.token == T::TWith {
@@ -2622,7 +2622,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.lexer.expect(T::TOpenBrace)?;
         // Keep mode stores the result in `TypeSyntax::last_object_type`.
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         let mut kept = ObjectTypeBuilder::default();
         // Applies to these braces only, not to object types nested in them.
         let is_interface_body =
@@ -2919,7 +2919,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline(never)]
     fn skip_missing_object_type(&mut self) -> Result<(), Error> {
         self.lexer.expect(T::TOpenBrace)?;
-        if self.should_keep_types() {
+        if self.should_save_types() {
             self.type_syntax_mut().next_braces_are_interface_body = false;
             self.finish_object_type(ObjectTypeBuilder::default());
         }
@@ -2981,7 +2981,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         member: &mut TypeMemberParts,
     ) -> Result<(), Error> {
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         if keeps {
             member.bracket_pos = self.token_start();
             member.bracket_full_start = self.lexer.token_full_start as u32;
@@ -3010,7 +3010,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         member: &mut TypeMemberParts,
     ) -> Result<(), Error> {
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         if keeps {
             member.open_paren = self.token_start();
             member.parameters = Some(Some(Default::default()));
@@ -3035,7 +3035,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.expect(T::TColon)?;
         self.lexer.next()?;
         self.skip_typescript_return_type()?;
-        if self.should_keep_types() {
+        if self.should_save_types() {
             member.ty = Some(self.last_type());
         }
         Ok(())
@@ -3082,7 +3082,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn skip_private_type_member(&mut self, member: &mut TypeMemberParts) -> Result<bool, Error> {
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         if keeps && self.lexer.token == T::TPrivateIdentifier {
             let word = self.read_member_word();
             member.add_word(word);
@@ -3146,7 +3146,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return self.skip_type_parameters_tolerant(flags, less_than);
         }
         // Keep mode stores the result in `TypeSyntax::last_type_params`.
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         let mut kept: Vec<TypeParam> = Vec::new();
         let mut is_complete = true;
 
@@ -3360,7 +3360,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     | T::TGreaterThanGreaterThanGreaterThanEquals
             )
         };
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         let mut kept: Vec<TypeParam> = Vec::new();
         let mut is_complete = true;
         let mut result = SkipTypeParameterResult::CouldBeTypeCast;
@@ -3448,7 +3448,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         result: &mut SkipTypeParameterResult,
     ) -> Result<Option<TypeParam>, Error> {
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         let mut is_complete = true;
         let mut parameter = TypeParam {
             name: StoreStr::EMPTY,
@@ -3611,7 +3611,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
                 | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
         )?;
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         let type_parameters = if keeps {
             self.take_type_params(type_parameters)
         } else {
@@ -3649,7 +3649,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
                 | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
         )?;
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         let type_parameters = if keeps {
             self.take_type_params(type_parameters)
         } else {
@@ -3696,7 +3696,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if self.should_keep_types() {
+        if self.should_save_types() {
             self.type_syntax_mut().next_braces_are_interface_body = true;
         }
         self.skip_type_script_object_type()?;
@@ -3733,7 +3733,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.lexer.token != T::TExtends && !self.lexer.is_contextual_keyword(b"implements") {
             return Ok(false);
         }
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         let (mut seen_extends, mut seen_implements) = (false, false);
         // The checker returns after 1172 or 1176.
         let mut stop_checking = false;
@@ -3815,7 +3815,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `parseExpressionWithTypeArguments` in a heritage clause of an interface. In keep mode the last type is the reference `A.B<C>`,
     /// or `HeritageExpression` for any other expression, which the checker objects to (2499).
     fn skip_interface_heritage_element(&mut self) -> Result<(), Error> {
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         let (start, pos) = (self.lexer.loc().start, self.token_start());
         if !self.is_at_entity_name_expression() {
             // `parseLeftHandSideExpressionOrHigher`
@@ -3877,7 +3877,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && self.lexer.next().is_ok();
         }
         // `parseMemberExpressionRest` and `parseCallExpressionRest` go on with these.
-        let goes_on = match self.lexer.token {
+        let continues = match self.lexer.token {
             T::TOpenParen
             | T::TOpenBracket
             | T::TQuestionDot
@@ -3887,7 +3887,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => false,
         };
         self.lexer.restore(&old_lexer);
-        is_name && !goes_on
+        is_name && !continues
     }
 
     #[inline]
@@ -3910,7 +3910,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let less_than = self.lexer.loc().start;
         self.lexer.expect_less_than::<false>()?;
-        let keeps = self.should_keep_types();
+        let keeps = self.should_save_types();
         let args_base = if keeps {
             self.type_syntax_mut().type_stack.len()
         } else {
@@ -4132,7 +4132,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         let constraint_opts =
             SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes);
-        if self.should_keep_types() {
+        if self.should_save_types() {
             self.skip_nested_type::<true>(level, constraint_opts)?;
         } else {
             self.skip_type_script_type_with_opts::<false>(level, constraint_opts, None)?;
@@ -4211,7 +4211,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.lexer.loc() == type_start {
             return true;
         }
-        if !self.should_keep_types() {
+        if !self.should_save_types() {
             return false;
         }
         let syntax = self.type_syntax_mut();

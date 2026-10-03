@@ -131,7 +131,7 @@ impl Checker<'_> {
         self.node_check_flags.clear();
         self.never_checked.borrow_mut().clear();
         self.reported.clear();
-        self.release_shapes_for_now();
+        self.release_provisional_shapes();
         self.is_type_checked = false;
         let hir = self.hir(file);
         if hir.ran_out_of_stack {
@@ -143,10 +143,10 @@ impl Checker<'_> {
         self.get_additional_js_syntactic_diagnostics(file);
         // `getBindAndCheckDiagnostics` has nothing to say of a JSON file.
         let is_json = hir.kind == FileKind::Json;
-        if self.wanted != Wanted::All || is_json || !self.reports_semantic_errors(file) {
+        if self.wanted != Requested::All || is_json || !self.reports_semantic_errors(file) {
             let syntactic = std::mem::take(&mut self.reported);
             let mut declaration = Vec::new();
-            if self.wanted != Wanted::Syntactic {
+            if self.wanted != Requested::Syntactic {
                 self.emit_resolver_links = Default::default();
                 declaration = self.get_declaration_diagnostics(file);
             }
@@ -205,7 +205,7 @@ impl Checker<'_> {
         self.report_decorators(file);
         self.check_strict_mode_statements(file);
         // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: what they never look at is taken back, whoever said it.
-        self.take_back_what_is_never_checked(file);
+        self.remove_diagnostics_in_unchecked_ranges(file);
         self.check_circular_mapped_properties();
         self.report_unresolved_identifiers();
         // `GetDeclarationDiagnostics`: no comment directive takes these back, and plain JavaScript has them too.
@@ -577,7 +577,7 @@ impl Checker<'_> {
         let mut related = Vec::new();
         match (code, other) {
             (2724, Some(meant)) => {
-                if let Some(place) = self.place_where_value_is_declared(meant) {
+                if let Some(place) = self.span_of_value_declaration(meant) {
                     related.push(self.new_diagnostic(place, 2728, &[Arg::Sym(meant)]));
                 }
             }
@@ -703,9 +703,9 @@ impl Checker<'_> {
             let candidates = exports
                 .iter()
                 .filter(|&&(_, s)| files.flags(s).intersects(module_member))
-                .map(|&(other, s)| (self.atoms().bytes(other), Meant::Symbol(s)));
+                .map(|&(other, s)| (self.atoms().bytes(other), SpellingSuggestion::Symbol(s)));
             return match get_spelling_suggestion_for_name(files, text, candidates) {
-                Some(Meant::Symbol(meant)) => (2724, Some(meant)),
+                Some(SpellingSuggestion::Symbol(meant)) => (2724, Some(meant)),
                 _ => (2724, None),
             };
         }
@@ -1029,7 +1029,7 @@ impl Checker<'_> {
                     continue;
                 }
             };
-            match self.what_runs_in_place(file, func) {
+            match self.immediately_invoked_container(file, func) {
                 Some(it) => parent = it,
                 None => return Container::Fn(func),
             }
@@ -1069,7 +1069,7 @@ impl Checker<'_> {
     /// `getControlFlowContainer`: a static block is not like a function, and a function expression that is called where it is written
     /// (`GetImmediatelyInvokedFunctionExpression`), `async` or not, is part of what is around it. The class or the call, if `f` is one
     /// of these.
-    fn what_runs_in_place(&self, file: FileId, f: FnId) -> Option<Parent> {
+    fn immediately_invoked_container(&self, file: FileId, f: FnId) -> Option<Parent> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match (hir[f].kind, bound.fns[f.idx()].owner) {
             (FnKind::StaticBlock, FnOwner::Member(m)) => match bound.member_owner[m.idx()] {
@@ -1172,7 +1172,7 @@ impl Checker<'_> {
             Parent::Expr(assign)
                 if matches!(hir[assign].kind, ExprKind::Assign { op: None, target, .. } if target == e)
                     && matches!(bound.expr_parent[assign.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand
-                        && !self.is_assignment_target(file, bound.prop_owner[p.idx()])) =>
+                        && !self.is_definite_assignment_target(file, bound.prop_owner[p.idx()])) =>
             {
                 return;
             }
@@ -1494,9 +1494,9 @@ impl Checker<'_> {
         };
         let (suggestion, declared) = match meant {
             // `suggestion.ValueDeclaration`, which what only leads to an export has none of.
-            Meant::Symbol(sym) if leads_to_export => (Arg::Sym(sym), None),
-            Meant::Symbol(sym) => (Arg::Sym(sym), self.place_where_value_is_declared(sym)),
-            Meant::Word(word) => (Arg::Text(word), None),
+            SpellingSuggestion::Symbol(sym) if leads_to_export => (Arg::Sym(sym), None),
+            SpellingSuggestion::Symbol(sym) => (Arg::Sym(sym), self.span_of_value_declaration(sym)),
+            SpellingSuggestion::Word(word) => (Arg::Text(word), None),
         };
         let code = if meaning == SymFlags::NAMESPACE {
             2833
@@ -1763,7 +1763,7 @@ fn word_at(c: &Checker<'_>, file: FileId, start: u32) -> Vec<u8> {
 
 /// What may have been meant by a name that nothing goes by.
 #[derive(Copy, Clone)]
-pub(crate) enum Meant {
+pub(crate) enum SpellingSuggestion {
     Symbol(Sym),
     /// What has no declaration: the name of a primitive type, `undefined`, `globalThis`.
     Word(&'static str),
@@ -1780,14 +1780,14 @@ pub(super) fn place_of_first_declaration(files: &Files, sym: Sym) -> Option<(boo
 fn get_spelling_suggestion_for_name<'a>(
     files: &Files,
     name: &[u8],
-    candidates: impl Iterator<Item = (&'a [u8], Meant)>,
-) -> Option<Meant> {
-    let place = |meant: Meant| match meant {
-        Meant::Symbol(sym) => place_of_first_declaration(files, sym),
-        Meant::Word(_) => None,
+    candidates: impl Iterator<Item = (&'a [u8], SpellingSuggestion)>,
+) -> Option<SpellingSuggestion> {
+    let place = |meant: SpellingSuggestion| match meant {
+        SpellingSuggestion::Symbol(sym) => place_of_first_declaration(files, sym),
+        SpellingSuggestion::Word(_) => None,
     };
     // `compareSymbols`
-    let compare = |a: (&'a [u8], Meant), b: (&'a [u8], Meant)| {
+    let compare = |a: (&'a [u8], SpellingSuggestion), b: (&'a [u8], SpellingSuggestion)| {
         match (place(a.1), place(b.1)) {
             (Some(a), Some(b)) => a.cmp(&b),
             (a, b) => b.is_some().cmp(&a.is_some()),
@@ -1805,7 +1805,7 @@ fn similar_in_scope_and_where(
     scope: ScopeId,
     name: Atom,
     meaning: SymFlags,
-) -> Option<(Meant, bool)> {
+) -> Option<(SpellingSuggestion, bool)> {
     let files = c.files();
     let try_resolve_alias = &mut |sym| Some(files.symbol_flags(sym));
     let name = (name, c.atoms().bytes(name));
@@ -1823,7 +1823,7 @@ impl Files {
         (name, text): (Atom, &[u8]),
         meaning: SymFlags,
         try_resolve_alias: &mut dyn FnMut(Sym) -> Option<SymFlags>,
-    ) -> Option<(Meant, bool)> {
+    ) -> Option<(SpellingSuggestion, bool)> {
         let (files, hir, bound) = (self, self.hir(file), self.bound(file));
         let (mut word, mut is_among_locals) = (None, false);
         // tsgo keeps the name of a function or class expression out of every symbol table: `Resolve` compares it directly.
@@ -1846,8 +1846,12 @@ impl Files {
                 files.is_spelling_candidate(sym, meaning, &mut *try_resolve_alias)
                     && is_close(text, files.atoms.bytes(candidate))
             };
-            let named =
-                |(candidate, sym): (Atom, Sym)| (files.atoms.bytes(candidate), Meant::Symbol(sym));
+            let named = |(candidate, sym): (Atom, Sym)| {
+                (
+                    files.atoms.bytes(candidate),
+                    SpellingSuggestion::Symbol(sym),
+                )
+            };
             let meant = match table {
                 SymbolTable::Locals(file, scope) => {
                     let s = &bound.scopes[scope.idx()];
@@ -1886,7 +1890,7 @@ impl Files {
                                 .intersects(SymFlags::VARIABLE)
                                 .then_some("undefined"),
                         )
-                        .map(|word| (word.as_bytes(), Meant::Word(word)));
+                        .map(|word| (word.as_bytes(), SpellingSuggestion::Word(word)));
                     let globals = files.globals.iter().copied();
                     get_spelling_suggestion_for_name(
                         files,
@@ -1896,8 +1900,8 @@ impl Files {
                 }
             };
             match meant? {
-                Meant::Symbol(sym) => Some(sym),
-                Meant::Word(meant) => {
+                SpellingSuggestion::Symbol(sym) => Some(sym),
+                SpellingSuggestion::Word(meant) => {
                     word = Some(meant);
                     None
                 }
@@ -1905,14 +1909,14 @@ impl Files {
         };
         let found = files.resolve_with(file, scope, name, meaning, false, lookup);
         if let Some(word) = word {
-            return Some((Meant::Word(word), false));
+            return Some((SpellingSuggestion::Word(word), false));
         }
         let sym = found.ok()??;
         let declared = files.symbol(sym);
         let leads_to_export = is_among_locals
             && declared.export_symbol.is_some()
             && !declared.flags.intersects(SymFlags::VALUE);
-        Some((Meant::Symbol(sym), leads_to_export))
+        Some((SpellingSuggestion::Symbol(sym), leads_to_export))
     }
 
     /// `getCandidateName` of `getSpellingSuggestionForName`. `unknownSymbol` is made with `SymbolFlagsProperty`: a value, and nothing
@@ -2112,12 +2116,12 @@ impl Checker<'_> {
             _ => {
                 let key = self.check_non_null_type(file, left, left_type);
                 let wanted = self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
-                let at = self.place_of_written_expr(file, left);
+                let at = self.span_of_parenthesized_expr(file, left);
                 self.check_type_assignable_to(key, wanted, Some(at), None);
             }
         }
         let object = self.check_non_null_type(file, right, right_type);
-        let at = self.place_of_written_expr(file, right);
+        let at = self.span_of_parenthesized_expr(file, right);
         if self.check_type_assignable_to(object, TypeId::OBJECT, Some(at), None)
             && has_empty_object_intersection(self, right_type)
         {
@@ -2135,7 +2139,7 @@ impl Checker<'_> {
     }
 
     /// `getErrorRangeForNode` of `e` as it is written, in its parentheses.
-    pub(super) fn place_of_written_expr(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
+    pub(super) fn span_of_parenthesized_expr(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
         (
             file,
             self.error_start_of(file, e),
@@ -2331,7 +2335,7 @@ impl Checker<'_> {
         } else {
             return true;
         };
-        let at = self.place_of_written_expr(file, offending);
+        let at = self.span_of_parenthesized_expr(file, offending);
         let is_assignment = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. });
         self.error_at(at, 2469, &[Arg::Bytes(&operator_text(op, is_assignment))]);
         false
@@ -2363,7 +2367,7 @@ impl Checker<'_> {
         };
         let maybe_missing_await =
             awaited.is_some_and(|awaited| self.is_assignable(awaited, numeric));
-        let at = self.place_of_written_expr(file, operand);
+        let at = self.span_of_parenthesized_expr(file, operand);
         self.error_and_maybe_suggest_await(at, maybe_missing_await, code, &[]);
         false
     }
@@ -2385,7 +2389,7 @@ impl Checker<'_> {
         ) else {
             return true;
         };
-        let at = self.place_of_written_expr(file, e);
+        let at = self.span_of_parenthesized_expr(file, e);
         self.error_at(at, code, &[]);
         false
     }
@@ -2452,7 +2456,7 @@ impl Checker<'_> {
         if !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) {
             wanted = self.base_of_literal(wanted);
         }
-        let at = self.place_of_written_expr(file, left);
+        let at = self.span_of_parenthesized_expr(file, left);
         self.check_type_assignable_to_and_optionally_elaborate(
             right_type,
             wanted,
@@ -2731,7 +2735,7 @@ impl<'p> Checker<'p> {
             return (is_refused || self.is_namespace_import_name(file, obj)).then_some(prop);
         }
         let is_refused = if prop.flags.contains(PropFlags::READONLY) {
-            !self.is_written_in_own_constructor(file, e, obj, prop)
+            !self.is_assigned_in_own_constructor(file, e, obj, prop)
         } else if self.has_readonly_assignment_declaration(prop) {
             true
         } else {
@@ -2740,7 +2744,7 @@ impl<'p> Checker<'p> {
         is_refused.then_some(prop)
     }
     /// `this.p = v` in a constructor of the class that declares `p` is how a `readonly` property gets its value.
-    fn is_written_in_own_constructor(
+    fn is_assigned_in_own_constructor(
         &self,
         file: FileId,
         e: ExprId,

@@ -4,7 +4,7 @@
 //! A token is no node yet: where a `?`, `!`, `...`, `*` or `=` is, is read off the text next to a node, once it is known to be there.
 
 use super::errors_x_operators::language_version;
-use super::errors_x_signatures::start_of_written_type;
+use super::errors_x_signatures::start_of_type_in_source;
 use super::related::Place;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner};
@@ -28,11 +28,11 @@ impl Checker<'_> {
         code: u32,
         args: &[Arg<'_>],
     ) -> bool {
-        let is_said = !has_parse_diagnostics(self.hir(file));
-        if is_said {
+        let is_reported = !has_parse_diagnostics(self.hir(file));
+        if is_reported {
             self.error(file, node, code, args);
         }
-        is_said
+        is_reported
     }
 
     /// `grammarErrorOnNode`, of the token `token` that comes right before `pos`.
@@ -475,7 +475,7 @@ impl Checker<'_> {
         if ret.is_none() {
             return false;
         }
-        let start = start_of_written_type(&hir.text, hir[ret].pos);
+        let start = start_of_type_in_source(&hir.text, hir[ret].pos);
         let end = self.end_of_type_node_from(file, ret, start);
         self.grammar_error_at((file, start, end), 1093, &[])
     }

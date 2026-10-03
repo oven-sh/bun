@@ -10,14 +10,14 @@ impl Checker<'_> {
     pub(super) fn expected_property(&mut self, target: TypeId, name: Atom) -> Option<Reported> {
         // What is compared on the way says nothing about the comparison that is being reported.
         let too_complex = self.relation_too_complex;
-        let related = self.where_expected_property_comes_from(target, name);
+        let related = self.related_info_for_expected_property(target, name);
         self.relation_too_complex = too_complex;
         related
     }
 
     /// 6501 at the index signature of `target` that stands in for `name`, or 6500 at what declares the property, or else `target`.
     /// Nothing in the default library is pointed at.
-    fn where_expected_property_comes_from(
+    fn related_info_for_expected_property(
         &mut self,
         target: TypeId,
         name: Atom,

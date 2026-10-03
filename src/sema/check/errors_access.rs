@@ -308,7 +308,7 @@ impl Checker<'_> {
             self.start_of(file, index),
             self.end_of_expr(file, index),
         );
-        let is_target = self.is_written(file, e);
+        let is_target = self.is_assignment_target(file, e);
         if let Some(name) = name
             && self.static_side_has(object, name)
         {
@@ -324,7 +324,7 @@ impl Checker<'_> {
         } else if self.index_type_of_type(object, TypeId::NUMBER).is_some() {
             self.error_at(at_index, 7015, &[]);
         } else if let Some(name) = name
-            && let Some(meant) = self.property_meant(object, name, None, true)
+            && let Some(meant) = self.spelling_suggestion_for_property(object, name, None, true)
         {
             let meant = self.name_of_unread_property(meant);
             let args = [Arg::Atom(name), Arg::Type(object), Arg::Bytes(&meant)];
@@ -528,7 +528,7 @@ impl Checker<'_> {
     }
 
     /// The property that may have been meant. `closest`: the one `GetSpellingSuggestion` settles on, and not the first that will do.
-    fn property_meant(
+    fn spelling_suggestion_for_property(
         &mut self,
         object: TypeId,
         name: Atom,
@@ -604,7 +604,7 @@ impl Checker<'_> {
 
     /// `GetErrorRangeForNode(suggestion.ValueDeclaration)`, of the property `meant` of `object`. `createUnionOrIntersectionProperty`:
     /// what the members of a union declare in several places has no such declaration.
-    fn place_of_property_meant(
+    fn span_of_suggested_property(
         &mut self,
         object: TypeId,
         meant: Atom,
@@ -628,7 +628,7 @@ impl Checker<'_> {
     }
 
     /// `GetErrorRangeForNode(symbol.ValueDeclaration)`. `None`: nothing declares `sym` as a value.
-    pub(super) fn place_where_value_is_declared(&self, sym: Sym) -> Option<(FileId, u32, u32)> {
+    pub(super) fn span_of_value_declaration(&self, sym: Sym) -> Option<(FileId, u32, u32)> {
         let (file, decl) = self
             .files()
             .value_declaration(self.files().canonical(sym))?;
@@ -835,7 +835,7 @@ impl Checker<'_> {
             let member = cat!(container, b".", missing);
             let args = [args[0], args[1], Arg::Bytes(&member)];
             self.new_diagnostic_chain(chain, at, 2576, &args)
-        } else if self.is_property_of_what_is_promised(containing, name) {
+        } else if self.is_property_of_promised_type(containing, name) {
             let mut diagnostic = self.new_diagnostic_chain(chain, at, 2339, &args);
             diagnostic.add_related_info(self.new_diagnostic(at, 2773, &[]));
             diagnostic
@@ -885,8 +885,13 @@ impl Checker<'_> {
         let is_access = matches!(self.hir(file)[e].kind, ExprKind::Dot { .. })
             && !self.bound(file).is_in_type_query(e);
         let looked_into = self.reduced(apparent);
-        let meant = self.property_meant(looked_into, name, is_access.then_some((file, e)), true)?;
-        Some((meant, self.place_of_property_meant(looked_into, meant)))
+        let meant = self.spelling_suggestion_for_property(
+            looked_into,
+            name,
+            is_access.then_some((file, e)),
+            true,
+        )?;
+        Some((meant, self.span_of_suggested_property(looked_into, meant)))
     }
 
     /// `containerSeemsToBeEmptyDomElement`
@@ -910,7 +915,7 @@ impl Checker<'_> {
     }
 
     /// It is what `containing` promises that has `name`: `await` was forgotten. `GetPromisedTypeOfPromise`
-    fn is_property_of_what_is_promised(&mut self, containing: TypeId, name: Atom) -> bool {
+    fn is_property_of_promised_type(&mut self, containing: TypeId, name: Atom) -> bool {
         // It is asked for a `#x` by its text, which is the name of no property.
         if self.is_private_name(name) {
             return false;

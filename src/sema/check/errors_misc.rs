@@ -74,7 +74,7 @@ impl Checker<'_> {
         // `isTypeEqualityComparableTo`, then the other way round.
         let is_nullable = case.is_null() || case.is_undefined();
         if !is_nullable && !self.is_comparable(subject, case) {
-            let at = self.place_of_written_expr(file, test);
+            let at = self.span_of_parenthesized_expr(file, test);
             self.check_type_comparable_to(case, subject, Some(at), None);
         }
     }
@@ -135,7 +135,7 @@ impl Checker<'_> {
                 _ => return,
             }
         };
-        self.error_at(self.place_of_written_expr(file, node), code, &[]);
+        self.error_at(self.span_of_parenthesized_expr(file, node), code, &[]);
     }
 
     /// `GetErrorRangeForNode`, for an expression as it is written: where an error about the whole of `e` goes. In parentheses it is

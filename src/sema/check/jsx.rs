@@ -124,7 +124,7 @@ impl<'p> Checker<'p> {
     ) -> Option<Vec<SigId>> {
         // `anySignature`
         if element_type == TypeId::STRING {
-            let takes_nothing = self.types().intern_sig(SigData::Synth {
+            let has_no_parameters = self.types().intern_sig(SigData::Synth {
                 type_params: Box::new([]),
                 params: Box::new([]),
                 ret: TypeId::ANY,
@@ -132,7 +132,7 @@ impl<'p> Checker<'p> {
                 of: Box::new([]),
                 is_union: true,
             });
-            return Some(vec![takes_nothing]);
+            return Some(vec![has_no_parameters]);
         }
         if let Some(name) = self.string_literal_value(element_type) {
             let attributes = match self.jsx_attributes_of_literal_tag(file, name) {
@@ -607,8 +607,8 @@ impl<'p> Checker<'p> {
             // The synthesized declaration of the children has the attributes as its parent, so `shouldCheckAsExcessProperty` accepts
             // it. The check only runs on a fresh type, and only `createJsxAttributesType` sets `ObjectFlagsFreshLiteral`: it needs a
             // written attribute.
-            let has_written_attribute = jsx.attrs.iter().any(|p| hir[p].kind != PropKind::Spread);
-            let flags = if has_written_attribute {
+            let has_source_attribute = jsx.attrs.iter().any(|p| hir[p].kind != PropKind::Spread);
+            let flags = if has_source_attribute {
                 PropFlags::JSX_CHILDREN
             } else {
                 PropFlags::empty()

@@ -283,7 +283,7 @@ impl<'p> Checker<'p> {
         head_message: Option<u32>,
         diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
-        let is_related = self.is_type_related_to_if_told(source, target, relation, true);
+        let is_related = self.try_is_type_related_to(source, target, relation, true);
         let (is_related, diagnostic) = match (is_related, error_node) {
             (Ok(true), _) => return true,
             (_, None) => return false,
@@ -307,8 +307,8 @@ impl<'p> Checker<'p> {
     }
 
     /// `isTypeRelatedTo`. `Err(code)`: the comparison overflowed (`r.overflow`); `code` is 2859 (complexity) or 2321 (stack depth).
-    /// `is_trial`: tsgo has no comparison at this point, see `Relater::keeps_failures`.
-    pub(super) fn is_type_related_to_if_told(
+    /// `is_trial`: tsgo has no comparison at this point, see `Relater::caches_failures`.
+    pub(super) fn try_is_type_related_to(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -369,7 +369,7 @@ impl<'p> Checker<'p> {
     ) -> (bool, Option<RelationDiagnostic>) {
         let mut r = Relater::new(relation, self.cycles);
         r.error_node = error_node;
-        r.keeps_failures = true;
+        r.caches_failures = true;
         // These two are never a `headMessage`: they are what `reportRelationError` says for lack of one.
         let head = head.filter(|&code| code != 2322 && code != 2678);
         // What the comparisons made on the way leave behind is for whoever asks a question, and nobody has.
@@ -918,14 +918,14 @@ impl<'p> Checker<'p> {
         };
         let names = [Some(&generalized_source_type[..]), Some(&target_type[..])];
         let gives_way = !is_conversion_or_interface_implementation_message(message);
-        let is_said_already = match r.get_chain_message(0) {
+        let is_already_reported = match r.get_chain_message(0) {
             Some(2353 | 2561) => true,
             Some(2859 | 2321 | 4104) => r.chain_args_match(&names),
             Some(2741) => gives_way && r.chain_args_match(&[None, names[0], names[1]]),
             Some(2740 | 2739) => gives_way && r.chain_args_match(&names),
             _ => false,
         };
-        if !is_said_already {
+        if !is_already_reported {
             self.report_error(r, message, &[generalized_source_name, target_name]);
         }
     }

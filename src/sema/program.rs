@@ -12,7 +12,7 @@ use crate::resolve::{
     is_javascript, is_relative, join, lib_name, remove_file_extension, supported_extensions,
     to_file_name_lower_case,
 };
-use crate::table::{Bases, ByNode, ByNodeKept, RawWord};
+use crate::table::{Bases, ByNode, ByNodeIndirect, RawWord};
 use crate::util::{FxHashMap, FxHashSet, List};
 use crate::verify::{Place, Problem};
 use bstr::ByteSlice;
@@ -79,7 +79,7 @@ pub struct Module {
     /// Resolved like Node does, it is an ECMAScript module.
     pub is_esm: bool,
     /// Its name or its package says that it is an ECMAScript module, however modules are resolved. Only asked of packages then.
-    pub says_esm: bool,
+    pub specifies_esm: bool,
     /// `GetImpliedNodeFormatForEmit`: what it is emitted as, where its name or its package settles that.
     pub implied_format: ResolutionMode,
     /// `getEmitSyntaxForUsageLocationWorker` of a plain `import` in it: what that is emitted as, which is also how it is resolved.
@@ -359,7 +359,7 @@ pub struct Files {
     merged_symbols: FxHashMap<Sym, Sym>,
     /// `symbol.Declarations` of a transient symbol: the symbols of the binder that have them, in the order they were merged.
     merged_parts: FxHashMap<Sym, Vec<Sym>>,
-    /// While symbols are put together: `name_means_instead`.
+    /// While symbols are put together: `redirect_name_to`.
     stand_ins: Vec<(Sym, SymbolId)>,
     /// `symbol.Exports` of a transient symbol.
     merged_exports: FxHashMap<Sym, SymbolMap>,
@@ -381,7 +381,7 @@ pub struct Files {
     has_type_only_stars: bool,
 
     /// `aliasSymbolLinks`. Filled by `link`.
-    alias_symbol_links: ByNodeKept<Sym, AliasSymbolLinks>,
+    alias_symbol_links: ByNodeIndirect<Sym, AliasSymbolLinks>,
     /// `link` has run: every table is filled, and nothing is written from here on.
     is_linked: bool,
     /// For `module_links` of what is no module.
@@ -427,9 +427,9 @@ struct Memo {
     /// `symbol_flags` of an alias, with `FLAGS_KNOWN` set.
     symbol_flags: ByNode<Sym, RawWord>,
     /// The declarations of a symbol that has several.
-    decls: ByNodeKept<Sym, Box<[(FileId, Decl)]>>,
+    decls: ByNodeIndirect<Sym, Box<[(FileId, Decl)]>>,
     /// `moduleSymbolLinks`
-    module_links: ByNodeKept<Sym, ModuleSymbolLinks>,
+    module_links: ByNodeIndirect<Sym, ModuleSymbolLinks>,
 }
 
 /// `ExportCollision`, one for each of its `exportsWithDuplicate`: 2308.
@@ -470,8 +470,8 @@ impl Memo {
         Memo {
             whole: ByNode::new(symbols),
             symbol_flags: ByNode::new(symbols),
-            decls: ByNodeKept::new(symbols),
-            module_links: ByNodeKept::new(symbols),
+            decls: ByNodeIndirect::new(symbols),
+            module_links: ByNodeIndirect::new(symbols),
         }
     }
 }
@@ -585,7 +585,7 @@ trait Resolve: std::ops::Deref<Target = Files> {
     /// `getSymbol`: whether `sym`, found under a name, counts where `meaning` is wanted. An alias means all that it and what is on the
     /// way to what it stands for mean.
     fn means(&self, sym: Sym, meaning: SymFlags) -> bool {
-        if let Some(known) = self.means_by_its_own_flags(sym, meaning) {
+        if let Some(known) = self.has_meaning_by_own_flags(sym, meaning) {
             return known;
         }
         self.symbol_flags(sym).intersects(meaning)
@@ -1978,7 +1978,7 @@ fn output_path_errors(
     let mut common = None;
     if !options.out_dir.is_empty()
         || !options.root_dir.is_empty()
-        || options.says_source_or_map_root
+        || options.specifies_source_or_map_root
         || !declaration_dir.is_empty()
     {
         let said = if !options.root_dir.is_empty() {
@@ -2228,7 +2228,7 @@ impl Files {
                 depths[id.idx()] = depths[id.idx()].min(depth);
                 return id;
             }
-            if !options.keeps_duplicate_packages
+            if !options.retains_duplicate_packages
                 && let Some(package_id) = resolver.package_id(&path)
             {
                 match by_package_id.get(&package_id) {
@@ -2487,7 +2487,7 @@ impl Files {
             .into_iter()
             .map(|module| ModuleCell(module.unwrap().into()))
             .collect();
-        if options.drops_what_nothing_refers_to {
+        if options.drops_unreferenced {
             let mut is_referred_to = vec![false; modules.len()];
             // `Files::new_symbol`: the symbols no file declares are kept with those of the first file, which has to stay for that.
             is_referred_to.iter_mut().take(1).for_each(|it| *it = true);
@@ -2569,7 +2569,7 @@ impl Files {
             resolved_at_merge: Vec::new(),
 
             has_type_only_stars,
-            alias_symbol_links: ByNodeKept::new(&symbols),
+            alias_symbol_links: ByNodeIndirect::new(&symbols),
             is_linked: false,
             no_module_links: Default::default(),
             is_merged: false,
@@ -2626,7 +2626,7 @@ impl Files {
             seen: FxHashSet<Vec<u8>>,
             seen_packages: FxHashSet<Vec<u8>>,
             /// Taken from `to_read` and not in `done` yet.
-            under_way: usize,
+            in_progress: usize,
             done: FxHashMap<Vec<u8>, Box<Loaded>>,
         }
         let shared = Guarded::new(Shared {
@@ -2634,7 +2634,7 @@ impl Files {
             to_read: seeds.into(),
             ready: Vec::new(),
             seen_packages: FxHashSet::default(),
-            under_way: 0,
+            in_progress: 0,
             done: FxHashMap::default(),
         });
         let has_changed = bun_threading::Condvar::new();
@@ -2648,7 +2648,7 @@ impl Files {
                 if reads && !state.to_read.is_empty() && state.ready.len() <= AHEAD {
                     let count = state.to_read.len().min(RUN);
                     let run: Vec<_> = state.to_read.drain(..count).collect();
-                    state.under_way += count;
+                    state.in_progress += count;
                     drop(state);
                     for file in run {
                         let text = host.read_source(&file.0);
@@ -2693,11 +2693,11 @@ impl Files {
                     }
                     let has_more = state.to_read.len() > before;
                     state.done.insert(path, loaded);
-                    state.under_way -= 1;
-                    if has_more || state.under_way == 0 {
+                    state.in_progress -= 1;
+                    if has_more || state.in_progress == 0 {
                         has_changed.notify_all();
                     }
-                } else if state.under_way == 0 && state.to_read.is_empty() {
+                } else if state.in_progress == 0 && state.to_read.is_empty() {
                     has_changed.notify_all();
                     return;
                 } else {
@@ -2715,7 +2715,7 @@ impl Files {
         atoms: &Interner,
         path: &[u8],
         is_lib: bool,
-        says_esm: bool,
+        specifies_esm: bool,
         text: Cow<'static, [u8]>,
     ) -> (hir::File, Bound) {
         let mut hir = host.parse(path, &text, atoms, options);
@@ -2740,7 +2740,7 @@ impl Files {
                 ModuleDetection::Force => true,
                 ModuleDetection::Legacy => false,
                 ModuleDetection::Auto => {
-                    says_esm || format_by_extension(path) != ResolutionMode::None
+                    specifies_esm || format_by_extension(path) != ResolutionMode::None
                 }
             };
             hir.has_module_syntax = is_shown || is_decreed;
@@ -2798,10 +2798,10 @@ impl Files {
         text: Cow<'static, [u8]>,
     ) -> Loaded {
         // `GetImpliedNodeFormatForFile`: a JSON file is neither kind of module, whatever its package says.
-        let says_esm = !path.ends_with(b".json")
+        let specifies_esm = !path.ends_with(b".json")
             && (options.resolves_like_node || strings::contains(path, b"/node_modules/"))
             && resolver.is_ecmascript_module(path);
-        let is_esm = options.resolves_like_node && says_esm;
+        let is_esm = options.resolves_like_node && specifies_esm;
         let implied_format = resolver.implied_format(path);
         let package_json_without_type =
             if matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18) {
@@ -2811,7 +2811,8 @@ impl Files {
             } else {
                 Atom::NONE
             };
-        let (hir, bound) = Self::parse_and_bind(host, options, atoms, path, is_lib, says_esm, text);
+        let (hir, bound) =
+            Self::parse_and_bind(host, options, atoms, path, is_lib, specifies_esm, text);
         let _resolving = Spent::on(host, Phase::Resolve);
         // `optionsForFile`. What is said of the program as a whole stays with the options of the program.
         let (of_program, program_resolver) = (options, resolver);
@@ -3115,7 +3116,7 @@ impl Files {
             extensionless_imports: extensionless_imports.into(),
             missing_references: missing_references.into(),
             is_esm,
-            says_esm,
+            specifies_esm,
             implied_format,
             default_mode,
             package_json_without_type,
@@ -3394,18 +3395,18 @@ impl Files {
         let mut stand_ins = std::mem::take(&mut self.stand_ins);
         stand_ins.sort_unstable();
         for of_file in stand_ins.chunk_by(|a, b| a.0.file == b.0.file) {
-            let stands_in = |symbol: &mut SymbolId| {
+            let is_placeholder = |symbol: &mut SymbolId| {
                 if let Ok(i) = of_file.binary_search_by_key(symbol, |s| s.0.id) {
                     *symbol = of_file[i].1;
                 }
             };
             let bound = &mut self.modules[of_file[0].0.file.idx()].bound;
-            bound.expr_symbol.iter_mut().for_each(stands_in);
+            bound.expr_symbol.iter_mut().for_each(is_placeholder);
             bound
                 .entries
                 .iter_mut()
                 .map(|e| &mut e.1)
-                .for_each(stands_in);
+                .for_each(is_placeholder);
         }
         // `addUndefinedToGlobalsOrErrorOnRedeclaration`
         if !self.modules.is_empty() && !self.globals.contains_key(known::undefined) {
@@ -3416,7 +3417,7 @@ impl Files {
         self.make_transient_symbols();
         // What an alias was found to stand for while symbols were being put together may be a part of something by now.
         let symbols = Bases::new(self.modules.iter().map(|m| m.bound.symbols.len()));
-        self.alias_symbol_links = ByNodeKept::new(&symbols);
+        self.alias_symbol_links = ByNodeIndirect::new(&symbols);
         // Their `aliasTarget` stays `unknownSymbol`, even if the merge broke the circle.
         for &alias in &self.circular_at_merge {
             let links = AliasSymbolLinks {
@@ -3769,7 +3770,7 @@ impl Files {
             // one, and nothing refers to a member by its name alone.
             if !is_alias && !unidirectional && !source_flags.intersects(SymFlags::CLASS_MEMBER) {
                 for part in self.parts(source).into_vec() {
-                    self.name_means_instead(part, target);
+                    self.redirect_name_to(part, target);
                 }
             }
             return target;
@@ -3859,9 +3860,9 @@ impl Files {
 
     /// Names are looked up in the table the two symbols were to share, which has `target`. The binder has found `refused` for those in
     /// its file. They get a symbol that stands in for `target` there, and the declarations of `refused` keep theirs.
-    fn name_means_instead(&mut self, refused: Sym, target: Sym) {
+    fn redirect_name_to(&mut self, refused: Sym, target: Sym) {
         let bound = &mut self.modules[refused.file.idx()].bound;
-        let stand_in = SymbolId(bound.symbols.len() as u32);
+        let placeholder = SymbolId(bound.symbols.len() as u32);
         let (name, parent) = {
             let symbol = &bound.symbols[refused.id.idx()];
             (symbol.name, symbol.parent)
@@ -3876,11 +3877,11 @@ impl Files {
             members: bind::TableId::NONE,
             export_symbol: SymbolId::NONE,
         });
-        self.stand_ins.push((refused, stand_in));
+        self.stand_ins.push((refused, placeholder));
         self.merged_symbols.insert(
             Sym {
                 file: refused.file,
-                id: stand_in,
+                id: placeholder,
             },
             target,
         );
@@ -4642,7 +4643,7 @@ impl Files {
 
     /// `means(sym, meaning)`, if no alias has to be resolved for it.
     #[inline]
-    fn means_by_its_own_flags(&self, sym: Sym, meaning: SymFlags) -> Option<bool> {
+    fn has_meaning_by_own_flags(&self, sym: Sym, meaning: SymFlags) -> Option<bool> {
         if meaning.is_empty() {
             return Some(false);
         }
@@ -4656,7 +4657,7 @@ impl Files {
     /// See `Resolve::means`.
     #[inline]
     pub fn means(&self, sym: Sym, meaning: SymFlags) -> bool {
-        match self.means_by_its_own_flags(sym, meaning) {
+        match self.has_meaning_by_own_flags(sym, meaning) {
             Some(known) => known,
             None => resolve!(self, resolver => resolver.means(sym, meaning)),
         }

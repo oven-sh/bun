@@ -13,8 +13,8 @@ use smallvec::SmallVec;
 
 type TypeParams = SmallVec<[TypeParamId; 8]>;
 
-/// Whether `mapped_keys_made_at_once` has anything to find in `node`, however many type arguments the names in it take.
-fn is_mapped_type_written_in(hir: &hir::File, node: TypeNodeId) -> bool {
+/// Whether `eagerly_resolved_mapped_keys` has anything to find in `node`, however many type arguments the names in it take.
+fn contains_mapped_type_node(hir: &hir::File, node: TypeNodeId) -> bool {
     if node.is_none() {
         return false;
     }
@@ -23,22 +23,22 @@ fn is_mapped_type_written_in(hir: &hir::File, node: TypeNodeId) -> bool {
         TypeNodeKind::Array(t)
         | TypeNodeKind::Keyof(t)
         | TypeNodeKind::Readonly(t)
-        | TypeNodeKind::JSDoc { ty: t, .. } => is_mapped_type_written_in(hir, t),
+        | TypeNodeKind::JSDoc { ty: t, .. } => contains_mapped_type_node(hir, t),
         TypeNodeKind::Tuple(elems) => elems
             .iter()
-            .any(|e| is_mapped_type_written_in(hir, hir[e].ty)),
+            .any(|e| contains_mapped_type_node(hir, hir[e].ty)),
         TypeNodeKind::Ref { args: list, .. }
         | TypeNodeKind::Union(list)
         | TypeNodeKind::Intersection(list)
         | TypeNodeKind::Template { types: list, .. }
         | TypeNodeKind::Typeof { args: list, .. } => {
-            hir.ids(list).any(|t| is_mapped_type_written_in(hir, t))
+            hir.ids(list).any(|t| contains_mapped_type_node(hir, t))
         }
         TypeNodeKind::IndexedAccess { obj, index } => {
-            is_mapped_type_written_in(hir, obj) || is_mapped_type_written_in(hir, index)
+            contains_mapped_type_node(hir, obj) || contains_mapped_type_node(hir, index)
         }
         TypeNodeKind::Cond { check, extends, .. } => {
-            is_mapped_type_written_in(hir, check) || is_mapped_type_written_in(hir, extends)
+            contains_mapped_type_node(hir, check) || contains_mapped_type_node(hir, extends)
         }
         _ => false,
     }
@@ -61,11 +61,11 @@ fn start_of_constraint(hir: &hir::File, node: TypeNodeId) -> u32 {
 
 /// `getUnionType`, `getIntersectionType`: what the type at `node` is whatever else is written in it. In a union `any`, and then
 /// `unknown`, leaves nothing of the rest; in an intersection `never`, and then `any`.
-fn keyword_it_comes_to(hir: &hir::File, node: TypeNodeId) -> Option<Keyword> {
+fn absorbing_keyword(hir: &hir::File, node: TypeNodeId) -> Option<Keyword> {
     let strongest = |members: IdList<TypeNodeId>, first: Keyword, second: Keyword| {
         let mut found = None;
         for member in hir.ids(members) {
-            match keyword_it_comes_to(hir, member) {
+            match absorbing_keyword(hir, member) {
                 Some(keyword) if keyword == first => return Some(first),
                 Some(keyword) if keyword == second => found = Some(second),
                 _ => {}
@@ -113,7 +113,7 @@ impl Checker<'_> {
                 let param = self.type_param(file, own);
                 is_circular = self
                     .constraint_from_type_param(param)
-                    .is_some_and(|extended| self.constraint_comes_back(param, extended));
+                    .is_some_and(|extended| self.has_circular_base_constraint(param, extended));
                 is_circular = is_circular || !self.has_non_circular_base_constraint(param);
             }
             if is_circular {
@@ -487,7 +487,7 @@ impl Checker<'_> {
         let at = match variable {
             Some(at) => Some(self.place_of_token(file, at)),
             None => self
-                .first_reference_that_makes_mapped_key(file, own)
+                .first_reference_resolving_mapped_key(file, own)
                 .map(|node| {
                     let from = self.hir(file)[node].pos;
                     (file, from, self.end_of_type_node(file, node))
@@ -511,7 +511,7 @@ impl Checker<'_> {
             if !seen.contains(&next) {
                 seen.push(next);
                 if hir[next].constraint.is_some() {
-                    self.type_parameters_written(file, hir[next].constraint, &mut todo);
+                    self.type_parameters_of_constraint(file, hir[next].constraint, &mut todo);
                 }
             }
         }
@@ -521,7 +521,7 @@ impl Checker<'_> {
     /// `getTypeFromMappedTypeNode` resolves the constraint of its key as soon as the type is made. For `own`, the key of a mapped type
     /// that is written in a type alias, that is when the first type reference that leads to the alias is checked. Children have lower
     /// ids and are checked first.
-    fn first_reference_that_makes_mapped_key(
+    fn first_reference_resolving_mapped_key(
         &self,
         file: FileId,
         own: TypeParamId,
@@ -577,7 +577,7 @@ impl Checker<'_> {
         let mut named = Vec::new();
         for &(file, decl) in self.files().decls_of(from).iter() {
             if let Decl::Alias(a) = decl {
-                self.aliases_made_at_once(file, self.hir(file)[a].ty, &mut named);
+                self.eagerly_resolved_aliases(file, self.hir(file)[a].ty, &mut named);
             }
         }
         named
@@ -585,53 +585,53 @@ impl Checker<'_> {
             .any(|next| self.alias_leads_to(next, to, seen))
     }
 
-    /// The type aliases referred to in what is resolved as soon as the type at `node` is made, as in `mapped_keys_made_at_once`: of a
+    /// The type aliases referred to in what is resolved as soon as the type at `node` is made, as in `eagerly_resolved_mapped_keys`: of a
     /// mapped type what its key extends.
-    fn aliases_made_at_once(&self, file: FileId, node: TypeNodeId, into: &mut Vec<Sym>) {
+    fn eagerly_resolved_aliases(&self, file: FileId, node: TypeNodeId, into: &mut Vec<Sym>) {
         if node.is_none() {
             return;
         }
         let hir = self.hir(file);
         match hir[node].kind {
             TypeNodeKind::Mapped(m) => {
-                self.aliases_made_at_once(file, hir[hir[m].param].constraint, into)
+                self.eagerly_resolved_aliases(file, hir[hir[m].param].constraint, into)
             }
             TypeNodeKind::Array(t)
             | TypeNodeKind::Keyof(t)
             | TypeNodeKind::Readonly(t)
-            | TypeNodeKind::JSDoc { ty: t, .. } => self.aliases_made_at_once(file, t, into),
+            | TypeNodeKind::JSDoc { ty: t, .. } => self.eagerly_resolved_aliases(file, t, into),
             TypeNodeKind::Tuple(elems) => {
                 for e in elems.iter() {
-                    self.aliases_made_at_once(file, hir[e].ty, into);
+                    self.eagerly_resolved_aliases(file, hir[e].ty, into);
                 }
             }
             TypeNodeKind::Ref { args, .. } => {
                 into.extend(self.alias_referred_to(file, node));
                 for t in hir.ids(args) {
-                    self.aliases_made_at_once(file, t, into);
+                    self.eagerly_resolved_aliases(file, t, into);
                 }
             }
             TypeNodeKind::Union(list)
             | TypeNodeKind::Intersection(list)
             | TypeNodeKind::Template { types: list, .. } => {
                 for t in hir.ids(list) {
-                    self.aliases_made_at_once(file, t, into);
+                    self.eagerly_resolved_aliases(file, t, into);
                 }
             }
             TypeNodeKind::IndexedAccess { obj, index } => {
-                self.aliases_made_at_once(file, obj, into);
-                self.aliases_made_at_once(file, index, into);
+                self.eagerly_resolved_aliases(file, obj, into);
+                self.eagerly_resolved_aliases(file, index, into);
             }
             TypeNodeKind::Cond { check, extends, .. } => {
-                self.aliases_made_at_once(file, check, into);
-                self.aliases_made_at_once(file, extends, into);
+                self.eagerly_resolved_aliases(file, check, into);
+                self.eagerly_resolved_aliases(file, extends, into);
             }
             _ => {}
         }
     }
 
     /// `hasNonCircularBaseConstraint`, the other way round and going by what is written: whether what the type parameter `own`
-    /// extends comes back to it, by way of what `type_parameters_written` finds in each constraint. One that only leads to a circle
+    /// extends comes back to it, by way of what `type_parameters_of_constraint` finds in each constraint. One that only leads to a circle
     /// is not in it.
     pub(super) fn is_constraint_circular(&self, file: FileId, own: TypeParamId) -> bool {
         let hir = self.hir(file);
@@ -639,7 +639,7 @@ impl Checker<'_> {
             return false;
         }
         let (mut seen, mut todo) = (TypeParams::new(), TypeParams::new());
-        self.type_parameters_written(file, hir[own].constraint, &mut todo);
+        self.type_parameters_of_constraint(file, hir[own].constraint, &mut todo);
         while let Some(next) = todo.pop() {
             if next == own {
                 return true;
@@ -647,7 +647,7 @@ impl Checker<'_> {
             if !seen.contains(&next) {
                 seen.push(next);
                 if hir[next].constraint.is_some() {
-                    self.type_parameters_written(file, hir[next].constraint, &mut todo);
+                    self.type_parameters_of_constraint(file, hir[next].constraint, &mut todo);
                 }
             }
         }
@@ -656,7 +656,7 @@ impl Checker<'_> {
 
     /// The type parameters a constraint comes down to: itself, the members of a union or an intersection, and the keys of the mapped
     /// types that are made with it.
-    fn type_parameters_written(&self, file: FileId, node: TypeNodeId, into: &mut TypeParams) {
+    fn type_parameters_of_constraint(&self, file: FileId, node: TypeNodeId, into: &mut TypeParams) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match hir[node].kind {
             TypeNodeKind::Ref { name, args } if args.is_empty() && name.len() == 1 => {
@@ -675,20 +675,20 @@ impl Checker<'_> {
             }
             // `computeBaseConstraint` goes by the type: of `T | unknown` or `T & never` no `T` is left.
             TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types)
-                if keyword_it_comes_to(hir, node).is_none() =>
+                if absorbing_keyword(hir, node).is_none() =>
             {
                 for t in hir.ids(types) {
-                    self.type_parameters_written(file, t, into);
+                    self.type_parameters_of_constraint(file, t, into);
                 }
             }
-            _ => self.mapped_keys_made_at_once(file, node, into),
+            _ => self.eagerly_resolved_mapped_keys(file, node, into),
         }
     }
 
     /// `getTypeFromMappedTypeNode` resolves the constraint of its key as soon as the type is made: the keys of the mapped types that
     /// are made together with `node`, which is in a constraint, where nothing is put off (`isDeferredTypeReferenceNode`). Members,
     /// signatures, the templates of mapped types and what they rename to wait.
-    fn mapped_keys_made_at_once(&self, file: FileId, node: TypeNodeId, into: &mut TypeParams) {
+    fn eagerly_resolved_mapped_keys(&self, file: FileId, node: TypeNodeId, into: &mut TypeParams) {
         if node.is_none() {
             return;
         }
@@ -698,14 +698,14 @@ impl Checker<'_> {
             TypeNodeKind::Array(t)
             | TypeNodeKind::Keyof(t)
             | TypeNodeKind::Readonly(t)
-            | TypeNodeKind::JSDoc { ty: t, .. } => self.mapped_keys_made_at_once(file, t, into),
+            | TypeNodeKind::JSDoc { ty: t, .. } => self.eagerly_resolved_mapped_keys(file, t, into),
             TypeNodeKind::Tuple(elems) => {
                 for e in elems.iter() {
-                    self.mapped_keys_made_at_once(file, hir[e].ty, into);
+                    self.eagerly_resolved_mapped_keys(file, hir[e].ty, into);
                 }
             }
             TypeNodeKind::Ref { name, args } => {
-                if !hir.ids(args).any(|t| is_mapped_type_written_in(hir, t)) {
+                if !hir.ids(args).any(|t| contains_mapped_type_node(hir, t)) {
                     return;
                 }
                 // `getTypeFromClassOrInterfaceReference`, `getTypeFromTypeAliasReference`: the wrong number of type arguments is an
@@ -722,7 +722,7 @@ impl Checker<'_> {
                     }
                 }
                 for t in hir.ids(args) {
-                    self.mapped_keys_made_at_once(file, t, into);
+                    self.eagerly_resolved_mapped_keys(file, t, into);
                 }
             }
             TypeNodeKind::Union(list)
@@ -730,17 +730,17 @@ impl Checker<'_> {
             | TypeNodeKind::Template { types: list, .. }
             | TypeNodeKind::Typeof { args: list, .. } => {
                 for t in hir.ids(list) {
-                    self.mapped_keys_made_at_once(file, t, into);
+                    self.eagerly_resolved_mapped_keys(file, t, into);
                 }
             }
             TypeNodeKind::IndexedAccess { obj, index } => {
-                self.mapped_keys_made_at_once(file, obj, into);
-                self.mapped_keys_made_at_once(file, index, into);
+                self.eagerly_resolved_mapped_keys(file, obj, into);
+                self.eagerly_resolved_mapped_keys(file, index, into);
             }
             // Which branch is taken, if any, is not a matter of how it is written.
             TypeNodeKind::Cond { check, extends, .. } => {
-                self.mapped_keys_made_at_once(file, check, into);
-                self.mapped_keys_made_at_once(file, extends, into);
+                self.eagerly_resolved_mapped_keys(file, check, into);
+                self.eagerly_resolved_mapped_keys(file, extends, into);
             }
             _ => {}
         }

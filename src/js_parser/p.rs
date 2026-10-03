@@ -871,7 +871,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `finishNode`: `expr` ends where the token before the current one does.
     #[inline]
     pub(crate) fn finish_expr(&mut self, expr: &mut Expr) {
-        if self.keeps_type_syntax() {
+        if self.preserves_type_syntax() {
             self.note_expr_end(expr, self.lexer.full_start());
         }
     }
@@ -4309,7 +4309,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         was_originally_bare_import: bool,
     ) -> Result<Stmt, crate::Error> {
         // The type checker has what was written (`keep_import`).
-        if self.keeps_type_syntax() {
+        if self.preserves_type_syntax() {
             return Ok(self.s(S::TypeScript::default(), loc));
         }
         let is_macro =
@@ -4409,7 +4409,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             // Return empty statement - the import is completely removed
-            if self.keeps_type_syntax() {
+            if self.preserves_type_syntax() {
                 return Ok(self.s(S::TypeScript::default(), loc));
             }
             return Ok(self.s(S::Empty {}, loc));
@@ -5261,7 +5261,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // The type checker binds for itself.
-        if self.keeps_type_syntax() {
+        if self.preserves_type_syntax() {
             return Ok(self.store_name_in_ref(name));
         }
 

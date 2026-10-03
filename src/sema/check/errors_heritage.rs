@@ -162,7 +162,7 @@ impl Checker<'_> {
         // on it: it is asked once they are not.
         let mut with_this = [ty, base].map(|t| self.type_with_this_argument(t, this));
         let [source, target] = with_this;
-        if self.is_type_related_to_if_told(source, target, Relation::Assignable, true) == Ok(true) {
+        if self.try_is_type_related_to(source, target, Relation::Assignable, true) == Ok(true) {
             return None;
         }
         for (t, plain) in with_this.iter_mut().zip([ty, base]) {

@@ -283,13 +283,13 @@ fn run_quietly(
         order: 1,
         digests: false,
         plan_options: bun_sema_driver::PlanOptions::default(),
-        keeps_everything: false,
-        stops_where_tsc_does: true,
-        says_it_as_typescript_does: false,
+        retains_everything: false,
+        stops_like_tsc: true,
+        uses_typescript_wording: false,
         loaded: None,
         checked: None,
         after_file: None,
-        declaration_file_written: None,
+        declaration_file_emitted: None,
     };
     bun_sema_driver::check_then(&request, then)
 }
@@ -340,15 +340,15 @@ impl CheckCommand {
             // The process ends while all that was loaded is still there. Where leaks are looked for, all is given back first.
             |report| match bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
                 true => report,
-                false => say_and_exit(&report, &options, &cwd),
+                false => report_and_exit(&report, &options, &cwd),
             },
         );
-        say_and_exit(&report, &options, &cwd)
+        report_and_exit(&report, &options, &cwd)
     }
 }
 
 /// Shows what was found and ends the process.
-fn say_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
+fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
     let shown_from = bun_sema_driver::host::from_native(cwd);
     // The errors are the output, as they are of `tsc`. How it went is said on the side.
     let mut out = Vec::new();
@@ -421,15 +421,15 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
         .flatten()
         .into_iter()
         .collect();
-    check_and_say(&paths, &allow_js)
+    check_and_report(&paths, &allow_js)
 }
 
 /// Type checks the project around the working directory, as `bun check` does, before one of its scripts is run.
 pub(crate) fn check_project_before() -> bool {
-    check_and_say(&[], &[])
+    check_and_report(&[], &[])
 }
 
-fn check_and_say(paths: &[Vec<u8>], compiler_options: &[CompilerOption]) -> bool {
+fn check_and_report(paths: &[Vec<u8>], compiler_options: &[CompilerOption]) -> bool {
     let cwd = working_directory();
     let report = run(&cwd, None, paths, compiler_options, 0, |report| report);
     if report.diagnostics.is_empty() && report.incomplete.is_empty() {

@@ -1,6 +1,6 @@
 //! Keep mode for TypeScript type syntax.
 //!
-//! By default the parser skips types. When `TypeSyntax::keep_types` is set, the same skip functions in
+//! By default the parser skips types. When `TypeSyntax::save_types` is set, the same skip functions in
 //! `parse/parse_skip_typescript.rs` also make the rows of the type checker's tree, by calling the helpers in this file under `if KEEP`
 //! (`clone_types.rs` makes them).
 //!
@@ -30,12 +30,12 @@ fn loc(pos: u32) -> Loc {
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Whether to build type nodes. This is the only check ordinary builds pay for, once per top-level type.
     #[inline(always)]
-    pub(crate) fn should_keep_types(&self) -> bool {
+    pub(crate) fn should_save_types(&self) -> bool {
         TYPESCRIPT
             && self
                 .type_syntax
                 .as_ref()
-                .is_some_and(|syntax| syntax.keep_types)
+                .is_some_and(|syntax| syntax.save_types)
     }
 
     #[inline]
@@ -1058,7 +1058,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if constraint.is_none() || !(flags.is_empty() || has_readonly) {
                         return None;
                     }
-                    let modifier = |sign: Option<bool>, is_there: bool| match (sign, is_there) {
+                    let modifier = |sign: Option<bool>, exists: bool| match (sign, exists) {
                         (None, false) => Some(MappedModifier::None),
                         (None | Some(true), true) => Some(MappedModifier::Add),
                         (Some(false), true) => Some(MappedModifier::Remove),
@@ -1243,7 +1243,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Called before each statement. Pass the result to `end_statement`.
     #[inline]
     pub(crate) fn begin_statement(&mut self) -> usize {
-        if !self.should_keep_types() {
+        if !self.should_save_types() {
             return 0;
         }
         let syntax = self.type_syntax_mut();
@@ -1257,7 +1257,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Called after each statement, whose `loc` is `loc`.
     #[inline]
     pub(crate) fn end_statement(&mut self, outer_modifiers_base: usize, loc: &mut Loc) {
-        if !self.should_keep_types() {
+        if !self.should_save_types() {
             return;
         }
         let base = self.type_syntax_mut().statement_modifiers_base;
@@ -1280,7 +1280,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// declaration or assignment, and the `default` after it.
     #[inline]
     pub(crate) fn push_statement_modifier(&mut self, flag: Flags, loc: Loc) {
-        if self.should_keep_types() {
+        if self.should_save_types() {
             self.type_syntax_mut().statement_modifiers.push(Modifier {
                 flag,
                 loc,
@@ -1313,7 +1313,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// `modifiers` are those of the parameter whose name has the `loc` `loc`.
     pub(crate) fn note_parameter_modifiers(&mut self, loc: &mut Loc, modifiers: &[Modifier]) {
-        if self.should_keep_types() && !modifiers.is_empty() {
+        if self.should_save_types() && !modifiers.is_empty() {
             let list = self.type_syntax_mut().b.ts.add_modifiers(modifiers);
             self.note_modifiers(loc, list);
         }
@@ -1322,7 +1322,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Those pushed since there were `base` are the modifiers of the statement, or of the parameter or the member whose name it is,
     /// that has the `loc` `loc`.
     pub(crate) fn end_parameter_modifiers(&mut self, base: usize, loc: &mut Loc) {
-        if !self.should_keep_types() {
+        if !self.should_save_types() {
             return;
         }
         let syntax = self.type_syntax_mut();
@@ -1345,7 +1345,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// The same for a decorator, whose `@` is at `loc`, of a statement that is no class.
     pub(crate) fn push_statement_decorator(&mut self, decorator: Expr, loc: Loc) {
-        if self.should_keep_types() {
+        if self.should_save_types() {
             self.type_syntax_mut().statement_modifiers.push(Modifier {
                 flag: Flags::empty(),
                 loc,

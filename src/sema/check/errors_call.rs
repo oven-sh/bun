@@ -79,7 +79,7 @@ impl Checker<'_> {
         let resolved = self.resolved_signature(file, e);
         if let Some(said) = self
             .p
-            .said_of_calls_resolved_again
+            .diagnostics_of_re_resolved_calls
             .get_ref(&mut self.task, &(file, e))
         {
             self.reported.extend_from_slice(said);
@@ -251,12 +251,12 @@ impl Checker<'_> {
             }
             return;
         }
-        let at = self.place_of_written_callee(file, data.callee);
+        let at = self.span_of_callee(file, data.callee);
         self.invocation_error(at, 2351, data.callee, apparent, (true, false), None);
     }
 
     /// Error span of a callee: from the start of the (possibly parenthesized) expression to its error end.
-    fn place_of_written_callee(&self, file: FileId, callee: ExprId) -> (FileId, u32, u32) {
+    fn span_of_callee(&self, file: FileId, callee: ExprId) -> (FileId, u32, u32) {
         (
             file,
             self.start_of(file, callee),
@@ -579,7 +579,7 @@ impl Checker<'_> {
             // With parentheses around it, it is those that are the element of the array.
             let is_element = !is_parenthesized(hir, e)
                 && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_)));
-            let at = self.place_of_written_callee(file, data.callee);
+            let at = self.span_of_callee(file, data.callee);
             if is_element {
                 self.error_at(at, 2796, &[]);
             } else {
@@ -785,7 +785,7 @@ impl Checker<'_> {
 
     /// What `resolveCall` said of the call `e` when it was resolved for good.
     pub(super) fn report_call_resolution(&mut self, file: FileId, e: ExprId) {
-        if let Some(said) = self.p.said_of_calls.get_ref(&mut self.task, &(file, e)) {
+        if let Some(said) = self.p.call_diagnostics.get_ref(&mut self.task, &(file, e)) {
             self.reported.extend_from_slice(said);
         }
     }
@@ -1013,7 +1013,7 @@ impl Checker<'_> {
         let params = self.sig_params(sig);
         // What a decorator is applied to is made up (`createSyntheticExpression`): an error about it is at the expression.
         let decorator = match node {
-            CallLike::Decorator(_) if report => Some(self.where_decorator_is(file, e)),
+            CallLike::Decorator(_) if report => Some(self.decorator_position(file, e)),
             _ => None,
         };
         if let Some(wanted) = self.sig_this_type(sig)
@@ -1052,7 +1052,7 @@ impl Checker<'_> {
             };
             let given = match arg {
                 Arg::Expr(x) if s.checks_arguments_once => {
-                    self.arg_type_kept_under(file, x, wanted)
+                    self.cached_arg_type_for_param(file, x, wanted)
                 }
                 _ => self.arg_type_under(file, arg, wanted, check_mode),
             };
@@ -1176,7 +1176,7 @@ impl Checker<'_> {
         let hir = self.hir(file);
         match (node, hir[e].kind) {
             (CallLike::Decorator(_), _) => {
-                let written = self.where_decorator_is(file, e);
+                let written = self.decorator_position(file, e);
                 (written.at_sign, written.end)
             }
             (CallLike::Call(c), ExprKind::Call(_)) => {
@@ -1298,7 +1298,7 @@ impl Checker<'_> {
             has_rest,
         } = counts;
         let decorator = match node {
-            CallLike::Decorator(_) => Some(self.where_decorator_is(file, e)),
+            CallLike::Decorator(_) => Some(self.decorator_position(file, e)),
             _ => None,
         };
         let code = if decorator.is_some() {

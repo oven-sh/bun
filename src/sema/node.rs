@@ -670,9 +670,9 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
         node.is_some() && (self.visit)(node)
     }
 
-    /// `visit`, of a part that is only there if `is_there`.
-    fn part(&mut self, of: Node, part: Part, is_there: bool) -> bool {
-        is_there && (self.visit)(of.with(part))
+    /// `visit`, of a part that is only there if `exists`.
+    fn part(&mut self, of: Node, part: Part, exists: bool) -> bool {
+        exists && (self.visit)(of.with(part))
     }
 
     /// `visitNodeList`
@@ -1657,7 +1657,7 @@ impl File {
 
     /// `node.PropertyName()`
     pub fn property_name(&self, node: Node) -> Node {
-        let is_there = match self.data(node) {
+        let exists = match self.data(node) {
             NodeData::ImportSpec(s) => self[s].imported_pos != self[s].pos,
             NodeData::ExportSpec(s) => self[s].local_pos != self[s].pos,
             // `parseObjectBindingElement`: only an identifier is a name without a property name.
@@ -1668,7 +1668,7 @@ impl File {
             }
             _ => false,
         };
-        if is_there {
+        if exists {
             node.with(Part::PropertyName)
         } else {
             Node::NONE

@@ -126,7 +126,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 || func.flags.contains(Flags::Function::IsForwardDeclaration)
             {
                 // The type checker is told of every declaration.
-                if p.keeps_type_syntax() {
+                if p.preserves_type_syntax() {
                     p.pop_scope();
                     if has_if_scope {
                         p.pop_scope();
@@ -357,7 +357,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut text = p.lexer.identifier;
             let name_start = p.lexer.loc();
             let mut arg = p.parse_binding(name_of_parameter)?;
-            if p.keeps_type_syntax() {
+            if p.preserves_type_syntax() {
                 if dots != bun_ast::Loc::EMPTY {
                     p.note_loc(&mut arg.loc, Mark::DotDotDot, dots);
                 }
@@ -493,7 +493,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // shadows any variable called "arguments" in any parent scopes. But only do
         // this if it wasn't already declared above because arguments are allowed to
         // be called "arguments", in which case the real "arguments" is inaccessible.
-        if !p.keeps_type_syntax() && !p.current_scope().members.contains_key(arguments_str) {
+        if !p.preserves_type_syntax() && !p.current_scope().members.contains_key(arguments_str) {
             func.arguments_ref = p
                 .declare_symbol(
                     js_ast::symbol::Kind::Arguments,

@@ -138,7 +138,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "class Foo { foo(): void; foo(): void {} }"
         if func.flags.contains(flags::Function::IsForwardDeclaration) {
             // A member of an object literal stays in the tree. The type checker is told of every member of a class.
-            let stays = p.lexer.tolerant && !opts.is_class || p.keeps_type_syntax();
+            let stays = p.lexer.tolerant && !opts.is_class || p.preserves_type_syntax();
             if !stays {
                 // Skip this property entirely
                 p.pop_and_discard_scope(scope_index);
@@ -576,7 +576,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             if let Some(_prop) =
                                                 p.parse_property(kind, opts, None)?
                                             {
-                                                if p.keeps_type_syntax() {
+                                                if p.preserves_type_syntax() {
                                                     return Ok(Some(_prop));
                                                 }
                                                 let mut prop = _prop;
@@ -607,7 +607,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             if let Some(prop) =
                                                 p.parse_property(kind, opts, None)?
                                             {
-                                                if p.keeps_type_syntax() {
+                                                if p.preserves_type_syntax() {
                                                     return Ok(Some(prop));
                                                 }
                                                 if prop.kind == PropertyKind::Normal
@@ -711,7 +711,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 kind: PropertyKind::ClassStaticBlock,
                                 class_static_block: Some(js_ast::StoreRef::from_bump(block)),
                                 // For the type checker only: nothing else expects a static block to have any.
-                                ts_decorators: if p.keeps_type_syntax() {
+                                ts_decorators: if p.preserves_type_syntax() {
                                     ExprNodeList::from_slice(&opts.ts_decorators)
                                 } else {
                                     ExprNodeList::from_slice(&[])
@@ -876,7 +876,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TypeParameterFlag::ALLOW_CONST_MODIFIER,
                     )?;
                     has_type_parameters = skipped != SkipTypeParameterResult::DidNotSkipAnything;
-                    type_parameters = p.kept_type_parameters(skipped);
+                    type_parameters = p.saved_type_parameters(skipped);
                 }
             }
 

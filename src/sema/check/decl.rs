@@ -377,7 +377,7 @@ impl<'p> Checker<'p> {
         if scope.is_none() {
             return Arc::from([]);
         }
-        Arc::clone(self.kept_outer_type_params(file, scope))
+        Arc::clone(self.cached_outer_type_params(file, scope))
     }
 
     /// The same, for whoever only looks at them.
@@ -385,7 +385,7 @@ impl<'p> Checker<'p> {
         if scope.is_none() || self.declares_no_type_params(file) {
             return &[];
         }
-        self.kept_outer_type_params(file, scope)
+        self.cached_outer_type_params(file, scope)
     }
 
     /// Whether no scope of `file` sees a type parameter, the `this` types of classes and interfaces included.
@@ -395,7 +395,7 @@ impl<'p> Checker<'p> {
         hir.type_params.is_empty() && hir.classes.is_empty() && hir.interfaces.is_empty()
     }
 
-    fn kept_outer_type_params(&mut self, file: FileId, scope: ScopeId) -> &'p Arc<[TypeId]> {
+    fn cached_outer_type_params(&mut self, file: FileId, scope: ScopeId) -> &'p Arc<[TypeId]> {
         let p = self.p;
         if let Some(known) = p.outer_type_params.get_ref(&mut self.task, &(file, scope)) {
             return known;
@@ -1172,10 +1172,10 @@ impl<'p> Checker<'p> {
         match *self.data(param) {
             TypeData::ThisParam(sym) => Some(self.declared_type(sym)),
             TypeData::TypeParam(file, tp, around) => {
-                let (before, scope) = (self.what_only_holds_for_now(), self.begin_scope());
+                let (before, scope) = (self.non_cacheable_mark(), self.begin_scope());
                 let constraint = self.resolve_constraint_of_type_param(param, file, tp, around);
                 let ended = self.end_scope(scope);
-                if self.what_only_holds_for_now() == before
+                if self.non_cacheable_mark() == before
                     && let Ok(stored) = ended
                 {
                     self.p
@@ -1197,7 +1197,7 @@ impl<'p> Checker<'p> {
         around: MapperId,
     ) -> Option<TypeId> {
         let constraint = self.constraint_from_type_param(param)?;
-        if self.constraint_comes_back(param, constraint) {
+        if self.has_circular_base_constraint(param, constraint) {
             return None;
         }
         // `getTypeFromMappedTypeNode` resolves the constraint of its key as soon as the mapped type is made, so a cycle can
@@ -1251,7 +1251,11 @@ impl<'p> Checker<'p> {
     }
 
     /// `hasNonCircularBaseConstraint`, the other way round, as far as type parameters, unions and intersections lead.
-    pub(super) fn constraint_comes_back(&mut self, param: TypeId, constraint: TypeId) -> bool {
+    pub(super) fn has_circular_base_constraint(
+        &mut self,
+        param: TypeId,
+        constraint: TypeId,
+    ) -> bool {
         if !matches!(
             self.data(constraint),
             TypeData::TypeParam(..) | TypeData::Union(_) | TypeData::Intersection(_)
@@ -1521,7 +1525,7 @@ impl<'p> Checker<'p> {
                 }
                 Err(open) => {
                     let raw = constraint.map_or(0, |ty| u64::from(ty.0) + 1);
-                    self.keep_provisionally(Query::InferredConstraint(param), raw, open);
+                    self.cache_provisionally(Query::InferredConstraint(param), raw, open);
                 }
             }
         }
@@ -1536,10 +1540,10 @@ impl<'p> Checker<'p> {
         let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
             return None;
         };
-        let (before, scope) = (self.what_only_holds_for_now(), self.begin_scope());
+        let (before, scope) = (self.non_cacheable_mark(), self.begin_scope());
         let default = self.resolve_default_of_type_param(file, tp, around);
         let ended = self.end_scope(scope);
-        if self.what_only_holds_for_now() == before
+        if self.non_cacheable_mark() == before
             && let Ok(stored) = ended
         {
             self.p
@@ -1664,7 +1668,7 @@ impl<'p> Checker<'p> {
             return TypeId(raw as u32);
         }
         if !self.enter(Query::Declared(sym)) {
-            return if self.came_full_circle {
+            return if self.found_cycle {
                 TypeId::ERROR
             } else {
                 TypeId::UNRESOLVED
@@ -1696,7 +1700,7 @@ impl<'p> Checker<'p> {
                     .declared_types
                     .insert(&mut self.task, sym, (ty, false), stored);
             }
-            Err(open) => self.keep_provisionally(Query::Declared(sym), u64::from(ty.0), open),
+            Err(open) => self.cache_provisionally(Query::Declared(sym), u64::from(ty.0), open),
         }
         ty
     }
@@ -1933,7 +1937,7 @@ impl<'p> Checker<'p> {
         if matches!(hir[initializer].kind, ExprKind::Missing) {
             return result;
         }
-        let at = self.place_of_written_expr(file, initializer);
+        let at = self.span_of_parenthesized_expr(file, initializer);
         match result.value {
             Some(value) => {
                 if is_const
@@ -2081,7 +2085,7 @@ impl<'p> Checker<'p> {
                     .insert(&mut self.task, (file, node), ty, stored);
             }
             Err(open) => {
-                self.keep_provisionally(Query::TypeNode(file, node), u64::from(ty.0), open);
+                self.cache_provisionally(Query::TypeNode(file, node), u64::from(ty.0), open);
             }
         }
         ty
@@ -2136,7 +2140,7 @@ impl<'p> Checker<'p> {
             }
         }
         // `ObjectFlagsFromTypeNode`
-        let made_before = self.types().made_before();
+        let first_new_type_id = self.types().first_new_type_id();
         let ty = match hir[node].kind {
             TypeNodeKind::Array(element) => {
                 let element = self.type_from_node(file, element);
@@ -2164,7 +2168,7 @@ impl<'p> Checker<'p> {
             }
             _ => TypeId::ERROR,
         };
-        self.types().mark_from_type_node(ty, made_before);
+        self.types().mark_from_type_node(ty, first_new_type_id);
         ty
     }
 
@@ -2191,9 +2195,9 @@ impl<'p> Checker<'p> {
         let alias = alias
             .as_ref()
             .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
-        let made_before = self.types().made_before();
+        let first_new_type_id = self.types().first_new_type_id();
         let ty = self.deferred_type_reference(reference, alias);
-        self.types().mark_from_type_node(ty, made_before);
+        self.types().mark_from_type_node(ty, first_new_type_id);
         ty
     }
 
@@ -2650,7 +2654,7 @@ impl<'p> Checker<'p> {
         if most != 0 && !is_class_or_interface && flags.contains(SymFlags::TYPE_ALIAS) {
             self.type_from_type_alias_reference(file, node, sym, &args)
         } else {
-            self.written_type_reference(sym, &args)
+            self.type_reference_of_node(sym, &args)
         }
     }
 
@@ -2782,7 +2786,7 @@ impl<'p> Checker<'p> {
                     let key = self.type_from_node(file, hir.id_at(args, 0));
                     if self.is_valid_index_key_type(key) {
                         let value = self.type_from_node(file, hir.id_at(args, 1));
-                        return Some(self.written_type_reference(record, &[key, value]));
+                        return Some(self.type_reference_of_node(record, &[key, value]));
                     }
                 }
                 return Some(TypeId::ANY);
@@ -2967,7 +2971,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `type_reference` for a type reference node.
-    fn written_type_reference(&mut self, sym: Sym, args: &[TypeId]) -> TypeId {
+    fn type_reference_of_node(&mut self, sym: Sym, args: &[TypeId]) -> TypeId {
         if !self
             .files()
             .flags(sym)
@@ -2978,9 +2982,9 @@ impl<'p> Checker<'p> {
         // `getTypeFromClassOrInterfaceReference` passes `ObjectFlagsFromTypeNode`. The declared type is resolved first, so it is not
         // the type created here. The target of an alias reference is created by instantiation and gets no flag.
         self.declared_type(sym);
-        let made_before = self.types().made_before();
+        let first_new_type_id = self.types().first_new_type_id();
         let ty = self.type_reference(sym, args);
-        self.types().mark_from_type_node(ty, made_before);
+        self.types().mark_from_type_node(ty, first_new_type_id);
         ty
     }
 
@@ -3466,7 +3470,7 @@ impl<'p> Checker<'p> {
 
     /// `sig_params`, for a caller that stands where tsgo asks for the types of the first `count` parameters (`getTypeAtPosition`): a
     /// circle through one of them is a circle, and `sig_params_of_declaration` would take it for its own doing.
-    pub(super) fn sig_params_asked_for(&mut self, sig: SigId, count: usize) -> List<'p, SigParam> {
+    pub(super) fn sig_params_up_to(&mut self, sig: SigId, count: usize) -> List<'p, SigParam> {
         if self.recent_sig_params[sig.0 as usize % RECENT_SIGS].0 != sig
             && let SigData::Decl { file, func, .. } | SigData::Construct { file, func, .. } =
                 *self.types().sig(sig)
@@ -3480,7 +3484,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `kept` is the stored result of `sig_params(sig)`.
-    fn kept_sig_params(&mut self, sig: SigId, kept: &'p [SigParam]) -> List<'p, SigParam> {
+    fn cached_sig_params(&mut self, sig: SigId, kept: &'p [SigParam]) -> List<'p, SigParam> {
         self.recent_sig_params[sig.0 as usize % RECENT_SIGS] = (sig, kept);
         List::Kept(kept)
     }
@@ -3489,7 +3493,7 @@ impl<'p> Checker<'p> {
     fn sig_params_not_recent(&mut self, sig: SigId) -> List<'p, SigParam> {
         let (file, func, mapper) = match self.types().sig(sig) {
             SigData::WithReturn { sig: inner, .. } => return self.sig_params(*inner),
-            SigData::Synth { params, .. } => return self.kept_sig_params(sig, params),
+            SigData::Synth { params, .. } => return self.cached_sig_params(sig, params),
             // Nothing is kept for one of these.
             SigData::DefaultConstruct { .. } => {
                 return match self.default_construct_base_sig(sig) {
@@ -3503,13 +3507,13 @@ impl<'p> Checker<'p> {
             } => (*file, *func, *mapper),
         };
         if let Some(kept) = self.p.sig_params.get_ref(&mut self.task, &sig) {
-            return self.kept_sig_params(sig, kept);
+            return self.cached_sig_params(sig, kept);
         }
         let scope = self.begin_scope();
         let params = self.sig_params_of_declaration(file, func, mapper);
         if let Ok(stored) = self.end_scope_by_counters(scope) {
             let kept = (self.p.sig_params).insert_ref(&mut self.task, sig, params.into(), stored);
-            return self.kept_sig_params(sig, kept.1);
+            return self.cached_sig_params(sig, kept.1);
         }
         List::Own(params)
     }
@@ -3560,11 +3564,11 @@ impl<'p> Checker<'p> {
             let declared = self.type_of_param(file, p);
             self.eager.pop();
             // `isOptionalParameter`: nobody else calls it, so what it is not given it does not need.
-            let is_left_out = given.is_some_and(|given| i >= given)
+            let is_omitted = given.is_some_and(|given| i >= given)
                 && param.ty.is_none()
                 && !param.flags.contains(Flags::REST);
             let optional =
-                param.flags.contains(Flags::OPTIONAL) || param.default.is_some() || is_left_out;
+                param.flags.contains(Flags::OPTIONAL) || param.default.is_some() || is_omitted;
             // Seen from outside, what may be left out may as well be given as `undefined`.
             let declared = if optional {
                 self.optional(declared)
@@ -3631,7 +3635,7 @@ impl<'p> Checker<'p> {
             return TypeId(raw as u32);
         }
         if !self.enter(Query::ReturnOfSignature(sig)) {
-            return if self.came_full_circle {
+            return if self.found_cycle {
                 TypeId::ERROR
             } else {
                 TypeId::UNRESOLVED
@@ -3657,7 +3661,7 @@ impl<'p> Checker<'p> {
                     .insert(&mut self.task, sig, ty, stored);
             }
             Err(open) => {
-                self.keep_provisionally(Query::ReturnOfSignature(sig), u64::from(ty.0), open);
+                self.cache_provisionally(Query::ReturnOfSignature(sig), u64::from(ty.0), open);
             }
         }
         ty

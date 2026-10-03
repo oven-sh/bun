@@ -806,7 +806,7 @@ fn heads(top: &str) -> Vec<String> {
 
 /// `compileFilesWithHost` compiles twice, and says so (TS-1) where writing the output has added errors: "such an error may not be reflected
 /// on the command line or in the editor". Without that, what is left is what there is before anything is written.
-fn without_what_emit_added(text: &str) -> String {
+fn without_errors_added_by_emit(text: &str) -> String {
     if !text.contains("error TS-1: ") {
         return text.to_owned();
     }
@@ -887,7 +887,7 @@ fn listed_under_the_mismatch(text: &str) -> Vec<&str> {
 
 /// `compileFilesWithHost` goes by the shorter of its two lists. Where writing the output has taken errors away, that is what there is
 /// afterwards, and what there was before besides is listed under TS-1.
-fn what_emit_took_away(text: &str) -> Vec<&str> {
+fn errors_removed_by_emit(text: &str) -> Vec<&str> {
     match counts_around_emit(text) {
         Some((before, after)) if before > after => listed_under_the_mismatch(text),
         _ => Vec::new(),
@@ -1183,7 +1183,7 @@ fn run_one(
         project
     };
     let project = parsed_command_line();
-    if !has_baselines && is_unsupported(&project.compiler_options_as_written) {
+    if !has_baselines && is_unsupported(&project.raw_compiler_options) {
         return None;
     }
 
@@ -1391,14 +1391,14 @@ fn run_one(
         order: 1,
         digests: false,
         plan_options: bun_sema_driver::PlanOptions::default(),
-        keeps_everything: false,
-        stops_where_tsc_does: false,
-        says_it_as_typescript_does: true,
+        retains_everything: false,
+        stops_like_tsc: false,
+        uses_typescript_wording: true,
         loaded: None,
         checked: types
             .is_some()
             .then_some(&note_circle as &(dyn Fn(&bun_sema::check::Program) + Sync)),
-        declaration_file_written: None,
+        declaration_file_emitted: None,
         after_file: match (types, dts) {
             (Some(_), _) => Some(&write_types),
             (None, Some(_)) => Some(&write_dts),
@@ -1589,10 +1589,10 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                 ))
                                 .map(|bytes| String::from_utf8_lossy(&bytes).replace("\r\n", "\n"))
                                 .unwrap_or_default();
-                                let taken_away = what_emit_took_away(&expected);
-                                if !taken_away.is_empty() {
+                                let removed = errors_removed_by_emit(&expected);
+                                if !removed.is_empty() {
                                     report.diagnostics.retain(|d| {
-                                        !taken_away.contains(&as_listed(d, setup.lib_dir).as_str())
+                                        !removed.contains(&as_listed(d, setup.lib_dir).as_str())
                                     });
                                 }
                                 let ours = if report.diagnostics.is_empty() {
@@ -1608,7 +1608,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                     ))
                                     .into_owned()
                                 };
-                                let expected = without_what_emit_added(&expected);
+                                let expected = without_errors_added_by_emit(&expected);
                                 let level = level_of(&ours, &expected);
                                 if let Some(out) = setup.out
                                     && level != Level::All
@@ -1651,7 +1651,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
 /// ten minutes the run ends, and says which it was.
 struct Watched(usize);
 
-static UNDER_WAY: Mutex<Vec<Option<(String, std::time::Instant)>>> = Mutex::new(Vec::new());
+static IN_PROGRESS: Mutex<Vec<Option<(String, std::time::Instant)>>> = Mutex::new(Vec::new());
 
 impl Watched {
     fn new(name: &str) -> Watched {
@@ -1660,7 +1660,7 @@ impl Watched {
             std::thread::spawn(|| {
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(1));
-                    for (name, since) in UNDER_WAY.lock().unwrap().iter().flatten() {
+                    for (name, since) in IN_PROGRESS.lock().unwrap().iter().flatten() {
                         if since.elapsed() > std::time::Duration::from_secs(60) {
                             eprintln!("STUCK: {name} has been under way for ten minutes. The run ends here.");
                             std::process::exit(3);
@@ -1669,16 +1669,16 @@ impl Watched {
                 }
             });
         });
-        let mut under_way = UNDER_WAY.lock().unwrap();
+        let mut in_progress = IN_PROGRESS.lock().unwrap();
         let entry = Some((name.to_owned(), std::time::Instant::now()));
-        match under_way.iter().position(Option::is_none) {
+        match in_progress.iter().position(Option::is_none) {
             Some(free) => {
-                under_way[free] = entry;
+                in_progress[free] = entry;
                 Watched(free)
             }
             None => {
-                under_way.push(entry);
-                Watched(under_way.len() - 1)
+                in_progress.push(entry);
+                Watched(in_progress.len() - 1)
             }
         }
     }
@@ -1686,6 +1686,6 @@ impl Watched {
 
 impl Drop for Watched {
     fn drop(&mut self) {
-        UNDER_WAY.lock().unwrap()[self.0] = None;
+        IN_PROGRESS.lock().unwrap()[self.0] = None;
     }
 }

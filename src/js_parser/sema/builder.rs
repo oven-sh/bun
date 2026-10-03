@@ -49,18 +49,18 @@ const SEEN_NAMES_LEN: usize = 1 << 14;
 
 thread_local! {
     /// The vectors the tree of the last file was made in, empty: they have about the room the next needs.
-    static ROOM: std::cell::RefCell<hir::File> = Default::default();
+    static RECYCLED: std::cell::RefCell<hir::File> = Default::default();
     /// `Builder::seen_names` between two files, and `Interner::number` of the interner they are of.
     static SEEN_NAMES: std::cell::Cell<(u64, Box<[std::cell::Cell<SeenName>]>)> = Default::default();
 }
 
-/// `ROOM` and `SEEN_NAMES`.
+/// `RECYCLED` and `SEEN_NAMES`.
 #[derive(Default)]
-pub(crate) struct Room(hir::File, (u64, Box<[std::cell::Cell<SeenName>]>));
+pub(crate) struct Recycled(hir::File, (u64, Box<[std::cell::Cell<SeenName>]>));
 
 /// Replaces what the last file of this thread left for the next.
-pub(crate) fn replace_room(room: Room) -> Room {
-    Room(ROOM.replace(room.0), SEEN_NAMES.replace(room.1))
+pub(crate) fn replace_recycled(room: Recycled) -> Recycled {
+    Recycled(RECYCLED.replace(room.0), SEEN_NAMES.replace(room.1))
 }
 
 impl Drop for Builder<'_> {
@@ -70,8 +70,8 @@ impl Drop for Builder<'_> {
 }
 
 /// `file` is finished: it is fitted, and the vectors it was made in serve the next file of this thread.
-pub(crate) fn leave_room(file: &mut hir::File) {
-    ROOM.with_borrow_mut(|room| file.fit_leaving_room(room));
+pub(crate) fn recycle(file: &mut hir::File) {
+    RECYCLED.with_borrow_mut(|room| file.shrink_to_fit_recycling(room));
 }
 
 impl<'a> Builder<'a> {
@@ -84,7 +84,7 @@ impl<'a> Builder<'a> {
             seen_names.fill(std::cell::Cell::new(SeenName::NONE));
         }
         Builder {
-            file: ROOM.take(),
+            file: RECYCLED.take(),
             atoms,
             seen_names,
             keyword_identifier_positions: Default::default(),

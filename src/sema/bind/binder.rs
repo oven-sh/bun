@@ -440,9 +440,9 @@ impl<'f> Binder<'f> {
             }
             _ => {
                 // A function or a class without a name is kept as `default`.
-                let is_kept =
+                let is_cached =
                     name == known::missing && matches!(decl, Decl::Fn(_) | Decl::Class(_));
-                let kept = if is_kept { known::default } else { name };
+                let kept = if is_cached { known::default } else { name };
                 let symbol = self.new_symbol(SymFlags::empty(), kept);
                 match existing {
                     Some(existing) if !is_replaceable => {
@@ -1529,15 +1529,15 @@ impl<'f> Binder<'f> {
             self.b.nested_names = filter.into_boxed_slice();
         }
         // Labels.
-        let (mut kept, mut not_kept) = (0, 0);
+        let (mut kept, mut not_cached) = (0, 0);
         for label in &self.label_edges {
             if label.node.is_some() {
                 kept += label.edges.len();
             } else {
-                not_kept += 1;
+                not_cached += 1;
             }
         }
-        self.b.flow_places = self.b.flow.len() as u32 + self.spared + not_kept;
+        self.b.flow_places = self.b.flow.len() as u32 + self.spared + not_cached;
         self.b.flow_edges.reserve_exact(kept);
         for node in &mut self.b.flow {
             let (Flow::Label { start, len } | Flow::Loop { start, len }) = node else {

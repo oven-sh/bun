@@ -6,7 +6,7 @@ use crate::bind::SymbolId;
 use crate::local::{Chunked, Hashed, LOCAL, MaybeLocal, spread_word};
 use crate::program::Sym;
 use crate::table::{
-    Bases, Buffered, ById, ByIdKept, ByKey, ByNode, ByNodeKept, Cell as _, FileLocal,
+    Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect, Cell as _, FileLocal,
 };
 use crate::types::{TypeData, TypeId, TypeStore, Types};
 use crate::util::{AppendVec, GrowingPlaces};
@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 type Node = (FileId, u32);
 
-/// A value that holds a handle of another table, as `KeptMembers` does.
+/// A value that holds a handle of another table, as `CachedMembers` does.
 #[derive(Copy, Clone, PartialEq, Debug)]
 struct Holder {
     shape: Handle,
@@ -35,9 +35,9 @@ struct Tables {
     by_node: ByNode<Node, TypeId, Buffered>,
     set: ByNode<Node, (), Buffered>,
     by_id: ById<TypeId, TypeId, Buffered>,
-    shapes: ByIdKept<TypeId, Box<[TypeId]>, Buffered>,
-    kept_by_node: ByNodeKept<Node, Box<[TypeId]>, Buffered>,
-    members: ByIdKept<TypeId, Holder, Buffered>,
+    shapes: ByIdIndirect<TypeId, Box<[TypeId]>, Buffered>,
+    kept_by_node: ByNodeIndirect<Node, Box<[TypeId]>, Buffered>,
+    members: ByIdIndirect<TypeId, Holder, Buffered>,
     by_key: ByKey<(TypeId, TypeId), TypeId, Buffered>,
 }
 
@@ -55,9 +55,9 @@ impl Tables {
             by_node: ByNode::new(&bases),
             set: ByNode::new(&bases),
             by_id: ById::default(),
-            shapes: ByIdKept::default(),
-            kept_by_node: ByNodeKept::new(&bases),
-            members: ByIdKept::default(),
+            shapes: ByIdIndirect::default(),
+            kept_by_node: ByNodeIndirect::new(&bases),
+            members: ByIdIndirect::default(),
             by_key: ByKey::default(),
         };
         tables.by_node.set_slot(0);
@@ -628,7 +628,7 @@ fn the_digest_takes_an_atom_as_its_text() {
         let used = used.map(|text| atoms.lookup(text).unwrap());
         let mut by_id = ById::<Atom, TypeId, Buffered>::default();
         let mut by_key = ByKey::<(TypeId, Atom), TypeId, Buffered>::default();
-        let mut kept = ByIdKept::<TypeId, Box<[Atom]>, Buffered>::default();
+        let mut kept = ByIdIndirect::<TypeId, Box<[Atom]>, Buffered>::default();
         by_id.set_slot(0);
         by_key.set_slot(1);
         kept.set_slot(2);

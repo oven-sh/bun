@@ -124,12 +124,12 @@ impl<'p> Checker<'p> {
 
     /// What the transformer has reported is said.
     pub(super) fn finish_isolated_declarations(&mut self, tx: Emit) {
-        self.iso_say_all(tx.file, tx.said);
+        self.iso_report_all(tx.file, tx.said);
     }
 
     /// `SortAndDeduplicateDiagnostics`, `compactAndMergeRelatedInfos`: what is reported twice is one error, with the related
     /// information of both in the order of the file.
-    fn iso_say_all(&mut self, file: FileId, mut said: Vec<Said>) {
+    fn iso_report_all(&mut self, file: FileId, mut said: Vec<Said>) {
         said.sort_by(|a, b| {
             (a.start, a.end, a.code)
                 .cmp(&(b.start, b.end, b.code))
@@ -255,7 +255,7 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── the errors ─────────────────────────────
 
-    fn iso_said(&self, file: FileId, node: Node, code: u32) -> Said {
+    fn iso_diagnostic(&self, file: FileId, node: Node, code: u32) -> Said {
         let (start, end) = self.get_error_range_for_node(file, node);
         Said {
             start,
@@ -347,7 +347,7 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         let declaration = self.iso_nearest_declaration(file, node);
         if declaration.is_none() {
-            return self.iso_said(file, node, message.unwrap_or(9013));
+            return self.iso_diagnostic(file, node, message.unwrap_or(9013));
         }
         // `isParentForIDDIagnostic`
         let parent = hir.find_ancestor_or_quit(hir.parent(node), |n| match hir.kind(n) {
@@ -363,7 +363,7 @@ impl<'p> Checker<'p> {
             true => Self::iso_codes_of_declaration(hir.kind(declaration)).0,
             false => 9013,
         };
-        let mut said = self.iso_said(file, node, message.unwrap_or(code));
+        let mut said = self.iso_diagnostic(file, node, message.unwrap_or(code));
         said.related.extend(self.iso_suggestion(file, declaration));
         if !is_direct {
             said.related
@@ -381,7 +381,7 @@ impl<'p> Checker<'p> {
             Some(param) if hir[func].kind == FnKind::Setter => hir.node(param),
             _ => node,
         };
-        let mut said = self.iso_said(file, target, 9009);
+        let mut said = self.iso_diagnostic(file, target, 9009);
         for (accessor, code) in [(setter, 9033), (getter, 9032)] {
             let related = accessor.map(|f| self.iso_related(file, hir.node(f), code, Vec::new()));
             said.related.extend(related);
@@ -392,7 +392,7 @@ impl<'p> Checker<'p> {
     /// `createReturnTypeError`
     fn iso_return_type_error(&self, file: FileId, node: Node) -> Said {
         let (code, suggestion) = Self::iso_codes_of_declaration(self.hir(file).kind(node));
-        let mut said = self.iso_said(file, node, code);
+        let mut said = self.iso_diagnostic(file, node, code);
         self.iso_add_parent_declaration(file, node, &mut said);
         said.related
             .push(self.iso_related(file, node, suggestion, Vec::new()));
@@ -402,7 +402,7 @@ impl<'p> Checker<'p> {
     /// `createObjectLiteralError`, `createArrayLiteralError`
     fn iso_literal_error(&self, file: FileId, node: Node) -> Said {
         let code = Self::iso_codes_of_declaration(self.hir(file).kind(node)).0;
-        let mut said = self.iso_said(file, node, code);
+        let mut said = self.iso_diagnostic(file, node, code);
         self.iso_add_parent_declaration(file, node, &mut said);
         said
     }
@@ -410,7 +410,7 @@ impl<'p> Checker<'p> {
     /// `createVariableOrPropertyError`
     fn iso_variable_or_property_error(&self, file: FileId, node: Node) -> Said {
         let code = Self::iso_codes_of_declaration(self.hir(file).kind(node)).0;
-        let mut said = self.iso_said(file, node, code);
+        let mut said = self.iso_diagnostic(file, node, code);
         said.related.extend(self.iso_suggestion(file, node));
         said
     }
@@ -425,7 +425,7 @@ impl<'p> Checker<'p> {
         if !adds_undefined && hir.initializer(node).is_some() {
             return self.iso_expression_error(file, hir.initializer(node), None);
         }
-        let mut said = self.iso_said(file, node, if adds_undefined { 9025 } else { 9011 });
+        let mut said = self.iso_diagnostic(file, node, if adds_undefined { 9025 } else { 9011 });
         said.related.extend(self.iso_suggestion(file, node));
         said
     }
@@ -434,7 +434,7 @@ impl<'p> Checker<'p> {
     fn iso_error_for(&mut self, file: FileId, node: Node) -> Said {
         let hir = self.hir(file);
         if hir.find_ancestor_kind(node, Kind::HeritageClause).is_some() {
-            return self.iso_said(file, node, 9021);
+            return self.iso_diagnostic(file, node, 9021);
         }
         let (kind, data) = (hir.kind(node), hir.data(node));
         // `IsPartOfTypeNode`, `IsTypeQueryNode`, `IsEntityName`, `IsEntityNameExpression`: `createEntityInTypeNodeError`
@@ -442,7 +442,7 @@ impl<'p> Checker<'p> {
             || matches!(data, NodeData::Type(_))
             || matches!(data, NodeData::Expr(e) if is_property_access_entity_name_expression(hir, e))
         {
-            let mut said = self.iso_said(file, node, 9039);
+            let mut said = self.iso_diagnostic(file, node, 9039);
             said.args = vec![self.source_text(file, said.start, said.end)];
             self.iso_add_parent_declaration(file, node, &mut said);
             return said;
@@ -465,7 +465,7 @@ impl<'p> Checker<'p> {
                 | Kind::FunctionDeclaration,
                 _,
             ) => self.iso_return_type_error(file, node),
-            (Kind::BindingElement, _) => self.iso_said(file, node, 9019),
+            (Kind::BindingElement, _) => self.iso_diagnostic(file, node, 9019),
             (Kind::PropertyDeclaration | Kind::VariableDeclaration, _) => {
                 self.iso_variable_or_property_error(file, node)
             }
@@ -558,7 +558,7 @@ impl<'p> Checker<'p> {
             return;
         };
         for target in self.iso_expando_targets(tx.file, ty) {
-            let said = self.iso_said(tx.file, self.hir(tx.file).node(target), 9023);
+            let said = self.iso_diagnostic(tx.file, self.hir(tx.file).node(target), 9023);
             tx.said.push(said);
         }
     }
@@ -1842,7 +1842,7 @@ impl<'p> Checker<'p> {
                     && files.decls_of(merged).iter().any(|&(of, _)| of == target)
             });
         if is_required {
-            let said = self.iso_said(file, self.hir(file).node(s), 9026);
+            let said = self.iso_diagnostic(file, self.hir(file).node(s), 9026);
             tx.said.push(said);
         }
     }
@@ -1887,7 +1887,7 @@ impl<'p> Checker<'p> {
                 }
                 _ => return false,
             };
-            let said = self.iso_said(file, hir.node(m), code);
+            let said = self.iso_diagnostic(file, hir.node(m), code);
             tx.said.push(said);
             return true;
         }

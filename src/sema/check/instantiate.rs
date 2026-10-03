@@ -234,12 +234,12 @@ impl<'p> Checker<'p> {
         if let Some(known) = self.recent_instantiations.get(ty.0, mapper.0) {
             return TypeId(known);
         }
-        self.instantiate_kept(ty, mapper)
+        self.instantiate_cached(ty, mapper)
     }
 
     /// `instantiate`, of a type that mentions type parameters, is none itself and was not asked about lately.
     #[inline(never)]
-    fn instantiate_kept(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
+    fn instantiate_cached(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
         if let Some(known) = self.p.instantiations.get(&mut self.task, &(ty, mapper)) {
             self.recent_instantiations.put(ty.0, mapper.0, known.0);
             return known;

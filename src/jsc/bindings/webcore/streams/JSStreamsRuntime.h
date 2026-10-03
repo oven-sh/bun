@@ -203,6 +203,7 @@ namespace WebCore {
 //   onReadableStreamTo*Fulfilled: the generic-path promise chains
 //     (toArrayBuffer/toBytes/toBlob: value = the chunk array; toJSON: value = the text;
 //      toFormData: value = the Blob, context = the contentType JSString).
+//   onReadableStreamConsumedThenReject: value = the Blob (dropped), context = the error to throw.
 //   onIntoArrayReadMany*: readableStreamIntoArray's readMany() continuation (readMany may
 //     return a Promise); context = an InternalFieldTuple{reader, resultArray}.
 //   onDirectConsumeLoopRead*: the readableStreamTo{Text,Array}Direct read loop;
@@ -219,6 +220,7 @@ namespace WebCore {
     V(onReadableStreamToJSONFulfilled)                                                                       \
     V(onReadableStreamToBlobFulfilled)                                                                       \
     V(onReadableStreamToFormDataFulfilled)                                                                   \
+    V(onReadableStreamConsumedThenReject)                                                                    \
     V(onIntoArrayReadManyFulfilled) /* append value; !done => readMany() again; done => release + resolve */ \
     V(onIntoArrayReadManyRejected) /* release the reader, reject the result promise */                       \
     V(onIntoArrayReadFulfilled) /* persistent-op pump: append the read chunk, keep filling */                \

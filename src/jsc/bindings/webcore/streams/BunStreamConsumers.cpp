@@ -1311,7 +1311,8 @@ JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableSt
     return derived;
 }
 
-JSValue readableStreamToFormData(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, JSValue contentType)
+// Reads `stream` to its end as a Blob; `(runtime->*handler)()(blob, context)` then settles the result.
+static JSValue readableStreamToBlobThen(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, JSFunction* (JSStreamsRuntime::*handler)() const, JSValue context)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1326,8 +1327,18 @@ JSValue readableStreamToFormData(JSGlobalObject* globalObject, WebCore::JSReadab
     }
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
-    blobPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadableStreamToFormDataFulfilled(), jsUndefined(), derived, contentType);
+    blobPromise->performPromiseThenWithContext(vm, globalObject, (runtime->*handler)(), jsUndefined(), derived, context);
     return derived;
+}
+
+JSValue readableStreamToFormData(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, JSValue contentType)
+{
+    return readableStreamToBlobThen(globalObject, stream, &JSStreamsRuntime::onReadableStreamToFormDataFulfilled, contentType);
+}
+
+JSValue readableStreamConsumeThenReject(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, JSValue error)
+{
+    return readableStreamToBlobThen(globalObject, stream, &JSStreamsRuntime::onReadableStreamConsumedThenReject, error);
 }
 
 } // namespace WebStreams
@@ -1532,6 +1543,14 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToFormDataFulfilled
     arguments.append(blob);
     arguments.append(contentType);
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::call(globalObject, fromFunction, callData, constructor, arguments)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamConsumedThenReject, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    throwException(globalObject, scope, callFrame->argument(1));
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onIntoArrayReadManyFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))

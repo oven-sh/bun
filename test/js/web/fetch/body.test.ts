@@ -1584,6 +1584,7 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     locked: stream.locked,
   });
   const consumedState = { readable: false, errored: false, disturbed: true, locked: true };
+  const notFormData = { "content-type": "application/json" };
 
   for (const [ownerName, make] of owners) {
     describe(ownerName, () => {
@@ -1850,8 +1851,175 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
           });
         }
       });
+
+      // https://fetch.spec.whatwg.org/#dom-body-formdata is "consume body" like
+      // every other reader: the body is read to its end, and only then does a
+      // Content-Type that is not form data reject the read. A formData() that
+      // fails this way has used the body up, however the body is held. WPT
+      // asserts the same in fetch/api/response/response-consume.html
+      // (checkBodyFormDataError: "bodyUsed turned true").
+      describe("formData() reads the body before it rejects a Content-Type that is not form data", () => {
+        const cases = sources.flatMap(([name, init]) => [
+          [name, "", init, false] as const,
+          [name, " after .body", init, true] as const,
+        ]);
+        test.each(cases)("%s%s", async (name, when, init, touch) => {
+          const owner = make(init(), notFormData);
+          const stream = touch ? owner.body! : null;
+          const error = await owner.formData().then(
+            () => null,
+            e => e,
+          );
+          expect({
+            error: [error?.constructor.name, error?.code],
+            bodyUsed: owner.bodyUsed,
+            sameStream: stream === null || owner.body === stream,
+            locked: owner.body!.locked,
+            getReader: errorName(() => owner.body!.getReader()),
+            clone: errorName(() => owner.clone()),
+            text: await settled(owner.text()),
+            formDataAgain: await settled(owner.formData()),
+          }).toEqual({
+            error: ["TypeError", "ERR_FORMDATA_PARSE_ERROR"],
+            bodyUsed: true,
+            sameStream: true,
+            locked: true,
+            getReader: "TypeError",
+            clone: "TypeError",
+            text: "TypeError",
+            formDataAgain: "TypeError",
+          });
+        });
+
+        test("a body without a Content-Type", async () => {
+          const owner = make(jsStream("payload"));
+          expect(await owner.formData().then(String, e => e.code)).toBe("ERR_FORMDATA_PARSE_ERROR");
+          expect({ bodyUsed: owner.bodyUsed, text: await settled(owner.text()) }).toEqual({
+            bodyUsed: true,
+            text: "TypeError",
+          });
+        });
+
+        test("a FormData body under a Content-Type that is not form data", async () => {
+          const form = new FormData();
+          form.append("a", "1");
+          const owner = make(form, notFormData);
+          expect(await owner.formData().then(String, e => e.code)).toBe("ERR_FORMDATA_PARSE_ERROR");
+          expect({ bodyUsed: owner.bodyUsed, text: await settled(owner.text()) }).toEqual({
+            bodyUsed: true,
+            text: "TypeError",
+          });
+        });
+
+        test("a body stream that fails rejects with its own error", async () => {
+          const boom = new Error("boom");
+          const owner = make(
+            new ReadableStream({
+              pull(c) {
+                c.error(boom);
+              },
+            }),
+            notFormData,
+          );
+          expect(
+            await owner.formData().then(
+              () => null,
+              e => e,
+            ),
+          ).toBe(boom);
+          expect(owner.bodyUsed).toBe(true);
+        });
+      });
     });
   }
+
+  // There is nothing to read in a null body, so the failed formData() leaves it as it was.
+  test("formData() on a null body that is not form data rejects and uses nothing up", async () => {
+    for (const owner of [
+      new Response(null, { headers: notFormData }),
+      new Request("http://a/", { method: "POST", headers: notFormData }),
+    ]) {
+      expect(await owner.formData().then(String, e => e.code)).toBe("ERR_FORMDATA_PARSE_ERROR");
+      expect({
+        body: owner.body,
+        bodyUsed: owner.bodyUsed,
+        clone: errorName(() => owner.clone()),
+        text: await owner.text(),
+      }).toEqual({ body: null, bodyUsed: false, clone: "ok", text: "" });
+    }
+  });
+
+  // The same holds for a body that is still on the wire when formData() is
+  // called: the read waits for the rest of it, then rejects.
+  describe("formData() on a body that is still arriving and is not form data", () => {
+    const encoder = new TextEncoder();
+    // A JSON body in two parts. The second part is held back until `release()`.
+    const gated = () => {
+      const { promise, resolve: release } = Promise.withResolvers<void>();
+      const stream = new ReadableStream({
+        async pull(c) {
+          c.enqueue(encoder.encode('{"a":'));
+          await promise;
+          c.enqueue(encoder.encode("1}"));
+          c.close();
+        },
+      });
+      return { stream, release };
+    };
+    const after = async (owner: Request | Response, touch: boolean, release: () => void) => {
+      const stream = touch ? owner.body! : null;
+      const pending = owner.formData().then(
+        () => null,
+        e => e,
+      );
+      release();
+      const error = await pending;
+      return {
+        error: [error?.constructor.name, error?.code],
+        bodyUsed: owner.bodyUsed,
+        sameStream: stream === null || owner.body === stream,
+        clone: errorName(() => owner.clone()),
+        text: await settled(owner.text()),
+      };
+    };
+    const used = {
+      error: ["TypeError", "ERR_FORMDATA_PARSE_ERROR"],
+      bodyUsed: true,
+      sameStream: true,
+      clone: "TypeError",
+      text: "TypeError",
+    };
+
+    test.each([
+      ["", false],
+      [" after .body", true],
+    ] as const)("a fetch() response%s", async (when, touch) => {
+      const { stream, release } = gated();
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(stream, { headers: notFormData }),
+      });
+      expect(await after(await fetch(server.url), touch, release)).toEqual(used);
+    });
+
+    test.each([
+      ["", false],
+      [" after .body", true],
+    ] as const)("a Bun.serve request%s", async (when, touch) => {
+      const { stream, release } = gated();
+      await using server = Bun.serve({
+        port: 0,
+        fetch: async request => Response.json(await after(request, touch, release)),
+      });
+      const response = await fetch(server.url, {
+        method: "POST",
+        body: stream,
+        headers: notFormData,
+        duplex: "half",
+      } as RequestInit);
+      expect(await response.json()).toEqual(used);
+    });
+  });
 
   // A null body is not a zero-length body: nothing can use it up.
   test("Response.redirect() and Response.error() have a null body", async () => {

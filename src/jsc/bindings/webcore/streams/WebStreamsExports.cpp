@@ -404,3 +404,12 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::Gl
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToFormData(globalObject, stream, JSValue::decode(contentType))));
 }
+
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamConsumeThenReject(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue, JSC::EncodedJSValue error)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = toReadableStream(globalObject, scope, streamValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamConsumeThenReject(globalObject, stream, JSValue::decode(error))));
+}

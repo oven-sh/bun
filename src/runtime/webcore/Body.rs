@@ -423,18 +423,23 @@ impl PendingValue {
                         Action::GetBytes => global_this.readable_stream_to_bytes(readable.value),
                         Action::GetText => global_this.readable_stream_to_text(readable.value),
                         Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
-                        Action::GetFormData(form_data) => 'brk: {
-                            let fd = form_data.take().unwrap();
-                            let encoding_js = match &fd.encoding {
-                                bun_core::form_data::Encoding::Multipart(multipart) => {
-                                    bun_string_jsc::create_utf8_for_js(global_this, multipart)?
-                                }
-                                bun_core::form_data::Encoding::URLEncoded => JSValue::UNDEFINED,
-                            };
-                            // fd dropped at end of scope (Box<AsyncFormData> -> Drop)
-                            break 'brk global_this
-                                .readable_stream_to_form_data(readable.value, encoding_js);
-                        }
+                        Action::GetFormData(form_data) => match form_data.take() {
+                            Some(fd) => {
+                                let encoding_js = match &fd.encoding {
+                                    bun_core::form_data::Encoding::Multipart(multipart) => {
+                                        bun_string_jsc::create_utf8_for_js(global_this, multipart)?
+                                    }
+                                    bun_core::form_data::Encoding::URLEncoded => JSValue::UNDEFINED,
+                                };
+                                // fd dropped at end of scope (Box<AsyncFormData> -> Drop)
+                                global_this
+                                    .readable_stream_to_form_data(readable.value, encoding_js)
+                            }
+                            None => global_this.readable_stream_consume_then_reject(
+                                readable.value,
+                                form_data_mime_error(global_this),
+                            ),
+                        },
                         _ => unreachable!(),
                     };
                     self.readable.deinit();
@@ -475,6 +480,7 @@ pub(crate) enum Action {
     GetArrayBuffer,
     GetBytes,
     GetBlob,
+    /// `None`: the Content-Type is not form data, so the read rejects once the body has been read.
     GetFormData(Option<Box<bun_core::form_data::AsyncFormData>>),
 }
 
@@ -1142,12 +1148,7 @@ impl Value {
                         let mut blob = new.use_as_any_blob();
                         let Some(async_form_data) = form_data_slot.take() else {
                             // `blob.detach()` below covers the reject error path too.
-                            let r = promise.reject(
-                                cx.global(),
-                                cx.global().create_error_instance(format_args!(
-                                    "Internal error: task for FormData must not be null"
-                                )),
-                            );
+                            let r = promise.reject(cx.global(), form_data_mime_error(cx.global()));
                             blob.detach();
                             r?;
                             break 'inner;
@@ -2081,17 +2082,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
 
-        let Some(encoder) = self.get_form_data_encoding()? else {
-            // TODO: catch specific errors from getFormDataEncoding
-            return Ok(global_object
-                .err(
-                    jsc::ErrorCode::FORMDATA_PARSE_ERROR,
-                    format_args!(
-                        "Can't decode form data from body because of incorrect MIME type/boundary"
-                    ),
-                )
-                .reject());
-        };
+        // https://fetch.spec.whatwg.org/#concept-body-consume-body: the body is read first; a
+        // Content-Type that is not form data rejects the read afterwards.
+        let encoder = self.get_form_data_encoding()?;
 
         let value = self.get_body_value();
         if let Value::Locked(_locked) = value {
@@ -2101,13 +2094,19 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             let Value::Locked(locked) = value else {
                 unreachable!()
             };
-            return locked.set_promise(
-                global_object,
-                Action::GetFormData(Some(encoder)),
-                owned_readable,
-            );
+            return locked.set_promise(global_object, Action::GetFormData(encoder), owned_readable);
         }
 
+        let Some(encoder) = encoder else {
+            // Nothing to read in a null body.
+            if !matches!(value, Value::Null) {
+                *value = Value::Used;
+            }
+            return Ok(
+                JSPromise::rejected_promise(global_object, form_data_mime_error(global_object))
+                    .to_js(),
+            );
+        };
         let mut blob: AnyBlob = value.use_as_any_blob();
         // `encoder.encoding` is `bun_core::form_data::Encoding`; convert
         // to the `webcore::form_data::Encoding` shape FormData::to_js expects.
@@ -2226,6 +2225,18 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
             format_args!("Body already used"),
         )
         .reject()
+}
+
+/// What `formData()` rejects with when the Content-Type is not form data.
+fn form_data_mime_error(global_object: &JSGlobalObject) -> JSValue {
+    global_object
+        .err(
+            jsc::ErrorCode::FORMDATA_PARSE_ERROR,
+            format_args!(
+                "Can't decode form data from body because of incorrect MIME type/boundary"
+            ),
+        )
+        .to_js()
 }
 
 /// <https://fetch.spec.whatwg.org/#body-unusable>: a disturbed or locked stream rejects every reader.

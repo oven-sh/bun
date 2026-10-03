@@ -1158,6 +1158,17 @@ impl JSGlobalObject {
         })
     }
 
+    /// A promise that rejects with `error` once the stream has been read to its end.
+    pub fn readable_stream_consume_then_reject(
+        &self,
+        value: JSValue,
+        error: JSValue,
+    ) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || {
+            ZigGlobalObject__readableStreamConsumeThenReject(self, value, error)
+        })
+    }
+
     /// Returns a freshly-created `napi_env` owned by this global, for use by
     /// the FFI module. The concrete `NapiEnv` struct lives in `bun_runtime`
     /// (which depends on `bun_jsc`), so this returns the raw pointer untyped;
@@ -1564,6 +1575,11 @@ unsafe extern "C" {
         this: &JSGlobalObject,
         value: JSValue,
         content_type: JSValue,
+    ) -> JSValue;
+    safe fn ZigGlobalObject__readableStreamConsumeThenReject(
+        this: &JSGlobalObject,
+        value: JSValue,
+        error: JSValue,
     ) -> JSValue;
     safe fn ZigGlobalObject__readableStreamToBlob(this: &JSGlobalObject, value: JSValue)
     -> JSValue;

@@ -1,13 +1,3 @@
-10-03_03:11:56 anon=345MB pids=45 load=1334.32 top=rustc:461MB
-10-03_03:14:33 anon=219MB pids=48 load=1709.29 top=rustc:362MB
-10-03_03:16:49 anon=161MB pids=45 load=1636.98 top=rustc:312MB
-10-03_03:19:03 anon=129MB pids=54 load=1516.11 top=ld.lld:226MB
-10-03_03:20:27 anon=17MB pids=42 load=1572.52 top=node-MainThread:49MB
-10-03_03:21:58 anon=97MB pids=36 load=1754.98 top=clippy-driver:187MB
-10-03_03:22:40 anon=112MB pids=36 load=1499.81 top=clippy-driver:229MB
-10-03_03:24:31 anon=151MB pids=39 load=1639.08 top=clippy-driver:297MB
-10-03_03:26:58 anon=212MB pids=34 load=1769.07 top=clippy-driver:362MB
-10-03_03:28:12 anon=39MB pids=35 load=1549.57 top=rustc:67MB
 10-03_03:29:52 anon=56MB pids=40 load=1714.71 top=rustc:103MB
 10-03_03:31:22 anon=166MB pids=37 load=1778.20 top=rustc:261MB
 10-03_03:32:28 anon=198MB pids=35 load=1624.98 top=rustc:347MB
@@ -398,3 +388,13 @@
 10-03_08:38:05 anon=3MB pids=27 load=615.09 top=postgres:12MB
 10-03_08:38:37 anon=3MB pids=27 load=740.66 top=postgres:12MB
 10-03_08:39:09 anon=3MB pids=27 load=676.89 top=postgres:12MB
+10-03_08:39:43 anon=28MB pids=28 load=688.87 top=git-remote-http:21MB
+10-03_08:40:16 anon=3MB pids=27 load=782.21 top=postgres:12MB
+10-03_08:40:48 anon=3MB pids=27 load=754.16 top=postgres:12MB
+10-03_08:41:23 anon=3MB pids=27 load=733.67 top=postgres:12MB
+10-03_08:41:56 anon=3MB pids=27 load=767.21 top=postgres:12MB
+10-03_08:42:29 anon=3MB pids=27 load=788.24 top=postgres:12MB
+10-03_08:43:02 anon=3MB pids=27 load=731.99 top=postgres:12MB
+10-03_08:43:35 anon=3MB pids=27 load=684.60 top=postgres:12MB
+10-03_08:44:06 anon=3MB pids=27 load=593.65 top=postgres:12MB
+10-03_08:44:38 anon=3MB pids=27 load=550.63 top=postgres:12MB

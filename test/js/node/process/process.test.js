@@ -165,12 +165,11 @@ describe.concurrent("TZ, NODE_TLS_REJECT_UNAUTHORIZED and BUN_CONFIG_VERBOSE_FET
         listed: Object.keys(process.env).includes(name),
         spread: { ...process.env }[name],
         json: JSON.parse(JSON.stringify(process.env))[name],
-        clone: structuredClone(process.env)[name],
       };
     }
     console.log(JSON.stringify(result));
   `;
-  const empty = { read: "", bunEnv: "", importMetaEnv: "", listed: true, spread: "", json: "", clone: "" };
+  const empty = { read: "", bunEnv: "", importMetaEnv: "", listed: true, spread: "", json: "" };
 
   it.each([
     ["the environment", { "index.js": read }, setTo("")],

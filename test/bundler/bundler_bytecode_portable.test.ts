@@ -382,7 +382,23 @@ function fingerprint(bytecode: Uint8Array, isPayload = true) {
   return { sha256: Bun.CryptoHasher.hash("sha256", copy, "hex"), bytes: copy.byteLength };
 }
 
-describe("bytecode cache portability", () => {
+// With BUN_JSC_verboseDiskCache=1, JSC writes one of these two lines to stderr for each program or module it looks up
+// in the bytecode cache. A run under it is expected to write nothing else there, so a warning or an error that leaves
+// stdout and the exit code alone still fails the test.
+function diskCacheLookups(stderr: string) {
+  const lookups = { hits: 0, misses: 0, otherStderr: [] as string[] };
+  for (const line of stderr.split(/\r?\n/)) {
+    if (line === "[Disk Cache] Cache hit for sourceCode") lookups.hits++;
+    else if (line === "[Disk Cache] Cache miss for sourceCode") lookups.misses++;
+    else if (line !== "") lookups.otherStderr.push(line);
+  }
+  return lookups;
+}
+
+// Every test is concurrent. The file then takes as long as its longest chain: the libraries.js build, then the run that
+// loads it. Every other child process, and everything this process encodes itself, fits inside that build's time. A
+// serial test would instead hold all the others back until the children it waits for are done.
+describe.concurrent("bytecode cache portability", () => {
   test("encoder output is identical on every platform", async () => {
     // The bundler builds are separate processes: start them all, then encode the in-process cases while they run.
     const bundled = Promise.all(bundlerBuilds.map(build));
@@ -658,13 +674,13 @@ describe("bytecode cache portability", () => {
       new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!,
     );
 
-    const [{ jsc: referenceJsc }, conditionHashes, [, stderr, exitCode]] = await Promise.all([
+    const [{ jsc: referenceJsc }, conditionHashes, [stdout, stderr, exitCode]] = await Promise.all([
       reference,
       conditioned,
       apiRun,
     ]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    // api.js prints nothing itself, and the corpus it runs gets a console that drops its output.
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     const expected = hash(referenceJsc);
     const results: Record<string, string> = Object.fromEntries(conditionHashes);
     results["Bun.build() after running other JS"] = hash(readFileSync(join(String(dir), "api", "features.js.jsc")));
@@ -684,7 +700,7 @@ describe("bytecode cache portability", () => {
 
   // Identical bytes only help if this platform also decodes what it encodes.
   for (const corpusBuild of corpusBuilds) {
-    test.concurrent(`output of \`${corpusBuild.name}\` loads from the cache`, async () => {
+    test(`output of \`${corpusBuild.name}\` loads from the cache`, async () => {
       const { path } = await build(corpusBuild);
       await using proc = Bun.spawn({
         cmd: [bunExe(), path],
@@ -693,7 +709,9 @@ describe("bytecode cache portability", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toStartWith("[Disk Cache] Cache hit for sourceCode");
+      // The output is one source, so one hit. Every other lookup is for a source that has no cache (the runtime
+      // evaluates one of its own), so it is a miss, and how many of those there are is not pinned here.
+      expect(diskCacheLookups(stderr)).toMatchObject({ hits: 1, otherStderr: [] });
       expect(stdout).toBe(corpusBuild.output + "\n");
       expect(exitCode).toBe(0);
     });
@@ -720,7 +738,7 @@ describe("bytecode cache portability", () => {
       modules: 2,
     },
   ]) {
-    test.concurrent(`\`bun build --compile --bytecode ${name}\` runs from the embedded bytecode`, async () => {
+    test(`\`bun build --compile --bytecode ${name}\` runs from the embedded bytecode`, async () => {
       using dir = tempDir("bytecode-portable-compile", {});
       const exe = join(String(dir), isWindows ? "app.exe" : "app");
       await using compile = Bun.spawn({
@@ -744,7 +762,7 @@ describe("bytecode cache portability", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr.match(/\[Disk Cache\] Cache hit for sourceCode/g)?.length).toBe(modules);
+      expect(diskCacheLookups(stderr)).toMatchObject({ hits: modules, otherStderr: [] });
       expect(stdout).toBe(output + "\n");
       expect(exitCode).toBe(0);
     });
@@ -758,7 +776,7 @@ describe("bytecode cache portability", () => {
     ["truncated", (jsc: Buffer) => jsc.subarray(0, 200)],
     ["empty", (jsc: Buffer) => jsc.subarray(0, 0)],
   ] as const) {
-    test.concurrent(`a .jsc that is ${variant} is a cache miss, not a crash`, async () => {
+    test(`a .jsc that is ${variant} is a cache miss, not a crash`, async () => {
       using dir = tempDir("bytecode-portable-reject", {});
       const { js, jsc } = await build(recordsBuild);
       writeFileSync(join(String(dir), "records.js"), js);
@@ -770,8 +788,9 @@ describe("bytecode cache portability", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("Cache hit");
-      expect(stderr).toContain("[Disk Cache] Cache miss for sourceCode");
+      const lookups = diskCacheLookups(stderr);
+      expect(lookups).toMatchObject({ hits: 0, otherStderr: [] });
+      expect(lookups.misses).toBeGreaterThan(0);
       expect(stdout).toBe(recordsOutput + "\n");
       expect(exitCode).toBe(0);
     });
@@ -782,7 +801,7 @@ describe("bytecode cache portability", () => {
     ["records.js", recordsSource, recordsOutput],
     ["source-forms.js", sourceFormsSource(), sourceFormsOutput],
   ] as const) {
-    test.concurrent(`vm.Script cachedData for ${file} is accepted and runs`, async () => {
+    test(`vm.Script cachedData for ${file} is accepted and runs`, async () => {
       const { cachedData } = new vm.Script(source, { filename: file, produceCachedData: true });
       const script = new vm.Script(source, { filename: file, cachedData });
       expect(script.cachedDataRejected).toBe(false);

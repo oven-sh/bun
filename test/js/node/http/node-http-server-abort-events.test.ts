@@ -1461,8 +1461,6 @@ describe("a 1xx response is sent by the call that writes it", () => {
   const keyPath = path.join(keys, "agent1-key.pem");
   const certPath = path.join(keys, "agent1-cert.pem");
   const tlsOptions = { key: readFileSync(keyPath), cert: readFileSync(certPath) };
-  // A child process needs more than the default on a debug build.
-  const childTimeout = 30_000;
 
   const hints = { link: "</style.css>; rel=preload; as=style" };
   const plainRequest = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
@@ -1586,10 +1584,8 @@ describe("a 1xx response is sent by the call that writes it", () => {
     }
 
     // On Windows the exit resets the connection, and the reset can discard what the client has not read yet.
-    test.skipIf(process.platform === "win32").concurrent(
-      "writeEarlyHints(), then process.exit()",
-      async () => {
-        const fixture = `
+    test.skipIf(process.platform === "win32").concurrent("writeEarlyHints(), then process.exit()", async () => {
+      const fixture = `
           const listener = (req, res) => {
             res.writeEarlyHints(${JSON.stringify(hints)});
             process.exit(0);
@@ -1601,26 +1597,24 @@ describe("a 1xx response is sent by the call that writes it", () => {
             : require("node:http").createServer(listener);
           server.listen(0, "127.0.0.1", () => console.log(server.address().port));
         `;
-        const child = spawn(process.execPath, ["-e", fixture], {
-          env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
-          stdio: ["ignore", "pipe", "inherit"],
-        });
-        try {
-          const exited = once(child, "exit");
-          let stdout = "";
-          child.stdout.setEncoding("utf8");
-          for await (const chunk of child.stdout) {
-            stdout += chunk;
-            if (stdout.includes("\n")) break;
-          }
-          expect(await exchange(transport, Number(stdout), plainRequest)).toBe(earlyHintsWire);
-          expect((await exited)[0]).toBe(0);
-        } finally {
-          child.kill();
+      const child = spawn(process.execPath, ["-e", fixture], {
+        env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      try {
+        const exited = once(child, "exit");
+        let stdout = "";
+        child.stdout.setEncoding("utf8");
+        for await (const chunk of child.stdout) {
+          stdout += chunk;
+          if (stdout.includes("\n")) break;
         }
-      },
-      childTimeout,
-    );
+        expect(await exchange(transport, Number(stdout), plainRequest)).toBe(earlyHintsWire);
+        expect((await exited)[0]).toBe(0);
+      } finally {
+        child.kill();
+      }
+    });
   });
 
   test.concurrent("calls back with null after the call returns, and returns what Node returns", async () => {
@@ -1670,6 +1664,28 @@ describe("a 1xx response is sent by the call that writes it", () => {
       returned: [undefined, undefined, undefined, accepted, accepted],
       callbacks: 0,
     });
+  });
+
+  // A response behind a pipelined one keeps its 1xx until it gets the connection. The callbacks run when the 1xx is written.
+  test.concurrent("calls back with null for a 1xx that a queued pipelined response wrote", async () => {
+    const events: unknown[][] = [];
+    const requests =
+      "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n" +
+      "GET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    const wire = await wireOf("http", { request: requests, event: "request" }, (req, res) => {
+      if (req.url === "/first") {
+        setImmediate(() => res.end("first"));
+        return;
+      }
+      for (const { name, write } of writersWithCallback) {
+        write!(res, (...args) => events.push([name, args]));
+      }
+      res.end("second");
+    });
+    expect(events).toEqual(writersWithCallback.map(({ name }) => [name, [null]]));
+    const all1xx = writersWithCallback.map(writer => writer.wire).join("");
+    expect(wire).toContain("\r\n\r\nfirst" + all1xx + "HTTP/1.1 200 OK\r\n");
+    expect(wire).toEndWith("\r\n\r\nsecond");
   });
 
   test.concurrent("is not held back by a cork that is released before the close", async () => {
@@ -1726,7 +1742,7 @@ describe("a 1xx response is sent by the call that writes it", () => {
     const clientHasBytes = new Int32Array(new SharedArrayBuffer(4));
     const server = await listening("http", "request", (_req, res) => {
       res.writeEarlyHints(hints);
-      res.end(Atomics.wait(clientHasBytes, 0, 0, 10_000) === "timed-out" ? "late" : "early");
+      res.end(Atomics.wait(clientHasBytes, 0, 0, 2_000) === "timed-out" ? "late" : "early");
     });
     const worker = new Worker(
       `
@@ -1756,7 +1772,7 @@ describe("a 1xx response is sent by the call that writes it", () => {
       server.closeAllConnections();
       server.close();
     }
-  }, 30_000);
+  });
 
   // Each send() is one TCP segment on loopback (TCP_NODELAY), and TCP_INFO counts the segments the client got.
   // The 1xx is one send, as in Node. What the handler writes after it in the same turn still shares one send.
@@ -1837,6 +1853,5 @@ describe("a 1xx response is sent by the call that writes it", () => {
       });
       expect(JSON.parse(stdout)).toEqual({ "/end": 1, "/102-end": 2, "/102-writes-end": 2 });
     },
-    childTimeout,
   );
 });

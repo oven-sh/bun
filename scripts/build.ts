@@ -62,8 +62,8 @@ async function main(): Promise<void> {
 
   // Windows: re-exec inside the VS dev shell if not already there.
   // The shell provides PATH (mt.exe, rc.exe, cl.exe), INCLUDE, LIB,
-  // WindowsSdkDir — things clang-cl can mostly self-detect but nested
-  // cmake projects can't. Cheap: VSINSTALLDIR check short-circuits on
+  // WindowsSdkDir — things clang-cl can mostly self-detect but msbuild
+  // (local WebKit's ICU) can't. Cheap: VSINSTALLDIR check short-circuits on
   // subsequent runs in the same terminal.
   if (process.platform === "win32" && !process.env.VSINSTALLDIR) {
     const vsShell = join(import.meta.dirname, "vs-shell.ps1");
@@ -240,10 +240,9 @@ async function main(): Promise<void> {
     }
     // FD 3 sideband — only when interactive. stream.ts (wrapping deps and
     // the cargo plan) writes live output there, bypassing ninja's per-job buffering.
-    // A human watching a terminal wants to see cmake configure spew and
-    // cargo's download progress in real time. A log file (CI) doesn't —
-    // that live output is noise (hundreds of `-- Looking for header.h`
-    // lines from cmake). When FD 3 isn't set up, stream.ts falls back to
+    // A human watching a terminal wants to see fetches and cargo's download
+    // progress in real time. A log file (CI) doesn't — that live output is
+    // noise. When FD 3 isn't set up, stream.ts falls back to
     // stdout which ninja buffers per-job: deps stay quiet until they
     // finish or fail, failure logs stay compact.
     //
@@ -284,7 +283,6 @@ async function main(): Promise<void> {
 
     if (args.execArgs.length === 0) {
       // Closing line on success: when restat prunes most of the graph
-      // (local WebKit no-op shows `[1/555] build WebKit` then silence),
       // it's not obvious ninja finished vs. stalled. This disambiguates.
       // Targets named when explicit so it's clear what was actually built.
       const what = args.ninjaTargets.length > 0 ? ` ${args.ninjaTargets.map(t => nameColor(t)).join(", ")}` : "";

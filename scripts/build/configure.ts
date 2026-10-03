@@ -114,7 +114,7 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
   const host = detectHost();
   const llvm = resolveLlvmToolchain(host.os, host.arch, targetOs ?? host.os);
 
-  // cmake — required for nested dep builds.
+  // cmake — CI packages the zips with `cmake -E tar`.
   const cmake = findSystemTool("cmake", { required: true, hint: "Install cmake (>= 3.24)" });
   if (cmake === undefined) throw new BuildError("unreachable: findSystemTool required=true returned undefined");
 
@@ -221,8 +221,16 @@ export interface ConfigureInput {
  * --config-file and re-expands the profile against the current
  * profiles.ts. Edits to a profile therefore take effect on the next
  * `ninja` in an existing build dir without `rm -rf`.
+ *
+ * `depInputs`: what the deps read from their source trees to describe their
+ * part of the graph (ResolvedDep.configureInputs).
  */
-function emitGeneratorRule(n: Ninja, cfg: Config | CodegenConfig, input: ConfigureInput): void {
+function emitGeneratorRule(
+  n: Ninja,
+  cfg: Config | CodegenConfig,
+  input: ConfigureInput,
+  depInputs: string[] = [],
+): void {
   const configFile = resolve(cfg.buildDir, "configure.json");
   const buildScript = resolve(cfg.cwd, "scripts", "build.ts");
 
@@ -253,7 +261,7 @@ function emitGeneratorRule(n: Ninja, cfg: Config | CodegenConfig, input: Configu
     // The Rust plans: the per-crate edges are generated from them (rust.ts), so a changed plan — new lockfile,
     // manifest, toolchain — must reconfigure. They are build outputs; when one is dirty ninja builds it first,
     // reruns this edge, and restarts with the new manifest.
-    implicitInputs: [...configureInputs(cfg.cwd), ...(buildsRust(cfg) ? rustPlanFiles(cfg) : [])],
+    implicitInputs: [...configureInputs(cfg.cwd), ...(buildsRust(cfg) ? rustPlanFiles(cfg) : []), ...depInputs],
   });
 }
 
@@ -514,7 +522,12 @@ async function generate<N extends string | undefined>(
   mkdirSync(cfg.buildDir, { recursive: true });
   const output = emitBun(n, cfg, sources);
   mark("emitBun");
-  emitGeneratorRule(n, cfg, input);
+  emitGeneratorRule(
+    n,
+    cfg,
+    input,
+    output.deps.flatMap(d => d.configureInputs),
+  );
 
   // Default targets: the `bun` phony (or stripped file); the smoke test
   // rides along as a validation of the link.

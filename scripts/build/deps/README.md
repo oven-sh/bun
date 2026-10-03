@@ -12,10 +12,9 @@ libraries/headers it provides.
 4. Add the name to `DepName` in `../source.ts`
 5. `bun run scripts/build/phase3-test.ts` to verify it builds
 
-That's it. For most deps you're done. If the dep's build is too entangled
-to list sources by hand (zlib-ng's per-file SIMD flags are about the
-limit), use `kind: "nested-cmake"` instead — see `NestedCmakeBuild` in
-`../source.ts` for the fields.
+That's it. For most deps you're done. A dep with several libraries, its own
+generators or helper executables adds `groups` and `steps` to the same
+`direct` spec — see `webkit.ts`.
 
 **`name` must match the directory on disk** (`vendor/<name>/`). If your repo
 is `oven-sh/WebKit`, name it `"WebKit"` — that's what `git clone` creates.
@@ -69,11 +68,15 @@ applied (they target the pinned tarball), so start the clone from the pinned
 commit if you want an identical baseline. Switching a dep between pinned and
 local moves its `-I` path, so the first build after the switch recompiles
 every TU that sees the dep's headers; after that, edits are picked up
-incrementally: `direct` deps through the compiler depfiles,
-`nested-cmake`/`cargo` deps by re-invoking their inner build every run. The
+incrementally through the compiler depfiles. The
 build banner shows `local:<name>` while this is on. Don't edit
 `vendor/<name>/` in place instead — it is wiped whenever the pin or patches
-change. WebKit has its own switch (`--webkit=local`).
+change.
+
+WebKit is prebuilt unless redirected: `--webkit=local` (the `-local`
+profiles, `bun run build:local`) is `--local-deps=WebKit=$BUN_WEBKIT_PATH`,
+or `vendor/WebKit` when that is unset, and `--local-deps=WebKit=<path>` on any
+profile means the same for one build.
 
 ## Common fields
 
@@ -85,9 +88,8 @@ export const mydep: Dependency = {
   // just the files at `commit`). Most deps use this.
   //
   // Other kinds: `prebuilt` (download pre-compiled .a, e.g. WebKit default),
-  // `local` (user-managed checkout — WebKit declares it because its clone is
-  // too slow to automate; any github-archive dep becomes one via
-  // `--local-deps`, see below), `in-tree` (source in src/).
+  // `local` (user-managed checkout: what a github-archive dep becomes via
+  // `--local-deps`, see above), `in-tree` (source in src/).
   source: () => ({ kind: "github-archive", repo: "owner/repo", commit: "..." }),
 
   // Optional: macro name for bun_dependency_versions.h (process.versions).
@@ -105,7 +107,7 @@ export const mydep: Dependency = {
   // How to build. `direct` lists sources explicitly; emitDirect compiles
   // each as a first-class cc/cxx edge and the resulting .o's go straight
   // into bun's link line. See `DirectBuild` in ../source.ts for all
-  // optional fields (lang/pic/defines/headers/codegen/forbidUndefined).
+  // optional fields (lang/pic/defines/headers/codegen/groups/steps/forbidUndefined).
   build: cfg => ({
     kind: "direct",
     sources: ["src/foo.c", "src/bar.c"],
@@ -132,13 +134,9 @@ export const mydep: Dependency = {
 ## Build types
 
 - **`direct`**: Sources compiled as first-class `cc` edges in our ninja
-  graph — no sub-process. Best for deps with a stable, small file list and
-  no configure-time codegen we can't replicate. See `DirectBuild` in
-  `../source.ts`. Prefer this over `nested-cmake` when feasible: it skips a
-  cmake configure (often 5–20s of try_compile probes) and lets LTO see
-  across the dep boundary into bun's call sites.
-- **`nested-cmake`**: Runs `cmake --fresh -B ...` then `cmake --build`.
-  See `NestedCmakeBuild` in `../source.ts` for all fields.
+  graph — no sub-process, no cmake configure, one job pool for everything, and
+  LTO sees across the dep boundary into bun's call sites. See `DirectBuild` in
+  `../source.ts`.
 - **`cargo`**: Rust deps (currently lolhtml and rust-argon2). See `CargoBuild` in `../source.ts`.
 - **`none`**: Header-only or prebuilt. No build step; `.ref` stamp is the output.
 
@@ -153,23 +151,17 @@ export const mydep: Dependency = {
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags
-- **webkit.ts** — `nested-cmake` (`sourceSubdir`, `preBuild`) and `prebuilt`
+- **webkit.ts** — `prebuilt`, and for a local checkout a direct build with
+  source `groups` (bmalloc, WTF, JavaScriptCore), generator and executable
+  `steps`, a per-group PCH, and file lists read from the checkout's own CMake
+  files at configure (`../cmake.ts`)
 
-## How the three-step build works
+## How a dep builds
 
-Each dep becomes three ninja build statements, each with `restat = 1`:
-
-1. **fetch** → `vendor/<name>/.ref` stamp
+1. **fetch** → `vendor/<name>/.ref` stamp (`restat = 1`)
    - Downloads tarball, extracts, applies patches
    - `.ref` contains `sha256(commit + patches)[:16]`
    - restat: if identity unchanged, no write, downstream pruned
-2. **configure** → `buildDir/deps/<name>/CMakeCache.txt`
-   - `cmake --fresh -B <dir> -D...`
-   - `--fresh` drops the cache so stale -D values don't persist
-   - restat: inner cmake might not touch cache
-3. **build** → `.a` files
-   - `cmake --build <dir> --target ...`
-   - restat: inner ninja no-ops if nothing changed
-
-`restat` is what makes incremental builds fast — if step N was a no-op,
-ninja prunes everything after it.
+2. **compile** → one `cc`/`cxx`/`nasm` edge per source, after the fetch
+   (order-only) and the dep's generated headers; the objects are inputs of
+   bun's link

@@ -661,6 +661,10 @@ pub fn enqueue_dependency_to_root(
                 return DependencyToEnqueue::Failure(err);
             }
 
+            // Nothing is in flight: the ranges of a later import may reuse
+            // what this one resolved.
+            this.lockfile.mark_settled_packages();
+
             break 'brk this.lockfile.buffers.resolutions[dep_id as usize];
         }
         // we managed to synchronously resolve the dependency
@@ -2364,9 +2368,7 @@ fn get_or_put_resolved_package_with_find_result(
             url: find_result.package.tarball_url.value,
         })),
     ) {
-        if pins {
-            this.lockfile.mark_pinned_by_reuse(id);
-        }
+        this.lockfile.mark_reused_for(id, dependency_id, pins);
         success_fn(this, dependency_id, id);
         return Ok(Some(ResolvedPackageResult {
             package: *this.lockfile.packages.get(id as usize),

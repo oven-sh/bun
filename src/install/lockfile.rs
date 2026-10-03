@@ -205,17 +205,24 @@ pub struct Lockfile {
     /// Indexed by `PackageID`, filled by `mark_appended_for` for the packages
     /// appended from a manifest in this run. Runtime-only, never serialised.
     appended_for_by_id: Vec<AppendedFor>,
+
+    /// The `Root` and `Workspace` packages among the first
+    /// `workspace_package_ids_scanned` packages, in id order. Filled on demand
+    /// by `scan_workspace_package_ids`. Runtime-only, never serialised.
+    workspace_package_ids: Vec<PackageID>,
+    workspace_package_ids_scanned: PackageID,
 }
 
 /// The rows a package appended in this run was resolved for; see
 /// `Lockfile::get_package_id`.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct AppendedFor {
-    /// The row it was appended for is declared by the root or a workspace.
+    /// A row declared by the root or a workspace resolved to it.
     pub direct: bool,
     /// A regular (non-peer) row's range, after overrides and catalogs, was
-    /// this exact version: the appending row's, or a later one's while the
-    /// package was not yet reusable (`mark_pinned_by_reuse`).
+    /// this exact version: the appending row's, a direct row's, or a later
+    /// transitive row's while the package was not yet reusable
+    /// (`mark_reused_for`).
     pub pinned: bool,
 }
 
@@ -772,7 +779,7 @@ impl Lockfile {
 
     /// Is `id` a direct dependency of one of the `targets` workspaces?
     pub fn is_dependency_of_workspace_in(
-        &self,
+        &mut self,
         targets: &[crate::package_manager::UpdateTargetWorkspace],
         id: DependencyID,
     ) -> bool {
@@ -789,8 +796,7 @@ impl Lockfile {
     }
 
     /// Is this a direct dependency of any workspace (including workspace root)?
-    /// TODO make this faster by caching the workspace package ids
-    pub(crate) fn is_workspace_dependency(&self, id: DependencyID) -> bool {
+    pub(crate) fn is_workspace_dependency(&mut self, id: DependencyID) -> bool {
         self.get_workspace_pkg_if_workspace_dep(id) != invalid_package_id
     }
 
@@ -804,24 +810,30 @@ impl Lockfile {
         None
     }
 
-    pub(crate) fn get_workspace_pkg_if_workspace_dep(&self, id: DependencyID) -> PackageID {
-        let packages = self.packages.slice();
-        let resolutions = packages.items_resolution();
-        let dependencies_lists = packages.items_dependencies();
-        for (pkg_id, (resolution, dependencies)) in resolutions
+    pub(crate) fn get_workspace_pkg_if_workspace_dep(&mut self, id: DependencyID) -> PackageID {
+        self.scan_workspace_package_ids();
+        let dependencies_lists = self.packages.items_dependencies();
+        self.workspace_package_ids
             .iter()
-            .zip(dependencies_lists.iter())
-            .enumerate()
-        {
-            if resolution.tag != ResolutionTag::Workspace && resolution.tag != ResolutionTag::Root {
-                continue;
-            }
-            if dependencies.contains(id) {
-                return PackageID::try_from(pkg_id).expect("int cast");
+            .copied()
+            .find(|&pkg_id| dependencies_lists[pkg_id as usize].contains(id))
+            .unwrap_or(invalid_package_id)
+    }
+
+    /// Brings `workspace_package_ids` up to date. A resolution tag is only
+    /// written in place while a lockfile loads, before the first call, so only
+    /// the packages appended since the last call are scanned.
+    fn scan_workspace_package_ids(&mut self) {
+        let resolutions = self.packages.items_resolution();
+        debug_assert!(self.workspace_package_ids_scanned as usize <= resolutions.len());
+        let scanned = self.workspace_package_ids_scanned as usize;
+        for (pkg_id, resolution) in resolutions.iter().enumerate().skip(scanned) {
+            if resolution.tag == ResolutionTag::Workspace || resolution.tag == ResolutionTag::Root {
+                self.workspace_package_ids
+                    .push(PackageID::try_from(pkg_id).expect("int cast"));
             }
         }
-
-        invalid_package_id
+        self.workspace_package_ids_scanned = resolutions.len() as PackageID;
     }
 
     /// Workspace packages whose node_modules must be self-contained: listed in the
@@ -2129,6 +2141,8 @@ impl Lockfile {
             loaded_package_count: 0,
             settled_package_count: 0,
             appended_for_by_id: Vec::new(),
+            workspace_package_ids: Vec::new(),
+            workspace_package_ids_scanned: 0,
         }
     }
 
@@ -2231,14 +2245,27 @@ impl Lockfile {
         *self.appended_for_mut(id) = AppendedFor { direct, pinned };
     }
 
-    /// A regular row whose range is exactly `id`'s version resolved to it.
-    /// Ignored once the package is reusable: from then on rows read
-    /// `pinned`, and which rows have resolved to it by any given moment
+    /// Row `dependency_id` resolved to the existing package `id`; `pins` when
+    /// it is a regular row whose range is exactly `id`'s version. A direct row
+    /// makes the package reusable, whichever row appended it: the update path
+    /// enqueues transitive rows before the root's. A transitive row's pin is
+    /// ignored once the package is reusable: from then on rows read `pinned`,
+    /// and which transitive rows have resolved to it by any given moment
     /// depends on registry timing.
-    pub(crate) fn mark_pinned_by_reuse(&mut self, id: PackageID) {
-        if !self.is_reusable(id) {
-            self.appended_for_mut(id).pinned = true;
+    pub(crate) fn mark_reused_for(
+        &mut self,
+        id: PackageID,
+        dependency_id: DependencyID,
+        pins: bool,
+    ) {
+        if id < self.loaded_package_count {
+            return;
         }
+        let direct = self.is_workspace_dependency(dependency_id);
+        let reusable = self.is_reusable(id);
+        let entry = self.appended_for_mut(id);
+        entry.direct |= direct;
+        entry.pinned |= pins && (direct || !reusable);
     }
 
     fn appended_for_mut(&mut self, id: PackageID) -> &mut AppendedFor {

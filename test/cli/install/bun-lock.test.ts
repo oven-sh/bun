@@ -1842,8 +1842,13 @@ async function registryWithHolds(manifests: OrderedManifests) {
   const tarballs = new Map<string, Uint8Array>();
   for (const [name, versions] of Object.entries(manifests)) {
     for (const [version, extra] of Object.entries(versions)) {
+      // `require("a")` gives `{ version, z: { version } }`: the versions a's install resolved.
       const archive = new Bun.Archive(
-        { "package/package.json": JSON.stringify({ name, version, ...extra }) },
+        {
+          "package/package.json": JSON.stringify({ name, version, ...extra }),
+          "package/index.js": `const { version, dependencies = {} } = require("./package.json");
+module.exports = { version, ...Object.fromEntries(Object.keys(dependencies).map(dep => [dep, require(dep)])) };`,
+        },
         { compress: "gzip" },
       );
       tarballs.set(`/${name}-${version}.tgz`, await archive.bytes());
@@ -1907,7 +1912,7 @@ function instancesOf(lock: string, name: string): Record<string, string> {
   );
 }
 
-it.each<{
+it.concurrent.each<{
   shape: string;
   manifests: OrderedManifests;
   files: Record<string, object>;
@@ -2055,6 +2060,25 @@ it.each<{
     },
     z: { "z": "z@1.0.0" },
   },
+  // Workspace rows resolve in workspace order. The exact row pins the z the range row put in place,
+  // or the range row takes the z the exact row put in place: c gets the same z either way.
+  ...[
+    ["wa", "wb"],
+    ["wb", "wa"],
+  ].map(([range, exact]) => ({
+    shape: `workspace ${range} -> z@^1.0.0 and workspace ${exact} -> z@1.1.0 pin what c -> z@* takes`,
+    manifests: { c: { "1.0.0": { dependencies: { z: "*" } } }, z: zVersions },
+    files: {
+      "package.json": { name: "foo", workspaces: ["wa", "wb"], dependencies: { c: "1.0.0" } },
+      [`${range}/package.json`]: { name: range, dependencies: { z: "^1.0.0" } },
+      [`${exact}/package.json`]: { name: exact, dependencies: { z: "1.1.0" } },
+    },
+    orders: {
+      "c's manifest last": [{ manifest: "c", until: "/z-1.1.0.tgz" }],
+      "z's manifest last": [{ manifest: "z", until: "/c-1.0.0.tgz" }],
+    },
+    z: { "z": "z@1.1.0" },
+  })),
 ])(
   "a fresh install writes the same bun.lock whichever manifest arrives last: $shape",
   async ({ manifests, files, orders, z }) => {
@@ -2070,3 +2094,29 @@ it.each<{
     expect(instancesOf(expected!, "z")).toEqual(z);
   },
 );
+
+// Imports resolve one after the other, so the packages an earlier import
+// resolved are in place for every range a later one brings.
+it.concurrent("runtime auto-install: a later import's range takes the z an earlier import resolved", async () => {
+  const ordered = await registryWithHolds({
+    a: { "1.0.0": { dependencies: { z: "^1.0.0" } } },
+    z: zVersions,
+  });
+  using server = ordered.server;
+  ordered.hold([]);
+  using dir = tempDir("auto-install-reuse", {
+    "bunfig.toml": `[install]\nregistry = "${server.url.href}"\n`,
+    "index.js": `const z = require("z@1.0.0");
+const a = require("a@1.0.0");
+console.log(JSON.stringify({ z: z.version, "a/z": a.z.version }));`,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "index.js"],
+    cwd: String(dir),
+    env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out, err, code }).toEqual({ out: `{"z":"1.0.0","a/z":"1.0.0"}\n`, err: "", code: 0 });
+});

@@ -1,6 +1,6 @@
 import assert from "assert";
-import { describe, expect } from "bun:test";
-import { osSlashes } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, osSlashes, tempDir } from "harness";
 import path from "path";
 import { dedent, ESBUILD_PATH, itBundled } from "../expectBundled";
 
@@ -3602,6 +3602,39 @@ describe.concurrent("bundler", () => {
         'This require call is not allowed because the imported file "entry.js" contains a top-level await',
       ],
     },
+  });
+  test("default/TopLevelAwaitForbiddenRequireSourceMapCLI", async () => {
+    using dir = tempDir("tla-forbidden-require-sourcemap", {
+      "a.js": `
+        import { b } from "./b.js";
+        console.log(b, require("./b.js"));
+      `,
+      "b.js": `export const b = await 0;`,
+    });
+    const build = async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--sourcemap=inline", "a.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { error: stderr.match(/^error: .*$/m)?.[0], exitCode };
+    };
+    // The link error races the source map tasks: one build alone does not always show it,
+    // and many builds at once show it less often.
+    const builds: Awaited<ReturnType<typeof build>>[] = [];
+    for (let round = 0; round < 10; round++) {
+      builds.push(...(await Promise.all([build(), build(), build(), build()])));
+    }
+    expect(builds).toEqual(
+      Array(40).fill({
+        error:
+          'error: This require call is not allowed because the transitive dependency "b.js" contains a top-level await',
+        exitCode: 1,
+      }),
+    );
   });
   itBundled("default/TopLevelAwaitAllowedImportWithoutSplitting", {
     files: {

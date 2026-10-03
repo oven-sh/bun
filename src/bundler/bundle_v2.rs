@@ -5418,6 +5418,12 @@ pub mod bv2_impl {
         }
 
         pub fn deinit_without_freeing_arena(&mut self) {
+            // A build that stops between `compute_data_for_source_map` and the waits in
+            // `generate_chunks_in_parallel` gets here with those tasks still on the pool,
+            // creating `Worker`s and reading `graph`.
+            self.linker.source_maps.line_offset_wait_group.wait();
+            self.linker.source_maps.quoted_contents_wait_group.wait();
+
             {
                 // We do this first to make it harder for any dangling pointers to data to be used in there.
                 let on_parse_finalizers = core::mem::take(&mut self.finalizers);

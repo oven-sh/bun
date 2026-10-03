@@ -435,7 +435,9 @@ impl ThreadPool {
 
         // SAFETY: `worker` is freshly heap-allocated and exclusive on this
         // thread until published via the map (already inserted above, but no
-        // other thread looks it up under a different `id`).
+        // other thread looks it up under a different `id`, and
+        // `deinit_without_freeing_arena` reads every entry only once no task
+        // of this bundle is left on the pool).
         unsafe {
             worker.write(Worker {
                 // Placeholder — overwritten by `init()` immediately below.

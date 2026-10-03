@@ -1342,8 +1342,7 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         let run = bv2.run_from_js_in_new_thread(&entry_points);
 
-        // The AST-allocator pop lives in `generate_in_new_thread`; the
-        // source-map wait-group waits run only on the error path.
+        // The AST-allocator pop lives in `generate_in_new_thread`.
         match run {
             Ok(build) => {
                 self.set_result(BundleV2Result::Value(build));
@@ -1351,8 +1350,6 @@ impl CompletionStruct for JSBundleCompletionTask {
                 Ok(())
             }
             Err(err) => {
-                bv2.linker.source_maps.line_offset_wait_group.wait();
-                bv2.linker.source_maps.quoted_contents_wait_group.wait();
                 bv2.deinit_without_freeing_arena();
                 Err(err)
             }

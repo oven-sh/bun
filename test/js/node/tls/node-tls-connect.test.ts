@@ -2337,7 +2337,7 @@ describe("keyCertSign on the trust anchor", () => {
   const nodeKeys = join(import.meta.dir, "..", "test", "fixtures", "keys", "selfsigned-no-keycertsign");
   const read = (path: string) => readFileSync(path, "utf8");
 
-  async function attempt(serverOptions: tls.TlsOptions, ca: string) {
+  async function attempt(serverOptions: tls.TlsOptions, ca?: string) {
     const server = tls.createServer(serverOptions, s => s.end());
     let client: TLSSocket | undefined;
     try {
@@ -2360,6 +2360,9 @@ describe("keyCertSign on the trust anchor", () => {
     const cert = read(join(nodeKeys, "cert.pem"));
     const key = read(join(nodeKeys, "key.pem"));
     expect(await attempt({ cert, key }, cert)).toBe("authorized true");
+    // Unpinned, it is an untrusted self-signed certificate (not expired, so
+    // the trust decision is what the code reports).
+    expect(await attempt({ cert, key })).toBe("error DEPTH_ZERO_SELF_SIGNED_CERT");
   });
 
   it("a trusted issuer without keyCertSign may not sign a leaf", async () => {

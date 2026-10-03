@@ -179,9 +179,9 @@ test("NODE_EXTRA_CA_CERTS trusts a self-signed certificate whose keyUsage lacks 
 
   await using dir = tempDir("extra-ca-no-keycertsign", {
     "main.js": `
-      const tls = require("node:tls");
-      const fs = require("node:fs");
-      const { once } = require("node:events");
+      import tls from "node:tls";
+      import fs from "node:fs";
+      import { once } from "node:events";
       const cert = fs.readFileSync(process.env.NODE_EXTRA_CA_CERTS, "utf8");
       const key = fs.readFileSync(process.env.TLS_KEY, "utf8");
 
@@ -193,8 +193,12 @@ test("NODE_EXTRA_CA_CERTS trusts a self-signed certificate whose keyUsage lacks 
         const socket = tls.connect({ host: "127.0.0.1", port: server.port, servername: "localhost" });
         await once(socket, "secureConnect");
         console.log("tls authorized", socket.authorized, socket.authorizationError);
+        // The walk ends at the pinned copy, as in Node: the leaf cannot
+        // sign, so it is not its own issuer, and the store has nothing above.
         const peer = socket.getPeerCertificate(true);
-        console.log("issuerCertificate is self", peer.issuerCertificate === peer);
+        const anchor = peer.issuerCertificate;
+        console.log("issuerCertificate is the pinned copy", anchor.fingerprint256 === peer.fingerprint256);
+        console.log("chain ends there", anchor.issuerCertificate === undefined);
         socket.end();
         await once(socket, "close");
         server.stop(true);
@@ -212,7 +216,9 @@ test("NODE_EXTRA_CA_CERTS trusts a self-signed certificate whose keyUsage lacks 
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("fetch 200 ok\ntls authorized true null\nissuerCertificate is self true\n");
+  expect(stdout).toBe(
+    "fetch 200 ok\ntls authorized true null\nissuerCertificate is the pinned copy true\nchain ends there true\n",
+  );
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

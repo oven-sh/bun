@@ -672,8 +672,9 @@ it("process.versions", async () => {
   const expectedVersions = {};
   for (const [key, file] of Object.entries(deps)) {
     const src = await Bun.file(join(depsDir, `${file}.ts`)).text();
-    // No $ anchor: some pins carry a trailing comment (zlib.ts: `"; // 2.3.3`)
-    const match = src.match(/^const [A-Z_]+_COMMIT = "([0-9a-f]{40})";/m);
+    // No $ anchor: some pins carry a trailing comment (zlib.ts: `"; // 2.3.3`).
+    // A pin that workarounds.ts reads is exported (boringssl.ts).
+    const match = src.match(/^(?:export )?const [A-Z_]+_COMMIT = "([0-9a-f]{40})";/m);
     expect(match, `failed to extract commit from ${file}.ts`).not.toBeNull();
     expectedVersions[key] = match[1];
   }

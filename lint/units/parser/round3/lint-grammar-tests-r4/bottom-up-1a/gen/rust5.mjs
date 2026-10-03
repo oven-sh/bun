@@ -1,25 +1,26 @@
-// Writes the Rust file that replaces the four test files test/bundler/transpiler/typescript-grammar*.test.ts:
-// src/js_parser/parse/grammar_rows_tests.rs. Every expectation is read from tsc 6.0.2 (../rows.facts2.json, made by facts2.mjs
-// from rows.facts.json of tests-known-differences/bottom-up). Run rustfmt --edition 2024 on the output: the tables are under
-// #[rustfmt::skip], one row on a line.
-// usage: OUT=<file> node rust4.mjs [index of a row | family | index=tag,tag,...] ...
-// The rows named are those a lint parse does not read as tsc does: they go into the table KNOWN_DIFFERENCES with what the lint
-// parse makes of them, a fifth test reads that table, and the test of ROWS passes them by. A bare index or a family says that
-// the lint parse does what a parse without lint does (None where main fails, else the tag of each statement that main keeps);
-// index=tag,tag says that the lint parse accepts the source and keeps statements with these tags (index= for none).
-// Without an argument the file has four tests and no such table.
+// Writes the Rust file that holds the 366 cases of the four test files test/bundler/transpiler/typescript-grammar*.test.ts:
+// src/js_parser/parse/grammar_rows_tests.rs. Every expectation is read from tsc 6.0.2 (rows.facts2.json, made by gen/facts2.mjs of
+// ../bottom-up from rows.facts.json of tests-known-differences/bottom-up). Run rustfmt --edition 2024 on the output, outside the
+// worktree: the tables are under #[rustfmt::skip], one row on a line.
+// usage: node rust5.mjs [--rows=<rows.facts2.json>] [--out=<file>] [--as-without-lint=<case,case,...>] [--keeps=<case>:<tag+tag>,...]
+// ROWS has the 366 cases in the order of the four files, a comment before each of the 37 groups, and what tsc makes of each source.
+// The cases named are those a lint parse does not read as tsc does. Their sources go into the table KNOWN_DIFFERENCES with what the
+// lint parse makes of them, a fifth test reads that table, and the test of ROWS passes them by: the expectation of tsc stays in ROWS.
+//   --as-without-lint=<cases>   the lint parse does what a parse without lint does (the field `main` of the rows): the text and
+//                               the offset of its first message, or the tag of each statement it keeps
+//   --keeps=<case>:<tag+tag>    the lint parse takes the source and keeps statements with these tags (<case>: for none)
+// A case is its index 0..365. Every case with the same loader and source follows the one named.
+// Without these arguments the file has four tests and no such table.
 import { readFileSync, writeFileSync } from "node:fs";
 import { ts } from "/workspace/notes/lint/units/parser/round3/tests-known-differences/bottom-up/gen/roots.mjs";
-import { FAMILIES, familyOf } from "/workspace/notes/lint/units/parser/round3/tests-known-differences/bottom-up/gen/families.mjs";
-const here = new URL("..", import.meta.url).pathname;
-const rows = JSON.parse(readFileSync(here + "rows.facts2.json", "utf8"));
-const notRead = process.argv.slice(2);
-const kept_ = new Map();
-for (const f of notRead) {
-  const m = /^(\d+)=(.*)$/.exec(f);
-  if (m) kept_.set(m[1], m[2] ? m[2].split(",") : []);
-  else if (!FAMILIES[f] && !/^\d+$/.test(f)) throw new Error("no family " + f);
-}
+import { familyOf } from "/workspace/notes/lint/units/parser/round3/tests-known-differences/bottom-up/gen/families.mjs";
+const arg = name => (process.argv.find(a => a.startsWith(`--${name}=`)) ?? `--${name}=`).slice(name.length + 3);
+const ROWS = arg("rows") || "/workspace/notes/lint/units/parser/round3/lint-grammar-tests-r4/bottom-up/rows.facts2.json";
+const rows = JSON.parse(readFileSync(ROWS, "utf8"));
+const asWithoutLint = new Set(arg("as-without-lint").split(",").filter(Boolean).map(Number));
+const keeps = new Map(arg("keeps").split(",").filter(Boolean).map(item => { const [i, tags] = item.split(":"); return [Number(i), (tags ?? "").split("+").filter(Boolean)]; }));
+for (const i of [...asWithoutLint, ...keeps.keys()]) if (!rows[i]) throw new Error("no case " + i);
+for (const a of process.argv.slice(2)) if (!/^--(rows|out|as-without-lint|keeps)=/.test(a)) throw new Error("no argument " + a);
 
 const bytes = text => 'b"' + text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n") + '"';
 const str = text => '"' + text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n") + '"';
@@ -53,11 +54,26 @@ for (const r of rows) {
 // A heritage entry is read with its class or interface: its type arguments are read alone.
 // (The roots of roots.mjs hold them inside the ExpressionWithTypeArguments; `(a = 1) => void` is in the table from other rows.)
 
-// What a parse without lint keeps of a source that it accepts: one tag for each statement of its output.
-const keptOfOutput = text => text.split("\n").filter(Boolean).map(line => (/^(export )?(const|let|var) /.test(line) ? "s_local" : "s_expr"));
-
-// The rows named on the command line (an index of rows.json, or a family) are those a lint parse does not read as tsc does.
-const notReadKeys = new Set();
+// The tag of each statement of a program that a parse without lint printed.
+const K = ts.SyntaxKind;
+const STATEMENT = { [K.VariableStatement]: "s_local", [K.ExpressionStatement]: "s_expr", [K.FunctionDeclaration]: "s_function", [K.ClassDeclaration]: "s_class", [K.Block]: "s_block", [K.ImportDeclaration]: "s_import" };
+const tagsOfOutput = text => ts.createSourceFile("/o.js", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS).statements.map(st => STATEMENT[st.kind] ?? (() => { throw new Error("no tag for " + K[st.kind]); })());
+// What a parse without lint makes of a row: the text and the offset of its first message, or the tag of each statement it keeps.
+function asMain(r) {
+  if (r.main[0] === "e") {
+    const [text, line, column] = r.main[1][0];
+    const offset = r.src.split("\n").slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0) + column - 1;
+    return `Err((${bytes(text)}, ${offset}))`;
+  }
+  return `Ok(${list(r.class === "M" ? r.facts.kept : tagsOfOutput(r.main[1]))})`;
+}
+// The sources that a lint parse does not read as tsc does, each with what the lint parse makes of it.
+const known = new Map();
+for (const r of rows) {
+  const key = r.loader + "\0" + r.src;
+  if (keeps.has(r.i)) known.set(key, `Ok(${list(keeps.get(r.i))})`);
+  else if (asWithoutLint.has(r.i)) known.set(key, asMain(r));
+}
 const entries = [];
 let lastGroup = null;
 for (const r of rows) {
@@ -68,15 +84,8 @@ for (const r of rows) {
     const f = r.facts;
     want = `Want::Reads(${str(`kept[${f.kept.join(" ")}] erased[${f.erased.join(" | ")}] wrappers[${f.wrappers.join(" | ")}] nodes[${f.nodes}] enums[${f.enums.join(" | ")}] types[${f.types.join(" | ")}] return_types[${f.returnTypes.join(" | ")}] type_parameters[${f.typeParameters.join(" | ")}] heritage[${f.heritage.join(" | ")}]`)})`;
   }
-  let without;
-  if (r.main[0] === "e") without = "None";
-  else if (r.class === "M") without = `Some(${list(r.facts.kept)})`;
-  else without = `Some(${list(keptOfOutput(r.main[1]))})`;
   const group = `${r.file}\0${r.describe}: ${r.group.replace(/: %s( %j)?$/, "").replace(/: %j passes design:%s$/, "")}`;
-  const isNotRead = notRead.includes(String(r.i)) || notRead.includes(family) || kept_.has(String(r.i));
-  if (kept_.has(String(r.i))) without = `Some(${list(kept_.get(String(r.i)))})`;
-  if (isNotRead) notReadKeys.add(r.loader + "\0" + r.src);
-  entries.push({ i: r.i, group: group === lastGroup ? null : group, family, dialect: DIALECT[r.loader], text: r.src, want, without, key: r.loader + "\0" + r.src });
+  entries.push({ i: r.i, group: group === lastGroup ? null : group, family, dialect: DIALECT[r.loader], text: r.src, want, key: r.loader + "\0" + r.src });
   lastGroup = group;
 }
 const seen = new Map();
@@ -121,12 +130,31 @@ struct Row {
     want: Want,
 }
 
-/// What \`check\` makes of the lint parse of \`text\`. \`Err\`: the code, the start and the end of its first error, zeros where it has no entry.
+/// The first error of a lint parse that fails: the code, the start and the end of its entry, zeros where it has none, and the text and the offset of its message.
+struct Failure {
+    entry: (u32, u32, u32),
+    text: String,
+    offset: usize,
+}
+
+/// What a lint parse made of a source, for the message of a test that fails.
+fn said(found: &Result<String, Failure>) -> String {
+    match found {
+        Ok(line) => line.clone(),
+        Err(failure) => {
+            let (code, start, end) = failure.entry;
+            let (text, offset) = (&failure.text, failure.offset);
+            format!("TS{code} [{start},{end}), the message at {offset}: {text}")
+        }
+    }
+}
+
+/// What \`check\` makes of the lint parse of \`text\`, or its first error.
 fn lint_parse<R>(
     dialect: Dialect,
     text: &'static [u8],
     check: impl FnOnce(&ParsedForLint<'_, '_>) -> R,
-) -> Result<R, (u32, u32, u32)> {
+) -> Result<R, Failure> {
     let (path, loader): (&'static [u8], Loader) = match dialect {
         Dialect::Ts | Dialect::Decorators => (b"/a.ts", Loader::Ts),
         Dialect::Tsx => (b"/a.tsx", Loader::Tsx),

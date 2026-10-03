@@ -1609,8 +1609,8 @@ impl<'a> PackageInstaller<'a> {
                         if package_manager::enqueue_git_for_checkout(
                             self.manager_mut(),
                             dependency_id,
+                            package_id,
                             alias.slice(string_buf!()),
-                            resolution,
                             context,
                             download_patch_hash,
                         ) == package_manager::GitEnqueueResult::OfflineMiss

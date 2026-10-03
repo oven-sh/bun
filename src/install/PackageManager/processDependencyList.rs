@@ -395,6 +395,10 @@ impl PackageManager {
                     }
                 }
             }
+            // A linker's `run_tasks` starts this checkout. Here it would be dropped.
+            TaskCallbackContext::GitCheckout { .. } => {
+                debug_assert!(false, "git checkout waiter outside the install phase");
+            }
             _ => {}
         }
         Ok(())

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { disabledSpecifierCases, frameworkFiles } from "./disabled-specifier-cases";
 
 // Every option here is declared as `string` or `boolean` in bake.d.ts. A value
 // of another type must throw ERR_INVALID_ARG_TYPE from Bun.serve, before any
@@ -57,3 +58,34 @@ test("Bun.serve({ app }) rejects wrong-typed framework options", async () => {
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+for (const c of disabledSpecifierCases) {
+  test.concurrent(`Bun.serve({ app }) reports a disabled ${c.name}`, async () => {
+    using dir = tempDir("bake-app-disabled", {
+      ...frameworkFiles,
+      "package.json": c.packageJson,
+      "fixture.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+        try {
+          Bun.serve({ port: 0, development: true, app: { framework: ${c.framework} }, fetch: () => new Response() }).stop(true);
+          console.log("no error");
+        } catch (e) {
+          console.log(e.name + ": " + e.message);
+        }
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr.trim()).toBe(c.error);
+    expect(stdout).toBe("AggregateError: Framework is missing required files!\n");
+    expect(exitCode).toBe(0);
+  });
+}

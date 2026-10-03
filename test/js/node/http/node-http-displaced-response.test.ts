@@ -159,13 +159,22 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     async () => {
       const head = (length: number) =>
         `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: ${length}\r\n\r\n`;
-      const calls = ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational", "cork"];
+      // The handle records each call on it. The bytes go out behind response 1, when response 2 has the connection.
+      const outputs = {
+        "write": "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nearly\r\nb\r\nsecond-body\r\n0\r\n\r\n",
+        "end": "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nearly",
+        "writeHead": "HTTP/1.1 201 Created\r\nx-early: yes\r\nContent-Length: 11\r\n\r\nsecond-body",
+        "flushHeaders": "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nb\r\nsecond-body\r\n0\r\n\r\n",
+        "writeContinue": "HTTP/1.1 100 Continue\r\n\r\n" + head(11) + "second-body",
+        "writeInformational": "early" + head(11) + "second-body",
+        "cork": head(11) + "second-body",
+      };
       expect(await run("queued", transport)).toEqual({
-        results: calls.map(call => ({
+        results: Object.entries(outputs).map(([call, output]) => ({
           call,
           queued: true,
           result: "returned",
-          received: head(10) + "first-body" + head(11) + "second-body",
+          received: head(10) + "first-body" + output,
         })),
         stderr: "",
         exitCode: 0,

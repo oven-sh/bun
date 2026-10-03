@@ -193,6 +193,10 @@ export default [
         fn: "writeHeadAndEndWithTrailers",
         length: 9,
       },
+      writeHeadAndWrite: {
+        fn: "writeHeadAndWrite",
+        length: 9,
+      },
       resume: {
         fn: "doResume",
         length: 0,

@@ -104,10 +104,15 @@ impl InlineSnapshotToWrite {
 
 pub(crate) struct File {
     pub(crate) id: FileId,
-    pub(crate) file: bun_sys::File,
+    // A missing snapshot in CI still needs a file ID to scope snapshot counts.
+    pub(crate) file: Option<bun_sys::File>,
 }
 
 impl Snapshots {
+    fn can_write(&self) -> bool {
+        self.update_snapshots || !crate::cli::ci_info::is_ci()
+    }
+
     /// Reset per-run snapshot counters to 0. Keys stay owned by the map until
     /// `writeSnapshotFile` tears them down on file switch.
     pub(crate) fn reset_counts(&mut self) {
@@ -180,12 +185,10 @@ impl Snapshots {
 
         // doesn't exist. append to file bytes and add to hashmap.
         // Prevent snapshot creation in CI environments unless --update-snapshots is used
-        if crate::cli::ci_info::is_ci() {
-            if !self.update_snapshots {
-                // Store the snapshot name for error reporting
-                self.last_error_snapshot_name = Some(name_with_counter.into_boxed_slice());
-                return Err(crate::Error::SnapshotCreationNotAllowedInCI);
-            }
+        if !self.can_write() {
+            // Store the snapshot name for error reporting
+            self.last_error_snapshot_name = Some(name_with_counter.into_boxed_slice());
+            return Err(crate::Error::SnapshotCreationNotAllowedInCI);
         }
 
         let estimated_length = b"\nexports[`".len()
@@ -345,10 +348,13 @@ impl Snapshots {
 
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
-            file.file
-                .write_all(&self.file_buf)
-                .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
-            let _ = file.file.close();
+            if let Some(file) = file.file {
+                if self.can_write() {
+                    file.write_all(&self.file_buf)
+                        .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
+                }
+                let _ = file.close();
+            }
             self.file_buf.clear();
             self.file_buf.shrink_to_fit();
 
@@ -443,12 +449,9 @@ impl Snapshots {
                     continue;
                 }
             };
-            let file = File {
-                id: file_id,
-                file: bun_sys::File::from_fd(fd),
-            };
+            let file = bun_sys::File::from_fd(fd);
 
-            let file_text: Vec<u8> = file.file.read_to_end().map_err(Error::from)?;
+            let file_text: Vec<u8> = file.read_to_end().map_err(Error::from)?;
 
             let source =
                 bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
@@ -797,7 +800,7 @@ impl Snapshots {
             }
 
             // 4. write out result_text to the file
-            if let Err(e) = file.file.seek_to(0) {
+            if let Err(e) = file.seek_to(0) {
                 log.add_error_fmt(
                     &source,
                     bun_ast::Loc { start: 0 },
@@ -809,7 +812,7 @@ impl Snapshots {
                 continue;
             }
 
-            if let Err(e) = file.file.write_all(&result_text) {
+            if let Err(e) = file.write_all(&result_text) {
                 log.add_error_fmt(
                     &source,
                     bun_ast::Loc { start: 0 },
@@ -821,7 +824,7 @@ impl Snapshots {
                 continue;
             }
             if result_text.len() < file_text.len() {
-                if bun_sys::ftruncate(file.file.handle, result_text.len() as i64).is_err() {
+                if bun_sys::ftruncate(file.handle, result_text.len() as i64).is_err() {
                     panic!("Failed to update inline snapshot: File was left in an invalid state");
                 }
             }
@@ -852,8 +855,11 @@ impl Snapshots {
                 .copy_from_slice(Self::SNAPSHOTS_DIR_NAME);
             pos += Self::SNAPSHOTS_DIR_NAME.len();
 
+            let can_write = self.can_write();
             let cached_dir = self.snapshot_dir_path;
-            if cached_dir.is_none() || !strings::eql_long(dir_path, cached_dir.unwrap(), true) {
+            if can_write
+                && (cached_dir.is_none() || !strings::eql_long(dir_path, cached_dir.unwrap(), true))
+            {
                 buf[pos] = 0;
                 // SAFETY: buf[pos] == 0 written above
                 let snapshot_dir_path = ZStr::from_buf(&buf[..], pos);
@@ -878,32 +884,38 @@ impl Snapshots {
             // SAFETY: buf[pos] == 0 written above
             let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
-            let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
+            let mut flags: i32 = if can_write {
+                bun_sys::O::CREAT | bun_sys::O::RDWR
+            } else {
+                bun_sys::O::RDONLY
+            };
             if self.update_snapshots {
                 flags |= bun_sys::O::TRUNC;
             }
-            let fd = match bun_sys::open(snapshot_file_path, flags, 0o644) {
-                bun_sys::Result::Ok(fd) => fd,
+            let file = match bun_sys::open(snapshot_file_path, flags, 0o644) {
+                bun_sys::Result::Ok(fd) => Some(bun_sys::File::from_fd(fd)),
+                bun_sys::Result::Err(err)
+                    if !can_write && err.get_errno() == bun_sys::Errno::ENOENT =>
+                {
+                    None
+                }
                 bun_sys::Result::Err(err) => return Ok(bun_sys::Result::Err(err)),
             };
 
-            let file = File {
-                id: file_id,
-                file: bun_sys::File::from_fd(fd),
-            };
+            let file = File { id: file_id, file };
 
             if self.update_snapshots {
                 self.file_buf.extend_from_slice(Self::FILE_HEADER);
-            } else {
-                let length = file.file.get_end_pos().map_err(Error::from)?;
+            } else if let Some(file) = &file.file {
+                let length = file.get_end_pos().map_err(Error::from)?;
                 if length == 0 {
                     self.file_buf.extend_from_slice(Self::FILE_HEADER);
                 } else {
                     let mut tmp = vec![0u8; length];
-                    let _ = file.file.pread_all(&mut tmp, 0).map_err(Error::from)?;
+                    let _ = file.pread_all(&mut tmp, 0).map_err(Error::from)?;
                     #[cfg(windows)]
                     {
-                        file.file.seek_to(0).map_err(Error::from)?;
+                        file.seek_to(0).map_err(Error::from)?;
                     }
                     self.file_buf.extend_from_slice(&tmp);
                 }

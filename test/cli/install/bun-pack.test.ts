@@ -815,6 +815,8 @@ describe.concurrent("workspaces", () => {
     { input: "workspace:1.1.x", expected: "1.1.x" },
     { input: "workspace:*", expected: "1.1.1" },
     { input: "workspace:-", expected: "-" },
+    // leading whitespace is not part of the specifier
+    { input: " workspace:^", expected: "^1.1.1" },
   ];
 
   test.each(withLockfileWorkspaceProtocolTests)(

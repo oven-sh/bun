@@ -286,23 +286,23 @@ describe.skipIf(!isGlibc || !cc)("a read of a `directories.bin` folder fails", (
 // remove from the bin folder then, and must unregister the package.
 describe.skipIf(isWindows)("bun unlink when `directories.bin` is not a folder", () => {
   test.concurrent.each([
-    ["a path that does not exist", "bin", {}, ""],
-    ["a regular file", "bin", { bin: "not a folder" }, "error: failed to link bin due to error ENOTDIR"],
+    ["a path that does not exist", "bin", {}, `Success! Registered "linked-pkg"`, 0],
+    ["a regular file", "bin", { bin: "not a folder" }, "error: failed to link bin due to error ENOTDIR", 1],
     [
       "a name longer than a file name can be",
       Buffer.alloc(300, "b").toString(),
       {},
       "error: failed to link bin due to error ENAMETOOLONG",
+      1,
     ],
-  ] as const)("%s", async (_, binDir, files, linkError) => {
+  ] as const)("%s", async (_what, binDir, files, linkOutput, linkExitCode) => {
     const { dir, root, cwd, globalBin, registered } = linkedPackage(binDir, files);
     using _ = dir;
 
     const linked = await run(["link"], cwd, root);
-    if (linkError) expect(linked.stderr).toContain(linkError);
-    else expect(linked.stdout).toContain(`Success! Registered "linked-pkg"`);
+    expect(linked.stdout + linked.stderr).toContain(linkOutput);
     expect(registered()).toBe(true);
-    expect(linked.exitCode).toBe(linkError ? 1 : 0);
+    expect(linked.exitCode).toBe(linkExitCode);
 
     const unlinked = await run(["unlink"], cwd, root);
     expect(unlinked.stderr).not.toContain("error:");

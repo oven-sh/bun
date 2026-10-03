@@ -3363,6 +3363,132 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
     write_bytes(writer, remain)
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// escapeControlChars
+// ───────────────────────────────────────────────────────────────────────────
+
+/// `Display` adapter for text that bun did not author (registry metadata, a
+/// dependency's `package.json`, an HTTP peer). C0 controls, DEL, C1 controls
+/// and the bidi embedding, override and isolate characters are spelled out
+/// (`\n`, `\x1b`, `\x7f`, `\u009b`, `\u202e`), so the text cannot erase,
+/// repaint, reorder or forge lines of terminal output.
+pub struct EscapeControlChars<T>(pub T);
+
+/// [`EscapeControlChars`] that keeps `\t`, `\n` and `\r\n`, for a value that
+/// is printed on its own and can span lines (`bun pm view <pkg> readme`).
+pub struct EscapeControlCharsMultiline<T>(pub T);
+
+/// [`EscapeControlChars`] for text that is already serialized JSON. DEL, C1
+/// and bidi characters, which JSON allows raw inside a string, become `\u`
+/// escapes. The output is the same JSON value.
+pub struct EscapeControlCharsJson<T>(pub T);
+
+/// [`EscapeControlChars`] over raw bytes; invalid UTF-8 renders as U+FFFD.
+pub fn escape_control_chars(text: &[u8]) -> EscapeControlChars<&bstr::BStr> {
+    EscapeControlChars(bstr::BStr::new(text))
+}
+
+/// [`EscapeControlCharsMultiline`] over raw bytes; invalid UTF-8 renders as U+FFFD.
+pub fn escape_control_chars_multiline(text: &[u8]) -> EscapeControlCharsMultiline<&bstr::BStr> {
+    EscapeControlCharsMultiline(bstr::BStr::new(text))
+}
+
+impl<T: Display> Display for EscapeControlChars<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut writer = EscapeControlCharsWriter {
+            f,
+            mode: EscapeControlCharsMode::Line,
+        };
+        write!(writer, "{}", self.0)
+    }
+}
+
+impl<T: Display> Display for EscapeControlCharsMultiline<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut writer = EscapeControlCharsWriter {
+            f,
+            mode: EscapeControlCharsMode::Multiline,
+        };
+        write!(writer, "{}", self.0)
+    }
+}
+
+impl<T: Display> Display for EscapeControlCharsJson<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut writer = EscapeControlCharsWriter {
+            f,
+            mode: EscapeControlCharsMode::Json,
+        };
+        write!(writer, "{}", self.0)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EscapeControlCharsMode {
+    Line,
+    Multiline,
+    Json,
+}
+
+struct EscapeControlCharsWriter<'a, 'f> {
+    f: &'a mut Formatter<'f>,
+    mode: EscapeControlCharsMode,
+}
+
+impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let bytes = s.as_bytes();
+        let mut start = 0;
+        let mut cursor = 0;
+        // `\` doubles as the quote char so the scan stops at nothing else extra.
+        while let Some(offset) =
+            strings::index_of_needs_escape_for_java_script_string(&bytes[cursor..], b'\\')
+        {
+            let i = cursor + offset as usize;
+            let (code_point, len) = match bytes[i..] {
+                [byte @ (0x00..=0x1F | 0x7F), ..] => (byte as u32, 1),
+                [0xC2, second @ 0x80..=0x9F, ..] => (second as u32, 2),
+                // U+202A..=U+202E and U+2066..=U+2069.
+                [0xE2, 0x80, third @ 0xAA..=0xAE, ..] => (0x2000 | (third as u32 & 0x3F), 3),
+                [0xE2, 0x81, third @ 0xA6..=0xA9, ..] => (0x2040 | (third as u32 & 0x3F), 3),
+                _ => {
+                    cursor = i + strings::wtf8_byte_sequence_length(bytes[i]) as usize;
+                    continue;
+                }
+            };
+            let keep = match self.mode {
+                EscapeControlCharsMode::Line => false,
+                EscapeControlCharsMode::Multiline => match code_point {
+                    0x09 | 0x0A => true,
+                    0x0D => bytes.get(i + 1) == Some(&b'\n'),
+                    _ => false,
+                },
+                // The serializer already escaped C0 inside strings; what is
+                // left of it is the whitespace between tokens.
+                EscapeControlCharsMode::Json => code_point < 0x7F,
+            };
+            if keep {
+                cursor = i + len;
+                continue;
+            }
+            self.f.write_str(&s[start..i])?;
+            match code_point {
+                _ if self.mode == EscapeControlCharsMode::Json => {
+                    write!(self.f, "\\u{:04x}", code_point)?
+                }
+                0x0A => self.f.write_str("\\n")?,
+                0x0D => self.f.write_str("\\r")?,
+                0x09 => self.f.write_str("\\t")?,
+                0x00..=0x7F => write!(self.f, "\\x{:02x}", code_point)?,
+                _ => write!(self.f, "\\u{:04x}", code_point)?,
+            }
+            start = i + len;
+            cursor = start;
+        }
+        self.f.write_str(&s[start..])
+    }
+}
+
 // js_bindings (fmtString for highlighter.test.ts) lives in src/jsc/fmt_jsc.rs
 // alongside fmt_jsc.bind.ts; bun_core/ stays JSC-free.
 

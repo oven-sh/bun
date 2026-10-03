@@ -2000,6 +2000,46 @@ describe("bundler", () => {
       run: { file: "/out/entry.js", stdout: "first\nsecond\na,z" },
     });
 
+    // The namespace object of lib.js names data.json. The file still goes where its import statement is, after side.js.
+    itBundled("splitting/NamespaceExportKeepsImportOrderOfJSON" + (splitting ? "" : "WithoutSplitting"), {
+      files: {
+        "/entry.js": `import * as lib from "./lib.js"; console.log(Object.keys(lib).join(), lib[["data"][0]].a);`,
+        "/lib.js": `import "./side.js"; export { default as data } from "./data.json";`,
+        "/side.js": `console.log("side");`,
+        "/data.json": `{ "a": "from json" }`,
+      },
+      splitting,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        const code = api.readFile("/out/entry.js");
+        expect(code.indexOf(`"side"`)).toBeLessThan(code.indexOf(`"from json"`));
+      },
+      run: { file: "/out/entry.js", stdout: "side\ndata from json" },
+    });
+
+    // A function of first.js names data.json, which the barrel imports later. The file does not go inside first.js.
+    itBundled("splitting/BarrelCycleKeepsImportOrderOfJSON" + (splitting ? "" : "WithoutSplitting"), {
+      files: {
+        "/entry.js": `import { read } from "./index.js"; console.log(read());`,
+        "/index.js": `export * from "./first.js"; export { default as data } from "./data.json";`,
+        "/first.js": /* js */ `
+          import { data } from "./index.js";
+          export function read() { return data.a; }
+          console.log("first");
+        `,
+        "/data.json": `{ "a": "from json" }`,
+      },
+      splitting,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        const code = api.readFile("/out/entry.js");
+        expect(code.indexOf(`"first"`)).toBeLessThan(code.indexOf(`"from json"`));
+      },
+      run: { file: "/out/entry.js", stdout: "first\nfrom json" },
+    });
+
     // first.js runs ahead of second.js and holds the namespace object of second.js, which exists before any file runs.
     itBundled("splitting/NamespaceObjectExistsBeforeItsFileRuns" + (splitting ? "" : "WithoutSplitting"), {
       files: {
@@ -2162,15 +2202,6 @@ describe("bundler", () => {
       `,
       "third.ts": `console.log("third"); export function three() { return 3; }`,
     },
-    "a JSON file that the barrel imports later is read at load": {
-      "main.ts": `import { early } from "./index.ts"; console.log(early);`,
-      "index.ts": `export * from "./first.ts"; export { default as data } from "./data.json";`,
-      "first.ts": `
-        import { data } from "./index.ts";
-        export const early = data.a;
-      `,
-      "data.json": `{ "a": 1 }`,
-    },
   };
   for (const [name, files] of Object.entries(barrelCycleGraphs)) {
     // With two entry points, the cycle is in the chunk that they share.
@@ -2179,10 +2210,7 @@ describe("bundler", () => {
         `splitting/BarrelCycleKeepsImportOrder${splitting ? "" : "WithoutSplitting"}: ${name}`,
         async () => {
           const entries = splitting ? ["main", "main2"] : ["main"];
-          using dir = tempDir("splitting-barrel-cycle", {
-            ...files,
-            ...Object.fromEntries(entries.map(entry => [entry + ".ts", files["main.ts"]])),
-          });
+          using dir = tempDir("splitting-barrel-cycle", splitting ? { ...files, "main2.ts": files["main.ts"] } : files);
           const cwd = String(dir);
           const [unbundled, build] = await Promise.all([
             run([bunExe(), "main.ts"], cwd, env),

@@ -2,7 +2,6 @@ use crate::mal_prelude::*;
 use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
 
-use crate::bundled_ast::Flags as AstFlags;
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
 use crate::options::Loader;
 use crate::{Chunk, EntryPoint, Index, IndexInt, LinkerContext, PartRange, chunk, js_meta::Wrap};
@@ -334,7 +333,7 @@ enum Edge {
 }
 
 /// The files that a file leads to, in evaluation order, with the part that leads there. `runs`: the load evaluates the file.
-/// A JavaScript file runs where it is imported, not where its bindings are used: `part.dependencies` does not place it.
+/// A file runs where it is imported, not where its bindings are used: `part.dependencies` does not order what runs.
 fn for_each_edge(
     c: &LinkerContext,
     source_index: IndexInt,
@@ -342,7 +341,8 @@ fn for_each_edge(
     mut each: impl FnMut(u32, Edge),
 ) {
     let records = c.graph.ast.items_import_records()[source_index as usize].as_slice();
-    if c.graph.ast.items_css()[source_index as usize].is_some()
+    let css = c.graph.ast.items_css();
+    if css[source_index as usize].is_some()
         || c.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
     {
         // A CSS or HTML file has no parts; every record counts.
@@ -356,10 +356,18 @@ fn for_each_edge(
 
     let parts = c.graph.ast.items_parts()[source_index as usize].as_slice();
     let parts_live = &c.graph.parts_live[source_index as usize];
-    let ast_flags = c.graph.ast.items_flags();
-    for (part_index, part) in parts.iter().enumerate() {
-        let runs_here = runs && parts_live.is_set(part_index);
-        let part_index = part_index as u32;
+    const NAMESPACE_EXPORT: usize = bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize;
+    // The namespace export part is ahead of the `import` statements. What it names goes after what they import.
+    for index in (NAMESPACE_EXPORT + 1..parts.len())
+        .chain(parts.get(NAMESPACE_EXPORT).map(|_| NAMESPACE_EXPORT))
+    {
+        let part = &parts[index];
+        let runs_here = runs && parts_live.is_set(index);
+        let part_index = if index == NAMESPACE_EXPORT {
+            parts.len()
+        } else {
+            index
+        } as u32;
         for &record_id in part.import_record_indices.slice() {
             let record: &ImportRecord = &records[record_id as usize];
             if !record.source_index.is_valid() || !(record.kind == ImportKind::Stmt || runs_here) {
@@ -377,12 +385,11 @@ fn for_each_edge(
                 },
             );
         }
-        // A file that is only a value (CSS class names, JSON, an asset) runs nothing: ahead of the part that names it.
-        // A chunk that names CSS class names through a re-export in another chunk gets its own copy here.
+        // A chunk prints its own copy of the CSS class names that it uses, also when the `import` is in another chunk.
         if runs_here {
             for dependency in part.dependencies.iter() {
                 let other = dependency.source_index.get();
-                if ast_flags[other as usize].contains(AstFlags::HAS_LAZY_EXPORT) {
+                if css[other as usize].is_some() {
                     each(part_index, Edge::Import(other));
                 }
             }
@@ -644,20 +651,19 @@ impl EntryWalk {
                         return;
                     }
                 }
-                let end = part_index.max(bun_ast::NAMESPACE_EXPORT_PART_INDEX + 1);
                 if let Some(slot) = slot
                     && splits
-                    && end > begin
+                    && part_index > begin
                 {
                     stack.push(WalkFrame::Place {
                         run: PartRun {
                             source_index,
                             begin,
-                            end,
+                            end: part_index,
                         },
                         slot,
                     });
-                    begin = end;
+                    begin = part_index;
                 }
                 stack.push(match slot {
                     Some(slot) if is_css => WalkFrame::PlaceCss {

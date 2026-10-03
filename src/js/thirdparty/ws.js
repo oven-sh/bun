@@ -499,18 +499,28 @@ class BunWebSocket extends EventEmitter {
   }
 
   send(data, opts, cb) {
+    const state = this.#ws.readyState;
+    if (state === ReadyState_CONNECTING) {
+      throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
+    }
+
     if ($isCallable(opts)) {
       cb = opts;
       opts = undefined;
     }
 
     try {
+      // Once CLOSING or CLOSED, the native send() discards the frame and only
+      // adds its size to bufferedAmount, which npm ws's sendAfterClose() does too.
       this.#ws.send(normalizeData(data, opts), opts?.compress);
     } catch (error) {
       // Node.js APIs expect callback arguments to be called after the current stack pops
       if (typeof cb === "function") process.nextTick(cb, error);
       return;
     }
+
+    if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
+
     // deviation: this should be called once the data is written, not immediately
     // Node.js APIs expect callback arguments to be called after the current stack pops
     if (typeof cb === "function") process.nextTick(cb, null);

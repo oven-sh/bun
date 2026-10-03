@@ -203,6 +203,12 @@ plugin({
 });
 ```
 
+<Note>
+  `Bun.build` uses the `path` that `onResolve` returns as the identity of the module, and it does not resolve symlinks
+  in that path. If another import reaches the same file through its real path, the bundle contains the file twice, and
+  each copy has its own module state. To get one copy, return the real path, for example `fs.realpathSync(path)`.
+</Note>
+
 ### onLoad
 
 ```ts

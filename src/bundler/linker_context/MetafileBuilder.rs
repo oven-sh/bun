@@ -200,7 +200,11 @@ fn generate_chunk_json(
 /// Called after `generate_chunks_in_parallel` has emitted every chunk's output.
 /// Chunk references (unique_keys) are resolved to their final output paths.
 /// The caller is responsible for freeing the returned slice.
-pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Box<[u8]>> {
+pub(crate) fn generate(
+    c: &mut LinkerContext,
+    chunks: &mut [Chunk],
+    output_files: &[crate::options::OutputFile],
+) -> crate::Result<Box<[u8]>> {
     // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
     let mut j = StringJoiner::default();
     // errdefer j.deinit() — handled by Drop
@@ -423,19 +427,41 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
 
     j.push_static(b"\n  },\n  \"outputs\": {");
 
-    let mut first_output = true;
-    for chunk in chunks.iter() {
-        if chunk.final_rel_path.is_empty() {
-            continue;
+    let mut chunk_by_path: StringHashMap<usize> = StringHashMap::default();
+    for (index, chunk) in chunks.iter().enumerate() {
+        if !chunk.final_rel_path.is_empty() {
+            chunk_by_path.put(&chunk.final_rel_path, index)?;
         }
+    }
 
+    let mut first_output = true;
+    for output in output_files {
         if !first_output {
             j.push_static(b",");
         }
         first_output = false;
 
         j.push_static(b"\n    ");
-        j.push_owned(generate_chunk_json(c, chunk, chunks)?);
+        if let Some(&index) = chunk_by_path.get(output.dest_path.as_ref()) {
+            j.push_owned(generate_chunk_json(c, &chunks[index], chunks)?);
+        } else {
+            let mut json = Vec::new();
+            write_json_string(&mut json, &output.dest_path)?;
+            write!(
+                json,
+                ": {{\n      \"bytes\": {},\n      \"inputs\": {{",
+                output.size
+            )?;
+            if output.output_kind == crate::options::OutputKind::Asset
+                && let Some(index) = output.source_index.unwrap()
+            {
+                let source = &sources[index.get() as usize];
+                write_json_string(&mut json, source.path.pretty)?;
+                write!(json, ": {{\"bytesInOutput\": {}}}", output.size)?;
+            }
+            json.extend_from_slice(b"},\n      \"imports\": [],\n      \"exports\": []\n    }");
+            j.push_owned(json.into_boxed_slice());
+        }
     }
 
     j.push_static(b"\n  }\n}\n");

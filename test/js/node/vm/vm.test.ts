@@ -1889,17 +1889,22 @@ describe("defineProperty errors use vm-realm global", () => {
 // function that belongs to a context, inlined into a function of the Bun global, then handed the context's global
 // object to an accessor of a Bun object, and Bun's accessors read their own global through that argument.
 describe.concurrent("a native accessor of a Bun object read by a function that belongs to a context", () => {
-  // Compile on the main thread so that the tier-up point does not depend on scheduling. With the FTL threshold at 8000
-  // (64000 by default) the FTL compiles the calling function after about 700 calls, so a debug build gets there
-  // quickly. The DFG keeps its threshold: the FTL has to find a settled inline cache in the DFG code. Without the fix
-  // every case goes wrong between iteration 400 and 800.
-  const env = { ...bunEnv, BUN_JSC_useConcurrentJIT: "0", BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "8000" };
+  // Compile on the main thread so that the tier-up point does not depend on scheduling.
+  const env = { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" };
+  // With one level of inlining the wrong call needs the FTL. At this threshold (64000 by default) the FTL compiles the
+  // calling function after about 700 calls, so a debug build gets there quickly. The DFG keeps its threshold: the FTL
+  // has to find a settled inline cache in the DFG code. Without the fix these cases go wrong between iteration 400
+  // and 800.
+  const ftl = { BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "8000" };
+  // With two levels the DFG makes the wrong call by itself, at about iteration 2070 without the fix.
+  const dfgOnly = { BUN_JSC_useFTLJIT: "0" };
   const iterations = 3000;
 
-  const cases: [name: string, script: string, expected: string][] = [
+  const cases: [name: string, tiers: Record<string, string>, script: string, expected: string][] = [
     [
       // A hand-written accessor that reads the bytes of its receiver.
       "StringDecoder#lastChar",
+      ftl,
       /*js*/ `
         const vm = require("node:vm");
         const { StringDecoder } = require("node:string_decoder");
@@ -1915,6 +1920,7 @@ describe.concurrent("a native accessor of a Bun object read by a function that b
     [
       // A generated getter that makes its value on the first read.
       "Request#signal",
+      ftl,
       /*js*/ `
         const vm = require("node:vm");
         const read = vm.runInNewContext("(function (request) { return request.signal; })");
@@ -1928,6 +1934,7 @@ describe.concurrent("a native accessor of a Bun object read by a function that b
     [
       // A generated getter that keeps its value on the receiver: the Response must not keep a Headers of the context.
       "Response#headers",
+      ftl,
       /*js*/ `
         const vm = require("node:vm");
         const read = vm.runInNewContext("(function (response) { return response.headers; })");
@@ -1941,6 +1948,7 @@ describe.concurrent("a native accessor of a Bun object read by a function that b
     [
       // A plain custom accessor, which the DFG calls through another node than the generated getters.
       "import.meta.env",
+      ftl,
       /*js*/ `
         import vm from "node:vm";
         const read = vm.runInNewContext("(function (meta) { return meta.env; })");
@@ -1954,6 +1962,7 @@ describe.concurrent("a native accessor of a Bun object read by a function that b
     [
       // A setter: node:buffer keeps INSPECT_MAX_BYTES on the global object it is called with.
       "the buffer.INSPECT_MAX_BYTES setter",
+      ftl,
       /*js*/ `
         const vm = require("node:vm");
         const buffer = require("node:buffer");
@@ -1968,6 +1977,7 @@ describe.concurrent("a native accessor of a Bun object read by a function that b
       // What a server does: the handler belongs to a context and reads an accessor of each Request. server.fetch()
       // runs the handler as a request does, without a socket for each call.
       "Request#signal in a Bun.serve handler",
+      ftl,
       /*js*/ `
         const vm = require("node:vm");
         const read = vm.runInNewContext("(function (request) { return typeof request.signal; })");
@@ -1981,10 +1991,47 @@ describe.concurrent("a native accessor of a Bun object read by a function that b
       `,
       "object object object object",
     ],
+    [
+      "Response#headers through two levels of inlining, with no FTL",
+      dfgOnly,
+      /*js*/ `
+        const vm = require("node:vm");
+        const read = vm.runInNewContext("(function (response) { return response.headers; })");
+        const middle = response => read(response);
+        function outer() {
+          let headers;
+          for (let i = 0; i < ${2 * iterations}; i++) headers = middle(new Response("x"));
+          return headers;
+        }
+        console.log(outer() instanceof Headers);
+      `,
+      "true",
+    ],
+    [
+      "the buffer.INSPECT_MAX_BYTES setter through two levels of inlining, with no FTL",
+      dfgOnly,
+      /*js*/ `
+        const vm = require("node:vm");
+        const buffer = require("node:buffer");
+        const write = vm.runInNewContext("(function (module, value) { module.INSPECT_MAX_BYTES = value; })");
+        const middle = (module, value) => write(module, value);
+        function outer() {
+          for (let i = 1; i <= ${2 * iterations}; i++) middle(buffer, i);
+        }
+        outer();
+        console.log(buffer.INSPECT_MAX_BYTES);
+      `,
+      String(2 * iterations),
+    ],
   ];
 
-  test.each(cases)("%s", async (_, script, expected) => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+  test.each(cases)("%s", async (_, tiers, script, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...env, ...tiers },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
       stdout: expected,

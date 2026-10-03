@@ -984,6 +984,85 @@ describe.concurrent("File and fs.Stats accept a newTarget that belongs to a cont
   });
 });
 
+// The FTL calls a native getter with the global object of the function it inlined. For a function
+// defined in a context that is the context's global object, not the Bun global that holds the
+// require cache.
+describe.concurrent("require.cache and require.extensions read by a function that belongs to a context", () => {
+  // Compile on the main thread so that the tier-up point does not depend on scheduling.
+  const env = { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" };
+
+  test.each(["cache", "extensions"])("require.%s", async property => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /*js*/ `
+          const vm = require("node:vm");
+          const read = vm.runInNewContext("(function (r) { return r.${property}; })");
+          let value;
+          for (let i = 0; i < 2_000_000; i++) value = read(require);
+          console.log(value === require.${property});
+        `,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "true",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // A Bun.ModuleGraph has its own cache object, made by the first read. Here the first read of the
+  // second graph is the last iteration, so the getter makes the object from the global it was given.
+  test("the first read of the require.cache of a Bun.ModuleGraph", async () => {
+    using dir = tempDir("vm-module-graph-require-cache", { "require.cjs": "module.exports = require;" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /*js*/ `
+          const vm = require("node:vm");
+          const { basename, resolve } = require("node:path");
+          const read = vm.runInNewContext("(function (r) { return r.cache; })");
+          const iterations = 2_000_000;
+          function readLast(warm, fresh) {
+            let value;
+            for (let i = 0; i < iterations; i++) value = read(i === iterations - 1 ? fresh : warm);
+            return value;
+          }
+          (async () => {
+            const file = resolve("require.cjs");
+            const warm = (await new Bun.ModuleGraph().import(file)).default;
+            const fresh = (await new Bun.ModuleGraph().import(file)).default;
+            const cache = readLast(warm, fresh);
+            console.log(JSON.stringify({
+              isTheCacheOfItsGraph: cache === fresh.cache && cache !== warm.cache && cache !== require.cache,
+              keys: Object.keys(cache).map(key => basename(key)),
+              missing: cache[resolve("missing.cjs")] === undefined,
+            }));
+          })();
+        `,
+      ],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify({ isTheCacheOfItsGraph: true, keys: ["require.cjs"], missing: true }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 test("can't use export syntax in vm.Script", () => {
   // vm.Script now parses eagerly (like Node), so the SyntaxError surfaces at
   // construction rather than at runInThisContext()/createCachedData().

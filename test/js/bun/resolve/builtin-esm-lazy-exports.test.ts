@@ -727,3 +727,204 @@ for (const { name, install, exportName, importFrom, files } of linkReentrancyCas
     expect(result).toEqual({ E: "getter throws", X: "getter throws" });
   });
 }
+
+// A CommonJS module can export an object that has a static table: `module.exports = process` is all the
+// process-nextick-args package does here, and others export Buffer, Promise or JSON. The structure of such an object
+// does not list the table's entries, and reading them all to find out what to export constructs every one of them.
+// So its exports are declared the way the builtins above declare theirs: every own property is an export, and what
+// Bun's own code produces is read when something first binds to it.
+const staticTableModules = {
+  "process.cjs": `module.exports = process;`,
+  "bun.cjs": `module.exports = Bun;`,
+  "module.cjs": `module.exports = require("node:module");`,
+  "buffer.cjs": `module.exports = Buffer;`,
+  "fs-binding.cjs": `module.exports = process.binding("fs");`,
+  "json.cjs": `module.exports = JSON;`,
+  "object.cjs": `module.exports = Object;`,
+  "promise.cjs": `module.exports = Promise;`,
+  "regexp.cjs": `module.exports = RegExp;`,
+};
+
+test.concurrent("CommonJS exports with a static table: every own property is an export, none is constructed", async () => {
+  const result = await runEntry(
+    `
+      import { constructed, constructedOnModule, constructedOnProcess, print } from "./native-helper.mjs";
+      const objects = {
+        process,
+        bun: Bun,
+        module: process.getBuiltinModule("node:module"),
+        buffer: Buffer,
+        "fs-binding": process.binding("fs"),
+        json: JSON,
+        object: Object,
+        promise: Promise,
+        regexp: RegExp,
+      };
+      const wrong = [];
+      for (const [name, object] of Object.entries(objects)) {
+        // Lists the entries of a static table without constructing them.
+        const own = Object.getOwnPropertyNames(object).filter(key => key !== "constructor" && key !== "default");
+        const ns = await import("./" + name + ".cjs");
+        const exportNames = Reflect.ownKeys(ns).filter(key => typeof key === "string");
+        if (exportNames.sort().join() !== [...own, "default"].sort().join() || ns.default !== object) wrong.push(name);
+      }
+      print({ wrong, constructed: [...constructed(), ...constructedOnProcess(), ...constructedOnModule()] });
+    `,
+    staticTableModules,
+  );
+  expect(result).toEqual({ wrong: [], constructed: [] });
+});
+
+test.concurrent("CommonJS exports with a static table: a named import constructs the binding it links", async () => {
+  const result = await runEntry(
+    `
+      import pna, { nextTick, release } from "./process.cjs";
+      import { alloc } from "./buffer.cjs";
+      import { parse } from "./json.cjs";
+      import { constructedOnProcess, print } from "./native-helper.mjs";
+      print({
+        default: pna === process,
+        nextTick: nextTick === process.nextTick,
+        release: release === process.release,
+        alloc: alloc === Buffer.alloc,
+        parse: parse === JSON.parse,
+        constructed: constructedOnProcess(),
+      });
+    `,
+    staticTableModules,
+  );
+  expect(result).toEqual({
+    default: true,
+    nextTick: true,
+    release: true,
+    alloc: true,
+    parse: true,
+    constructed: ["release"],
+  });
+});
+
+test.concurrent("CommonJS exports with a static table: a property that throws only fails the binding that reads it", async () => {
+  // Bun.redis is the default client, and constructing it throws for this URL.
+  const result = await runEntry(
+    `
+      import * as ns from "./bun.cjs";
+      import { print } from "./native-helper.mjs";
+      let redis;
+      try {
+        redis = typeof ns.redis;
+      } catch (error) {
+        redis = error.message;
+      }
+      print({ write: ns.write === Bun.write, redis });
+    `,
+    staticTableModules,
+    { REDIS_URL: "not a url" },
+  );
+  expect(result).toEqual({ write: true, redis: "Invalid URL format" });
+});
+
+test.concurrent("CommonJS exports with a static table: a stored value is exported as it was at load", async () => {
+  const result = await runEntry(
+    `
+      import { print } from "./native-helper.mjs";
+      process.stored = "at load";
+      const title = process.title;
+      const ns = await import("./process.cjs");
+      process.stored = "after load";
+      process.title = "set after load";
+      // What the table's accessor produces is read when something first binds to it.
+      const exported = ns.title;
+      process.title = title;
+      print({ stored: ns.stored, title: exported, titleAgain: ns.title });
+    `,
+    staticTableModules,
+  );
+  expect(result).toEqual({ stored: "at load", title: "set after load", titleAgain: "set after load" });
+});
+
+test.concurrent("CommonJS exports with a static table and __esModule: the enumerable properties are the exports", async () => {
+  const result = await runEntry(
+    `
+      import { hasNonReifiedStatic } from "bun:internal-for-testing";
+      import { constructed, print } from "./native-helper.mjs";
+      const enumerable = Object.keys(Bun);
+      const ns = await import("./marked.cjs");
+      const exportNames = Reflect.ownKeys(ns).filter(key => typeof key === "string");
+      print({
+        exportListMatches: exportNames.sort().join() === [...enumerable, "default"].sort().join(),
+        default: ns.default === Bun,
+        constructed: constructed(),
+        stillLazy: hasNonReifiedStatic(Bun),
+        write: ns.write === Bun.write,
+      });
+    `,
+    { "marked.cjs": `Bun.__esModule = true;\nmodule.exports = Bun;` },
+  );
+  expect(result).toEqual({ exportListMatches: true, default: true, constructed: [], stillLazy: true, write: true });
+});
+
+// An export that is declared without a value is read when a module first binds to it, which is while that module
+// links, and by then user code can have redefined the property as an accessor. Its getter cannot run there (see
+// throwingGetter), so it is not called and the export is undefined.
+const redefinedAfterLoadCases: { name: string; load: string; install: string; exportName: string; importFrom: string }[] =
+  [
+    {
+      name: "node:process",
+      load: `await import("node:process");`,
+      install: `Object.defineProperty(process, "title", ${throwingGetter});`,
+      exportName: "title",
+      importFrom: "node:process",
+    },
+    {
+      name: "node:module",
+      load: `await import("node:module");`,
+      install: `Object.defineProperty(require("node:module"), "globalPaths", ${throwingGetter});`,
+      exportName: "globalPaths",
+      importFrom: "node:module",
+    },
+    {
+      name: "node:fs",
+      load: `await import("node:fs");`,
+      install: `Object.defineProperty(require("node:fs"), "ReadStream", ${throwingGetter});`,
+      exportName: "ReadStream",
+      importFrom: "node:fs",
+    },
+    {
+      name: "a CommonJS module that exports process",
+      load: `await import("./process.cjs");`,
+      install: `Object.defineProperty(process, "title", ${throwingGetter});`,
+      exportName: "title",
+      importFrom: "./process.cjs",
+    },
+  ];
+
+for (const { name, load, install, exportName, importFrom } of redefinedAfterLoadCases) {
+  test.concurrent(`a getter defined after the module loaded does not run while a module links: ${name}`, async () => {
+    const result = await runEntry(
+      `
+        ${load}
+        ${install}
+        const result = {};
+        try {
+          result.E = String((await import("./E.mjs")).e);
+        } catch (error) {
+          result.E = error.message;
+        }
+        try {
+          result.X = (await import("./X.mjs")).x;
+        } catch (error) {
+          result.X = error.message;
+        }
+        console.log(JSON.stringify(result));
+      `,
+      {
+        ...staticTableModules,
+        "E.mjs": `import { ${exportName} as value } from ${JSON.stringify(importFrom)};\nexport const e = value;`,
+        "X.mjs": `import "./E.mjs";\nexport const x = "evaluated";`,
+        "Q.mjs": `import "./Y.mjs";\nimport "./X.mjs";`,
+        "Y.mjs": `throw new Error("Y.mjs throws while evaluating");`,
+      },
+    );
+    expect(result).toEqual({ E: "undefined", X: "evaluated" });
+  });
+}

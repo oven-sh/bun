@@ -30,7 +30,8 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);
 
-void populateESMExports(
+// Returns the object that exports appended as an empty JSValue are read from on first binding, or nullptr.
+JSC::JSObject* populateESMExports(
     JSC::JSGlobalObject* globalObject,
     JSC::JSValue result,
     WTF::Vector<JSC::Identifier, 4>& exportNames,
@@ -119,7 +120,8 @@ public:
     JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
     void setModuleGraph(JSC::VM&, JSModuleGraph*);
 
-    void toSyntheticSource(JSC::JSGlobalObject* globalObject,
+    // As populateESMExports().
+    JSC::JSObject* toSyntheticSource(JSC::JSGlobalObject* globalObject,
         const JSC::Identifier& moduleKey,
         Vector<JSC::Identifier, 4>& exportNames,
         JSC::MarkedArgumentBuffer& exportValues);

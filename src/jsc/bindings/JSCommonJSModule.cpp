@@ -83,6 +83,7 @@
 #include "wtf/URL.h"
 #include "wtf/text/StringImpl.h"
 #include "JSCommonJSExtensions.h"
+#include "_NativeModule.h"
 
 #include "ErrorCode.h"
 #include "WebCoreJSBuiltins.h"
@@ -95,6 +96,8 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireNativeModule);
 
 static bool canPerformFastEnumeration(Structure* s)
 {
+    if (s->hasNonReifiedStaticProperties())
+        return false;
     if (s->typeInfo().overridesGetOwnPropertySlot())
         return false;
     if (s->typeInfo().overridesAnyFormOfGetOwnPropertyNames())
@@ -108,6 +111,16 @@ static bool canPerformFastEnumeration(Structure* s)
     if (s->hasUnderscoreProtoPropertyExcludingOriginalProto())
         return false;
     return true;
+}
+
+// An object that has static table entries nothing has constructed yet (process, the Bun object, the Buffer
+// constructor, a JSC builtin) and whose own properties can be looked at without running its code.
+static bool hasDeferrableStaticTableEntries(Structure* s)
+{
+    return s->hasNonReifiedStaticProperties()
+        && !s->typeInfo().overridesGetOwnPropertySlot()
+        && !s->typeInfo().overridesAnyFormOfGetOwnPropertyNames()
+        && !hasIndexedProperties(s->indexingType());
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
@@ -1088,7 +1101,84 @@ JSCommonJSModule::~JSCommonJSModule()
 {
 }
 
-void populateESMExports(
+// The exports of an object whose properties cannot be taken from its structure. Returns the object that the exports
+// declared without a value are read from, or nullptr when every export has its value.
+static JSObject* populateESMExportsFromPropertyNames(
+    JSC::JSGlobalObject* globalObject,
+    JSObject* exports,
+    bool hasESModuleMarker,
+    Vector<JSC::Identifier, 4>& exportNames,
+    JSC::MarkedArgumentBuffer& exportValues,
+    bool& needsToAssignDefault)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const Identifier& notAnExport = hasESModuleMarker ? vm.propertyNames->__esModule : vm.propertyNames->defaultKeyword;
+    // To read every property of such an object constructs all of them: the stdio streams, for `module.exports = process`.
+    // What Bun's own code produces is declared without a value instead, and JSC reads it off `exports` when something
+    // first binds to it.
+    bool deferWhatBunProduces = hasDeferrableStaticTableEntries(exports->structure());
+    JSObject* lazyExportsSource = nullptr;
+
+    JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+    exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, hasESModuleMarker ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    for (auto property : properties) {
+        if (property.isEmpty() || property.isNull() || property == notAnExport || property.isPrivateName() || property.isSymbol()) [[unlikely]]
+            continue;
+
+        // ignore constructor
+        if (property == vm.propertyNames->constructor)
+            continue;
+
+        if (deferWhatBunProduces) {
+            unsigned attributes = 0;
+            JSValue stored = exports->getDirect(vm, property, attributes);
+            // As below, an accessor that is not enumerable is not an export.
+            bool isHiddenAccessor = stored && stored.isGetterSetter() && (attributes & PropertyAttribute::DontEnum);
+            if (!isHiddenAccessor && Zig::isExportProducedByBun(exports, property, stored)) {
+                exportNames.append(property);
+                exportValues.append(JSValue());
+                lazyExportsSource = exports;
+                needsToAssignDefault = needsToAssignDefault && property != vm.propertyNames->defaultKeyword;
+                continue;
+            }
+        }
+
+        JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
+        auto has = exports->getPropertySlot(globalObject, property, slot);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!has) continue;
+
+        // Allow DontEnum properties which are not getter/setters
+        // https://github.com/oven-sh/bun/issues/4432
+        if (slot.attributes() & PropertyAttribute::DontEnum) {
+            if (!(slot.isValue() || slot.isCustom())) {
+                continue;
+            }
+        }
+
+        exportNames.append(property);
+
+        JSValue getterResult = slot.getValue(globalObject, property);
+
+        // If it throws, we keep them in the exports list, but mark it as undefined
+        // This is consistent with what Node.js does.
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            getterResult = jsUndefined();
+        }
+
+        exportValues.append(getterResult);
+
+        needsToAssignDefault = needsToAssignDefault && property != vm.propertyNames->defaultKeyword;
+    }
+
+    return lazyExportsSource;
+}
+
+JSC::JSObject* populateESMExports(
     JSC::JSGlobalObject* globalObject,
     JSValue result,
     Vector<JSC::Identifier, 4>& exportNames,
@@ -1127,6 +1217,7 @@ void populateESMExports(
     //       it to something that does NOT evaluate to "true" I could find were in
     //       unit tests of build tools. Happy to revisit this if users file an issue.
     bool needsToAssignDefault = true;
+    JSObject* lazyExportsSource = nullptr;
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* exports = result.getObject()) {
@@ -1134,7 +1225,7 @@ void populateESMExports(
         if (!ignoreESModuleAnnotation) {
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
             auto has = exports->getPropertySlot(globalObject, esModuleMarker, slot);
-            RETURN_IF_EXCEPTION(scope, );
+            RETURN_IF_EXCEPTION(scope, nullptr);
             if (has) {
                 JSValue value = slot.getValue(globalObject, esModuleMarker);
                 CLEAR_IF_EXCEPTION(scope);
@@ -1152,65 +1243,24 @@ void populateESMExports(
         exportNames.reserveCapacity(size + 2);
         exportValues.ensureCapacity(size + 2);
 
-        if (hasESModuleMarker) {
-            if (canPerformFastEnumeration(structure)) {
-                exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                    auto key = entry.key();
-                    if (key->isSymbol() || key == esModuleMarker)
-                        return true;
-
-                    needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
-
-                    JSValue value = exports->getDirect(entry.offset());
-
-                    exportNames.append(Identifier::fromUid(vm, key));
-                    exportValues.append(value);
+        if (!canPerformFastEnumeration(structure)) {
+            lazyExportsSource = populateESMExportsFromPropertyNames(globalObject, exports, hasESModuleMarker, exportNames, exportValues, needsToAssignDefault);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        } else if (hasESModuleMarker) {
+            exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                auto key = entry.key();
+                if (key->isSymbol() || key == esModuleMarker)
                     return true;
-                });
-            } else {
-                JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-                exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
-                RETURN_IF_EXCEPTION(scope, );
 
-                for (auto property : properties) {
-                    if (property.isEmpty() || property.isNull() || property == esModuleMarker || property.isPrivateName() || property.isSymbol()) [[unlikely]]
-                        continue;
+                needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
 
-                    // ignore constructor
-                    if (property == vm.propertyNames->constructor)
-                        continue;
+                JSValue value = exports->getDirect(entry.offset());
 
-                    JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
-                    auto has = exports->getPropertySlot(globalObject, property, slot);
-                    RETURN_IF_EXCEPTION(scope, );
-                    if (!has) continue;
-
-                    // Allow DontEnum properties which are not getter/setters
-                    // https://github.com/oven-sh/bun/issues/4432
-                    if (slot.attributes() & PropertyAttribute::DontEnum) {
-                        if (!(slot.isValue() || slot.isCustom())) {
-                            continue;
-                        }
-                    }
-
-                    exportNames.append(property);
-
-                    JSValue getterResult = slot.getValue(globalObject, property);
-
-                    // If it throws, we keep them in the exports list, but mark it as undefined
-                    // This is consistent with what Node.js does.
-                    if (scope.exception()) [[unlikely]] {
-                        (void)scope.tryClearException();
-                        getterResult = jsUndefined();
-                    }
-
-                    exportValues.append(getterResult);
-
-                    needsToAssignDefault = needsToAssignDefault && property != vm.propertyNames->defaultKeyword;
-                }
-            }
-
-        } else if (canPerformFastEnumeration(structure)) {
+                exportNames.append(Identifier::fromUid(vm, key));
+                exportValues.append(value);
+                return true;
+            });
+        } else {
             exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 auto key = entry.key();
                 if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
@@ -1222,45 +1272,6 @@ void populateESMExports(
                 exportValues.append(value);
                 return true;
             });
-        } else {
-            JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-            exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
-            RETURN_IF_EXCEPTION(scope, );
-
-            for (auto property : properties) {
-                if (property.isEmpty() || property.isNull() || property == vm.propertyNames->defaultKeyword || property.isPrivateName() || property.isSymbol()) [[unlikely]]
-                    continue;
-
-                // ignore constructor
-                if (property == vm.propertyNames->constructor)
-                    continue;
-
-                JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
-                auto has = exports->getPropertySlot(globalObject, property, slot);
-                RETURN_IF_EXCEPTION(scope, );
-                if (!has) continue;
-
-                if (slot.attributes() & PropertyAttribute::DontEnum) {
-                    // Allow DontEnum properties which are not getter/setters
-                    // https://github.com/oven-sh/bun/issues/4432
-                    if (!(slot.isValue() || slot.isCustom())) {
-                        continue;
-                    }
-                }
-
-                exportNames.append(property);
-
-                JSValue getterResult = slot.getValue(globalObject, property);
-
-                // If it throws, we keep them in the exports list, but mark it as undefined
-                // This is consistent with what Node.js does.
-                if (scope.exception()) [[unlikely]] {
-                    (void)scope.tryClearException();
-                    getterResult = jsUndefined();
-                }
-
-                exportValues.append(getterResult);
-            }
         }
     }
 
@@ -1268,16 +1279,18 @@ void populateESMExports(
         exportNames.append(vm.propertyNames->defaultKeyword);
         exportValues.append(result);
     }
+
+    return lazyExportsSource;
 }
 
-void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
+JSC::JSObject* JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
     const JSC::Identifier& moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     auto result = this->exportsObject();
-    RETURN_IF_EXCEPTION(scope, );
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     RELEASE_AND_RETURN(scope, populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation));
 }
@@ -1675,11 +1688,11 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph)
 {
     return JSC::SourceCode(
-        JSC::SyntheticSourceProvider::create(
+        JSC::SyntheticSourceProvider::createWithLazyExports(
             [graph = JSC::Weak<JSModuleGraph>(graph)](JSC::JSGlobalObject* lexicalGlobalObject,
                 const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
-                JSC::MarkedArgumentBuffer& exportValues) -> void {
+                JSC::MarkedArgumentBuffer& exportValues) -> JSC::JSObject* {
                 auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
                 auto& vm = JSC::getVM(globalObject);
                 auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1688,13 +1701,13 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 // Nothing evaluates in a disposed Bun.ModuleGraph: a module that had not run yet never does.
                 // (The graph's loader, which is evaluating this, keeps the graph alive.)
                 Bun::throwIfModuleGraphDisposed(globalObject, scope, graph.get());
-                RETURN_IF_EXCEPTION(scope, );
+                RETURN_IF_EXCEPTION(scope, nullptr);
                 // The loader reaches this from its pipeline, which carries no async context:
                 // the module's code runs in its graph's (what it opens is the graph's).
                 ModuleGraphContextScope graphContext(globalObject, graph.get());
                 JSMap* requireMap = requireMapOf(globalObject, graph.get());
                 JSValue entry = requireMap->get(globalObject, keyValue);
-                RETURN_IF_EXCEPTION(scope, void());
+                RETURN_IF_EXCEPTION(scope, nullptr);
 
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
@@ -1707,25 +1720,25 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                                 moduleObject->m_filename.get());
                             if (auto exception = scope.exception()) {
                                 if (vm.hasPendingTerminationException()) [[unlikely]]
-                                    return;
+                                    return nullptr;
                                 (void)scope.tryClearException();
 
                                 // On error, remove the module from the require map
                                 // so that it can be re-evaluated on the next require.
                                 requireMap->remove(globalObject, moduleObject->filename());
-                                RETURN_IF_EXCEPTION(scope, void());
+                                RETURN_IF_EXCEPTION(scope, nullptr);
 
                                 scope.throwException(globalObject, exception);
-                                return;
+                                return nullptr;
                             }
                         }
 
-                        moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
-                        RETURN_IF_EXCEPTION(scope, void());
+                        RELEASE_AND_RETURN(scope, moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues));
                     }
                 } else {
                     // require map was cleared of the entry
                 }
+                return nullptr;
             },
             sourceOrigin,
             sourceURL));

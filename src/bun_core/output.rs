@@ -850,6 +850,48 @@ pub fn is_github_action() -> bool {
     false
 }
 
+/// Per-child filter: which relayed lines the GitHub Actions runner must see
+/// at column 0. Group markers stay prefixed (concurrent children would leave
+/// them unpaired), and so does the `::stop-commands::<token>` window.
+#[derive(Default)]
+pub struct GithubCommandRelay {
+    stop_token: std::cell::Cell<Option<Box<[u8]>>>,
+}
+
+impl GithubCommandRelay {
+    const BARE_COMMANDS: [&[u8]; 5] = [
+        b"::error",
+        b"::warning",
+        b"::notice",
+        b"::debug",
+        b"::add-mask",
+    ];
+
+    /// Whether `line` must go out at column 0.
+    pub fn is_bare_line(&self, line: &[u8]) -> bool {
+        let line = line.trim_ascii();
+        if let Some(token) = self.stop_token.take() {
+            let resumes = line.len() == token.len() + 4
+                && line.starts_with(b"::")
+                && line.ends_with(b"::")
+                && line[2..line.len() - 2] == *token;
+            if !resumes {
+                self.stop_token.set(Some(token));
+            }
+            return false;
+        }
+        if let Some(token) = line.strip_prefix(b"::stop-commands::") {
+            if !token.is_empty() {
+                self.stop_token.set(Some(token.into()));
+            }
+            return false;
+        }
+        Self::BARE_COMMANDS.iter().any(|cmd| {
+            line.starts_with(cmd) && matches!(line.get(cmd.len()), Some(b' ') | Some(b':'))
+        })
+    }
+}
+
 pub fn is_ai_agent() -> bool {
     static VALUE: AtomicBool = AtomicBool::new(false);
     static ONCE: std::sync::Once = std::sync::Once::new();

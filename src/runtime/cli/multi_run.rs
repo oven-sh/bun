@@ -114,6 +114,7 @@ pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
     state: *const State<'a>,
     color_idx: usize,
+    github_relay: Output::GithubCommandRelay,
 
     stdout_reader: PipeReader<'a>,
     stderr_reader: PipeReader<'a>,
@@ -390,7 +391,9 @@ impl<'a> State<'a> {
         line: &[u8],
         writer: &mut OutputWriter,
     ) -> Result<(), Error> {
-        self.write_prefix(handle, writer)?;
+        if !(Output::is_github_action() && handle.github_relay.is_bare_line(line)) {
+            self.write_prefix(handle, writer)?;
+        }
         writer.write_all(line)?;
         Ok(())
     }
@@ -456,7 +459,8 @@ impl<'a> State<'a> {
         // raw-ptr-based throughout this file).
         let handle_ptr = std::ptr::from_mut::<ProcessHandle>(handle);
         // SAFETY: handle_ptr is live for this call; flush_pipe_buffer reads only
-        // `config`/`color_idx` from `handle` and writes only `pipe.line_buffer`.
+        // `config`/`color_idx`/`github_relay` (a `Cell`) from `handle` and
+        // writes only `pipe.line_buffer`.
         unsafe {
             self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stdout_reader)?;
             self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stderr_reader)?;
@@ -1158,6 +1162,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             state: &raw const state,
             config,
             color_idx,
+            github_relay: Output::GithubCommandRelay::default(),
             stdout_reader: PipeReader::new(false),
             stderr_reader: PipeReader::new(true),
             process: None,

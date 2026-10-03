@@ -194,6 +194,8 @@ fn global_node_modules() -> Option<Vec<u8>> {
 fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
     const BEFORE_THE_FIRST: Duration = Duration::from_millis(300);
     const BETWEEN: Duration = Duration::from_millis(80);
+    // `Output`'s writers are per-thread state, and this thread is not from Bun's pool.
+    Output::Source::configure_thread_no_js();
     let began = std::time::Instant::now();
     let mut tick = 0;
     while !is_done.load(Ordering::Acquire) {

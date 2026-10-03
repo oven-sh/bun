@@ -1,12 +1,3 @@
-10-02_13:52:49 anon=42MB pids=31 load=1044.56 top=git:47MB
-10-02_13:53:19 anon=45MB pids=33 load=999.08 top=git:49MB
-10-02_13:53:49 anon=45MB pids=33 load=971.72 top=git:50MB
-10-02_13:54:20 anon=46MB pids=33 load=967.88 top=git:52MB
-10-02_13:55:04 anon=68MB pids=38 load=1024.62 top=git:57MB
-10-02_13:55:35 anon=52MB pids=31 load=1065.23 top=git:70MB
-10-02_13:56:09 anon=84MB pids=31 load=1052.51 top=git:116MB
-10-02_13:56:40 anon=104MB pids=31 load=1017.67 top=git:141MB
-10-02_13:57:15 anon=131MB pids=31 load=1034.79 top=git:176MB
 10-02_13:57:46 anon=132MB pids=31 load=1031.16 top=git:164MB
 10-02_13:58:22 anon=130MB pids=31 load=971.61 top=git:164MB
 10-02_13:59:02 anon=130MB pids=31 load=973.87 top=git:159MB
@@ -398,3 +389,12 @@
 10-03_00:42:54 anon=4MB pids=28 load=259.74 top=mariadbd:26MB
 10-03_00:43:24 anon=4MB pids=27 load=223.72 top=mariadbd:26MB
 10-03_00:43:55 anon=4MB pids=27 load=194.99 top=mariadbd:26MB
+10-03_00:44:25 anon=4MB pids=27 load=198.80 top=mariadbd:26MB
+10-03_00:44:56 anon=4MB pids=27 load=215.17 top=mariadbd:26MB
+10-03_00:45:26 anon=4MB pids=27 load=213.25 top=mariadbd:26MB
+10-03_00:45:57 anon=4MB pids=27 load=204.37 top=mariadbd:26MB
+10-03_00:46:27 anon=4MB pids=27 load=202.04 top=mariadbd:26MB
+10-03_00:47:01 anon=4MB pids=27 load=276.84 top=mariadbd:26MB
+10-03_00:47:36 anon=4MB pids=27 load=326.85 top=mariadbd:26MB
+10-03_00:48:11 anon=4MB pids=27 load=395.86 top=mariadbd:26MB
+10-03_00:48:45 anon=4MB pids=27 load=442.01 top=mariadbd:26MB

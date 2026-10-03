@@ -47,7 +47,6 @@
   --syntax-orange: #ffb86c;
   --syntax-pink: #ff79c6;
   --syntax-purple: #bd93f9;
-  --syntax-red: #ff5555;
   --syntax-yellow: #f1fa8c;
 
   font-family:
@@ -306,9 +305,6 @@ header {
 }
 .syntax-orange {
   color: var(--syntax-orange);
-}
-.syntax-red {
-  color: var(--syntax-red);
 }
 .syntax-green {
   color: var(--syntax-green);

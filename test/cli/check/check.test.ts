@@ -1807,6 +1807,36 @@ export const wrong: number = { ...tool, kind: 1 };
       );
     });
 
+    test("an aliased intersection with a class is named by its members where its properties are compared", async () => {
+      using dir = project({
+        "a.ts": `declare class Base {
+  href: string;
+}
+interface Plain {
+  href: string;
+}
+type WithThisType = Base & { brand: "x" };
+type Without = Plain & { brand: "x" };
+interface Target {
+  a: 1;
+  b: 1;
+}
+declare const one: WithThisType;
+declare const two: Without;
+export const first: Target = one;
+export const second: Target = two;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      // The head message is left out if the next one names the same two types.
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(15,14): error TS2322: Type 'WithThisType' is not assignable to type 'Target'.
+          Type 'Base & { brand: "x"; }' is missing the following properties from type 'Target': a, b
+        a.ts(16,14): error TS2739: Type 'Without' is missing the following properties from type 'Target': a, b"
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("a property copied from `export { a as b }` by a spread is not narrowed", async () => {
       using dir = project({
         "utils.ts": `declare const _n: string | undefined;

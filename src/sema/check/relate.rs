@@ -6981,14 +6981,15 @@ impl<'p> Checker<'p> {
     /// `getApparentTypeOfIntersectionType`: the intersection of the apparent types of the members
     /// of `ty`. `apparent_type` returns an intersection whose members all have object apparent
     /// types unchanged, and `members` builds its shape from those apparent types.
+    /// `getTypeWithThisArgument` also replaces a member that is a reference with a `this` type. The
+    /// new reference prints like the old one, and the new intersection has no alias.
     pub(super) fn apparent_type_of_intersection(&mut self, ty: TypeId) -> TypeId {
         let TypeData::Intersection(parts) = self.data(ty) else {
             return ty;
         };
-        if !parts
-            .iter()
-            .any(|&p| self.intersection_member_has_other_apparent_type(p))
-        {
+        if !parts.iter().any(|&p| {
+            self.intersection_member_has_other_apparent_type(p) || self.takes_this_argument(p)
+        }) {
             return ty;
         }
         let looks: Vec<TypeId> = parts

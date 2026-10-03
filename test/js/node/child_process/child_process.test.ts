@@ -1822,3 +1822,25 @@ it("throw from a child stdio 'data' listener is an uncaughtException and the str
     exitCode: 0,
   });
 });
+
+it("throw from a child stdio 'data' listener with no handler is fatal", async () => {
+  const script = `
+    const { spawn } = require("node:child_process");
+    const c = spawn(process.execPath, ["-e", "setTimeout(() => console.log('hi'), 50)"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    c.stdout.on("data", () => { throw new Error("data-throw-fatal"); });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: stderr.includes("error: data-throw-fatal"), exitCode }).toEqual({
+    stdout: "",
+    stderr: true,
+    exitCode: 1,
+  });
+});

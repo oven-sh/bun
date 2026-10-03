@@ -21,6 +21,8 @@ const kHighWaterMark = Symbol("highWaterMark");
 const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
+const kUncaughtOnListenerThrow = Symbol("uncaughtOnListenerThrow");
+const kListenerError = Symbol("listenerError");
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
@@ -50,6 +52,8 @@ interface NativeReadable extends NodeReadable {
   [kHighWaterMark]: number;
   [kHasResized]: boolean;
   [kRemainingChunk]: Buffer | undefined;
+  [kUncaughtOnListenerThrow]: boolean;
+  [kListenerError]: { error: unknown } | undefined;
   debugId: number;
 }
 
@@ -66,7 +70,15 @@ interface NativePtr {
 
 let debugId = 0;
 
-function constructNativeReadable(readableStream: ReadableStream, options): NativeReadable {
+// `uncaughtOnListenerThrow`: a throw from a listener that `push()` runs (a
+// 'data' listener) is reported as an uncaughtException, as Node does for the
+// streams it feeds from a native read callback (child stdio). Otherwise the
+// throw rejects the pending pull promise, as Node's Readable.fromWeb does.
+function constructNativeReadable(
+  readableStream: ReadableStream,
+  options,
+  uncaughtOnListenerThrow: boolean = false,
+): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const bunNativePtr = (readableStream as any).$bunNativePtr;
   $assert(typeof bunNativePtr === "object", "Invalid native ptr");
@@ -87,6 +99,8 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
+  stream[kUncaughtOnListenerThrow] = uncaughtOnListenerThrow;
+  stream[kListenerError] = undefined;
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
@@ -183,6 +197,11 @@ function read(this: NativeReadable, maxToRead: number) {
         );
         this[kPendingRead] = false;
         this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
+        const thrown = this[kListenerError];
+        if (thrown !== undefined) {
+          this[kListenerError] = undefined;
+          throw thrown.error;
+        }
       },
       reason => {
         errorOrDestroy(this, reason);
@@ -227,11 +246,16 @@ function pushAndCheck(stream: NativeReadable, chunk: any) {
   try {
     wantMore = stream.push(chunk);
   } catch (e) {
-    // Node dispatches 'data' from its native read callback, where a listener throw is an uncaughtException.
-    reportUncaughtException(e);
     wantMore = true;
     // The throw unwound addChunk before maybeReadMore; keep the stream reading.
     process.nextTick(readAfterListenerThrow, stream);
+    if (stream[kUncaughtOnListenerThrow]) {
+      reportUncaughtException(e);
+    } else {
+      // Only the pending-pull reaction emits 'data' from inside push(): it
+      // rethrows this once the read's bookkeeping is done.
+      stream[kListenerError] = { error: e };
+    }
   }
   if (!wantMore) {
     const ptr = stream.$bunNativePtr;
@@ -240,7 +264,7 @@ function pushAndCheck(stream: NativeReadable, chunk: any) {
 }
 
 function readAfterListenerThrow(stream: NativeReadable) {
-  // On native close, handleResult already scheduled the EOF push(null).
+  // A sync pull from the uncaughtException handler can have closed the stream; its EOF push is already queued.
   if (stream.destroyed || stream[kCloseState][0]) return;
   stream.read(0);
 }

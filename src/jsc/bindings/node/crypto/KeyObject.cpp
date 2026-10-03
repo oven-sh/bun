@@ -2010,7 +2010,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             RETURN_IF_EXCEPTION(scope, {});
             if (auto* decodedView = dynamicDowncast<JSArrayBufferView>(decoded)) {
                 EVPKeyPointer::PrivateKeyEncodingConfig config;
-                parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, WTF::nullStringView(), config);
+                parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, "key"_s, config);
                 RETURN_IF_EXCEPTION(scope, {});
 
                 return {
@@ -2025,7 +2025,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
 
         if (auto* view = dynamicDowncast<JSArrayBufferView>(dataValue)) {
             EVPKeyPointer::PrivateKeyEncodingConfig config;
-            parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, WTF::nullStringView(), config);
+            parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, "key"_s, config);
             RETURN_IF_EXCEPTION(scope, {});
 
             return {
@@ -2039,7 +2039,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
 
         if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(dataValue)) {
             EVPKeyPointer::PrivateKeyEncodingConfig config;
-            parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, WTF::nullStringView(), config);
+            parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, "key"_s, config);
             RETURN_IF_EXCEPTION(scope, {});
 
             auto* buffer = arrayBuffer->impl();

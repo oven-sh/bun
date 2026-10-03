@@ -297,9 +297,7 @@ describe.concurrent("process.execve", () => {
   });
 
   test.skipIf(isWindows)("inherits process.env when env is omitted with an empty TZ in the OS env", async () => {
-    // An empty TZ is a valid value: the execve env loop must not reject the
-    // defaulted process.env with ERR_INVALID_ARG_VALUE naming an argument the
-    // caller never passed.
+    // An empty TZ is a valid value: execve must not reject the defaulted process.env for it.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -324,9 +322,7 @@ describe.concurrent("process.execve", () => {
   test.skipIf(isWindows)(
     "inherits process.env when env is omitted with a `$`-prefixed name in the OS env",
     async () => {
-      // process.env lists a `$`-prefixed name but reads it back undefined; the
-      // execve env loop must skip it rather than rejecting the defaulted
-      // process.env with ERR_INVALID_ARG_VALUE.
+      // process.env reads a `$`-prefixed name as undefined: execve must skip it, not reject the defaulted env.
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),

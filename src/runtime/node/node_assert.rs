@@ -1,5 +1,5 @@
 use bun_core::String as BunString;
-use bun_core::strings::EncodingNonAscii;
+use bun_core::strings::{self, EncodingNonAscii};
 use bun_jsc::js_object::PojoFields;
 use bun_jsc::{FromAny, JSGlobalObject, JSObject, JSValue, JsError, JsResult, StringJsc};
 
@@ -203,24 +203,6 @@ fn append_ascii<C: CodeUnit>(out: &mut Vec<C>, bytes: &[u8]) {
     out.extend(bytes.iter().map(|&b| C::from(b)));
 }
 
-/// `String.prototype.trimEnd` whitespace set (WhiteSpace + LineTerminator).
-fn is_js_whitespace(c: u32) -> bool {
-    matches!(
-        c,
-        0x09..=0x0D
-            | 0x20
-            | 0xA0
-            | 0x1680
-            | 0x2000..=0x200A
-            | 0x2028
-            | 0x2029
-            | 0x202F
-            | 0x205F
-            | 0x3000
-            | 0xFEFF
-    )
-}
-
 fn emit<C, T>(
     global: &JSGlobalObject,
     diff_list: &MyersDiff::DiffList<T>,
@@ -341,7 +323,7 @@ fn render_lines<C: CodeUnit, T: DiffText<C>>(diff: &[Diff<T>], colors: &Colors) 
     }
 
     // `message.trimEnd()` (the leading "\n" is prepended after trimming in JS, so keep it).
-    while out.len() > 1 && is_js_whitespace(out[out.len() - 1].as_u32()) {
+    while out.len() > 1 && strings::is_js_whitespace(out[out.len() - 1].as_u32()) {
         out.pop();
     }
     (out, skipped)

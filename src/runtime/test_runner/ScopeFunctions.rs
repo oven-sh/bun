@@ -2,7 +2,7 @@ use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
-use bun_core::String as BunString;
+use bun_core::{strings, EncodedSlice, String as BunString};
 
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
 use crate::test_runner::bun_test::js_fns::Signature;
@@ -58,9 +58,11 @@ pub enum Mode {
 pub(crate) struct ScopeFunctions {
     pub(crate) mode: Mode,
     pub(crate) cfg: BaseScopeCfg,
-    /// typically `.zero`. not Strong.Optional because codegen visits the C++ `m_each`
-    /// WriteBarrier on the JS wrapper (see `values: ["each"]` in jest.classes.ts). This
-    /// field is kept in sync with that slot via `js::each_set_cached` in `create_unbound`.
+    /// typically `.zero`. After `.each`: the table array, or the Error of a malformed
+    /// template table, which the title call throws. not Strong.Optional because codegen
+    /// visits the C++ `m_each` WriteBarrier on the JS wrapper (see `values: ["each"]` in
+    /// jest.classes.ts). This field is kept in sync with that slot via
+    /// `js::each_set_cached` in `create_unbound`.
     pub(crate) each: JSValue,
 }
 
@@ -117,7 +119,8 @@ impl ScopeFunctions {
     pub(crate) fn fn_each(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
-        let [array] = frame.arguments_as_array::<1>();
+        let args = frame.arguments();
+        let array = args.first().copied().unwrap_or(JSValue::UNDEFINED);
         if array.is_undefined_or_null() || !array.is_array() {
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
             return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
@@ -126,8 +129,166 @@ impl ScopeFunctions {
         if !this.each.is_empty() {
             return Err(global.throw(format_args!("Cannot {} on {}", "each", this)));
         }
+        // test.each`a | b \n ${1} | ${2}` calls each(strings, 1, 2).
+        if args.len() > 1 && is_template_strings(global, array)? {
+            return bun_jsc::MarkedArgumentBuffer::new(|rooted| {
+                let table = template_table(global, rooted, array, &args[1..])?;
+                create_bound(global, this.mode, table, this.cfg, "each")
+            });
+        }
         create_bound(global, this.mode, array, this.cfg, "each")
     }
+}
+
+/// A tagged template passes its tag an array of strings that has an own `raw` array.
+fn is_template_strings(global: &JSGlobalObject, array: JSValue) -> JsResult<bool> {
+    Ok(array.get_own_truthy(global, "raw")?.is_some_and(|raw| raw.is_array()))
+}
+
+/// The headings of a template table. `header` is `strings[0]`: a newline, one row of names
+/// with `|` between them, and a newline. jest-each also takes an empty name, and a row
+/// that goes on after a `|` on the next line. Both are malformed here.
+fn template_headings(header: EncodedSlice<'_>) -> Option<Vec<BunString>> {
+    let is_space = |i: usize| strings::is_js_whitespace(u32::from(header.char_at(i)));
+    if header.len == 0 || header.char_at(0) != u16::from(b'\n') {
+        return None;
+    }
+    let mut i = 1;
+    while i < header.len && is_space(i) {
+        i += 1;
+    }
+    let mut headings = Vec::new();
+    let mut heading: Vec<u16> = Vec::new();
+    let mut heading_ended = false;
+    loop {
+        if i == header.len {
+            return None;
+        }
+        let unit = header.char_at(i);
+        if unit == u16::from(b'\n') {
+            break;
+        }
+        if unit == u16::from(b'|') {
+            if heading.is_empty() {
+                return None;
+            }
+            headings.push(BunString::clone_utf16(&heading));
+            heading.clear();
+            heading_ended = false;
+        } else if is_space(i) {
+            heading_ended = !heading.is_empty();
+        } else if heading_ended {
+            return None;
+        } else {
+            heading.push(unit);
+        }
+        i += 1;
+    }
+    if heading.is_empty() {
+        return None;
+    }
+    headings.push(BunString::clone_utf16(&heading));
+    // In jest-each, a `|` that starts the next text continues the row.
+    i += 1;
+    while i < header.len && is_space(i) {
+        i += 1;
+    }
+    if i < header.len && header.char_at(i) == u16::from(b'|') {
+        return None;
+    }
+    Some(headings)
+}
+
+/// The table for `each(strings, ...values)`: one object per row, keyed by the headings in
+/// `strings[0]`. A malformed table gives the Error that the title call throws, in
+/// jest-each's wording. `rooted` keeps the result alive until the caller stores it.
+fn template_table(
+    global: &JSGlobalObject,
+    rooted: &mut bun_jsc::MarkedArgumentBuffer,
+    template_strings: JSValue,
+    values: &[JSValue],
+) -> JsResult<JSValue> {
+    let table_error = |rooted: &mut bun_jsc::MarkedArgumentBuffer, message: fmt::Arguments<'_>| {
+        let error = global.create_error_instance(message);
+        if error.is_empty() {
+            return Err(bun_jsc::JsError::Thrown);
+        }
+        rooted.append(error);
+        Ok(error)
+    };
+
+    let first = template_strings.get_index(global, 0)?;
+    rooted.append(first);
+    let headings = if first.is_string() {
+        template_headings(first.to_bun_string(global)?.to_encoded_slice())
+    } else {
+        None
+    };
+    let Some(headings) = headings else {
+        let mut formatter = crate::test_runner::expect::make_formatter(global);
+        return table_error(
+            rooted,
+            format_args!(
+                "Table headings do not conform to expected format:\n\nheading1 | headingN\n\nReceived:\n\n{}",
+                first.to_fmt(&mut formatter)
+            ),
+        );
+    };
+
+    let incomplete = values.len() % headings.len();
+    if incomplete != 0 {
+        let mut heading_list: Vec<u8> = Vec::new();
+        for (i, heading) in headings.iter().enumerate() {
+            if i != 0 {
+                heading_list.extend_from_slice(b" | ");
+            }
+            heading_list.extend_from_slice(heading.to_utf8().slice());
+        }
+        let received = JSValue::create_array_from_slice(global, values)?;
+        rooted.append(received);
+        let missing = headings.len() - incomplete;
+        let mut formatter = crate::test_runner::expect::make_formatter(global);
+        return table_error(
+            rooted,
+            format_args!(
+                "Not enough arguments supplied for given headings:\n{}\n\nReceived:\n{}\n\nMissing {} argument{}",
+                bstr::BStr::new(&heading_list),
+                received.to_fmt(&mut formatter),
+                missing,
+                if missing == 1 { "" } else { "s" },
+            ),
+        );
+    }
+
+    let rows = JSValue::create_empty_array(global, values.len() / headings.len())?;
+    rooted.append(rows);
+    for (row_index, row_values) in values.chunks_exact(headings.len()).enumerate() {
+        let row = JSValue::create_empty_object(global, headings.len());
+        rows.put_index(global, row_index as u32, row)?;
+        for (heading, value) in headings.iter().zip(row_values) {
+            row.put_may_be_index(global, heading, *value)?;
+        }
+    }
+    Ok(rows)
+}
+
+/// A template with no `${}` calls `each(strings)`, so `.each` kept `strings` as a table of one row.
+/// That row is the text of the template, or undefined when the text has an invalid escape.
+fn reject_template_without_values(global: &JSGlobalObject, table: JSValue) -> JsResult<()> {
+    let first = table.get_index(global, 0)?;
+    if !(first.is_string() || first.is_undefined()) || !is_template_strings(global, table)? {
+        return Ok(());
+    }
+    if first.is_string() {
+        let text = first.to_bun_string(global)?;
+        let text = text.to_encoded_slice();
+        if (0..text.len).all(|i| strings::is_js_whitespace(u32::from(text.char_at(i)))) {
+            return Err(global.throw(format_args!("`.each` called with an empty Tagged Template Literal of table data.")));
+        }
+    }
+    Err(global.throw(format_args!(
+        "`.each` called with a Tagged Template Literal with no data, remember to interpolate with ${{expression}} syntax."
+    )))
 }
 
 #[bun_jsc::host_fn]
@@ -168,10 +329,16 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
     if !this.each.is_empty() {
         if this.each.is_undefined_or_null() || !this.each.is_array() {
+            if this.each.is_error() {
+                return Err(global.throw_value(this.each));
+            }
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
         let mut iter = this.each.array_iterator(global)?;
+        if iter.len == 1 {
+            reject_template_without_values(global, this.each)?;
+        }
         let mut test_idx: usize = 0;
         while let Some(item) = iter.next()? {
             if item.is_empty() {

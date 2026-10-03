@@ -3452,7 +3452,8 @@ impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
                 [0xE2, 0x80, third @ 0xAA..=0xAE, ..] => (0x2000 | (third as u32 & 0x3F), 3),
                 [0xE2, 0x81, third @ 0xA6..=0xA9, ..] => (0x2040 | (third as u32 & 0x3F), 3),
                 _ => {
-                    cursor = i + strings::wtf8_byte_sequence_length(bytes[i]) as usize;
+                    let char_len = strings::wtf8_byte_sequence_length(bytes[i]) as usize;
+                    cursor = (i + char_len).min(bytes.len());
                     continue;
                 }
             };

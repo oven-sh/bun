@@ -3603,14 +3603,15 @@ describe.concurrent("bundler", () => {
       ],
     },
   });
+  const forbiddenRequireWithNamedImport = {
+    "a.js": `
+      import { b } from "./b.js";
+      console.log(b, require("./b.js"));
+    `,
+    "b.js": `export const b = await 0;`,
+  };
   test("default/TopLevelAwaitForbiddenRequireSourceMapCLI", async () => {
-    using dir = tempDir("tla-forbidden-require-sourcemap", {
-      "a.js": `
-        import { b } from "./b.js";
-        console.log(b, require("./b.js"));
-      `,
-      "b.js": `export const b = await 0;`,
-    });
+    using dir = tempDir("tla-forbidden-require-sourcemap", forbiddenRequireWithNamedImport);
     const build = async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "--sourcemap=inline", "a.js"],
@@ -3635,6 +3636,37 @@ describe.concurrent("bundler", () => {
         exitCode: 1,
       }),
     );
+  });
+  test("default/TopLevelAwaitForbiddenRequireSourceMapAPI", async () => {
+    using dir = tempDir("tla-forbidden-require-sourcemap-api", {
+      ...forbiddenRequireWithNamedImport,
+      "build.js": `
+        const messages = [];
+        for (let i = 0; i < 40; i++) {
+          const { logs } = await Bun.build({ entrypoints: ["./a.js"], sourcemap: "inline", throw: false });
+          messages.push(logs[0].message);
+        }
+        console.log(JSON.stringify(messages));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout:
+        JSON.stringify(
+          Array(40).fill(
+            'This require call is not allowed because the transitive dependency "b.js" contains a top-level await',
+          ),
+        ) + "\n",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
   itBundled("default/TopLevelAwaitAllowedImportWithoutSplitting", {
     files: {

@@ -1816,8 +1816,8 @@ impl<'p> Checker<'p> {
 
     /// `c.error_at(c.currentNode, ..)`: the computation in progress has reached a limit. Like a
     /// tsgo checker, the task reports it once, at the node it is checking at that moment, and
-    /// stores the result. What a task sees is a function of the program, so which task reaches the
-    /// limit, and at which node, is too.
+    /// stores the results of the queries that began at depth 0. What a task sees is a function of
+    /// the program, so which task reaches the limit, and at which node, is too.
     #[cold]
     fn error_at_current_node(&mut self, code: u32) {
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
@@ -1839,6 +1839,12 @@ impl<'p> Checker<'p> {
             ),
         };
         self.add_diagnostic_of(None, Reported::bare(at, code));
+        // A query that began under an instantiation had less depth left than the same query has
+        // from depth 0, where a finite type does not reach the limit. tsgo stores its result all
+        // the same, and which types that breaks depends on the order in which it checks files.
+        if let Some(from) = self.frames.iter().position(|frame| frame.entry_depth > 0) {
+            self.mark_tainted_from(from);
+        }
     }
 
     /// `error_at_current_node`, with arguments, where `c.currentNode` is an expression. Elsewhere

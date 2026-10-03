@@ -312,6 +312,65 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies(`^${M1}`, `${M}.0.0`, false);
   });
 
+  describe("a derived upper bound excludes the prereleases of its own version", () => {
+    // node-semver ends ^, ~, x-ranges, partials and hyphen ranges at `<X.Y.Z-0`, not `<X.Y.Z`.
+    // Where a second comparator names a prerelease of that bound, the prerelease rule alone
+    // does not reject the version. Every expectation is the answer of npm's semver 7.7.4.
+    const rows: [range: string, version: string, expected: boolean][] = [
+      [">=2.0.0-rc.0 ^1.2.3", "2.0.0-rc.1", false],
+      ["^1.2.3 >=2.0.0-rc.0", "2.0.0-rc.1", false],
+      [">=2.0.0-rc.0 ^1", "2.0.0-rc.1", false],
+      [">=0.2.0-rc.0 ^0.1.2", "0.2.0-rc.1", false],
+      ["^0.1.2 >=0.2.0-rc.0", "0.2.0-rc.1", false],
+      [">=0.0.2-rc.0 ^0.0.1", "0.0.2-rc.1", false],
+      ["~1.5.0 >=1.6.0-beta", "1.6.0-beta.2", false],
+      [">=1.6.0-beta ~1.5.0", "1.6.0-beta.2", false],
+      [">=2.0.0-rc.0 ~1", "2.0.0-rc.1", false],
+      ["<2 >=2.0.0-rc.0", "2.0.0-rc.1", false],
+      [">=2.0.0-rc.0 <2", "2.0.0-rc.1", false],
+      [">=1.0.0-rc.0 <1.x", "1.0.0-rc.1", false],
+      [">=1.2.0-rc.0 <1.2.x", "1.2.0-rc.1", false],
+      ["<=2.0.0-rc.5 ^1.2.3", "2.0.0-rc.1", false],
+      // A bare version after another comparator is read as an alternative today (#32993),
+      // so these shapes go first.
+      ["1.5.x >=1.6.0-beta", "1.6.0-beta.2", false],
+      ["1.5 >=1.6.0-beta", "1.6.0-beta.2", false],
+      ["1.x >=2.0.0-rc.0", "2.0.0-rc.1", false],
+      ["1 >=2.0.0-rc.0", "2.0.0-rc.1", false],
+      // `1.0.0 - 1.5` is `>=1.0.0 <1.6.0-0`. npm calls a hyphen range next to another
+      // comparator invalid. Bun parses it, and the bound it derives has the same floor.
+      ["1.0.0 - 1.5 >=1.6.0-beta", "1.6.0-beta.2", false],
+      ["1.0.0 - 1.x >=2.0.0-rc.0", "2.0.0-rc.1", false],
+      ["1.0.0 - 1.5.x >=1.6.0-beta", "1.6.0-beta.2", false],
+
+      // still inside the range
+      ["^1.2.3", "1.9.0", true],
+      ["~1.2.3", "1.2.4", true],
+      ["^1.2.3-alpha", "1.2.3-pre", true],
+      ["1.5.x", "1.5.9", true],
+      ["1.0.0 - 1.5", "1.5.9", true],
+      ["<2", "1.9.9", true],
+      ["<2 >=1.5.0-rc.0", "1.5.0-rc.1", true],
+      ["^1.2.3 >=1.5.0-rc.0", "1.5.0-rc.1", true],
+      // a bound written in full keeps its form
+      [">=2.0.0-rc.0 <2.0.0", "2.0.0-rc.1", true],
+      [">=1.2.3 <2.0.0 >=2.0.0-rc.0", "2.0.0-rc.1", true],
+
+      // rejected before this floor too
+      ["^1.2.3", "2.0.0-0", false],
+      ["^1.2.3", "2.0.0", false],
+      ["^1.2.3", "2.0.0-rc.1", false],
+      ["^1.2.3", "1.5.0-beta", false],
+      ["^1.2.3-alpha", "2.0.0-alpha", false],
+      ["~1.5.0", "1.6.0-beta.2", false],
+      ["1.x", "2.0.0-rc.1", false],
+      [">=1.6.0-beta <1.6.0-0", "1.6.0-beta.2", false],
+    ];
+    test.each(rows)("%s with %s is %p", (range, version, expected) => {
+      testSatisfies(range, version, expected);
+    });
+  });
+
   test("ranges", () => {
     testSatisfies("~1.2.3", "1.2.3", true);
     testSatisfies("~1.2", "1.2.0", true);

@@ -628,6 +628,71 @@ describe.concurrent("version-scoped targets", () => {
     });
   });
 
+  // #41371. `^1.0.0` ends at `<2.0.0-0`, so a selector that starts at a 2.0.0 prerelease does not
+  // intersect it. `intersects` is what npm's semver 7.7.4 answers, and npm applies a rule on that
+  // answer. Every rule sets 1.0.0. `untouched` is what the declared range resolves to without it.
+  describe.concurrent.each([
+    { declared: "^1.0.0", selector: ">=2.0.0-alpha.0 <3", intersects: false, untouched: "1.1.0" },
+    { declared: "^1.0.0", selector: ">=2.0.0-0", intersects: false, untouched: "1.1.0" },
+    { declared: "~1.0.0", selector: ">=1.1.0-alpha.0 <2", intersects: false, untouched: "1.0.1" },
+    { declared: "1.0.x", selector: ">=1.1.0-alpha.0 <2", intersects: false, untouched: "1.0.1" },
+    { declared: "1.0", selector: ">=1.1.0-alpha.0 <2", intersects: false, untouched: "1.0.1" },
+    { declared: "1.x", selector: ">=2.0.0-alpha.0 <3", intersects: false, untouched: "1.1.0" },
+    { declared: "1", selector: ">=2.0.0-alpha.0 <3", intersects: false, untouched: "1.1.0" },
+    { declared: "<2", selector: ">=2.0.0-alpha.0 <3", intersects: false, untouched: "1.1.0" },
+    { declared: "1.0.0 - 1.0", selector: ">=1.1.0-alpha.0 <2", intersects: false, untouched: "1.0.1" },
+    { declared: "1.0.0 - 1.x", selector: ">=2.0.0-alpha.0 <3", intersects: false, untouched: "1.1.0" },
+    // the same pairs with the selector as the sugar
+    { declared: ">=2.0.0-alpha.0 <3", selector: "^1.0.0", intersects: false, untouched: "2.0.0" },
+    { declared: ">=1.1.0-alpha.0 <2", selector: "~1.0.0", intersects: false, untouched: "1.1.0" },
+    { declared: ">=2.0.0-alpha.0", selector: "1.x", intersects: false, untouched: "2.0.0" },
+    { declared: ">=2.0.0-alpha.0", selector: "1", intersects: false, untouched: "2.0.0" },
+    { declared: ">=2.0.0-alpha.0", selector: "<2", intersects: false, untouched: "2.0.0" },
+    { declared: ">=1.1.0-alpha.0", selector: "1.0.0 - 1.0", intersects: false, untouched: "2.0.0" },
+    // ranges that do meet, and a bound written in full, which keeps its form
+    { declared: "^1.0.0", selector: ">=1.1.0-alpha.0 <2", intersects: true, untouched: "1.1.0" },
+    { declared: "~1.0.0", selector: ">=1.0.1-alpha.0 <1.1", intersects: true, untouched: "1.0.1" },
+    { declared: ">=1.0.0 <2.0.0-beta", selector: ">=2.0.0-alpha.0 <3", intersects: true, untouched: "1.1.0" },
+    { declared: ">=1.0.0 <2.0.0", selector: ">=2.0.0-alpha.0 <3", intersects: true, untouched: "1.1.0" },
+  ])("a declared range and a selector with a prerelease bound %j", ({ declared, selector, intersects, untouched }) => {
+    test(intersects ? "the rule applies" : "the rule leaves the edge alone", async () => {
+      const dir = await project({
+        dependencies: { "no-deps": declared },
+        overrides: { [`no-deps@${selector}`]: "1.0.0" },
+      });
+      const { err } = await installOk(dir);
+      expect(err).not.toContain("warn:");
+      expect(await versionSeenBy(dir, undefined, "no-deps")).toBe(intersects ? "1.0.0" : untouched);
+      await installOk(dir, "--frozen-lockfile");
+    });
+  });
+
+  test("a selector with a prerelease bound leaves a transitive ^ edge alone", async () => {
+    // the shape of #41371: one-range-dep declares no-deps@^1.0.0
+    const dir = await project({
+      dependencies: { "one-range-dep": "1.0.0" },
+      overrides: { "one-range-dep": { "no-deps@>=2.0.0-alpha.0 <3": "1.0.0" } },
+    });
+    const { err } = await installOk(dir);
+    expect(err).not.toContain("warn:");
+    expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.1.0");
+    await installOk(dir, "--frozen-lockfile");
+  });
+
+  // The key of #41371 is at the top level of `overrides`, and a dependency declares the ^ edge.
+  describe.concurrent.each([
+    { rule: { "no-deps@>=2.0.0-alpha.0 <3": "1.0.0" } },
+    { rule: { "no-deps@>=2.0.0-0": "1.0.0" } },
+  ])("a top-level selector with a prerelease bound %j", ({ rule }) => {
+    test("leaves a transitive ^ edge alone", async () => {
+      const dir = await project({ dependencies: { "one-range-dep": "1.0.0" }, overrides: rule });
+      const { err } = await installOk(dir);
+      expect(err).not.toContain("warn:");
+      expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.1.0");
+      await installOk(dir, "--frozen-lockfile");
+    });
+  });
+
   test("pnpm key whose range contains > after ||", async () => {
     const dir = await project({
       dependencies: { "one-range-dep": "1.0.0", ofd2: twoParents.ofd2 },

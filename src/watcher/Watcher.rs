@@ -587,6 +587,7 @@ impl Watcher {
     fn append_directory_assume_capacity<const CLONE_FILE_PATH: bool>(
         &mut self,
         stored_fd: Fd,
+        open_missing_fd: bool,
         file_path: &[u8],
         hash: HashType,
     ) -> sys::Result<WatchItemIndex> {
@@ -602,7 +603,7 @@ impl Watcher {
             }
         }
 
-        let fd = if stored_fd.is_valid() {
+        let fd = if stored_fd.is_valid() || !open_missing_fd {
             stored_fd
         } else {
             bun_sys::open_a(file_path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?
@@ -722,6 +723,7 @@ impl Watcher {
                 Some(v) => v,
                 None => match self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
                     dir_fd,
+                    true,
                     parent_dir,
                     parent_dir_hash,
                 ) {
@@ -793,7 +795,68 @@ impl Watcher {
         self.watchlist
             .ensure_unused_capacity(1)
             .unwrap_or_else(|_| bun_core::out_of_memory());
-        self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, file_path, hash)
+        self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, true, file_path, hash)
+    }
+
+    /// `LOCK` is false inside `WatcherContext::on_file_update`, which runs with `mutex` held.
+    pub fn add_directory_by_path<const LOCK: bool>(&mut self, dir_path: &[u8]) -> sys::Result<()> {
+        // `append_file_maybe_lock` spells a file's directory with a trailing separator. Share its entry.
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let has_trailing_sep = dir_path
+            .last()
+            .is_some_and(|&c| bun_paths::is_sep_native(c));
+        let dir_path: &[u8] = if has_trailing_sep {
+            dir_path
+        } else {
+            if dir_path.len() >= buf.len() {
+                return Err(
+                    sys::Error::from_code_int(libc::ENAMETOOLONG, sys::Tag::watch)
+                        .with_path(dir_path),
+                );
+            }
+            buf[..dir_path.len()].copy_from_slice(dir_path);
+            buf[dir_path.len()] = bun_paths::SEP;
+            &buf[..dir_path.len() + 1]
+        };
+
+        let _guard = LOCK.then(|| self.mutex.lock_guard());
+
+        let hash = Self::get_hash(dir_path);
+        if self.index_of(hash).is_some() {
+            return Ok(());
+        }
+        // An event names its watch item with a `WatchItemIndex`.
+        if self.watchlist.len() >= NO_WATCH_ITEM as usize {
+            return Ok(());
+        }
+        #[cfg(windows)]
+        if bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), dir_path)
+            == bun_paths::resolve_path::ParentEqual::Unrelated
+        {
+            return Ok(());
+        }
+
+        let fd = if REQUIRES_FILE_DESCRIPTORS {
+            bun_sys::open_a(
+                dir_path,
+                bun_sys::O::DIRECTORY | bun_sys::O::CLOEXEC | WATCH_OPEN_FLAGS,
+                0,
+            )?
+        } else {
+            Fd::INVALID
+        };
+        self.watchlist
+            .ensure_unused_capacity(1)
+            .unwrap_or_else(|_| bun_core::out_of_memory());
+        match self.append_directory_assume_capacity::<true>(fd, false, dir_path, hash) {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                if fd.is_valid() {
+                    let _ = bun_sys::close(fd);
+                }
+                Err(err)
+            }
+        }
     }
 
     /// Lazily watch a file by path (slow path).

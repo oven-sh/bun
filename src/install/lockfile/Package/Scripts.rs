@@ -235,6 +235,12 @@ impl Scripts {
                 }
             };
 
+            let install_dependencies_for_prepare =
+                matches!(resolution_tag, ResolutionTag::Git | ResolutionTag::Github)
+                    && scripts[List::FIRST_PREPARE_INDEX..]
+                        .iter()
+                        .any(|script| script.is_some());
+
             return Some(List {
                 items: scripts,
                 first_index: u8::try_from(first_index).expect("int cast"),
@@ -242,6 +248,7 @@ impl Scripts {
                 // Owned NUL-terminated copy.
                 cwd: ZBox::from_bytes(cwd),
                 package_name: Box::<[u8]>::from(package_name),
+                install_dependencies_for_prepare,
             });
         }
 
@@ -417,9 +424,20 @@ pub struct List {
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,
     pub(crate) package_name: Box<[u8]>,
+    /// Git dependency with prepare scripts: nothing installs the devDependencies
+    /// those build with, so the runner runs `bun install` in `cwd` first (like npm).
+    pub(crate) install_dependencies_for_prepare: bool,
 }
 
+const _: () = assert!(matches!(
+    LockfileScripts::NAMES[List::FIRST_PREPARE_INDEX].as_bytes(),
+    b"preprepare"
+));
+
 impl List {
+    /// Index of `preprepare` in `items`; `prepare` and `postprepare` follow it.
+    pub(crate) const FIRST_PREPARE_INDEX: usize = 3;
+
     pub fn print_scripts(
         &self,
         resolution: &Resolution,

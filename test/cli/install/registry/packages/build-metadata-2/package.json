@@ -1,0 +1,29 @@
+{
+  "_id": "build-metadata-2",
+  "name": "build-metadata-2",
+  "dist-tags": {
+    "latest": "1.0.1+build.10"
+  },
+  "versions": {
+    "1.0.0+build.1": {
+      "name": "build-metadata-2",
+      "version": "1.0.0+build.1",
+      "_id": "build-metadata-2@1.0.0+build.1",
+      "dist": {
+        "integrity": "sha512-sEQ/xwJOoptJcEmAvAomxAi3alQhl8wiJN20jeaaSzxQeHq+HeVqxXP1iDDRzLydKuFYVTWznn8wuwA9T1Q2wg==",
+        "shasum": "b382376976305c96b5a0165cb4382214b9999f0a",
+        "tarball": "http://localhost:4873/build-metadata-2/-/build-metadata-2-1.0.0-build.1.tgz"
+      }
+    },
+    "1.0.1+build.10": {
+      "name": "build-metadata-2",
+      "version": "1.0.1+build.10",
+      "_id": "build-metadata-2@1.0.1+build.10",
+      "dist": {
+        "integrity": "sha512-F0B4IJC1yLvDBMlhcf+05Ci5++ikf2uDH9V4QWiGggYSilX1nlaIaEWXKb+7PjckY3UUnWy97UfZ44kkTbB6Sw==",
+        "shasum": "1056818979bffee8b0c9650f9d9728caea3549e4",
+        "tarball": "http://localhost:4873/build-metadata-2/-/build-metadata-2-1.0.1-build.10.tgz"
+      }
+    }
+  }
+}

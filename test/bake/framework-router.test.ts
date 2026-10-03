@@ -369,10 +369,9 @@ describe.concurrent("scan errors in the dev server and in bun build --app", () =
     return { stdout, stderr, exitCode };
   }
 
-  // The ASAN lane runs the tests of `bun build --app` (test/bake/dev/production.test.ts) without exception check
-  // validation and without LeakSanitizer: its config loader fails the validation, and its error exit leaves the
-  // VM alive (test/no-validate-exceptions.txt, test/no-validate-leaksan.txt). These children get the same
-  // settings. ASAN stays on.
+  // `bun build --app` takes the exemptions that test/bake/dev/production.test.ts has in
+  // test/no-validate-exceptions.txt and test/no-validate-leaksan.txt: bakeModuleLoaderResolve fails the exception
+  // check validation (#41185), and an error exit leaves the VM alive. Both lists name this override. ASAN stays on.
   const buildEnv = {
     ...bunEnv,
     BUN_JSC_validateExceptionChecks: undefined,

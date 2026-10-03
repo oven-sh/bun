@@ -1758,6 +1758,88 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
   });
 });
 
+// A project-root tsconfig.json that cannot be loaded is reported before the
+// entry point runs. Before, the report was queued in the VM log and only
+// printed after a clean exit, so a `Cannot find module` for a `paths` alias
+// (the entry point rejects), a `process.exit()`, or a long-lived process
+// never showed the cause.
+describe("tsconfig.json load errors are reported before the entry point runs", () => {
+  // "compilerOptions"<ZWSP>: is what a web copy-paste produces.
+  const zwspTsconfig = `{\n  "compilerOptions"\u200b: { "paths": { "@m/*": ["./src/*"] } }\n}\n`;
+  const aliasFiles = {
+    "src/x.ts": `export const x = "via-alias";`,
+    "entry.ts": `import { x } from "@m/x";\nconsole.log("ALIAS-OK", x);`,
+  };
+
+  test.concurrent("a syntax error in tsconfig.json is printed before the alias failure", async () => {
+    using dir = tempDir("tsconfig-parse-error-alias", {
+      ...aliasFiles,
+      "tsconfig.json": zwspTsconfig,
+    });
+
+    const result = await runWildcardScript(String(dir), "entry.ts");
+    expect(result.stdout).toBe("");
+    const parseErrorAt = result.stderr.indexOf(`error: Expected ":" but found`);
+    const notFoundAt = result.stderr.indexOf(`Cannot find module '@m/x'`);
+    expect(parseErrorAt).toBeGreaterThanOrEqual(0);
+    expect(notFoundAt).toBeGreaterThan(parseErrorAt);
+    expect(result.stderr).toContain(`${join(realpathSync(String(dir)), "tsconfig.json")}:2:20`);
+    expect(result.exitCode).toBe(1);
+  });
+
+  test.concurrent("a syntax error in an `extends` base is printed", async () => {
+    using dir = tempDir("tsconfig-parse-error-extends", {
+      ...aliasFiles,
+      "tsconfig.json": JSON.stringify({ extends: "./base.json" }),
+      "base.json": zwspTsconfig,
+    });
+
+    const result = await runWildcardScript(String(dir), "entry.ts");
+    expect(result.stderr).toContain(`error: Expected ":" but found`);
+    expect(result.stderr).toContain(`${join(realpathSync(String(dir)), "base.json")}:2:20`);
+    expect(result.stderr).toContain(`Cannot find module '@m/x'`);
+    expect(result.exitCode).toBe(1);
+  });
+
+  test.concurrent("the report is printed even when the script calls process.exit()", async () => {
+    using dir = tempDir("tsconfig-parse-error-exit", {
+      "tsconfig.json": zwspTsconfig,
+      "entry.ts": `console.log("ran"); process.exit(0);`,
+    });
+
+    const result = await runWildcardScript(String(dir), "entry.ts");
+    expect(result.stdout).toBe("ran");
+    expect(result.stderr).toContain(`error: Expected ":" but found`);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
+    "an unreadable tsconfig.json is reported with its errno",
+    async () => {
+      using dir = tempDir("tsconfig-eacces", {
+        ...aliasFiles,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@m/*": ["./src/*"] } } }),
+      });
+      chmodSync(join(String(dir), "tsconfig.json"), 0o000);
+
+      const result = await runWildcardScript(String(dir), "entry.ts");
+      expect(result.stderr).toContain(`Cannot read file "${join(realpathSync(String(dir)), "tsconfig.json")}": EACCES`);
+      expect(result.stderr).toContain(`Cannot find module '@m/x'`);
+      expect(result.exitCode).toBe(1);
+    },
+  );
+
+  test.concurrent.skipIf(isWindows)("a dangling tsconfig.json symlink is reported", async () => {
+    using dir = tempDir("tsconfig-dangling-symlink", aliasFiles);
+    symlinkSync(join(String(dir), "missing.json"), join(String(dir), "tsconfig.json"));
+
+    const result = await runWildcardScript(String(dir), "entry.ts");
+    expect(result.stderr).toContain(`Cannot find tsconfig file "${join(realpathSync(String(dir)), "tsconfig.json")}"`);
+    expect(result.stderr).toContain(`Cannot find module '@m/x'`);
+    expect(result.exitCode).toBe(1);
+  });
+});
+
 it.skipIf(isWindows)("runs a script from a working directory nested 256 directories deep", async () => {
   using dir = tempDir("resolver-deep-cwd", { ".keep": "" });
   const base = realpathSync(String(dir));

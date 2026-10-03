@@ -1857,7 +1857,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ),
                 import_options: e_.options,
                 loc: e_.expr.loc,
-                import_loader: e_.import_record_loader(),
+                import_loader: e_.import_record_loader(p.arena),
                 ..Default::default()
             };
 
@@ -2530,9 +2530,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Check if the feature flag is enabled
-        // Use the underlying string data directly without allocation.
         // Feature flag names should be ASCII identifiers, so UTF-16 is unexpected.
-        let flag_string = arg.data.e_string().expect("infallible: variant checked");
+        let mut flag_string = arg.data.e_string().expect("infallible: variant checked");
+        flag_string.resolve_rope_if_needed(p.arena);
         if flag_string.is_utf16 {
             p.log().add_error(
                 Some(p.source),

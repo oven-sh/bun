@@ -970,7 +970,7 @@ function abortHandshake(socket, code, message, headers, req) {
   };
 
   // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
-  // In an 'upgrade' listener the socket can still hold the response of a request ahead.
+  // The socket can also hold the response of a request ahead: that one does not carry the reply.
   const response = socket._httpMessage;
   if (response && answersRequest(response, req)) {
     response.writeHead(code, headers);

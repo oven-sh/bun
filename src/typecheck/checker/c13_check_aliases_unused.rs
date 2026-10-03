@@ -261,7 +261,14 @@ impl<'a> Checker<'a> {
                     );
                     if a.flags(const_enum_declaration)
                         .intersects(NodeFlags::AMBIENT)
-                        && !redirect.is_some_and(|options| options.should_preserve_const_enums())
+                        && redirect.is_none_or(|redirect| match redirect.resolved {
+                            Some(resolved) => {
+                                !resolved.compiler_options().should_preserve_const_enums()
+                            }
+                            None => !self.fail::<bool>(
+                                "nil CompilerOptions of a project reference in checkAliasSymbol",
+                            ),
+                        })
                     {
                         let flag_name = self.get_isolated_modules_like_flag_name();
                         self.error(

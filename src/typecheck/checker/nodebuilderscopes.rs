@@ -1,7 +1,7 @@
 // checker/nodebuilderscopes.go: the scopes that the node builder enters for a signature or a mapped type. Upstream returns a function that undoes a scope: here each enter returns the state that its exit takes.
 use crate::ast::{
-    Kind, NodeId, SymbolId, SymbolTableId, get_symbol_id, is_binding_pattern, is_block,
-    is_parameter_declaration,
+    Kind, NodeFactory as _, NodeId, NodeSink as _, SymbolId, SymbolTableId, get_symbol_id,
+    is_binding_pattern, is_block, is_parameter_declaration,
 };
 use crate::checker::nodebuilderimpl::{NodeBuilderContext, NodeBuilderImpl};
 use crate::checker::{Checker, SignatureId, TypeId, TypeMapperId};
@@ -225,7 +225,7 @@ impl NodeBuilderImpl {
         }
     }
 
-    fn fake_scope_undo(c: &Checker<'_>, undo: FakeScopeUndo<'_>) {
+    fn fake_scope_undo<'a>(c: &Checker<'a>, undo: FakeScopeUndo<'a>) {
         let a = c.ast;
         for s in undo.new_locals {
             a.table_delete(undo.locals, s);
@@ -357,7 +357,7 @@ impl NodeBuilderImpl {
     }
 
     // The function that enterNewScope returns upstream.
-    pub(crate) fn exit_new_scope(self, c: &mut Checker<'_>, cleanup: ScopeCleanup<'_>) {
+    pub(crate) fn exit_new_scope<'a>(self, c: &mut Checker<'a>, cleanup: ScopeCleanup<'a>) {
         if let Some(cleanup_params) = cleanup.cleanup_params {
             Self::fake_scope_undo(c, cleanup_params);
         }

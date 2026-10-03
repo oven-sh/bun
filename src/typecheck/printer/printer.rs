@@ -57,8 +57,9 @@ pub struct PrintHandlers {
     pub on_after_emit_token: Option<Box<dyn FnMut(NodeId)>>,
 }
 
-pub struct Printer<'p> {
-    a: Ast<'p>,
+// Two lifetimes: `Ast<'a>` is invariant, so with one the emit context and the writer would stay borrowed for as long as the tree lives.
+pub struct Printer<'a, 'p> {
+    a: Ast<'a>,
     handlers: PrintHandlers,
     pub options: PrinterOptions,
     emit_context: &'p mut EmitContext,
@@ -95,12 +96,12 @@ pub(crate) struct PrinterState {
     comment_state: Option<CommentState>,
 }
 
-pub fn new_printer<'p>(
-    a: Ast<'p>,
+pub fn new_printer<'a, 'p>(
+    a: Ast<'a>,
     options: PrinterOptions,
     handlers: PrintHandlers,
     emit_context: &'p mut EmitContext,
-) -> Printer<'p> {
+) -> Printer<'a, 'p> {
     // Upstream wires the name generator to the printer with callbacks: here the printer passes itself to the name generator.
     Printer {
         a,
@@ -222,7 +223,7 @@ pub(crate) enum CommentSeparator {
     After,
 }
 
-impl<'p> Printer<'p> {
+impl<'p> Printer<'_, 'p> {
     // `p.writer`
     fn w(&mut self) -> &mut (dyn EmitTextWriter + 'p) {
         let Self { writer, sink, .. } = self;
@@ -730,7 +731,7 @@ impl<'p> Printer<'p> {
 }
 
 // Tokens, literals, identifiers and names
-impl Printer<'_> {
+impl Printer<'_, '_> {
     fn write_token_text(&mut self, token: Kind, write_kind: WriteKind, pos: i32) -> i32 {
         let token_string = token_to_string(token);
         self.write_as(token_string, write_kind);
@@ -992,7 +993,7 @@ impl Printer<'_> {
 }
 
 // Comments, source maps, name generation, and the state around a node or a token
-impl Printer<'_> {
+impl Printer<'_, '_> {
     fn emit_comments_before_node(&mut self, node: NodeId) -> Option<CommentState> {
         if !self.should_emit_comments(node) {
             return None;
@@ -1429,7 +1430,7 @@ fn get_closing_bracket(a: Ast<'_>, format: ListFormat) -> &'static [u8] {
 }
 
 // Signature elements and type members
-impl Printer<'_> {
+impl Printer<'_, '_> {
     fn emit_modifier_list(
         &mut self,
         parent_node: NodeId,
@@ -1727,7 +1728,7 @@ impl Printer<'_> {
 }
 
 // Lists
-impl Printer<'_> {
+impl Printer<'_, '_> {
     fn emit_list(
         &mut self,
         emit: fn(&mut Self, NodeId),
@@ -2101,7 +2102,7 @@ impl Printer<'_> {
 }
 
 // Types
-impl Printer<'_> {
+impl Printer<'_, '_> {
     fn emit_keyword_type_node(&mut self, node: NodeId) {
         self.emit_keyword_node(node);
     }
@@ -2746,7 +2747,7 @@ impl Printer<'_> {
 }
 
 // Expressions, as far as a type node or an entity name holds them
-impl Printer<'_> {
+impl Printer<'_, '_> {
     fn emit_keyword_expression(&mut self, node: NodeId) {
         self.emit_keyword_node(node);
     }
@@ -3018,7 +3019,7 @@ impl Printer<'_> {
 }
 
 // Entry points
-impl<'p> Printer<'p> {
+impl<'p> Printer<'_, 'p> {
     fn set_source_file(&mut self, source_file: NodeId) {
         self.current_source_file = source_file;
         self.external_helpers_module_name = NodeId::NIL;

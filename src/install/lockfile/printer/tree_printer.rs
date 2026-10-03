@@ -4,7 +4,7 @@ use bun_semver as semver;
 
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::TrackInstalledBin;
-use bun_core::fmt::PathSep;
+use bun_core::fmt::{EscapeControlChars, PathSep, escape_control_chars};
 use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
 use bun_install::{
     self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
@@ -479,16 +479,16 @@ where
                     "<r><green>+<r> <b>{s}<r><d>@{f}<r> <d>(<blue>v{f} available<r><d>)<r>\n",
                     true
                 ),
-                bstr::BStr::new(name),
-                resolution.fmt(string_buf, PathSep::Posix),
+                escape_control_chars(name),
+                EscapeControlChars(resolution.fmt(string_buf, PathSep::Posix)),
                 later_version_fmt,
             )?;
         } else {
             write!(
                 writer,
                 bun_core::pretty_fmt!("<r>+ {s}<r><d>@{f}<r> <d>(v{f} available)<r>\n", false),
-                bstr::BStr::new(name),
-                resolution.fmt(string_buf, PathSep::Posix),
+                escape_control_chars(name),
+                EscapeControlChars(resolution.fmt(string_buf, PathSep::Posix)),
                 later_version_fmt,
             )?;
         }
@@ -500,15 +500,15 @@ where
         write!(
             writer,
             bun_core::pretty_fmt!("<r><green>+<r> <b>{s}<r><d>@{f}<r>\n", true),
-            bstr::BStr::new(name),
-            resolution.fmt(string_buf, PathSep::Posix),
+            escape_control_chars(name),
+            EscapeControlChars(resolution.fmt(string_buf, PathSep::Posix)),
         )?;
     } else {
         write!(
             writer,
             bun_core::pretty_fmt!("<r>+ {s}<r><d>@{f}<r>\n", false),
-            bstr::BStr::new(name),
-            resolution.fmt(string_buf, PathSep::Posix),
+            escape_control_chars(name),
+            EscapeControlChars(resolution.fmt(string_buf, PathSep::Posix)),
         )?;
     }
 
@@ -529,7 +529,7 @@ where
         writer,
         ENABLE_ANSI_COLORS,
         "<r><green>installed<r> <b>{s}<r>",
-        bstr::BStr::new(dependency.name.slice(string_buf)),
+        escape_control_chars(dependency.name.slice(string_buf)),
     )?;
 
     if let Some(npm) = dependency.version.try_npm().filter(|npm| npm.is_alias) {
@@ -537,7 +537,7 @@ where
             writer,
             ENABLE_ANSI_COLORS,
             "<d>@npm:<r><b>{s}<r>",
-            bstr::BStr::new(npm.name.slice(string_buf)),
+            escape_control_chars(npm.name.slice(string_buf)),
         )?;
     }
 
@@ -545,7 +545,7 @@ where
         writer,
         ENABLE_ANSI_COLORS,
         "<d>@{f}<r>",
-        resolution.fmt(string_buf, PathSep::Posix),
+        EscapeControlChars(resolution.fmt(string_buf, PathSep::Posix)),
     )?;
     writer.write_str(if has_binaries {
         " with binaries:\n"
@@ -731,8 +731,8 @@ where
                 writer,
                 ENABLE_ANSI_COLORS,
                 " <r><b>{s}<r><d>@<b>{f}<r>\n",
-                bstr::BStr::new(package_name),
-                resolved[package_id as usize].fmt(string_buf, PathSep::Auto),
+                escape_control_chars(package_name),
+                EscapeControlChars(resolved[package_id as usize].fmt(string_buf, PathSep::Auto)),
             )?;
         }
     }
@@ -798,7 +798,7 @@ where
                                 writer,
                                 ENABLE_ANSI_COLORS,
                                 "<r> <d>- <r><b>{s}<r>\n",
-                                bstr::BStr::new(&owned[..]),
+                                escape_control_chars(&owned[..]),
                             )?;
 
                             manager.track_installed_bin = TrackInstalledBin::Basename(owned);
@@ -810,7 +810,7 @@ where
                             writer,
                             ENABLE_ANSI_COLORS,
                             "<r> <d>- <r><b>{s}<r>\n",
-                            bstr::BStr::new(bin_name),
+                            escape_control_chars(bin_name),
                         )?;
                     }
                 }

@@ -1,4 +1,4 @@
-//! Pre-`dlopen` libc-mismatch detection for native addons on Linux.
+//! Native-addon loader preflight helpers for Linux.
 //!
 //! A glibc-linked `.node` loaded into a musl process (typically via Alpine's
 //! `gcompat` shim, which satisfies the `libc.so.6` soname but not the ABI)
@@ -6,8 +6,43 @@
 //! catchable from JS and looks like a Bun bug. Instead, inspect the addon's
 //! ELF `PT_DYNAMIC` segment before calling `dlopen` and surface a
 //! `ERR_DLOPEN_FAILED` that names the problem. See issue #15753.
+//!
+//! On Linux-musl, this module also performs a one-time best-effort load of the
+//! optional host C++ runtime into the process-global namespace before addon
+//! `dlopen`.
 
 use core::ffi::c_char;
+
+/// A musl Bun embeds its own C++ runtime so the executable can start without
+/// Alpine's `libstdc++` and `libgcc` packages. Before the first native addon,
+/// opportunistically restore the shared runtime provider that musl addons
+/// historically inherited from Bun's startup dependencies. Keeping the
+/// handle open for the process lifetime makes its symbols available to this
+/// and later addons. Missing packages are not an error here: self-contained
+/// addons may still load, and `process.dlopen` reports the original loader
+/// error for addons which need them.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__loadMuslCxxRuntimeIfPresent() {
+    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    {
+        static LOAD: std::sync::Once = std::sync::Once::new();
+        LOAD.call_once(|| {
+            // SAFETY: the name is NUL-terminated. The successful handle is
+            // intentionally retained for the lifetime of the process.
+            let handle = unsafe {
+                libc::dlopen(
+                    c"libstdc++.so.6".as_ptr(),
+                    libc::RTLD_NOW | libc::RTLD_GLOBAL,
+                )
+            };
+            if handle.is_null() {
+                // SAFETY: consume the error from this best-effort probe so it
+                // cannot leak into the addon's own loader/error handling.
+                let _ = unsafe { libc::dlerror() };
+            }
+        });
+    }
+}
 
 /// Called from `Process_functionDlopen` (BunProcess.cpp) immediately before
 /// `dlopen`. Returns `1` when the file at `path_ptr[..path_len]` is an ELF

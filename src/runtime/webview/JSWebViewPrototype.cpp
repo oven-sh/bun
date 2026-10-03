@@ -35,6 +35,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncClose);
 
 static JSC_DECLARE_CUSTOM_GETTER(jsWebViewGetter_url);
 static JSC_DECLARE_CUSTOM_GETTER(jsWebViewGetter_title);
+static JSC_DECLARE_CUSTOM_GETTER(jsWebViewGetter_status);
 static JSC_DECLARE_CUSTOM_GETTER(jsWebViewGetter_loading);
 static JSC_DECLARE_CUSTOM_GETTER(jsWebViewGetter_onNavigated);
 static JSC_DECLARE_CUSTOM_SETTER(jsWebViewSetter_onNavigated);
@@ -58,6 +59,7 @@ static const HashTableValue JSWebViewPrototypeTableValues[] = {
     { "close"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncClose, 0 } },
     { "url"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebViewGetter_url, 0 } },
     { "title"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebViewGetter_title, 0 } },
+    { "status"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebViewGetter_status, 0 } },
     { "loading"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebViewGetter_loading, 0 } },
     { "onNavigated"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebViewGetter_onNavigated, jsWebViewSetter_onNavigated } },
     { "onNavigationFailed"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebViewGetter_onNavigationFailed, jsWebViewSetter_onNavigationFailed } },
@@ -672,6 +674,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_title, (JSGlobalObject * globalObject, 
     auto* thisObject = dynamicDowncast<JSWebView>(JSValue::decode(thisValue));
     if (!thisObject) return JSValue::encode(jsEmptyString(globalObject->vm()));
     return JSValue::encode(jsString(globalObject->vm(), thisObject->m_title));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_status, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))
+{
+    auto* thisObject = dynamicDowncast<JSWebView>(JSValue::decode(thisValue));
+    if (!thisObject || !thisObject->m_status) return JSValue::encode(jsNull());
+    return JSValue::encode(jsNumber(thisObject->m_status));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_loading, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))

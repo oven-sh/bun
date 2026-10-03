@@ -1035,6 +1035,90 @@ it("chrome: onNavigated fires with committed URL", async () => {
   expect(urls[urls.length - 1]).toContain("data:text/html");
 });
 
+it("chrome: status reports the main frame's HTTP status, null for non-HTTP pages", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: req =>
+      new Response(`<!doctype html><title>${new URL(req.url).pathname}</title>`, {
+        status: req.url.endsWith("/missing") ? 404 : 200,
+        headers: { "content-type": "text/html" },
+      }),
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  expect(view.status).toBe(null);
+
+  await view.navigate(`${base}/ok`);
+  expect(view.status).toBe(200);
+  expect(view.title).toBe("/ok");
+  await view.navigate(`${base}/missing`);
+  expect(view.status).toBe(404);
+  expect(view.title).toBe("/missing");
+
+  // reload() resolves through the same loadEventFired chain.
+  await view.reload();
+  expect(view.status).toBe(404);
+
+  // A data: load has no HTTP response, and the previous page's code must
+  // not leak into it.
+  await view.navigate(html("<title>data</title>"));
+  expect(view.status).toBe(null);
+  expect(view.title).toBe("data");
+});
+
+it("chrome: status follows goBack/goForward", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: req =>
+      new Response(`<!doctype html><title>${new URL(req.url).pathname}</title>`, {
+        status: req.url.endsWith("/missing") ? 404 : 200,
+        headers: { "content-type": "text/html" },
+      }),
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+
+  await view.navigate(`${base}/ok`);
+  await view.evaluate("history.pushState(null, '', '/ok#pushed')");
+  await view.navigate(`${base}/missing`);
+  expect(view.status).toBe(404);
+
+  await view.goBack();
+  expect(view.status).toBe(200);
+  expect(await view.evaluate("location.hash")).toBe("#pushed");
+
+  await view.goForward();
+  expect(view.status).toBe(404);
+});
+
+it("chrome: userAgent option sets the User-Agent header and navigator.userAgent", async () => {
+  const agents: string[] = [];
+  using server = Bun.serve({
+    port: 0,
+    fetch: req => {
+      // The page request only; a favicon request would add a second entry.
+      if (new URL(req.url).pathname === "/") agents.push(req.headers.get("user-agent") ?? "");
+      return new Response("<!doctype html><body>ok</body>", { headers: { "content-type": "text/html" } });
+    },
+  });
+  const ua = "bun-webview-test/1.0 (+https://example.com/bot)";
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200, userAgent: ua });
+  await view.navigate(`http://127.0.0.1:${server.port}/`);
+  expect(agents).toEqual([ua]);
+  expect(await view.evaluate("navigator.userAgent")).toBe(ua);
+});
+
+test("userAgent must be a string without CR, LF or NUL", () => {
+  // Option parsing runs before any backend spawns, so no browser is needed.
+  expect(() => new Bun.WebView({ backend: chrome, width: 100, height: 100, userAgent: 42 as any })).toThrow(
+    /userAgent must be a string/,
+  );
+  expect(() => new Bun.WebView({ backend: chrome, width: 100, height: 100, userAgent: "bot/1.0\n" })).toThrow(
+    /userAgent must not contain/,
+  );
+});
+
 it("chrome: press() dispatches keydown/keyup pair", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   // Listeners in the HTML so they're live before any press. evaluate() wraps

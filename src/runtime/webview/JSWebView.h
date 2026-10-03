@@ -86,7 +86,13 @@ public:
     // synchronous but the real values live in the child.
     WTF::String m_url;
     WTF::String m_title;
+    // Main-frame HTTP status of the last completed navigation; 0 (null in
+    // JS) for a non-HTTP page.
+    uint16_t m_status = 0;
     bool m_loading = false;
+    // Constructor `userAgent` option, applied by the backend before the
+    // first load.
+    WTF::String m_userAgent;
 
     // Chrome session state. Empty until the Target.createTarget →
     // Target.attachToTarget → Page.enable chain completes (driven by the
@@ -181,7 +187,7 @@ public:
     // host spawn failed (caller throws).
     static JSWebView* createAndSend(JSC::JSGlobalObject*, JSC::Structure*,
         uint32_t width, uint32_t height, const WTF::String& persistDir,
-        bool stdoutInherit, bool stderrInherit);
+        const WTF::String& userAgent, bool stdoutInherit, bool stderrInherit);
 #endif
 
     // Chrome constructor. Lazy-spawns Chrome; stores width/height for the

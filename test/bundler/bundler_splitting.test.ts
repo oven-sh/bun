@@ -823,6 +823,15 @@ describe("bundler", () => {
   };
   for (const [name, files, options] of [
     ["ReadsImportMeta", { "/setup.js": `globalThis.APP = { name: import.meta.file };` }, {}],
+    // logo.png is a file of index.js, with the path of the asset in it.
+    [
+      "ImportsAsset",
+      {
+        "/setup.js": `import logo from "./logo.png"; globalThis.APP = { name: logo };`,
+        "/logo.png": "an image",
+      },
+      { loader: { ".png": "file" } },
+    ],
     // Each resolves at runtime, from the file that holds it.
     [
       "HasImportCallWithComputedSpecifier",

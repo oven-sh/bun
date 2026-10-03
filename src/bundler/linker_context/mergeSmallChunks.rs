@@ -741,6 +741,11 @@ fn entry_files_ahead_of_parent(
     let ast_flags = this.graph.ast.items_flags();
     let import_records = this.graph.ast.items_import_records();
     let module_scopes = this.graph.ast.items_module_scope();
+    // Of a file that holds the path of an asset, which is printed from the directory of its chunk.
+    let asset_keys = this
+        .parse_graph()
+        .input_files
+        .items_unique_key_for_additional_file();
     let is_live = |file: u32| this.graph.files_live.is_set(file as usize);
     // The early chunk runs ahead of `__chunks()` and of what a split `require()` loads.
     let loads_a_chunk = |file: u32| {
@@ -824,6 +829,7 @@ fn entry_files_ahead_of_parent(
                     | crate::bundled_ast::Flags::HAS_COMPUTED_SPECIFIER,
             )
             && !module_scopes[file as usize].contains_direct_eval
+            && asset_keys[file as usize].is_empty()
             && !loads_a_chunk(file)
             && !import_records[file as usize].iter().any(|record| {
                 !record.source_index.is_valid()

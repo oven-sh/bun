@@ -627,7 +627,7 @@ Bun does this only when nothing else changes. The modules stay in `index.js`, an
 
 - the entrypoint has exports, is a CommonJS module, or the build uses `compile`
 - the module is CommonJS, uses a direct `eval`, or imports shared code itself
-- the module can tell which file holds it: it reads `import.meta`, imports a relative path that is not bundled, or has an `import()` or `require()` whose argument is not a string
+- the module can tell which file holds it: it reads `import.meta`, imports an asset or a relative path that is not bundled, or has an `import()` or `require()` whose argument is not a string
 - an [external](#external) package or a CommonJS module is imported ahead of it
 - the entrypoint also loads a module that another entrypoint shares
 

@@ -314,7 +314,7 @@ pub(crate) fn for_each_multipart_entry<C>(
 
                 while let Some(eql_start) = strings::index_of(value, b"=") {
                     let eql_key = strings::trim(&value[..eql_start], b" \t;");
-                    value = &value[eql_start + 1..];
+                    value = strings::trim_left(&value[eql_start + 1..], b" \t");
                     let quoted = value.starts_with(b"\"");
                     if quoted {
                         value = &value[1..];

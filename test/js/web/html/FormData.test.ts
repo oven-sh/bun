@@ -378,6 +378,17 @@ describe("FormData", () => {
           [`form-data; name=a \t; filename=b`, [{ key: "a", file: "b", text: "v" }]],
           [`form-data; filename=b; name=a `, [{ key: "a", file: "b", text: "v" }]],
           [`form-data; name="a " ; filename="b "`, [{ key: "a ", file: "b ", text: "v" }]],
+          // SP and HTAB between `=` and the value are not part of the value,
+          // quoted or not. Whitespace inside the quotes stays.
+          [`form-data; name= "k"`, [{ key: "k", string: "v" }]],
+          [`form-data; name= "k"; filename="x.txt"`, [{ key: "k", file: "x.txt", text: "v" }]],
+          [`form-data; name= k`, [{ key: "k", string: "v" }]],
+          [`form-data; name=\tk`, [{ key: "k", string: "v" }]],
+          [`form-data; name="k"; filename= "x.txt"`, [{ key: "k", file: "x.txt", text: "v" }]],
+          [`form-data; name="k"; filename= x.txt`, [{ key: "k", file: "x.txt", text: "v" }]],
+          [`form-data; name= \t k; filename=\t "x.txt"`, [{ key: "k", file: "x.txt", text: "v" }]],
+          [`form-data; filename= x.txt; name= k`, [{ key: "k", file: "x.txt", text: "v" }]],
+          [`form-data; name= " k "`, [{ key: " k ", string: "v" }]],
         ] as const)("%s", async (disposition, expected) => {
           expect(await parse(C, disposition)).toEqual(expected);
         });

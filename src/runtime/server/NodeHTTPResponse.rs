@@ -500,12 +500,9 @@ impl NodeHTTPResponse {
         Bun__getNodeHTTPResponseThisValue(any_response_is_ssl(&raw), raw.socket().cast())
     }
 
-    /// Flags this response when another one is the connection's current response, and says so.
+    /// Flags this response when it is not the connection's current response, and says so.
     pub(crate) fn mark_dispatch_threw_if_queued(&self) -> bool {
-        let queued = self
-            .get_this_value()
-            .as_class_ref::<Self>()
-            .is_some_and(|current| !ptr::eq(current, self));
+        let queued = !self.flags.get().contains(Flags::CURRENT);
         if queued {
             self.update_flags(|f| f.insert(Flags::DISPATCH_THREW_WHILE_QUEUED));
         }

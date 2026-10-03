@@ -3409,6 +3409,74 @@ describe("a dispatch that throws while an earlier response on the connection is 
   });
 });
 
+// The same throw with nothing ahead of the request but a raw write of the socket. A 'connection'
+// listener left it in the buffer, and the client does not read. The first request is then
+// dispatched like a pipelined one: its response waits in the queue, and the connection has no
+// current response yet. The throw follows the rule above: nothing of the response goes out, and
+// the connection closes at its turn, when the raw write has left.
+// Node v26.3.0 keeps the connection where the modes below expect a close. It also sends the
+// 100 Continue of "expect-request" before the throw, and it answers "body-to-come" with a 400.
+describe.concurrent.each(["tcp", "tls"])(
+  "a dispatch that throws while a raw write of the socket is still in its buffer (%s)",
+  transport => {
+    const fixture = path.join(import.meta.dir, "node-http-throw-behind-raw-write-fixture.js");
+    // CI has its own time for each test. A local debug or ASAN build needs several seconds to start one fixture.
+    const timeout = (isASAN || isDebug) && !isCI ? 90_000 : undefined;
+    const thrown = (thrower: string) => [`${thrower} /first`, `uncaught: ${thrower} threw`];
+    const nothingSent = { rawBytes: "all", response: "", closed: true };
+    const expected: Record<string, object> = {
+      "request": { queued: true, events: thrown("request"), ...nothingSent },
+      "checkContinue": { queued: true, events: thrown("checkContinue"), ...nothingSent },
+      "checkExpectation": { queued: true, events: thrown("checkExpectation"), ...nothingSent },
+      "expect-request": { queued: true, events: thrown("request"), ...nothingSent },
+      // The constructors throw before a response exists that the server can put in the queue.
+      "constructor-request": { events: ["IncomingMessage", "uncaught: IncomingMessage threw"], ...nothingSent },
+      "constructor-response": { events: thrown("ServerResponse"), ...nothingSent },
+      // A response that is complete at its turn is sent, and the connection stays.
+      "ended": {
+        queued: true,
+        events: thrown("request"),
+        rawBytes: "all",
+        response: "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 4\r\n\r\ndone",
+        closed: false,
+      },
+      // req.destroy() destroys the connection with the rest of the raw write, like in Node.js.
+      "destroyed": { queued: true, events: thrown("request"), response: "", closed: true },
+      "body": { queued: true, events: thrown("request"), ...nothingSent },
+      // The body that arrives after the throw ends the connection before the raw write has left.
+      "body-to-come": { queued: true, events: thrown("request"), response: "", closed: true },
+    };
+
+    // Windows takes the whole raw write of a plain TCP socket at once, so the first request is
+    // not queued there. Over TLS it is queued, so that transport covers Windows.
+    test.skipIf(isWindows && transport === "tcp").each(Object.keys(expected))(
+      "%s",
+      async mode => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), fixture, transport, mode],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({
+          result: stdout ? JSON.parse(stdout) : undefined,
+          stderr,
+          exitCode,
+          signalCode: proc.signalCode,
+        }).toEqual({
+          result: { mode, ...expected[mode] },
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      },
+      timeout,
+    );
+  },
+);
+
 // User code emits 'close' on a ServerResponse that is open, or on the socket of its connection.
 // Node.js has no listener of its own on the 'close' of a response. Bun took that event as the end
 // of the response: native code ended the open response with a bare CRLF and a later res.end() sent

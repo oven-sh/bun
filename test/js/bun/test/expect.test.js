@@ -880,6 +880,82 @@ describe("expect()", () => {
       expect({ a: 123n }).toEqual({ a: expect.any(BigInt) });
       expect({ a: 123n }).not.toEqual({ a: expect.any(g) });
     });
+
+    it("gives a matcher undefined for an element that the other array does not have", () => {
+      const seen = [];
+      expect.extend({
+        toBeRecorded(value) {
+          seen.push(value);
+          return { pass: false, message: () => "" };
+        },
+      });
+      const matchers = [
+        expect.stringContaining("a"),
+        expect.stringMatching(/a/),
+        expect.any(String),
+        expect.any(Symbol),
+        expect.any(BigInt),
+        expect.any(Boolean),
+        expect.any(Number),
+        expect.any(Array),
+        expect.any(Object),
+        expect.any(Promise),
+        expect.any(Date),
+        expect.anything(),
+        expect.arrayContaining([1]),
+        expect.objectContaining({ a: 1 }),
+        expect.closeTo(1),
+        // @ts-expect-error
+        expect.toBeRecorded(),
+      ];
+      for (const matcher of matchers) {
+        expect([,]).not.toEqual([matcher]);
+        expect([[,]]).not.toEqual(expect.arrayContaining([[matcher]]));
+        expect({ a: [["x"]] }).not.toMatchObject({ a: expect.arrayContaining([["x", matcher]]) });
+      }
+      expect([,]).toEqual([expect.not.stringContaining("a")]);
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.filter(value => value !== undefined)).toEqual([]);
+    });
+
+    it("gives a matcher the value of a getter at an index", () => {
+      const array = [1];
+      Object.defineProperty(array, 1, { get: () => "x", enumerable: true });
+      expect(array).toEqual([1, expect.anything()]);
+      expect(array).toEqual([1, expect.any(String)]);
+      expect(array).toEqual([1, expect.stringContaining("x")]);
+      expect(array).not.toEqual([1, expect.stringContaining("y")]);
+      expect([array]).toEqual(expect.arrayContaining([[1, expect.stringContaining("x")]]));
+    });
+
+    if (isBun) {
+      it("does not crash on an element that the other array does not have", async () => {
+        const { bunEnv, bunExe } = require("harness");
+        const src = `
+          import { expect } from "bun:test";
+          const getter = Object.defineProperty([], 0, { get: () => "x", enumerable: true });
+          for (const matcher of [expect.stringContaining("a"), expect.any(String), expect.arrayContaining([1])]) {
+            try { expect([,]).toEqual([matcher]); } catch {}
+            try { expect([]).toEqual(expect.arrayContaining([[matcher]])); } catch {}
+            try { expect(getter).toEqual([matcher]); } catch {}
+            try { expect({ a: [["x"]] }).toMatchObject({ a: expect.arrayContaining([["x", matcher]]) }); } catch {}
+          }
+          console.log("ok");
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", src],
+          env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+          stdout: "ok\n",
+          exitCode: 0,
+          signalCode: null,
+        });
+      });
+    }
   });
 
   test("toThrow asymmetric matchers", () => {

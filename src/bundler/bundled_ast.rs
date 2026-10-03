@@ -157,7 +157,8 @@ bitflags::bitflags! {
         const HAS_IMPORT_META = 1 << 8;
         /// See `Ast::commonjs_lifted_to_esm`.
         const COMMONJS_LIFTED_TO_ESM = 1 << 9;
-        // _padding: u6 fills the rest
+        const HAS_COMPUTED_SPECIFIER = 1 << 10;
+        // _padding: u5 fills the rest
     }
 }
 
@@ -275,6 +276,7 @@ impl<'arena> BundledAst<'arena> {
                 None
             },
             has_import_meta: self.flags.contains(Flags::HAS_IMPORT_META),
+            has_computed_specifier: self.flags.contains(Flags::HAS_COMPUTED_SPECIFIER),
             ..Ast::empty_in(arena)
         }
     }
@@ -297,6 +299,7 @@ impl<'arena> BundledAst<'arena> {
             ast.directive.is_some_and(|d| d == b"use strict"),
         );
         flags.set(Flags::HAS_IMPORT_META, ast.has_import_meta);
+        flags.set(Flags::HAS_COMPUTED_SPECIFIER, ast.has_computed_specifier);
 
         Self {
             approximate_newline_count: ast.approximate_newline_count as u32,

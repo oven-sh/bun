@@ -686,6 +686,14 @@ pub(crate) fn compute_chunks(
             output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
         );
         chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
+        // The chunk with the code that the entry point shares has the plain name.
+        if this.is_early_entry_file(chunk.entry_point.source_index()) {
+            let first_file =
+                &parse_graph.input_files.items_source()[chunk.entry_point.source_index() as usize];
+            chunk.template.placeholder.name = [pathname.base, b"-", first_file.path.name().base]
+                .concat()
+                .into_boxed_slice();
+        }
         chunk.template.placeholder.ext = chunk.content.ext().to_vec().into_boxed_slice();
 
         if chunk.template.needs(PlaceholderField::Target) {

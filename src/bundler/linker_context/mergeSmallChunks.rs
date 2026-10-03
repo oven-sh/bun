@@ -803,15 +803,21 @@ fn entry_files_ahead_of_parent(
             own_chunk_followed = true;
             continue;
         }
-        // The chunk is elsewhere, and runs ahead of `__chunks()` and of what a split `require()` loads. It imports neither the
+        // The chunk is another file, so no code in it may tell which file holds it. It runs ahead of `__chunks()` and of what a split `require()` loads. It imports neither the
         // entry point's chunk, which no chunk may, nor the parent, which would run first. A wrapped file runs where it is called.
         let mut can_move = flags[file as usize].wrap == WrapKind::None
-            && !ast_flags[file as usize].contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
+            && !ast_flags[file as usize].intersects(
+                crate::bundled_ast::Flags::HAS_IMPORT_META
+                    | crate::bundled_ast::Flags::HAS_COMPUTED_SPECIFIER,
+            )
             && !module_scopes[file as usize].contains_direct_eval
             && !import_records[file as usize].iter().any(|record| {
-                record.source_index.is_valid()
-                    && this.is_external_dynamic_import(record, file)
-                    && (this.module_preload() || record.kind == ImportKind::Require)
+                if record.source_index.is_valid() {
+                    this.is_external_dynamic_import(record, file)
+                        && (this.module_preload() || record.kind == ImportKind::Require)
+                } else {
+                    record.path.text.starts_with(b"./") || record.path.text.starts_with(b"../")
+                }
             });
         this.for_each_file_loaded_by(file, |other| {
             can_move &= is_early.is_set(other as usize) || !(is_own(other) || is_in_parent(other));

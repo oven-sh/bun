@@ -618,7 +618,7 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     pinned(api) {
-      expect(jsOutputs(api)).toEqual(["index.js", "index.js", "index.js", "settings.js"]);
+      expect(jsOutputs(api).sort()).toEqual(["index-setup.js", "index.js", "index.js", "settings.js"]);
       expect(outputsWith(api, `"index"`)).toEqual(["index.js"]);
       // The chunk with store.js imports nothing, so it loads without setup.js.
       api.expectFile("/out/" + chunkContaining(api, "class Store")).not.toContain("import");
@@ -783,6 +783,8 @@ describe("bundler", () => {
     ["ChunksInOtherDirectory", { chunkNaming: "chunks/[name]-[hash].[ext]" }],
     ["ChunksInDirectoryWithHash", { chunkNaming: "[hash]/[name].[ext]" }],
     ["EntryInOtherDirectory", { entryNaming: "app/[name].[ext]", outputPaths: ["/out/app/index.js"] }],
+    // The two chunks that index.js imports have two names.
+    ["ChunksWithoutHash", { chunkNaming: "chunks/[name].[ext]" }],
   ] as const) {
     itBundled("splitting/EntrySetupImportRunsBeforeSharedCodeWithNaming/" + name, {
       files: setupBeforeShared,
@@ -805,6 +807,36 @@ describe("bundler", () => {
   };
   for (const [name, files, options] of [
     ["ReadsImportMeta", { "/setup.js": `globalThis.APP = { name: import.meta.file };` }, {}],
+    // Each resolves at runtime, from the file that holds it.
+    [
+      "HasImportCallWithComputedSpecifier",
+      {
+        "/setup.js": `globalThis.APP = { name: "app" }; globalThis.load = lang => import("./locales/" + lang + ".js");`,
+      },
+      {},
+    ],
+    [
+      "HasRequireWithComputedSpecifier",
+      { "/setup.js": `export {}; globalThis.APP = { name: "app" }; globalThis.load = lang => require("./" + lang);` },
+      {},
+    ],
+    [
+      "HasRequireResolveWithComputedSpecifier",
+      {
+        "/setup.js": `export {}; globalThis.APP = { name: "app" }; globalThis.at = lang => require.resolve("./" + lang);`,
+      },
+      {},
+    ],
+    [
+      "ImportsRelativeExternalFile",
+      { "/setup.js": `import "./local.js"; globalThis.APP = { name: "app" };` },
+      { external: ["*local.js"] },
+    ],
+    [
+      "HasImportCallOfRelativeExternalFile",
+      { "/setup.js": `globalThis.APP = { name: "app" }; globalThis.load = () => import("../local.js");` },
+      { external: ["*local.js"] },
+    ],
     ["HasDirectEval", { "/setup.js": `export const name = eval("'app'"); globalThis.APP = { name };` }, {}],
     [
       "RequiresSplitModule",

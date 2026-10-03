@@ -1121,6 +1121,22 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     });
   });
 
+  // The helper starts in the working directory that the script has. A
+  // directory that was removed has no name to change to.
+  test("a helper runs when the working directory of the script was removed", async () => {
+    const { result } = await runWithHelpers(
+      { xclip: `printf 'from xclip'` },
+      `
+        const { mkdirSync, rmdirSync } = require("node:fs");
+        mkdirSync(CLIP_DIR + "/removed");
+        process.chdir(CLIP_DIR + "/removed");
+        rmdirSync(CLIP_DIR + "/removed");
+        print({ readText: await settle(navigator.clipboard.readText()) });
+      `,
+    );
+    expect(result).toEqual({ readText: { ok: "from xclip" } });
+  });
+
   // Firefox puts text/html on the X11 clipboard as UTF-16 with a byte order mark.
   test("read() decodes UTF-16 text/html to UTF-8", async () => {
     const { result } = await runWithHelpers(

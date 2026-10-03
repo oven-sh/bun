@@ -82,7 +82,7 @@ async function getDevServerURL() {
   readStream()
     .catch(e => reject(e))
     .finally(() => {
-      dev_server.unref?.();
+      dev_server?.unref?.();
     });
   await promise;
   return baseUrl;
@@ -135,7 +135,6 @@ test(
   "ssr works for 100-ish requests",
   async () => {
     using devServer = await startDevServer();
-    const { resolve, reject, promise } = Promise.withResolvers();
     expect(dev_server).not.toBeUndefined();
     expect(baseUrl).not.toBeUndefined();
     const lockfile = parseLockfile(root);
@@ -145,6 +144,7 @@ test(
 
     // On an arm64 mac, it doesn't get faster if you increase it beyond 4 as of August, 2025.
     const queue = new PQueue({ concurrency: 4 });
+    let completed = 0;
 
     async function run(i: number) {
       const x = await fetch(`${baseUrl}/?i=${i}`, {
@@ -157,21 +157,24 @@ test(
       const text = await x.text();
       console.count("Completed request");
       expect(text).toContain(`>${Bun.version}</code>`);
+      completed++;
     }
 
+    const requests: Promise<void>[] = [];
     for (let i = 0; i < 100; i++) {
-      queue.add(
-        async () => {
-          await run(i);
-        },
-        { signal: controller.signal },
-      );
+      requests.push(queue.add(() => run(i), { signal: controller.signal }));
     }
-    queue.once("error", e => {
-      reject(e);
-    });
-    queue.onEmpty().then(resolve);
-    await promise;
+
+    // Every request must finish before `devServer` is disposed, which kills
+    // the dev server. `queue.onEmpty()` is not enough: it settles when the
+    // last job is dequeued while up to `concurrency` jobs are still running.
+    try {
+      await Promise.all(requests);
+    } catch (e) {
+      controller.abort(e);
+      throw e;
+    }
+    expect(completed).toBe(100);
   },
   timeout,
 );

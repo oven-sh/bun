@@ -26,19 +26,25 @@ describe("minimum-release-age", () => {
   const daysAgo = (days: number) => new Date(currentTime - days * DAY_MS).toISOString();
 
   // Helper to create a minimal valid tarball
-  const createTarball = (name: string, version: string) => {
+  const createTarball = (name: string, version: string, withBin = false) => {
     const packageJson = JSON.stringify({
       name,
       version,
       description: "test package",
       main: "index.js",
+      ...(withBin ? { bin: { [name]: "bin.js" } } : {}),
     });
 
     // Create a simple tar structure (simplified for testing)
-    const files = {
+    const files: Record<string, string> = {
       "package/package.json": packageJson,
       "package/index.js": 'module.exports = "test";',
     };
+    if (withBin) {
+      // A bin that prints its version, so `bunx` tests can observe which
+      // version actually ran.
+      files["package/bin.js"] = `#!/bin/sh\necho ${version}\n`;
+    }
 
     let tarSize = 0;
     const entries = [];
@@ -150,6 +156,67 @@ describe("minimum-release-age", () => {
             });
           }
           // Return full manifest (with time field) for other requests
+          return Response.json(packageData);
+        }
+
+        // bunx-package: same timeline as regular-package, plus a bin that
+        // prints its version, for the `bunx` tests.
+        if (url.pathname === "/bunx-package") {
+          const packageData = {
+            name: "bunx-package",
+            "dist-tags": { latest: "3.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "bunx-package",
+                version: "1.0.0",
+                bin: { "bunx-package": "bin.js" },
+                dist: {
+                  tarball: `${mockRegistryUrl}/bunx-package/-/bunx-package-1.0.0.tgz`,
+                  integrity: "sha512-fakebunx1==",
+                },
+              },
+              "2.0.0": {
+                name: "bunx-package",
+                version: "2.0.0",
+                bin: { "bunx-package": "bin.js" },
+                dist: {
+                  tarball: `${mockRegistryUrl}/bunx-package/-/bunx-package-2.0.0.tgz`,
+                  integrity: "sha512-fakebunx2==",
+                },
+              },
+              "2.1.0": {
+                name: "bunx-package",
+                version: "2.1.0",
+                bin: { "bunx-package": "bin.js" },
+                dist: {
+                  tarball: `${mockRegistryUrl}/bunx-package/-/bunx-package-2.1.0.tgz`,
+                  integrity: "sha512-fakebunx3==",
+                },
+              },
+              "3.0.0": {
+                name: "bunx-package",
+                version: "3.0.0",
+                bin: { "bunx-package": "bin.js" },
+                dist: {
+                  tarball: `${mockRegistryUrl}/bunx-package/-/bunx-package-3.0.0.tgz`,
+                  integrity: "sha512-fakebunx4==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": daysAgo(30),
+              "2.0.0": daysAgo(10),
+              "2.1.0": daysAgo(6),
+              "3.0.0": daysAgo(1),
+            },
+          };
+          if (req.headers.get("accept")?.includes("application/vnd.npm.install-v1+json")) {
+            return Response.json({
+              name: packageData.name,
+              "dist-tags": packageData["dist-tags"],
+              versions: packageData.versions,
+            });
+          }
           return Response.json(packageData);
         }
 
@@ -847,7 +914,7 @@ describe("minimum-release-age", () => {
             });
           } else if (regularMatch) {
             const [, packageName, version] = regularMatch;
-            return new Response(createTarball(packageName, version), {
+            return new Response(createTarball(packageName, version, packageName === "bunx-package"), {
               headers: { "Content-Type": "application/octet-stream" },
             });
           }
@@ -2681,9 +2748,8 @@ export const scanner = {
       using cacheDir = tempDir(`bunx-min-age-cache-bad-${bad.replace(/[^a-z0-9]/gi, "_")}`, {});
       using tmp = tempDir(`bunx-min-age-tmp-bad-${bad.replace(/[^a-z0-9]/gi, "_")}`, {});
 
-      // Seed a warm mismatched-bin cache so both pre-fix regressions
-      // (cache wipe under `=abc`, cached binary run under `=-5`) would
-      // be observable without the fix.
+      // Seed a warm ungated cache: an invalid value must neither run its
+      // binary nor touch it.
       const pkgName = "@fake-scope/validation-guard";
       const realBin = "mytool";
       const uid = process.getuid?.() ?? 0;
@@ -2732,11 +2798,11 @@ export const scanner = {
     // `EXE_SUFFIX` on Windows), and the fake binary is a sh script. On
     // Windows the fake cache is never matched; the test would pass
     // vacuously via the cold-install path, providing no coverage of the
-    // `age_gate_forces_refresh` short-circuit.
+    // cache-key separation.
     test.skipIf(isWindows)("warm bunx cache does not bypass --minimum-release-age", async () => {
-      // Simulate a warm cache (fake executable at the expected cache path),
-      // then invoke bunx with a 100-year gate: it must force re-resolution
-      // via `bun add` instead of running the cached binary.
+      // Simulate a warm ungated cache (fake executable at the expected cache
+      // path), then invoke bunx with a 100-year gate: the gated run must
+      // resolve through `bun add` instead of running that binary.
       using dir = tempDir("bunx-min-age-warm", {});
       using cacheDir = tempDir("bunx-min-age-cache-warm", {});
       using tmp = tempDir("bunx-min-age-tmp-warm", {});
@@ -2765,13 +2831,14 @@ export const scanner = {
       expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
       expect(stderr.toLowerCase()).toContain("minimum-release-age");
       expect(exitCode).not.toBe(0);
+      // The gated run uses its own cache dir; the ungated one is untouched.
+      expect(existsSync(binPath)).toBe(true);
     });
 
     // Same unix-only fake-cache layout as the warm-cache test above.
-    test.skipIf(isWindows)("--no-install + --minimum-release-age refuses to run cached binary", async () => {
-      // On a warm cache, `--no-install`'s run-the-stale-binary fallback
-      // would bypass the age gate (re-resolution is what the flag opts out
-      // of); bunx must error instead.
+    test.skipIf(isWindows)("--no-install + --minimum-release-age does not run an ungated cached binary", async () => {
+      // The gate-keyed cache dir is cold, so `--no-install` has nothing to
+      // run: it must refuse rather than fall back to the ungated cache.
       using dir = tempDir("bunx-min-age-noinstall", {});
       using cacheDir = tempDir("bunx-min-age-cache-noinstall", {});
       using tmp = tempDir("bunx-min-age-tmp-noinstall", {});
@@ -2796,7 +2863,6 @@ export const scanner = {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
       expect(stderr).toContain("--no-install");
-      expect(stderr).toContain("--minimum-release-age");
       expect(exitCode).not.toBe(0);
     });
 
@@ -2850,49 +2916,42 @@ export const scanner = {
       expect(exitCode).not.toBe(0);
     });
 
-    // `=0` is the documented disable spelling: it must NOT force
-    // re-resolution on a warm cache, and `--no-install` + `=0` must run the
-    // cached binary instead of hard-erroring.
-    test.skipIf(isWindows)("--minimum-release-age=0 honors cached binary (disable semantics)", async () => {
+    test.skipIf(isWindows)("--minimum-release-age=0 installs ungated into its own cache dir", async () => {
+      // `=0` is an explicit "no gate for this run". It gets its own cache key
+      // so it neither reuses nor overwrites the ungated entry, which a global
+      // bunfig gate may have shaped.
       using dir = tempDir("bunx-min-age-zero", {});
       using cacheDir = tempDir("bunx-min-age-cache-zero", {});
       using tmp = tempDir("bunx-min-age-tmp-zero", {});
 
       const uid = process.getuid?.() ?? 0;
-      const cacheRoot = join(String(tmp), `bunx-${uid}-regular-package@latest`);
+      const cacheRoot = join(String(tmp), `bunx-${uid}-bunx-package@latest`);
       const binDir = join(cacheRoot, "node_modules", ".bin");
       mkdirSync(binDir, { recursive: true });
       chmodSync(cacheRoot, 0o755);
-      const binPath = join(binDir, "regular-package");
-      writeFileSync(binPath, "#!/bin/sh\necho ZERO_DISABLE_OK\nexit 0\n");
+      const binPath = join(binDir, "bunx-package");
+      writeFileSync(binPath, "#!/bin/sh\necho CACHE_BYPASS_BUG_REPRO\nexit 0\n");
       chmodSync(binPath, 0o755);
 
-      // Without --no-install: should run the cached binary, not force
-      // re-resolution via `bun add`.
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "x", "--minimum-release-age=0", "regular-package"],
+        cmd: [bunExe(), "x", "--minimum-release-age=0", "bunx-package"],
         cwd: String(dir),
         env: bunxEnv(String(cacheDir), String(tmp)),
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toContain("ZERO_DISABLE_OK");
-      expect(stderr).not.toContain("Cannot use --no-install");
+      expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
+      // No gate applied: the newest version is installed and executed.
+      expect(stdout.trim()).toBe("3.0.0");
+      expect(stderr).not.toContain("error");
       expect(exitCode).toBe(0);
 
-      // With --no-install: same, since =0 isn't an active gate.
-      await using proc2 = Bun.spawn({
-        cmd: [bunExe(), "x", "--no-install", "--minimum-release-age=0", "regular-package"],
-        cwd: String(dir),
-        env: bunxEnv(String(cacheDir), String(tmp)),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
-      expect(stdout2).toContain("ZERO_DISABLE_OK");
-      expect(stderr2).not.toContain("Cannot use --no-install");
-      expect(exitCode2).toBe(0);
+      const zeroRoot = join(String(tmp), `bunx-${uid}-bunx-package@latest+min-age=0`);
+      expect(JSON.parse(readFileSync(join(zeroRoot, "node_modules", "bunx-package", "package.json"), "utf8")).version).toBe(
+        "3.0.0",
+      );
+      expect(existsSync(binPath)).toBe(true);
     });
 
     // Same unix-only fake-cache layout as the other warm-cache tests.
@@ -2911,8 +2970,8 @@ export const scanner = {
         const uid = process.getuid?.() ?? 0;
 
         // 1. Local project install: `<cwd>/node_modules/<pkg>/package.json`
-        //    with a bin entry. `get_bin_name_from_project_directory` reads
-        //    this and returns the real bin name, bypassing force_stale.
+        //    with a bin entry, so bin discovery succeeds before any cache
+        //    probe.
         const localPkgDir = join(String(dir), "node_modules", pkgName);
         mkdirSync(localPkgDir, { recursive: true });
         writeFileSync(
@@ -2956,10 +3015,9 @@ export const scanner = {
     );
 
     // Same unix-only fake-cache layout as the other warm-cache tests.
-    test.skipIf(isWindows)("--no-install + --minimum-release-age + mismatched bin name: specific error", async () => {
-      // With a mismatched bin name, the `--no-install` catch-all must emit
-      // the specific "Cannot use --no-install with --minimum-release-age"
-      // error, not the generic could-not-find message.
+    test.skipIf(isWindows)("--no-install + --minimum-release-age does not run an ungated mismatched-bin cache", async () => {
+      // Bin discovery through the cached package.json must look in the
+      // gate-keyed dir (cold), not the ungated one holding the sentinel.
       using dir = tempDir("bunx-min-age-noinstall-mismatched", {});
       using cacheDir = tempDir("bunx-min-age-cache-noinstall-mismatched", {});
       using tmp = tempDir("bunx-min-age-tmp-noinstall-mismatched", {});
@@ -3001,50 +3059,107 @@ export const scanner = {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
       expect(stderr).toContain("--no-install");
-      expect(stderr).toContain("--minimum-release-age");
       expect(exitCode).not.toBe(0);
     });
 
-    test.skipIf(isWindows)("warm cache bun.lock is cleared before age-gated install", async () => {
-      // A surviving `bun.lock` pins resolution even under `--no-cache
-      // --force`, so the install path must wipe the cache dir when the age
-      // gate is active. Seeds a sentinel lockfile and asserts it's gone.
-      using dir = tempDir("bunx-min-age-lockfile", {});
-      using cacheDir = tempDir("bunx-min-age-cache-lockfile", {});
-      using tmp = tempDir("bunx-min-age-tmp-lockfile", {});
+    test.skipIf(isWindows)("age-gated install lands in its own cache dir with the newest allowed version", async () => {
+      using dir = tempDir("bunx-min-age-keyed", {});
+      using cacheDir = tempDir("bunx-min-age-cache-keyed", {});
+      using tmp = tempDir("bunx-min-age-tmp-keyed", {});
 
-      const pkgName = "regular-package";
+      // A warm ungated entry with a sentinel bin and lockfile; the gated run
+      // must leave both alone.
       const uid = process.getuid?.() ?? 0;
+      const ungatedRoot = join(String(tmp), `bunx-${uid}-bunx-package@latest`);
+      const ungatedBinDir = join(ungatedRoot, "node_modules", ".bin");
+      mkdirSync(ungatedBinDir, { recursive: true });
+      chmodSync(ungatedRoot, 0o755);
+      const ungatedBin = join(ungatedBinDir, "bunx-package");
+      writeFileSync(ungatedBin, "#!/bin/sh\necho CACHE_BYPASS_BUG_REPRO\nexit 0\n");
+      chmodSync(ungatedBin, 0o755);
+      const ungatedLock = join(ungatedRoot, "bun.lock");
+      writeFileSync(ungatedLock, "SENTINEL_LOCKFILE");
 
-      const cacheRoot = join(String(tmp), `bunx-${uid}-${pkgName}@^2`);
-      const binDir = join(cacheRoot, "node_modules", ".bin");
-      mkdirSync(binDir, { recursive: true });
-      chmodSync(cacheRoot, 0o755);
-      writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
-      const lockPath = join(cacheRoot, "bun.lock");
-      writeFileSync(lockPath, "SENTINEL_LOCKFILE_CONTENT_SHOULD_BE_WIPED");
-      const binPath = join(binDir, pkgName);
-      writeFileSync(binPath, "#!/bin/sh\necho CACHE_BYPASS_BUG_REPRO\nexit 0\n");
-      chmodSync(binPath, 0o755);
-
+      // 3 days: allows 2.1.0 (6 days old), blocks 3.0.0 (1 day old).
+      const gateSeconds = 3 * 24 * 60 * 60;
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "x", "--minimum-release-age=3155760000", `${pkgName}@^2`],
+        cmd: [bunExe(), "x", `--minimum-release-age=${gateSeconds}`, "bunx-package"],
         cwd: String(dir),
         env: bunxEnv(String(cacheDir), String(tmp)),
         stdout: "pipe",
         stderr: "pipe",
       });
-
-      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // Sentinel binary must not have run.
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
-      // And the install step must have wiped the sentinel lockfile (the
-      // test doesn't care whether the wipe happened before or after the
-      // `bun add` failure, only that it happened at all).
-      if (existsSync(lockPath)) {
-        expect(readFileSync(lockPath, "utf8")).not.toContain("SENTINEL_LOCKFILE_CONTENT_SHOULD_BE_WIPED");
-      }
-      expect(exitCode).not.toBe(0);
+      expect(stdout.trim()).toBe("2.1.0");
+      expect(stderr).not.toContain("error");
+      expect(exitCode).toBe(0);
+
+      const gatedRoot = join(String(tmp), `bunx-${uid}-bunx-package@latest+min-age=${gateSeconds * 1000}`);
+      expect(JSON.parse(readFileSync(join(gatedRoot, "node_modules", "bunx-package", "package.json"), "utf8")).version).toBe(
+        "2.1.0",
+      );
+      expect(existsSync(ungatedBin)).toBe(true);
+      expect(readFileSync(ungatedLock, "utf8")).toBe("SENTINEL_LOCKFILE");
+
+      // A plain run afterwards serves the ungated entry, not the gated one.
+      await using plain = Bun.spawn({
+        cmd: [bunExe(), "x", "bunx-package"],
+        cwd: String(dir),
+        env: bunxEnv(String(cacheDir), String(tmp)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [plainOut, , plainExit] = await Promise.all([plain.stdout.text(), plain.stderr.text(), plain.exited]);
+      expect(plainOut.trim()).toBe("CACHE_BYPASS_BUG_REPRO");
+      expect(plainExit).toBe(0);
+
+      // `bun pm cache rm` sweeps gated and ungated entries alike.
+      using pmDir = tempDir("bunx-min-age-keyed-pm", { "package.json": "{}" });
+      await using rm = Bun.spawn({
+        cmd: [bunExe(), "pm", "cache", "rm"],
+        cwd: String(pmDir),
+        env: bunxEnv(String(cacheDir), String(tmp)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, rmErr, rmExit] = await Promise.all([rm.stdout.text(), rm.stderr.text(), rm.exited]);
+      expect(rmErr).not.toContain("error");
+      expect(rmExit).toBe(0);
+      expect(existsSync(gatedRoot)).toBe(false);
+      expect(existsSync(ungatedRoot)).toBe(false);
+    });
+
+    test.skipIf(isWindows)("concurrent age-gated runs share a warm cache without racing", async () => {
+      using dir = tempDir("bunx-min-age-concurrent", {});
+      using cacheDir = tempDir("bunx-min-age-cache-concurrent", {});
+      using tmp = tempDir("bunx-min-age-tmp-concurrent", {});
+      const gateSeconds = 3 * 24 * 60 * 60;
+      const spawnGated = () =>
+        Bun.spawn({
+          cmd: [bunExe(), "x", `--minimum-release-age=${gateSeconds}`, "bunx-package"],
+          cwd: String(dir),
+          env: bunxEnv(String(cacheDir), String(tmp)),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+      // Warm the gate-keyed entry once.
+      await using warm = spawnGated();
+      const [warmOut, , warmExit] = await Promise.all([warm.stdout.text(), warm.stderr.text(), warm.exited]);
+      expect(warmOut.trim()).toBe("2.1.0");
+      expect(warmExit).toBe(0);
+
+      // Eight concurrent gated runs on the warm entry: none may delete the
+      // directory another run is executing from.
+      const procs = Array.from({ length: 8 }, spawnGated);
+      const results = await Promise.all(
+        procs.map(async p => {
+          const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+          return { out: out.trim(), code };
+        }),
+      );
+      expect(results).toEqual(Array.from({ length: 8 }, () => ({ out: "2.1.0", code: 0 })));
     });
   });
 });

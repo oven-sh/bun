@@ -5425,7 +5425,7 @@ pub mod bv2_impl {
             self.linker.source_maps.quoted_contents_wait_group.wait();
 
             {
-                // We do this first to make it harder for any dangling pointers to data to be used in there.
+                // We do this before the rest to make it harder for any dangling pointers to data to be used in there.
                 let on_parse_finalizers = core::mem::take(&mut self.finalizers);
                 for finalizer in &on_parse_finalizers {
                     finalizer.call();

@@ -111,7 +111,7 @@ pub struct LinkerContext<'a> {
     /// string buffer containing prefix for each unique keys
     pub(crate) unique_key_prefix: Box<[u8]>,
 
-    pub source_maps: SourceMapData,
+    pub(crate) source_maps: SourceMapData,
 
     /// This will eventually be used for reference-counting LinkerContext
     /// to know whether or not we can free it safely.

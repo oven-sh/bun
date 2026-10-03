@@ -1340,20 +1340,13 @@ impl CompletionStruct for JSBundleCompletionTask {
             .map(|b| &**b)
             .collect();
 
-        let run = bv2.run_from_js_in_new_thread(&entry_points);
+        let run = bv2
+            .run_from_js_in_new_thread(&entry_points)
+            .map(|build| self.set_result(BundleV2Result::Value(build)));
 
         // The AST-allocator pop lives in `generate_in_new_thread`.
-        match run {
-            Ok(build) => {
-                self.set_result(BundleV2Result::Value(build));
-                bv2.deinit_without_freeing_arena();
-                Ok(())
-            }
-            Err(err) => {
-                bv2.deinit_without_freeing_arena();
-                Err(err)
-            }
-        }
+        bv2.deinit_without_freeing_arena();
+        run
     }
 }
 

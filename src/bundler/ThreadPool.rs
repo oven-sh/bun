@@ -435,9 +435,10 @@ impl ThreadPool {
 
         // SAFETY: `worker` is freshly heap-allocated and exclusive on this
         // thread until published via the map (already inserted above, but no
-        // other thread looks it up under a different `id`, and
-        // `deinit_without_freeing_arena` reads every entry only once no task
-        // of this bundle is left on the pool).
+        // other thread looks it up under a different `id`).
+        // `deinit_without_freeing_arena` reads every entry, so it must not run
+        // while a task is in here: its callers `wait_for_parse` first, and it
+        // waits for the source map tasks itself.
         unsafe {
             worker.write(Worker {
                 // Placeholder — overwritten by `init()` immediately below.

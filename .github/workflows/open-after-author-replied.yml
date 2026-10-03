@@ -1,0 +1,185 @@
+name: Reopen after author reply
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  reopen:
+    # Change this if the GitHub login is different, for example robobun[bot].
+    env:
+      ROBOBUN_LOGINS: '["robobun", "robobun[bot]"]'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Reopen after an author reply
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const payload = context.payload;
+
+            const issueNumber =
+              payload.issue?.number ??
+              payload.pull_request?.number;
+
+            const currentComment =
+              payload.comment;
+
+            if (!issueNumber || !currentComment) {
+              core.info("This event does not contain a comment.");
+              return;
+            }
+
+            const roboBunLogins = new Set(
+              JSON.parse(process.env.ROBOBUN_LOGINS)
+                .map(login => login.toLowerCase())
+            );
+
+            const issue = await github.rest.issues.get({
+              owner,
+              repo,
+              issue_number: issueNumber
+            });
+
+            // Only reopen currently closed issues or pull requests.
+            if (issue.data.state !== "closed") {
+              core.info("The issue or pull request is not closed.");
+              return;
+            }
+
+            // The reply must come from the original issue/PR author.
+            const authorLogin = issue.data.user?.login?.toLowerCase();
+            const commenterLogin = currentComment.user?.login?.toLowerCase();
+
+            if (!authorLogin || commenterLogin !== authorLogin) {
+              core.info("The comment was not posted by the original author.");
+              return;
+            }
+
+            const currentCommentTime = new Date(
+              currentComment.created_at
+            ).getTime();
+
+            // Find timeline events showing who actually closed the item.
+            const timelineEvents = await github.paginate(
+              github.rest.issues.listEventsForTimeline,
+              {
+                owner,
+                repo,
+                issue_number: issueNumber,
+                per_page: 100
+              }
+            );
+
+            const closeEvents = timelineEvents
+              .filter(event =>
+                event.event === "closed" &&
+                event.created_at
+              )
+              .sort((a, b) =>
+                new Date(b.created_at) - new Date(a.created_at)
+              );
+
+            const closeEvent = closeEvents[0];
+
+            if (!closeEvent) {
+              core.info("No closing timeline event was found.");
+              return;
+            }
+            const closerLogin = closeEvent.actor?.login?.toLowerCase();
+
+            if (!closerLogin || !roboBunLogins.has(closerLogin)) {
+              core.info("The most recent close was not performed by robobun.");
+              return;
+            }
+
+            const closeTime = new Date(closeEvent.created_at).getTime();
+
+            // Retrieve both normal conversation comments and PR review comments.
+            const issueComments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner,
+                repo,
+                issue_number: issueNumber,
+                per_page: 100
+              }
+            );
+
+            let reviewComments = [];
+
+            if (issue.data.pull_request) {
+              reviewComments = await github.paginate(
+                github.rest.pulls.listReviewComments,
+                {
+                  owner,
+                  repo,
+                  pull_number: issueNumber,
+                  per_page: 100
+                }
+              );
+            }
+
+            const allComments = [...issueComments, ...reviewComments];
+
+            // The closing response must be a robobun comment posted before closing.
+            const robobunResponse = allComments
+              .filter(comment =>
+                comment.user?.login &&
+                roboBunLogins.has(comment.user.login.toLowerCase()) &&
+                comment.created_at &&
+                new Date(comment.created_at).getTime() <= closeTime
+              )
+              .sort((a, b) =>
+                new Date(b.created_at) - new Date(a.created_at)
+              )[0];
+
+            if (!robobunResponse) {
+              core.info("No robobun response was found before the close event.");
+              return;
+            }
+
+            const robobunResponseTime = new Date(
+              robobunResponse.created_at
+            ).getTime();
+
+            // Require the author comment to occur after both the robobun
+            // response and the robobun close event.
+            if (
+              currentCommentTime <= robobunResponseTime ||
+              currentCommentTime <= closeTime
+            ) {
+              core.info(
+                "The author comment did not occur after robobun's closing response."
+              );
+              return;
+            }
+
+            try {
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                state: "open"
+              });
+            } catch (error) {
+              if (error.status !== 422) {
+                throw error;
+              }
+              core.warning(
+                `Could not reopen ${owner}/${repo}#${issueNumber}: ${error.message}`
+              );
+              return;
+            }
+
+            core.info(
+              `Reopened ${owner}/${repo}#${issueNumber} after a reply from ${authorLogin}.`
+            );

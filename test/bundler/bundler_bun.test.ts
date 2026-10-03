@@ -95,6 +95,61 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!" },
   });
+  // cjs output is wrapped in the `@bun-cjs` function wrapper, where `import.meta`
+  // is a SyntaxError, so the synthesized module has to use the wrapper's `require`.
+  itBundled("bun/embedded-sqlite-file-cjs", {
+    target: "bun",
+    format: "cjs",
+    outfile: "",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import db from './db.sqlite' with {type: "sqlite", embed: "true"};
+        console.log(db.query("select message from messages LIMIT 1").get().message);
+      `,
+      "/db.sqlite": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        return db.serialize();
+      })(),
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out/entry.js");
+      expect(out).toContain("// @bun @bun-cjs\n");
+      expect(out).not.toContain("import.meta");
+      expect(out).toMatch(/^var db_default = require\("\.\/db-[a-z0-9]+\.sqlite", \{ type: "sqlite" \}\)\.db;$/m);
+    },
+    run: { stdout: "Hello, world!" },
+  });
+  // A dynamic import turns the synthesized module into `module.exports = ...`
+  // inside a __commonJS wrapper; that is the other shape the linker gives it.
+  itBundled("bun/embedded-sqlite-file-cjs-dynamic-import", {
+    target: "bun",
+    format: "cjs",
+    outfile: "",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import('./db.sqlite', { with: {type: "sqlite", embed: "true"} }).then(({ default: db }) => {
+          console.log(db.query("select message from messages LIMIT 1").get().message);
+        });
+      `,
+      "/db.sqlite": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        return db.serialize();
+      })(),
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out/entry.js");
+      expect(out).toContain("// @bun @bun-cjs\n");
+      expect(out).not.toContain("import.meta");
+      expect(out).toMatch(/\bmodule\d*\.exports = require\("\.\/db-[a-z0-9]+\.sqlite", \{ type: "sqlite" \}\)\.db;$/m);
+    },
+    run: { stdout: "Hello, world!" },
+  });
   itBundled("bun/sqlite-file", {
     target: "bun",
     files: {
@@ -110,6 +165,30 @@ describe("bundler", () => {
         db.exec("insert into messages values ('Hello, world!')");
         return db.serialize();
       })(),
+    },
+    run: { stdout: "Hello, world!", setCwd: true },
+  });
+  itBundled("bun/sqlite-file-cjs", {
+    target: "bun",
+    format: "cjs",
+    files: {
+      "/entry.ts": /* js */ `
+        import db from './db.sqlite' with {type: "sqlite"};
+        console.log(db.query("select message from messages LIMIT 1").get().message);
+      `,
+    },
+    runtimeFiles: {
+      "/db.sqlite": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        return db.serialize();
+      })(),
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("// @bun @bun-cjs\n");
+      expect(out).not.toContain("import.meta");
     },
     run: { stdout: "Hello, world!", setCwd: true },
   });

@@ -86,6 +86,12 @@ To force a script to always run with Bun, give it a `bun` shebang.
 #!/usr/bin/env bun
 ```
 
+## Install configuration
+
+When the package isn't installed, `bunx` installs it into a cache directory and then runs the executable. `bunx` passes its `--verbose` and `--silent` flags to that install.
+
+[`BUN_OPTIONS`](/runtime/environment-variables) adds flags to `bunx` and stays in the environment of the executable. The install doesn't read `BUN_OPTIONS`. To configure the install, set an environment variable such as `BUN_CONFIG_REGISTRY` or `BUN_INSTALL_CACHE_DIR`, or use the `[install]` section of the [global `bunfig.toml`](/runtime/bunfig).
+
 ---
 
 <Bunx />

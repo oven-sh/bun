@@ -292,8 +292,7 @@ impl PackageManager {
         }
     }
 
-    /// Returns whether the root gets the default `node-gyp rebuild` install
-    /// script. The meta hash needs the same answer.
+    /// Whether the root gets the default `node-gyp rebuild` script. The meta hash covers it.
     pub(crate) fn load_root_lifecycle_scripts(&mut self, root_package: &Package) -> bool {
         let buf = self.lockfile.buffers.string_bytes.as_slice();
         // need to clone because this is a copy before Lockfile.cleanWithLogger

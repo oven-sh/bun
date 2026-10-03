@@ -433,8 +433,7 @@ pub(crate) fn load(
         package::serializer::load(stream, total_buffer_size as usize, migrate_from_v2)?;
 
     lockfile.packages = packages_load_result.list;
-    // All zero is the hash of a lockfile with one package. On a longer one
-    // nothing computed the hash before the save.
+    // All zero on a lockfile with more than one package: nothing computed the hash before the save.
     lockfile.loaded_meta_hash = (stored_meta_hash != [0u8; 32] || lockfile.packages.len() <= 1)
         .then_some(MetaHash(stored_meta_hash));
 

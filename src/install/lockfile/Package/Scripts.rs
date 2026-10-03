@@ -144,9 +144,7 @@ impl Scripts {
         )
     }
 
-    /// The script each hook runs for a package with this resolution tag, in
-    /// `Lockfile.Scripts.names` order. With `add_node_gyp_rebuild_script`,
-    /// `node-gyp rebuild` stands in for the install and preinstall scripts.
+    /// The script each hook runs, in `Lockfile.Scripts.names` order.
     pub(crate) fn script_entries<'a>(
         &'a self,
         lockfile_buf: &'a [u8],

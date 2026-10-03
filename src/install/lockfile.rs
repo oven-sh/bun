@@ -125,9 +125,7 @@ pub(crate) type PatchedDependenciesMap =
 
 pub(crate) type StringPool = bun_semver::string::StringPool;
 
-/// SHA-512/256 of a lockfile's sorted `name@resolution` lines and its lifecycle
-/// script lines. Only [`Lockfile::generate_meta_hash`] and the `bun.lockb`
-/// reader produce one.
+/// SHA-512/256 of the sorted `name@resolution` lines and the lifecycle script lines.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct MetaHash([u8; 32]); // Sha512T256.digest_length
 
@@ -138,8 +136,7 @@ impl MetaHash {
 
 impl fmt::Display for MetaHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Alternating uppercase/lowercase hex groups; `HexBytes` emits two
-        // digits per byte, contiguous, no separators.
+        // Alternating uppercase/lowercase hex groups.
         write!(
             f,
             "{}-{}-{}-{}",
@@ -156,25 +153,19 @@ impl fmt::Display for MetaHash {
 pub enum MetaHashScripts {
     /// None. `bun pm hash` and `bun pm hash-string` print this hash.
     Omit,
-    /// The scripts `bun install` runs for the root package and for each
-    /// workspace with an install script. `bun.lockb` stores this hash.
+    /// The root's and the workspaces' install scripts. `bun.lockb` stores this hash.
     Derive {
-        /// The root gets the default `node-gyp rebuild` install script
-        /// ([`package::Scripts::wants_default_node_gyp`]).
+        /// The root gets the default `node-gyp rebuild` install script.
         root_node_gyp_rebuild: bool,
     },
 }
 
-/// What an install pass already knows about the meta hash a `bun.lockb`
-/// stores. The default knows nothing, and the writer derives all of it.
+/// What the caller of a save already knows about the meta hash. The default: nothing.
 #[derive(Clone, Copy, Default)]
 pub struct MetaHashForSave {
-    /// The root gets the default `node-gyp rebuild` install script.
     /// `None`: the writer looks for the root's `binding.gyp` itself.
     pub root_node_gyp_rebuild: Option<bool>,
-    /// The hash the comparison before the save computed, with the number of
-    /// packages it covers. The writer takes it only when it covers every
-    /// package it writes.
+    /// A hash and the number of packages it covers. Used only when it covers every package written.
     pub computed: Option<(MetaHash, usize)>,
 }
 
@@ -216,9 +207,7 @@ pub struct Lockfile {
 
     pub(crate) text_lockfile_version: bun_lock::Version,
 
-    /// The meta hash the `bun.lockb` this lockfile was loaded from stores.
-    /// `None` when no `bun.lockb` was loaded, or when it stores no hash.
-    /// Only for comparison: the writer derives the hash it stores.
+    /// The hash the loaded `bun.lockb` stores, if any. Only compared: the writer derives its own.
     pub(crate) loaded_meta_hash: Option<MetaHash>,
 
     pub packages: PackageList,
@@ -3030,8 +3019,7 @@ impl Lockfile {
         Ok(true)
     }
 
-    /// The hash `bun pm hash-print` and `bun bun.lockb --hash` show: the one
-    /// the loaded `bun.lockb` stores, all zero when there is none.
+    /// The hash the loaded `bun.lockb` stores, all zero when there is none.
     pub fn stored_meta_hash(&self) -> MetaHash {
         self.loaded_meta_hash.unwrap_or(MetaHash::ZERO)
     }
@@ -3068,8 +3056,7 @@ impl Lockfile {
         }
     }
 
-    /// The lifecycle scripts the meta hash covers, per hook: the root's first,
-    /// then those of each workspace with an install script, in package order.
+    /// The scripts to hash: the root's, then each workspace's, in package order.
     fn meta_hash_script_entries(
         &self,
         scripts: MetaHashScripts,
@@ -3105,8 +3092,7 @@ impl Lockfile {
         entries
     }
 
-    /// Hashes the first `packages_len` packages. The result depends only on
-    /// the package columns and on `scripts`.
+    /// Hashes the first `packages_len` packages. Reads nothing but the package columns.
     pub fn generate_meta_hash(
         &self,
         scripts: MetaHashScripts,

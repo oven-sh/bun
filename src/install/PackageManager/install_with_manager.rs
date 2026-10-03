@@ -908,8 +908,7 @@ pub fn install_with_manager(
                     &lockfile_before_clean,
                     lockfile_before_clean.loaded_package_count as usize,
                 )?,
-                // No lockfile, or a bun.lockb that stores no hash. Any package besides the
-                // root is a change.
+                // Nothing to compare with, so any package besides the root is a change.
                 None => {
                     if print_hash_string {
                         fresh_meta_hash(true);
@@ -1396,8 +1395,7 @@ pub(crate) fn get_workspace_filters(
     Ok((filters, install_root_dependencies))
 }
 
-/// The meta hash of the lockfile as it was loaded, to compare with the one
-/// after the resolve. `None` when the loaded lockfile has none.
+/// The meta hash of the lockfile as it was loaded. `None` when that lockfile has none.
 fn loaded_meta_hash(
     manager: &PackageManager,
     load_result: &lockfile::LoadResult,
@@ -1408,8 +1406,7 @@ fn loaded_meta_hash(
         return Some(stored);
     }
     match load_result {
-        // package-lock.json and yarn.lock store no hash. Theirs is the hash of the packages
-        // the migration produced.
+        // package-lock.json and yarn.lock store no hash: hash the packages the migration produced.
         lockfile::LoadResult::Ok(ok)
             if matches!(
                 ok.migrated,

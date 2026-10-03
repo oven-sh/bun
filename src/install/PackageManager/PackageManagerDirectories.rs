@@ -1184,8 +1184,7 @@ pub fn save_lockfile(
     Ok(wrote)
 }
 
-/// Saves the lockfile for `bun pm migrate` and `bun pm trust`, which run no
-/// install pass.
+/// Saves the lockfile for `bun pm migrate` and `bun pm trust`, which run no install pass.
 pub fn save_lockfile_without_install(
     this: &mut PackageManager,
     load_result: &LoadResult,
@@ -1198,9 +1197,7 @@ pub fn save_lockfile_without_install(
         return Ok(());
     }
 
-    // A bun.lockb stores the hash the next install computes for it. That
-    // install takes lifecycle scripts from package.json and drops every
-    // package nothing depends on, and a migrated lockfile has had neither.
+    // Match what the next install hashes: scripts from package.json, no unreferenced packages.
     load_lifecycle_scripts_from_package_json(this)?;
     let log_level = this.options.log_level;
     let mut cleaned = {
@@ -1223,8 +1220,7 @@ pub fn save_lockfile_without_install(
     Ok(())
 }
 
-/// Copies the lifecycle scripts of the root and of the workspaces from their
-/// package.json into the lockfile, where the install differ expects them.
+/// Copies the root's and the workspaces' lifecycle scripts from package.json into the lockfile.
 fn load_lifecycle_scripts_from_package_json(this: &mut PackageManager) -> Result<(), Error> {
     for package_id in 0..this.lockfile.packages.len() {
         let resolution = this.lockfile.packages.items_resolution()[package_id];
@@ -1242,9 +1238,7 @@ fn load_lifecycle_scripts_from_package_json(this: &mut PackageManager) -> Result
         }
         let _ = package_json_path.append(b"package.json");
 
-        // A package.json that cannot be read fails the install that needs it.
-        // `bun pm trust` still holds the root package.json it parsed, so the
-        // AST store is not reset.
+        // No store reset: `bun pm trust` still holds the package.json AST it parsed.
         let Ok(package_json) = this
             .workspace_package_json_cache
             .get_with_path(

@@ -1950,6 +1950,11 @@ impl<'p> Printer<'_, 'p> {
             return None;
         }
         let container = self.c.files().sym(file, container);
+        self.member_of_to_expression(container, name)
+    }
+
+    /// The same for the member `name` of the class or interface `container`.
+    fn member_of_to_expression(&mut self, container: Sym, name: Atom) -> Option<Vec<u8>> {
         let at = self.enclosing_declaration?;
         let chain = self.c.lookup_symbol_chain_of_member_at(container, at);
         if chain.is_empty() {
@@ -3594,10 +3599,12 @@ impl<'p> Printer<'_, 'p> {
                     .member_to_expression(file, m, name)
                     .or_else(|| self.computed_key_text(prop))
                     .unwrap_or_else(|| self.text(name)),
-                UniqueSymbolDeclaration::SymbolConstructor => match self.computed_key_text(prop) {
-                    Some(written) => written,
-                    None => cat!(b"Symbol.", self.text(name)),
-                },
+                UniqueSymbolDeclaration::SymbolConstructor => self
+                    .c
+                    .global_type_symbol(known::SymbolConstructor)
+                    .and_then(|container| self.member_of_to_expression(container, name))
+                    .or_else(|| self.computed_key_text(prop))
+                    .unwrap_or_else(|| cat!(b"Symbol.", self.text(name))),
             };
             self.enclosing_declaration = outer;
             self.approximate_length += expression.len() + 1;

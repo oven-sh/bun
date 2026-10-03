@@ -11,7 +11,7 @@ use super::errors_operators::{start_of_dots_before, start_of_equals_before, why_
 use super::mapped::AccessNode;
 use super::symbols::IterationUse;
 use super::*;
-use crate::bind::{FnOwner, Parent, PatParent};
+use crate::bind::{Parent, PatParent};
 
 impl Checker<'_> {
     /// `checkRightHandSideOfForOf`
@@ -118,28 +118,6 @@ impl Checker<'_> {
                         error_node,
                     );
                 }
-            }
-        }
-        // `createGeneratorType`, which is always evaluated for a generator without a return type
-        // annotation: a missing `Generator` and `IterableIterator` is reported, without a file.
-        for i in 0..hir.fns.len() {
-            let f = &hir.fns[i];
-            if !f.flags.contains(Flags::GENERATOR)
-                || f.ret.is_some()
-                || matches!(f.body, FnBody::None)
-                || matches!(bound.fns[i].owner, FnOwner::None)
-            {
-                continue;
-            }
-            let (generator, iterator) = if f.flags.contains(Flags::ASYNC) {
-                (known::AsyncGenerator, known::AsyncIterableIterator)
-            } else {
-                (known::Generator, known::IterableIterator)
-            };
-            if self.global_type_of_arity(generator, 3).is_none()
-                && self.global_type_symbol(iterator).is_none()
-            {
-                self.report_global_error(2318, vec![self.atom_text(iterator)]);
             }
         }
     }

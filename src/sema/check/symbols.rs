@@ -3068,26 +3068,7 @@ impl<'p> Checker<'p> {
                     .map_or(TypeId::UNKNOWN, |t| t.next)
             }
         };
-        // `createGeneratorType`
-        let names = if is_async {
-            [known::AsyncGenerator, known::AsyncIterableIterator]
-        } else {
-            [known::Generator, known::IterableIterator]
-        };
-        for name in names {
-            // `getGlobalType`: a class or an interface with the same number of type parameters, or
-            // it is ignored.
-            if let Some(sym) = self.global_type_symbol(name)
-                && self
-                    .files()
-                    .flags(sym)
-                    .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-                && self.local_type_params_of_symbol(sym).len() == 3
-            {
-                return self.global_ref(name, &[yielded, ret, next]);
-            }
-        }
-        TypeId::EMPTY_OBJECT
+        self.generator_of(yielded, ret, next, is_async)
     }
 
     /// `forEachYieldExpression` visits only the body: whether the `yield` `e` is in a parameter of
@@ -4016,7 +3997,7 @@ impl<'p> Checker<'p> {
 
     /// The end of `getIterationTypesOfIterableWorker`: `ty` is not iterable, and `diags` becomes
     /// the related information of that error. tsgo defers it (`addDeferredDiagnostic`) so that
-    /// printing the type cannot cause a cycle.
+    /// printing the type cannot cause a cycle: nothing is being resolved by then.
     fn report_type_not_iterable(
         &mut self,
         error_node: Option<Place>,
@@ -4026,7 +4007,9 @@ impl<'p> Checker<'p> {
         diags: Vec<Reported>,
     ) {
         if let Some(error_node) = error_node {
+            let reprinting = std::mem::replace(&mut self.reprinting, true);
             let mut diagnostic = self.type_not_iterable_error(error_node, ty, allows_async, for_of);
+            self.reprinting = reprinting;
             diagnostic.related_information.extend(diags);
             self.add_diagnostic(diagnostic);
         }

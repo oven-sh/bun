@@ -122,6 +122,7 @@ known_atoms! {
     AsyncIterable = "AsyncIterable",
     AsyncIterator = "AsyncIterator",
     AsyncIterableIterator = "AsyncIterableIterator",
+    SymbolConstructor = "SymbolConstructor",
     AsyncIteratorObject = "AsyncIteratorObject",
     Generator = "Generator",
     AsyncGenerator = "AsyncGenerator",

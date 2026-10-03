@@ -890,7 +890,8 @@ pub struct Checker<'p> {
     /// prints.
     printing_closes_cycles: bool,
     /// A message is being recreated that was dropped with a result that was not cached: its types
-    /// are printed behind the barrier, and do not count as a level. tsgo creates it once.
+    /// are printed behind the barrier, and do not count as a level. tsgo creates it once. Or tsgo
+    /// creates the message after the check of the file (`addDeferredDiagnostic`).
     reprinting: bool,
     /// The height of `stack` when each `typeToStringEx` in progress began.
     printing_floors: Vec<usize>,
@@ -2550,7 +2551,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `createGeneratorType`: if `Generator` does not exist `IterableIterator` is used, and if
-    /// neither exists, `{}`.
+    /// neither exists, `{}`, and the missing `IterableIterator` is reported, without a file.
     pub fn generator_of(
         &mut self,
         yielded: TypeId,
@@ -2572,6 +2573,10 @@ impl<'p> Checker<'p> {
         let name = if self.global_type_of_arity(generator, 3).is_some() {
             generator
         } else {
+            // `getGlobalIterableIteratorTypeChecked`
+            if self.global_type_symbol(iterator).is_none() {
+                self.report_global_error(2318, vec![self.atom_text(iterator)]);
+            }
             iterator
         };
         self.global_ref(name, &[yielded, returned, next])

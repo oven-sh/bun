@@ -5793,6 +5793,33 @@ impl<'p> Checker<'p> {
                 .then(a.0.cmp(&b.0))
         });
         paths.dedup();
+        // The specifier of an import that resolves to one of the paths, by its `ResolvedFileName`.
+        let importer = self.files().module(importing);
+        let mut existing: Vec<(Atom, ResolutionMode, Vec<u8>)> = Vec::new();
+        for &specifier in &self.bound(importing).specifiers {
+            for used in [
+                importer.default_mode,
+                ResolutionMode::Import,
+                ResolutionMode::Require,
+                ResolutionMode::None,
+            ] {
+                if importer.imports.get(&(specifier, used)) == Some(&target)
+                    && !existing.iter().any(|it| it.0 == specifier && it.1 == used)
+                {
+                    let resolved = self.resolved_file_name_of_import(importing, specifier, used);
+                    existing.push((specifier, used, resolved));
+                }
+            }
+        }
+        for (path, _) in &paths {
+            if let Some(&(specifier, used, _)) = existing.iter().find(|it| it.2 == *path)
+                && (used == target_mode
+                    || used == ResolutionMode::None
+                    || target_mode == ResolutionMode::None)
+            {
+                return self.atoms().bytes(specifier).to_vec();
+            }
+        }
         let prefers_js =
             self.resolution_mode_for_specifier(importing, mode) == ResolutionMode::Import;
         let allowed_endings = self.allowed_endings(importing, prefers_js, target_mode);
@@ -6006,6 +6033,37 @@ impl<'p> Checker<'p> {
         Vec::new()
     }
 
+    /// `referenceRedirect` in `GetEachFileNameOfModule`
+    fn reference_redirect(&self, path: &[u8]) -> Option<Vec<u8>> {
+        match self.files().options.parse_file_redirect(path) {
+            Some(output) => Some(output.to_vec()),
+            None => self.output_dts_of_project_reference_source(path),
+        }
+    }
+
+    /// `ResolvedFileName` of an import of `importing`.
+    fn resolved_file_name_of_import(
+        &self,
+        importing: FileId,
+        specifier: Atom,
+        mode: ResolutionMode,
+    ) -> Vec<u8> {
+        let files = self.files();
+        let importer = files.module(importing);
+        let mut redirected = importer.redirected_imports.iter();
+        if let Some(&(_, _, name)) = redirected.find(|it| it.0 == specifier && it.1 == mode) {
+            return self.atoms().bytes(name).to_vec();
+        }
+        let path = &files.module(importer.imports[&(specifier, mode)]).path;
+        let mut to_outputs = importer.project_reference_imports.iter();
+        if to_outputs.any(|&it| it == (specifier, mode))
+            && let Some(output) = self.reference_redirect(path)
+        {
+            return output;
+        }
+        path.clone()
+    }
+
     /// `GetModuleSpecifiers`, first result only: the specifier `importing` uses for the file
     /// `target`.
     fn get_module_specifiers(
@@ -6021,38 +6079,18 @@ impl<'p> Checker<'p> {
         } else {
             mode
         };
-        // A specifier that already imports the file.
-        'existing: for &specifier in &self.bound(importing).specifiers {
-            for used in [
-                from.default_mode,
-                ResolutionMode::Import,
-                ResolutionMode::Require,
-                ResolutionMode::None,
-            ] {
-                if from.imports.get(&(specifier, used)) != Some(&target) {
-                    continue;
-                }
-                if used == target_mode
-                    || used == ResolutionMode::None
-                    || target_mode == ResolutionMode::None
-                {
-                    return self.atoms().bytes(specifier).to_vec();
-                }
-                break 'existing;
-            }
-        }
         // `GetModuleSpecifiersWithInfo`: "Use original source file name when file is from project reference output".
         let path = (files.options)
             .source_of_project_reference_if_output_included(&files.module(target).path);
         // `GetEachFileNameOfModule`. The output of a referenced project for the file comes first,
         // then the source: the `exports` of its package map to one or the other.
-        let reference_redirect = match files.options.parse_file_redirect(path) {
-            Some(output) => Some(output.to_vec()),
-            None => self.output_dts_of_project_reference_source(path),
-        };
+        let reference_redirect = self.reference_redirect(path);
         let mut targets: Vec<(Vec<u8>, bool)> = Vec::with_capacity(2);
         targets.extend(reference_redirect.map(|output| (output, true)));
         targets.push((path.to_vec(), false));
+        // `GetRedirectTargets`
+        let redirects = files.redirect_targets.get(&target).into_iter().flatten();
+        targets.extend(redirects.map(|path| (path.clone(), false)));
         let mut paths = self.paths_through_links(path, &targets, &from.path);
         // `containsIgnoredPath`, `shouldFilterIgnoredPaths`
         let contains_ignored_path = |path: &[u8]| {

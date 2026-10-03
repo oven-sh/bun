@@ -438,6 +438,9 @@ pub struct Files {
     /// to it, in order. Only filled when declaration files are emitted. The `package.json` of each
     /// is in `package_jsons` under the path of the symlink.
     pub linked_directories: Vec<(Vec<u8>, Vec<u8>)>,
+    /// `redirectTargetsMap`: the paths of the duplicates of a package file, for which that file is
+    /// in the program, in order.
+    pub redirect_targets: FxHashMap<FileId, Vec<Vec<u8>>>,
 }
 
 /// `Files::global_type`
@@ -2529,6 +2532,15 @@ impl Files {
                 module.redirected_imports = redirected.into();
             }
         }
+        let mut redirect_targets: FxHashMap<FileId, Vec<Vec<u8>>> = FxHashMap::default();
+        if !kept.is_empty() {
+            for (path, id) in &by_path {
+                if kept.get(id).is_some_and(|kept| kept != path) {
+                    redirect_targets.entry(*id).or_default().push(path.clone());
+                }
+            }
+            redirect_targets.values_mut().for_each(|paths| paths.sort());
+        }
         let mut package_jsons: FxHashMap<Vec<u8>, Json> = FxHashMap::default();
         if options.emits_declarations {
             for module in modules.iter().flatten() {
@@ -2664,6 +2676,7 @@ impl Files {
             include_errors,
             package_jsons,
             linked_directories,
+            redirect_targets,
         };
         let merging = Spent::on(host, Phase::Merge);
         files.order = files.declaration_order(&starts);

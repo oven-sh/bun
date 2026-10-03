@@ -644,16 +644,31 @@ impl<'p> Checker<'p> {
         let Some(sym) = self.symbol_of_identifier(file, at, name) else {
             return false;
         };
-        if !self.files().flags(sym).intersects(SymFlags::VALUE) {
+        let flags = self.files().flags(sym);
+        // `getSymbolOfDeclaration(ref)`: `module` and `exports` are declared by the source file,
+        // whose symbol is the module.
+        let host = if flags.contains(SymFlags::MODULE_EXPORTS) {
+            self.files().file_symbol(sym.file)
+        } else if flags.intersects(SymFlags::VALUE) {
+            sym
+        } else {
             return false;
-        }
-        let ty = self.type_of_symbol(sym);
+        };
+        let ty = self.type_of_symbol(host);
+        // `IsExpandoPropertyDeclaration(p.ValueDeclaration)`
         self.members(ty).is_some_and(|members| {
-            members
-                .shape()
-                .props
-                .iter()
-                .any(|prop| matches!(prop.source, PropSource::Symbol(sym) if self.is_declared_by_assignment(sym)))
+            members.shape().props.iter().any(|prop| {
+                let PropSource::Symbol(sym) = prop.source else {
+                    return false;
+                };
+                match self.files().value_declaration(sym) {
+                    Some((_, Decl::Expando(_) | Decl::ThisProperty(_))) => true,
+                    Some((file, Decl::ExportsProperty(e))) => {
+                        matches!(self.hir(file)[e].kind, ExprKind::Assign { .. })
+                    }
+                    _ => false,
+                }
+            })
         })
     }
 
@@ -1479,10 +1494,15 @@ impl<'p> Checker<'p> {
                 }
             }
             PropSource::Symbol(sym) => self.declarations_of_property(*sym).len(),
-            PropSource::Copy(_, of, _) | PropSource::ReverseMapped(_, of) => {
+            PropSource::Copy(_, of, _)
+            | PropSource::ReverseMapped(_, of)
+            | PropSource::Intersected(_, of) => {
                 of.iter().map(|p| self.iso_declaration_count(p)).sum()
             }
-            PropSource::Type(_) | PropSource::Intersected(..) | PropSource::Mapped(..) => 0,
+            PropSource::Mapped(..) => (prop.declared_by_modifiers_property().iter())
+                .map(|p| self.iso_declaration_count(p))
+                .sum(),
+            PropSource::Type(_) => 0,
         }
     }
 

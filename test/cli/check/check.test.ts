@@ -1882,6 +1882,139 @@ export const outer = struct({ a: str, b: struct({ c: str }) });
       expect(exitCode).toBe(1);
     });
 
+    test("isolatedDeclarations: `exports.a = e` is an assignment to an expando, `module.exports = e` is not", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions":{"strict":true,"noEmit":true,"target":"esnext","module":"esnext","moduleResolution":"bundler","lib":["esnext"],"types":[],"skipLibCheck":true,"allowJs":true,"checkJs":true,"declaration":true,"isolatedDeclarations":true}}`,
+        "lib.d.ts": `export declare function f(): number;
+`,
+        "properties.cjs": `const { f } = require("./lib");
+exports.one = f();
+module.exports.two = { n: f() };
+`,
+        "whole.cjs": `const { f } = require("./lib");
+module.exports = { one: f() };
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "tsconfig.json(1,162): error TS5053: Option 'allowJs' cannot be specified with option 'isolatedDeclarations'.
+        whole.cjs(2,1): error TS9013: Expression type can't be inferred with --isolatedDeclarations.
+        whole.cjs(2,25): error TS9013: Expression type can't be inferred with --isolatedDeclarations."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("isolatedDeclarations: a property of a mapped type has the declarations of the property it maps", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions":{"strict":true,"noEmit":true,"target":"esnext","module":"esnext","moduleResolution":"bundler","lib":["esnext"],"types":[],"skipLibCheck":true,"declaration":true,"isolatedDeclarations":true}}`,
+        "a.ts": `type Infer<D> = D extends "number" ? number : D extends "string" ? string
+  : D extends object ? { [K in keyof D]: Infer<D[K]> } : never;
+declare function type<const D>(d: D): { t: Infer<D> };
+export const T = type({ top: "number", deep: { first: "string", second: "number", third: "number" } });
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,14): error TS9010: Variable must have an explicit type annotation with --isolatedDeclarations.
+        a.ts(4,73): error TS9013: Expression type can't be inferred with --isolatedDeclarations."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("printing `[Symbol.iterator]` resolves the type of every variable in scope", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions":{"strict":true,"noEmit":true,"target":"esnext","module":"esnext","moduleResolution":"bundler","lib":["esnext"],"types":[],"skipLibCheck":true}}`,
+        "a.ts": `export function f(key: any) {
+  const chunks = { name: "b", [Symbol.iterator]() { return 1; } };
+  const input = chunks[key];
+  return input;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,9): error TS7022: 'input' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+        a.ts(3,17): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type '{ name: string; [Symbol.iterator](): number; }'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a generator with a return type annotation needs the global IterableIterator too", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions":{"strict":true,"noEmit":true,"target":"esnext","module":"esnext","moduleResolution":"bundler","lib":["es5"],"types":[],"skipLibCheck":true}}`,
+        "a.ts": `interface Shape { x: number }
+export function* sync(): Shape { yield 1; }
+export async function* async(): Shape { yield 1; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "error TS2318: Cannot find global type 'AsyncIterableIterator'.
+        error TS2318: Cannot find global type 'IterableIterator'.
+        a.ts(2,26): error TS2741: Property 'x' is missing in type '{}' but required in type 'Shape'.
+        a.ts(3,33): error TS2741: Property 'x' is missing in type '{}' but required in type 'Shape'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // Two installed copies of one version of a package are one package: the second is redirected to the first.
+    test("a redirected copy of a package is named through the links to the copy in the program", async () => {
+      const store = (hash: string) => `node_modules/.pnpm/tsup@8.5.0_${hash}/node_modules/tsup`;
+      const copy = (hash: string) => ({
+        [`${store(hash)}/package.json`]: `{ "name": "tsup", "version": "8.5.0", "types": "./dist/index.d.ts" }
+`,
+        [`${store(hash)}/dist/index.d.ts`]: `export interface Options { entry?: string[] }
+export declare function defineConfig(o: Options): Options;
+`,
+      });
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "declaration": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true } }
+`,
+        ...copy("a"),
+        ...copy("b"),
+        "kit/a.ts": `import { defineConfig } from "tsup";
+export default defineConfig({});
+`,
+        "orm/b.ts": `import { defineConfig } from "tsup";
+export default defineConfig({});
+`,
+      });
+      mkdirSync(join(String(dir), "kit/node_modules"), { recursive: true });
+      symlinkSync(join(String(dir), store("a")), join(String(dir), "node_modules/tsup"), "junction");
+      symlinkSync(join(String(dir), store("b")), join(String(dir), "kit/node_modules/tsup"), "junction");
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"orm/b.ts(2,1): error TS2883: The inferred type of 'default' cannot be named without a reference to 'Options' from '../kit/node_modules/tsup/dist'. This is likely not portable. A type annotation is necessary."`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test("a redirected copy of a package is named by the copy next to the importing file", async () => {
+      const copy = (at: string) => ({
+        [`${at}/node_modules/x/package.json`]: `{ "name": "x", "version": "1.0.0", "types": "./index.d.ts" }
+`,
+        [`${at}/node_modules/x/index.d.ts`]: `export interface Options { entry?: string[] }
+export declare function defineConfig(o: Options): Options;
+`,
+        [`${at}/m.ts`]: `import { defineConfig } from "x";
+export default defineConfig({});
+export const c = defineConfig({});
+`,
+      });
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "declaration": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true } }
+`,
+        ...copy("a"),
+        ...copy("b"),
+        "b/n.ts": `import { c } from "../a/m";
+export const d = c;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test("an aliased intersection with a class is named by its members where its properties are compared", async () => {
       using dir = project({
         "a.ts": `declare class Base {

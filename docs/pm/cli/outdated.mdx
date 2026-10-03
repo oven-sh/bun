@@ -94,6 +94,20 @@ bun outdated '!@types/*'
 | typescript (dev)               | 5.7.2   | 5.7.3     | 5.7.3      |
 ```
 
+To check several dependencies, pass more than one name or pattern. `bun outdated` matches each pattern against the dependency name as written in `package.json`. The table lists a dependency when at least one pattern matches it. A pattern that starts with `!` removes the dependencies it matches:
+
+```sh terminal icon="terminal"
+bun outdated typescript 'eslint*' '!eslint-plugin-sonarjs'
+```
+
+```txt
+| Package                        | Current | Update | Latest     |
+| ------------------------------ | ------- | ------ | ---------- |
+| eslint (dev)                   | 8.57.1  | 8.57.1 | 9.20.0     |
+| eslint-plugin-security (dev)   | 2.1.1   | 2.1.1  | 3.0.1      |
+| typescript (dev)               | 5.7.2   | 5.7.3  | 5.7.3      |
+```
+
 ### Workspace Filters
 
 Use the `--filter` flag to check for outdated dependencies in a different workspace package:

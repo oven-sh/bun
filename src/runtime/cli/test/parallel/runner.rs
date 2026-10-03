@@ -671,8 +671,7 @@ pub(crate) fn run_as_worker(
 
     worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
-    // sees repeat_bufs / coverage_file. Ticking runs JS (microtasks, weak-ref
-    // release), hence the API lock.
+    // sees repeat_bufs / coverage_file.
     vm_ref.run_with_api_lock(|| {
         while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
             // SAFETY: event_loop pointer is valid while vm lives.

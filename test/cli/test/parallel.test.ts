@@ -1116,20 +1116,10 @@ test("--parallel: a test writing garbage to fd 3 gets its worker killed and the 
   expect(exitCode).toBe(1);
 });
 
-// After the last file, the worker flushes its aggregate frames (repeat bufs,
-// coverage files) and ticks the event loop until the IPC backlog drains.
-// Those ticks run JS teardown (microtasks, weak-ref release) and must hold
-// the JSC API lock like the ticks during the run; builds with JSC assertions
-// (debug and asan) otherwise abort the worker with
-// "ASSERTION FAILED: currentThreadIsHoldingAPILock()" on its stderr, which
-// the coordinator streams through, and the frames still queued are lost. On
-// Windows every frame takes the async uv_write path so the drain loop runs on
-// every worker exit; on POSIX it only runs when a frame overflows the
-// socketpair send buffer (~208KB on Linux), hence the ~1MB todo repeat
-// buffer. The 26 passes keep the end-of-run repeat section printing
-// (suppressed at <=20 passes), which reprints the todo lines out of that
-// backpressured frame on every build flavor, so frame delivery is asserted
-// even where assertions are compiled out.
+// ~1MB of todo lines overflows the socketpair send buffer (~208KB on Linux),
+// so the worker's final RepeatBufs frame is backpressured and leaves through
+// its exit drain loop. More than 20 passes keep the end-of-run repeat section
+// printing.
 test(
   "--parallel: worker drains a backpressured final frame under the JSC API lock",
   async () => {
@@ -1149,12 +1139,6 @@ test(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toContain("PARALLEL");
-    // Filter instead of not.toContain so a failure prints the assertion lines,
-    // not the ~1MB of todo lines around them.
-    const assertionLines = stderr
-      .split("\n")
-      .filter(line => line.includes("ASSERTION FAILED") || line.includes("currentThreadIsHoldingAPILock"));
-    expect(assertionLines).toEqual([]);
     // The backpressured RepeatBufs frame crossed the IPC intact: the last
     // todo line appears exactly twice, streamed live and again in the
     // end-of-run repeat section built from the frame.

@@ -1,8 +1,8 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
+import { chmodSync, copyFileSync, mkdirSync, readdirSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -508,6 +508,70 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
   expect(err).not.toContain("error:");
   expect(err).not.toContain("Cannot find module 'exec'");
   expect(out.trim()).not.toContain(Bun.version);
+  expect(exited).toBe(0);
+});
+
+// #40298: on Windows, `bunx --bun <pkg>` runs a node-shebang bin script in the
+// same process instead of spawning a child. The process kept bunx's identity:
+// process.execPath pointed at bunx.exe (so a fork()ed child re-entered bunx
+// CLI mode) and process.execArgv carried the bunx CLI flags.
+it.concurrent.skipIf(!isWindows)("bunx --bun in-process launch can fork children (#40298)", async () => {
+  using dir = tempDir("bunx-bun-fork", {
+    "package.json": JSON.stringify({ name: "repro", dependencies: { showexec: "file:./showexec" } }),
+    "showexec/package.json": JSON.stringify({ name: "showexec", version: "1.0.0", bin: { showexec: "cli.js" } }),
+    "showexec/cli.js": `#!/usr/bin/env node
+      console.log(JSON.stringify({ argv0: process.argv[0], execPath: process.execPath, execArgv: process.execArgv, npmExecpath: process.env.npm_execpath }));
+      const { fork } = require("node:child_process");
+      const cp = fork(require("node:path").join(__dirname, "child.js"));
+      cp.on("exit", code => console.log("child exit", code));
+    `,
+    "showexec/child.js": `console.log("CHILD OK");`,
+  });
+  // The defect only reproduces when the executable is named bunx.exe, so run
+  // a copy of the test build under that name, with a bun.exe sibling.
+  const exeDir = join(String(dir), "exes");
+  mkdirSync(exeDir);
+  copyFileSync(bunExe(), join(exeDir, "bun.exe"));
+  copyFileSync(bunExe(), join(exeDir, "bunx.exe"));
+
+  await using install = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [installOut, installErr, installExit] = await Promise.all([
+    install.stdout.text(),
+    install.stderr.text(),
+    install.exited,
+  ]);
+  expect(installErr).not.toContain("error:");
+  expect(installExit).toBe(0);
+
+  // An inherited npm_execpath (the test runner sets one) would win over the
+  // bunx-set default, so strip it.
+  const bunxEnv = { ...bunEnv, BUN_OPTIONS: "--smol" };
+  delete bunxEnv.npm_execpath;
+  await using proc = spawn({
+    cmd: [join(exeDir, "bunx.exe"), "--bun", "--no-install", "showexec"],
+    cwd: String(dir),
+    env: bunxEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const state = JSON.parse(out.slice(0, out.indexOf("\n")));
+  const bunExePath = realpathSync(join(exeDir, "bun.exe")).toLowerCase();
+  expect(realpathSync(state.execPath).toLowerCase()).toBe(bunExePath);
+  expect(realpathSync(state.argv0).toLowerCase()).toBe(bunExePath);
+  expect(realpathSync(state.npmExecpath).toLowerCase()).toBe(bunExePath);
+  // BUN_OPTIONS flags stay in execArgv; the bunx CLI flags must not.
+  expect(state.execArgv).toEqual(["--smol"]);
+  expect(out).toContain("CHILD OK");
+  expect(out).toContain("child exit 0");
+  expect(err).not.toContain("error:");
   expect(exited).toBe(0);
 });
 

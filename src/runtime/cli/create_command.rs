@@ -221,8 +221,7 @@ impl CreateOptions {
             // clap positionals borrow from process argv; dupe each
             // entry into the process-lifetime CLI arena to obtain
             // `&'static [u8]`.
-            positionals: args
-                .positionals()
+            positionals: bun_install::positionals_from_keyword(args.positionals())
                 .iter()
                 .map(|p| crate::cli::cli_dupe(p))
                 .collect::<Vec<&'static [u8]>>()

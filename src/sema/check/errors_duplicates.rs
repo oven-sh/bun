@@ -350,12 +350,7 @@ impl Checker<'_> {
         if !matches!(hir.text.get(next as usize), None | Some(b';' | b'}')) {
             return None;
         }
-        let meant = [
-            b"export type { ",
-            self.files().atoms.bytes(alias.name),
-            b" }",
-        ]
-        .concat();
+        let meant = [b"export type { ", self.atoms().bytes(alias.name), b" }"].concat();
         let at = self.place_of_token(file, alias.name_pos);
         Some(self.new_diagnostic(at, 1369, &[Arg::Bytes(&meant)]))
     }
@@ -618,7 +613,7 @@ impl Checker<'_> {
                         continue;
                     };
                     // `name := memberName`, `DeclarationNameToString(declName)` for a unique symbol.
-                    let name = if self.files().atoms.is_symbol_name(*name) {
+                    let name = if self.atoms().is_symbol_name(*name) {
                         Arg::Bytes(&self.hir(of).text[from as usize..to as usize])
                     } else {
                         Arg::Atom(*name)
@@ -767,7 +762,7 @@ impl Checker<'_> {
                 // `getEffectivePropertyNameForPropertyNameNode`
                 if let Some(name) = self.member_name(file, member.key)
                     && matches!(
-                        self.files().atoms.bytes(name),
+                        self.atoms().bytes(name),
                         b"name" | b"length" | b"caller" | b"arguments"
                     )
                 {

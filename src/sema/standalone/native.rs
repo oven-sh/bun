@@ -291,6 +291,13 @@ unsafe extern "C" fn highway_last_index_of_char(p: *const u8, len: usize, needle
         .unwrap_or(len)
 }
 #[unsafe(no_mangle)]
+unsafe extern "C" fn highway_count_char(p: *const u8, len: usize, needle: u8) -> usize {
+    unsafe { bytes(p, len) }
+        .iter()
+        .filter(|&&c| c == needle)
+        .count()
+}
+#[unsafe(no_mangle)]
 unsafe extern "C" fn highway_index_of_any_char(
     p: *const u8,
     len: usize,

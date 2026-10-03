@@ -975,9 +975,10 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
             }
             TypeNodeKind::Ref { name, args } => self.one(name) || self.list(args),
             TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => self.list(types),
-            TypeNodeKind::Array(t) | TypeNodeKind::Keyof(t) | TypeNodeKind::Readonly(t) => {
-                self.one(t)
-            }
+            TypeNodeKind::Array(t)
+            | TypeNodeKind::Keyof(t)
+            | TypeNodeKind::Readonly(t)
+            | TypeNodeKind::JSDoc { ty: t, .. } => self.one(t),
             TypeNodeKind::Tuple(elements) => self.span(elements),
             TypeNodeKind::Fn(f) => self.function(f, node),
             TypeNodeKind::Object(members) => self.span(members),
@@ -2148,6 +2149,8 @@ impl File {
             TypeNodeKind::Keyof(_) | TypeNodeKind::Readonly(_) | TypeNodeKind::UniqueSymbol => {
                 Kind::TypeOperator
             }
+            TypeNodeKind::JSDoc { is_nullable, .. } if is_nullable => Kind::JSDocNullableType,
+            TypeNodeKind::JSDoc { .. } => Kind::JSDocNonNullableType,
             TypeNodeKind::Typeof { .. } => Kind::TypeQuery,
             TypeNodeKind::Import { .. } => Kind::ImportType,
             TypeNodeKind::Predicate { .. } => Kind::TypePredicate,
@@ -2467,6 +2470,7 @@ impl File {
             NodeData::Type(t) => match self[t].kind {
                 TypeNodeKind::Keyof(ty)
                 | TypeNodeKind::Readonly(ty)
+                | TypeNodeKind::JSDoc { ty, .. }
                 | TypeNodeKind::Predicate { ty, .. } => ty,
                 TypeNodeKind::Mapped(m) => self[m].ty,
                 _ => TypeNodeId::NONE,

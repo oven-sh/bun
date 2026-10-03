@@ -1,16 +1,29 @@
-//! `ast.Diagnostic`, and `DiagnosticsCollection` for all the checkers of a program.
+//! `ast.Diagnostic`, and `DiagnosticsCollection` for all the tasks of a program.
 //!
-//! A diagnostic is reported where the answer it goes with is worked out, by whichever checker gets there first, and goes to the sink of
-//! the file it is in. Whoever finds the answer kept has nothing to report. `finish_file` reads the sink of a file once every file has
-//! been checked.
+//! EVERY DIAGNOSTIC BELONGS TO THE TASK OR TO A QUERY.
+//! - Reported with no query in flight, by a pass of `check_file`: it belongs to the task, and is reported.
+//! - Reported inside a query: it belongs to the query. A hit on its entry reports nothing, but several tasks of one step can each have
+//!   evaluated it. AT THE BARRIER, TASKS IN PLAN ORDER, IT IS REPORTED IFF NO EARLIER TASK HAS REPORTED UNDER THAT QUERY. No entry
+//!   is needed for that: a step whose entries no later step reads sends only its diagnostics to the barrier.
+//! - The texts of two tasks for one error can differ: union members are ordered by id, and the ids of a task's own types are in the order
+//!   in which that task created them (`'A | B'`, `'B | A'`). The first task's text is reported. tsc's can be the other one.
 //!
-//! `error` puts it in `Checker::reported`. `Checker::leave` settles what the question that is left has put there:
-//! - the answer holds: to the sink, before the answer is kept;
-//! - the answer rests on a circle, a trial or a guess (`drops_reported`): dropped, and reported when it is worked out again;
-//! - the answer is not kept only because a loop is under way (`taint_from`): it stays, and is settled with the question around.
+//! `add_diagnostic` pushes onto `Checker::reported`. The diagnostics of a frame are the suffix from `QueryFrame::reported_from`.
+//! `Checker::leave` calls `settle_reported` for them:
+//! - the result is finished: they move to `Task::diagnostics`, tagged with the query;
+//! - the result depends on a cycle, a trial or a refused query (`drops_reported`): dropped. The next evaluation reports again;
+//! - the result depends on an incomplete flow-loop type (`taint_from`): they stay, and belong to the frame around it.
 //!
-//! What is reported with no question under way stays there until `check_file` ends, and is handed to `finish_file`.
+//! `Program::publish_diagnostics` moves the diagnostics of a task to the buffers of their files (`Sink`). `Program::finish_file` reads
+//! the buffer of a file after the last barrier.
+//!
+//! What belongs to the task and is located in the file of its `check_file` stays in `reported` until that ends, and goes to `finish_file`.
+//!
+//! A DIAGNOSTIC THAT LEAVES ITS TASK IS SETTLED (`Checker::settle`): whatever only the tree of its file can tell has been filled in. The
+//! tree of a file that nothing imports is freed at the end of its task, and `finish_file` reads no tree.
 
+use super::explain::NOWHERE;
+use super::task::Finished;
 use super::*;
 use bun_threading::Guarded;
 
@@ -55,7 +68,13 @@ pub(super) struct Reported {
     pub(super) related_information: Vec<Reported>,
     /// `CategorySuggestion`
     pub(super) is_suggestion: bool,
+    /// Once settled: where the `@ts-ignore` or `@ts-expect-error` directive starts that suppresses it. `NO_DIRECTIVE`: none does.
+    pub(super) directive: u32,
+    /// Once settled: `is_bare` before `end` was filled in.
+    pub(super) was_bare: bool,
 }
+
+pub(super) const NO_DIRECTIVE: u32 = u32::MAX;
 
 impl Reported {
     /// `NewDiagnostic`, of arguments that are printed.
@@ -74,10 +93,24 @@ impl Reported {
             message_chain: Vec::new(),
             related_information: Vec::new(),
             is_suggestion: false,
+            directive: NO_DIRECTIVE,
+            was_bare: false,
         }
     }
 
-    /// Nothing but the place and the code has been said of it.
+    /// Converts a diagnostic stored in the HIR of `file`.
+    pub(super) fn from_hir(file: FileId, d: &hir::Diagnostic) -> Reported {
+        let related = d
+            .related
+            .iter()
+            .map(|related| Reported::from_hir(file, related));
+        Reported {
+            related_information: related.collect(),
+            ..Reported::new((file, d.start, d.end), d.code, d.args.clone())
+        }
+    }
+
+    /// It has a start and a code, and no end, arguments or chain.
     pub(super) fn is_bare(&self) -> bool {
         self.end == 0 && self.args.is_empty() && self.message_chain.is_empty()
     }
@@ -109,25 +142,117 @@ fn compare_message_chain_content(a: &[Reported], b: &[Reported]) -> std::cmp::Or
         })
 }
 
-/// For each file what has been reported in it.
-pub(super) struct Sink(Box<[Guarded<Vec<Reported>>]>);
+pub(super) struct Sink {
+    /// For each file what has been reported in it.
+    by_file: Box<[Guarded<Vec<Reported>>]>,
+    /// The queries under which a task has reported. Touched only at barriers.
+    owners: Guarded<crate::util::FxHashSet<Query>>,
+}
 
 impl Sink {
     pub(super) fn new(files: usize) -> Sink {
-        Sink((0..files).map(|_| Guarded::default()).collect())
+        Sink {
+            by_file: (0..files).map(|_| Guarded::default()).collect(),
+            owners: Guarded::default(),
+        }
+    }
+}
+
+/// Whether every task names `q` alike: it holds a file and a node, or a symbol. A type, signature or mapper id can be one of the
+/// task's own.
+fn is_task_independent(q: Query) -> bool {
+    match q {
+        Query::Symbol(_)
+        | Query::Declared(_)
+        | Query::Bases(_)
+        | Query::BaseConstructor(_)
+        | Query::Return(..)
+        | Query::ReturnAtFirstLook(..)
+        | Query::Pat(..)
+        | Query::LiteralProp(..)
+        | Query::TypeNode(..)
+        | Query::Enum(..)
+        | Query::Expr(..)
+        | Query::Call(..)
+        | Query::InitializerIsUndefined(..) => true,
+        Query::ReturnOfSignature(_)
+        | Query::Shape(_)
+        | Query::Constraint(_)
+        | Query::InferredConstraint(_)
+        | Query::MappedProp(..)
+        | Query::Cond(..)
+        | Query::TypeArguments(_) => false,
     }
 }
 
 impl super::Program {
-    /// Whether `finish_file` would come back with nothing. Most files are like that, and no checker is made to hear it.
-    pub fn has_nothing_to_finish(&self, file: FileId, checked: &super::errors::Checked) -> bool {
-        let (hir, files) = (self.files.hir(file), &self.files);
-        checked.is_empty()
-            && hir.comment_directives.is_empty()
-            && hir.jsdoc_errors.is_empty()
-            && files.module(file).missing_references.is_empty()
-            && files.include_problems_in(file).next().is_none()
-            && self.sink.0[file.idx()].lock().is_empty()
+    /// At the barrier, tasks in plan order. What belongs to a query is reported iff no earlier task has reported under that query.
+    pub(super) fn publish_diagnostics(&self, finished: &mut Finished) {
+        let mut owners = self.sink.owners.lock();
+        let mut own = Vec::new();
+        for (owner, diagnostic) in std::mem::take(&mut finished.diagnostics) {
+            if let Some(q) = owner {
+                if owners.contains(&q) {
+                    continue;
+                }
+                own.push(q);
+            }
+            self.push_diagnostic(diagnostic);
+        }
+        owners.extend(own);
+    }
+
+    /// To the buffer of the file, or to `global_errors` if it is located in no file (`c.error(nil, ..)`).
+    fn push_diagnostic(&self, diagnostic: Reported) {
+        if diagnostic.file != NOWHERE.0 {
+            return self.sink.by_file[diagnostic.file.idx()]
+                .lock()
+                .push(diagnostic);
+        }
+        let args = diagnostic.args.iter();
+        let args = args.map(|arg| String::from_utf8_lossy(arg).into_owned());
+        (self.global_errors.lock()).insert((diagnostic.code, args.collect()));
+    }
+
+    /// What the tasks have reported in `file`.
+    pub(super) fn take_buffer(&self, file: FileId) -> Vec<Reported> {
+        std::mem::take(&mut *self.sink.by_file[file.idx()].lock())
+    }
+
+    /// `CompareDiagnostics`
+    pub(super) fn compare_diagnostics(&self, a: &Reported, b: &Reported) -> std::cmp::Ordering {
+        let path = |file: FileId| self.files.modules.get(file.idx()).map(|m| &m.path[..]);
+        (path(a.file), a.start, a.end, a.code, &a.args)
+            .cmp(&(path(b.file), b.start, b.end, b.code, &b.args))
+            .then_with(|| compare_message_chain_size(&a.message_chain, &b.message_chain))
+            .then_with(|| compare_message_chain_content(&a.message_chain, &b.message_chain))
+            // `compareRelatedInfo`
+            .then_with(|| {
+                let (a, b) = (&a.related_information, &b.related_information);
+                let by_length = b.len().cmp(&a.len());
+                a.iter().zip(b).fold(by_length, |order, (a, b)| {
+                    order.then_with(|| self.compare_diagnostics(a, b))
+                })
+            })
+    }
+
+    /// `SortAndDeduplicateDiagnostics`
+    pub(super) fn sort_and_deduplicate_diagnostics(&self, reported: &mut Vec<Reported>) {
+        reported.sort_by(|a, b| self.compare_diagnostics(a, b));
+        // `compactAndMergeRelatedInfos`: those that differ in nothing but what they are related to are one, related to all of it.
+        reported.dedup_by(|next, first| {
+            let is_same = (next.file, next.start, next.end, next.code)
+                == (first.file, first.start, first.end, first.code)
+                && next.args == first.args
+                && next.message_chain == first.message_chain;
+            if is_same && !next.related_information.is_empty() {
+                let related = &mut first.related_information;
+                related.append(&mut next.related_information);
+                related.sort_by(|a, b| self.compare_diagnostics(a, b));
+                related.dedup();
+            }
+            is_same
+        });
     }
 }
 
@@ -142,7 +267,7 @@ impl Checker<'_> {
                     Arg::Sym(symbol) => self.write_symbol(&mut out, symbol),
                     Arg::Prop(prop) => self.write_prop(&mut out, prop),
                     Arg::Sig(signature) => self.write_signature(&mut out, signature),
-                    Arg::Atom(name) => out.extend_from_slice(self.files().atoms.bytes(name)),
+                    Arg::Atom(name) => out.extend_from_slice(self.atoms().bytes(name)),
                     Arg::Number(number) => out.extend_from_slice(bun_core::fmt::itoa(
                         &mut bun_core::fmt::ItoaBuf::new(),
                         number,
@@ -236,7 +361,7 @@ impl Checker<'_> {
         if self.serialization_level >= MAX_SERIALIZATION_LEVEL {
             // For a diagnostic in another file, tsgo's result depends on file order. Mark the innermost query non-cacheable so that
             // the owning file recomputes it during its own check and reports the diagnostic there.
-            if self.checking != Some(diagnostic.file) {
+            if self.task.file != Some(diagnostic.file) {
                 self.mark_tainted_from(self.frames.len().saturating_sub(1));
             }
             return self.discarded.insert(diagnostic);
@@ -245,76 +370,99 @@ impl Checker<'_> {
         self.reported.last_mut().unwrap()
     }
 
-    /// Of the question `frame`, which has just been left.
+    /// The diagnostics of `frame`, the frame of `q`, which `leave` has just popped.
     #[cold]
-    pub(super) fn settle_reported(&mut self, frame: QueryFrame) {
+    pub(super) fn settle_reported(&mut self, frame: QueryFrame, q: Query) {
         let from = frame.reported_from as usize;
         if frame.drops_reported {
             self.reported.truncate(from);
         } else if !frame.tainted {
-            self.commit_reported_from(from);
+            for diagnostic in self.reported.split_off(from) {
+                self.log_diagnostic(Some(q), diagnostic);
+            }
         }
     }
 
-    pub(super) fn commit_reported_from(&mut self, from: usize) {
+    /// `settle_reported` for the innermost frame if it stores nothing under its query, before `leave`: an evaluation that is repeated
+    /// in order to report, a check by value. Every task that gets there evaluates it, so only `check_file` of the file reports. The diagnostics do not go to the frame around it, which may drop its own.
+    pub(super) fn settle_reported_without_entry(&mut self) {
+        if let Some(frame) = self.frames.last()
+            && !frame.tainted
+            && !frame.drops_reported
+        {
+            for diagnostic in self.reported.split_off(frame.reported_from as usize) {
+                if self.task.file == Some(diagnostic.file) {
+                    self.log_diagnostic(None, diagnostic);
+                }
+            }
+        }
+    }
+
+    /// `add_diagnostic` with an owner other than the innermost frame. The frames in flight do not drop it.
+    /// - `Some(q)`: the result of a resolution cycle, after the `leave` that found it (`!popTypeResolution()`) or while `q` is still in
+    ///   flight below. It belongs to the entry that `q` stores. tsgo caches that result whatever becomes of the resolutions around it.
+    /// - `None`: it belongs to the task. A limit, after which no query in flight is cacheable. A cycle that has no query.
+    pub(super) fn add_diagnostic_of(&mut self, owner: Option<Query>, diagnostic: Reported) {
+        self.log_diagnostic(owner, diagnostic);
+    }
+
+    /// What has been reported from `from` on belongs to the task.
+    pub(super) fn log_reported_from(&mut self, from: usize) {
         for diagnostic in self.reported.split_off(from) {
-            self.commit(diagnostic);
+            self.log_diagnostic(None, diagnostic);
         }
     }
 
-    /// `c.diagnostics.Add`, of what goes with an answer that is kept whatever becomes of the questions under way. What is asked about
-    /// a file after `checkSourceFile` reports nothing there: nobody collects it.
-    pub(super) fn commit(&self, diagnostic: Reported) {
-        if self.is_type_checked && self.checking == Some(diagnostic.file) {
+    /// `owner`: the query whose entry the diagnostic belongs to. `None`: it belongs to the task.
+    fn log_diagnostic(&mut self, owner: Option<Query>, diagnostic: Reported) {
+        // A query about a file after its `checkSourceFile` reports nothing there: its diagnostics have been collected. A baseline
+        // writer can still be the first to evaluate an entry of another file, and then this task owns what that reports.
+        if self.is_type_checked && self.task.file == Some(diagnostic.file) {
             return;
         }
-        self.p.sink.0[diagnostic.file.idx()].lock().push(diagnostic);
-    }
-
-    /// `CompareDiagnostics`
-    pub(super) fn compare_diagnostics(&self, a: &Reported, b: &Reported) -> std::cmp::Ordering {
-        let path = |file: FileId| self.files().modules.get(file.idx()).map(|m| &m.path[..]);
-        (path(a.file), a.start, a.end, a.code, &a.args)
-            .cmp(&(path(b.file), b.start, b.end, b.code, &b.args))
-            .then_with(|| compare_message_chain_size(&a.message_chain, &b.message_chain))
-            .then_with(|| compare_message_chain_content(&a.message_chain, &b.message_chain))
-            // `compareRelatedInfo`
-            .then_with(|| {
-                let (a, b) = (&a.related_information, &b.related_information);
-                let by_length = b.len().cmp(&a.len());
-                a.iter().zip(b).fold(by_length, |order, (a, b)| {
-                    order.then_with(|| self.compare_diagnostics(a, b))
-                })
-            })
-    }
-
-    /// What all the checkers have reported in `file`, but for where `checkSourceFile` never comes.
-    pub(super) fn drain_sink(&self, file: FileId, never_checked: &[(u32, u32)]) -> Vec<Reported> {
-        let mut reported = std::mem::take(&mut *self.p.sink.0[file.idx()].lock());
-        reported.retain(|d| {
-            !never_checked
-                .iter()
-                .any(|&(from, to)| (from..to).contains(&d.start))
-        });
-        reported
-    }
-
-    /// `SortAndDeduplicateDiagnostics`: in what order the checkers got there does not show.
-    pub(super) fn sort_and_deduplicate_diagnostics(&self, reported: &mut Vec<Reported>) {
-        reported.sort_by(|a, b| self.compare_diagnostics(a, b));
-        // `compactAndMergeRelatedInfos`: those that differ in nothing but what they are related to are one, related to all of it.
-        reported.dedup_by(|next, first| {
-            let is_same = (next.file, next.start, next.end, next.code)
-                == (first.file, first.start, first.end, first.code)
-                && next.args == first.args
-                && next.message_chain == first.message_chain;
-            if is_same && !next.related_information.is_empty() {
-                let related = &mut first.related_information;
-                related.append(&mut next.related_information);
-                related.sort_by(|a, b| self.compare_diagnostics(a, b));
-                related.dedup();
+        let mut owner = owner;
+        if self.task.checker_count != 0 {
+            if diagnostic.file != NOWHERE.0 && !self.collects_later(diagnostic.file) {
+                return;
             }
-            is_same
-        });
+            // No other checker reports in the file.
+            owner = None;
+        }
+        if self.task.is_planned() {
+            self.task.diagnostics.push((owner, diagnostic));
+        } else if let Some(diagnostic) = self.settled(diagnostic, &mut Default::default()) {
+            // What a task outside the plan buffers is dropped with it, so nothing competes for its entries.
+            self.p.push_diagnostic(diagnostic);
+        }
+    }
+
+    /// After `begin_task`. The task is one of `count` checkers of `checkerPool`.
+    pub fn set_checker_count(&mut self, count: u32) {
+        self.task.checker_count = count;
+    }
+
+    /// `getBindAndCheckDiagnosticsWithChecker`: the diagnostics of a file are those that its own checker has for it right after
+    /// `checkSourceFile`. Whether that is still to come for `file`.
+    fn collects_later(&self, file: FileId) -> bool {
+        let rank = self.files().rank_of_file(file);
+        let is_own = Some(rank % self.task.checker_count) == self.task.index();
+        let current = self
+            .task
+            .file
+            .map(|current| self.files().rank_of_file(current));
+        is_own && current.is_none_or(|current| rank >= current)
+    }
+
+    /// At the end of the task, on its own thread, for `Task::finish`. A query that only this task can name does not go to the barrier:
+    /// what was reported under it belongs to the task.
+    pub(super) fn take_diagnostics(&mut self) -> Vec<(Option<Query>, Reported)> {
+        let diagnostics = std::mem::take(&mut self.task.diagnostics);
+        let mut directives = Default::default();
+        (diagnostics.into_iter())
+            .filter_map(|(owner, diagnostic)| {
+                let diagnostic = self.settled(diagnostic, &mut directives)?;
+                Some((owner.filter(|&q| is_task_independent(q)), diagnostic))
+            })
+            .collect()
     }
 }

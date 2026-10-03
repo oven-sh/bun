@@ -1,10 +1,7 @@
-//! Errors that are reported in two steps, and errors as they are shown.
-//!
-//! `error` makes an `ast.Diagnostic` whole. What is here finds the one last reported at a place again and adds to it, for whoever
-//! does not have it all at hand where it reports.
+//! Errors as they are shown.
 
 use super::Checker;
-use super::sink::{Arg, Args, Reported, held};
+use super::sink::{Args, Reported};
 use crate::messages::{self, Category};
 use crate::program::FileId;
 
@@ -76,92 +73,6 @@ pub struct Explained {
 }
 
 impl Checker<'_> {
-    /// What was last reported as `code` at `start`, by no question that is settled, or else what has been noted of it ahead.
-    fn last_reported(&mut self, start: u32, code: u32) -> Option<&mut Reported> {
-        (self.reported.iter_mut().rev())
-            .chain(self.noted_ahead.iter_mut().rev())
-            .find(|d| d.start == start && d.code == code)
-    }
-
-    /// The same, and that the error ends at `end`: the end of the node TypeScript reports it on.
-    pub(super) fn explain_to(
-        &mut self,
-        start: u32,
-        end: u32,
-        code: u32,
-        args: impl FnOnce(&mut Self) -> Vec<String>,
-    ) {
-        let args = held(args(self));
-        self.note_printed(start, end, code, args);
-    }
-
-    /// The same, of arguments that are at hand. Of an error that has its arguments it is another error.
-    pub(super) fn note(&mut self, start: u32, end: u32, code: u32, args: &[Arg<'_>]) {
-        let args = self.stringify_args(args);
-        self.note_printed(start, end, code, args);
-    }
-
-    pub(super) fn note_printed(&mut self, start: u32, end: u32, code: u32, args: Args) {
-        let last = self.last_reported_or_ahead(start, code);
-        if last.is_bare() {
-            (last.end, last.args) = (end, args);
-        } else if last.file != NOWHERE.0 {
-            let another = Reported::new((last.file, start, end), code, args);
-            self.reported.push(another);
-        } else if last.end != end {
-            let ahead = Reported::new((NOWHERE.0, start, end), code, args);
-            self.noted_ahead.push(ahead);
-        }
-    }
-
-    /// `last_reported`. Who works out the code may say what goes with it, and whoever asked reports it afterwards.
-    fn last_reported_or_ahead(&mut self, start: u32, code: u32) -> &mut Reported {
-        if self.last_reported(start, code).is_none() {
-            let ahead = Reported::bare((NOWHERE.0, start, 0), code);
-            self.noted_ahead.push(ahead);
-        }
-        self.last_reported(start, code).unwrap()
-    }
-
-    /// Merges each pending note into the diagnostic with the same start and code. Notes without a match are dropped.
-    pub(super) fn settle_what_was_noted_ahead(&mut self) {
-        for ahead in std::mem::take(&mut self.noted_ahead) {
-            let is_it = |d: &&mut Reported| d.start == ahead.start && d.code == ahead.code;
-            match self.reported.iter_mut().find(is_it) {
-                Some(d) if d.is_bare() || ahead.is_bare() => {
-                    if !ahead.is_bare() {
-                        (d.end, d.args) = (ahead.end, ahead.args);
-                        d.message_chain = ahead.message_chain;
-                    }
-                    d.related_information.extend(ahead.related_information);
-                    d.is_suggestion |= ahead.is_suggestion;
-                }
-                // It was said first, and the first of two errors in one place is kept.
-                Some(d) if ahead.end == 0 || ahead.end == d.end => {
-                    (d.args, d.message_chain) = (ahead.args, ahead.message_chain);
-                    d.related_information = ahead.related_information;
-                }
-                Some(d) => {
-                    let file = d.file;
-                    self.reported.push(Reported { file, ..ahead });
-                }
-                None => {}
-            }
-        }
-    }
-
-    /// `AddRelatedInfo`, to what was last reported as `code` at `start`.
-    pub(super) fn relate(
-        &mut self,
-        start: u32,
-        code: u32,
-        related: impl FnOnce(&mut Self) -> Vec<Reported>,
-    ) {
-        let related = related(self);
-        let last = self.last_reported_or_ahead(start, code);
-        last.related_information.extend(related);
-    }
-
     /// Whether `GetSuggestionDiagnostics` are reported as well.
     pub(super) fn captures_suggestions(&self) -> bool {
         self.files().options.captures_suggestions
@@ -169,7 +80,7 @@ impl Checker<'_> {
 
     /// `name` as it is written in a message.
     pub(super) fn atom_text(&self, name: crate::atom::Atom) -> String {
-        String::from_utf8_lossy(self.files().atoms.bytes(name)).into_owned()
+        String::from_utf8_lossy(self.atoms().bytes(name)).into_owned()
     }
 
     /// The source text of `file` from `start` to `end`.
@@ -182,11 +93,30 @@ impl Checker<'_> {
     /// `check_file` and `finish_file`, for whoever checks one file by itself.
     pub fn check_file_explained(&mut self, file: FileId) -> Vec<Explained> {
         let checked = self.check_file(file);
-        self.finish_file(file, checked)
+        self.p.finish_file(file, checked)
     }
 
+    /// Where `d` ends, if that has not been said.
+    pub(super) fn settle_place(&self, d: &mut Reported) {
+        d.was_bare = d.is_bare();
+        let hir = self.hir(d.file);
+        // What is reported where a line ends is reported between two tokens, and is empty. In a JSDoc comment the end of a line is a token.
+        let token_end = match hir.text.get(d.start as usize) {
+            Some(b'\n' | b'\r') if !hir.is_in_jsdoc(d.start) => d.start,
+            _ => self.end_of_token_at(d.file, d.start),
+        };
+        d.end = match d.end {
+            NO_LENGTH => d.start,
+            end if end != 0 && end >= d.start => end,
+            // No end was given.
+            _ => token_end,
+        };
+    }
+}
+
+impl Explained {
     /// `d` as it is shown.
-    pub(super) fn explained(&self, d: Reported) -> Explained {
+    pub(super) fn new(d: Reported) -> Explained {
         // The message of `d` and the lines under it, each indented by two spaces for each level.
         fn said(d: &mut Reported, otherwise: Category) -> (Category, String) {
             let (category, template) =
@@ -216,7 +146,11 @@ impl Checker<'_> {
             related: (d.related_information.into_iter())
                 .map(|mut related| {
                     let (category, text) = said(&mut related, Category::Message);
-                    let at = (related.file, related.start, related.end);
+                    let end = match related.end {
+                        NO_LENGTH => related.start,
+                        end => end,
+                    };
+                    let at = (related.file, related.start, end);
                     RelatedExplained {
                         at: (related.file != NOWHERE.0).then_some(at),
                         code: related.code,
@@ -226,25 +160,5 @@ impl Checker<'_> {
                 })
                 .collect(),
         }
-    }
-
-    /// Where `d` ends, if that has not been said, and the arguments of its message, if they can be read off the source.
-    pub(super) fn settle_place(&self, d: &mut Reported) {
-        let hir = self.hir(d.file);
-        // What is reported where a line ends is reported between two tokens, and is empty. In a JSDoc comment the end of a line is a token.
-        let token_end = match hir.text.get(d.start as usize) {
-            Some(b'\n' | b'\r') if !hir.is_in_jsdoc(d.start) => d.start,
-            _ => self.end_of_token_at(d.file, d.start),
-        };
-        d.end = match d.end {
-            NO_LENGTH => d.start,
-            end if end != 0 && end >= d.start => end,
-            // Nobody has said. What the parser reported it on, if it is one of its errors.
-            _ => hir
-                .error_ends
-                .iter()
-                .find(|e| e.0 == d.start && e.1 == d.code)
-                .map_or(token_end, |e| e.2),
-        };
     }
 }

@@ -142,7 +142,7 @@ impl Checker<'_> {
     /// that is JavaScript nothing declares the types of (`errorOnImplicitAnyModule`).
     fn eh_resolve_helpers_module(&mut self, file: FileId, request: Request) -> Option<Sym> {
         let files = self.files();
-        let (tslib, module) = (files.atoms.intern_str(TSLIB), files.module(file));
+        let (tslib, module) = (known::tslib, files.module(file));
         let mode = module.default_mode;
         if let Some(found) = files.module_of_specifier_as(file, tslib, mode) {
             return Some(found);
@@ -798,7 +798,7 @@ impl Checker<'_> {
                     let is_computed = is_computed_name_at(prop.pos);
                     // `IsProtoSetter`
                     let is_proto = !is_computed
-                        && matches!(prop.key, PropKey::Name(name) if files.atoms.bytes(name) == b"__proto__");
+                        && matches!(prop.key, PropKey::Name(name) if self.atoms().bytes(name) == b"__proto__");
                     if prop.kind != PropKind::Init
                         || is_proto
                         || owner.is_none()

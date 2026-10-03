@@ -10,6 +10,7 @@ use crate::resolve::{
 };
 use crate::verify::{Place, Problem};
 use bstr::ByteSlice;
+use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, relative_normalized};
 
@@ -165,7 +166,7 @@ fn substitute_if_template(value: &[u8], base: &[u8]) -> Option<Vec<u8>> {
 
 /// `normalizeNonListOptionValue`
 fn absolute_unless_template(value: &[u8], base: &[u8]) -> Vec<u8> {
-    let value = value.replace(b"\\", b"/");
+    let value = strings::replace_owned(value, b"\\", b"/");
     if starts_with_config_dir_template(&value) {
         value
     } else {
@@ -204,12 +205,9 @@ fn parse_config(
         errors.push(ConfigError::new(18000, &[&chain.join(&b" -> "[..])]));
         return None;
     }
-    let Some(text) = host.read(path) else {
+    let text = host.read(path);
+    let Some(file) = text.and_then(|text| TsConfigSourceFile::parse(host, text)) else {
         errors.push(ConfigError::new(5083, &[path]));
-        return None;
-    };
-    let Some(file) = TsConfigSourceFile::parse(host, text) else {
-        errors.push(ConfigError::new(5014, &[path, b"invalid JSON"]));
         return None;
     };
     let at = |(from, to): (u32, u32)| (path.to_vec(), from, to);
@@ -368,7 +366,7 @@ fn parse_config(
                         spec
                     } else {
                         // Not normalized: `..` after `**` is an error that is still to be reported.
-                        [&extended_dir[..], b"/", &spec[..]].concat()
+                        [extended_dir, b"/", &spec[..]].concat()
                     }
                 })
                 .collect()
@@ -407,7 +405,7 @@ fn extends_config_path(
     base: &[u8],
     errors: &mut Vec<ConfigError>,
 ) -> Option<Vec<u8>> {
-    let extended = extended.replace(b"\\", b"/");
+    let extended = strings::replace_owned(extended, b"\\", b"/");
     if extended.starts_with(b"/") || extended.starts_with(b"./") || extended.starts_with(b"../") {
         let mut path = join(base, &extended);
         if !host.is_file(&path) && !path.ends_with(b".json") {
@@ -441,7 +439,7 @@ fn invalid_dot_dot_after_recursive_wildcard(s: &[u8]) -> bool {
     let wildcard = if s.starts_with(b"**/") {
         Some(0)
     } else {
-        s.find(b"/**/")
+        strings::index_of(s, b"/**/")
     };
     let Some(wildcard) = wildcard else {
         return false;
@@ -449,7 +447,7 @@ fn invalid_dot_dot_after_recursive_wildcard(s: &[u8]) -> bool {
     let last_dot = if s.ends_with(b"/..") {
         Some(s.len())
     } else {
-        s.rfind(b"/../")
+        strings::last_index_of(s, b"/../")
     };
     last_dot.is_some_and(|dot| dot > wildcard)
 }
@@ -892,7 +890,7 @@ impl GlobPattern {
                 .map(|part| {
                     if part == b"**" {
                         Component::DoubleAsterisk
-                    } else if part.find_byteset(b"*?").is_none() {
+                    } else if strings::index_of_any(part, b"*?").is_none() {
                         Component::Literal(part.to_vec())
                     } else {
                         Component::Wildcard(parse_segments(part))
@@ -1037,8 +1035,12 @@ impl GlobPattern {
         };
         !is_min_js
             || segments.iter().any(|segment| match segment {
-                Segment::Literal(literal) if self.case_sensitive => literal.contains_str(b".min."),
-                Segment::Literal(literal) => literal.to_ascii_lowercase().contains_str(b".min."),
+                Segment::Literal(literal) if self.case_sensitive => {
+                    strings::contains(literal, b".min.")
+                }
+                Segment::Literal(literal) => {
+                    strings::contains(&literal.to_ascii_lowercase(), b".min.")
+                }
                 _ => false,
             })
     }
@@ -1118,7 +1120,7 @@ impl GlobMatcher {
 
 /// `getIncludeBasePath`
 fn include_base_path(absolute: &[u8]) -> Vec<u8> {
-    match absolute.find_byteset(b"*?") {
+    match strings::index_of_any(absolute, b"*?") {
         None => {
             let name = absolute.rsplit(|&b| b == b'/').next().unwrap_or(b"");
             if name.contains(&b'.') {
@@ -1128,7 +1130,7 @@ fn include_base_path(absolute: &[u8]) -> Vec<u8> {
             }
         }
         Some(wildcard) => {
-            let end = absolute[..wildcard].rfind_byte(b'/').unwrap_or(0);
+            let end = strings::last_index_of_char(&absolute[..wildcard], b'/').unwrap_or(0);
             if end == 0 {
                 b"/".to_vec()
             } else {
@@ -1188,7 +1190,7 @@ fn match_files(
             let prefix = if path.ends_with(b"/") {
                 path.to_vec()
             } else {
-                [&path[..], b"/"].concat()
+                [path, b"/"].concat()
             };
             Listed {
                 files: files

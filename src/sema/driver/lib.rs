@@ -8,21 +8,28 @@ pub mod host;
 pub use bun_sema::messages::Category;
 
 use bstr::ByteSlice;
+use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
-use bun_sema::check::{Program, compute_ecma_line_starts};
+use bun_sema::check::task::{Finished, Published};
+use bun_sema::check::{FOREIGN_EVALUATION_KINDS, Program, Wanted, compute_ecma_line_starts};
 use bun_sema::config::{self, ConfigError};
-use bun_sema::hir::FileKind;
+use bun_sema::hir::{ExprTag, FileKind};
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{FileId, Files};
-use bun_sema::resolve::{Host, Phase, join};
+use bun_sema::resolve::{
+    Host, Options, Phase, inside, is_declaration_file_name, join, output_declaration_file_name,
+};
+use bun_sema::types::LinkCounts;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema::verify::verify_project_references;
 use bun_threading::Guarded;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::borrow::Cow;
+use std::cmp::Reverse;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// Runs `work(i)` for every `i` below `count` on the threads everything else in Bun runs on, no more than `threads` of them at a time. They take
@@ -56,6 +63,130 @@ pub fn for_each_parallel_in_runs(
         },
         &mut runners,
     );
+}
+
+/// What one thread does between two barriers, with one `Checker` and one buffer: `check_file` for each file, in program order. A file
+/// is named by its index: its position in program order among the files to check.
+type Task = Vec<usize>;
+
+/// The constants of a `Plan`. They are options for as long as they are being chosen: the standalone command line sets them.
+#[derive(Clone, Copy)]
+pub struct PlanOptions {
+    /// Steps that follow each other hold at most 1, g, g * g, .. tasks.
+    pub step_growth: usize,
+    /// How many light files are checked in steps of growing size, one file per task, before the one step with all other files. They
+    /// are spread evenly over the light files of the program.
+    pub warm_up_files: usize,
+    /// A larger file is heavy. It is not in the warm-up, and it is a task of its own.
+    pub warm_up_max_bytes: usize,
+    /// After the warm-up, light files that follow each other in program order are one task until they have this much source. 0: one
+    /// file per task.
+    pub chunk_bytes: usize,
+    /// .. or until they have the source of the step divided by this, if that is less: a step with many files has about this many tasks
+    /// at least. Not a function of the thread count.
+    pub min_tasks: usize,
+    /// `--checkers`. Not 0: `checkerPool`, and none of the above.
+    pub checkers: usize,
+}
+
+impl Default for PlanOptions {
+    fn default() -> PlanOptions {
+        PlanOptions {
+            step_growth: 8,
+            warm_up_files: 1 + 8 + 64,
+            warm_up_max_bytes: 16 << 10,
+            chunk_bytes: 64 << 10,
+            min_tasks: 64,
+            checkers: 0,
+        }
+    }
+}
+
+/// Which task is in which step, and in which order the tasks of a step are published. A FUNCTION OF THE PROGRAM ALONE: not of the thread
+/// count, not of time. During a step the published state is read-only and a task writes to its own buffer, so the result of a task is
+/// a function of the program and of the published state at the start of its step. By induction over the steps, so is the output.
+struct Plan {
+    steps: Vec<Vec<Task>>,
+}
+
+impl Plan {
+    /// `createCheckers`, `forEachCheckerGroupDo`: file `i` of the program belongs to checker `i % checkers`, and a checker goes through
+    /// its files in program order. The checkers share nothing. `rank_of(i)`: where file `i` of those to check is in the program, which
+    /// has `files` files.
+    fn of_checkers(
+        count: usize,
+        rank_of: &dyn Fn(usize) -> usize,
+        files: usize,
+        checkers: usize,
+    ) -> Plan {
+        let checkers = checkers.min(files).clamp(1, 256);
+        let mut tasks: Vec<Task> = vec![Vec::new(); checkers];
+        for file in 0..count {
+            tasks[rank_of(file) % checkers].push(file);
+        }
+        Plan { steps: vec![tasks] }
+    }
+
+    /// `count`: how many files there are to check. `size_of(i)`: the bytes of source of file `i`.
+    ///
+    /// No order among the tasks is needed: what they observe of each other is published, or each computes its own copy.
+    fn new(
+        count: usize,
+        bytes_of: &dyn Fn(usize) -> usize,
+        size_of: &dyn Fn(usize) -> usize,
+        options: PlanOptions,
+    ) -> Plan {
+        assert!(options.step_growth >= 1);
+        let mut steps: Vec<Vec<Task>> = Vec::new();
+        // THE WARM-UP fills the published state with what most tasks need. Until that is published, each task of a step computes its own
+        // copy. Short steps, so of light files. A sample of the whole program: its first files are not like the bulk of it.
+        let is_heavy = |file: usize| bytes_of(file) > options.warm_up_max_bytes;
+        let light: Vec<usize> = (0..count).filter(|&file| !is_heavy(file)).collect();
+        let wanted = options.warm_up_files.min(light.len());
+        let warm_up = (0..wanted).map(|i| light[i * light.len() / wanted]);
+        let warm_up: Vec<usize> = warm_up.collect();
+        let (mut tasks, mut limit) = (warm_up.iter().map(|&file| vec![file]).peekable(), 1usize);
+        while tasks.peek().is_some() {
+            steps.push(tasks.by_ref().take(limit).collect());
+            limit = limit.saturating_mul(options.step_growth);
+        }
+        // ONE STEP WITH ALL OTHER FILES. The heaviest file of a program takes about as long as a thread's share of the whole check, so
+        // there is one step in which heavy files run, and they are started first.
+        let rest = (0..count).filter(|file| warm_up.binary_search(file).is_err());
+        let rest: Vec<usize> = rest.collect();
+        let bytes: usize = rest.iter().map(|&file| size_of(file)).sum();
+        // About `min_tasks` tasks, whatever the size of the program: enough for any number of threads, and every further task computes
+        // its own copy of what it shares with the others.
+        let chunk_bytes = match options.min_tasks {
+            0 => options.chunk_bytes,
+            tasks => (bytes / tasks).max(1),
+        };
+        let is_heavy = |file: usize| size_of(file) >= chunk_bytes;
+        // The files of a task share a buffer, and neighbours in program order use the same types.
+        let mut chunks: Vec<Task> = Vec::new();
+        // How much source the last chunk has, if it is of light files.
+        let mut bytes_of_last = None;
+        for file in rest {
+            match bytes_of_last {
+                _ if is_heavy(file) => {
+                    chunks.push(vec![file]);
+                    bytes_of_last = None;
+                }
+                Some(so_far) if so_far < chunk_bytes => {
+                    chunks.last_mut().unwrap().push(file);
+                    bytes_of_last = Some(so_far + size_of(file));
+                }
+                _ => {
+                    chunks.push(vec![file]);
+                    bytes_of_last = Some(size_of(file));
+                }
+            }
+        }
+        if !chunks.is_empty() {
+            steps.push(chunks);
+        }
+        Plan { steps }
+    }
 }
 
 /// How far a check has got. Read from another thread.
@@ -149,9 +280,12 @@ pub struct Request<'a> {
     pub progress: Option<&'a Progress>,
     /// Of all that is loaded, only the files with this in their path are checked. For looking into one file of a big project.
     pub only: Option<&'a [u8]>,
-    /// Files are started in the order of rank * `order` (mod 2^32). 1 = program order. Any other odd number is a fixed permutation.
-    /// The output does not depend on it. For tests of that property.
+    /// The order in which the tasks of a step are STARTED. 1: the largest first. Any other odd number: by index * `order` (mod 2^32), a
+    /// fixed permutation. The output does not depend on it. For tests of that property.
     pub order: u32,
+    /// `Published::digest` is computed at every barrier. For tests: it is a function of the program.
+    pub digests: bool,
+    pub plan_options: PlanOptions,
     /// Nothing is forgotten once it is checked: for whoever goes on to ask about the program. It takes several times the memory.
     pub keeps_everything: bool,
     /// As `tsc` does: if something does not parse, that is all that is said. If the options do not go together, that is. Only then come the
@@ -166,6 +300,9 @@ pub struct Request<'a> {
     /// Called for each file right after it is checked, on the thread that checked it, while the types that are local to the file
     /// are still alive. The way to read the type of every expression without `keeps_everything`.
     pub after_file: Option<&'a (dyn Fn(&mut bun_sema::check::Checker<'_>, FileId) + Sync)>,
+    /// Called with the path and the text of each declaration file that a project of a `tsc -b` run leaves for those that reference it.
+    /// Nothing is written to the disk: this is the way to see them.
+    pub declaration_file_written: Option<&'a (dyn Fn(&[u8], &[u8]) + Sync)>,
 }
 
 /// Something that is wrong, ready to be shown.
@@ -192,6 +329,29 @@ pub struct Diagnostic {
     pub related: Vec<Diagnostic>,
 }
 
+/// A step of a `Plan`, as it ran.
+#[derive(Clone)]
+pub struct StepReport {
+    pub tasks: usize,
+    /// Of all its tasks.
+    pub files: usize,
+    /// Wall time from the start of the first task to the end of the last, and in the two halves of the barrier after it.
+    pub in_tasks: Duration,
+    pub in_link: Duration,
+    pub in_publish: Duration,
+    /// How long threads had no task because the step was not over, summed over the threads.
+    pub idle: Duration,
+    /// Entries of the tasks' buffers: all that were handed to the barrier, those that were published, those that lost to a lower task.
+    pub entries: Published,
+    /// Types, signatures, mappers and component lists that the tasks have created.
+    pub records: LinkCounts,
+    /// `Checker::generic_relation_entries_not_published`, summed over the tasks.
+    pub generic_relation_entries_not_published: u64,
+    /// `Finished::foreign_evaluations`, summed over the tasks: by kind of query, in the order of `FOREIGN_EVALUATION_KINDS`. What a
+    /// task computed about a source file of another component, because nothing had published it.
+    pub foreign_evaluations: [u64; FOREIGN_EVALUATION_KINDS.len()],
+}
+
 #[derive(Default)]
 pub struct Report {
     /// Sorted as TypeScript sorts them: what has no file first, then by path and position.
@@ -206,12 +366,16 @@ pub struct Report {
     pub listed_files: Vec<Vec<u8>>,
     pub files_loaded: usize,
     pub files_checked: usize,
+    /// The steps that ran, in order. See `Plan`.
+    pub steps: Vec<StepReport>,
     /// How many projects were checked, if the configuration has `references`. Otherwise 0.
     pub projects_checked: usize,
+    /// `Options::writes_declaration_files`: each source file that a declaration file is written for, and what is written.
+    pub declaration_files: Vec<(Vec<u8>, Vec<u8>)>,
     pub load_time: Duration,
     pub check_time: Duration,
     /// `load_time`, by what it went on: in the order of `Phase::ALL`.
-    pub load_phases: [Duration; 8],
+    pub load_phases: [Duration; Phase::ALL.len()],
     /// The most stack any file took, in bytes.
     pub deepest_stack: usize,
 }
@@ -237,6 +401,7 @@ impl Report {
         self.has_bun_types_installed |= other.has_bun_types_installed;
         self.files_loaded += other.files_loaded;
         self.files_checked += other.files_checked;
+        self.steps.extend(other.steps);
         self.check_time += other.check_time;
         for (phase, more) in self.load_phases.iter_mut().zip(other.load_phases) {
             *phase += more;
@@ -286,8 +451,8 @@ fn global(code: u32, args: &[impl AsRef<[u8]>]) -> Diagnostic {
 /// TypeScript's messages say how to install types with npm.
 fn in_terms_of_bun(text: Vec<u8>) -> Vec<u8> {
     const NPM: &[u8] = b"npm i --save-dev ";
-    if text.contains_str(NPM) {
-        text.replace(NPM, b"bun add -d ")
+    if strings::contains(&text, NPM) {
+        strings::replace_owned(&text, NPM, b"bun add -d ")
     } else {
         text
     }
@@ -327,7 +492,7 @@ fn line_and_character(text: &[u8], starts: &[u32], offset: u32) -> (u32, u32) {
     let offset = offset.min(text.len() as u32);
     let line = starts.partition_point(|&s| s <= offset) - 1;
     let before = &text[starts[line] as usize..offset as usize];
-    let units = bun_core::strings::element_length_utf8_into_utf16(before);
+    let units = strings::element_length_utf8_into_utf16(before);
     (line as u32, units as u32)
 }
 
@@ -341,24 +506,16 @@ fn line_text(text: &[u8], starts: &[u32], line: u32) -> Vec<u8> {
         .to_vec()
 }
 
-/// The roots `paths` stand for: a file is itself, a directory is what a project with nothing but that directory would include.
-fn roots_of_paths(
-    disk: &host::Disk,
-    cwd: &[u8],
-    paths: &[Vec<u8>],
-    allow_js: bool,
-    errors: &mut Vec<Diagnostic>,
-) -> Vec<Vec<u8>> {
+/// Expands `paths` (absolute, existing) into root files. A file maps to itself; a directory maps to the files that a project without a
+/// config file rooted there would include.
+fn roots_of_paths(disk: &host::Disk, paths: &[Vec<u8>], allow_js: bool) -> Vec<Vec<u8>> {
     let mut roots = Vec::new();
     for path in paths {
-        let path = join(cwd, &path.replace(b"\\", b"/"));
-        if disk.is_dir(&path) {
+        if disk.is_dir(path) {
             let compiler = Json::Object(vec![(b"allowJs".to_vec(), Json::Bool(allow_js))]);
-            roots.extend(config::without_config(disk, &path, compiler, Vec::new()).files);
-        } else if disk.is_file(&path) {
-            roots.push(path);
+            roots.extend(config::without_config(disk, path, compiler, Vec::new()).files);
         } else {
-            errors.push(global(6053, &[path]));
+            roots.push(path.clone());
         }
     }
     roots
@@ -388,15 +545,24 @@ pub fn check(request: &Request) -> Report {
     check_then(request, |report| report)
 }
 
-/// With the report, the program that was checked last.
+/// Returns the report and the last program that was checked. The caller decides when to drop the program.
 fn check_what_is_asked(disk: &host::Disk, request: &Request) -> (Report, Option<Box<Program>>) {
     let started = Instant::now();
     let cwd = host::from_native(request.cwd);
     let mut report = Report::default();
 
+    // Report missing paths (TS6053) before loading the config file or any source file.
+    let (paths, missing): (Vec<_>, Vec<_>) = (request.paths.iter())
+        .map(|path| join(&cwd, path))
+        .partition(|path| disk.is_dir(path) || disk.is_file(path));
+    let not_found = missing.iter().map(|path| global(6053, &[path]));
+    report.diagnostics.extend(not_found);
+    if paths.is_empty() && !missing.is_empty() {
+        return (report, None);
+    }
     let config_path = match request.project {
         Some(project) => {
-            let path = join(&cwd, &project.replace(b"\\", b"/"));
+            let path = join(&cwd, project);
             if disk.is_dir(&path) {
                 let inside = join(&path, b"tsconfig.json");
                 if !disk.is_file(&inside) {
@@ -411,24 +577,22 @@ fn check_what_is_asked(disk: &host::Disk, request: &Request) -> (Report, Option<
                 return (report, None);
             }
         }
-        // The project the first thing named belongs to, or else the one around here.
-        None => request
-            .paths
+        // Use the config file nearest to the first path argument, or else nearest to the working directory.
+        None => paths
             .first()
-            .map(|first| join(&cwd, &first.replace(b"\\", b"/")))
             .and_then(|first| {
-                let dir = if disk.is_dir(&first) {
-                    first
+                let dir = if disk.is_dir(first) {
+                    first.as_slice()
                 } else {
-                    dirname::<Posix>(&first).to_vec()
+                    dirname::<Posix>(first)
                 };
-                config::find_config(disk, &dir)
+                config::find_config(disk, dir)
             })
             .or_else(|| config::find_config(disk, &cwd)),
     };
     let mut project = match &config_path {
-        // Nothing is written, whatever the project says. Without `references` this is `tsc --noEmit`: what is only wrong with where
-        // output would go is not looked into. With them it is `tsc -b`, which has no `--noEmit`.
+        // `bun check` never emits. Without `references` it behaves like `tsc --noEmit`, so output-path errors are not reported. With
+        // `references` it behaves like `tsc -b`, which has no `--noEmit`.
         Some(path) => config::load_overriding(disk, path, &|has_references| {
             overriding_options(request, has_references && request.paths.is_empty())
         }),
@@ -445,16 +609,10 @@ fn check_what_is_asked(disk: &host::Disk, request: &Request) -> (Report, Option<
     };
     report.config_path.clone_from(&project.config_path);
     let mut named = None;
-    if !request.paths.is_empty() {
-        let mut roots = roots_of_paths(
-            disk,
-            &cwd,
-            request.paths,
-            project.options.allow_js,
-            &mut report.diagnostics,
-        );
-        // The program is the whole project all the same. What one file adds to the global scope, or to a module, is there for every
-        // other: a file means the same, and has the same errors, whether it is named or not.
+    if !paths.is_empty() {
+        let mut roots = roots_of_paths(disk, &paths, project.options.allow_js);
+        // Load the whole project even when only some files are checked. Global declarations and module augmentations from any file
+        // affect every other file, so a file must produce the same errors with and without path arguments.
         let mut seen: FxHashSet<&[u8]> = project.files.iter().map(Vec::as_slice).collect();
         let more: Vec<Vec<u8>> = roots
             .iter()
@@ -463,12 +621,37 @@ fn check_what_is_asked(disk: &host::Disk, request: &Request) -> (Report, Option<
             .collect();
         project.files.extend(more);
         project.options.files.clone_from(&project.files);
-        // That the project itself names no files is beside the point.
+        // An empty file set in the config file is not an error when path arguments provide the roots.
         project
             .errors
             .retain(|e| e.code != 18003 && e.code != 18002);
         roots.sort_unstable();
         named = Some(roots);
+    }
+    if config_path.is_none() && paths.is_empty() {
+        let configs = workspace_projects(disk, &cwd);
+        if !configs.is_empty() {
+            return check_workspaces(disk, &configs, project, request, report, started);
+        }
+    }
+    // A config file with an empty file set is left to TS18002 and TS18003. With `extends`, `"files": [], "include": []` is valid.
+    let has_no_input = named.as_ref().map_or_else(
+        || config_path.is_none() && project.files.is_empty(),
+        Vec::is_empty,
+    );
+    if has_no_input {
+        let dir = paths.first().unwrap_or(&cwd);
+        report.diagnostics.push(Diagnostic {
+            text: [
+                b"Nothing to check: no TypeScript files in '",
+                &dir[..],
+                b"'",
+            ]
+            .concat(),
+            code: 0,
+            ..global(18003, &[""; 0])
+        });
+        return (report, None);
     }
     if named.is_none() && !project.references.is_empty() {
         check_with_references(disk, project, request, report, started)
@@ -483,6 +666,106 @@ fn check_what_is_asked(disk: &host::Disk, request: &Request) -> (Report, Option<
             None,
         )
     }
+}
+
+/// Returns the sorted `tsconfig.json` paths of the directories matched by `workspaces` in `dir`'s `package.json`. Patterns have
+/// `bun install` semantics (`WorkspaceMap::process_names_array`).
+fn workspace_projects(disk: &host::Disk, dir: &[u8]) -> Vec<Vec<u8>> {
+    let package = disk.read(&inside(dir, b"package.json"));
+    let package = package.and_then(|text| Json::parse(&text));
+    let workspaces = package.as_ref().and_then(|p| p.get(b"workspaces"));
+    // Yarn's object form: `{ "packages": [..] }`.
+    let patterns = workspaces.and_then(|w| w.get(b"packages").unwrap_or(w).as_array());
+    let patterns: Vec<&[u8]> = (patterns.unwrap_or_default().iter())
+        .filter_map(Json::as_str)
+        .collect();
+    let mut found = Vec::new();
+    for (i, &pattern) in patterns.iter().enumerate() {
+        if !bun_glob::detect_glob_syntax(pattern) {
+            found.push(join(dir, &[pattern, &b"/tsconfig.json"[..]].concat()));
+            continue;
+        }
+        // A negated pattern only filters the matches of earlier patterns.
+        if pattern.starts_with(b"!") {
+            continue;
+        }
+        let Ok(Ok(mut walker)) = bun_glob::BunGlobWalker::init_with_cwd(
+            &[pattern, &b"/tsconfig.json"[..]].concat(),
+            host::to_native(dir),
+            false,
+            false,
+            false,
+            false,
+            true,
+            Some(|name| matches!(name, b"node_modules" | b".git")),
+        ) else {
+            continue;
+        };
+        let mut matches = bun_glob::walk::Iterator::new(&mut walker);
+        if !matches!(matches.init(), Ok(Ok(()))) {
+            continue;
+        }
+        while let Ok(Ok(Some(matched))) = matches.next() {
+            let package = &matched[..matched.len() - b"/tsconfig.json".len()];
+            let is_negated = patterns[i + 1..].iter().any(|later| {
+                let result = bun_glob::r#match(later, package);
+                result.is_negated() && !result.matches()
+            });
+            if !is_negated {
+                found.push(join(dir, &matched));
+            }
+        }
+    }
+    found.retain(|path| disk.is_file(path));
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
+/// Checks a workspace root that has no config file. Each entry of `configs` is an independent project, as with `bun check -p`. `rest` is the
+/// default-options project of the root directory, restricted to the files that no workspace project includes. A file is checked only by the
+/// project that includes it, even when other projects import it.
+fn check_workspaces(
+    disk: &host::Disk,
+    configs: &[Vec<u8>],
+    mut rest: config::Project,
+    request: &Request,
+    mut report: Report,
+    started: Instant,
+) -> (Report, Option<Box<Program>>) {
+    let over = |has_references| overriding_options(request, has_references);
+    let mut projects: Vec<config::Project> = (configs.iter())
+        .map(|path| config::load_overriding(disk, path, &over))
+        .collect();
+    let roots: Vec<Vec<Vec<u8>>> = projects.iter().map(|p| p.files.clone()).collect();
+    let named: FxHashSet<&[u8]> = roots.iter().flatten().map(Vec::as_slice).collect();
+    rest.files.retain(|file| !named.contains(file.as_slice()));
+    rest.options.files.clone_from(&rest.files);
+    if !rest.files.is_empty() {
+        projects.push(rest);
+    }
+    let mut program = None;
+    for (index, project) in projects.into_iter().enumerate() {
+        let own: FxHashSet<&[u8]> = (roots.get(index).into_iter().flatten())
+            .map(Vec::as_slice)
+            .collect();
+        let owned_elsewhere: FxHashSet<&[u8]> = named.difference(&own).copied().collect();
+        // Drop the previous program before loading the next one to bound peak memory.
+        drop(program.take());
+        let (began, so_far) = (Instant::now(), Report::default());
+        let checked = if project.references.is_empty() {
+            let owned_elsewhere = Some(&owned_elsewhere);
+            check_what_is_named(disk, project, request, so_far, began, None, owned_elsewhere)
+        } else {
+            check_with_references(disk, project, request, so_far, began)
+        };
+        report.projects_checked += checked.0.projects_checked.max(1);
+        report.merge(checked.0);
+        program = checked.1;
+    }
+    report.load_time = started.elapsed().saturating_sub(report.check_time);
+    sort_and_deduplicate(&mut report.diagnostics);
+    (report, program)
 }
 
 struct ReferencedProject {
@@ -542,8 +825,113 @@ impl Graph<'_> {
     }
 }
 
-/// What `tsc -b` checks: `root` and every project it references, each with its own options. Nothing has to be built first: an
-/// import from a referenced project resolves to its source, where `tsc` would read the `.d.ts` it emitted.
+/// The file system as a `tsc -b` run leaves it: the declaration files of the projects that have been built so far are there too.
+/// Nothing is written to the disk.
+struct WithOutputs<'h> {
+    disk: &'h dyn Host,
+    files: FxHashMap<Vec<u8>, Vec<u8>>,
+    /// The directories the files are in, and all above them.
+    directories: FxHashSet<Vec<u8>>,
+}
+
+impl WithOutputs<'_> {
+    fn add(&mut self, path: Vec<u8>, text: Vec<u8>) {
+        let mut directory = dirname::<Posix>(&path);
+        while directory.len() > 1 && self.directories.insert(directory.to_vec()) {
+            directory = dirname::<Posix>(directory);
+        }
+        self.files.insert(path, text);
+    }
+
+    /// `path` with the links followed in as much of it as is on the disk: a package of the workspace is found by way of a link in a
+    /// `node_modules`, and what it has written goes by where it is.
+    fn through_links(&self, path: &[u8]) -> Option<Vec<u8>> {
+        if self.files.is_empty() || !strings::contains(path, b"/node_modules/") {
+            return None;
+        }
+        let mut on_disk = dirname::<Posix>(path);
+        while on_disk.len() > 1 && !self.disk.is_dir(on_disk) {
+            on_disk = dirname::<Posix>(on_disk);
+        }
+        let real = self.disk.realpath(on_disk);
+        (real != on_disk).then(|| [&real[..], &path[on_disk.len()..]].concat())
+    }
+
+    fn written(&self, path: &[u8]) -> Option<&Vec<u8>> {
+        let written = self.files.get(path);
+        written.or_else(|| self.files.get(&self.through_links(path)?))
+    }
+}
+
+impl Host for WithOutputs<'_> {
+    fn spent(&self, phase: Phase, time: Duration) {
+        self.disk.spent(phase, time);
+    }
+    fn times(&self) -> [Duration; Phase::ALL.len()] {
+        self.disk.times()
+    }
+    fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+        match self.written(path) {
+            Some(written) => Some(Cow::Owned(written.clone())),
+            None => self.disk.read(path),
+        }
+    }
+    fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
+        match self.written(path) {
+            Some(written) => Cow::Owned(written.clone()),
+            None => self.disk.read_source(path),
+        }
+    }
+    fn take_unreadable(&self) -> Vec<Vec<u8>> {
+        self.disk.take_unreadable()
+    }
+    fn is_file(&self, path: &[u8]) -> bool {
+        self.disk.is_file(path) || self.written(path).is_some()
+    }
+    fn is_dir(&self, path: &[u8]) -> bool {
+        self.disk.is_dir(path)
+            || self.directories.contains(path)
+            || (self.through_links(path)).is_some_and(|real| self.directories.contains(&real))
+    }
+    fn realpath(&self, path: &[u8]) -> Vec<u8> {
+        match self.through_links(path) {
+            Some(real) if self.files.contains_key(&real) || self.directories.contains(&real) => {
+                real
+            }
+            _ => self.disk.realpath(path),
+        }
+    }
+    fn list_dir(&self, path: &[u8]) -> Vec<Vec<u8>> {
+        self.disk.list_dir(path)
+    }
+    fn entries(&self, path: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+        self.disk.entries(path)
+    }
+    fn is_case_sensitive(&self) -> bool {
+        self.disk.is_case_sensitive()
+    }
+    fn parse(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        atoms: &bun_sema::atom::Interner,
+        options: &bun_sema::resolve::Options,
+    ) -> bun_sema::hir::File {
+        self.disk.parse(path, text, atoms, options)
+    }
+    fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        self.disk.parallel(count, work);
+    }
+    fn threads(&self) -> usize {
+        self.disk.threads()
+    }
+    fn readers(&self) -> usize {
+        self.disk.readers()
+    }
+}
+
+/// What `tsc -b` checks: `root` and every project it references, each with its own options. Nothing is written: a project reads the
+/// declaration files of those it references from memory.
 fn check_with_references(
     host: &dyn Host,
     root: config::Project,
@@ -605,6 +993,14 @@ fn check_with_references(
         })
         .collect();
     let references: Vec<Vec<usize>> = projects.iter().map(|p| p.references.clone()).collect();
+    let options_of_projects: Vec<Options> =
+        projects.iter().map(|p| p.project.options.clone()).collect();
+    let mut host = WithOutputs {
+        disk: host,
+        files: FxHashMap::default(),
+        directories: FxHashSet::default(),
+    };
+    let is_read_later = |index: usize| references.iter().any(|of| of.contains(&index));
     let mut program = None;
     for (index, referenced) in projects.into_iter().enumerate() {
         let mut project = referenced.project;
@@ -624,20 +1020,59 @@ fn check_with_references(
                 pending.extend(&references[i]);
             }
         }
-        project.options.referenced_outputs = (0..roots.len())
-            .filter(|&i| is_referenced[i])
-            .filter_map(|i| outputs[i].clone())
+        // `ParseInputOutputNames`, `getOutputDeclarationAndSourceFileNames`
+        let referenced: Vec<usize> = (0..roots.len()).filter(|&i| is_referenced[i]).collect();
+        project.options.referenced_options = referenced
+            .iter()
+            .map(|&i| options_of_projects[i].clone())
             .collect();
+        project.options.referenced_sources = (referenced.iter().enumerate())
+            .flat_map(|(at, &i)| {
+                let output = outputs[i]
+                    .as_ref()
+                    .map(|it| (it.0.as_slice(), it.1.as_slice()));
+                // No declaration file is written for JavaScript yet: it is read itself.
+                let is_javascript = |path: &[u8]| {
+                    [&b".js"[..], b".jsx", b".mjs", b".cjs"]
+                        .iter()
+                        .any(|it| path.ends_with(it))
+                };
+                let sources = roots[i]
+                    .iter()
+                    .filter(|path| !is_declaration_file_name(path));
+                sources.map(move |source| {
+                    let output_dts = match is_javascript(source) {
+                        true => None,
+                        false => output_declaration_file_name(source, output),
+                    };
+                    (source.clone(), output_dts.unwrap_or_default(), at as u32)
+                })
+            })
+            .collect();
+        project.options.referenced_sources.sort_unstable();
+        project
+            .options
+            .referenced_sources
+            .dedup_by(|a, b| a.0 == b.0);
+        project.options.referenced_output_dts = (project.options.referenced_sources.iter())
+            .enumerate()
+            .filter(|(_, it)| !it.1.is_empty())
+            .map(|(index, it)| (it.1.clone(), index as u32))
+            .collect();
+        project.options.referenced_output_dts.sort_unstable();
         let own: FxHashSet<&[u8]> = roots[index].iter().map(Vec::as_slice).collect();
         let owned_elsewhere: FxHashSet<&[u8]> = (0..roots.len())
             .filter(|&i| is_referenced[i])
             .flat_map(|i| roots[i].iter().map(Vec::as_slice))
             .filter(|path| !own.contains(path))
             .collect();
+        project.options.is_build = true;
+        project.options.writes_declaration_files = is_read_later(index);
+        let no_emit_on_error = project.options.no_emit_on_error;
         // Not two programs at a time.
         drop(program.take());
-        let checked = check_what_is_named(
-            host,
+        let mut checked = check_what_is_named(
+            &host,
             project,
             request,
             Report::default(),
@@ -645,6 +1080,20 @@ fn check_with_references(
             None,
             Some(&owned_elsewhere),
         );
+        // `HandleNoEmitOnError`
+        if !(no_emit_on_error && !checked.0.diagnostics.is_empty()) {
+            let output = outputs[index]
+                .as_ref()
+                .map(|it| (it.0.as_slice(), it.1.as_slice()));
+            for (source, written) in std::mem::take(&mut checked.0.declaration_files) {
+                if let Some(path) = output_declaration_file_name(&source, output) {
+                    if let Some(declaration_file_written) = request.declaration_file_written {
+                        declaration_file_written(&path, &written);
+                    }
+                    host.add(path, written);
+                }
+            }
+        }
         report.merge(checked.0);
         program = checked.1;
         report.projects_checked += 1;
@@ -842,14 +1291,14 @@ fn check_what_is_named(
             .retain(|&f| !owned_elsewhere.contains(program.files.modules[f.idx()].path.as_slice()));
     }
     if let Some(only) = request.only {
-        to_check.retain(|&f| program.files.modules[f.idx()].path.contains_str(only));
+        to_check.retain(|&f| strings::contains(&program.files.modules[f.idx()].path, only));
     }
     if is_true(b"listFilesOnly") && request.stops_where_tsc_does {
         to_check.clear();
     }
-    // Program order (`program.files`): an imported file precedes its importers. The start order is determined by the program, not by
-    // paths or timing.
-    to_check.sort_by_key(|&f| program.files.rank_of_file(f).wrapping_mul(request.order));
+    // Program order (`program.files`): an imported file precedes its importers. The position of a file in `to_check` is its index.
+    let place = |f: FileId| program.files.rank_of_file(f);
+    to_check.sort_by_key(|&f| place(f));
     let size = |f: FileId| program.files.modules[f.idx()].hir.source_len;
     report.files_checked = to_check.len();
     if let Some(progress) = request.progress {
@@ -857,18 +1306,20 @@ fn check_what_is_named(
             .iter()
             .map(|f| program.files.modules[f.idx()].hir.source_len as usize)
             .sum();
-        progress.bytes_to_check.store(bytes, Ordering::Relaxed);
-        progress.to_check.store(to_check.len(), Ordering::Relaxed);
+        progress.bytes_to_check.fetch_add(bytes, Ordering::Relaxed);
+        progress
+            .to_check
+            .fetch_add(to_check.len(), Ordering::Relaxed);
     }
     let found: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
     // `GetDeclarationDiagnostics`
     let emit_diagnostics: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
     let incomplete: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
-    // The text of the default library is not kept.
+    // `Files::parse_and_bind` keeps the text of every file but those of the default library.
     let text_of = |file: FileId| {
         let module = &program.files.modules[file.idx()];
-        if module.hir.text.is_empty() {
+        if module.is_lib {
             host.read(&module.path).unwrap_or_default()
         } else {
             std::borrow::Cow::Borrowed(&module.hir.text[..])
@@ -931,49 +1382,85 @@ fn check_what_is_named(
         }
         found.lock().extend(shown);
     };
-    let new_checker = |only_syntax: bool| {
+    let new_checker = |wanted: Wanted| {
         let mut checker = program.checker();
-        checker.set_only_syntax(only_syntax);
-        // What the thread really has left, whatever thread it is and however it was built.
-        checker.set_stack_limit(bun_core::StackCheck::init().remaining());
+        checker.set_wanted(wanted);
+        checker.begin_stack_budget();
         checker
     };
-    let finish_file = |checker: &mut bun_sema::check::Checker<'_>, file, mut checked: Checked| {
-        let declaration = checked.take_declaration_diagnostics();
-        show(file, checker.finish_file(file, checked), &found);
-        if let Some(declaration) = declaration {
-            show(
-                file,
-                checker.finish_file(file, declaration),
-                &emit_diagnostics,
-            );
-        }
+    // 0: the tasks are not `checkerPool`'s.
+    let checker_count = match request.plan_options.checkers {
+        0 => 0,
+        checkers => checkers.min(program.files.order.len()).clamp(1, 256),
     };
-    // What was found in the files that the checker of another file may still report in.
+    // Of the files that are checked and not yet rendered. The task of another file may still report in them.
     let unfinished: Guarded<Vec<(FileId, Checked)>> = Guarded::new(Vec::new());
-    let check_file = |file: FileId, only_syntax: bool| {
-        // Dropped last, after all that was found out about the file.
-        let _at_hand = program.files.bring_in(host, file);
-        let module = &program.files.modules[file.idx()];
-        let mut checker = new_checker(only_syntax);
-        let checked = checker.check_file(file);
-        if let Some(after_file) = request.after_file
-            && !only_syntax
-        {
-            after_file(&mut checker, file);
+    /// What a task leaves at the barrier.
+    struct Outcome {
+        /// `None`: the files were checked outside the plan.
+        finished: Option<Finished>,
+        /// For `finish_files`.
+        checked: Vec<(FileId, Checked)>,
+        /// The files in which the native stack ran out.
+        incomplete: Vec<FileId>,
+        generic_relation_entries_not_published: u64,
+    }
+    // `task`: its step, its place in the step, and `is_read_later`. `None`: the files are checked outside the plan.
+    let check_chunk = |files: &[FileId], wanted: Wanted, task: Option<(usize, usize, bool)>| {
+        let mut checker = new_checker(wanted);
+        if let Some((step, index, is_read_later)) = task {
+            checker.begin_task(step as u32, index as u32, is_read_later);
+            checker.set_checker_count(checker_count as u32);
+        }
+        let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
+        for &file in files {
+            checked.push((file, checker.check_file(file)));
+            if let Some(after_file) = request.after_file
+                && wanted == Wanted::All
+            {
+                after_file(&mut checker, file);
+            }
+            if checker.take_ran_out_of_stack() {
+                incomplete.push(file);
+            }
+            if let (Some(progress), Some(_)) = (request.progress, task) {
+                progress.checked.fetch_add(1, Ordering::Relaxed);
+                let bytes = size(file) as usize;
+                progress.bytes_checked.fetch_add(bytes, Ordering::Relaxed);
+            }
         }
         deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
-        // What was found stands. What was not may be missing, and that is said.
-        if checker.ran_out_of_stack() {
-            incomplete.lock().push(module.path.clone());
+        let outcome = Outcome {
+            finished: task.map(|_| checker.end_task()),
+            checked,
+            incomplete,
+            generic_relation_entries_not_published: checker
+                .generic_relation_entries_not_published(),
+        };
+        // It holds references into trees.
+        drop(checker);
+        // At the end of the task, not of the file: an entry of the buffer can hold a value that is bound to an earlier file of the task.
+        // A freed tree does not come back, and a file that is checked outside the plan is checked again by its task.
+        if task.is_some() {
+            for &file in files {
+                if program.files.modules[file.idx()].is_leaf {
+                    // SAFETY: this task is the only one that reads the tree, and it has ended.
+                    unsafe { program.files.free_tree(file) };
+                }
+            }
         }
-        // Nothing refers to a file that is only at hand for now, and what does not parse is nobody else's business.
-        if only_syntax || module.is_transient {
-            finish_file(&mut checker, file, checked);
-        } else {
-            unfinished.lock().push((file, checked));
-        }
+        outcome
     };
+    let declaration_files: Guarded<Vec<(Vec<u8>, Vec<u8>)>> = Guarded::new(Vec::new());
+    let accept = |outcome: Outcome| {
+        // What was found is reported. What was not found may be missing, and the report lists the file as incomplete.
+        for file in outcome.incomplete {
+            let path = program.files.modules[file.idx()].path.clone();
+            incomplete.lock().push(path);
+        }
+        unfinished.lock().extend(outcome.checked);
+    };
+    // THE REPORT. No task is running: every diagnostic is in the buffer of its file. It makes no query and reads no tree.
     let finish_files = || {
         let unfinished: Vec<Guarded<Option<(FileId, Checked)>>> = unfinished
             .lock()
@@ -981,20 +1468,108 @@ fn check_what_is_named(
             .map(|one| Guarded::new(Some(one)))
             .collect();
         for_each_parallel(threads, unfinished.len(), &|i| {
-            let (file, checked) = unfinished[i].lock().take().unwrap();
-            if !program.has_nothing_to_finish(file, &checked) {
-                finish_file(&mut new_checker(false), file, checked);
+            let (file, mut checked) = unfinished[i].lock().take().unwrap();
+            if let Some(written) = checked.declaration_file.take() {
+                let path = program.files.modules[file.idx()].path.clone();
+                declaration_files.lock().push((path, written));
+            }
+            let declaration = checked.take_declaration_diagnostics();
+            show(file, program.finish_file(file, checked), &found);
+            if let Some(declaration) = declaration {
+                let declaration = program.finish_file(file, declaration);
+                show(file, declaration, &emit_diagnostics);
             }
         });
     };
-    let take = |i: usize| {
-        check_file(to_check[i], false);
-        if let Some(progress) = request.progress {
-            progress.checked.fetch_add(1, Ordering::Relaxed);
-            progress
-                .bytes_checked
-                .fetch_add(size(to_check[i]) as usize, Ordering::Relaxed);
+    let bytes_of = |index: usize| size(to_check[index]) as usize;
+    // An estimate of what it costs to check a file: how many identifiers its expressions have. Each is a symbol to find and a type to
+    // work out. The size of the text says next to nothing: on storybook, tasks cut by it take 1.8 times as long as tasks cut by the
+    // time itself, where tasks cut by this take 1.1 times.
+    let is_identifier = |tag: ExprTag| tag == ExprTag::Ident;
+    let costs: Vec<usize> = (to_check.iter())
+        .map(|&file| {
+            let tags = program.files.hir(file).exprs.iter().map(|it| it.kind.tag());
+            tags.filter(|&tag| is_identifier(tag)).count() + 1
+        })
+        .collect();
+    let size_of = |index: usize| costs[index];
+    let plan = match request.plan_options.checkers {
+        0 => Plan::new(to_check.len(), &bytes_of, &size_of, request.plan_options),
+        checkers => Plan::of_checkers(
+            to_check.len(),
+            &|index| place(to_check[index]) as usize,
+            program.files.order.len(),
+            checkers,
+        ),
+    };
+    let in_parallel = |count: usize, work: &(dyn Fn(usize) + Sync)| {
+        for_each_parallel(threads, count, work);
+    };
+    let steps: Guarded<Vec<StepReport>> = Guarded::new(Vec::new());
+    let run_step = |number: usize, step: &[Task], wanted: Wanted| {
+        // After the last step the published state is read by the loop over the files that are not checked, which runs with `after_file`,
+        // and by a caller that goes on to ask about the program.
+        let is_read_later = number + 1 != plan.steps.len()
+            || request.keeps_everything
+            || request.after_file.is_some();
+        let tasks = step.len();
+        let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
+        // The largest first, so that no thread begins it when the others are nearly done.
+        let mut start_order: Vec<usize> = (0..tasks).collect();
+        match request.order {
+            1 => start_order.sort_by_key(|&i| Reverse(weight_of(i))),
+            order => start_order.sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
         }
+        let outcomes: Vec<Guarded<Option<Outcome>>> =
+            (0..tasks).map(|_| Guarded::new(None)).collect();
+        let (started, busy) = (Instant::now(), AtomicU64::new(0));
+        for_each_parallel(threads, tasks, &|i| {
+            let (index, began) = (start_order[i], Instant::now());
+            let files: Vec<FileId> = step[index].iter().map(|&file| to_check[file]).collect();
+            let outcome = check_chunk(&files, wanted, Some((number, index, is_read_later)));
+            *outcomes[index].lock() = Some(outcome);
+            busy.fetch_add(began.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        });
+        let in_tasks = started.elapsed();
+        // THE BARRIER. Everything from here on is in task order.
+        let mut outcomes: Vec<Outcome> = (outcomes.into_iter())
+            .map(|mut outcome| outcome.get_mut().take().unwrap())
+            .collect();
+        let mut finished: Vec<Finished> = (outcomes.iter_mut())
+            .map(|outcome| outcome.finished.take().unwrap())
+            .collect();
+        let mut foreign_evaluations = [0u64; FOREIGN_EVALUATION_KINDS.len()];
+        for finished in &finished {
+            for (sum, &more) in foreign_evaluations
+                .iter_mut()
+                .zip(&finished.foreign_evaluations)
+            {
+                *sum += u64::from(more);
+            }
+        }
+        let linking = Instant::now();
+        let records = program.link(&mut finished, &in_parallel);
+        let (in_link, publishing) = (linking.elapsed(), Instant::now());
+        let entries = program.publish(&mut finished, &in_parallel, request.digests);
+        let in_publish = publishing.elapsed();
+        let not_published = outcomes
+            .iter()
+            .map(|it| it.generic_relation_entries_not_published);
+        let generic_relation_entries_not_published = not_published.sum();
+        outcomes.into_iter().for_each(&accept);
+        steps.lock().push(StepReport {
+            tasks,
+            files: step.iter().map(Vec::len).sum(),
+            in_tasks,
+            in_link,
+            in_publish,
+            idle: (in_tasks * threads as u32)
+                .saturating_sub(Duration::from_nanos(busy.into_inner())),
+            entries,
+            records,
+            generic_relation_entries_not_published,
+            foreign_evaluations,
+        });
     };
     let global_errors = || -> Vec<Diagnostic> {
         program
@@ -1006,8 +1581,10 @@ fn check_what_is_named(
     // `GetDiagnosticsOfAnyProgram`: TypeScript's command line goes on to the next kind of error only if there is none of the last. What
     // does not parse, or is checked under options that make no sense, gives errors that are not worth reading.
     let stops = request.stops_where_tsc_does;
-    let check_files = || {
-        for_each_parallel(threads, to_check.len(), &take);
+    let check_files = |wanted: Wanted| {
+        for (number, step) in plan.steps.iter().enumerate() {
+            run_step(number, step, wanted);
+        }
         finish_files();
     };
     // `EmitFilesAndReportErrors` calls `Emit` after collecting diagnostics, even if there are errors, and the declaration transformer
@@ -1016,13 +1593,13 @@ fn check_what_is_named(
     let options = &program.files.options;
     let emits_despite_errors = options.emits_declarations
         && !options.no_emit_on_error
-        && !match owned_elsewhere {
-            Some(_) => options.no_emit,
-            None => options.is_incremental,
+        && !match options.is_build {
+            true => options.no_emit,
+            false => options.is_incremental,
         };
     let emit_on_early_exit = || -> Vec<Diagnostic> {
         if emits_despite_errors {
-            check_files();
+            check_files(Wanted::Declaration);
             found.lock().clear();
         }
         std::mem::take(&mut *emit_diagnostics.lock())
@@ -1032,12 +1609,17 @@ fn check_what_is_named(
             let suspects: Vec<FileId> = (0..program.files.modules.len())
                 .filter(|&i| {
                     let hir = &program.files.modules[i].hir;
-                    (hir.has_parse_diagnostics || !hir.early_errors.is_empty() || hir.is_js)
+                    (hir.has_parse_diagnostics
+                        || hir.has_parse_or_grammar_diagnostics()
+                        || hir.is_js)
                         && is_reached.as_ref().is_none_or(|reached| reached[i])
                 })
                 .map(|i| FileId(i as u32))
                 .collect();
-            for_each_parallel(threads, suspects.len(), &|i| check_file(suspects[i], true));
+            for_each_parallel(threads, suspects.len(), &|i| {
+                accept(check_chunk(&suspects[i..=i], Wanted::Syntactic, None));
+            });
+            finish_files();
             let syntactic = std::mem::take(&mut *found.lock());
             if !syntactic.is_empty() {
                 report.diagnostics.extend(syntactic);
@@ -1055,7 +1637,7 @@ fn check_what_is_named(
                 break 'stages;
             }
         }
-        check_files();
+        check_files(Wanted::All);
         report.diagnostics.append(&mut found.lock());
         report.diagnostics.extend(global_errors());
         // `GetDiagnosticsOfAnyProgram` collects them itself if there are no other errors. This list also contains suggestions.
@@ -1080,17 +1662,20 @@ fn check_what_is_named(
                 {
                     continue;
                 }
-                let _at_hand = program.files.bring_in(host, file);
                 let mut checker = program.checker();
-                checker.set_stack_limit(bun_core::StackCheck::init().remaining());
+                checker.begin_stack_budget();
                 after_file(&mut checker, file);
             }
         }
     }
     report.deepest_stack = deepest_stack.into_inner();
+    report.steps = std::mem::take(&mut *steps.lock());
     report.incomplete = std::mem::take(&mut *incomplete.lock());
     report.incomplete.sort();
     report.incomplete.dedup();
+    let unreadable = host.take_unreadable();
+    let cannot_read = unreadable.iter().map(|path| global(5083, &[path]));
+    report.diagnostics.extend(cannot_read);
     sort_and_deduplicate(&mut report.diagnostics);
     // What the program says of no file is at -1 (`NewCompilerDiagnostic`), what the checker says of none at 0 (`NewDiagnosticForNode`).
     let of_the_checker = program.global_errors();
@@ -1098,6 +1683,7 @@ fn check_what_is_named(
     report.diagnostics[..in_no_file]
         .sort_by_key(|d| of_the_checker.iter().any(|(code, _)| *code == d.code));
     report.check_time = checking.elapsed();
+    report.declaration_files = std::mem::take(&mut *declaration_files.lock());
     if let Some(checked) = request.checked {
         checked(&program);
     }

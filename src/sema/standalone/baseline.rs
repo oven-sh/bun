@@ -960,6 +960,9 @@ pub struct Setup<'a> {
     pub types_out: Option<&'a str>,
     /// The same for the symbol at every name: to compare with `.symbols` baselines. Needs `types_out`.
     pub symbols_out: Option<&'a str>,
+    /// Where to write the declaration files of every test that asks for them, if anywhere: to compare with the `.d.ts` sections of the
+    /// `.js` baselines. Not together with `types_out`.
+    pub dts_out: Option<&'a str>,
     pub threads: usize,
 }
 
@@ -1013,6 +1016,7 @@ fn run_one(
     has_baselines: bool,
     types: Option<&Mutex<String>>,
     symbols: Option<&Mutex<String>>,
+    dts: Option<&Mutex<Vec<(u32, Vec<u8>)>>>,
 ) -> Option<(Report, Vec<(String, Vec<u8>)>)> {
     let Parsed { mut units, links } = units_of(code, path);
     let cwd = absolute(
@@ -1281,6 +1285,70 @@ fn run_one(
             write_unit(checker, file, &copy, host.read(copy.as_bytes()).as_deref());
         }
     };
+    // `DoJSEmitBaseline`: `//// [name]`, and what is written to the file. The harness asks for `\r\n`.
+    let write_dts = |checker: &mut bun_sema::check::Checker<'_>,
+                     file: bun_sema::program::FileId| {
+        if !checker.p.files.options.emits_declarations {
+            return;
+        }
+        let path = checker.p.files.modules[file.idx()].path.clone();
+        let options = &checker.p.files.options;
+        let output_dir = [&options.declaration_dir, &options.out_dir]
+            .into_iter()
+            .find(|dir| !dir.is_empty())
+            .map(|dir| dir.strip_suffix(b"/").unwrap_or(dir).to_vec());
+        // `GetCommonSourceDirectory`
+        let common = if !options.root_dir.is_empty() {
+            options.root_dir.clone()
+        } else if !options.config_path.is_empty() {
+            let end = options
+                .config_path
+                .iter()
+                .rposition(|&b| b == b'/')
+                .unwrap_or(0);
+            options.config_path[..end].to_vec()
+        } else {
+            let sources = (roots.iter().chain(&others))
+                .map(|unit| absolute(&unit.name, &cwd).into_bytes())
+                .filter(|it| bun_sema::resolve::output_declaration_file_name(it, None).is_some());
+            let common = sources.reduce(|a, b| {
+                let same = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+                a[..same].to_vec()
+            });
+            let common = common.unwrap_or_default();
+            let end = common.iter().rposition(|&b| b == b'/').unwrap_or(0);
+            common[..end].to_vec()
+        };
+        let common = common.strip_suffix(b"/").unwrap_or(&common).to_vec();
+        let output = output_dir.as_ref().map(|dir| (&dir[..], &common[..]));
+        let (Some(written), Some(output)) = (
+            checker.emit_declaration_file(file),
+            bun_sema::resolve::output_declaration_file_name(&path, output)
+                .or_else(|| bun_sema::resolve::output_declaration_file_name(&path, None)),
+        ) else {
+            return;
+        };
+        // `fileOutput`, `removeTestPathPrefixes`
+        let name = if settings.get("fullemitpaths").is_some_and(|it| it == "true") {
+            output.strip_prefix(b"/.src/").unwrap_or(&output)
+        } else {
+            output.rsplit(|&b| b == b'/').next().unwrap_or_default()
+        };
+        let mut section = [b"//// [", name, b"]\r\n"].concat();
+        for line in written.split_inclusive(|&b| b == b'\n') {
+            match line.strip_suffix(b"\n") {
+                Some(line) => section.extend_from_slice(&[line, b"\r\n"].concat()),
+                None => section.extend_from_slice(line),
+            }
+        }
+        // In the order of the program.
+        let order = &checker.p.files.order;
+        let place = order
+            .iter()
+            .position(|&it| it == file)
+            .unwrap_or(order.len());
+        dts.unwrap().lock().unwrap().push((place as u32, section));
+    };
     let closed_a_circle = AtomicBool::new(false);
     let note_circle = |program: &bun_sema::check::Program| {
         let closed = program.closed_a_circle.load(Ordering::Relaxed);
@@ -1297,6 +1365,8 @@ fn run_one(
         progress: None,
         only: None,
         order: 1,
+        digests: false,
+        plan_options: bun_sema_driver::PlanOptions::default(),
         keeps_everything: false,
         stops_where_tsc_does: false,
         says_it_as_typescript_does: true,
@@ -1304,10 +1374,12 @@ fn run_one(
         checked: types
             .is_some()
             .then_some(&note_circle as &(dyn Fn(&bun_sema::check::Program) + Sync)),
-        after_file: types.is_some().then_some(
-            &write_types
-                as &(dyn Fn(&mut bun_sema::check::Checker<'_>, bun_sema::program::FileId) + Sync),
-        ),
+        declaration_file_written: None,
+        after_file: match (types, dts) {
+            (Some(_), _) => Some(&write_types),
+            (None, Some(_)) => Some(&write_dts),
+            (None, None) => None,
+        },
     };
     let report = bun_sema_driver::check_project(
         &host,
@@ -1416,6 +1488,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                         let name = format!("{}/{configured}", suite.name);
                         let types = setup.types_out.map(|_| Mutex::new(String::new()));
                         let symbols = setup.symbols_out.map(|_| Mutex::new(String::new()));
+                        let dts = setup.dts_out.map(|_| Mutex::new(Vec::new()));
                         let _watched = Watched::new(&name);
                         let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             run_one(
@@ -1426,8 +1499,21 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                 has_baselines,
                                 types.as_ref(),
                                 symbols.as_ref(),
+                                dts.as_ref(),
                             )
                         }));
+                        if let (Some(out), Some(dts), Ok(Some(_))) = (setup.dts_out, dts, &ran) {
+                            let mut sections = dts.into_inner().unwrap();
+                            sections.sort();
+                            let sections: Vec<Vec<u8>> =
+                                sections.into_iter().map(|it| it.1).collect();
+                            let dir = format!("{out}/{}", suite.name);
+                            let _ = std::fs::create_dir_all(&dir);
+                            let _ = std::fs::write(
+                                format!("{dir}/{configured}.dts"),
+                                sections.concat(),
+                            );
+                        }
                         if let (Some(out), Some(symbols), Ok(Some(_))) =
                             (setup.symbols_out, symbols, &ran)
                         {

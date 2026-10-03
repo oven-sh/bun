@@ -5,6 +5,7 @@
 //! is in the circle, and what only leads to it is not. Here the circles are looked for in what is written, and among those that
 //! `Checker::enter` came upon when the types were asked for.
 
+use super::explain::NOWHERE;
 use super::sink::held;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, Symbol, SymbolId};
@@ -19,9 +20,10 @@ fn is_mapped_type_written_in(hir: &hir::File, node: TypeNodeId) -> bool {
     }
     match hir[node].kind {
         TypeNodeKind::Mapped(_) => true,
-        TypeNodeKind::Array(t) | TypeNodeKind::Keyof(t) | TypeNodeKind::Readonly(t) => {
-            is_mapped_type_written_in(hir, t)
-        }
+        TypeNodeKind::Array(t)
+        | TypeNodeKind::Keyof(t)
+        | TypeNodeKind::Readonly(t)
+        | TypeNodeKind::JSDoc { ty: t, .. } => is_mapped_type_written_in(hir, t),
         TypeNodeKind::Tuple(elems) => elems
             .iter()
             .any(|e| is_mapped_type_written_in(hir, hir[e].ty)),
@@ -97,7 +99,7 @@ impl Checker<'_> {
             let own = self.files().sym(file, symbol);
             self.base_types(own);
         }
-        self.check_circular_mapped_properties(file);
+        self.check_circular_mapped_properties();
         for p in 0..hir.type_params.len() {
             let constraint = hir.type_params[p].constraint;
             if constraint.is_none() || bound.type_param_scope[p].is_none() {
@@ -112,10 +114,7 @@ impl Checker<'_> {
                 is_circular = self
                     .constraint_from_type_param(param)
                     .is_some_and(|extended| self.constraint_comes_back(param, extended));
-                if !is_circular {
-                    self.base_constraint(param);
-                    is_circular = self.p.circular_constraints.get(&param).is_some();
-                }
+                is_circular = is_circular || !self.has_non_circular_base_constraint(param);
             }
             if is_circular {
                 let start = start_of_constraint(hir, constraint);
@@ -223,8 +222,8 @@ impl Checker<'_> {
         self.check_circular_assignment_declarations(file);
     }
 
-    /// The end of `getTypeOfAccessors`, where `popTypeResolution` finds the circle. `members`: the declarations of the property.
-    pub(super) fn report_circular_accessors(&mut self, members: &[(FileId, MemberId)]) {
+    /// The end of `getTypeOfAccessors`, where `popTypeResolution` finds the cycle. `members`: the declarations of the property `sym`.
+    pub(super) fn report_circular_accessors(&mut self, sym: Sym, members: &[(FileId, MemberId)]) {
         let of_kind = |c: &Self, kind: MemberKind| {
             members
                 .iter()
@@ -255,7 +254,8 @@ impl Checker<'_> {
             (None, Some(setter)) => (setter, 2502),
             // It goes to the set accessor, which is nil.
             _ if auto_accessor.is_some_and(|(file, m)| self.hir(file)[m].ty.is_some()) => {
-                return self.report_global_error(2502, vec![name]);
+                let err = Reported::new(NOWHERE, 2502, held(vec![name]));
+                return self.add_diagnostic_of(Some(Query::Symbol(sym)), err);
             }
             _ => match getter {
                 Some(getter) if self.p.files.options.no_implicit_any => (getter, 7023),
@@ -268,7 +268,7 @@ impl Checker<'_> {
             self.end_of_member_name(file, accessor),
         );
         let err = self.new_diagnostic(at, code, &[Arg::Text(&name)]);
-        self.commit(err);
+        self.add_diagnostic_of(Some(Query::Symbol(sym)), err);
     }
 
     /// `symbol.ValueDeclaration` of the CommonJS export `symbol`: the assignment. `None` if it is no assignment.
@@ -319,50 +319,36 @@ impl Checker<'_> {
     }
 
     /// `getTypeOfMappedSymbol`: 2615 at `c.currentNode`, the type node being checked when the type of a property of a mapped type
-    /// turns out to depend on itself.
-    fn check_circular_mapped_properties(&mut self, file: FileId) {
-        let hir = self.hir(file);
-        if self.p.circular_mapped_props.len() == 0 {
-            return;
-        }
-        for (n, node) in hir.types.iter().enumerate() {
-            if self
-                .p
-                .circular_mapped_props
-                .get(&(file, TypeNodeId(n as u32)))
-                .is_some()
-            {
-                // A variable of that type that is read while the file is emitted makes the type first.
-                let made = self.type_from_node(file, TypeNodeId(n as u32));
-                // Under whichever alias: the keys of the mapped type, which lead into the circle, are the same.
-                let made = self.intern(self.data(made).clone());
-                let variable = if matches!(self.data(made), TypeData::Anon { .. }) {
-                    self.first_variable_read_by_emit(file, |c, ty| {
-                        c.intern(c.data(ty).clone()) == made
-                    })
-                } else {
-                    None
-                };
-                let (start, end) = match variable {
-                    Some(at) => (at, self.end_of_token_at(file, at)),
-                    None => (node.pos, self.end_of_type_node(file, TypeNodeId(n as u32))),
-                };
-                let names = &self.p.circular_mapped_prop_names;
-                let named = names.get(&(file, TypeNodeId(n as u32)));
-                {
-                    let args = match named {
-                        Some((mapped, name)) => vec![
-                            match self.prop_of(mapped, name) {
-                                Some((prop, _)) => self.prop_to_string(&prop),
-                                None => self.atom_text(name),
-                            },
-                            self.type_to_string(mapped),
-                        ],
-                        None => Vec::new(),
-                    };
-                    self.add_diagnostic(Reported::new((file, start, end), 2615, held(args)));
-                }
-            }
+    /// turns out to depend on itself. For the cycles that this task has found since the last call, in whatever file the node is.
+    /// A task that hits the entry of the property has nothing to report.
+    pub(super) fn check_circular_mapped_properties(&mut self) {
+        let mut found = std::mem::take(&mut self.circular_mapped_props);
+        // The first cycle found at a node names the property.
+        found.sort_by_key(|&(node, ..)| node);
+        found.dedup_by_key(|&mut (node, ..)| node);
+        for ((file, node), mapped, name) in found {
+            // A variable of that type that is read while the file is emitted makes the type first.
+            let made = self.type_from_node(file, node);
+            // Under any alias: the keys of the mapped type, which lead into the cycle, are the same.
+            let made = self.intern(self.data(made).clone());
+            let variable = if matches!(self.data(made), TypeData::Anon { .. }) {
+                self.first_variable_read_by_emit(file, |c, ty| c.intern(c.data(ty).clone()) == made)
+            } else {
+                None
+            };
+            let (start, end) = match variable {
+                Some(at) => (at, self.end_of_token_at(file, at)),
+                None => (self.hir(file)[node].pos, self.end_of_type_node(file, node)),
+            };
+            let args = vec![
+                match self.prop_of(mapped, name) {
+                    Some((prop, _)) => self.prop_to_string(&prop),
+                    None => self.atom_text(name),
+                },
+                self.type_to_string(mapped),
+            ];
+            let err = Reported::new((file, start, end), 2615, held(args));
+            self.add_diagnostic_of(Some(Query::MappedProp(mapped, name)), err);
         }
     }
 
@@ -391,25 +377,29 @@ impl Checker<'_> {
     }
 
     /// The end of `getReturnTypeOfSignature`, where `popTypeResolution` finds the circle: 2577, 7023 at the name of the function, 7024
-    /// at one that has none. Of a getter of an object literal it is the end of `getTypeOfAccessors`.
-    pub(super) fn report_circular_return_type(&mut self, file: FileId, func: FnId) {
-        self.p.circular_returns.insert((file, func), ());
+    /// at one that has none. Of a getter of an object literal it is the end of `getTypeOfAccessors`. `owner`: see `add_diagnostic_of`.
+    pub(super) fn report_circular_return_type(
+        &mut self,
+        owner: Option<Query>,
+        file: FileId,
+        func: FnId,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let no_implicit_any = self.p.files.options.no_implicit_any;
-        let owner = bound.fns[func.idx()].owner;
+        let fn_owner = bound.fns[func.idx()].owner;
         let named = |c: &mut Self, of: FnId, code: u32| {
             if let Some(start) = c.name_of_function(file, of) {
                 let end = c.end_of_name_at(file, start);
                 let name = c.source_text(file, start, end);
                 let err = c.new_diagnostic((file, start, end), code, &[Arg::Text(&name)]);
-                c.commit(err);
+                c.add_diagnostic_of(owner, err);
                 return true;
             }
             false
         };
         if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
             // The accessors of classes, interfaces and type literals are reported with the property they make.
-            if hir[func].kind == FnKind::Getter && matches!(owner, FnOwner::Expr(_)) {
+            if hir[func].kind == FnKind::Getter && matches!(fn_owner, FnOwner::Expr(_)) {
                 let setter = self
                     .sibling_accessor(file, func, FnKind::Setter)
                     .filter(|&s| {
@@ -426,14 +416,14 @@ impl Checker<'_> {
             let ret = hir[func].ret;
             let at = (file, hir[ret].pos, self.end_of_type_node(file, ret));
             let err = self.new_diagnostic(at, 2577, &[]);
-            self.commit(err);
+            self.add_diagnostic_of(owner, err);
         } else if no_implicit_any
             && !matches!(hir[func].body, FnBody::None)
             && !named(self, func, 7023)
         {
             let (start, end) = self.error_range_of_fn(file, func);
             let err = self.new_diagnostic((file, start, end), 7024, &[]);
-            self.commit(err);
+            self.add_diagnostic_of(owner, err);
         }
     }
 
@@ -606,9 +596,10 @@ impl Checker<'_> {
             TypeNodeKind::Mapped(m) => {
                 self.aliases_made_at_once(file, hir[hir[m].param].constraint, into)
             }
-            TypeNodeKind::Array(t) | TypeNodeKind::Keyof(t) | TypeNodeKind::Readonly(t) => {
-                self.aliases_made_at_once(file, t, into)
-            }
+            TypeNodeKind::Array(t)
+            | TypeNodeKind::Keyof(t)
+            | TypeNodeKind::Readonly(t)
+            | TypeNodeKind::JSDoc { ty: t, .. } => self.aliases_made_at_once(file, t, into),
             TypeNodeKind::Tuple(elems) => {
                 for e in elems.iter() {
                     self.aliases_made_at_once(file, hir[e].ty, into);
@@ -704,9 +695,10 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match hir[node].kind {
             TypeNodeKind::Mapped(m) => into.push(hir[m].param),
-            TypeNodeKind::Array(t) | TypeNodeKind::Keyof(t) | TypeNodeKind::Readonly(t) => {
-                self.mapped_keys_made_at_once(file, t, into)
-            }
+            TypeNodeKind::Array(t)
+            | TypeNodeKind::Keyof(t)
+            | TypeNodeKind::Readonly(t)
+            | TypeNodeKind::JSDoc { ty: t, .. } => self.mapped_keys_made_at_once(file, t, into),
             TypeNodeKind::Tuple(elems) => {
                 for e in elems.iter() {
                     self.mapped_keys_made_at_once(file, hir[e].ty, into);

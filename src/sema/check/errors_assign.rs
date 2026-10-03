@@ -632,9 +632,9 @@ impl Checker<'_> {
                 let text = format!(
                     "{}{}",
                     if op == UnOp::Plus { '+' } else { '-' },
-                    self.files().atoms.text(digits)
+                    self.atoms().text(digits)
                 );
-                return Ok(Some(self.files().atoms.intern_str(&text)));
+                return Ok(Some(self.atoms().intern_str(&text)));
             }
             _ => {}
         }
@@ -1500,11 +1500,11 @@ impl Checker<'_> {
     /// (`getLiteralTypeFromProperty`).
     fn indexed_access_by_name(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
         // From the name of a symbol there is no way back to the symbol.
-        if self.files().atoms.is_symbol_name(name) {
+        if self.atoms().is_symbol_name(name) {
             return self.type_of_property(ty, name);
         }
         // `isNumericLiteralName`: what a number is spelled as.
-        let key = match self.files().atoms.text(name).parse::<f64>() {
+        let key = match self.atoms().text(name).parse::<f64>() {
             Ok(n) if self.number_name(n) == name => self.number_literal(n, false),
             _ => self.string_literal(name, false),
         };
@@ -1817,9 +1817,10 @@ impl Checker<'_> {
     // ───────────────────────────── what is said ─────────────────────────────
 
     /// `checkTypeRelatedToEx(source, target, relation, errorNode, headMessage)`, of two types that the caller has found not to be
-    /// related: reports what it reports, and gives that back. `at`, `end`: from where to where `errorNode` goes.
+    /// related: reports what it reports, and gives that back. `at`, `end`: from where to where `errorNode` goes in `file`.
     pub(super) fn report_not_assignable_with_end(
         &mut self,
+        file: FileId,
         source: TypeId,
         target: TypeId,
         at: u32,
@@ -1832,7 +1833,7 @@ impl Checker<'_> {
         } else {
             Relation::Assignable
         };
-        let place = (self.checking?, at, end);
+        let place = (file, at, end);
         let (is_related, diagnostic) =
             self.relation_diagnostic(source, target, relation, place, Some(head));
         let diagnostic = match diagnostic {
@@ -1852,8 +1853,7 @@ impl Checker<'_> {
         }
         let first = lines.remove(0);
         let code = first.code;
-        let at = (self.checking.unwrap(), start, end);
-        let mut diagnostic = Reported::new(at, code, first.args);
+        let mut diagnostic = Reported::new((file, start, end), code, first.args);
         super::explain::add_lines(&mut diagnostic.message_chain, lines);
         diagnostic.related_information = related;
         self.add_diagnostic(diagnostic);

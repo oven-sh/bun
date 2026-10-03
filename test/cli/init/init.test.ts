@@ -432,8 +432,10 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       expect({ tscStdout, tscStderr, tscExited }).toMatchObject({ tscExited: 0 });
 
       // So does `bun check`, which is what the `typecheck` script of every template runs.
+      // bun-plugin-tailwind's `bun` peer dep links a node_modules/.bin/bun that
+      // would otherwise shadow bunExe() in the nested `bun check`, so pass --bun.
       await using check = Bun.spawn({
-        cmd: [bunExe(), "run", "typecheck"],
+        cmd: [bunExe(), "--bun", "run", "typecheck"],
         cwd: temp,
         stdio: ["ignore", "pipe", "pipe"],
         env: bunEnv,
@@ -446,9 +448,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       expect({ checkStdout, checkStderr, checkExited }).toMatchObject({ checkStdout: "", checkExited: 0 });
 
       // The blank template has no `build` script; the react templates do.
-      // bun-plugin-tailwind's `bun` peer dep links a node_modules/.bin/bun that
-      // would otherwise shadow bunExe() in the nested `bun run build.ts`, so
-      // pass --bun.
+      // --bun for the same reason: the script is `bun run build.ts`.
       const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
       if (pkg.scripts?.build) {
         await using build = Bun.spawn({

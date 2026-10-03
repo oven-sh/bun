@@ -777,6 +777,51 @@ pub fn modifier_text(modifier: Flags) -> &'static str {
         .map_or("", |text| text.1)
 }
 
+/// The TypeScript component that reports a [`Diagnostic`]. It determines when the checker reports it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum DiagnosticKind {
+    /// `SourceFile.Diagnostics()`: parser.go and scanner.go. `hasParseDiagnostics` counts only these.
+    Parse,
+    /// `SourceFile.JSDiagnostics()`
+    Js,
+    /// `SourceFile.JSDocDiagnostics()`. Reported only if the file is checked (`IsCheckJSEnabledForFile`).
+    JsDoc,
+    /// `grammarErrorOnNode` and similar, and the binder's identifier checks. Suppressed in a file that has parse diagnostics.
+    Grammar,
+    /// `c.error`. Not suppressed by parse diagnostics.
+    Checker,
+}
+
+/// `ast.Diagnostic`
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Diagnostic {
+    pub kind: DiagnosticKind,
+    pub start: u32,
+    /// 0: the end of the token at `start`. [`Diagnostic::NO_LENGTH`]: `start`.
+    pub end: u32,
+    pub code: u32,
+    /// The message arguments: `{0}`, `{1}`, ...
+    pub args: Box<[Box<[u8]>]>,
+    /// `AddRelatedInfo`
+    pub related: Vec<Diagnostic>,
+}
+
+impl Diagnostic {
+    /// An `end` that makes the range empty. An explicit end cannot say so at offset 0.
+    pub const NO_LENGTH: u32 = u32::MAX;
+
+    pub fn new(kind: DiagnosticKind, at: (u32, u32), code: u32, args: &[&[u8]]) -> Diagnostic {
+        Diagnostic {
+            kind,
+            start: at.0,
+            end: at.1,
+            code,
+            args: args.iter().map(|&arg| arg.into()).collect(),
+            related: Vec::new(),
+        }
+    }
+}
+
 /// One of a `ModifierList`, which is in source order.
 #[derive(Copy, Clone, Debug)]
 pub struct Modifier {
@@ -1390,6 +1435,12 @@ pub enum TypeNodeKind {
     Keyof(TypeNodeId),
     Readonly(TypeNodeId),
     UniqueSymbol,
+    /// `?T`, `T?`: a `JSDocNullableType`. `!T`, `T!`: a `JSDocNonNullableType`.
+    JSDoc {
+        ty: TypeNodeId,
+        is_nullable: bool,
+        is_postfix: bool,
+    },
     /// `typeof a.b.c<Args>`
     /// `expr` is `name` as an expression: what it is where it is written depends on the tests made on the way there.
     Typeof {
@@ -1498,30 +1549,20 @@ pub struct File {
     pub is_module_by_decree: bool,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
-    /// The parser could not make sense of the file; whatever is here is partial.
+    /// The parser rejected the file: the tree is partial or empty. Only parse errors are reported for it.
     pub has_errors: bool,
+    /// The parser, the lowering or the binder ran out of stack: the tree is partial or empty. The file is reported as not fully checked
+    /// and the exit code is 1.
+    pub ran_out_of_stack: bool,
     /// `@d`: what is decorated, and the expression. In the order they are written.
     pub decorators: Few<(DecoratorOwner, ExprId)>,
     /// `experimentalDecorators`
     pub legacy_decorators: bool,
-    /// What the parser objected to and went on from, the tree being whole: where, and the code it goes by.
-    pub early_errors: Vec<(u32, u32)>,
-    /// What the message of an error of the parser names (`{0}`, `{1}` ..): the start and the code of the error, and the arguments.
-    pub error_arguments: Few<(u32, u32, Box<[Box<[u8]>]>)>,
-    /// Where the errors of the parser end that say what was expected: start, code and end. `parseErrorAtCurrentToken` reports the token
-    /// the parser is at, as its scanner sees it there, and `parseErrorAt` what it is given, which can be nothing at all.
-    pub error_ends: Few<(u32, u32, u32)>,
-    /// `SourceFile.JSDiagnostics()`: start, end (0: that of the token at the start), code and `{0}`, if the message has one.
-    /// `hasParseDiagnostics` does not count them.
-    pub js_diagnostics: Few<(u32, u32, u32, &'static [u8])>,
+    /// Diagnostics produced while parsing and lowering the file.
+    pub diagnostics: Vec<Diagnostic>,
     /// `hasParseDiagnostics`: the parser or the scanner reported an error. `grammarErrorOnNode` and the binder's checks of
     /// reserved names then report nothing.
     pub has_parse_diagnostics: bool,
-    /// `parseExpectedMatchingBrackets`: where the parser missed a closing bracket, where the bracket it would have closed is, and which
-    /// bracket that is.
-    pub opening_brackets: Few<(u32, u32, u8)>,
-    /// Errors about syntax that tsgo reports with a plain `c.error`, so parse errors do not silence them: start and code.
-    pub checker_errors: Few<(u32, u32)>,
     /// Pieces of type syntax that were given up on.
     pub syntax_errors: u32,
     /// Where the first of either was noticed.
@@ -1572,16 +1613,13 @@ pub struct File {
     pub jsx_pragmas: JsxPragmas,
     /// The JSDoc comments of a JavaScript file, from where to where. Sorted. A node whose position is in one is made from a tag.
     pub jsdoc_comments: Few<(u32, u32)>,
-    /// `JSDocDiagnostics`: what the parser objects to in the JSDoc comments that belong to a node, start and code. Only reported if
-    /// the file is checked (`IsCheckJSEnabledForFile`), and no parse diagnostics as far as `hasParseDiagnostics` goes.
-    pub jsdoc_errors: Few<(u32, u32)>,
     /// The types of `@type` tags on what has no place for a type. Sorted by owner.
     pub jsdoc_types: Few<(JsDocTypeOwner, TypeNodeId)>,
     /// `@public`, `@private`, `@protected`, `@readonly` and `@override` on an assignment: the assignment and the modifiers. Sorted.
     pub jsdoc_modifiers: Few<(ExprId, Flags)>,
-    /// `checkUnmatchedJSDocParameters`, as far as the syntax tells: the function, where the name in the `@param` tag is, and the
-    /// code. 8024 and 8032 hold unless the function refers to `arguments`, 8029 holds if it does.
-    pub jsdoc_param_errors: Few<(FnId, u32, u32)>,
+    /// `checkUnmatchedJSDocParameters`, the part that only needs syntax: the function and the diagnostic for the name in its
+    /// `@param` tag. 8024 and 8032 apply unless the function references `arguments`. 8029 applies if it does.
+    pub jsdoc_param_errors: Few<(FnId, Diagnostic)>,
 
     pub ids: Vec<u32>,
     pub numbers: Vec<f64>,
@@ -1771,22 +1809,19 @@ impl File {
             .find(|modifier| modifier.kind == ModifierKind::Keyword(flag))
             .map(|modifier| modifier.pos)
     }
-    #[inline]
-    /// `code` is said of what goes from `start` to `end`.
-    pub fn error(&mut self, start: u32, end: u32, code: u32) {
-        self.early_errors.push((start, code));
-        self.error_ends.push((start, code, end));
+    /// Adds a diagnostic without arguments for the range `start..end`.
+    pub fn error(&mut self, kind: DiagnosticKind, start: u32, end: u32, code: u32) {
+        let diagnostic = Diagnostic::new(kind, (start, end), code, &[]);
+        self.diagnostics.push(diagnostic);
     }
-    /// The same, and the message names `args`.
-    pub fn error_about(&mut self, start: u32, end: u32, code: u32, args: &[&[u8]]) {
-        self.early_errors.push((start, code));
-        self.explain_error(start, end, code, args);
+    /// Whether the file has a `Parse` or a `Grammar` diagnostic.
+    pub fn has_parse_or_grammar_diagnostics(&self) -> bool {
+        use DiagnosticKind::{Grammar, Parse};
+        (self.diagnostics.iter()).any(|d| matches!(d.kind, Parse | Grammar))
     }
-    /// Where the error `code` at `start` ends and what its message names, of an error that is kept in a list of its own.
-    pub fn explain_error(&mut self, start: u32, end: u32, code: u32, args: &[&[u8]]) {
-        self.error_ends.push((start, code, end));
-        let args = args.iter().map(|&arg| arg.into()).collect();
-        self.error_arguments.push((start, code, args));
+    /// Whether a diagnostic with `code` starts at `start`.
+    pub fn has_diagnostic(&self, start: u32, code: u32) -> bool {
+        (self.diagnostics.iter()).any(|d| d.start == start && d.code == code)
     }
     #[inline]
     pub fn ty(&mut self, kind: TypeNodeKind, pos: u32, end: u32) -> TypeNodeId {
@@ -1923,15 +1958,13 @@ impl File {
             deferred_import_calls,
             import_attributes,
             specifier_expressions,
-            checker_errors,
             after_skipped,
             stray_decorators,
             jsdoc_comments,
-            jsdoc_errors,
             jsdoc_types,
             jsdoc_modifiers,
             jsdoc_param_errors,
-            js_diagnostics,
+            diagnostics,
             decorators,
             comment_directives
         );

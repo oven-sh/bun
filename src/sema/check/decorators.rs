@@ -53,27 +53,27 @@ impl<'p> Checker<'p> {
         let params: Vec<SigParam> = params
             .iter()
             .map(|&(name, ty)| SigParam {
-                name: self.files().atoms.intern(name),
+                name: self.atoms().intern(name),
                 ty,
                 optional: false,
                 rest: false,
                 has_declaration: false,
             })
             .collect();
-        self.p.types.intern_sig(SigData::Synth {
+        self.types().intern_sig(SigData::Synth {
             type_params: Box::new([]),
             params: params.into(),
             ret,
             this,
             of: Box::new([]),
+            is_union: true,
         })
     }
 
     /// `getGlobalType` with `reportErrors`: that there is none is said, of no file.
     fn global_type(&mut self, name: &[u8], args: &[TypeId]) -> Option<TypeId> {
         let found = self
-            .files()
-            .atoms
+            .atoms()
             .lookup(name)
             .and_then(|name| self.files().global(name, SymFlags::TYPE));
         let Some(sym) = found else {
@@ -272,7 +272,7 @@ impl<'p> Checker<'p> {
                 let name = match hir[m].key {
                     // `#x` as it is written, without what tells it from the `#x` of other classes.
                     PropKey::Private(name) => {
-                        let written = self.files().atoms.intern(self.written_name(name));
+                        let written = self.atoms().intern(self.written_name(name));
                         self.string_literal(written, false)
                     }
                     // `getLiteralTypeFromPropertyName`: a number only where a number is written.
@@ -282,7 +282,7 @@ impl<'p> Checker<'p> {
                             Some(b'0'..=b'9' | b'.')
                         ) =>
                     {
-                        let n: f64 = self.files().atoms.text(name).parse().unwrap_or(0.0);
+                        let n: f64 = self.atoms().text(name).parse().unwrap_or(0.0);
                         self.number_literal(n, false)
                     }
                     PropKey::Name(name) => self.string_literal(name, false),
@@ -300,7 +300,7 @@ impl<'p> Checker<'p> {
                 ]
                 .into_iter()
                 .map(|(name, ty)| Prop {
-                    name: self.files().atoms.intern(name),
+                    name: self.atoms().intern(name),
                     flags: PropFlags::empty(),
                     source: PropSource::Type(ty),
                     mapper: MapperId::IDENTITY,

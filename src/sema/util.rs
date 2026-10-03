@@ -216,6 +216,33 @@ impl<'a, T> IntoIterator for &'a List<'_, T> {
     }
 }
 
+/// `in_parallel(count, work)` runs `work(i)` exactly once for every `i` below `count`, on the pool, and returns when all have returned.
+pub type InParallel<'a> = &'a dyn Fn(usize, &(dyn Fn(usize) + Sync));
+
+/// `work(&mut items[i])` for every item, on the pool. The first items are begun first.
+pub fn for_each_mut<T: Send>(
+    items: &mut [T],
+    in_parallel: InParallel<'_>,
+    work: &(dyn Fn(&mut T) + Sync),
+) {
+    struct Items<T>(*mut T);
+    // SAFETY: the threads get at different items, which are `Send`.
+    unsafe impl<T: Send> Sync for Items<T> {}
+    impl<T> Items<T> {
+        /// # Safety
+        /// `i` is in bounds, and no other reference to the item is in use.
+        #[allow(clippy::mut_from_ref)]
+        unsafe fn item(&self, i: usize) -> &mut T {
+            // SAFETY: the caller's.
+            unsafe { &mut *self.0.add(i) }
+        }
+    }
+    let all = Items(items.as_mut_ptr());
+    // SAFETY: `in_parallel` gives every `i` below the length to one call, so no two calls have one item, and `items` is borrowed until
+    // all have returned.
+    in_parallel(items.len(), &|i| work(unsafe { all.item(i) }));
+}
+
 const FIRST_CHUNK_BITS: u32 = 10;
 /// One for each number of leading zeros a `u32` can have.
 const CHUNKS: usize = 33;
@@ -282,6 +309,34 @@ impl<T> AppendVec<T> {
         // SAFETY: `offset` is inside the chunk, the slot is this call's alone, and nobody reads it before the index is handed out.
         unsafe { base.wrapping_add(offset).write(make(index)) };
         index
+    }
+
+    /// Gives out `count` indices in a row and returns the first. Their chunks are in place afterwards, so that many threads can `write`
+    /// to them at once.
+    ///
+    /// # Safety
+    /// Every one of the indices is to be given to `write` before the vector is dropped.
+    pub unsafe fn reserve(&self, count: u32) -> u32 {
+        let first = self.len.fetch_add(count, Ordering::Relaxed);
+        if count != 0 {
+            // A later index is in a chunk with fewer leading zeros.
+            for chunk in locate(first + count - 1).0..=locate(first).0 {
+                if self.chunks[chunk].load(Ordering::Acquire).is_null() {
+                    self.install_chunk(chunk);
+                }
+            }
+        }
+        first
+    }
+
+    /// # Safety
+    /// `index` is one that `reserve` has given out, this is the only `write` to it, and nobody reads it before a barrier.
+    #[inline]
+    pub unsafe fn write(&self, index: u32, value: T) {
+        let (chunk, offset) = locate(index);
+        let base = self.chunks[chunk].load(Ordering::Relaxed);
+        // SAFETY: `reserve` has put the chunk in place, `offset` is inside it, and the slot is this call's alone.
+        unsafe { base.wrapping_add(offset).write(value) };
     }
 
     /// Several threads may get here at once. The first to put its chunk in place wins.
@@ -365,14 +420,19 @@ impl Places {
         })
     }
 
-    /// The index of what `is_it` says yes to among those with the hash `spread`.
+    /// The index of what `is_it` says yes to among those with the hash `spread`. `order`: `Acquire` if another thread may be adding.
     #[inline]
-    fn find(&self, spread: u64, mut is_it: impl FnMut(u32) -> bool) -> Option<u32> {
+    fn find(
+        &self,
+        spread: u64,
+        order: Ordering,
+        mut is_it: impl FnMut(u32) -> bool,
+    ) -> Option<u32> {
         let tag = spread as u32;
         let mut at = tag as usize & self.mask;
         loop {
             // SAFETY: `mask` is one less than there are places.
-            let place = unsafe { self.places.get_unchecked(at) }.load(Ordering::Acquire);
+            let place = unsafe { self.places.get_unchecked(at) }.load(order);
             if place == 0 {
                 return None;
             }
@@ -431,7 +491,57 @@ impl GrowingPlaces {
             return None;
         }
         // SAFETY: a table lives as long as `self`: `Writer::tables` owns it and gives nothing up.
-        unsafe { &*current }.find(spread, is_it)
+        unsafe { &*current }.find(spread, Ordering::Acquire, is_it)
+    }
+
+    /// `find`, during a step: nobody adds anything, and the barrier before the step has ordered what was added. Plain loads.
+    #[inline]
+    pub(crate) fn find_frozen(&self, spread: u64, is_it: impl FnMut(u32) -> bool) -> Option<u32> {
+        let current = self.current.load(Ordering::Relaxed);
+        if current.is_null() {
+            return None;
+        }
+        // SAFETY: as in `find`.
+        unsafe { &*current }.find(spread, Ordering::Relaxed, is_it)
+    }
+
+    /// At a barrier, by the one thread that fills this part: adds `count` pairs of a hash and an index, none of which is there yet. One
+    /// lock, and at most one bigger table, for all of them.
+    pub(crate) fn extend(&self, count: usize, added: impl Iterator<Item = (u64, u32)>) {
+        if count == 0 {
+            return;
+        }
+        let mut writer = self.writer.lock();
+        self.make_room(&mut writer, count);
+        let places = writer.tables.last().unwrap();
+        let mut put = 0;
+        for (spread, index) in added {
+            places.put(spread, index);
+            put += 1;
+        }
+        debug_assert_eq!(put, count);
+        writer.count += count;
+    }
+
+    /// Afterwards `more` places can be filled, and three quarters of the table at most are.
+    fn make_room(&self, writer: &mut Writer, more: usize) {
+        let capacity = writer.tables.last().map_or(0, |t| t.mask + 1);
+        if (writer.count + more) * 4 <= capacity * 3 {
+            return;
+        }
+        let needed = ((writer.count + more) * 4).div_ceil(3);
+        let bigger = Places::with_capacity(needed.next_power_of_two().max(capacity * 2).max(16));
+        if let Some(old) = writer.tables.last() {
+            for place in &old.places {
+                let place = place.load(Ordering::Relaxed);
+                if place != 0 {
+                    bigger.put_place(place);
+                }
+            }
+        }
+        self.current
+            .store(std::ptr::from_ref(&*bigger).cast_mut(), Ordering::Release);
+        writer.tables.push(bigger);
     }
 
     /// What `is_it` says yes to, or else what `make` adds.
@@ -446,25 +556,11 @@ impl GrowingPlaces {
         if let Some(found) = writer
             .tables
             .last()
-            .and_then(|t| t.find(spread, &mut is_it))
+            .and_then(|t| t.find(spread, Ordering::Relaxed, &mut is_it))
         {
             return found;
         }
-        let capacity = writer.tables.last().map_or(0, |t| t.mask + 1);
-        if (writer.count + 1) * 4 > capacity * 3 {
-            let bigger = Places::with_capacity((capacity * 2).max(16));
-            if let Some(old) = writer.tables.last() {
-                for place in &old.places {
-                    let place = place.load(Ordering::Relaxed);
-                    if place != 0 {
-                        bigger.put_place(place);
-                    }
-                }
-            }
-            self.current
-                .store(std::ptr::from_ref(&*bigger).cast_mut(), Ordering::Release);
-            writer.tables.push(bigger);
-        }
+        self.make_room(&mut writer, 1);
         let index = make();
         writer.tables.last().unwrap().put(spread, index);
         writer.count += 1;
@@ -514,6 +610,10 @@ impl<K: std::hash::Hash + Eq, V> Default for ShardedMap<K, V> {
 }
 
 impl<K: std::hash::Hash + Eq, V> ShardedMap<K, V> {
+    pub fn entries(&self) -> usize {
+        self.shards.iter().map(|s| s.entries.len() as usize).sum()
+    }
+
     /// What is kept never moves.
     #[inline]
     pub fn get_ref<Q>(&self, key: &Q) -> Option<&V>
@@ -527,6 +627,32 @@ impl<K: std::hash::Hash + Eq, V> ShardedMap<K, V> {
             .places
             .find(spread, |i| shard.entries.get(i).0.borrow() == key)
             .map(|i| &shard.entries.get(i).1)
+    }
+
+    /// `get_ref`, during a step: see `GrowingPlaces::find_frozen`. `spread`: `spread_hash(key)`.
+    #[inline]
+    pub(crate) fn get_frozen(&self, spread: u64, key: &K) -> Option<&V> {
+        let shard = &self.shards[shard_of(spread)];
+        shard
+            .places
+            .find_frozen(spread, |i| shard.entries.get(i).0 == *key)
+            .map(|i| &shard.entries.get(i).1)
+    }
+
+    /// At a barrier, by the one thread that fills the shard of `spread`, which is `spread_hash(key)`. Keeps what is there already.
+    /// Whether `value` was put in.
+    pub(crate) fn add_if_absent(&self, spread: u64, key: &K, value: V) -> bool
+    where
+        K: Clone,
+    {
+        let shard = &self.shards[shard_of(spread)];
+        let mut value = Some(value);
+        shard.places.find_or_add(
+            spread,
+            |i| shard.entries.get(i).0 == *key,
+            || shard.entries.push((key.clone(), value.take().unwrap())),
+        );
+        value.is_none()
     }
 
     /// Keeps what is there already, and returns what is kept.

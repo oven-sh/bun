@@ -159,7 +159,7 @@ impl Checker<'_> {
             b"never",
             b"intrinsic",
         ];
-        if KEYWORDS.contains(&self.files().atoms.bytes(name)) {
+        if KEYWORDS.contains(&self.atoms().bytes(name)) {
             return true;
         }
         let scope = self.bound(file).fns[func.idx()].scope;

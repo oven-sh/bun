@@ -172,7 +172,9 @@ impl<'a> Builder<'a> {
     /// `jsErrorAtRange`. An end of 0: that of the token at the start. `what`: `{0}`, if the message has one.
     pub(crate) fn js_error_at_range(&mut self, at: (u32, u32), code: u32, what: &'static [u8]) {
         if self.is_js {
-            self.file.js_diagnostics.push((at.0, at.1, code, what));
+            let args: &[&[u8]] = if what.is_empty() { &[] } else { &[what] };
+            let diagnostic = Diagnostic::new(DiagnosticKind::Js, at, code, args);
+            self.file.diagnostics.push(diagnostic);
         }
     }
 

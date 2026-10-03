@@ -92,6 +92,8 @@ pub(super) const FAILED: u8 = 2;
 const REPORTS_UNMEASURABLE: u8 = 8;
 const REPORTS_UNRELIABLE: u8 = 16;
 pub(super) const COMPLEXITY_OVERFLOW: u8 = 32;
+pub(super) const STACK_DEPTH_OVERFLOW: u8 = 64;
+const OVERFLOW: u8 = COMPLEXITY_OVERFLOW | STACK_DEPTH_OVERFLOW;
 
 // VarianceFlags
 pub(super) const INVARIANT: u8 = 0;
@@ -116,10 +118,56 @@ const CONSTRUCT_SIGNATURE: u8 = 32;
 
 /// `getRelationKey`: the source, the target, and flags. The flags hold the relation in the low four bits and the intersection
 /// state above it.
-pub(super) type Key = (TypeId, TypeId, u8);
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub(super) struct Key(TypeId, TypeId, u8);
 
-/// Flag of a `Key` for two generic type references. The two ids of such a key are the halves of a hash.
+/// Flag of a `Key` for two generic type references. The two ids of such a key are the halves of a hash. `LOCAL` in the first half: the
+/// hash took in an own id.
 const GENERIC_KEY: u8 = 0x80;
+
+impl Key {
+    /// After the link step the same two references have another hash, so the entry is of no use to another task.
+    #[inline]
+    fn is_hash_of_own_ids(self) -> bool {
+        self.2 & GENERIC_KEY != 0 && self.0.is_local()
+    }
+}
+
+impl MaybeLocal for Key {
+    #[inline]
+    fn is_local(&self) -> bool {
+        self.0.is_local() || self.1.is_local()
+    }
+}
+
+/// Not the tuple's: the halves of a hash are no ids.
+impl Follow for Key {
+    fn visit<V: Visitor>(&self, visitor: &mut V) {
+        let Key(source, target, flags) = *self;
+        if flags & GENERIC_KEY == 0 {
+            visitor.ty(source);
+            visitor.ty(target);
+        } else {
+            visitor.plain(&(source.0, target.0));
+        }
+        visitor.plain(&flags);
+    }
+
+    fn follow(&mut self, link: &Link) {
+        if self.2 & GENERIC_KEY == 0 {
+            self.0.follow(link);
+            self.1.follow(link);
+        }
+    }
+
+    fn is_bound(&self, own: &OwnStore) -> bool {
+        if self.2 & GENERIC_KEY == 0 {
+            (self.0, self.1).is_bound(own)
+        } else {
+            self.is_hash_of_own_ids()
+        }
+    }
+}
 
 /// The state of `keyBuilder.writeGenericTypeReferences`.
 struct GenericKeyBuilder {
@@ -129,6 +177,8 @@ struct GenericKeyBuilder {
     type_param_count: usize,
     /// A constrained type parameter was written by id.
     constrained: bool,
+    /// An id with `LOCAL` was written.
+    has_own_id: bool,
 }
 
 impl GenericKeyBuilder {
@@ -174,6 +224,8 @@ pub(super) struct Relater {
     pub(super) overflow: bool,
     /// A cached `COMPLEXITY_OVERFLOW` entry answered one of the comparisons.
     hit_cached_overflow: bool,
+    /// `len(r.sourceStack)` or `len(r.targetStack)` has come to 100: that is why `overflow` is set.
+    is_too_deep: bool,
     /// `related` has been through its own rules with `top_source` and `top_target`: no simple rule relates them, and they are
     /// not an object type and a primitive. The first comparison takes it.
     is_from_related: bool,
@@ -212,6 +264,7 @@ impl Relater {
             expanding: 0,
             overflow: false,
             hit_cached_overflow: false,
+            is_too_deep: false,
             is_from_related: false,
             top_key: None,
             relation_count: 2_000_000,
@@ -660,9 +713,9 @@ impl<'p> Checker<'p> {
         if !self.p.files.options.strict_null_checks || parts.len() < 3 {
             return false;
         }
-        // Members are in the order of their ids, and few ids are lower than those of the kinds of `undefined` and of `null`.
+        // The constituents are in the order of `CompareTypes`, which starts with the flags.
         let (mut has_undefined, mut has_null) = (false, false);
-        for p in parts.iter().take_while(|p| **p <= TypeId::NULL_DECLARED) {
+        for p in parts.iter().take_while(|p| self.flags(**p) <= tf::NULL) {
             has_undefined |= p.is_undefined();
             has_null |= p.is_null();
         }
@@ -772,11 +825,15 @@ impl<'p> Checker<'p> {
     /// `global_ref` without type arguments.
     #[inline]
     fn plain_global_ref(&mut self, name: Atom) -> TypeId {
-        if let Some(known) = self.p.plain_global_refs.get(&name) {
+        if let Some(known) = self.p.plain_global_refs.get(&mut self.task, &name) {
             return known;
         }
+        let scope = self.begin_scope();
         let global = self.global_ref(name, &[]);
-        self.p.plain_global_refs.insert(name, global)
+        match self.end_scope_as(scope, false) {
+            Ok(stored) => (self.p.plain_global_refs).insert(&mut self.task, name, global, stored),
+            Err(_) => global,
+        }
     }
 
     /// `Checker::inherited_names`. They stay as they are if one of the four is not there, or not yet.
@@ -882,7 +939,7 @@ impl<'p> Checker<'p> {
         let mut missed = None;
         if is_object_kind(sd) && is_object_kind(td) {
             let key = self.relation_key_as(source, sd, target, td, relation, STATE_NONE);
-            if let Some(entry) = self.p.relations.get(&key.0) {
+            if let Some(entry) = self.p.relations.get(&mut self.task, &key.0) {
                 // The cache is shared between threads, so another thread measuring the same symbol may have stored this
                 // comparison already. Without its flags the variances would lack `UNMEASURABLE` or `UNRELIABLE`.
                 if is_marker_comparison {
@@ -913,6 +970,19 @@ impl<'p> Checker<'p> {
         missed: Option<(Key, bool)>,
         is_trial: bool,
     ) -> bool {
+        let (cuts, outermost) = (
+            self.cuts(),
+            self.frames.first().map_or(0, |frame| frame.serial),
+        );
+        if cuts != 0 && !is_trial {
+            let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
+            if let Some(&(under, is_related)) = self.relations_cut_short.get(&key)
+                && under == outermost
+            {
+                self.cut_short_again();
+                return is_related;
+            }
+        }
         let mut r = self
             .free_relaters
             .pop()
@@ -931,6 +1001,7 @@ impl<'p> Checker<'p> {
         // `relationCount <= 0`. Running out of nesting depth or native stack is not a complexity overflow.
         let is_too_complex = overflow && r.relation_count <= 0 && self.cycles == r.cycles;
         let hit_cached_overflow = r.hit_cached_overflow;
+        let is_too_deep = overflow && std::mem::take(&mut r.is_too_deep) && !is_trial;
         r.is_from_related = false;
         r.top_key = None;
         r.maybe_keys.clear();
@@ -948,24 +1019,40 @@ impl<'p> Checker<'p> {
         if is_too_complex {
             // Recorded as failed so that the comparison is not attempted again.
             let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
-            self.p.relations.insert(key, FAILED | COMPLEXITY_OVERFLOW);
+            let scope = self.begin_scope();
+            if let Ok(stored) = self.end_scope_as(scope, false) {
+                self.insert_relation(key, FAILED | COMPLEXITY_OVERFLOW, stored);
+            }
             self.relation_too_complex = true;
+        } else if is_too_deep {
+            let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
+            let scope = self.begin_scope();
+            if let Ok(stored) = self.end_scope_as(scope, false) {
+                self.insert_relation(key, FAILED | STACK_DEPTH_OVERFLOW, stored);
+            }
+            // There is no error node: `errorNode = c.currentNode`.
+            self.error_at_current_expression(2321, &[Arg::Type(source), Arg::Type(target)]);
         } else if hit_cached_overflow && !overflow && !result.holds() {
             // `reportRelationError`: the overflow replaces the relation error only if it was recorded for `source` and `target`.
             let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
             if self
                 .p
                 .relations
-                .get(&key)
+                .get(&mut self.task, &key)
                 .is_some_and(|entry| entry & COMPLEXITY_OVERFLOW != 0)
             {
                 self.relation_too_complex = true;
             }
         }
-        if overflow {
-            return false;
+        let is_related = !overflow && result.holds();
+        // `checkTypeRelatedToEx` records an overflow "such that we don't attempt the overflowing operation again". Where these limits are hit
+        // depends on the caller, so the record is private to this checker.
+        if self.cuts() != cuts && !is_trial {
+            let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
+            self.relations_cut_short
+                .insert(key, (outermost, is_related));
         }
-        result.holds()
+        is_related
     }
 
     /// `isSimpleTypeRelatedTo`. `sd`, `td`: what `s` and `t` are.
@@ -1393,9 +1480,9 @@ impl<'p> Checker<'p> {
             return Some(TypeId::ERROR);
         }
         let param = self.type_param(file, mapped.param);
-        let mut pairs = self.p.types.mapping(mapper).to_vec();
+        let mut pairs = self.types().mapping(mapper).to_vec();
         pairs.push((param, index));
-        let with_key = self.p.types.mapper(pairs);
+        let with_key = self.types().mapper(pairs);
         let template = self.type_from_node(file, mapped.ty);
         let template = self.instantiate(template, with_key);
         // Unless it says `?` itself, what it takes its modifiers from says, `-?` or not.
@@ -1470,17 +1557,23 @@ impl<'p> Checker<'p> {
                 index,
                 undefined,
             } => {
-                self.base_constraint(t);
-                if self.p.circular_constraints.get(&t).is_some() {
+                if !self.has_non_circular_base_constraint(t) {
                     return None;
                 }
                 self.constraint_of_indexed_access(obj, index, undefined)
             }
-            TypeData::Cond { .. } => match self.constraint_of_distributive_conditional(t) {
-                Some(constraint) => Some(constraint),
-                None => Some(self.default_constraint_of_conditional(t)),
-            },
+            // `getConstraintOfConditionalType`
+            TypeData::Cond { .. } => (self.has_non_circular_base_constraint(t))
+                .then(|| self.constraint_from_conditional(t)),
             _ => self.base_constraint_of(t),
+        }
+    }
+
+    /// `getConstraintFromConditionalType`
+    pub(super) fn constraint_from_conditional(&mut self, t: TypeId) -> TypeId {
+        match self.constraint_of_distributive_conditional(t) {
+            Some(constraint) => constraint,
+            None => self.default_constraint_of_conditional(t),
         }
     }
 
@@ -1511,7 +1604,11 @@ impl<'p> Checker<'p> {
     /// `hasNonCircularBaseConstraint`
     pub(super) fn has_non_circular_base_constraint(&mut self, t: TypeId) -> bool {
         self.base_constraint(t);
-        self.p.circular_constraints.get(&t).is_none()
+        // `circularConstraintType`: marked while the frame is in flight, stored with the value afterwards. The read is a hit: every caller
+        // passes a type of a kind that has an entry.
+        !self.constraints_marked_circular.contains(&t)
+            && !(self.p.constraints.get(&mut self.task, &t))
+                .is_some_and(|(_, is_circular)| is_circular)
     }
 
     /// `getBaseConstraintOfType`. `None`: there is none.
@@ -1620,7 +1717,10 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── conditional types ─────────────────────────────
 
     pub(super) fn cond_origin(&self, t: TypeId) -> (FileId, TypeNodeId, MapperId, [TypeNodeId; 4]) {
-        let TypeData::Cond { file, node, mapper } = *self.data(t) else {
+        let TypeData::Cond {
+            file, node, mapper, ..
+        } = *self.data(t)
+        else {
             unreachable!()
         };
         let TypeNodeKind::Cond {
@@ -1705,7 +1805,7 @@ impl<'p> Checker<'p> {
                     .type_arguments(check)
                     .iter()
                     .any(|&e| self.is_generic(e));
-        let mut pairs = self.p.types.mapping(mapper).to_vec();
+        let mut pairs = self.types().mapping(mapper).to_vec();
         if check_is_deferred {
             for &param in &params {
                 let widest = match self.constraint_of_type_param(param) {
@@ -1719,7 +1819,7 @@ impl<'p> Checker<'p> {
             let inferred = self.infer_from_types(&params, check, extends, mapper);
             pairs.extend(params.iter().copied().zip(inferred));
         }
-        let combined = self.p.types.mapper(pairs);
+        let combined = self.types().mapper(pairs);
         let declared = self.type_from_node(file, nodes[2]);
         self.instantiate(declared, combined)
     }
@@ -1770,10 +1870,10 @@ impl<'p> Checker<'p> {
         if constraint == check {
             return None;
         }
-        let mut pairs = self.p.types.mapping(mapper).to_vec();
+        let mut pairs = self.types().mapping(mapper).to_vec();
         pairs.retain(|p| p.0 != param);
         pairs.push((param, constraint));
-        let with_constraint = self.p.types.mapper(pairs);
+        let with_constraint = self.types().mapper(pairs);
         let instantiated = self.conditional_type_uncached(file, node, with_constraint, true, None);
         (!instantiated.is_never()).then_some(instantiated)
     }
@@ -1842,10 +1942,10 @@ impl<'p> Checker<'p> {
         if own == declared {
             return mapper;
         }
-        let mut pairs = self.p.types.mapping(mapper).to_vec();
+        let mut pairs = self.types().mapping(mapper).to_vec();
         pairs.retain(|p| p.0 != declared);
         pairs.push((declared, own));
-        self.p.types.mapper(pairs)
+        self.types().mapper(pairs)
     }
 
     pub(super) fn mapped_keys(&mut self, t: TypeId) -> TypeId {
@@ -1967,8 +2067,7 @@ impl<'p> Checker<'p> {
     /// does not account for. `instantiateType(t, reportUnreliableMapper)`
     fn report_unreliable(&mut self, t: TypeId) {
         if self
-            .p
-            .types
+            .types()
             .object_flags(t)
             .contains(ObjectFlags::HAS_MARKER)
         {
@@ -1978,8 +2077,7 @@ impl<'p> Checker<'p> {
 
     fn report_unmeasurable(&mut self, t: TypeId) {
         if self
-            .p
-            .types
+            .types()
             .object_flags(t)
             .contains(ObjectFlags::HAS_MARKER)
         {
@@ -1991,8 +2089,7 @@ impl<'p> Checker<'p> {
     pub(super) fn is_marker_type(&mut self, t: TypeId) -> bool {
         // `getVariances`: arrays are never measured.
         if !self
-            .p
-            .types
+            .types()
             .object_flags(t)
             .contains(ObjectFlags::HAS_MARKER)
             || self.is_array(t)
@@ -2011,7 +2108,7 @@ impl<'p> Checker<'p> {
     /// parameter for itself, but for one that a marker stands for. `variances_of` makes them once it has set about `sym`. Until
     /// then such an instantiation goes by the variances of `sym` like any other, which is what sets about it.
     pub(super) fn are_marker_arguments(
-        &self,
+        &mut self,
         sym: Sym,
         params: &[TypeId],
         args: &[TypeId],
@@ -2022,8 +2119,7 @@ impl<'p> Checker<'p> {
         let mut measured = None;
         for (&arg, &param) in args.iter().zip(params) {
             if self
-                .p
-                .types
+                .types()
                 .object_flags(arg)
                 .contains(ObjectFlags::HAS_MARKER)
                 && self.is_type_param(arg)
@@ -2047,7 +2143,8 @@ impl<'p> Checker<'p> {
         if !modifiers.is_empty() {
             return false;
         }
-        self.variances_in_progress.contains(&sym) || self.p.variances.get(&sym).is_some()
+        self.variances_in_progress.contains(&sym)
+            || self.p.variances.get(&mut self.task, &sym).is_some()
     }
 
     /// `getTypeParameterModifiers`: what any of the declarations of `sym` says of its type parameter `param`.
@@ -2112,16 +2209,41 @@ impl<'p> Checker<'p> {
     /// `getVariances`, `getAliasVariances`: how instantiations of `sym` compare, going by how their type arguments do. Empty while
     /// it is measured.
     pub(super) fn variances_of(&mut self, sym: Sym) -> Arc<[u8]> {
-        if let Some(known) = self.p.variances.get(&sym) {
+        if let Some(known) = self.p.variances.get(&mut self.task, &sym) {
             return known;
         }
+        self.variances_worker(sym)
+    }
+
+    /// `getVariancesWorker`. The caller has looked `sym` up and missed.
+    fn variances_worker(&mut self, sym: Sym) -> Arc<[u8]> {
         if Some(sym) == self.global_type_symbol(known::Array)
             || Some(sym) == self.global_type_symbol(known::ReadonlyArray)
         {
-            return self.p.variances.insert(sym, Arc::from([COVARIANT]));
+            let scope = self.begin_scope();
+            let variances: Arc<[u8]> = Arc::from([COVARIANT]);
+            return match self.end_scope_as(scope, false) {
+                Ok(stored) => self
+                    .p
+                    .variances
+                    .insert(&mut self.task, sym, variances, stored),
+                Err(_) => variances,
+            };
         }
         if self.variances_in_progress.contains(&sym) {
             return Arc::from([]);
+        }
+        let (cuts, outermost) = (
+            self.cuts(),
+            self.frames.first().map_or(0, |frame| frame.serial),
+        );
+        if cuts != 0
+            && let Some((under, known)) = self.variances_cut_short.get(&sym)
+            && *under == outermost
+        {
+            let known = known.clone();
+            self.cut_short_again();
+            return known;
         }
         self.variances_in_progress.push(sym);
         let was_computing = std::mem::replace(&mut self.in_variance_computation, true);
@@ -2131,7 +2253,7 @@ impl<'p> Checker<'p> {
         if !was_computing {
             self.resolution_start = self.stack.len();
         }
-        let taint_scope = self.begin_taint_scope();
+        let scope = self.begin_scope();
         let flags = self.files().flags(sym);
         let is_alias = flags.contains(SymFlags::TYPE_ALIAS)
             && !flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE);
@@ -2186,11 +2308,18 @@ impl<'p> Checker<'p> {
         self.resolution_start = resolution_start;
         self.variances_in_progress.pop();
         let variances: Arc<[u8]> = variances.into();
-        let is_tainted = self.end_taint_scope(&taint_scope);
-        if !is_tainted {
-            self.p.variances.insert(sym, variances)
-        } else {
-            variances
+        match self.end_scope(scope) {
+            Ok(stored) => self
+                .p
+                .variances
+                .insert(&mut self.task, sym, variances, stored),
+            Err(_) => {
+                if self.cuts() != cuts {
+                    self.variances_cut_short
+                        .insert(sym, (outermost, variances.clone()));
+                }
+                variances
+            }
         }
     }
 
@@ -2203,9 +2332,9 @@ impl<'p> Checker<'p> {
 
     /// `variances_of`, as a list.
     fn variances_list(&mut self, sym: Sym) -> List<'p, u8> {
-        match self.p.variances.get_ref(&sym) {
+        match self.p.variances.get_ref(&mut self.task, &sym) {
             Some(known) => List::Kept(known),
-            None => List::Own(self.variances_of(sym).to_vec()),
+            None => List::Own(self.variances_worker(sym).to_vec()),
         }
     }
 
@@ -2531,7 +2660,7 @@ impl<'p> Checker<'p> {
         };
         for prop in &sm.shape().props {
             // `isIgnoredJsxProperty`
-            if is_jsx && self.files().atoms.bytes(prop.name).contains(&b'-') {
+            if is_jsx && self.atoms().bytes(prop.name).contains(&b'-') {
                 continue;
             }
             // `shouldCheckAsExcessProperty`: what a spread brought along is nobody's mistake.
@@ -2591,7 +2720,7 @@ impl<'p> Checker<'p> {
                     let mut suggestion = None;
                     if is_identifier {
                         let properties = self.properties_of_type(error_target);
-                        let written = self.files().atoms.bytes(prop.name);
+                        let written = self.atoms().bytes(prop.name);
                         suggestion = self
                             .suggested_property(written, &properties)
                             .map(|i| Arg::Atom(properties[i].name));
@@ -2686,7 +2815,7 @@ impl<'p> Checker<'p> {
                     return true;
                 }
                 // A name made from a symbol is let through by an index signature for strings.
-                self.files().atoms.is_symbol_name(name)
+                self.atoms().is_symbol_name(name)
                     && members
                         .shape()
                         .index
@@ -2729,7 +2858,7 @@ impl<'p> Checker<'p> {
         // An attribute with a hyphen in its name is taken to be known.
         let is_jsx = matches!(self.data(source), TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes);
         sm.shape().props.iter().any(|p| {
-            is_jsx && self.files().atoms.bytes(p.name).contains(&b'-')
+            is_jsx && self.atoms().bytes(p.name).contains(&b'-')
                 || self.is_known_property(target, p.name)
         })
     }
@@ -2986,10 +3115,11 @@ impl<'p> Checker<'p> {
             TypeData::Union(parts) => parts,
             _ => &[],
         };
-        // `getUndefinedStrippedTargetIfNeeded`: `undefined`, which optionality adds, would spoil the correspondence. Where it
-        // stands in a union: members are in the order of their ids, and its kinds come one after the other.
+        // `getUndefinedStrippedTargetIfNeeded`: `undefined`, which optionality adds, would spoil the correspondence. Its position in a
+        // union: the constituents are in the order of `CompareTypes`, which starts with the flags.
         let undefined_in = |types: &[TypeId]| {
-            let from = types.partition_point(|&t| t < TypeId::UNDEFINED);
+            let is_before = |t: &&TypeId| self.flags(**t) < tf::UNDEFINED;
+            let from = types.iter().take_while(is_before).count();
             from..from
                 + types[from..]
                     .iter()
@@ -3176,6 +3306,20 @@ impl<'p> Checker<'p> {
         })
     }
 
+    /// `getTupleKey`: the element flags, the labels and `readonly` identify a tuple target. A label is written as its text: the number of
+    /// an atom of a syntax tree depends on which parser thread came first.
+    fn write_tuple_target(&self, hasher: &mut FxHasher, flags: &[ElemFlags], readonly: bool) {
+        hasher.write_u8(if readonly { b'!' } else { b't' });
+        hasher.write_usize(flags.len());
+        for flag in flags {
+            hasher.write_u32(flag.with_label(Atom::NONE).bits());
+            let label = flag.label();
+            if !label.is_none() {
+                hasher.write(self.atoms().bytes(label));
+            }
+        }
+    }
+
     /// The `writeTypeReference` closure of `writeGenericTypeReferences`.
     fn write_type_reference(
         &mut self,
@@ -3190,16 +3334,9 @@ impl<'p> Checker<'p> {
                 key.hasher.write_u32(target.file.0);
                 key.hasher.write_u32(target.id.0);
             }
-            // `getTupleKey`: the element flags and `readonly` identify a tuple target.
             TypeData::Tuple {
                 flags, readonly, ..
-            } => {
-                key.hasher.write_u8(if *readonly { b'!' } else { b't' });
-                key.hasher.write_usize(flags.len());
-                for flag in flags.iter() {
-                    key.hasher.write_u32(flag.bits());
-                }
-            }
+            } => self.write_tuple_target(&mut key.hasher, flags, *readonly),
             _ => return,
         }
         for &arg in self.type_arguments(reference) {
@@ -3229,6 +3366,7 @@ impl<'p> Checker<'p> {
             }
             key.hasher.write_u8(b'-');
             key.hasher.write_u32(arg.0);
+            key.has_own_id |= arg.is_local();
         }
     }
 
@@ -3243,7 +3381,10 @@ impl<'p> Checker<'p> {
         ignore_constraints: bool,
     ) -> (Key, bool) {
         let flags = relation as u8 | state << 4;
-        let (source, target) = if relation == Relation::Identity && source > target {
+        // tsgo orders the pair by id. The order decides how `generic_relation_key` numbers the type parameters.
+        let is_swapped =
+            relation == Relation::Identity && self.creation_order(source, target).is_gt();
+        let (source, target) = if is_swapped {
             (target, source)
         } else {
             (source, target)
@@ -3251,7 +3392,7 @@ impl<'p> Checker<'p> {
         if !self.is_type_reference_with_generic_arguments(source)
             || !self.is_type_reference_with_generic_arguments(target)
         {
-            return ((source, target, flags), false);
+            return (Key(source, target, flags), false);
         }
         self.generic_relation_key(source, target, flags, ignore_constraints)
     }
@@ -3274,10 +3415,10 @@ impl<'p> Checker<'p> {
             return self.relation_key(source, target, relation, state, false);
         }
         let flags = relation as u8 | state << 4;
-        if relation == Relation::Identity && source > target {
-            ((target, source, flags), false)
+        if relation == Relation::Identity && self.creation_order(source, target).is_gt() {
+            (Key(target, source, flags), false)
         } else {
-            ((source, target, flags), false)
+            (Key(source, target, flags), false)
         }
     }
 
@@ -3295,19 +3436,25 @@ impl<'p> Checker<'p> {
             type_params: [TypeId::NEVER; 8],
             type_param_count: 0,
             constrained: false,
+            has_own_id: false,
         };
         self.write_type_reference(&mut key, source, 0, ignore_constraints);
         key.hasher.write_u8(b',');
         self.write_type_reference(&mut key, target, 0, ignore_constraints);
         // A constraint that could not be resolved does not tell whether its type parameter is constrained.
         if self.cycles != cycles_before {
-            return ((source, target, flags), false);
+            return (Key(source, target, flags), false);
         }
         let hash = key.hasher.finish();
+        // In a hash the bit `LOCAL` is noise. Symbols, indices and published ids are the same for every task, now and later.
+        let local = match key.has_own_id {
+            true => crate::local::LOCAL,
+            false => 0,
+        };
         (
-            (
-                TypeId(hash as u32),
-                TypeId((hash >> 32) as u32),
+            Key(
+                TypeId(hash as u32 & !crate::local::LOCAL | local),
+                TypeId((hash >> 32) as u32 & !crate::local::LOCAL),
                 flags | GENERIC_KEY,
             ),
             key.constrained,
@@ -3340,13 +3487,18 @@ impl<'p> Checker<'p> {
             None => self.relation_key_as(source, sd, target, td, r.relation, state),
         };
         if missed.is_none()
-            && let Some(entry) = self.p.relations.get(&key)
+            && let Some(entry) = self.p.relations.get(&mut self.task, &key)
             // A failure that is remembered is gone through again for what there is to say about it.
-            && !(REPORT && entry & FAILED != 0 && entry & COMPLEXITY_OVERFLOW == 0)
+            && !(REPORT && entry & FAILED != 0 && entry & OVERFLOW == 0)
         {
             self.reliability |= entry & (REPORTS_UNMEASURABLE | REPORTS_UNRELIABLE);
-            if REPORT && entry & COMPLEXITY_OVERFLOW != 0 {
-                self.report_error(r, 2859, &[Arg::Type(source), Arg::Type(target)]);
+            if REPORT && entry & OVERFLOW != 0 {
+                let code = if entry & COMPLEXITY_OVERFLOW != 0 {
+                    2859
+                } else {
+                    2321
+                };
+                self.report_error(r, code, &[Arg::Type(source), Arg::Type(target)]);
             }
             if entry & COMPLEXITY_OVERFLOW != 0 {
                 // The comparison was cut short when it was made.
@@ -3377,13 +3529,14 @@ impl<'p> Checker<'p> {
         if is_too_deep || self.is_stack_low() {
             if is_too_deep {
                 self.relations_too_deep.push((r.top_source, r.top_target));
+                r.is_too_deep = true;
             }
             r.maybe_keys_set.remove(&key);
             r.overflow = true;
             return Ternary::FALSE;
         }
         let maybe_start = r.maybe_keys.len();
-        let taint_scope = self.begin_taint_scope();
+        let scope = self.begin_scope();
         r.maybe_keys.push(key);
         let save_expanding = r.expanding;
         if recursion & REC_SOURCE != 0 {
@@ -3410,7 +3563,8 @@ impl<'p> Checker<'p> {
         } else {
             self.structured_type_related_to::<REPORT>(r, source, sd, target, td, state)
         };
-        let is_tainted = self.end_taint_scope(&taint_scope);
+        // With reports the answer can be another (`relate_variances`): it is nobody else's.
+        let stored = self.end_scope(scope).ok().filter(|_| !REPORT);
         let propagating = self.reliability;
         self.reliability |= save_reliability;
         if recursion & REC_SOURCE != 0 {
@@ -3420,8 +3574,6 @@ impl<'p> Checker<'p> {
             r.target_stack.pop();
         }
         r.expanding = save_expanding;
-        // With reports the answer can be another (`relate_variances`): it is nobody else's.
-        let is_cacheable = !REPORT && !is_tainted;
         if result.holds() {
             if result == Ternary::TRUE || r.source_stack.is_empty() && r.target_stack.is_empty() {
                 // What held on assumptions holds now that there are none left. What is not known stays so.
@@ -3430,7 +3582,7 @@ impl<'p> Checker<'p> {
                     maybe_start,
                     propagating,
                     result == Ternary::TRUE || result == Ternary::MAYBE,
-                    is_cacheable,
+                    stored,
                 );
             }
         } else {
@@ -3440,13 +3592,21 @@ impl<'p> Checker<'p> {
                 if !is_cut_short {
                     r.failed.insert(key);
                 }
-            } else if is_cacheable && !is_cut_short {
-                self.p.relations.insert(key, FAILED | propagating);
+            } else if let Some(stored) = stored
+                && !is_cut_short
+            {
+                self.insert_relation(key, FAILED | propagating, stored);
             }
             r.relation_count -= 1;
-            self.reset_maybe_stack(r, maybe_start, propagating, false, is_cacheable);
+            self.reset_maybe_stack(r, maybe_start, propagating, false, stored);
         }
         result
+    }
+
+    #[inline]
+    fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
+        self.generic_relation_entries_not_published += u64::from(key.is_hash_of_own_ids());
+        self.p.relations.insert(&mut self.task, key, entry, stored);
     }
 
     /// `resetMaybeStack`
@@ -3456,7 +3616,7 @@ impl<'p> Checker<'p> {
         maybe_start: usize,
         propagating: u8,
         mark_all_as_succeeded: bool,
-        is_cacheable: bool,
+        stored: Option<Stored>,
     ) {
         while r.maybe_keys.len() > maybe_start {
             let Some(key) = r.maybe_keys.pop() else {
@@ -3464,8 +3624,8 @@ impl<'p> Checker<'p> {
             };
             r.maybe_keys_set.remove(&key);
             if mark_all_as_succeeded {
-                if is_cacheable {
-                    self.p.relations.insert(key, SUCCEEDED | propagating);
+                if let Some(stored) = stored {
+                    self.insert_relation(key, SUCCEEDED | propagating, stored);
                 }
                 r.relation_count -= 1;
             }
@@ -3493,16 +3653,17 @@ impl<'p> Checker<'p> {
         }
         let identity = self.recursion_identity_as(t, data);
         let mut count = 0;
-        let mut last = TypeId(0);
+        let mut last = None;
         for &on_stack in stack {
             if self.has_matching_recursion_identity(on_stack, identity) {
-                if on_stack >= last {
+                // `t.id >= lastTypeId`
+                if last.is_none_or(|last| self.creation_order(on_stack, last).is_ge()) {
                     count += 1;
                     if count >= max_depth {
                         return true;
                     }
                 }
-                last = on_stack;
+                last = Some(on_stack);
             }
         }
         false
@@ -3534,7 +3695,7 @@ impl<'p> Checker<'p> {
         }
         let identity = self.recursion_identity_by_now(t, kept);
         let mut count = 0;
-        let mut last = TypeId(0);
+        let mut last = None;
         for &(on_stack, kept) in identities {
             let matches = if kept == NOT_PLAIN {
                 self.has_matching_recursion_identity(on_stack, identity)
@@ -3543,13 +3704,14 @@ impl<'p> Checker<'p> {
                     && self.recursion_identity_by_now(on_stack, kept) == identity
             };
             if matches {
-                if on_stack >= last {
+                // `t.id >= lastTypeId`
+                if last.is_none_or(|last| self.creation_order(on_stack, last).is_ge()) {
                     count += 1;
                     if count >= max_depth {
                         return true;
                     }
                 }
-                last = on_stack;
+                last = Some(on_stack);
             }
         }
         false
@@ -3566,11 +3728,11 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `recursion_identity` of `t`, given that it was `kept` at some time. A reference or a tuple may have been written out as a
-    /// type since (`mark_manifest`), and then it has one of its own.
+    /// `recursion_identity` of `t`, given the identity `kept` computed earlier. `mark_from_type_node` may have run since then, and a
+    /// reference or tuple with the flag is its own identity.
     #[inline]
     fn recursion_identity_by_now(&self, t: TypeId, kept: RecursionId) -> RecursionId {
-        if matches!(kept.0, 1 | 5) && self.p.types.is_manifest(t) {
+        if matches!(kept.0, 1 | 5) && self.types().is_from_type_node(t) {
             (0, t.0, 0)
         } else {
             kept
@@ -3591,10 +3753,10 @@ impl<'p> Checker<'p> {
     }
 
     fn target_with_symbol_of_mapped(&mut self, of: TypeId) -> TypeId {
-        if let Some(known) = self.p.mapped_targets.get(&of) {
+        if let Some(known) = self.p.mapped_targets.get(&mut self.task, &of) {
             return known;
         }
-        let before = self.what_only_holds_for_now();
+        let scope = self.begin_scope();
         let mut t = of;
         let has_symbol = |c: &Self, ty: TypeId| {
             matches!(
@@ -3623,7 +3785,7 @@ impl<'p> Checker<'p> {
                 break;
             };
             // `ObjectFlagsInstantiatedMapped`: not the mapped type as it is declared.
-            if self.p.types.mapping(mapper).iter().all(|p| p.0 == p.1) {
+            if self.types().mapping(mapper).iter().all(|p| p.0 == p.1) {
                 break;
             }
             let Some(target) = self.mapped_modifiers_type(t) else {
@@ -3638,10 +3800,10 @@ impl<'p> Checker<'p> {
             }
             t = target;
         }
-        if self.what_only_holds_for_now() == before {
-            self.p.mapped_targets.insert(of, t);
+        match self.end_scope_by_counters(scope) {
+            Ok(stored) => (self.p.mapped_targets).insert(&mut self.task, of, t, stored),
+            Err(_) => t,
         }
-        t
     }
 
     /// `hasMatchingRecursionIdentity`
@@ -3651,7 +3813,7 @@ impl<'p> Checker<'p> {
             TypeData::Intersection(parts) => parts
                 .iter()
                 .any(|&p| self.has_matching_recursion_identity(p, identity)),
-            // The identity of a reference is its own or that of what it refers to.
+            // Fast path: the identity of a reference is either the type itself or its target symbol.
             TypeData::Ref { target, .. }
                 if identity != (0, t.0, 0) && identity != (1, target.file.0, target.id.0) =>
             {
@@ -3694,13 +3856,12 @@ impl<'p> Checker<'p> {
         self.recursion_identity_as(t, self.data(t))
     }
 
-    /// `data`: what `t` is.
+    /// `data`: the `TypeData` of `t`.
     fn recursion_identity_as(&self, t: TypeId, data: &TypeData) -> RecursionId {
         match data {
-            // Written out as a type, or the type of an array literal: not made by instantiation (`ObjectFlagsFromTypeNode`,
-            // `isObjectOrArrayLiteralType`).
+            // `ObjectFlagsFromTypeNode`, `isObjectOrArrayLiteralType`
             TypeData::Ref { .. } | TypeData::Tuple { .. }
-                if self.p.types.is_manifest(t) || self.holds_object_literals(t, data) =>
+                if self.types().is_from_type_node(t) || self.holds_object_literals(t, data) =>
             {
                 (0, t.0, 0)
             }
@@ -3709,7 +3870,7 @@ impl<'p> Checker<'p> {
                 origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
                 ..
             } => (2, file.0, node.0),
-            // `getWidenedTypeOfObjectLiteral`: an ordinary object type that has the symbol of the literal.
+            // `getWidenedTypeOfObjectLiteral` creates an anonymous object type with the symbol of the literal.
             TypeData::Anon {
                 origin: Origin::WidenedLiteral(file, e, ..),
                 ..
@@ -3721,13 +3882,11 @@ impl<'p> Checker<'p> {
             TypeData::Fns { decls, .. } => (4, decls[0].0.0, decls[0].1.0),
             TypeData::Tuple {
                 flags, readonly, ..
-            } => (
-                5,
-                flags.len() as u32,
-                flags.iter().fold(*readonly as u32, |h, f| {
-                    h.wrapping_mul(31).wrapping_add(f.bits())
-                }),
-            ),
+            } => {
+                let mut hasher = FxHasher::default();
+                self.write_tuple_target(&mut hasher, flags, *readonly);
+                (5, flags.len() as u32, hasher.finish() as u32)
+            }
             TypeData::Cond { file, node, .. } => (2, file.0, node.0),
             TypeData::IndexedAccess { obj, .. } => {
                 // The leftmost object type: `A` in `A[P1][P2][P3]`.
@@ -5369,7 +5528,7 @@ impl<'p> Checker<'p> {
         let mut in_order: Vec<&Prop> = Vec::new();
         if REPORT && matches!(td, TypeData::Tuple { .. }) {
             in_order.extend(&tm.shape().props);
-            let atoms = &self.files().atoms;
+            let atoms = &self.atoms();
             let place = |tp: &Prop| match tp.source {
                 PropSource::Type(_) => (true, atoms.bytes(tp.name)),
                 _ => (false, &[][..]),
@@ -5399,7 +5558,7 @@ impl<'p> Checker<'p> {
                 let a = self.compose(sp.mapper, source_mapper);
                 let b = self.compose(tp.mapper, tm.mapper);
                 // `H.this -> H.this` is kept in a mapper, and moves nothing.
-                let types = &self.p.types;
+                let types = &self.types();
                 let moved = |m| types.mapping(m).iter().filter(|pair| pair.0 != pair.1);
                 if a == b || moved(a).eq(moved(b)) {
                     continue;
@@ -5629,7 +5788,7 @@ impl<'p> Checker<'p> {
 
     /// `SignatureFlagsAbstract`
     pub(super) fn is_abstract_signature(&self, sig: SigId) -> bool {
-        match *self.p.types.sig(sig) {
+        match *self.types().sig(sig) {
             // `getDefaultConstructSignatures`, `getSignatureFromDeclaration`: of several classes of one name the first is the class.
             SigData::Construct { class, .. } | SigData::DefaultConstruct { class, .. } => self
                 .files()
@@ -5658,7 +5817,7 @@ impl<'p> Checker<'p> {
     pub(super) fn constructor_accessibility(&mut self, sig: SigId) -> Option<Flags> {
         let mut sig = sig;
         for _ in 0..64 {
-            match *self.p.types.sig(self.p.types.sig_origin(sig)) {
+            match *self.types().sig(self.types().sig_origin(sig)) {
                 SigData::Construct { file, func, .. } | SigData::Decl { file, func, .. } => {
                     return Some(self.hir(file)[func].flags & (Flags::PRIVATE | Flags::PROTECTED));
                 }
@@ -5799,7 +5958,7 @@ impl<'p> Checker<'p> {
         let mut result = Ternary::TRUE;
         // `ObjectFlagsInstantiated`: not the type as it is declared.
         let is_instantiated =
-            |c: &Self, mapper: MapperId| c.p.types.mapping(mapper).iter().any(|p| p.0 != p.1);
+            |c: &Self, mapper: MapperId| c.types().mapping(mapper).iter().any(|p| p.0 != p.1);
         let same_origin = match (sd, td) {
             (
                 TypeData::Anon {
@@ -5926,27 +6085,26 @@ impl<'p> Checker<'p> {
         params: &[TypeId],
         values: &[TypeId],
     ) -> SigId {
-        let declared_as = |c: &Self, t: TypeId| match *c.data(t) {
-            TypeData::TypeParam(file, tp, ..) => Some((file, tp)),
-            _ => None,
-        };
         let extended = |c: &mut Self, own: MapperId| {
-            let mut pairs = c.p.types.mapping(own).to_vec();
+            let mut pairs = c.types().mapping(own).to_vec();
             for (&param, &value) in params.iter().zip(values) {
-                // In something instantiated it is a clone, which the declared one stands for (`cloneTypeParameter`).
-                let declared = pairs.iter().position(|pair| {
-                    pair.1 == param
-                        && pair.0 != param
-                        && declared_as(c, pair.0) == declared_as(c, param)
-                });
+                // In something instantiated it is a clone, which the declared one stands for (`cloneTypeParameter`). A mapper has one
+                // pair for a parameter, so the order of the pairs does not matter.
+                let declared = match *c.data(param) {
+                    TypeData::TypeParam(file, tp, around) if around != MapperId::IDENTITY => {
+                        let declared = c.type_param(file, tp);
+                        pairs.iter().position(|pair| *pair == (declared, param))
+                    }
+                    _ => None,
+                };
                 match declared {
                     Some(i) => pairs[i].1 = value,
                     None => pairs.push((param, value)),
                 }
             }
-            c.p.types.mapper(pairs)
+            c.types().mapper(pairs)
         };
-        let data = match *self.p.types.sig(sig) {
+        let data = match *self.types().sig(sig) {
             SigData::Decl { file, func, mapper } => SigData::Decl {
                 file,
                 func,
@@ -5977,7 +6135,7 @@ impl<'p> Checker<'p> {
                 return self.instantiate_sig(sig, mapper);
             }
         };
-        self.p.types.intern_sig(data)
+        self.types().intern_sig(data)
     }
 
     /// `isTopSignature`: `(...args: any[]) => any`, `(...args: never) => unknown`: what every function is.
@@ -6026,7 +6184,7 @@ impl<'p> Checker<'p> {
     /// The signature as declared that `sig` is an instantiation of.
     fn sig_instantiated_from(&mut self, sig: SigId) -> Option<SigId> {
         // `cloneSignature` keeps the target.
-        let sig = self.p.types.sig_origin(sig);
+        let sig = self.types().sig_origin(sig);
         let (file, func, _) = self.sig_decl(sig)?;
         let declared = self.sig_of_fn(file, func);
         (declared != sig).then_some(declared)
@@ -6156,7 +6314,7 @@ impl<'p> Checker<'p> {
         let mut source = source;
         let tp = self.sig_params(target);
         let target_count = self.parameter_count(&tp);
-        let has_generic_params = {
+        {
             let sp = self.sig_params(source);
             let source_has_more_parameters = !self.has_effective_rest_parameter(&tp)
                 && if check_mode & STRICT_ARITY != 0 {
@@ -6172,12 +6330,6 @@ impl<'p> Checker<'p> {
                 }
                 return Ternary::FALSE;
             }
-            sp.iter().any(|p| self.has_type_variables(p.ty))
-        };
-        // `assignContextualParameterTypes`: a context-sensitive function expression adopts the type parameters of a generic
-        // contextual signature. They only matter when a parameter type mentions them.
-        if has_generic_params {
-            source = self.with_adopted_type_params(source);
         }
         let source_type_params = self.sig_type_params(source);
         if !source_type_params.is_empty() && source_type_params != self.sig_type_params(target) {
@@ -6694,7 +6846,7 @@ impl<'p> Checker<'p> {
 
     /// `isApplicableIndexType`, for the name of a property.
     pub(super) fn is_name_applicable_to_index(&mut self, name: Atom, key: TypeId) -> bool {
-        if self.files().atoms.is_symbol_name(name) {
+        if self.atoms().is_symbol_name(name) {
             return key == TypeId::SYMBOL;
         }
         if key == TypeId::STRING {
@@ -6723,7 +6875,7 @@ impl<'p> Checker<'p> {
         let is_jsx = sm.shape().literal == Literalness::JsxAttributes;
         for prop in &sm.shape().props {
             // `isIgnoredJsxProperty`
-            if is_jsx && self.files().atoms.bytes(prop.name).contains(&b'-') {
+            if is_jsx && self.atoms().bytes(prop.name).contains(&b'-') {
                 continue;
             }
             if !self.is_name_applicable_to_index(prop.name, key) {
@@ -6772,7 +6924,7 @@ impl<'p> Checker<'p> {
 
     /// `templateLiteralTypesDefinitelyUnrelated`: they start or end differently.
     fn templates_definitely_unrelated(&self, source: &[Atom], target: &[Atom]) -> bool {
-        let atoms = &self.files().atoms;
+        let atoms = &self.atoms();
         let (ss, ts) = (atoms.bytes(source[0]), atoms.bytes(target[0]));
         let (se, te) = (
             atoms.bytes(source[source.len() - 1]),
@@ -6832,7 +6984,7 @@ impl<'p> Checker<'p> {
                         {
                             s
                         } else {
-                            let empty = self.files().atoms.intern(b"");
+                            let empty = self.atoms().intern(b"");
                             self.template_type(&[empty, empty], &[s])
                         },
                     );
@@ -6885,7 +7037,7 @@ impl<'p> Checker<'p> {
         types: &[TypeId],
         target_texts: &[Atom],
     ) -> Option<Vec<TypeId>> {
-        let atoms = &self.files().atoms;
+        let atoms = &self.atoms();
         let last_source = texts.len() - 1;
         let last_target = target_texts.len() - 1;
         let (start, end) = (atoms.bytes(texts[0]), atoms.bytes(texts[last_source]));
@@ -6987,7 +7139,7 @@ impl<'p> Checker<'p> {
         }
         match self.data(piece) {
             TypeData::StringLit { value, .. } => {
-                let text = self.files().atoms.bytes(*value);
+                let text = self.atoms().bytes(*value);
                 match self.data(hole) {
                     TypeData::Intrinsic(Intrinsic::Number) => is_valid_number_string(text),
                     TypeData::Intrinsic(Intrinsic::BigInt) => is_valid_bigint_string(text),
@@ -7002,9 +7154,7 @@ impl<'p> Checker<'p> {
             }
             TypeData::Template { texts, types } => {
                 texts.len() == 2
-                    && texts
-                        .iter()
-                        .all(|&t| self.files().atoms.bytes(t).is_empty())
+                    && texts.iter().all(|&t| self.atoms().bytes(t).is_empty())
                     && self.is_assignable(types[0], hole)
             }
             _ => false,

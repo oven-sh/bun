@@ -784,7 +784,24 @@ impl<'f> Binder<'f> {
     }
 
     /// `isNarrowingExpression`: `x as T` and `x satisfies T` are none.
-    fn is_narrowing_expression(&self, e: ExprId) -> bool {
+    fn is_narrowing_expression(&self, mut e: ExprId) -> bool {
+        // In `x == true == true == ..` only the innermost comparison can narrow. The loop keeps a long chain from recursing.
+        let is_equality = |kind: ExprKind| {
+            matches!(
+                kind,
+                ExprKind::Binary {
+                    op: BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq,
+                    ..
+                }
+            )
+        };
+        while let ExprKind::Binary { left, right, .. } = self.f[e].kind
+            && is_equality(self.f[e].kind)
+            && is_equality(self.f[left].kind)
+            && matches!(self.f[right].kind, ExprKind::True | ExprKind::False)
+        {
+            e = left;
+        }
         match self.f[e].kind {
             ExprKind::Ident(_) | ExprKind::This | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                 self.contains_narrowable_reference(e)
@@ -1470,9 +1487,9 @@ impl<'f> Binder<'f> {
         self.b.alias_idents.sort_unstable_by_key(|a| a.0);
         self.b.arguments_objects.as_mut_slice().sort_unstable();
         // `checkUnmatchedJSDocParameters`: a function that refers to `arguments` is held to less.
-        for &(func, pos, code) in &self.f.jsdoc_param_errors {
-            if (code == 8029) == refer_to_arguments.contains(&func) {
-                self.b.jsdoc_param_errors.push((pos, code));
+        for (index, (func, diagnostic)) in self.f.jsdoc_param_errors.iter().enumerate() {
+            if (diagnostic.code == 8029) == refer_to_arguments.contains(func) {
+                self.b.jsdoc_param_errors.push(index as u32);
             }
         }
         self.b
@@ -3402,7 +3419,10 @@ impl<'f> Binder<'f> {
                 self.tys(types)
             }
             TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => self.tys(types),
-            TypeNodeKind::Array(t) | TypeNodeKind::Keyof(t) | TypeNodeKind::Readonly(t) => {
+            TypeNodeKind::Array(t)
+            | TypeNodeKind::Keyof(t)
+            | TypeNodeKind::Readonly(t)
+            | TypeNodeKind::JSDoc { ty: t, .. } => {
                 return Some(t);
             }
             TypeNodeKind::Tuple(elems) => {

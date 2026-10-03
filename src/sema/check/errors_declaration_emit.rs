@@ -10,7 +10,7 @@ use super::enclosing_declaration::Enclosing;
 use super::errors_isolated_declarations::Emit;
 use super::print::{
     DECLARATION_EMIT_NODE_BUILDER_FLAGS, Report, SymbolTracker,
-    WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL, to_valid_utf8,
+    WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL, Written, to_valid_utf8,
 };
 use super::sink::held;
 use super::*;
@@ -20,8 +20,8 @@ use crate::resolve::{
     JsxEmit, contains_path, is_declaration_file_name, is_relative, join, known_extension,
     node_module_path_parts, path_is_relative, remove_file_extension,
 };
-use crate::util::FxHashSet;
 use bstr::ByteSlice;
+use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, relative_normalized};
 use std::rc::Rc;
@@ -155,6 +155,442 @@ struct SymbolTrackerImpl {
     isolated_declarations: Option<Emit>,
 }
 
+/// What `ensureType` and `ensureNoInitializer` leave behind the name of a declaration.
+enum Ensured {
+    Nothing,
+    Type(Vec<u8>),
+    /// `CreateLiteralConstValue`
+    Initializer(Vec<u8>),
+}
+
+impl Ensured {
+    fn text(&self) -> Vec<u8> {
+        match self {
+            Ensured::Nothing => Vec::new(),
+            Ensured::Type(ty) => [b": ", &ty[..]].concat(),
+            Ensured::Initializer(value) => [b" = ", &value[..]].concat(),
+        }
+    }
+}
+
+/// The kinds of statement that the transformer tells apart once they are made.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum StatementKind {
+    Import,
+    ImportEquals,
+    ExportDeclaration,
+    ExportAssignment,
+    /// `IsAmbientModule`
+    AmbientModule,
+    Other,
+}
+
+/// A statement of the declaration file. The transformer edits it after it is made (`stripExportModifiers`), so its modifiers are apart.
+#[derive(Clone)]
+struct Statement {
+    kind: StatementKind,
+    /// The comments before it, with what separates them from it.
+    comments: Vec<u8>,
+    /// In the order they are written.
+    modifiers: Vec<Flags>,
+    /// What comes after the modifiers.
+    text: Vec<u8>,
+}
+
+impl Statement {
+    fn new(kind: StatementKind, text: Vec<u8>) -> Statement {
+        Statement {
+            kind,
+            comments: Vec::new(),
+            modifiers: Vec::new(),
+            text,
+        }
+    }
+
+    fn is_exported(&self) -> bool {
+        self.modifiers.contains(&Flags::EXPORT)
+    }
+
+    /// `IsAnyImportOrReExport`
+    fn is_any_import_or_re_export(&self) -> bool {
+        matches!(
+            self.kind,
+            StatementKind::Import | StatementKind::ImportEquals | StatementKind::ExportDeclaration
+        )
+    }
+
+    /// `needsScopeMarker`
+    fn needs_scope_marker(&self) -> bool {
+        !self.is_any_import_or_re_export()
+            && !self.is_exported()
+            && !matches!(
+                self.kind,
+                StatementKind::ExportAssignment | StatementKind::AmbientModule
+            )
+    }
+
+    /// `IsExternalModuleIndicator`
+    fn is_external_module_indicator(&self) -> bool {
+        self.is_any_import_or_re_export()
+            || self.is_exported()
+            || self.kind == StatementKind::ExportAssignment
+    }
+
+    /// `isScopeMarker`
+    fn is_scope_marker(&self) -> bool {
+        matches!(
+            self.kind,
+            StatementKind::ExportAssignment | StatementKind::ExportDeclaration
+        )
+    }
+
+    /// `createEmptyExports`
+    fn empty_exports() -> Statement {
+        Statement::new(StatementKind::ExportDeclaration, b"export {};".to_vec())
+    }
+}
+
+/// What `visit` makes of a statement.
+enum Visited {
+    Statements(Vec<Statement>),
+    /// "Don't actually transform yet; just leave as original node - will be elided/swapped by late pass"
+    Late(StmtId),
+}
+
+/// `CreateModifiersFromModifierFlags`: the modifiers in the order it makes them.
+const MODIFIERS: [(Flags, &[u8]); 15] = [
+    (Flags::EXPORT, b"export"),
+    (Flags::AMBIENT, b"declare"),
+    (Flags::DEFAULT, b"default"),
+    (Flags::CONST, b"const"),
+    (Flags::PUBLIC, b"public"),
+    (Flags::PRIVATE, b"private"),
+    (Flags::PROTECTED, b"protected"),
+    (Flags::ABSTRACT, b"abstract"),
+    (Flags::STATIC, b"static"),
+    (Flags::OVERRIDE, b"override"),
+    (Flags::READONLY, b"readonly"),
+    (Flags::ACCESSOR, b"accessor"),
+    (Flags::ASYNC, b"async"),
+    (Flags::IN, b"in"),
+    (Flags::OUT, b"out"),
+];
+
+/// `IsNonContextualKeyword`: the reserved words, and those of strict mode.
+fn is_non_contextual_keyword(word: &[u8]) -> bool {
+    matches!(
+        word,
+        b"break"
+            | b"case"
+            | b"catch"
+            | b"class"
+            | b"const"
+            | b"continue"
+            | b"debugger"
+            | b"default"
+            | b"delete"
+            | b"do"
+            | b"else"
+            | b"enum"
+            | b"export"
+            | b"extends"
+            | b"false"
+            | b"finally"
+            | b"for"
+            | b"function"
+            | b"if"
+            | b"import"
+            | b"in"
+            | b"instanceof"
+            | b"new"
+            | b"null"
+            | b"return"
+            | b"super"
+            | b"switch"
+            | b"this"
+            | b"throw"
+            | b"true"
+            | b"try"
+            | b"typeof"
+            | b"var"
+            | b"void"
+            | b"while"
+            | b"with"
+            | b"implements"
+            | b"interface"
+            | b"let"
+            | b"package"
+            | b"private"
+            | b"protected"
+            | b"public"
+            | b"static"
+            | b"yield"
+    )
+}
+
+/// `emitComments`, with `commentSeparatorAfter`, of those of `comments` that `shouldWriteComment` under `OnlyPrintJSDocStyle`. They are
+/// written at the start of a line that is `indent` levels in, and so is what follows them.
+pub(super) fn comments_text(text: &[u8], comments: Vec<(usize, usize)>, indent: usize) -> Vec<u8> {
+    let mut written = Vec::new();
+    for (start, end) in comments {
+        if !should_write_comment(&text[start..end]) {
+            continue;
+        }
+        write_comment_range(text, start, end, indent, &mut written);
+        if has_trailing_new_line(text, end) {
+            written.push(b'\n');
+            written.extend_from_slice(&b"    ".repeat(indent));
+        } else {
+            written.push(b' ');
+        }
+    }
+    written
+}
+
+/// `shouldWriteComment`, under `OnlyPrintJSDocStyle`: `isJSDocLikeText`, `IsPinnedComment`.
+fn should_write_comment(comment: &[u8]) -> bool {
+    comment.starts_with(b"/*")
+        && (comment.len() >= 5 && comment[2] == b'*' && comment[3] != b'/'
+            || comment.len() > 5 && comment[2] == b'!')
+}
+
+/// `CommentRange.HasTrailingNewLine`, of a comment that ends at `end`.
+fn has_trailing_new_line(text: &[u8], end: usize) -> bool {
+    let after = text[end..].iter().find(|&&b| b != b' ' && b != b'\t');
+    matches!(after, Some(b'\n' | b'\r'))
+}
+
+/// An element of a list. `range`: `Pos()` and `End()` of the node it is written for, which says where its comments are.
+pub(super) struct Element {
+    pub(super) range: Option<(usize, usize)>,
+    pub(super) text: Vec<u8>,
+}
+
+/// `EmitTextWriter`, as far as a list with comments in it needs one. `source`: the text of the file the comments are in.
+pub(super) struct Writer<'a> {
+    source: &'a [u8],
+    text: Vec<u8>,
+    indent: usize,
+    is_at_start_of_line: bool,
+}
+
+impl<'a> Writer<'a> {
+    /// What it writes goes on in a line that is `indent` levels in.
+    pub(super) fn new(source: &'a [u8], indent: usize) -> Writer<'a> {
+        Writer {
+            source,
+            text: Vec::new(),
+            indent,
+            is_at_start_of_line: false,
+        }
+    }
+
+    pub(super) fn into_text(self) -> Vec<u8> {
+        self.text
+    }
+
+    pub(super) fn write(&mut self, text: &[u8]) {
+        if text.is_empty() {
+            return;
+        }
+        if std::mem::take(&mut self.is_at_start_of_line) {
+            self.text.extend_from_slice(&b"    ".repeat(self.indent));
+        }
+        self.text.extend_from_slice(text);
+    }
+
+    pub(super) fn write_line(&mut self) {
+        if !self.is_at_start_of_line {
+            self.text.push(b'\n');
+            self.is_at_start_of_line = true;
+        }
+    }
+
+    /// `emitComment`
+    fn emit_comment(&mut self, (start, end): (usize, usize)) {
+        let mut written = Vec::new();
+        write_comment_range(self.source, start, end, self.indent, &mut written);
+        self.write(&written);
+    }
+
+    /// `emitLeadingComments`
+    fn emit_leading_comments(&mut self, pos: usize) {
+        let mut has_written_comment = false;
+        for comment in super::spans::get_leading_comment_ranges(self.source, pos) {
+            if !should_write_comment(&self.source[comment.0..comment.1]) {
+                continue;
+            }
+            // `emitNewLineBeforeLeadingCommentOfPosition`
+            if !std::mem::replace(&mut has_written_comment, true)
+                && self.source[pos..comment.0].contains(&b'\n')
+            {
+                self.write_line();
+            }
+            self.emit_comment(comment);
+            if has_trailing_new_line(self.source, comment.1) {
+                self.write_line();
+            } else {
+                self.write(b" ");
+            }
+        }
+    }
+
+    /// `emitTrailingComments`
+    fn emit_trailing_comments(&mut self, end: usize) {
+        for comment in super::spans::get_trailing_comment_ranges(self.source, end) {
+            if !should_write_comment(&self.source[comment.0..comment.1]) {
+                continue;
+            }
+            if !self.is_at_start_of_line {
+                self.write(b" ");
+            }
+            self.emit_comment(comment);
+            if has_trailing_new_line(self.source, comment.1) {
+                self.write_line();
+            }
+        }
+    }
+
+    /// `emitTrailingCommentsOfPosition`, without `prefixSpace`: it writes every kind of comment.
+    fn emit_trailing_comments_of_position(&mut self, pos: usize, force_no_newline: bool) {
+        for comment in super::spans::get_trailing_comment_ranges(self.source, pos) {
+            self.emit_comment(comment);
+            let is_single_line = self.source[comment.0..].starts_with(b"//");
+            if force_no_newline {
+                if is_single_line {
+                    self.write_line();
+                }
+            } else if has_trailing_new_line(self.source, comment.1) {
+                self.write_line();
+            } else {
+                self.write(b" ");
+            }
+        }
+    }
+
+    /// `emitListItems`, between what opens and what closes the list. `delimiter`: `writeDelimiter`, `,` or ` |` or ` &`.
+    /// `is_multi_line`: `LFMultiLine | LFIndented`, else `LFSingleLine | LFSpaceBetweenSiblings`. `has_trailing_comma`: and
+    /// `LFAllowTrailingComma`. `parent_end`: `End()` of the node the list is in.
+    pub(super) fn emit_list_items(
+        &mut self,
+        elements: &[Element],
+        delimiter: &[u8],
+        is_multi_line: bool,
+        has_trailing_comma: bool,
+        parent_end: usize,
+    ) {
+        let mut should_emit_intervening_comments = !is_multi_line;
+        if is_multi_line {
+            self.write_line();
+            self.indent += 1;
+        }
+        let mut previous: Option<(usize, usize)> = None;
+        for (i, child) in elements.iter().enumerate() {
+            if i != 0 {
+                if let Some((_, end)) = previous.filter(|it| it.1 != parent_end) {
+                    self.emit_leading_comments(end);
+                }
+                self.write(delimiter);
+                if is_multi_line {
+                    if should_emit_intervening_comments && let Some((pos, _)) = child.range {
+                        self.emit_trailing_comments_of_position(pos, true);
+                    }
+                    self.write_line();
+                    should_emit_intervening_comments = false;
+                } else {
+                    self.write(b" ");
+                }
+            }
+            match child.range {
+                Some((pos, _)) if should_emit_intervening_comments => {
+                    self.emit_trailing_comments_of_position(pos, false);
+                }
+                _ => should_emit_intervening_comments = true,
+            }
+            if let Some((pos, _)) = child.range {
+                self.emit_leading_comments(pos);
+            }
+            self.write(&child.text);
+            if let Some((_, end)) = child.range.filter(|it| it.1 != parent_end) {
+                self.emit_trailing_comments(end);
+            }
+            previous = child.range;
+        }
+        if has_trailing_comma {
+            self.write(b",");
+        } else if let Some((_, end)) = previous.filter(|it| it.1 != parent_end) {
+            self.emit_leading_comments(end);
+        }
+        if is_multi_line {
+            self.indent -= 1;
+            self.write_line();
+        }
+    }
+}
+
+/// `writeCommentRangeWorker`, of a `/* */`.
+fn write_comment_range(
+    text: &[u8],
+    start: usize,
+    end: usize,
+    indent: usize,
+    written: &mut Vec<u8>,
+) {
+    // `calculateIndent`
+    let indent_of = |line: &[u8]| {
+        let mut indent = 0;
+        for &b in line.iter().take_while(|&&b| b == b' ' || b == b'\t') {
+            indent += if b == b'\t' { 4 - indent % 4 } else { 1 };
+        }
+        indent as isize
+    };
+    let line_start = strings::last_index_of_char(&text[..start], b'\n').map_or(0, |at| at + 1);
+    let first_line_indent = indent_of(&text[line_start..start]);
+    for (i, line) in text[start..end].split(|&b| b == b'\n').enumerate() {
+        if i != 0 {
+            written.push(b'\n');
+            let spaces = indent as isize * 4 - first_line_indent + indent_of(line);
+            written.extend_from_slice(&b" ".repeat(spaces.max(0) as usize));
+        }
+        written.extend_from_slice(line.trim_ascii());
+    }
+}
+
+/// `node.Pos()`, going by where the first token of the node is: where the token before it ends, or a comment that trails that token.
+pub(super) fn pos_before(text: &[u8], start: usize) -> usize {
+    let mut at = start.min(text.len());
+    loop {
+        while at > 0 && text[at - 1].is_ascii_whitespace() {
+            at -= 1;
+        }
+        if text[..at].ends_with(b"*/")
+            && let Some(open) = strings::last_index_of(&text[..at - 2], b"/*")
+        {
+            at = open;
+            continue;
+        }
+        // A line that is all comment.
+        let line_start = strings::last_index_of_char(&text[..at], b'\n').map_or(0, |it| it + 1);
+        let line = &text[line_start..at];
+        match strings::index_of(line, b"//") {
+            Some(slashes) if line[..slashes].trim_ascii().is_empty() => at = line_start + slashes,
+            _ => return at,
+        }
+    }
+}
+
+/// Each with a space after it.
+fn modifiers_text(modifiers: &[Flags]) -> Vec<u8> {
+    let mut text = Vec::new();
+    for modifier in modifiers {
+        if let Some((_, word)) = MODIFIERS.iter().find(|it| it.0 == *modifier) {
+            text.extend_from_slice(word);
+            text.push(b' ');
+        }
+    }
+    text
+}
+
 /// `DeclarationTransformer`
 struct DeclarationEmit<'c, 'p> {
     c: &'c mut Checker<'p>,
@@ -162,8 +598,24 @@ struct DeclarationEmit<'c, 'p> {
     enclosing: Enclosing,
     suppresses_new_contexts: bool,
     in_class_expression: bool,
-    /// `lateStatementReplacementMap`: the statements something is written for.
-    written: FxHashSet<StmtId>,
+    /// `lateStatementReplacementMap`: the statements something is written for, and what.
+    written: FxHashMap<StmtId, Vec<Statement>>,
+    /// The declaration file is wanted, and not only what stands in its way. Otherwise all text is empty.
+    writes: bool,
+    needs_declare: bool,
+    needs_scope_fix_marker: bool,
+    result_has_scope_marker: bool,
+    result_has_external_module_indicator: bool,
+    /// How deep what is being written is indented.
+    indent: usize,
+    /// `generatedNames`
+    generated_names: Vec<Vec<u8>>,
+    /// `detachedCommentsInfo`: `nodePos`, `detachedCommentEndPos`.
+    detached_comments: Option<(usize, usize)>,
+    /// `expandoHosts`, of the variables that are written as functions: by the statement.
+    expando_hosts: FxHashMap<StmtId, Vec<Statement>>,
+    /// `expandoMembers`: by the statement of the host.
+    expando_members: FxHashMap<StmtId, Vec<Statement>>,
 }
 
 impl Checker<'_> {
@@ -176,38 +628,66 @@ impl Checker<'_> {
         let text = &self.hir(file).text[..];
         super::spans::get_leading_comment_ranges(text, pos as usize)
             .into_iter()
-            .any(|(start, end)| bun_core::strings::contains(&text[start..end], b"@internal"))
+            .any(|(start, end)| strings::contains(&text[start..end], b"@internal"))
     }
 }
 
 impl<'p> Checker<'p> {
     /// `getDeclarationDiagnosticsForFile`
     pub(super) fn check_declaration_emit(&mut self, file: FileId) {
+        self.transform_declarations(file, false);
+    }
+
+    /// `emitDeclarationFile`: what is written to the declaration file of `file`. `None`: there is none, because none is emitted for
+    /// such a file (`sourceFileMayBeEmitted`) or because the transformer has found something in the way (`declBlocked`), which is
+    /// reported.
+    pub fn emit_declaration_file(&mut self, file: FileId) -> Option<Vec<u8>> {
+        self.transform_declarations(file, true)
+    }
+
+    fn transform_declarations(&mut self, file: FileId, writes: bool) -> Option<Vec<u8>> {
         let files = self.files();
         let module = files.module(file);
         // `sourceFileMayBeEmitted`
         if !matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx)
-            || module.path.contains_str(b"/node_modules/")
+            || strings::contains(&module.path, b"/node_modules/")
                 && !files.options.files.contains(&module.path)
         {
-            return;
+            return None;
         }
         // All this is asked once everything is checked: a circle that goes through here is nobody's error.
         let saved = self.relation_too_complex;
         self.eager.push(self.stack.len());
-        let (found, isolated_declarations) = {
+        let (text, found, isolated_declarations) = {
             let mut emit = DeclarationEmit::new(self, file);
-            if module.hir.is_js {
+            emit.writes = writes;
+            let text = if module.hir.is_js {
                 emit.transform_javascript_file();
+                None
             } else {
-                emit.transform_source_file();
-            }
-            (emit.tracker.diagnostics, emit.tracker.isolated_declarations)
+                Some(emit.transform_source_file())
+            };
+            (
+                text,
+                emit.tracker.diagnostics,
+                emit.tracker.isolated_declarations,
+            )
         };
         self.eager.pop();
         self.relation_too_complex = saved;
         if let Some(isolated_declarations) = isolated_declarations {
             self.finish_isolated_declarations(isolated_declarations);
+        }
+        self.declaration_indent = None;
+        let mut text = text.filter(|_| writes && found.is_empty());
+        // `getSourceMappingURL`, without `mapRoot`. Nothing follows it, not a line break either.
+        if files.options.writes_declaration_maps
+            && let Some(text) = &mut text
+            && let Some(output) = crate::resolve::output_declaration_file_name(&module.path, None)
+        {
+            let name =
+                &output[strings::last_index_of_char(&output, b'/').map_or(0, |slash| slash + 1)..];
+            text.extend_from_slice(&[b"//# sourceMappingURL=", name, b".map"].concat());
         }
         for error in found {
             let Found {
@@ -220,6 +700,7 @@ impl<'p> Checker<'p> {
             self.add_diagnostic(Reported::new((file, start, end), code, held(args)))
                 .related_information = related;
         }
+        text
     }
 }
 
@@ -241,7 +722,17 @@ impl<'c, 'p> DeclarationEmit<'c, 'p> {
             enclosing: top,
             suppresses_new_contexts: false,
             in_class_expression: false,
-            written: FxHashSet::default(),
+            written: FxHashMap::default(),
+            writes: false,
+            needs_declare: true,
+            needs_scope_fix_marker: false,
+            result_has_scope_marker: false,
+            result_has_external_module_indicator: false,
+            indent: 0,
+            generated_names: Vec::new(),
+            detached_comments: None,
+            expando_hosts: FxHashMap::default(),
+            expando_members: FxHashMap::default(),
         }
     }
 
@@ -1394,19 +1885,23 @@ impl<'p> Checker<'p> {
         }
         let files = self.files();
         let mut results = Vec::new();
+        // `resolveExternalModuleName(enclosingDeclaration, importRef)`: the location is no specifier, so the module is looked up in the
+        // default mode of the file. An import that was resolved in another mode (`module: commonjs` with `bundler`) is not found.
+        let mode = self.default_resolution_mode_for_file(at.file);
         for &specifier in &self.bound(at.file).specifiers {
-            if let Some(module) = files.module_of_specifier(at.file, specifier)
+            if let Some(module) = files.module_of_specifier_as(at.file, specifier, mode)
                 && self.alias_for_symbol_in_container(module, symbol).is_some()
             {
                 results.push(module);
             }
         }
         if results.is_empty() {
-            for (index, module) in files.modules.iter().enumerate() {
-                let file = FileId(index as u32);
-                // `hir` of a transient module is mutated by the thread that owns it (`Files::bring_in`, `AtHand::drop`). Test
-                // `is_transient`, which is immutable after loading, before reading `hir`.
-                if module.is_transient && !file.is_local() {
+            // `c.program.SourceFiles()`
+            for &file in &files.order {
+                let module = files.module(file);
+                // The task that checks a leaf file frees its tree (`Files::free_tree`). Test `is_leaf`, which is immutable after
+                // loading, before reading `hir`.
+                if module.is_leaf && self.task.file != Some(file) {
                     continue;
                 }
                 if !module.hir.has_module_syntax {
@@ -2045,15 +2540,297 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
 // ───────────────────────────── `DeclarationTransformer` ─────────────────────────────
 
 impl<'p> DeclarationEmit<'_, 'p> {
-    /// `visitSourceFile`
-    fn transform_source_file(&mut self) {
+    /// `visitSourceFile`, `transformSourceFile`
+    fn transform_source_file(&mut self) -> Vec<u8> {
+        self.set_indent(0);
+        let detached = self.detached_comments_text();
         self.precalculate_visibility();
         self.transform_expando_assignments();
         let hir = self.c.hir(self.file());
+        let mut visited = Vec::with_capacity(hir.body.len());
         for s in hir.ids(hir.body) {
-            self.visit_statement(s);
+            visited.push(self.visit_statement(s));
         }
-        self.transform_late_painted_statements();
+        let mut statements = self.transform_late_painted_statements(visited, true);
+        let module = self.c.files().module(self.file());
+        if (module.is_module() || module.is_commonjs())
+            && (!self.result_has_external_module_indicator
+                || self.needs_scope_fix_marker && !self.result_has_scope_marker)
+        {
+            statements.push(Statement::empty_exports());
+        }
+        // `emitSourceFile`: `emitShebangIfNeeded`, `emitDetachedCommentsBeforeStatementList`, `emitTripleSlashDirectives`.
+        let mut shebang = Vec::new();
+        if hir.text.starts_with(b"#!") {
+            let end = strings::index_of_char_usize(&hir.text, b'\n').unwrap_or(hir.text.len());
+            shebang = [hir.text[..end].trim_end_with(|c| c == '\r'), b"\n"].concat();
+        }
+        let directives = self.reference_directives();
+        [
+            shebang,
+            detached,
+            directives,
+            self.statements_text(&statements),
+        ]
+        .concat()
+    }
+
+    /// `getReferencedFiles`, `getTypeReferences`, `getLibReferences`, `emitTripleSlashDirectives`: those that say `preserve="true"`.
+    fn reference_directives(&self) -> Vec<u8> {
+        let hir = self.c.hir(self.file());
+        let mut text = Vec::new();
+        for (wanted, word) in [
+            (ReferenceKind::Path, &b"path"[..]),
+            (ReferenceKind::Types, b"types"),
+            (ReferenceKind::Lib, b"lib"),
+        ] {
+            for &(kind, value, pos, mode) in hir.references.iter().filter(|it| it.0 == wanted) {
+                let _ = kind;
+                let line = &hir.text[(pos as usize).min(hir.text.len())..];
+                let line = &line[..strings::index_of_char_usize(line, b'\n').unwrap_or(line.len())];
+                if !strings::contains(line, b"preserve=\"true\"")
+                    && !strings::contains(line, b"preserve='true'")
+                {
+                    continue;
+                }
+                let mut name = self.name(value).to_vec();
+                // The declaration file of a file of the program is next to this one as the file is to this file.
+                if wanted == ReferenceKind::Path
+                    && let Some(output) = crate::resolve::output_declaration_file_name(&name, None)
+                {
+                    name = output;
+                }
+                let mode: &[u8] = match mode {
+                    ResolutionMode::None => b"",
+                    ResolutionMode::Import => b"resolution-mode=\"import\" ",
+                    ResolutionMode::Require => b"resolution-mode=\"require\" ",
+                };
+                text.extend_from_slice(
+                    &[b"/// <reference ", word, b"=\"", &name[..], b"\" ", mode].concat(),
+                );
+                text.extend_from_slice(b"preserve=\"true\" />\n");
+            }
+        }
+        text
+    }
+
+    // ───────────────────────────── what is written ─────────────────────────────
+
+    fn text_of(&mut self, what: Written) -> Vec<u8> {
+        if !self.writes {
+            return Vec::new();
+        }
+        let (file, enclosing) = (self.file(), self.enclosing);
+        self.c.text_of_written(file, what, enclosing)
+    }
+
+    /// Nothing, of what has no name: `export default class {}`.
+    fn name(&self, name: Atom) -> &'p [u8] {
+        if name.is_none() {
+            return b"";
+        }
+        self.c.atoms().bytes(name)
+    }
+
+    fn indentation(&self) -> Vec<u8> {
+        b"    ".repeat(self.indent)
+    }
+
+    fn set_indent(&mut self, indent: usize) {
+        self.indent = indent;
+        self.c.declaration_indent = self.writes.then_some(indent);
+    }
+
+    /// `emitLeadingComments`, under `OnlyPrintJSDocStyle`, of a node that is written at the start of a line. `pos`: `node.Pos()`.
+    fn leading_comments(&mut self, pos: u32) -> Vec<u8> {
+        if !self.writes || self.c.files().options.remove_comments {
+            return Vec::new();
+        }
+        let mut pos = pos as usize;
+        // "skip detached comments"
+        if let Some((_, end)) = self.detached_comments.filter(|it| it.0 == pos) {
+            pos = end;
+        }
+        let text = &self.c.hir(self.file()).text[..];
+        comments_text(
+            text,
+            super::spans::get_leading_comment_ranges(text, pos),
+            self.indent,
+        )
+    }
+
+    /// `emitDetachedComments`, of the file: the comments at its start that an empty line sets apart from what follows.
+    fn detached_comments_text(&mut self) -> Vec<u8> {
+        let hir = self.c.hir(self.file());
+        let text = &hir.text[..];
+        let Some(pos) = hir.ids(hir.body).next().map(|s| hir[s].loc.pos as usize) else {
+            return Vec::new();
+        };
+        if !self.writes || self.c.files().options.remove_comments {
+            return Vec::new();
+        }
+        let lines_between =
+            |from: usize, to: usize| text[from..to].iter().filter(|&&b| b == b'\n').count();
+        let mut detached: Vec<(usize, usize)> = Vec::new();
+        for comment in super::spans::get_leading_comment_ranges(text, pos) {
+            // "There was a blank line between the last comment and this comment."
+            if detached
+                .last()
+                .is_some_and(|last| lines_between(last.1, comment.0) >= 2)
+            {
+                break;
+            }
+            detached.push(comment);
+        }
+        let Some(&(_, end)) = detached.last() else {
+            return Vec::new();
+        };
+        let node = self.c.skip_trivia_from(self.file(), pos as u32) as usize;
+        if lines_between(end, node.max(end)) < 2 {
+            return Vec::new();
+        }
+        self.detached_comments = Some((pos, end));
+        comments_text(text, detached, self.indent)
+    }
+
+    /// Each statement on a line of its own.
+    fn statements_text(&self, statements: &[Statement]) -> Vec<u8> {
+        let mut text = Vec::new();
+        for statement in statements {
+            text.extend_from_slice(&self.indentation());
+            text.extend_from_slice(&statement.comments);
+            text.extend_from_slice(&modifiers_text(&statement.modifiers));
+            text.extend_from_slice(&statement.text);
+            text.push(b'\n');
+        }
+        text
+    }
+
+    /// `{`, each of `lines` on a line of its own one level further in, with `separator` between two, and `}`.
+    fn block(&self, lines: &[Vec<u8>], separator: &[u8]) -> Vec<u8> {
+        let mut text = b"{\n".to_vec();
+        for (i, line) in lines.iter().enumerate() {
+            text.extend_from_slice(&self.indentation());
+            text.extend_from_slice(b"    ");
+            text.extend_from_slice(line);
+            if i + 1 != lines.len() {
+                text.extend_from_slice(separator);
+            }
+            text.push(b'\n');
+        }
+        text.extend_from_slice(&self.indentation());
+        text.push(b'}');
+        text
+    }
+
+    /// `ensureModifiers`, `ensureModifierFlags`, `maskModifierFlags`. `written`: `node.Modifiers()`.
+    fn ensure_modifiers(
+        &self,
+        written: Span<ModifierId>,
+        parent_is_file: bool,
+        is_always_type: bool,
+    ) -> Vec<Flags> {
+        let hir = self.c.hir(self.file());
+        let in_order: Vec<Flags> = (written.iter())
+            .filter_map(|m| match hir[m].kind {
+                ModifierKind::Keyword(modifier) => Some(modifier),
+                ModifierKind::Decorator(_) => None,
+            })
+            .collect();
+        let current = in_order.iter().fold(Flags::empty(), |all, &it| all | it);
+        // "No async and override modifiers in declaration files"
+        let mut flags = current - (Flags::PUBLIC | Flags::ASYNC | Flags::OVERRIDE);
+        if !parent_is_file {
+            flags -= Flags::AMBIENT;
+        } else if self.needs_declare && !is_always_type {
+            flags |= Flags::AMBIENT;
+        }
+        if flags.contains(Flags::DEFAULT) {
+            flags |= Flags::EXPORT;
+            flags -= Flags::AMBIENT;
+        }
+        if flags == current {
+            return in_order;
+        }
+        let made = MODIFIERS.iter().filter(|it| flags.contains(it.0));
+        made.map(|it| it.0).collect()
+    }
+
+    /// The literal that names a module in the statement `s`, as it is written.
+    fn module_specifier_text(&self, s: StmtId, spec: Atom) -> Vec<u8> {
+        let hir = self.c.hir(self.file());
+        let (from, to) = (hir[s].start, hir[s].loc.end);
+        let mut uses = hir.specifier_uses.iter();
+        let written = uses.find(|it| it.spec == spec && (from..to).contains(&it.pos));
+        let text = &hir.text[..];
+        if let Some(start) = written.map(|it| it.pos as usize)
+            && let Some(&quote) = text.get(start)
+            && matches!(quote, b'"' | b'\'')
+        {
+            let mut end = start + 1;
+            while end < text.len() && text[end] != quote && text[end] != b'\n' {
+                end += if text[end] == b'\\' { 2 } else { 1 };
+            }
+            return text[start..(end + 1).min(text.len())].to_vec();
+        }
+        super::print::quoted(self.name(spec), b'"', false)
+    }
+
+    /// `NewUniqueNameEx(base, GeneratedIdentifierFlagsOptimistic)`, `makeUniqueName`: `base` if nothing in the file is called that.
+    fn unique_name(&mut self, base: &[u8]) -> Vec<u8> {
+        let text = &self.c.hir(self.file()).text[..];
+        let is_part = |byte: Option<&u8>| {
+            byte.is_some_and(|&b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80)
+        };
+        let is_taken = |name: &[u8], generated: &[Vec<u8>]| {
+            generated.iter().any(|it| it == name) || {
+                let mut from = 0;
+                loop {
+                    let Some(at) = strings::index_of(&text[from..], name).map(|at| from + at)
+                    else {
+                        break false;
+                    };
+                    if !is_part(at.checked_sub(1).and_then(|before| text.get(before)))
+                        && !is_part(text.get(at + name.len()))
+                    {
+                        break true;
+                    }
+                    from = at + 1;
+                }
+            }
+        };
+        let mut name = base.to_vec();
+        let mut number = 0;
+        while is_taken(&name, &self.generated_names) {
+            number += 1;
+            name = [base, b"_", number.to_string().as_bytes()].concat();
+        }
+        self.generated_names.push(name.clone());
+        name
+    }
+
+    /// `<A, B>`, or nothing.
+    fn visit_type_parameters(&mut self, type_parameters: Span<TypeParamId>) -> Vec<u8> {
+        let mut texts = Vec::with_capacity(type_parameters.len());
+        for tp in type_parameters.iter() {
+            texts.push(self.visit_type_parameter(tp));
+        }
+        if texts.is_empty() {
+            return Vec::new();
+        }
+        [b"<", &texts.join(&b", "[..])[..], b">"].concat()
+    }
+
+    /// The same of type arguments, which have been gone through.
+    fn type_arguments_text(&mut self, arguments: IdList<TypeNodeId>) -> Vec<u8> {
+        let mut texts = Vec::with_capacity(arguments.len());
+        for argument in self.c.hir(self.file()).ids(arguments) {
+            texts.push(self.text_of(Written::Type(argument)));
+        }
+        if texts.is_empty() {
+            return Vec::new();
+        }
+        [b"<", &texts.join(&b", "[..])[..], b">"].concat()
     }
 
     /// `visitNestedExpression`, `transformExpandoAssignment`, of each `f.name = value` that declares a property. They come before all
@@ -2150,7 +2927,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 _ => None,
             };
             let Some(property) =
-                property.filter(|&name| bun_core::lexer::is_identifier(files.atoms.bytes(name)))
+                property.filter(|&name| bun_core::lexer::is_identifier(self.c.atoms().bytes(name)))
             else {
                 continue;
             };
@@ -2178,14 +2955,25 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             // `transformExpandoHost`: it is written as a function, in the place of the whole statement. A function declaration says
             // the same when it is got to.
+            // `getExpandoHostId`
+            let root = match variable {
+                Some((d, _)) => bound.var_stmt[d.idx()].some(),
+                None => self.c.files().statement_of_declaration(file, declaration),
+            };
             if let Some((d, function)) = variable {
                 let statement = bound.var_stmt[d.idx()];
-                if statement.is_some() && self.written.insert(statement) {
+                if statement.is_some() && !self.expando_hosts.contains_key(&statement) {
                     let saved = self.tracker.get_symbol_accessibility_diagnostic;
                     self.tracker.get_symbol_accessibility_diagnostic =
                         Context::ForNode(hir.node(d));
-                    self.transform_signature(function);
+                    let signature = self.transform_signature(function);
                     self.tracker.get_symbol_accessibility_diagnostic = saved;
+                    let host = self.expando_host(statement, name, &signature);
+                    self.expando_hosts.insert(statement, host.clone());
+                    if self.written.contains_key(&statement) {
+                        let block = self.create_full_expando_block(statement, host);
+                        self.written.insert(statement, block);
+                    }
                     if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
                         self.c
                             .iso_report_expandos(isolated_declarations, hir.node(d));
@@ -2197,21 +2985,64 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.tracker.get_symbol_accessibility_diagnostic,
             );
             self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(e));
+            let export_of = |names: Vec<u8>| {
+                let text = [b"export { ", &names[..], b" };"].concat();
+                Statement::new(StatementKind::ExportDeclaration, text)
+            };
+            let export_name = self.name(property);
+            let mut added = Vec::new();
             if let ExprKind::Ident(right) = hir[value].kind
                 && !is_parenthesized(hir, value)
             {
                 // `transformBinaryExpressionToExportDeclaration`: it is written `export { right as name }`.
                 self.check_entity_name_visibility(right, hir[value].pos, Meaning::ValueOfName);
+                added.push(export_of(if right == property {
+                    export_name.to_vec()
+                } else {
+                    [self.name(right), b" as ", export_name].concat()
+                }));
             } else {
                 let holder = self.c.type_of_symbol(host);
                 if let Some(ty) = self.c.type_of_property(holder, property) {
                     self.tracker.error_name_node = Node::NONE;
-                    self.create_type_of_declaration(
+                    let ty = self.create_type_of_declaration(
                         Some(hir.node(e)),
                         ty,
                         DECLARATION_EMIT_NODE_BUILDER_FLAGS,
                     );
+                    // "use exportName as localName if there won't be any conflicts or keyword issues"
+                    let any = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
+                    let scope = self.enclosing.scope;
+                    let local_name = if files.resolve_name(file, scope, property, any).is_some()
+                        || is_non_contextual_keyword(export_name)
+                    {
+                        self.unique_name(&[export_name, b"_1"].concat())
+                    } else {
+                        export_name.to_vec()
+                    };
+                    added.push(Statement::new(
+                        StatementKind::Other,
+                        [b"var ", &local_name[..], b": ", &ty[..], b";"].concat(),
+                    ));
+                    if local_name != export_name {
+                        added.push(export_of([&local_name[..], b" as ", export_name].concat()));
+                    }
                 }
+            }
+            if let Some(root) = root {
+                let members = self.expando_members.entry(root).or_default();
+                let is_export = |it: &Statement| it.kind == StatementKind::ExportDeclaration;
+                let had_export = members.iter().any(is_export);
+                // "so they remain exported after the `export {}` is added"
+                if added.len() > 1 && !had_export {
+                    for member in members.iter_mut().filter(|it| !it.is_exported()) {
+                        member.modifiers.insert(0, Flags::EXPORT);
+                    }
+                }
+                if had_export && let Some(first) = added.first_mut().filter(|it| !is_export(it)) {
+                    first.modifiers.push(Flags::EXPORT);
+                }
+                members.append(&mut added);
             }
             (
                 self.tracker.error_name_node,
@@ -2347,23 +3178,32 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     /// `visit`, of a statement.
-    fn visit_statement(&mut self, s: StmtId) {
-        let statement = &self.c.hir(self.file())[s];
+    fn visit_statement(&mut self, s: StmtId) -> Visited {
+        let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
+        let statement = &hir[s];
         // `visitDeclarationStatements`
         if self.c.should_strip_internal(self.file(), statement.loc.pos) {
-            return;
+            return Visited::Statements(Vec::new());
         }
+        let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
         match statement.kind {
-            // `transformImportDeclaration`
-            StmtKind::Import(i) => {
-                if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
-                    self.c.iso_transform_import(isolated_declarations, s, i);
-                }
+            StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => {
+                self.result_has_external_module_indicator |= parent_is_file;
+                self.result_has_scope_marker = true;
+                let mut written = self.export_declaration(s);
+                written.comments = self.leading_comments(statement.loc.pos);
+                Visited::Statements(vec![written])
+            }
+            // `VisitEachChild`
+            StmtKind::ExportAsNamespace(name) => {
+                let text = [b"export as namespace ", self.name(name), b";"].concat();
+                Visited::Statements(vec![Statement::new(StatementKind::Other, text)])
             }
             StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
-                self.transform_export_assignment(s, e)
+                Visited::Statements(self.transform_export_assignment(s, e))
             }
-            StmtKind::Fn(_)
+            StmtKind::Import(_)
+            | StmtKind::Fn(_)
             | StmtKind::Class(_)
             | StmtKind::Interface(_)
             | StmtKind::TypeAlias(_)
@@ -2371,24 +3211,207 @@ impl<'p> DeclarationEmit<'_, 'p> {
             | StmtKind::Module(_)
             | StmtKind::Var(_)
             | StmtKind::ImportEquals(_) => {
-                if !self.written.contains(&s) && self.transform_top_level_declaration(s) {
-                    self.written.insert(s);
+                // `transformImportDeclaration`
+                if let StmtKind::Import(i) = statement.kind
+                    && let Some(isolated_declarations) = &mut self.tracker.isolated_declarations
+                {
+                    self.c.iso_transform_import(isolated_declarations, s, i);
                 }
+                if !self.written.contains_key(&s)
+                    && let Some(written) = self.transform_top_level_declaration(s)
+                {
+                    self.written.insert(s, written);
+                }
+                Visited::Late(s)
             }
-            _ => {}
+            _ => Visited::Statements(Vec::new()),
         }
     }
 
-    /// `transformAndReplaceLatePaintedStatements`
-    fn transform_late_painted_statements(&mut self) {
+    /// `transformAndReplaceLatePaintedStatements`. `parent_is_file`: `IsSourceFile(statement.Parent)`.
+    fn transform_late_painted_statements(
+        &mut self,
+        visited: Vec<Visited>,
+        parent_is_file: bool,
+    ) -> Vec<Statement> {
         while !self.tracker.late_marked_statements.is_empty() {
             let next = self.tracker.late_marked_statements.remove(0);
-            if self.transform_top_level_declaration(next) {
-                self.written.insert(next);
-            } else {
-                self.written.remove(&next);
+            let parent = self.c.bound(self.file()).stmt_parent[next.idx()];
+            let saved = std::mem::replace(&mut self.needs_declare, parent == Parent::File);
+            let written = self.transform_top_level_declaration(next);
+            self.needs_declare = saved;
+            match written {
+                Some(written) => self.written.insert(next, written),
+                None => self.written.remove(&next),
+            };
+        }
+        let mut results = Vec::with_capacity(visited.len());
+        for visited in visited {
+            match visited {
+                Visited::Statements(mut statements) => results.append(&mut statements),
+                Visited::Late(s) => {
+                    for statement in self.written.get(&s).into_iter().flatten() {
+                        self.needs_scope_fix_marker |= statement.needs_scope_marker();
+                        self.result_has_external_module_indicator |=
+                            parent_is_file && statement.is_external_module_indicator();
+                        results.push(statement.clone());
+                    }
+                }
             }
         }
+        results
+    }
+
+    /// An `ExportDeclaration`, which is kept.
+    fn export_declaration(&mut self, s: StmtId) -> Statement {
+        let hir = self.c.hir(self.file());
+        let mut text = b"export ".to_vec();
+        let (spec, mode) = match hir[s].kind {
+            StmtKind::ExportNamed(export) => {
+                let export = &hir[export];
+                if export.type_only {
+                    text.extend_from_slice(b"type ");
+                }
+                // `Pos()` of an element: where the `{` or the comma before it ends.
+                let after_comma = |end: u32| {
+                    let comma = self.c.skip_trivia_from(self.file(), end) as usize;
+                    (hir.text.get(comma) == Some(&b',')).then_some(comma + 1)
+                };
+                let statement = hir[s].start as usize;
+                let mut pos = strings::index_of_char_usize(&hir.text[statement..], b'{')
+                    .map(|brace| statement + brace + 1);
+                let mut items = Vec::with_capacity(export.items.len());
+                for item in export.items.iter() {
+                    let (start, end) = (hir[item].start as usize, hir[item].end as usize);
+                    items.push(Element {
+                        range: pos.map(|pos| (pos, end)),
+                        text: hir.text[start..end].to_vec(),
+                    });
+                    pos = after_comma(hir[item].end);
+                }
+                if items.is_empty() {
+                    text.extend_from_slice(b"{}");
+                } else {
+                    // `NodeList.HasTrailingComma`
+                    let items = self.list_text(items, false, pos.is_some());
+                    text.extend_from_slice(&[b"{ ", &items[..], b" }"].concat());
+                }
+                (export.spec, export.mode)
+            }
+            StmtKind::ExportStar {
+                spec,
+                alias,
+                type_only,
+                mode,
+                alias_pos,
+                ..
+            } => {
+                if type_only {
+                    text.extend_from_slice(b"type ");
+                }
+                text.push(b'*');
+                if alias.is_some() {
+                    // `export * as "a b"`
+                    let name = match hir.text.get(alias_pos as usize) {
+                        Some(&quote @ (b'"' | b'\'')) => {
+                            super::print::quoted(self.name(alias), quote, false)
+                        }
+                        _ => self.name(alias).to_vec(),
+                    };
+                    text.extend_from_slice(&[b" as ", &name[..]].concat());
+                }
+                (spec, mode)
+            }
+            _ => (Atom::NONE, ResolutionMode::None),
+        };
+        if spec.is_some() {
+            // `rewriteModuleSpecifier`
+            self.result_has_external_module_indicator = true;
+            text.extend_from_slice(b" from ");
+            text.extend_from_slice(&self.module_specifier_text(s, spec));
+            text.extend_from_slice(&self.resolution_mode_override_text(s, mode));
+        }
+        text.push(b';');
+        Statement::new(StatementKind::ExportDeclaration, text)
+    }
+
+    /// `tryGetResolutionModeOverride`: the import attributes of the statement `s`, if they say how its module is looked for.
+    fn resolution_mode_override_text(&self, s: StmtId, mode: ResolutionMode) -> Vec<u8> {
+        let hir = self.c.hir(self.file());
+        let statement = &hir.text[hir[s].start as usize..hir[s].loc.end as usize];
+        // `GetResolutionModeOverride`
+        let said = strings::index_of(statement, b"resolution-mode").map(|at| &statement[at..]);
+        let word: &[u8] = match mode {
+            ResolutionMode::Import => b"import",
+            ResolutionMode::Require => b"require",
+            ResolutionMode::None => {
+                match said.and_then(|it| it.split(|&b| b == b'"' || b == b'\'').nth(2)) {
+                    Some(b"import") => b"import",
+                    Some(b"require") => b"require",
+                    _ => return Vec::new(),
+                }
+            }
+        };
+        [b" with { \"resolution-mode\": \"", word, b"\" }"].concat()
+    }
+
+    /// `transformImportDeclaration`
+    fn transform_import_declaration(&mut self, i: ImportId, s: StmtId) -> Option<Statement> {
+        let file = self.file();
+        let hir = self.c.hir(file);
+        let import = &hir[i];
+        let tail = |emit: &mut Self| {
+            // `rewriteModuleSpecifier`
+            emit.result_has_external_module_indicator = true;
+            let specifier = emit.module_specifier_text(s, import.spec);
+            [
+                &specifier[..],
+                &emit.resolution_mode_override_text(s, import.mode)[..],
+                b";",
+            ]
+            .concat()
+        };
+        // `import "mod"`: "possibly needed for side effects? (global interface patches, module augmentations, etc)"
+        if import.clause_start == import.clause_end {
+            let text = [b"import ", &tail(self)[..]].concat();
+            return Some(Statement::new(StatementKind::Import, text));
+        }
+        let mut bindings: Vec<Vec<u8>> = Vec::new();
+        if import.default.is_some() && self.c.is_declaration_visible(file, Decl::ImportDefault(i)) {
+            bindings.push(self.name(import.default).to_vec());
+        }
+        if import.namespace.is_some() {
+            if self
+                .c
+                .is_declaration_visible(file, Decl::ImportNamespace(i))
+            {
+                bindings.push([b"* as ", self.name(import.namespace)].concat());
+            }
+        } else {
+            let mut named: Vec<&[u8]> = Vec::new();
+            for spec in import.named.iter() {
+                if self.c.is_declaration_visible(file, Decl::ImportSpec(spec)) {
+                    named.push(&hir.text[hir[spec].start as usize..hir[spec].end as usize]);
+                }
+            }
+            if !named.is_empty() {
+                bindings.push([b"{ ", &named.join(&b", "[..])[..], b" }"].concat());
+            }
+        }
+        if bindings.is_empty() {
+            return None;
+        }
+        let type_only: &[u8] = if import.type_only { b"type " } else { b"" };
+        let bindings = bindings.join(&b", "[..]);
+        let text = [
+            b"import ",
+            type_only,
+            &bindings[..],
+            b" from ",
+            &tail(self)[..],
+        ]
+        .concat();
+        Some(Statement::new(StatementKind::Import, text))
     }
 
     /// Makes `scope` what names are looked up from.
@@ -2398,18 +3421,26 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
     }
 
-    /// `transformTopLevelDeclaration`. Whether anything is written for the statement.
-    fn transform_top_level_declaration(&mut self, s: StmtId) -> bool {
+    /// `transformTopLevelDeclaration`. `None`: nothing is written for the statement.
+    fn transform_top_level_declaration(&mut self, s: StmtId) -> Option<Vec<Statement>> {
         self.tracker
             .late_marked_statements
             .retain(|&marked| marked != s);
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         if self.c.should_strip_internal(self.file(), hir[s].loc.pos) {
-            return false;
+            return None;
         }
         let kind = hir[s].kind;
         let decl = match kind {
-            StmtKind::ImportEquals(i) => return self.transform_import_equals(i, s),
+            StmtKind::ImportEquals(_) | StmtKind::Import(_) => {
+                let mut written = match kind {
+                    StmtKind::ImportEquals(i) => self.transform_import_equals(i, s)?,
+                    StmtKind::Import(i) => self.transform_import_declaration(i, s)?,
+                    _ => return None,
+                };
+                written.comments = self.leading_comments(hir[s].loc.pos);
+                return Some(vec![written]);
+            }
             StmtKind::Fn(f) => Some(Decl::Fn(f)),
             StmtKind::Class(c) => Some(Decl::Class(c)),
             StmtKind::Interface(i) => Some(Decl::Interface(i)),
@@ -2417,46 +3448,80 @@ impl<'p> DeclarationEmit<'_, 'p> {
             StmtKind::Enum(e) => Some(Decl::Enum(e)),
             StmtKind::Module(m) => Some(Decl::Module(m)),
             StmtKind::Var(_) => None,
-            _ => return false,
+            _ => return None,
         };
         let file = self.file();
         if let Some(decl) = decl
             && !self.c.is_declaration_visible(file, decl)
         {
-            return false;
+            return None;
         }
         if let StmtKind::Fn(f) = kind
             && self.is_implementation_of_overload(f)
         {
-            return false;
+            return None;
+        }
+        if let Some(host) = self.expando_hosts.get(&s) {
+            let host = host.clone();
+            return Some(self.create_full_expando_block(s, host));
         }
         let saved = (
             self.enclosing,
             self.tracker.get_symbol_accessibility_diagnostic,
             self.tracker.error_name_node,
+            self.needs_declare,
         );
-        let is_written = match kind {
+        let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
+        let other = |modifiers: Vec<Flags>, text: Vec<u8>| {
+            Some(vec![Statement {
+                kind: StatementKind::Other,
+                comments: Vec::new(),
+                modifiers,
+                text,
+            }])
+        };
+        let written = match kind {
             StmtKind::TypeAlias(a) => {
                 self.enter(bound.alias_scope[a.idx()]);
                 self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(s));
-                for tp in hir[a].type_params.iter() {
-                    self.visit_type_parameter(tp);
-                }
+                self.needs_declare = false;
+                let modifiers = self.ensure_modifiers(hir[s].modifiers, parent_is_file, false);
+                let type_parameters = self.visit_type_parameters(hir[a].type_params);
                 self.visit_type(hir[a].ty, true);
-                true
+                let ty = self.text_of(Written::Type(hir[a].ty));
+                let name = self.name(hir[a].name);
+                other(
+                    modifiers,
+                    [b"type ", name, &type_parameters[..], b" = ", &ty[..], b";"].concat(),
+                )
             }
             StmtKind::Interface(i) => {
                 self.enter(bound.interface_scope[i.idx()]);
-                for tp in hir[i].type_params.iter() {
-                    self.visit_type_parameter(tp);
-                }
+                let modifiers = self.ensure_modifiers(hir[s].modifiers, parent_is_file, true);
+                let type_parameters = self.visit_type_parameters(hir[i].type_params);
+                let mut extends = Vec::new();
                 for node in hir.ids(hir[i].extends) {
                     self.visit_heritage_type(node);
+                    // `transformHeritageClause`
+                    if matches!(hir[node].kind, TypeNodeKind::Ref { .. }) {
+                        extends.push(self.text_of(Written::Type(node)));
+                    }
                 }
+                self.set_indent(self.indent + 1);
+                let mut members = Vec::with_capacity(hir[i].members.len());
                 for m in hir[i].members.iter() {
-                    self.visit_member(m);
+                    members.extend(self.visit_member(m));
                 }
-                true
+                self.set_indent(self.indent - 1);
+                let mut text =
+                    [b"interface ", self.name(hir[i].name), &type_parameters[..]].concat();
+                if !extends.is_empty() {
+                    text.extend_from_slice(b" extends ");
+                    text.extend_from_slice(&extends.join(&b", "[..]));
+                }
+                text.push(b' ');
+                text.extend_from_slice(&self.block(&members, b""));
+                other(modifiers, text)
             }
             StmtKind::Fn(f) => {
                 if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
@@ -2465,43 +3530,236 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 }
                 self.enter(bound.fns[f.idx()].scope);
                 self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(s));
-                self.transform_signature(f);
-                true
+                let signature = self.transform_signature(f);
+                if self.expando_members.contains_key(&s) {
+                    Some(self.expando_host(s, hir[f].name, &signature))
+                } else {
+                    let modifiers = self.ensure_modifiers(hir[s].modifiers, parent_is_file, false);
+                    let name = self.name(hir[f].name);
+                    other(
+                        modifiers,
+                        [b"function ", name, &signature[..], b";"].concat(),
+                    )
+                }
             }
             StmtKind::Enum(e) => {
                 if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
                     self.c.iso_transform_enum(isolated_declarations, e);
                 }
-                true
+                let modifiers = self.ensure_modifiers(hir[s].modifiers, parent_is_file, false);
+                let text = self.transform_enum_declaration(e);
+                other(modifiers, text)
             }
-            StmtKind::Module(m) => {
-                self.enter(bound.module_scope[m.idx()]);
-                for inner in hir.ids(hir[m].body) {
-                    self.visit_statement(inner);
-                }
-                self.transform_late_painted_statements();
-                true
-            }
-            StmtKind::Class(c) => {
-                self.transform_class_declaration(c, s);
-                true
-            }
-            StmtKind::Var(decls) => self.transform_variable_statement(decls, s),
-            _ => true,
+            StmtKind::Module(m) => Some(vec![self.transform_module_declaration(m, s)]),
+            StmtKind::Class(c) => Some(self.transform_class_declaration(c, s)),
+            StmtKind::Var(decls) => self
+                .transform_variable_statement(decls, s)
+                .map(|it| vec![it]),
+            _ => Some(Vec::new()),
         };
         (
             self.enclosing,
             self.tracker.get_symbol_accessibility_diagnostic,
             self.tracker.error_name_node,
+            self.needs_declare,
         ) = saved;
-        is_written
+        let mut written = written?;
+        let comments = self.leading_comments(hir[s].loc.pos);
+        let keeps_comments = match kind {
+            StmtKind::Class(_) => written.last_mut(),
+            _ => written.first_mut(),
+        };
+        if let Some(statement) = keeps_comments {
+            statement.comments = comments;
+        }
+        Some(self.create_full_expando_block(s, written))
+    }
+
+    /// `transformExpandoHost`, of a function: the function `name` with `signature`, in the place of the statement `s`.
+    fn expando_host(&mut self, s: StmtId, name: Atom, signature: &[u8]) -> Vec<Statement> {
+        let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
+        let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
+        let saved = std::mem::replace(&mut self.needs_declare, true);
+        let mut modifiers = self.ensure_modifiers(hir[s].modifiers, parent_is_file, false);
+        self.needs_declare = saved;
+        let is_default_export = modifiers.contains(&Flags::DEFAULT);
+        if is_default_export {
+            modifiers = vec![Flags::AMBIENT];
+        }
+        let name = self.name(name);
+        let mut host = vec![Statement {
+            kind: StatementKind::Other,
+            comments: Vec::new(),
+            modifiers,
+            text: [b"function ", name, signature, b";"].concat(),
+        }];
+        if is_default_export {
+            self.result_has_external_module_indicator |= parent_is_file;
+            self.result_has_scope_marker = true;
+            let text = [b"export default ", name, b";"].concat();
+            host.push(Statement::new(StatementKind::ExportAssignment, text));
+        }
+        host
+    }
+
+    /// `createFullExpandoBlock`: `host`, which is written for the statement `s`, and a namespace with what is assigned to its properties.
+    fn create_full_expando_block(&mut self, s: StmtId, mut host: Vec<Statement>) -> Vec<Statement> {
+        let Some(members) = self.expando_members.get(&s).cloned() else {
+            return host;
+        };
+        let hir = self.c.hir(self.file());
+        let name = match hir[s].kind {
+            StmtKind::Fn(f) => hir[f].name,
+            StmtKind::Class(c) => hir[c].name,
+            StmtKind::Enum(e) => hir[e].name,
+            StmtKind::Module(m) => match hir[m].name {
+                ModuleName::Ident(name) => name,
+                _ => Atom::NONE,
+            },
+            StmtKind::Var(decls) => match decls.iter().next().map(|d| hir[hir[d].pat].kind) {
+                Some(PatKind::Ident(name)) => name,
+                _ => Atom::NONE,
+            },
+            _ => Atom::NONE,
+        };
+        let Some(first) = host.first().filter(|_| name.is_some()) else {
+            return host;
+        };
+        let modifiers = first.modifiers.clone();
+        self.set_indent(self.indent + 1);
+        let body = self.statements_text(&members);
+        self.set_indent(self.indent - 1);
+        let head = [b"namespace ", self.name(name), b" {\n"].concat();
+        host.push(Statement {
+            kind: StatementKind::Other,
+            comments: Vec::new(),
+            modifiers,
+            text: [&head[..], &body[..], &self.indentation()[..], b"}"].concat(),
+        });
+        host
+    }
+
+    /// `transformEnumDeclaration`, from the keyword on.
+    fn transform_enum_declaration(&mut self, e: EnumId) -> Vec<u8> {
+        let file = self.file();
+        let hir = self.c.hir(file);
+        let mut members = Vec::with_capacity(hir[e].members.len());
+        for m in hir[e].members.iter() {
+            if !self.writes || self.c.should_strip_internal(file, hir[m].loc.pos) {
+                continue;
+            }
+            let mut member = self.text_of(Written::PropertyName(hir.name(hir.node(m))));
+            // "Rewrite enum values to their constants, if available"
+            match self.c.enum_member_value(file, m) {
+                Some(EnumValue::Number(bits)) => {
+                    let value = f64::from_bits(bits);
+                    let (sign, size): (&[u8], f64) = if value < 0.0 {
+                        (b"-", -value)
+                    } else {
+                        (b"", value)
+                    };
+                    let size = crate::atom::number_to_string(size);
+                    member.extend_from_slice(&[b" = ", sign, size.as_bytes()].concat());
+                }
+                Some(EnumValue::String(value)) => {
+                    member.extend_from_slice(b" = ");
+                    member.extend_from_slice(&super::print::quoted(self.name(value), b'"', false));
+                }
+                None => {}
+            }
+            members.push(Element {
+                range: Some((hir[m].loc.pos as usize, hir[m].loc.end as usize)),
+                text: member,
+            });
+        }
+        let name = self.name(hir[e].name);
+        let members = self.list_text(members, true, false);
+        [
+            b"enum ",
+            name,
+            b" {",
+            &members[..],
+            &self.indentation()[..],
+            b"}",
+        ]
+        .concat()
+    }
+
+    /// `transformModuleDeclaration`
+    fn transform_module_declaration(&mut self, m: ModuleId, s: StmtId) -> Statement {
+        let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
+        let module = &hir[m];
+        self.enter(bound.module_scope[m.idx()]);
+        let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
+        let modifiers = self.ensure_modifiers(hir[s].modifiers, parent_is_file, false);
+        self.needs_declare = false;
+        let (kind, head) = match module.name {
+            // `IsAmbientModule`: `IsGlobalScopeAugmentation` too.
+            ModuleName::Global => (StatementKind::AmbientModule, b"global".to_vec()),
+            ModuleName::String(name) => {
+                let written = hir.text.get(module.name_pos as usize).copied();
+                let quote = written.filter(|&it| it == b'\'').unwrap_or(b'"');
+                let name = super::print::quoted(self.name(name), quote, false);
+                (
+                    StatementKind::AmbientModule,
+                    [b"module ", &name[..]].concat(),
+                )
+            }
+            ModuleName::Ident(name) => (
+                StatementKind::Other,
+                [b"namespace ", self.name(name)].concat(),
+            ),
+        };
+        let saved = (self.needs_scope_fix_marker, self.result_has_scope_marker);
+        (self.needs_scope_fix_marker, self.result_has_scope_marker) = (false, false);
+        self.set_indent(self.indent + 1);
+        let mut visited = Vec::with_capacity(module.body.len());
+        for inner in hir.ids(module.body) {
+            visited.push(self.visit_statement(inner));
+        }
+        let mut statements = self.transform_late_painted_statements(visited, false);
+        // "If it was `declare`'d everything is implicitly exported already, ignore late printed "privates""
+        if module.flags.contains(Flags::AMBIENT) {
+            self.needs_scope_fix_marker = false;
+        }
+        if module.name != ModuleName::Global
+            && !self.result_has_scope_marker
+            && !statements.iter().any(Statement::is_scope_marker)
+        {
+            if self.needs_scope_fix_marker {
+                statements.push(Statement::empty_exports());
+            } else {
+                // `stripExportModifiers`
+                for statement in &mut statements {
+                    if statement.kind != StatementKind::ImportEquals
+                        && !statement.modifiers.contains(&Flags::DEFAULT)
+                    {
+                        statement.modifiers.retain(|&it| it != Flags::EXPORT);
+                    }
+                }
+            }
+        }
+        let body = self.statements_text(&statements);
+        self.set_indent(self.indent - 1);
+        (self.needs_scope_fix_marker, self.result_has_scope_marker) = saved;
+        let text = if module.has_body {
+            [&head[..], b" {\n", &body[..], &self.indentation()[..], b"}"].concat()
+        } else {
+            [&head[..], b";"].concat()
+        };
+        Statement {
+            kind,
+            comments: Vec::new(),
+            modifiers,
+            text,
+        }
     }
 
     /// `transformImportEqualsDeclaration`
-    fn transform_import_equals(&mut self, i: ImportEqualsId, s: StmtId) -> bool {
+    fn transform_import_equals(&mut self, i: ImportEqualsId, s: StmtId) -> Option<Statement> {
         let file = self.file();
         if !self.c.is_declaration_visible(file, Decl::ImportEquals(i)) {
-            return false;
+            return None;
         }
         let hir = self.c.hir(self.file());
         if let ImportEqualsTarget::Entity(names) = hir[i].target
@@ -2516,7 +3774,34 @@ impl<'p> DeclarationEmit<'_, 'p> {
             self.check_entity_name_visibility(hir[names.at(0)].text, start, Meaning::Namespace);
             self.tracker.get_symbol_accessibility_diagnostic = saved;
         }
-        true
+        let target = match hir[i].target {
+            ImportEqualsTarget::Require(spec) => {
+                // `rewriteModuleSpecifier`
+                self.result_has_external_module_indicator = true;
+                [b"require(", &self.module_specifier_text(s, spec)[..], b")"].concat()
+            }
+            ImportEqualsTarget::Entity(names) => {
+                let names: Vec<&[u8]> = names.iter().map(|it| self.name(hir[it].text)).collect();
+                names.join(&b"."[..])
+            }
+        };
+        let type_only: &[u8] = if hir[i].flags.contains(Flags::TYPE_ONLY) {
+            b"type "
+        } else {
+            b""
+        };
+        let name = self.name(hir[i].name);
+        // `decl.Modifiers()`
+        let modifiers = (hir[s].modifiers.iter()).filter_map(|m| match hir[m].kind {
+            ModifierKind::Keyword(modifier) => Some(modifier),
+            ModifierKind::Decorator(_) => None,
+        });
+        Some(Statement {
+            kind: StatementKind::ImportEquals,
+            comments: Vec::new(),
+            modifiers: modifiers.collect(),
+            text: [b"import ", type_only, name, b" = ", &target[..], b";"].concat(),
+        })
     }
 
     /// `getBindingNameVisible`
@@ -2536,14 +3821,19 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     /// `transformVariableStatement`
-    fn transform_variable_statement(&mut self, decls: Span<VarDeclId>, s: StmtId) -> bool {
+    fn transform_variable_statement(
+        &mut self,
+        decls: Span<VarDeclId>,
+        s: StmtId,
+    ) -> Option<Statement> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         if !decls
             .iter()
             .any(|d| self.is_binding_name_visible(hir[d].pat))
         {
-            return false;
+            return None;
         }
+        let mut declarations: Vec<Vec<u8>> = Vec::new();
         let scope = match bound.stmt_parent[s.idx()] {
             Parent::File => ScopeId(0),
             Parent::Module(m) => bound.module_scope[m.idx()],
@@ -2579,11 +3869,12 @@ impl<'p> DeclarationEmit<'_, 'p> {
             if !self.suppresses_new_contexts {
                 self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(d));
             }
-            if matches!(hir[pat].kind, PatKind::Ident(_)) {
+            if let PatKind::Ident(name) = hir[pat].kind {
                 self.suppresses_new_contexts = true;
-                self.ensure_type(hir.node(d), false);
+                let ensured = self.ensure_type(hir.node(d), false);
+                declarations.push([self.name(name), &ensured.text()[..]].concat());
             } else {
-                self.recreate_binding_pattern(pat, true);
+                declarations.append(&mut self.recreate_binding_pattern(pat, true));
             }
             (
                 self.enclosing,
@@ -2592,63 +3883,113 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.suppresses_new_contexts,
             ) = saved;
         }
-        true
+        if declarations.is_empty() {
+            return None;
+        }
+        let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
+        let keyword: &[u8] = match decls.iter().next().map(|d| hir[d].kind) {
+            Some(VarKind::Var) | None => b"var ",
+            Some(VarKind::Let) => b"let ",
+            Some(VarKind::Const | VarKind::Using | VarKind::AwaitUsing) => b"const ",
+        };
+        Some(Statement {
+            kind: StatementKind::Other,
+            comments: Vec::new(),
+            modifiers: self.ensure_modifiers(hir[s].modifiers, parent_is_file, false),
+            text: [keyword, &declarations.join(&b", "[..])[..], b";"].concat(),
+        })
     }
 
-    /// `recreateBindingPattern`, and `walkBindingPattern`, which does not ask what is visible.
-    fn recreate_binding_pattern(&mut self, pat: PatId, only_visible: bool) {
+    /// `recreateBindingPattern`, and `walkBindingPattern`, which does not ask what is visible: each name with its type.
+    fn recreate_binding_pattern(&mut self, pat: PatId, only_visible: bool) -> Vec<Vec<u8>> {
         let hir = self.c.hir(self.file());
         let elements: Vec<PatId> = match hir[pat].kind {
             PatKind::Object(props) => props.iter().map(|p| hir[p].value).collect(),
             PatKind::Array(elems) => elems.iter().map(|e| hir[e].pat).collect(),
-            _ => return,
+            _ => return Vec::new(),
         };
+        let mut names = Vec::with_capacity(elements.len());
         for element in elements {
             if only_visible && !self.is_binding_name_visible(element) {
                 continue;
             }
             match hir[element].kind {
                 PatKind::Missing => {}
-                PatKind::Ident(_) => self.ensure_type(hir.parent(hir.node(element)), false),
-                _ => self.recreate_binding_pattern(element, only_visible),
+                PatKind::Ident(name) => {
+                    let ensured = self.ensure_type(hir.parent(hir.node(element)), false);
+                    names.push([self.name(name), &ensured.text()[..]].concat());
+                }
+                _ => names.append(&mut self.recreate_binding_pattern(element, only_visible)),
             }
         }
+        names
     }
 
     /// `transformClassDeclaration`
-    fn transform_class_declaration(&mut self, c: ClassId, s: StmtId) {
+    fn transform_class_declaration(&mut self, c: ClassId, s: StmtId) -> Vec<Statement> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         let class = hir[c];
         self.enter(bound.class_scope[c.idx()]);
         self.tracker.error_name_node = hir.name(hir.node(s));
         self.tracker.fallback_stack.push(hir.node(s));
-        for tp in class.type_params.iter() {
-            self.visit_type_parameter(tp);
-        }
-        self.build_class_members(c);
-        self.visit_class_heritage(c);
+        let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
+        let modifiers = self.ensure_modifiers(hir[s].modifiers, parent_is_file, false);
+        let type_parameters = self.visit_type_parameters(class.type_params);
+        let members = self.build_class_members(c);
+        let (base, heritage) = self.visit_class_heritage(c);
         self.tracker.fallback_stack.pop();
+        let name = match self.name(class.name) {
+            b"" => Vec::new(),
+            name => [b" ", name].concat(),
+        };
+        let head = [
+            b"class",
+            &name[..],
+            &type_parameters[..],
+            &heritage[..],
+            b" ",
+        ]
+        .concat();
+        let class = Statement {
+            kind: StatementKind::Other,
+            comments: Vec::new(),
+            modifiers,
+            text: [&head[..], &self.block(&members, b"")[..]].concat(),
+        };
+        base.into_iter().chain([class]).collect()
     }
 
     /// `transformClassExpressionToDeclaration`
-    fn transform_class_expression(&mut self, c: ClassId) {
+    fn transform_class_expression(
+        &mut self,
+        c: ClassId,
+        name: &[u8],
+        modifiers: Vec<Flags>,
+    ) -> Statement {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         let class = hir[c];
         let saved = (self.enclosing, self.in_class_expression);
         self.enter(bound.class_scope[c.idx()]);
         self.in_class_expression = true;
-        self.build_class_members(c);
-        for tp in class.type_params.iter() {
-            self.visit_type_parameter(tp);
-        }
-        self.visit_class_heritage(c);
+        let members = self.build_class_members(c);
+        let type_parameters = self.visit_type_parameters(class.type_params);
+        let (_, heritage) = self.visit_class_heritage(c);
         (self.enclosing, self.in_class_expression) = saved;
+        let head = [b"class ", name, &type_parameters[..], &heritage[..], b" "].concat();
+        Statement {
+            kind: StatementKind::Other,
+            comments: Vec::new(),
+            modifiers,
+            text: [&head[..], &self.block(&members, b"")[..]].concat(),
+        }
     }
 
-    /// `buildClassMembers`
-    fn build_class_members(&mut self, c: ClassId) {
+    /// `buildClassMembers`: each member, as it is written one level further in.
+    fn build_class_members(&mut self, c: ClassId) -> Vec<Vec<u8>> {
         let hir = self.c.hir(self.file());
         let members = hir[c].members;
+        self.set_indent(self.indent + 1);
+        let mut parameter_properties: Vec<Vec<u8>> = Vec::new();
         // `GetFirstConstructorWithBody`
         let constructor = members.iter().find(|&m| {
             hir[m].kind == MemberKind::Constructor
@@ -2662,24 +4003,52 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     continue;
                 }
                 self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(p));
+                let modifiers = self.ensure_modifiers(hir.param_modifiers(p), false, false);
+                // `preserveJsDoc`
+                let comments = self.leading_comments(hir[p].loc.pos);
+                let modifiers = [comments, modifiers_text(&modifiers)].concat();
                 match hir[hir[p].pat].kind {
-                    PatKind::Ident(_) => self.ensure_type(hir.node(p), false),
-                    _ => self.recreate_binding_pattern(hir[p].pat, false),
+                    PatKind::Ident(name) => {
+                        let ensured = self.ensure_type(hir.node(p), false);
+                        let question: &[u8] = if hir[p].flags.contains(Flags::OPTIONAL) {
+                            b"?"
+                        } else {
+                            b""
+                        };
+                        let name = self.name(name);
+                        parameter_properties.push(
+                            [&modifiers[..], name, question, &ensured.text()[..], b";"].concat(),
+                        );
+                    }
+                    _ => {
+                        for name in self.recreate_binding_pattern(hir[p].pat, false) {
+                            parameter_properties.push([&modifiers[..], &name[..], b";"].concat());
+                        }
+                    }
                 }
             }
             self.tracker.get_symbol_accessibility_diagnostic = saved;
         }
-        self.create_late_bound_index_signatures(c);
-        for m in members.iter() {
-            self.visit_member(m);
+        let mut written: Vec<Vec<u8>> = Vec::new();
+        // "When the class has at least one private identifier, create a unique constant identifier to retain the nominal typing behavior"
+        if (members.iter()).any(|m| matches!(hir[m].key, PropKey::Private(_))) {
+            written.push(b"#private;".to_vec());
         }
+        written.append(&mut self.create_late_bound_index_signatures(c));
+        written.append(&mut parameter_properties);
+        for m in members.iter() {
+            written.extend(self.visit_member(m));
+        }
+        self.set_indent(self.indent - 1);
+        written
     }
 
     /// `CreateLateBoundIndexSignatures`
-    fn create_late_bound_index_signatures(&mut self, c: ClassId) {
+    fn create_late_bound_index_signatures(&mut self, c: ClassId) -> Vec<Vec<u8>> {
         let file = self.file();
         let files = self.c.files();
         let class = self.c.class_sym(file, c);
+        let mut written: Vec<Vec<u8>> = Vec::new();
         for is_static in [true, false] {
             let holder = if is_static {
                 self.c.type_of_symbol(class)
@@ -2735,31 +4104,50 @@ impl<'p> DeclarationEmit<'_, 'p> {
                             }
                         }
                         let ty = self.c.type_of_index_component(component);
-                        self.c.type_to_type_node(
+                        let ty = self.c.type_to_type_node(
                             ty,
                             Some(self.enclosing),
                             DECLARATION_EMIT_NODE_BUILDER_FLAGS,
                             Some(&mut self.tracker),
                         );
+                        let name = self.text_of(Written::EntityName(name));
+                        let modifiers: &[u8] = if is_static { b"static " } else { b"" };
+                        written.push([modifiers, b"[", &name[..], b"]: ", &ty[..], b";"].concat());
                     }
                     continue;
                 }
                 // `IndexInfoToIndexSignatureDeclaration`
                 let value = self.c.instantiate(info.value, mapper);
-                self.c.type_to_type_node(
+                let value = self.c.type_to_type_node(
                     value,
                     Some(self.enclosing),
                     DECLARATION_EMIT_NODE_BUILDER_FLAGS,
                     Some(&mut self.tracker),
                 );
+                let key = self.c.type_to_type_node(
+                    info.key,
+                    Some(self.enclosing),
+                    DECLARATION_EMIT_NODE_BUILDER_FLAGS,
+                    None,
+                );
+                let modifiers: &[u8] = match (is_static, info.readonly) {
+                    (true, true) => b"static readonly ",
+                    (true, false) => b"static ",
+                    (false, true) => b"readonly ",
+                    (false, false) => b"",
+                };
+                written.push([modifiers, b"[x: ", &key[..], b"]: ", &value[..], b";"].concat());
             }
         }
+        written
     }
 
-    /// The heritage clauses of a class. What a class declaration extends is written as a variable of its type if it is no name.
-    fn visit_class_heritage(&mut self, c: ClassId) {
+    /// The heritage clauses of a class, each with a space before it. What a class declaration extends is written as a variable of its
+    /// type if it is no name: the statement that declares it.
+    fn visit_class_heritage(&mut self, c: ClassId) -> (Option<Statement>, Vec<u8>) {
         let hir = self.c.hir(self.file());
         let (class, base) = (hir[c], hir.node(c).with(Part::Base));
+        let (mut variable, mut heritage) = (None, Vec::new());
         if class.extends.is_some() {
             if is_entity_name_expression(hir, class.extends) {
                 let saved = self.tracker.get_symbol_accessibility_diagnostic;
@@ -2773,6 +4161,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     self.visit_type(argument, false);
                 }
                 self.tracker.get_symbol_accessibility_diagnostic = saved;
+                let name = self.text_of(Written::EntityName(class.extends));
+                let arguments = self.type_arguments_text(class.extends_args);
+                heritage = [b" extends ", &name[..], &arguments[..]].concat();
+            } else if matches!(hir[class.extends].kind, ExprKind::Null) {
+                heritage = b" extends null".to_vec();
             } else if hir.kind(hir.node(c)) == Kind::ClassDeclaration
                 && !matches!(hir[class.extends].kind, ExprKind::Null)
             {
@@ -2781,15 +4174,43 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 let expression = hir.child(class.extends);
                 self.tracker
                     .report_inference_fallback(self.c, file, expression);
-                self.create_type_of_expression(class.extends);
+                let old_name: &[u8] = if class.name.is_some() {
+                    self.name(class.name)
+                } else {
+                    b"default"
+                };
+                let name = self.unique_name(&[old_name, b"_base"].concat());
+                let ty = self.create_type_of_expression(class.extends);
                 for argument in hir.ids(class.extends_args) {
                     self.visit_type(argument, false);
                 }
+                variable = Some(Statement {
+                    kind: StatementKind::Other,
+                    comments: Vec::new(),
+                    modifiers: if self.needs_declare {
+                        vec![Flags::AMBIENT]
+                    } else {
+                        Vec::new()
+                    },
+                    text: [b"const ", &name[..], b": ", &ty[..], b";"].concat(),
+                });
+                let arguments = self.type_arguments_text(class.extends_args);
+                heritage = [b" extends ", &name[..], &arguments[..]].concat();
             }
         }
+        let mut implements = Vec::new();
         for node in hir.ids(class.implements) {
             self.visit_heritage_type(node);
+            // `transformHeritageClause`
+            if matches!(hir[node].kind, TypeNodeKind::Ref { .. }) {
+                implements.push(self.text_of(Written::Type(node)));
+            }
         }
+        if !implements.is_empty() {
+            heritage.extend_from_slice(b" implements ");
+            heritage.extend_from_slice(&implements.join(&b", "[..]));
+        }
+        (variable, heritage)
     }
 
     /// `transformExpressionWithTypeArguments`, of what a class implements or an interface extends.
@@ -2804,13 +4225,28 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     /// `transformExportAssignment`
-    fn transform_export_assignment(&mut self, s: StmtId, e: ExprId) {
+    fn transform_export_assignment(&mut self, s: StmtId, e: ExprId) -> Vec<Statement> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
-        if matches!(hir[e].kind, ExprKind::Ident(_))
+        self.result_has_external_module_indicator |= bound.stmt_parent[s.idx()] == Parent::File;
+        self.result_has_scope_marker = true;
+        let keyword: &[u8] = if matches!(hir[s].kind, StmtKind::ExportAssign(_)) {
+            b"export = "
+        } else {
+            b"export default "
+        };
+        let export_of = |name: &[u8]| {
+            Statement::new(
+                StatementKind::ExportAssignment,
+                [keyword, name, b";"].concat(),
+            )
+        };
+        if let ExprKind::Ident(name) = hir[e].kind
             && !is_parenthesized(self.c.hir(self.file()), e)
             && matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_))
         {
-            return;
+            let mut written = export_of(self.name(name));
+            written.comments = self.leading_comments(hir[s].loc.pos);
+            return vec![written];
         }
         // `SkipOuterExpressions(expression, OEKExpressionTypePassthrough)`
         let mut unwrapped = e;
@@ -2827,19 +4263,62 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 _ => break,
             };
         }
+        // `getNameOfExportedAssignedExpression`, `tryGetNameOfAssignedExpression`
+        let own_name = match hir[unwrapped].kind {
+            ExprKind::Class(c) => hir[c].name,
+            ExprKind::Fn(f) => hir[f].name,
+            ExprKind::Ident(name) => name,
+            _ => Atom::NONE,
+        };
+        let name = if own_name.is_some() && own_name != known::default {
+            self.unique_name(self.name(own_name))
+        } else {
+            self.unique_name(b"_default")
+        };
+        let declare = if self.needs_declare {
+            vec![Flags::AMBIENT]
+        } else {
+            Vec::new()
+        };
         match hir[unwrapped].kind {
-            ExprKind::Class(c) => return self.transform_class_expression(c),
-            ExprKind::Fn(f) => return self.transform_signature(f),
+            ExprKind::Class(c) => {
+                let mut class = self.transform_class_expression(c, &name, declare);
+                class.comments = self.leading_comments(hir[s].loc.pos);
+                return vec![export_of(&name), class];
+            }
+            ExprKind::Fn(f) => {
+                let signature = self.transform_signature(f);
+                let function = Statement {
+                    kind: StatementKind::Other,
+                    comments: self.leading_comments(hir[s].loc.pos),
+                    modifiers: declare,
+                    text: [b"function ", &name[..], &signature[..], b";"].concat(),
+                };
+                return vec![export_of(&name), function];
+            }
             _ => {}
         }
         self.tracker.get_symbol_accessibility_diagnostic = Context::DefaultExport(hir.node(s));
         // `IsPrimitiveLiteralValue`: it is written as it is.
-        if self.c.iso_is_primitive_literal(self.file(), e, true) {
-            return;
-        }
-        self.tracker.fallback_stack.push(hir.node(s));
-        self.ensure_type(hir.node(s), false);
-        self.tracker.fallback_stack.pop();
+        let ensured = if self.c.iso_is_primitive_literal(self.file(), e, true) {
+            // `CreateLiteralConstValue`
+            let literal = self.c.type_of_expr(self.file(), e);
+            let flags = DECLARATION_EMIT_NODE_BUILDER_FLAGS;
+            let enclosing = Some(self.enclosing);
+            Ensured::Initializer(self.c.type_to_type_node(literal, enclosing, flags, None))
+        } else {
+            self.tracker.fallback_stack.push(hir.node(s));
+            let ensured = self.ensure_type(hir.node(s), false);
+            self.tracker.fallback_stack.pop();
+            ensured
+        };
+        let variable = Statement {
+            kind: StatementKind::Other,
+            comments: self.leading_comments(hir[s].loc.pos),
+            modifiers: declare,
+            text: [b"const ", &name[..], &ensured.text()[..], b";"].concat(),
+        };
+        vec![variable, export_of(&name)]
     }
 
     // ───────────────────────────── members and signatures ─────────────────────────────
@@ -2874,39 +4353,98 @@ impl<'p> DeclarationEmit<'_, 'p> {
         hir.flags(hir.node(f)).contains(Flags::PRIVATE)
     }
 
-    /// `ensureTypeParams`, `updateParamList`, `ensureType`
-    fn transform_signature(&mut self, f: FnId) {
-        if !self.is_private_function(f) {
-            for tp in self.c.hir(self.file())[f].type_params.iter() {
-                self.visit_type_parameter(tp);
-            }
-        }
-        self.update_param_list(f);
-        self.ensure_type(self.c.hir(self.file()).node(f), false);
+    /// `ensureTypeParams`, `updateParamList`, `ensureType`: `<T>(a: T): T`
+    fn transform_signature(&mut self, f: FnId) -> Vec<u8> {
+        let type_parameters = if self.is_private_function(f) {
+            Vec::new()
+        } else {
+            self.visit_type_parameters(self.c.hir(self.file())[f].type_params)
+        };
+        let parameters = self.update_param_list(f);
+        let returned = self.ensure_type(self.c.hir(self.file()).node(f), false);
+        [
+            &type_parameters[..],
+            b"(",
+            &parameters[..],
+            b")",
+            &returned.text()[..],
+        ]
+        .concat()
     }
 
-    /// `updateParamList`
-    fn update_param_list(&mut self, f: FnId) {
+    /// `updateParamList`: the parameters, with `, ` between them.
+    fn update_param_list(&mut self, f: FnId) -> Vec<u8> {
         if self.is_private_function(f) {
-            return;
+            return Vec::new();
         }
-        let function = self.c.hir(self.file())[f];
-        self.visit_type(function.this_ty(self.c.hir(self.file())), false);
+        let hir = self.c.hir(self.file());
+        let function = hir[f];
+        let this = function.this_ty(hir);
+        self.visit_type(this, false);
+        let mut parameters = Vec::with_capacity(function.params.len() + 1);
+        if this.is_some() {
+            parameters.push(Element {
+                range: None,
+                text: [b"this: ", &self.text_of(Written::Type(this))[..]].concat(),
+            });
+        }
         for p in function.params.iter() {
-            self.ensure_parameter(p);
+            let loc = hir[p].loc;
+            parameters.push(Element {
+                range: (loc.end != 0).then_some((loc.pos as usize, loc.end as usize)),
+                text: self.ensure_parameter(p),
+            });
         }
+        self.list_text(parameters, false, false)
+    }
+
+    /// `emitListItems`: see `Writer::emit_list_items`.
+    fn list_text(
+        &self,
+        mut elements: Vec<Element>,
+        is_multi_line: bool,
+        has_trailing_comma: bool,
+    ) -> Vec<u8> {
+        if !self.writes {
+            return Vec::new();
+        }
+        if self.c.files().options.remove_comments {
+            elements.iter_mut().for_each(|it| it.range = None);
+        }
+        let mut writer = Writer::new(&self.c.hir(self.file()).text, self.indent);
+        writer.emit_list_items(
+            &elements,
+            b",",
+            is_multi_line,
+            has_trailing_comma,
+            usize::MAX,
+        );
+        writer.into_text()
     }
 
     /// `ensureParameter`
-    fn ensure_parameter(&mut self, p: ParamId) {
-        let hir = self.c.hir(self.file());
+    fn ensure_parameter(&mut self, p: ParamId) -> Vec<u8> {
+        let file = self.file();
+        let hir = self.c.hir(file);
         let saved = self.tracker.get_symbol_accessibility_diagnostic;
         if !self.suppresses_new_contexts {
             self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(p));
         }
         self.visit_binding_name(hir[p].pat);
-        self.ensure_type(hir.node(p), true);
+        let ensured = self.ensure_type(hir.node(p), true);
         self.tracker.get_symbol_accessibility_diagnostic = saved;
+        let rest: &[u8] = if hir[p].flags.contains(Flags::REST) {
+            b"..."
+        } else {
+            b""
+        };
+        let question: &[u8] = if self.writes && self.c.is_optional_parameter(file, p) {
+            b"?"
+        } else {
+            b""
+        };
+        let name = self.text_of(Written::BindingName(hir[p].pat));
+        [rest, &name[..], question, &ensured.text()[..]].concat()
     }
 
     /// `visitBindingName`
@@ -2934,7 +4472,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     /// `visitDeclarationSubtree`, of a type parameter.
-    fn visit_type_parameter(&mut self, tp: TypeParamId) {
+    fn visit_type_parameter(&mut self, tp: TypeParamId) -> Vec<u8> {
         let hir = self.c.hir(self.file());
         let saved = self.tracker.get_symbol_accessibility_diagnostic;
         if !self.suppresses_new_contexts {
@@ -2943,20 +4481,21 @@ impl<'p> DeclarationEmit<'_, 'p> {
         self.visit_type(hir[tp].constraint, false);
         self.visit_type(hir[tp].default, false);
         self.tracker.get_symbol_accessibility_diagnostic = saved;
+        self.text_of(Written::TypeParameter(tp))
     }
 
-    /// `visitDeclarationSubtree`, of a member of a class, an interface or a type literal.
-    fn visit_member(&mut self, m: MemberId) {
+    /// `visitDeclarationSubtree`, of a member of a class, an interface or a type literal. `None`: nothing is written for it.
+    fn visit_member(&mut self, m: MemberId) -> Option<Vec<u8>> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         let member = hir[m];
         if self.c.should_strip_internal(self.file(), member.loc.pos) {
-            return;
+            return None;
         }
         let f = member.func;
         if member.kind == MemberKind::StaticBlock
             || f.is_none() && member.kind != MemberKind::Property
         {
-            return;
+            return None;
         }
         // `HasDynamicName`: `[-1]` is none.
         let dynamic_name = match member.key {
@@ -2975,7 +4514,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         };
         if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
             if self.c.iso_report_dynamic_name(isolated_declarations, m) {
-                return;
+                return None;
             }
         }
         // `IsLateBound`
@@ -2983,13 +4522,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
             && !(is_entity_name_expression(self.c.hir(self.file()), key)
                 && self.c.member_name(self.file(), member.key).is_some())
         {
-            return;
+            return None;
         }
         if f.is_some()
             && !matches!(member.kind, MemberKind::Getter | MemberKind::Setter)
             && self.is_implementation_of_overload(f)
         {
-            return;
+            return None;
         }
         let saved = (
             self.enclosing,
@@ -3005,36 +4544,80 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
         let is_private = member.flags.contains(Flags::PRIVATE);
         let is_written = !matches!(member.key, PropKey::Private(_));
+        let mut written = None;
         if is_written {
-            match member.kind {
-                MemberKind::Property => self.ensure_type(hir.node(m), false),
-                // `omitPrivateMethodType`
-                MemberKind::Method if is_private => {}
-                MemberKind::Method | MemberKind::CallSignature | MemberKind::ConstructSignature => {
-                    self.transform_signature(f)
+            let modifiers = modifiers_text(&self.ensure_modifiers(member.modifiers, false, false));
+            let name = self.text_of(Written::PropertyName(hir.name(hir.node(m))));
+            let head = [&modifiers[..], &name[..]].concat();
+            let question: &[u8] = if member.flags.contains(Flags::OPTIONAL) {
+                b"?"
+            } else {
+                b""
+            };
+            written = match member.kind {
+                MemberKind::Property => {
+                    let ensured = self.ensure_type(hir.node(m), false);
+                    Some([&head[..], question, &ensured.text()[..], b";"].concat())
                 }
-                MemberKind::Constructor => self.update_param_list(f),
+                // `omitPrivateMethodType`: once, whatever overloads it has.
+                MemberKind::Method if is_private => {
+                    let files = self.c.files();
+                    let symbol = bound.member_symbol[m.idx()];
+                    let is_first = symbol.is_none()
+                        || files.decls_of(files.sym(self.file(), symbol)).first()
+                            == Some(&(self.file(), Decl::Member(m)));
+                    is_first.then(|| [&head[..], b";"].concat())
+                }
+                MemberKind::Method => {
+                    let signature = self.transform_signature(f);
+                    Some([&head[..], question, &signature[..], b";"].concat())
+                }
+                MemberKind::CallSignature => {
+                    Some([&self.transform_signature(f)[..], b";"].concat())
+                }
+                MemberKind::ConstructSignature => {
+                    Some([b"new ", &self.transform_signature(f)[..], b";"].concat())
+                }
+                MemberKind::Constructor => {
+                    let parameters = self.update_param_list(f);
+                    Some([&modifiers[..], b"constructor(", &parameters[..], b");"].concat())
+                }
                 MemberKind::Getter => {
                     if !is_private {
                         self.visit_type(hir[f].this_ty(hir), false);
                     }
-                    self.ensure_type(hir.node(m), false);
+                    let ensured = self.ensure_type(hir.node(m), false);
+                    let name = [&modifiers[..], b"get ", &name[..]].concat();
+                    Some([&name[..], b"()", &ensured.text()[..], b";"].concat())
                 }
                 // `updateAccessorParamList`
                 MemberKind::Setter => {
+                    let mut value = None;
                     if !is_private {
                         self.visit_type(hir[f].this_ty(hir), false);
-                        if let Some(value) = hir[f].params.iter().next() {
-                            self.ensure_parameter(value);
+                        if let Some(parameter) = hir[f].params.iter().next() {
+                            value = Some(self.ensure_parameter(parameter));
                         }
                     }
+                    let value = value.unwrap_or_else(|| {
+                        if is_private {
+                            b"value".to_vec()
+                        } else {
+                            b"value: any".to_vec()
+                        }
+                    });
+                    let name = [&modifiers[..], b"set ", &name[..]].concat();
+                    Some([&name[..], b"(", &value[..], b");"].concat())
                 }
                 MemberKind::IndexSignature => {
                     self.visit_type(hir[f].ret, false);
-                    self.update_param_list(f);
+                    let value = self.text_of(Written::Type(hir[f].ret));
+                    let parameters = self.update_param_list(f);
+                    let key = [&modifiers[..], b"[", &parameters[..], b"]: "].concat();
+                    Some([&key[..], &value[..], b";"].concat())
                 }
-                MemberKind::StaticBlock => {}
-            }
+                MemberKind::StaticBlock => None,
+            };
         }
         // `checkName`
         if is_written
@@ -3053,6 +4636,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
             self.tracker.error_name_node,
             self.suppresses_new_contexts,
         ) = saved;
+        let written = written?;
+        Some([self.leading_comments(member.loc.pos), written].concat())
     }
 
     // ───────────────────────────── types that are written ─────────────────────────────
@@ -3109,7 +4694,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     self.visit_type(ty, false);
                 }
             }
-            TypeNodeKind::Array(of) | TypeNodeKind::Keyof(of) | TypeNodeKind::Readonly(of) => {
+            TypeNodeKind::Array(of)
+            | TypeNodeKind::Keyof(of)
+            | TypeNodeKind::Readonly(of)
+            | TypeNodeKind::JSDoc { ty: of, .. } => {
                 self.visit_type(of, false);
             }
             TypeNodeKind::Tuple(elems) => {
@@ -3120,19 +4708,24 @@ impl<'p> DeclarationEmit<'_, 'p> {
             TypeNodeKind::Fn(f) => {
                 let saved = self.enclosing;
                 self.enter(bound.fns[f.idx()].scope);
+                // What is written for a type comes from the printer (`text_of`).
+                let writes = std::mem::take(&mut self.writes);
                 for tp in hir[f].type_params.iter() {
                     self.visit_type_parameter(tp);
                 }
                 self.update_param_list(f);
+                self.writes = writes;
                 self.visit_type(hir[f].ret, false);
                 self.enclosing = saved;
             }
             TypeNodeKind::Object(members) => {
                 let saved = self.suppresses_new_contexts;
                 self.suppresses_new_contexts |= !is_alias_body;
+                let writes = std::mem::take(&mut self.writes);
                 for m in members.iter() {
                     self.visit_member(m);
                 }
+                self.writes = writes;
                 self.suppresses_new_contexts = saved;
             }
             TypeNodeKind::Cond {
@@ -3149,14 +4742,20 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.enclosing = saved;
                 self.visit_type(no, false);
             }
-            TypeNodeKind::Infer(tp) => self.visit_type_parameter(tp),
+            TypeNodeKind::Infer(tp) => {
+                let writes = std::mem::take(&mut self.writes);
+                self.visit_type_parameter(tp);
+                self.writes = writes;
+            }
             TypeNodeKind::Mapped(m) => {
                 let mapped = hir[m];
                 let saved = (self.enclosing, self.suppresses_new_contexts);
                 self.enter(bound.type_param_scope[mapped.param.idx()]);
                 self.suppresses_new_contexts |= !is_alias_body;
                 self.visit_type(mapped.ty, false);
+                let writes = std::mem::take(&mut self.writes);
                 self.visit_type_parameter(mapped.param);
+                self.writes = writes;
                 self.visit_type(mapped.name_ty, false);
                 (self.enclosing, self.suppresses_new_contexts) = saved;
             }
@@ -3195,13 +4794,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
         self.c.is_fresh_literal(ty).then_some(ty)
     }
 
-    /// `ensureType`
-    fn ensure_type(&mut self, node: Node, ignores_private: bool) {
+    /// `ensureType`, `ensureNoInitializer`
+    fn ensure_type(&mut self, node: Node, ignores_private: bool) -> Ensured {
         let file = self.file();
         let hir = self.c.hir(file);
         // What is private has no type, but for the parameter of a private parameter property.
         if !ignores_private && hir.flags(node).contains(Flags::PRIVATE) {
-            return;
+            return Ensured::Nothing;
         }
         if let Some(literal) = self.literal_const_type(node) {
             // `unwrapParenthesizedExpression(node.Initializer())`: the stored expression id excludes the parentheses.
@@ -3220,14 +4819,20 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.tracker
                     .track_symbol(self.c, member, Some(self.enclosing), SymFlags::VALUE);
             }
-            return;
+            if !self.writes {
+                return Ensured::Nothing;
+            }
+            let flags = DECLARATION_EMIT_NODE_BUILDER_FLAGS;
+            let enclosing = Some(self.enclosing);
+            return Ensured::Initializer(self.c.type_to_type_node(literal, enclosing, flags, None));
         }
         // An export assignment and a binding element have none.
         if let NodeData::Type(annotation) = hir.data(hir.type_node(node))
             && !matches!(hir.data(node), NodeData::Param(p)
                 if self.c.requires_adding_implicit_undefined(file, p, Some(self.enclosing)))
         {
-            return self.visit_type(annotation, false);
+            self.visit_type(annotation, false);
+            return Ensured::Type(self.text_of(Written::Type(annotation)));
         }
         let saved = (
             self.tracker.error_name_node,
@@ -3254,8 +4859,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             _ => None,
         };
-        if let Some(ty) = ty {
-            self.create_type_of_declaration(Some(node), ty, flags);
+        let text = if let Some(ty) = ty {
+            self.create_type_of_declaration(Some(node), ty, flags)
         } else if let Some(f) = hir.function_of(node).some() {
             // `CreateReturnTypeOfSignatureDeclaration`
             self.c.serialize_return_type_for_signature(
@@ -3264,12 +4869,15 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.enclosing,
                 flags,
                 &mut self.tracker,
-            );
-        }
+            )
+        } else {
+            b"any".to_vec()
+        };
         self.tracker.error_name_node = saved.0;
         if !self.suppresses_new_contexts {
             self.tracker.get_symbol_accessibility_diagnostic = saved.1;
         }
+        Ensured::Type(text)
     }
 
     /// `getTypeOfSymbol`, of the symbol of `export default e` or `export = e`.
@@ -3299,7 +4907,12 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     /// `CreateTypeOfDeclaration`, of a declaration of this file whose symbol has the type `ty`.
-    fn create_type_of_declaration(&mut self, declaration: Option<Node>, ty: TypeId, flags: u32) {
+    fn create_type_of_declaration(
+        &mut self,
+        declaration: Option<Node>,
+        ty: TypeId,
+        flags: u32,
+    ) -> Vec<u8> {
         let file = self.file();
         self.c.serialize_type_for_declaration(
             file,
@@ -3308,11 +4921,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
             self.enclosing,
             flags,
             &mut self.tracker,
-        );
+        )
     }
 
     /// `CreateTypeOfExpression`, of what the class around extends.
-    fn create_type_of_expression(&mut self, e: ExprId) {
+    fn create_type_of_expression(&mut self, e: ExprId) -> Vec<u8> {
         let file = self.file();
         self.c.serialize_type_for_expression(
             file,
@@ -3320,7 +4933,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             self.enclosing,
             DECLARATION_EMIT_NODE_BUILDER_FLAGS,
             &mut self.tracker,
-        );
+        )
     }
 }
 
@@ -3359,21 +4972,18 @@ fn ensure_path_is_non_module_name(path: Vec<u8>) -> Vec<u8> {
 
 /// `CountPathComponents`
 fn count_path_components(path: &[u8]) -> usize {
-    path.strip_prefix(b"./")
-        .unwrap_or(path)
-        .find_iter(b"/")
-        .count()
+    strings::count_char(path.strip_prefix(b"./").unwrap_or(path), b'/')
 }
 
 /// `TryGetRealFileNameForNonJSDeclarationFileName`
 fn try_get_real_file_name_for_non_js_declaration_file_name(file_name: &[u8]) -> Option<Vec<u8>> {
     let base_name = file_name.rsplit(|&b| b == b'/').next().unwrap_or(file_name);
     let no_extension = file_name.strip_suffix(b".ts")?;
-    if !base_name.contains_str(b".d.") || base_name.ends_with(b".d.ts") {
+    if !strings::contains(base_name, b".d.") || base_name.ends_with(b".d.ts") {
         return None;
     }
-    let extension = &no_extension[no_extension.rfind_byte(b'.')?..];
-    let (before, _) = no_extension.split_once_str(b".d.")?;
+    let extension = &no_extension[strings::last_index_of_char(no_extension, b'.')?..];
+    let (before, _) = strings::split_once(no_extension, b".d.")?;
     Some([before, extension].concat())
 }
 
@@ -3409,7 +5019,7 @@ fn normalized_name(path: &[u8]) -> Vec<u8> {
 /// `GetPackageNameFromTypesPackageName`
 fn package_name_from_types_package_name(name: &[u8]) -> Vec<u8> {
     match name.strip_prefix(b"@types/") {
-        Some(mangled) => match mangled.split_once_str(b"__") {
+        Some(mangled) => match strings::split_once(mangled, b"__") {
             Some((scope, rest)) => [&b"@"[..], scope, b"/", rest].concat(),
             None => mangled.to_vec(),
         },
@@ -3453,8 +5063,7 @@ fn module_name_from_exports(
                         }
                     }
                     Matching::Pattern => {
-                        let (leading, trailing) = pattern
-                            .split_once_str(b"*")
+                        let (leading, trailing) = strings::split_once(&pattern, b"*")
                             .unwrap_or((pattern.as_slice(), b""));
                         if leading.len() + trailing.len() <= candidate.len()
                             && candidate.starts_with(leading)
@@ -3561,11 +5170,10 @@ fn module_name_from_package_exports(
 impl<'p> Checker<'p> {
     /// The relative specifiers `file` mentions, in the order it does.
     fn relative_specifiers_of(&self, file: FileId) -> Vec<&'p [u8]> {
-        let files = self.files();
         self.bound(file)
             .specifiers
             .iter()
-            .map(|&specifier| files.atoms.bytes(specifier))
+            .map(|&specifier| self.atoms().bytes(specifier))
             .filter(|text| path_is_relative(text))
             .collect()
     }
@@ -3715,7 +5323,7 @@ impl<'p> Checker<'p> {
             return with_js_extension();
         }
         if extension == b".ts"
-            && file_name.contains_str(b".d.")
+            && strings::contains(file_name, b".d.")
             && let Some(real) = try_get_real_file_name_for_non_js_declaration_file_name(file_name)
         {
             return real;
@@ -3875,21 +5483,12 @@ impl<'p> Checker<'p> {
 
     /// `GetProjectReferenceFromSource(path).OutputDts`: the declaration file a referenced project emits for its source file at `path`.
     fn output_dts_of_project_reference_source(&self, path: &[u8]) -> Option<Vec<u8>> {
-        let extension: &[u8] = match known_extension(path) {
-            b".ts" | b".tsx" => b".d.ts",
-            b".mts" => b".d.mts",
-            b".cts" => b".d.cts",
-            _ => return None,
-        };
-        for (output_dir, root_dir) in &self.files().options.referenced_outputs {
-            if let Some(relative) = path.strip_prefix(root_dir.as_slice())
-                && relative.starts_with(b"/")
-            {
-                let relative = remove_file_extension(relative);
-                return Some([output_dir.as_slice(), relative, extension].concat());
-            }
+        if !matches!(known_extension(path), b".ts" | b".tsx" | b".mts" | b".cts") {
+            return None;
         }
-        None
+        let outputs = self.files().options.referenced_outputs.iter();
+        (outputs.map(|(output_dir, root_dir)| Some((output_dir.as_slice(), root_dir.as_slice()))))
+            .find_map(|output| crate::resolve::output_declaration_file_name(path, output))
     }
 
     /// `GetEachFileNameOfModule`: the paths that lead to one of `targets` by a link to a directory the file at `real` is in. With each
@@ -3958,11 +5557,7 @@ impl<'p> Checker<'p> {
             distance(&a.0)
                 .cmp(&distance(&b.0))
                 .then(b.1.cmp(&a.1))
-                .then(
-                    a.0.find_iter(b"/")
-                        .count()
-                        .cmp(&b.0.find_iter(b"/").count()),
-                )
+                .then(strings::count_char(&a.0, b'/').cmp(&strings::count_char(&b.0, b'/')))
                 .then(a.0.cmp(&b.0))
         });
         paths.dedup();
@@ -3971,13 +5566,13 @@ impl<'p> Checker<'p> {
         let allowed_endings = self.allowed_endings(importing, prefers_js, target_mode);
         let imported_file_is_in_node_modules = paths
             .iter()
-            .any(|path| path.0.contains_str(b"/node_modules/"));
+            .any(|path| strings::contains(&path.0, b"/node_modules/"));
         // The first of `pathsSpecifiers`, `redirectPathsSpecifiers`, `nodeModulesSpecifiers`, `relativeSpecifiers`.
         let (mut from_paths, mut from_redirect_paths) = (None, None);
         let (mut from_node_modules, mut relative) = (None, None);
         for (path, is_redirect) in &paths {
             let is_redirect = *is_redirect;
-            let is_in_node_modules = path.contains_str(b"/node_modules/");
+            let is_in_node_modules = strings::contains(path, b"/node_modules/");
             let mut specifier = Vec::new();
             if is_in_node_modules {
                 specifier =
@@ -4004,7 +5599,7 @@ impl<'p> Checker<'p> {
             if is_redirect {
                 from_redirect_paths.get_or_insert(local);
             } else if path_is_bare_specifier(&local) {
-                if local.contains_str(b"/node_modules/") {
+                if strings::contains(&local, b"/node_modules/") {
                     relative.get_or_insert(local);
                 } else {
                     from_paths.get_or_insert(local);
@@ -4054,8 +5649,11 @@ impl<'p> Checker<'p> {
             said => said,
         };
         // `tryGetModuleNameFromPackageJsonImports` is not ported: nothing is called by a `#name` yet.
+        // A copy: `relative_normalized` answers from one buffer per thread, which the callee writes to again.
+        let relative_to_base_url =
+            relative_normalized::<Posix, true>(base_directory, module_file_name).to_vec();
         let maybe_non_relative = self.try_get_module_name_from_paths(
-            relative_normalized::<Posix, true>(base_directory, module_file_name),
+            &relative_to_base_url,
             allowed_endings,
             base_directory,
         );
@@ -4114,10 +5712,10 @@ impl<'p> Checker<'p> {
                 let candidate = ensure_path_is_non_module_name(
                     relative_normalized::<Posix, true>(&source_path, target_path).to_vec(),
                 );
-                let separators = candidate.find_iter(b"/").count();
+                let separators = strings::count_char(&candidate, b'/');
                 if shortest
                     .as_ref()
-                    .is_none_or(|shortest| separators < shortest.find_iter(b"/").count())
+                    .is_none_or(|shortest| separators < strings::count_char(shortest, b'/'))
                 {
                     shortest = Some(candidate);
                 }
@@ -4149,7 +5747,7 @@ impl<'p> Checker<'p> {
                 if !known_extension(&pattern).is_empty() {
                     candidates.push(relative_to_base_url.to_vec());
                 }
-                let Some((prefix, suffix)) = pattern.split_once_str(b"*") else {
+                let Some((prefix, suffix)) = strings::split_once(&pattern, b"*") else {
                     if candidates.contains(&pattern) {
                         return key.clone();
                     }
@@ -4200,15 +5798,20 @@ impl<'p> Checker<'p> {
                     || used == ResolutionMode::None
                     || target_mode == ResolutionMode::None
                 {
-                    return files.atoms.bytes(specifier).to_vec();
+                    return self.atoms().bytes(specifier).to_vec();
                 }
                 break 'existing;
             }
         }
-        // `GetEachFileNameOfModule`
-        let path = files.module(target).path.as_slice();
-        // What a referenced project emits for the file comes first: that is what the `exports` of its package lead to.
-        let reference_redirect = self.output_dts_of_project_reference_source(path);
+        // `GetModuleSpecifiersWithInfo`: "Use original source file name when file is from project reference output".
+        let path = (files.options)
+            .source_of_project_reference_if_output_included(&files.module(target).path);
+        // `GetEachFileNameOfModule`. What a referenced project emits for the file comes first, then the source: the `exports` of its
+        // package lead to one or the other.
+        let reference_redirect = match files.options.parse_file_redirect(path) {
+            Some(output) => Some(output.to_vec()),
+            None => self.output_dts_of_project_reference_source(path),
+        };
         let mut targets: Vec<(Vec<u8>, bool)> = Vec::with_capacity(2);
         targets.extend(reference_redirect.map(|output| (output, true)));
         targets.push((path.to_vec(), false));
@@ -4217,7 +5820,7 @@ impl<'p> Checker<'p> {
         let contains_ignored_path = |path: &[u8]| {
             [b"/node_modules/.".as_slice(), b"/.git", b".#"]
                 .iter()
-                .any(|ignored| path.contains_str(ignored))
+                .any(|ignored| strings::contains(path, ignored))
         };
         let filters = !paths.is_empty() || !targets.iter().all(|it| contains_ignored_path(&it.0));
         targets.retain(|it| !(filters && contains_ignored_path(&it.0)));
@@ -4257,7 +5860,7 @@ impl<'p> Checker<'p> {
                 // `tryGetModuleNameFromAmbientModule`
                 Decl::Module(m) => {
                     if let ModuleName::String(name) = self.hir(file)[m].name {
-                        let name = self.files().atoms.bytes(name).to_vec();
+                        let name = self.atoms().bytes(name).to_vec();
                         if !self.hir(file).has_module_syntax || !is_relative(&name) {
                             specifier = specifier.or(Some(name));
                         }
@@ -4268,7 +5871,7 @@ impl<'p> Checker<'p> {
         }
         let specifier = match (ambient_name, specifier, target) {
             // Without a file, `StripQuotes(symbol.Name)`.
-            (Some(name), _, None) => self.files().atoms.bytes(name).to_vec(),
+            (Some(name), _, None) => self.atoms().bytes(name).to_vec(),
             (_, Some(name), _) => name,
             (_, None, target) => match target.or_else(|| self.source_file_of_module(symbol)) {
                 Some(target) => self.get_module_specifiers(target, importing, mode),
@@ -4396,7 +5999,7 @@ impl<'p> Checker<'p> {
         }
         if !allows_node_modules_relative_paths
             && is_node
-            && specifier.contains_str(b"/node_modules/")
+            && strings::contains(&specifier, b"/node_modules/")
         {
             // Resolved the other way it may be found.
             let (swapped, swapped_mode) = if context_format == ResolutionMode::Import {
@@ -4405,7 +6008,7 @@ impl<'p> Checker<'p> {
                 (ResolutionMode::Import, &b"import"[..])
             };
             let other = self.specifier_for_module_symbol(module, importing, swapped);
-            if !other.contains_str(b"/node_modules/") {
+            if !strings::contains(&other, b"/node_modules/") {
                 return (other, Some(swapped_mode));
             }
         }

@@ -63,15 +63,7 @@ fn name_of_type_parameter_owner(hir: &hir::File, tp: TypeParamId) -> Option<u32>
 
 impl Checker<'_> {
     pub(super) fn check_x_signatures(&mut self, file: FileId) {
-        let hir = self.hir(file);
         self.check_type_parameter_declarations(file);
-        // 2730 is the parser's to say. It is said of all of the parameter.
-        for &(start, code) in hir.checker_errors.iter() {
-            if code == 2730 && !hir.is_in_jsdoc(start) {
-                let parameter = hir.params.iter().find(|parameter| parameter.pos == start);
-                self.note(start, parameter.map_or(0, |it| it.loc.end), code, &[]);
-            }
-        }
         self.check_promise_constructor_is_there(file);
     }
 
@@ -178,7 +170,10 @@ impl Checker<'_> {
                     self.work_out_written_type(file, t, resolution, depth + 1);
                 }
             }
-            TypeNodeKind::Array(t) | TypeNodeKind::Keyof(t) | TypeNodeKind::Readonly(t) => {
+            TypeNodeKind::Array(t)
+            | TypeNodeKind::Keyof(t)
+            | TypeNodeKind::Readonly(t)
+            | TypeNodeKind::JSDoc { ty: t, .. } => {
                 self.work_out_written_type(file, t, resolution, depth + 1)
             }
             TypeNodeKind::Tuple(elems) => {

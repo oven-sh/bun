@@ -21,6 +21,7 @@ use crate::parser::{
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
 use bun_ast::{B, E, Expr, G, S, Stmt};
+use bun_sema::hir::{Diagnostic, DiagnosticKind};
 
 // Named instantiations of `P<'_, TS, SCAN>`.
 pub type JavaScriptParser<'a> = P<'a, false, false>;
@@ -471,8 +472,8 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses a TypeScript module, visits nothing, and returns what `bun_sema` resolves types from.
-    /// A file the parser cannot recover from, or rejects for a reason TypeScript has no diagnostic for, is marked `has_errors`. It still
-    /// gets at least one syntactic error, unless the parser ran out of stack: then `early_errors` is empty and the driver reports that.
+    /// A file the parser cannot recover from, or rejects with an error that has no TypeScript equivalent, is marked `has_errors` and
+    /// gets at least one parse error. A file too deep for the stack is marked `ran_out_of_stack`.
     /// `await_is_a_name`: the top level has no await context, as in a script (`parseSourceFileWorker`).
     /// Also returns whether `await` was parsed as a keyword at the top level.
     #[cold]
@@ -562,13 +563,11 @@ impl<'a> Parser<'a> {
         let awaited = p.top_level_await_keyword.len > 0;
         // Before `jsdoc::read_comments` sends the lexer through the comments again.
         let comment_directives = core::mem::take(&mut p.lexer.comment_directives);
-        // What is objected to without the tree suffering is for the checker to say, in its own words.
-        // Sorted by which part of TypeScript reports it.
-        let (mut syntactic, mut grammar, mut checker) = (Vec::new(), Vec::new(), Vec::new());
-        let (mut error_arguments, mut error_ends) = (Vec::new(), Vec::new());
-        let has_jsx = p.is_jsx_enabled();
-        let opening_brackets = Self::opening_brackets(p.log());
+        // Recoverable errors are converted to TypeScript's diagnostics. The checker reports them.
+        let mut logged = Vec::new();
+        let (has_jsx, is_js) = (p.is_jsx_enabled(), p.lexer.is_javascript_file());
         let mut has_errors = stmts.is_err();
+        // The offset of the first error that has no TypeScript equivalent.
         let mut untranslated = None;
         for msg in p.log().msgs.iter().filter(|m| m.kind == bun_ast::Kind::Err) {
             let offset = msg.data.location.as_ref().map(|l| l.offset);
@@ -578,43 +577,21 @@ impl<'a> Parser<'a> {
                 "{}",
                 bstr::BStr::new(&msg.data.text)
             );
-            let at = offset
-                .and_then(|o| self.source.contents().get(o..))
-                .unwrap_or_default();
-            match (crate::sema::early_error(&msg.data.text, at), offset) {
-                (Some((0, _)), _) => {}
-                (Some((code, delta)), Some(offset)) => {
-                    // 1368: `checkMethodDeclaration` reports it with a plain `c.error`.
-                    let list = if msg.data.text.starts_with(b"TC") || code == 1368 {
-                        &mut checker
-                    } else if Self::is_syntactic_error(&msg.data.text, code) {
-                        &mut syntactic
-                    } else {
-                        &mut grammar
-                    };
-                    let start = (offset as i64 + i64::from(delta)).max(0) as u32;
-                    list.push((start, code));
-                    let contents = self.source.contents();
-                    if let Some(args) = crate::sema::error_arguments(&msg.data, code, contents) {
-                        error_arguments.push((start, code, args));
-                    }
-                    error_ends.extend(crate::sema::error_end(
-                        &msg.data,
-                        self.source.contents(),
-                        has_jsx,
-                    ));
+            let source = self.source.contents();
+            match crate::sema::diagnostic(&msg.data, &msg.notes, source, has_jsx) {
+                // `checkJSDecoratorSyntax` reports these two as JS diagnostics, which parse errors do not suppress.
+                Some(Some(diagnostic)) if is_js && matches!(diagnostic.code, 1206 | 8038) => {
+                    logged.push(Diagnostic {
+                        kind: DiagnosticKind::Js,
+                        ..diagnostic
+                    });
                 }
-                (_, offset) => {
+                Some(diagnostic) => logged.extend(diagnostic),
+                None => {
                     has_errors = true;
                     untranslated = untranslated.or(offset);
                 }
             }
-        }
-        // A rejected file never passes as free of errors.
-        if has_errors && syntactic.is_empty() && !matches!(stmts, Err(crate::Error::StackOverflow))
-        {
-            let at = untranslated.unwrap_or_else(|| p.lexer.loc().start.max(0) as usize);
-            syntactic.push((at as u32, 1012));
         }
         let mut file = match stmts {
             Ok(stmts) => {
@@ -631,85 +608,31 @@ impl<'a> Parser<'a> {
                 );
                 file
             }
-            Err(_) => failed(),
+            Err(error) => bun_sema::hir::File {
+                ran_out_of_stack: matches!(error, crate::Error::StackOverflow),
+                ..failed()
+            },
         };
-        // The lowering sets it when it runs out of stack.
-        let has_errors = has_errors || file.has_errors;
+        has_errors |= file.ran_out_of_stack;
         file.has_errors = has_errors;
-        if !opening_brackets.is_empty() {
-            file.opening_brackets.extend(opening_brackets);
-        }
-        if !error_arguments.is_empty() {
-            file.error_arguments.extend(error_arguments);
-        }
-        if !error_ends.is_empty() {
-            file.error_ends.extend(error_ends);
-        }
-        // `hasParseDiagnostics`. The lowering does not say who reports what it pushed, so `check_file` sorts that by code.
-        file.has_parse_diagnostics = has_errors
-            || !syntactic.is_empty()
-            || file
-                .early_errors
-                .iter()
-                .any(|&(_, code)| Self::is_parser_code(code));
+        let is_parse_error = |d: &Diagnostic| d.kind == DiagnosticKind::Parse;
+        file.has_parse_diagnostics =
+            has_errors || logged.iter().chain(&file.diagnostics).any(is_parse_error);
         if has_errors {
-            file.early_errors = syntactic;
-        } else {
-            file.early_errors.extend(syntactic);
-            // `checkJSDecoratorSyntax` says these two, whatever else is wrong with the file.
-            let is_js = p.lexer.is_javascript_file();
-            let has_errors = file.has_parse_diagnostics;
-            grammar.retain(|error| !has_errors || is_js && matches!(error.1, 1206 | 8038));
-            file.early_errors.extend(grammar);
-            file.checker_errors.extend(checker);
-        }
-        (file, awaited)
-    }
-
-    /// `hir::File::opening_brackets`, of what is in `log`: the notes of `Lexer::note_opening_bracket`.
-    fn opening_brackets(log: &bun_ast::Log) -> Vec<(u32, u32, u8)> {
-        let mut found = Vec::new();
-        for msg in log.msgs.iter().filter(|msg| msg.kind == bun_ast::Kind::Err) {
-            let Some(at) = msg.data.location.as_ref() else {
-                continue;
-            };
-            for note in msg.notes.iter() {
-                if let (Some(&[bracket]), Some(open)) =
-                    (note.text.strip_prefix(b"TS1007 "), note.location.as_ref())
-                {
-                    found.push((at.offset as u32, open.offset as u32, bracket));
-                }
+            (file.diagnostics)
+                .retain(|d| !matches!(d.kind, DiagnosticKind::Parse | DiagnosticKind::Grammar));
+            logged.retain(is_parse_error);
+            // A rejected file is never reported as free of errors.
+            if logged.is_empty() && !file.ran_out_of_stack {
+                let at = untranslated.unwrap_or_else(|| p.lexer.loc().start.max(0) as usize) as u32;
+                logged.push(Diagnostic::new(DiagnosticKind::Parse, (at, 0), 1012, &[]));
             }
+        } else {
+            let suppress_grammar_errors = file.has_parse_diagnostics;
+            logged.retain(|d| !suppress_grammar_errors || d.kind != DiagnosticKind::Grammar);
         }
-        found
-    }
-
-    /// Whether TypeScript's parser or scanner reports the logged error `text`, which `early_error` translated to `code`.
-    /// If not, its checker does through `grammarErrorOnNode`, or its binder through `checkContextualIdentifier`.
-    fn is_syntactic_error(text: &[u8], code: u32) -> bool {
-        if text.starts_with(b"TG") || text.starts_with(b"TC") {
-            return false;
-        }
-        if text.starts_with(b"TS") {
-            // Some grammar errors are still logged through `Lexer::ts_error`.
-            return Self::is_parser_code(code);
-        }
-        // `Lexer::expected` and `Lexer::unexpected`. 1359 at a reserved word: `createIdentifierWithDiagnostic`.
-        matches!(code, 1003 | 1005 | 1109)
-            || code == 1359 && text.starts_with(b"Expected identifier ")
-    }
-
-    /// The codes that parser.go and scanner.go report while parsing a TypeScript file. Leaves out what they only report in
-    /// JavaScript files (`jsErrorAtRange`: 1206 8038 ..) and in regular expressions, which the checker scans.
-    fn is_parser_code(code: u32) -> bool {
-        matches!(
-            code,
-            1002 | 1003 | 1005 | 1007 | 1010..=1012 | 1034 | 1068 | 1084 | 1109 | 1110 | 1121 | 1124..=1132 | 1134..=1140 | 1142
-                | 1144..=1146 | 1160 | 1161 | 1177..=1181 | 1185 | 1198 | 1199 | 1209 | 1228 | 1260 | 1327 | 1328 | 1351..=1353
-                | 1357 | 1359 | 1381 | 1382 | 1385..=1390 | 1433..=1443 | 1453 | 1472 | 1477 | 1478 | 1486..=1490 | 2427 | 2457
-                | 2657 | 2754 | 2809 | 2819 | 2880 | 6188 | 6189 | 17002 | 17006..=17008 | 17014 | 17015 | 17021 | 18009 | 18016
-                | 18026 | 18029 | 18030
-        )
+        file.diagnostics.extend(logged);
+        (file, awaited)
     }
 
     /// Bundler-only scan pass (see `bundler/cache.rs`). Never reached from

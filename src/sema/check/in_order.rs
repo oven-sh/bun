@@ -10,11 +10,92 @@ use super::errors_x_operators::{
     check_tagged_template, check_template_spans, check_yield_result,
 };
 use super::errors_x_statements::is_with_statement;
+use super::task::{Finished, Published};
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
+use crate::types::LinkCounts;
+use crate::util::InParallel;
 use smallvec::SmallVec;
 
+/// How much native stack a checker may use, measured from `Checker::begin_stack_budget`. ONE CONSTANT, on every thread, on every
+/// platform, in the product and in the harness: where a task runs out of stack has to be a function of the program. The smallest stack
+/// of a thread of the pool is 4 MB (`DEFAULT_THREAD_STACK_SIZE`: Linux with glibc or musl, macOS). `StackCheck` keeps up to 512 KB of it
+/// back (under a sanitizer), and the frames of the pool and of the driver come off too.
+const TASK_STACK: usize = 3 << 20;
+
+/// THE BARRIER after a step. `finished`: the tasks of that step, in task order. No task is running.
+impl Program {
+    /// The first half. Of the types, signatures, mappers and component lists that several tasks have created, the lowest task's stays.
+    /// Each task gets its `Link`, through which `publish` rewrites its keys and values.
+    pub fn link(&self, finished: &mut [Finished], in_parallel: InParallel<'_>) -> LinkCounts {
+        let own = finished.iter_mut().map(|it| std::mem::take(&mut it.own));
+        // For a union whose order rested on ids of the task's own. Few steps have one.
+        let checker = std::cell::OnceCell::new();
+        let (links, counts) =
+            (self.types).link(&self.files.atoms, own.collect(), in_parallel, &|types| {
+                checker.get_or_init(|| self.checker()).sort_types(types)
+            });
+        for (finished, link) in finished.iter_mut().zip(links) {
+            finished.link = link;
+        }
+        counts
+    }
+
+    /// The second half. The entries of the buffers go to the published state, and the first entry for a key stays. Then the diagnostics:
+    /// the first task to report under a query is the one that reports, so this is called for the steps in plan order, on one thread.
+    /// `with_digest`: `Published::digest` is computed.
+    pub fn publish(
+        &self,
+        finished: &mut [Finished],
+        in_parallel: InParallel<'_>,
+        with_digest: bool,
+    ) -> Published {
+        let published = task::publish(self, finished, in_parallel, with_digest);
+        if finished.iter().any(|finished| finished.closed_a_cycle) {
+            (self.closed_a_circle).store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        for finished in finished {
+            self.publish_diagnostics(finished);
+        }
+        published
+    }
+}
+
 impl Checker<'_> {
+    /// Where a task begins, or a checker outside the plan. See `TASK_STACK`.
+    pub fn begin_stack_budget(&mut self) {
+        let left = bun_core::StackCheck::init().remaining();
+        assert!(
+            left >= TASK_STACK,
+            "the thread has too little stack for a task"
+        );
+        self.set_stack_limit(TASK_STACK);
+    }
+
+    /// Before `check_file`. `step` counts from 0. `index`: the place of the task in its step, in task order.
+    /// `is_read_later`: whether anything will read what this task publishes. If not, only its diagnostics go to the barrier.
+    /// A checker for which this is not called is outside the plan: what it writes is dropped with it.
+    pub fn begin_task(&mut self, step: u32, index: u32, is_read_later: bool) {
+        self.task.begin(step, index, is_read_later);
+    }
+
+    /// On the thread of the task, after everything else that this checker does.
+    pub fn end_task(&mut self) -> Finished {
+        let diagnostics = self.take_diagnostics();
+        self.task.finish(self.p, diagnostics)
+    }
+
+    /// After `check_file`: whether the native stack ran out in that file. A task checks several files.
+    pub fn take_ran_out_of_stack(&mut self) -> bool {
+        self.ran_out_of_stack.replace(false)
+    }
+
+    /// How many entries of `relations` this checker has stored under a generic key whose hash took in an id of the task's own. Such an
+    /// entry is bound to its task: after the link the same two references hash to something else. A function of the program.
+    pub fn generic_relation_entries_not_published(&self) -> u64 {
+        self.generic_relation_entries_not_published
+    }
+
     /// `checkSourceFile`
     pub(super) fn check_source_file(&mut self, file: FileId) {
         self.deferred_nodes.clear();
@@ -26,35 +107,20 @@ impl Checker<'_> {
             || hir.classes.iter().any(|it| is_ambient(it.flags))
             || hir.fns.iter().any(|it| is_ambient(it.flags));
         self.parsed_again_for_await = None;
+        // The kinds that `type_of_expr_uncached` puts off. By position: one evaluation comes to them in that order.
+        let index = self.exprs_by_kind(file);
+        let tags = [ExprTag::Fn, ExprTag::Class, ExprTag::Jsx, ExprTag::Unary];
+        let mut earlier: Vec<ExprId> = (tags.iter())
+            .flat_map(|&tag| index.of(tag).iter().copied())
+            .filter(|&e| (self.p.deferred_nodes.get(&self.task, &(file, e))).is_some())
+            .collect();
+        earlier.sort_unstable_by_key(|&e| hir[e].pos);
+        for e in earlier {
+            self.check_node_deferred(file, e);
+        }
         self.check_source_elements(file, self.hir(file).body);
         self.check_deferred_nodes(file);
-        if self.limits != 0 && !self.shares_nothing {
-            let said = self.check_source_file_alone(file, |alone| alone.drain_sink(file, &[]));
-            let is_limit = |d: &Reported| matches!(d.code, 2589 | 2590 | 2799 | 2800);
-            self.reported.extend(said.into_iter().filter(is_limit));
-        }
         self.reported_unreachable_nodes.clear();
-        if self.trace_cycles {
-            self.report_what_was_not_looked_at(file);
-        }
-    }
-
-    /// `checkSourceFile(file)` by a checker that shares nothing, as every checker of tsgo's: what is said once, of whoever asks first,
-    /// goes by the order in which THAT one asks. `read`: what it noted on the way.
-    pub(super) fn check_source_file_alone<R>(
-        &self,
-        file: FileId,
-        read: impl FnOnce(&Checker<'_>) -> R,
-    ) -> R {
-        TypeStore::apart_from_what_is_local(|| {
-            let program = Program::new(Arc::clone(&self.p.files));
-            let mut checker = program.checker();
-            checker.shares_nothing = true;
-            (checker.stack_base, checker.stack_limit) = (self.stack_base, self.stack_limit);
-            checker.checking = Some(file);
-            checker.check_source_file(file);
-            read(&checker)
-        })
     }
 
     /// `checkSourceElements`
@@ -73,19 +139,14 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkNodeDeferred`
+    /// `checkNodeDeferred`. `links.deferredNodes` belongs to the file of the node and is in the order of the calls, whichever file was being
+    /// checked at the time. So what is evaluated on demand before `checkSourceFile` of its file comes first there: `Program::deferred_nodes`
+    /// has it until then.
     pub(super) fn check_node_deferred(&mut self, file: FileId, e: ExprId) {
-        if self.checking == Some(file) && !self.is_type_checked && self.is_deferred_node.insert(e) {
+        if self.task.file != Some(file) {
+            (self.p.deferred_nodes).insert(&self.task, (file, e), (), Stored::new());
+        } else if !self.is_type_checked && self.is_deferred_node.insert(e) {
             self.deferred_nodes.push_back(e);
-        }
-    }
-
-    /// `checkNodeDeferred`, where the type of `e` is worked out. Whether it is worked out HERE depends on who was first, unless nobody
-    /// else can ask about the file.
-    #[inline]
-    pub(super) fn check_node_deferred_where_it_is_worked_out(&mut self, file: FileId, e: ExprId) {
-        if self.shares_nothing || crate::local::file() == file.0 {
-            self.check_node_deferred(file, e);
         }
     }
 
@@ -311,6 +372,9 @@ impl Checker<'_> {
             match kind {
                 FnKind::Constructor | FnKind::ConstructSignature | FnKind::ConstructorType => {
                     self.error(file, p, 2681, &[]);
+                }
+                FnKind::Arrow => {
+                    self.error(file, p, 2730, &[]);
                 }
                 FnKind::Getter | FnKind::Setter => {
                     self.error(file, p, 2784, &[]);
@@ -636,12 +700,14 @@ impl Checker<'_> {
     /// `checkSignatureDeclaration`.
     fn check_members(&mut self, file: FileId, members: Span<MemberId>) {
         let hir = self.hir(file);
+        let is_lib = self.files().module(file).is_lib;
         for m in members.iter() {
             let member = &hir[m];
             if !member.modifiers.is_empty() {
                 self.check_grammar_modifiers_of_member(file, m);
             }
-            if !hir.text.is_empty() {
+            // The default library is not looked into for how it is written.
+            if !is_lib {
                 match member.kind {
                     MemberKind::IndexSignature => {
                         self.check_grammar_index_signature_parameters(file, m)
@@ -812,14 +878,30 @@ impl Checker<'_> {
                 self.check_type_node(file, of);
             }
             TypeNodeKind::UniqueSymbol => self.check_grammar_type_operator_node(file, node),
+            // `checkJSDocType`: `checkJSDocTypeIsInJsFile`
+            TypeNodeKind::JSDoc {
+                ty,
+                is_nullable,
+                is_postfix,
+            } => {
+                if !hir.is_js {
+                    let mut suggestion = self.type_from_node(file, ty);
+                    // `getNullableType`
+                    if is_nullable && !suggestion.is_never() && suggestion != TypeId::VOID {
+                        let null: &[TypeId] = if is_postfix { &[] } else { &[TypeId::NULL] };
+                        suggestion = self.union(&[&[suggestion, TypeId::UNDEFINED], null].concat());
+                    }
+                    let token = Arg::Text(if is_nullable { "?" } else { "!" });
+                    let code = if is_postfix { 17019 } else { 17020 };
+                    self.grammar_error_on_node(file, node, code, &[token, Arg::Type(suggestion)]);
+                }
+                self.check_type_node(file, ty);
+            }
             // `checkTupleType`, `checkNamedTupleMember`
             TypeNodeKind::Tuple(elems) => {
                 self.check_tuple_type(file, elems);
                 for elem in elems.iter() {
                     self.check_type_node(file, hir[elem].ty);
-                    if hir[elem].rest && hir[elem].optional {
-                        self.check_nullable_rest_element(file, elem);
-                    }
                 }
                 self.type_from_node(file, node);
             }
@@ -883,7 +965,7 @@ impl Checker<'_> {
         let within_unreachable_code = self.within_unreachable_code;
         if s.is_some()
             && !within_unreachable_code
-            && self.p.files.options.allow_unreachable_code == Some(false)
+            && self.p.files.options.allow_unreachable_code != Some(true)
             && self.check_source_element_unreachable(file, s)
         {
             self.within_unreachable_code = true;
@@ -1191,22 +1273,6 @@ impl Checker<'_> {
         }
     }
 
-    /// With `BUN_SEMA_TRACE_CYCLES`: the expressions `checkSourceFile` comes to that have not been looked at.
-    fn report_what_was_not_looked_at(&self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for (i, e) in hir.exprs.iter().enumerate() {
-            let id = ExprId(i as u32);
-            if !bound.is_unchecked(i)
-                && !matches!(e.kind, ExprKind::Missing)
-                && self.kept_type_of_expr(file, id).is_none()
-                && !self.looked_at.contains(&(file, id))
-            {
-                let path = &self.files().module(file).path;
-                eprintln!("GAP {:?} {}:{}", e.kind.tag(), bstr::BStr::new(path), e.pos);
-            }
-        }
-    }
-
     /// `checkExpression`: `e`, then whatever in it that did not need looking at.
     pub(super) fn check_expression(&mut self, file: FileId, e: ExprId) {
         if e.is_none() || self.is_stack_low() {
@@ -1240,7 +1306,10 @@ impl Checker<'_> {
                     self.check_type_nodes(file, hir[c].type_args);
                 }
                 // `getCandidateForOverloadFailure` begins with `checkNodeDeferred(node)`.
-                if self.p.said_of_calls.get_ref(&(file, e)).is_some() {
+                if (self.p.said_of_calls)
+                    .get_ref(&mut self.task, &(file, e))
+                    .is_some()
+                {
                     self.check_node_deferred(file, e);
                 } else {
                     for x in hir.ids(hir[c].args) {
@@ -1366,18 +1435,43 @@ impl Checker<'_> {
                     self.check_destructuring_assignment(file, target, source_type);
                 }
             }
-            // `checkBinaryLikeExpression`
-            ExprKind::Binary { op, left, right } => {
-                self.check_expression(file, left);
-                self.check_expression(file, right);
-                match op {
-                    BinOp::And | BinOp::Or | BinOp::Nullish => {
-                        let is_and = op == BinOp::And;
-                        self.check_testing_known_truthy_left_operand(file, e, is_and, left)
+            // `checkBinaryLikeExpression`. It iterates over the left spine, as TypeScript's trampoline does, so that a long chain
+            // (`a + b + c + ..`) does not recurse. The order of the checks is that of the recursion.
+            ExprKind::Binary { .. } => {
+                // Down: the start of this function for each operator on the spine.
+                let mut spine: SmallVec<[ExprId; 8]> = SmallVec::new();
+                spine.push(e);
+                while let ExprKind::Binary { left, .. } = hir[spine[spine.len() - 1]].kind
+                    && left.is_some()
+                    && matches!(hir[left].kind, ExprKind::Binary { .. })
+                {
+                    let ty = self.type_of_expr(file, left);
+                    if self.is_const_enum_object(ty) {
+                        self.check_const_enum_access(file, left, ty);
                     }
-                    BinOp::Comma => self.check_comma_operator(file, e, left, right),
-                    BinOp::Instanceof => check_instance_of_expression(self, file, e, left, right),
-                    _ => {}
+                    spine.push(left);
+                }
+                // Up: the leftmost operand, then the right operand and the checks of each operator.
+                let mut is_innermost = true;
+                while let Some(e) = spine.pop() {
+                    let ExprKind::Binary { op, left, right } = hir[e].kind else {
+                        unreachable!()
+                    };
+                    if std::mem::take(&mut is_innermost) {
+                        self.check_expression(file, left);
+                    }
+                    self.check_expression(file, right);
+                    match op {
+                        BinOp::And | BinOp::Or | BinOp::Nullish => {
+                            let is_and = op == BinOp::And;
+                            self.check_testing_known_truthy_left_operand(file, e, is_and, left)
+                        }
+                        BinOp::Comma => self.check_comma_operator(file, e, left, right),
+                        BinOp::Instanceof => {
+                            check_instance_of_expression(self, file, e, left, right)
+                        }
+                        _ => {}
+                    }
                 }
             }
             ExprKind::Index {

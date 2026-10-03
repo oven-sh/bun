@@ -25,10 +25,11 @@ impl Checker<'_> {
         }
         let options = &self.p.files.options;
         let (jsx, no_implicit_any) = (options.jsx, options.no_implicit_any);
-        let atoms = &self.p.files.atoms;
+        let atoms = &self.atoms();
         // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
         let path = &self.files().module(file).path;
-        let runtime = crate::program::jsx_runtime_of(options, hir, atoms)
+        // The only atom it reads is one that the parser made.
+        let runtime = crate::program::jsx_runtime_of(options, hir, &self.p.files.atoms)
             .filter(|_| path.ends_with(b".tsx") || path.ends_with(b".jsx"))
             .map(|spec| atoms.intern(&spec));
         // `getJsxNamespaceContainerForImplicitImport`: the module elements are made with is imported unasked, and has to be there.
@@ -43,8 +44,8 @@ impl Checker<'_> {
             .map(|spec| (spec, module.default_mode))
             .filter(|untyped| !runtime_is_no_module && module.untyped_imports.contains(untyped));
         let (factory, fragment_factory) = (
-            jsx_namespace(self.files(), hir, false),
-            jsx_namespace(self.files(), hir, true),
+            jsx_namespace(self.files(), self.atoms(), hir, false),
+            jsx_namespace(self.files(), self.atoms(), hir, true),
         );
         let names_fragment_factory = atoms.bytes(fragment_factory) != b"null";
         // `markJsxAliasReferenced`: a module that is not found is as good as none asked for.
@@ -83,13 +84,10 @@ impl Checker<'_> {
         // What is said once for the file is said of what is checked first. What the walk does not reach comes last, in source order.
         let (mut first, mut first_fragment) = (None, None);
         if runtime_is_missing || checks_fragment_type {
-            // Nobody else can ask about a file that nothing refers to.
-            let reached = if crate::local::file() == file.0 {
-                self.first_jsx
-            } else if elements.len() > 1 {
-                self.check_source_file_alone(file, |checker| checker.first_jsx)
-            } else {
-                (None, None)
+            // Only this task stores the entry of a JSX element of the file (`is_noted_for_check_file`), so it has evaluated each itself.
+            let reached = match self.first_jsx {
+                (of, first, first_fragment) if of == file => (first, first_fragment),
+                _ => (None, None),
             };
             let is_fragment =
                 |e: &ExprId| matches!(hir[*e].kind, ExprKind::Jsx(j) if hir[j].tag.is_none());
@@ -231,7 +229,7 @@ impl Checker<'_> {
             JsxEmit::React | JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
         ) && let ExprKind::String(name) = hir[jsx.tag].kind
         {
-            let name = self.files().atoms.bytes(name);
+            let name = self.atoms().bytes(name);
             if let Some(colon) = name.iter().position(|&c| c == b':')
                 && !(name[0].is_ascii_lowercase() || name[..colon].contains(&b'-'))
             {
@@ -409,23 +407,22 @@ impl Checker<'_> {
             return None;
         }
         // `getContextualTypeForArgumentAtIndex`: no contextual type while the signature is `resolvingSignature`. That state belongs to
-        // this checker, so it is read from its own query stack and never from the shared `calls` table.
+        // this checker, so it is read from its own query stack.
         let is_this_element = |r: &(FileId, ExprId, ResolvedCall)| r.0 == file && r.1 == e;
-        if self.stack.contains(&Query::Call(file, e))
-            && !self.resolved_meanwhile.iter().any(is_this_element)
+        if !self.resolved_meanwhile.iter().any(is_this_element)
+            && self.stack.contains(&Query::Call(file, e))
         {
             return None;
         }
         // Cache: queried once per attribute and per child.
-        if let Some(cached) = self.p.jsx_attributes_types.get(&(file, j)) {
+        if let Some(cached) = (self.p.jsx_attributes_types).get(&mut self.task, &(file, j)) {
             return Some(cached);
         }
         let signature = self.resolved_signature(file, e).sig?;
         let ty = self.jsx_effective_first_argument(file, e, signature);
         // Cacheable only if computed from the cached signature.
-        let cached = self.p.calls.get(&(file, e));
-        if cached.is_some_and(|cached| cached.sig == Some(signature)) {
-            self.p.jsx_attributes_types.insert((file, j), ty);
+        if self.p.calls.get(&self.task, &(file, e)) == Some(Some(signature)) {
+            (self.p.jsx_attributes_types).insert(&mut self.task, (file, j), ty);
         }
         Some(ty)
     }
@@ -656,7 +653,7 @@ impl Checker<'_> {
         if ways.is_empty() {
             return None;
         }
-        let names = jsx_factory_entity(files, hir, true);
+        let names = jsx_factory_entity(files, self.atoms(), hir, true);
         let scope = self
             .bound(file)
             .expr_scope
@@ -689,7 +686,7 @@ impl Checker<'_> {
         if least <= most {
             return None;
         }
-        let factory: Vec<&[u8]> = names.iter().map(|&name| files.atoms.bytes(name)).collect();
+        let factory: Vec<&[u8]> = names.iter().map(|&name| self.atoms().bytes(name)).collect();
         Some((least, factory.join(&b'.'), most))
     }
 
@@ -714,7 +711,7 @@ impl Checker<'_> {
             let Some(name) = self.member_name(file, prop.key) else {
                 continue;
             };
-            if self.files().atoms.bytes(name).contains(&b'-') {
+            if self.atoms().bytes(name).contains(&b'-') {
                 continue;
             }
             let (at, mut diags) = (
@@ -1033,25 +1030,35 @@ impl Checker<'_> {
 }
 
 /// `getJsxNamespace`
-pub(super) fn jsx_namespace(files: &Files, hir: &hir::File, is_opening_fragment: bool) -> Atom {
+pub(super) fn jsx_namespace(
+    files: &Files,
+    atoms: Atoms<'_>,
+    hir: &hir::File,
+    is_opening_fragment: bool,
+) -> Atom {
     if is_opening_fragment {
         // `getJsxFragmentFactoryEntity`: a `@jsxFrag` pragma hides `jsxFragmentFactory` even if the pragma does not parse.
         let pragma = hir.jsx_pragmas.fragment_factory;
         let text = if pragma.is_some() {
-            files.atoms.bytes(pragma)
+            atoms.bytes(pragma)
         } else {
             &files.options.jsx_fragment_factory
         };
-        if let Some(entity) = parse_isolated_entity_name(&files.atoms, text) {
+        if let Some(entity) = parse_isolated_entity_name(atoms, text) {
             return entity[0];
         }
     }
-    jsx_factory_entity(files, hir, !is_opening_fragment)[0]
+    jsx_factory_entity(files, atoms, hir, !is_opening_fragment)[0]
 }
 
 /// `getJsxFactoryEntity`, as its identifiers from left to right. `is_local`: `localJsxFactory` counts, which is `@jsx` if it parses.
-fn jsx_factory_entity(files: &Files, hir: &hir::File, is_local: bool) -> Vec<Atom> {
-    let (options, atoms) = (&files.options, &files.atoms);
+fn jsx_factory_entity(
+    files: &Files,
+    atoms: Atoms<'_>,
+    hir: &hir::File,
+    is_local: bool,
+) -> Vec<Atom> {
+    let options = &files.options;
     let pragma = hir.jsx_pragmas.factory;
     if is_local
         && pragma.is_some()
@@ -1071,7 +1078,7 @@ fn jsx_factory_entity(files: &Files, hir: &hir::File, is_local: bool) -> Vec<Ato
 }
 
 /// `parseIsolatedEntityName`, as the identifiers of the name. The empty text is no name.
-fn parse_isolated_entity_name(atoms: &crate::atom::Interner, text: &[u8]) -> Option<Vec<Atom>> {
+fn parse_isolated_entity_name(atoms: Atoms<'_>, text: &[u8]) -> Option<Vec<Atom>> {
     crate::verify::is_entity_name(text).then(|| {
         text.split(|&c| c == b'.')
             .map(|name| atoms.intern(name.trim_ascii()))

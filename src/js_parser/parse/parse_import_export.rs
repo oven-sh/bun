@@ -42,7 +42,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // syntax error, so it is no reason for an attempt at parsing to fail either.
             let less_than = p.lexer.loc();
             let (logged, errors) = (p.log().msgs.len(), p.log().errors);
-            if !p.try_skip_type_script_type_arguments_with_backtracking() {
+            if !p.try_skip_type_script_type_arguments_with_backtracking()? {
                 // `import < a`: nothing is said, and the caller goes on with the comparison.
                 return Ok(p.new_expr(E::Missing {}, loc));
             }

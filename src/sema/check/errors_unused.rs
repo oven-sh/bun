@@ -21,7 +21,7 @@ struct Unused<'a> {
     file: FileId,
     hir: &'a hir::File,
     bound: &'a Bound,
-    atoms: &'a crate::atom::Interner,
+    atoms: crate::atom::Atoms<'a>,
     /// By symbol: the meanings it was referred to with.
     referenced: Vec<u8>,
     /// `symbolReferenceLinks`, of the private members of classes and the private parameter properties.
@@ -46,27 +46,18 @@ impl Checker<'_> {
         if !(locals || parameters) || hir.kind == FileKind::Declaration {
             return;
         }
-        let mut syntax_errors: Vec<u32> = if hir.has_parse_diagnostics {
-            let is_syntactic = |code: u32| {
-                super::errors_js::SYNTACTIC_ERRORS
-                    .binary_search(&code)
-                    .is_ok()
-            };
-            hir.early_errors
-                .iter()
-                .filter(|error| is_syntactic(error.1))
-                .map(|error| error.0)
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let parse_errors = hir
+            .diagnostics
+            .iter()
+            .filter(|d| d.kind == DiagnosticKind::Parse);
+        let mut syntax_errors: Vec<u32> = parse_errors.map(|d| d.start).collect();
         syntax_errors.sort_unstable();
         let mut u = Unused {
             files: &self.p.files,
             file,
             hir,
             bound,
-            atoms: &self.p.files.atoms,
+            atoms: self.atoms(),
             referenced: vec![0; bound.symbols.len()],
             referenced_members: Default::default(),
             reads_unknown_members: false,
@@ -103,7 +94,7 @@ impl Checker<'_> {
         let links = &self.p.symbol_reference_links;
         for (i, kinds) in u.referenced.iter_mut().enumerate() {
             let id = SymbolId(i as u32);
-            if links.get(&Sym { file, id }).is_some() {
+            if links.get(&self.task, &Sym { file, id }).is_some() {
                 *kinds |= ALIAS;
             }
         }
@@ -136,8 +127,8 @@ impl Checker<'_> {
     /// is imported for it unasked (`getJsxNamespaceContainerForImplicitImport`).
     fn note_jsx_factories(&self, file: FileId, index: &ExprsByKind, u: &mut Unused) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let (options, atoms) = (&self.p.files.options, &self.p.files.atoms);
-        let runtime = crate::program::jsx_runtime_of(options, hir, atoms);
+        let (options, atoms) = (&self.p.files.options, self.atoms());
+        let runtime = crate::program::jsx_runtime_of(options, hir, &self.p.files.atoms);
         if runtime.is_some_and(|spec| {
             self.files()
                 .module_of_specifier(file, atoms.intern(&spec))
@@ -146,8 +137,8 @@ impl Checker<'_> {
             return;
         }
         let (factory, fragment_factory) = (
-            super::errors_jsx::jsx_namespace(self.files(), hir, false),
-            super::errors_jsx::jsx_namespace(self.files(), hir, true),
+            super::errors_jsx::jsx_namespace(self.files(), self.atoms(), hir, false),
+            super::errors_jsx::jsx_namespace(self.files(), self.atoms(), hir, true),
         );
         for &e in index.of(ExprTag::Jsx) {
             let ExprKind::Jsx(j) = hir[e].kind else {
@@ -181,7 +172,7 @@ impl Checker<'_> {
     /// `checkJSDocComment`: the name of each `{@link name}` in the JSDoc of a statement, a member or a parameter is resolved,
     /// which is a use of what it starts with.
     fn note_jsdoc_links(&self, file: FileId, u: &mut Unused) {
-        let atoms = &self.p.files.atoms;
+        let atoms = &self.atoms();
         let text: &[u8] = &self.hir(file).text;
         let all = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
         let mut from = 0;

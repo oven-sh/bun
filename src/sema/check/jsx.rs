@@ -91,7 +91,7 @@ impl<'p> Checker<'p> {
         match self.hir(file)[tag].kind {
             ExprKind::String(name) => Some(name),
             ExprKind::Ident(name)
-                if crate::hir::is_intrinsic_jsx_name(self.files().atoms.bytes(name)) =>
+                if crate::hir::is_intrinsic_jsx_name(self.atoms().bytes(name)) =>
             {
                 Some(name)
             }
@@ -124,12 +124,13 @@ impl<'p> Checker<'p> {
     ) -> Option<Vec<SigId>> {
         // `anySignature`
         if element_type == TypeId::STRING {
-            let takes_nothing = self.p.types.intern_sig(SigData::Synth {
+            let takes_nothing = self.types().intern_sig(SigData::Synth {
                 type_params: Box::new([]),
                 params: Box::new([]),
                 ret: TypeId::ANY,
                 this: None,
                 of: Box::new([]),
+                is_union: true,
             });
             return Some(vec![takes_nothing]);
         }
@@ -181,12 +182,13 @@ impl<'p> Checker<'p> {
             rest: false,
             has_declaration: false,
         }];
-        self.p.types.intern_sig(SigData::Synth {
+        self.types().intern_sig(SigData::Synth {
             type_params: Box::new([]),
             params: params.into(),
             ret,
             this: None,
             of: Box::new([]),
+            is_union: true,
         })
     }
 
@@ -252,8 +254,8 @@ impl<'p> Checker<'p> {
     /// `getJSXFragmentType`: what the fragment `e` is made with. `None`: anything, or it is not found.
     pub(super) fn jsx_fragment_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let (hir, files) = (self.hir(file), self.files());
-        let (options, atoms) = (&files.options, &files.atoms);
-        let name = super::errors_jsx::jsx_namespace(files, hir, true);
+        let (options, atoms) = (&files.options, self.atoms());
+        let name = super::errors_jsx::jsx_namespace(files, atoms, hir, true);
         if options.jsx != JsxEmit::React && options.jsx_fragment_factory.is_empty()
             || atoms.bytes(name) == b"null"
         {
@@ -348,7 +350,7 @@ impl<'p> Checker<'p> {
     fn jsx_props_from_member(&mut self, sig: SigId, name: Atom) -> Option<TypeId> {
         // Of a signature that stands for those of the members of a union, what each of them makes has to be given its due.
         let alone = [sig];
-        let parts: &[SigId] = match self.p.types.sig(sig) {
+        let parts: &[SigId] = match self.types().sig(sig) {
             SigData::Synth { of, .. } if !of.is_empty() => &of[..],
             _ => &alone[..],
         };
@@ -472,7 +474,7 @@ impl<'p> Checker<'p> {
         if self.is_tuple(ty) {
             return true;
         }
-        let (zero, apparent) = (self.files().atoms.intern(b"0"), self.apparent_type(ty));
+        let (zero, apparent) = (self.atoms().intern(b"0"), self.apparent_type(ty));
         if self.prop_of(apparent, zero).is_some() {
             return true;
         }

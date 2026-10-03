@@ -25,6 +25,21 @@ fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// `--timing`: the ten tables whose published halves take the most memory. Without `--keep` the tasks of the last step, which has
+/// most of the files, publish no entries, so theirs are not counted.
+fn list_largest_tables(program: &bun_sema::check::Program) {
+    let mut tables = program.table_footprints();
+    tables.sort_by_key(|table| std::cmp::Reverse(table.1.touched));
+    for (name, footprint) in tables.iter().take(10) {
+        eprintln!(
+            "table {name}: {:.1} MB touched, {} entries, {} kept",
+            footprint.touched as f64 / (1u64 << 20) as f64,
+            footprint.entries,
+            footprint.kept
+        );
+    }
+}
+
 /// `BUN_SEMA_LIST=<file>`: the paths of all that is loaded, a line each.
 fn list_loaded(program: &bun_sema::check::Program) {
     if let Ok(to) = std::env::var("BUN_SEMA_LIST") {
@@ -38,6 +53,8 @@ fn list_loaded(program: &bun_sema::check::Program) {
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 
 fn main() {
+    // The main thread parses tsconfig.json. Its stack is 8 MB on macOS and Linux.
+    bun_sema_standalone::native::set_stack_size(7 << 20);
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         // hir <files or directories> --print: what the front end makes of each file. For telling whether a change to the front end changes any tree.
@@ -147,14 +164,18 @@ fn main() {
             // `--timing`: the instructions of loading, so that those of checking can be told apart. Loading opens every file, and what the
             // system does for that differs from run to run.
             let instructions_of_loading = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            // The trees of all files are alive then.
+            let peak_memory_of_loading = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
             if let (true, Some(progress)) = (is_timed, progress.clone()) {
                 let noted = instructions_of_loading.clone();
+                let noted_peak = peak_memory_of_loading.clone();
                 std::thread::spawn(move || {
                     use std::sync::atomic::Ordering::Relaxed;
                     while progress.to_check.load(Relaxed) == 0 {
                         std::thread::sleep(std::time::Duration::from_micros(200));
                     }
                     noted.store(bun_sema_standalone::instructions_and_cycles().0, Relaxed);
+                    noted_peak.store(bun_sema_standalone::peak_memory(), Relaxed);
                 });
             }
             if let (true, Some(progress)) = (shows_progress, progress.clone()) {
@@ -199,8 +220,39 @@ fn main() {
             type AfterFile<'a> =
                 &'a (dyn Fn(&mut bun_sema::check::Checker<'_>, bun_sema::program::FileId) + Sync);
             let after_file = has("--error-types").then_some(&note_error_types as AfterFile<'_>);
+            // `--declarations-out=<directory>`: the declaration files of a `tsc -b` run, each under its absolute path in there.
+            let declarations_out =
+                (args.iter()).find_map(|a| a.strip_prefix("--declarations-out="));
+            let write_declaration_file = |path: &[u8], text: &[u8]| {
+                let path = format!(
+                    "{}{}",
+                    declarations_out.unwrap(),
+                    String::from_utf8_lossy(path)
+                );
+                if let Some(directory) = std::path::Path::new(&path).parent() {
+                    let _ = std::fs::create_dir_all(directory);
+                }
+                let _ = std::fs::write(path, text);
+            };
+            // For choosing the constants of the plan without a build. They go when the constants are chosen.
+            let number = |name: &str, default: usize| {
+                let given = args.iter().find_map(|a| a.strip_prefix(name));
+                given.map_or(default, |n| n.parse().expect(name))
+            };
+            let defaults = bun_sema_driver::PlanOptions::default();
+            let plan_options = bun_sema_driver::PlanOptions {
+                step_growth: number("--step-growth=", defaults.step_growth),
+                warm_up_files: number("--warm-up-files=", defaults.warm_up_files),
+                warm_up_max_bytes: number("--warm-up-max-bytes=", defaults.warm_up_max_bytes),
+                chunk_bytes: number("--chunk-bytes=", defaults.chunk_bytes),
+                min_tasks: number("--min-tasks=", defaults.min_tasks),
+                checkers: number("--checkers=", defaults.checkers),
+            };
+            let list_files_only = has("--listFilesOnly")
+                .then(|| bun_sema_driver::compiler_option_from_flag(b"listFilesOnly", None).ok());
+            let compiler_options: Vec<_> = list_files_only.flatten().into_iter().collect();
             let request = bun_sema_driver::Request {
-                compiler_options: &[],
+                compiler_options: &compiler_options,
                 cwd: cwd.as_bytes(),
                 project: project.as_deref().map(str::as_bytes),
                 paths: &paths,
@@ -222,14 +274,20 @@ fn main() {
                     .find_map(|a| a.strip_prefix("--order="))
                     .and_then(|n| n.parse().ok())
                     .unwrap_or(1),
+                digests: is_timed,
+                plan_options,
                 stops_where_tsc_does: !args.iter().any(|a| a == "--every-stage"),
                 says_it_as_typescript_does: false,
                 loaded: args
                     .iter()
                     .any(|a| a == "--memory")
                     .then_some(&list_loaded as &(dyn Fn(&bun_sema::check::Program) + Sync)),
-                checked: None,
+                checked: is_timed
+                    .then_some(&list_largest_tables as &(dyn Fn(&bun_sema::check::Program) + Sync)),
                 after_file,
+                declaration_file_written: declarations_out
+                    .is_some()
+                    .then_some(&write_declaration_file as &(dyn Fn(&[u8], &[u8]) + Sync)),
             };
             // A binary without the flag ignores it silently. A script that tests start orders looks for this line.
             if request.order != 1 {
@@ -298,6 +356,127 @@ fn main() {
                         "instructions of checking {:.2} G",
                         instructions.saturating_sub(loading) as f64 / 1e9
                     );
+                    let peak = peak_memory_of_loading.load(std::sync::atomic::Ordering::Relaxed);
+                    eprintln!(
+                        "peak of loading {:.2} GB",
+                        peak as f64 / (1u64 << 30) as f64
+                    );
+                    let seconds = |of: fn(&bun_sema_driver::StepReport) -> std::time::Duration| {
+                        report
+                            .steps
+                            .iter()
+                            .map(of)
+                            .sum::<std::time::Duration>()
+                            .as_secs_f64()
+                    };
+                    let count = |of: fn(&bun_sema_driver::StepReport) -> u64| {
+                        report.steps.iter().map(of).sum::<u64>()
+                    };
+                    // fan/r7/tools/oracle.py reads these lines. It compares the counts between runs: they are functions of the program.
+                    eprintln!(
+                        "plan options: step growth {}, warm-up files {}, warm-up max bytes {}, chunk bytes {}, min tasks {}",
+                        plan_options.step_growth,
+                        plan_options.warm_up_files,
+                        plan_options.warm_up_max_bytes,
+                        plan_options.chunk_bytes,
+                        plan_options.min_tasks
+                    );
+                    eprintln!("steps: {}", report.steps.len());
+                    eprintln!("tasks: {}", count(|step| step.tasks as u64));
+                    eprintln!("seconds in steps: {:.3}", seconds(|step| step.in_tasks));
+                    eprintln!("seconds in link: {:.3}", seconds(|step| step.in_link));
+                    eprintln!(
+                        "seconds in publishes: {:.3}",
+                        seconds(|step| step.in_publish)
+                    );
+                    eprintln!("seconds idle at barriers: {:.3}", seconds(|step| step.idle));
+                    eprintln!("entries buffered: {}", count(|step| step.entries.buffered));
+                    eprintln!(
+                        "entries published: {}",
+                        count(|step| step.entries.published)
+                    );
+                    eprintln!("entries lost: {}", count(|step| step.entries.lost));
+                    eprintln!(
+                        "records linked: {}, joined: {}",
+                        count(|step| step.records.linked.iter().sum::<usize>() as u64),
+                        count(|step| step.records.joined.iter().sum::<usize>() as u64)
+                    );
+                    let by_kind = bun_sema::types::LinkCounts::NAMES.iter().enumerate();
+                    let by_kind = by_kind.map(|(kind, name)| {
+                        let sum = |of: fn(&bun_sema::types::LinkCounts) -> &[usize]| {
+                            report
+                                .steps
+                                .iter()
+                                .map(|step| of(&step.records)[kind])
+                                .sum::<usize>()
+                        };
+                        format!("{name} {} / {}", sum(|it| &it.linked), sum(|it| &it.joined))
+                    });
+                    eprintln!(
+                        "records linked / joined by kind: {}",
+                        by_kind.collect::<Vec<String>>().join(", ")
+                    );
+                    eprintln!(
+                        "generic relation entries not published: {}",
+                        count(|step| step.generic_relation_entries_not_published)
+                    );
+                    // What a task computed about a source file of another component. The first eight kinds are inference. The others are
+                    // type syntax.
+                    let kinds = bun_sema::check::FOREIGN_EVALUATION_KINDS;
+                    let foreign: Vec<u64> = (0..kinds.len())
+                        .map(|kind| {
+                            report
+                                .steps
+                                .iter()
+                                .map(|step| step.foreign_evaluations[kind])
+                                .sum()
+                        })
+                        .collect();
+                    eprintln!(
+                        "foreign evaluations: {} inference, {} type syntax",
+                        foreign[..8].iter().sum::<u64>(),
+                        foreign[8..].iter().sum::<u64>()
+                    );
+                    let by_kind: Vec<String> = (kinds.iter().zip(&foreign))
+                        .map(|(kind, count)| format!("{kind} {count}"))
+                        .collect();
+                    eprintln!("foreign evaluations by kind: {}", by_kind.join(", "));
+                    let by_step = report.steps.iter().map(|step| step.entries.published);
+                    let by_step: Vec<String> = by_step.map(|n| n.to_string()).collect();
+                    eprintln!("entries published by step: {}", by_step.join(" "));
+                    // The ten tables in which the most work was done more than once.
+                    let names = bun_sema::check::task::table_names();
+                    let mut by_table = vec![(0u64, 0u64); names.len()];
+                    for step in &report.steps {
+                        for (sum, more) in by_table.iter_mut().zip(&step.entries.by_table) {
+                            (sum.0, sum.1) = (sum.0 + more.0, sum.1 + more.1);
+                        }
+                    }
+                    let mut by_table: Vec<(&str, (u64, u64))> =
+                        names.into_iter().zip(by_table).collect();
+                    by_table.sort_by_key(|(_, (buffered, published))| {
+                        std::cmp::Reverse(buffered - published)
+                    });
+                    for (name, (buffered, published)) in by_table.iter().take(10) {
+                        eprintln!("lost {name}: {} of {buffered}", buffered - published);
+                    }
+                    for (number, step) in report.steps.iter().enumerate() {
+                        eprintln!(
+                            "step {number}: {} tasks, {} files, {:.3} s, link {:.3}, publish {:.3}, idle {:.3}, entries {} / {} / {}, records {} / {}, digest {:016x}",
+                            step.tasks,
+                            step.files,
+                            step.in_tasks.as_secs_f64(),
+                            step.in_link.as_secs_f64(),
+                            step.in_publish.as_secs_f64(),
+                            step.idle.as_secs_f64(),
+                            step.entries.buffered,
+                            step.entries.published,
+                            step.entries.lost,
+                            step.records.linked.iter().sum::<usize>(),
+                            step.records.joined.iter().sum::<usize>(),
+                            step.entries.digest
+                        );
+                    }
                 }
                 std::process::exit(i32::from(!report.is_ok()));
             })
@@ -312,7 +491,7 @@ fn main() {
             };
             let (lib_dir, test_lib) = (flag("lib").unwrap(), flag("testlib").unwrap());
             let (only, out, types_out) = (flag("only"), flag("out"), flag("types-out"));
-            let symbols_out = flag("symbols-out");
+            let (symbols_out, dts_out) = (flag("symbols-out"), flag("dts-out"));
             let setup = Setup {
                 lib_dir: &lib_dir,
                 test_lib: &test_lib,
@@ -320,6 +499,7 @@ fn main() {
                 out: out.as_deref(),
                 types_out: types_out.as_deref(),
                 symbols_out: symbols_out.as_deref(),
+                dts_out: dts_out.as_deref(),
                 threads: flag("threads").and_then(|t| t.parse().ok()).unwrap_or(8),
             };
             let mut all = Vec::new();

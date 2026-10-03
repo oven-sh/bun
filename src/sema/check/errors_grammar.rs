@@ -49,7 +49,7 @@ impl Checker<'_> {
             return;
         };
         let name = self.atom_text(value);
-        let end = start + self.files().atoms.bytes(value).len() as u32;
+        let end = start + self.atoms().bytes(value).len() as u32;
         // `supportedExtensions`
         let extensions = if self.p.files.options.allow_js {
             "'.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'"
@@ -232,10 +232,10 @@ impl Checker<'_> {
     /// 2657. The span covers the adjacent elements, which the parser joins into a comma expression that starts where the error does.
     fn is_in_adjacent_jsx_elements(&self, file: FileId, comma: ExprId, start: u32) -> bool {
         let hir = self.hir(file);
-        if !hir.early_errors.iter().any(|&(_, code)| code == 2657) {
+        if !hir.diagnostics.iter().any(|d| d.code == 2657) {
             return false;
         }
-        let is_reported_at = |pos: u32| hir.early_errors.contains(&(pos, 2657));
+        let is_reported_at = |pos: u32| hir.has_diagnostic(pos, 2657);
         if is_reported_at(start) {
             return true;
         }

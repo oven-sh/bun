@@ -440,7 +440,7 @@ impl Checker<'_> {
         if !hir.text[..skip_trivia_back(&hir.text, start as usize)].ends_with(b"=") {
             return;
         }
-        let name = self.files().atoms.bytes(alias.name);
+        let name = self.atoms().bytes(alias.name);
         let is_provided = match alias.type_params.len() {
             0 => name == b"BuiltinIteratorReturn",
             1 => matches!(
@@ -705,10 +705,7 @@ impl Checker<'_> {
                 ExprKind::Dot { name, name_pos, .. } => (name, name_pos),
                 _ => continue,
             };
-            let after = skip_trivia(
-                text,
-                name_pos as usize + self.files().atoms.bytes(name).len(),
-            );
+            let after = skip_trivia(text, name_pos as usize + self.atoms().bytes(name).len());
             if text.get(after) != Some(&b'<') || matches!(text.get(after + 1), Some(b'<' | b'=')) {
                 continue;
             }

@@ -24,6 +24,7 @@ pub(crate) mod ts_syntax;
 
 use crate::sema::ts_syntax as ts;
 use bun_ast::{Expr, Loc};
+use bun_sema::hir::{Diagnostic, DiagnosticKind};
 
 /// What the parser says of a node that `bun_ast` has no place for (see [`notes`]). Of which node, and what the payload of the note is.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -199,12 +200,61 @@ pub(crate) fn early_error(text: &[u8], at: &[u8]) -> Option<(u32, i32)> {
     early_error_in_place(text).map(|code| (code, 0))
 }
 
-/// `hir::File::error_arguments`, of the error `code` the parser logged as `said`.
-pub(crate) fn error_arguments(
-    said: &bun_ast::Data,
-    code: u32,
+/// Converts a logged error and its notes to the diagnostic TypeScript reports. `Some(None)`: no diagnostic, because the checker
+/// detects the error itself. `None`: an unrecognized error, so the AST is unreliable. `has_jsx`: `LanguageVariantJSX`.
+pub(crate) fn diagnostic(
+    data: &bun_ast::Data,
+    notes: &[bun_ast::Data],
     source: &[u8],
-) -> Option<Box<[Box<[u8]>]>> {
+    has_jsx: bool,
+) -> Option<Option<Diagnostic>> {
+    let location = data.location.as_ref()?;
+    let (text, mut len) = (&data.text[..], location.length);
+    let at = source.get(location.offset..).unwrap_or_default();
+    let (code, delta) = early_error(text, at)?;
+    let kind = match text {
+        _ if code == 0 => return Some(None),
+        // 1368: `checkMethodDeclaration` reports it with a plain `c.error`.
+        [b'T', b'C', ..] => DiagnosticKind::Checker,
+        _ if code == 1368 => DiagnosticKind::Checker,
+        [b'T', b'G', ..] => DiagnosticKind::Grammar,
+        [b'T', b'S', ..] => DiagnosticKind::Parse,
+        // `Lexer::expected` and `Lexer::unexpected`
+        _ if matches!(code, 1003 | 1005 | 1109) => DiagnosticKind::Parse,
+        // `createIdentifierWithDiagnostic`, at a reserved word.
+        _ if code == 1359 && text.starts_with(b"Expected identifier ") => DiagnosticKind::Parse,
+        _ => DiagnosticKind::Grammar,
+    };
+    match at {
+        // `Scan` produces one token for `</` unless the `/` starts a comment. This lexer produces two.
+        [b'<', b'/', rest @ ..] if has_jsx && len == 1 && rest.first() != Some(&b'*') => len = 2,
+        // `Scan` always produces a single `>`. `reScanGreaterThanToken` only runs after an operand, where 1005 is reported.
+        [b'>', b'>' | b'=', ..] if !matches!(code, 1005 | 1185) => len = len.min(1),
+        _ => {}
+    }
+    let mut related: Vec<Diagnostic> = (notes.iter())
+        .filter_map(|note| diagnostic(note, &[], source, has_jsx)?)
+        .collect();
+    // `parseTypedefTag` adds this related info without a location.
+    if code == 8033 {
+        related.push(Diagnostic::new(kind, (0, 0), 8034, &[]));
+    }
+    Some(Some(Diagnostic {
+        kind,
+        start: (location.offset as i64 + i64::from(delta)).max(0) as u32,
+        end: match (delta, len) {
+            (0, 0) => Diagnostic::NO_LENGTH,
+            (0, _) => (location.offset + len) as u32,
+            _ => 0,
+        },
+        code,
+        args: error_arguments(data, code, source).unwrap_or_default(),
+        related,
+    }))
+}
+
+/// The message arguments of the logged error `said`, which has `code`.
+fn error_arguments(said: &bun_ast::Data, code: u32, source: &[u8]) -> Option<Box<[Box<[u8]>]>> {
     let text = &said.text[..];
     // `createIdentifierWithDiagnostic`, `parsingContextErrors`, `checkGrammarObjectLiteralExpression`: these name the token they are
     // reported at.
@@ -232,28 +282,6 @@ pub(crate) fn error_arguments(
     };
     // `Lexer::ts_error_about`: a NUL between two.
     Some(token.split(|&b| b == 0).map(Box::from).collect())
-}
-
-/// `hir::File::error_ends`, of the error the parser logged as `said`: its start, its code and its end. `has_jsx`: `LanguageVariantJSX`.
-pub(crate) fn error_end(
-    said: &bun_ast::Data,
-    source: &[u8],
-    has_jsx: bool,
-) -> Option<(u32, u32, u32)> {
-    let location = said.location.as_ref()?;
-    let (start, mut len) = (location.offset, location.length);
-    let at = source.get(start..)?;
-    let Some((code, 0)) = early_error(&said.text, at) else {
-        return None;
-    };
-    match at {
-        // `Scan` makes one token of `</`, unless the `/` starts a comment. This lexer makes two.
-        [b'<', b'/', rest @ ..] if has_jsx && len == 1 && rest.first() != Some(&b'*') => len = 2,
-        // `Scan` makes a token of `>` whatever follows. `reScanGreaterThanToken` is asked after an operand, where a token is missed.
-        [b'>', b'>' | b'=', ..] if !matches!(code, 1005 | 1185) => len = len.min(1),
-        _ => {}
-    }
-    Some((start as u32, code, (start + len) as u32))
 }
 
 fn early_error_in_place(text: &[u8]) -> Option<u32> {
@@ -473,8 +501,6 @@ pub(crate) struct TypeSyntax<'a> {
     pub(crate) b: builder::Builder<'a>,
     /// `CommentTypes::made`, while the comments are read.
     pub(crate) comment_rows: Vec<(notes::Rows, notes::Rows)>,
-    /// `T?` was just made of `T`: the two, and what rows there were before.
-    pub(crate) last_postfix_nullable: Option<(ts::TypeId, ts::TypeId, notes::Rows)>,
     /// The most recently parsed type. `NONE` if there is no usable type.
     pub(crate) last_type: ts::TypeId,
     /// Where the first token is of the type `parse_and_keep_type` read last.
@@ -523,7 +549,6 @@ impl<'a> TypeSyntax<'a> {
             has_jsdoc: false,
             b,
             comment_rows: Vec::new(),
-            last_postfix_nullable: None,
             last_type: ts::TypeId::NONE,
             last_type_start: 0,
             type_stack: Vec::new(),

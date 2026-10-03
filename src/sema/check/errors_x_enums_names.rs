@@ -163,7 +163,7 @@ impl Checker<'_> {
                     && files.decls(found).first().is_some_and(|d| d.0 != file)
                 {
                     let option = super::errors_x_modules::isolated_modules_like_flag_name(files);
-                    let (of, member) = (files.atoms.bytes(hir[en].name), files.atoms.bytes(name));
+                    let (of, member) = (self.atoms().bytes(hir[en].name), self.atoms().bytes(name));
                     let qualified = [of, b".", member].concat();
                     self.error_at(
                         (file, start, 0),
@@ -241,8 +241,8 @@ impl Checker<'_> {
             return;
         }
         let (factory, fragment_factory) = (
-            super::errors_jsx::jsx_namespace(files, hir, false),
-            super::errors_jsx::jsx_namespace(files, hir, true),
+            super::errors_jsx::jsx_namespace(files, self.atoms(), hir, false),
+            super::errors_jsx::jsx_namespace(files, self.atoms(), hir, true),
         );
         // The scope a tag is written in is not kept: whatever the file declares by the name, wherever, may be what is meant.
         let is_umd_global = |name: Atom| {

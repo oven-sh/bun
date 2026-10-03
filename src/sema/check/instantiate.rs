@@ -60,9 +60,31 @@ impl Recent {
 
 impl<'p> Checker<'p> {
     pub fn mapper_from(&mut self, params: &[TypeId], args: &[TypeId]) -> MapperId {
-        self.p
-            .types
+        self.types()
             .mapper(params.iter().copied().zip(args.iter().copied()).collect())
+    }
+
+    /// The pairs of `mapper` by the declaration of the type parameter, as `typeParameters` and `outerTypeParameters` are. A mapper
+    /// stores them in `arrival_order`, which depends on the schedule, so nothing observable may follow the stored order. That includes
+    /// the order of evaluation: a creation stamp is exact only if a transaction evaluates in the order of the sequential execution.
+    pub(super) fn mapping_in_declaration_order(
+        &self,
+        mapper: MapperId,
+    ) -> std::borrow::Cow<'p, [(TypeId, TypeId)]> {
+        let declaration = |param: TypeId| match *self.data(param) {
+            TypeData::TypeParam(file, tp, _) => (0u8, file.0, tp.0),
+            _ => (1, 0, 0),
+        };
+        let stored = self.types().mapping(mapper);
+        if stored.is_sorted_by(|x, y| declaration(x.0) < declaration(y.0)) {
+            return stored.into();
+        }
+        let mut pairs = stored.to_vec();
+        // Clones of one declaration, and the `this` types of nested classes, have one key.
+        pairs.sort_by(|x, y| {
+            (declaration(x.0).cmp(&declaration(y.0))).then_with(|| self.creation_order(x.0, y.0))
+        });
+        pairs.into()
     }
 
     /// `first`, then `second`.
@@ -73,24 +95,26 @@ impl<'p> Checker<'p> {
         if second == MapperId::IDENTITY {
             return first;
         }
-        if let Some(kept) = self.p.composed.get(&(first, second)) {
+        if let Some(kept) = self.p.composed.get(&mut self.task, &(first, second)) {
             return kept;
         }
-        let cycles_before = self.cycles;
+        let scope = self.begin_scope();
         let mut pairs: Vec<(TypeId, TypeId)> = Vec::new();
-        for &(param, value) in self.p.types.mapping(first) {
+        for &(param, value) in self.mapping_in_declaration_order(first).iter() {
             pairs.push((param, self.instantiate(value, second)));
         }
-        for &(param, value) in self.p.types.mapping(second) {
-            if self.p.types.map(first, param).is_none() {
+        for &(param, value) in self.types().mapping(second) {
+            if self.types().map(first, param).is_none() {
                 pairs.push((param, value));
             }
         }
-        let composed = self.p.types.mapper(pairs);
-        if self.cycles == cycles_before {
-            self.p.composed.insert((first, second), composed);
+        let composed = self.types().mapper(pairs);
+        match self.end_scope_by_counters(scope) {
+            Ok(stored) => {
+                (self.p.composed).insert(&mut self.task, (first, second), composed, stored)
+            }
+            Err(_) => composed,
         }
-        composed
     }
 
     /// `first`, then `second`, for the parameters `first` is about.
@@ -98,11 +122,11 @@ impl<'p> Checker<'p> {
         if first == MapperId::IDENTITY || second == MapperId::IDENTITY {
             return first;
         }
-        let mapping = self.p.types.mapping(first);
+        let mapping = self.mapping_in_declaration_order(first);
         let mut pairs: smallvec::SmallVec<[(TypeId, TypeId); 8]> =
             smallvec::SmallVec::with_capacity(mapping.len());
         let mut changed = false;
-        for &(param, value) in mapping {
+        for &(param, value) in mapping.iter() {
             let new = self.instantiate(value, second);
             changed |= new != value;
             pairs.push((param, new));
@@ -110,7 +134,7 @@ impl<'p> Checker<'p> {
         if !changed {
             return first;
         }
-        self.p.types.mapper_of(&pairs)
+        self.types().mapper_of(&pairs)
     }
 
     pub fn instantiate_all(&mut self, types: &[TypeId], mapper: MapperId) -> Vec<TypeId> {
@@ -142,7 +166,7 @@ impl<'p> Checker<'p> {
                 pairs.push((part, map(self, part)));
             } else if let TypeData::Synth(shape) = self.data(part) {
                 for &sig in shape.call.iter().chain(&shape.construct) {
-                    if let SigData::Synth { type_params, .. } = self.p.types.sig(sig) {
+                    if let SigData::Synth { type_params, .. } = self.types().sig(sig) {
                         own.extend_from_slice(type_params);
                     }
                 }
@@ -150,7 +174,7 @@ impl<'p> Checker<'p> {
             false
         });
         pairs.retain(|pair| pair.0 != pair.1 && !own.contains(&pair.0));
-        let mapper = self.p.types.mapper(pairs);
+        let mapper = self.types().mapper(pairs);
         self.instantiate(t, mapper)
     }
 
@@ -200,12 +224,12 @@ impl<'p> Checker<'p> {
         if mapper == MapperId::IDENTITY {
             return ty;
         }
-        let (data, flags) = self.p.types.get_with_flags(ty);
+        let (data, flags) = self.types().get_with_flags(ty);
         if !flags.contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES) {
             return ty;
         }
         if let TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) = data {
-            return self.p.types.map(mapper, ty).unwrap_or(ty);
+            return self.types().map(mapper, ty).unwrap_or(ty);
         }
         if let Some(known) = self.recent_instantiations.get(ty.0, mapper.0) {
             return TypeId(known);
@@ -216,7 +240,7 @@ impl<'p> Checker<'p> {
     /// `instantiate`, of a type that mentions type parameters, is none itself and was not asked about lately.
     #[inline(never)]
     fn instantiate_kept(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
-        if let Some(known) = self.p.instantiations.get(&(ty, mapper)) {
+        if let Some(known) = self.p.instantiations.get(&mut self.task, &(ty, mapper)) {
             self.recent_instantiations.put(ty.0, mapper.0, known.0);
             return known;
         }
@@ -226,7 +250,7 @@ impl<'p> Checker<'p> {
             && under == outermost
         {
             // Reading it leaves the marks that working it out again would.
-            self.limits += 1;
+            self.note_limit();
             self.mark_tainted_from(0);
             return known;
         }
@@ -236,24 +260,29 @@ impl<'p> Checker<'p> {
         }
         self.instantiation_count += 1;
         self.instantiation_depth += 1;
-        let (cycles_before, limits_before) = (self.cycles, self.limits);
+        let cycles_before = self.cycles;
+        let scope = self.begin_scope();
         let result = self.instantiate_uncached(ty, mapper);
         let result = self.with_new_alias(ty, mapper, result, None);
         self.instantiation_depth -= 1;
-        if self.cycles != cycles_before {
-            return result;
-        }
-        if self.limits != limits_before {
-            self.instantiations_up_to_a_limit
-                .insert((ty, mapper), (outermost, result));
-        } else {
-            let kept = self.p.instantiations.insert((ty, mapper), result);
-            // The table keeps nothing local under a key that is shared.
-            if ty.is_local() || mapper.is_local() || !result.is_local() {
-                self.recent_instantiations.put(ty.0, mapper.0, kept.0);
+        match self.end_scope_by_counters(scope) {
+            Ok(stored) => {
+                let kept =
+                    (self.p.instantiations).insert(&mut self.task, (ty, mapper), result, stored);
+                // The table keeps nothing local under a key that is shared.
+                if ty.is_local() || mapper.is_local() || !result.is_local() {
+                    self.recent_instantiations.put(ty.0, mapper.0, kept.0);
+                }
+                kept
+            }
+            Err(_) => {
+                if self.cycles == cycles_before {
+                    self.instantiations_up_to_a_limit
+                        .insert((ty, mapper), (outermost, result));
+                }
+                result
             }
         }
-        result
     }
 
     /// Whether `getOuterTypeParameters` of the object literal that `written` is a property of returns only type parameters declared
@@ -289,7 +318,7 @@ impl<'p> Checker<'p> {
         mapper: MapperId,
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
-        let Some(deferred) = self.p.types.deferred(ty) else {
+        let Some(deferred) = self.types().deferred(ty) else {
             return ty;
         };
         let (file, node) = (deferred.file, deferred.node);
@@ -321,7 +350,7 @@ impl<'p> Checker<'p> {
     }
 
     fn instantiate_uncached(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
-        if self.p.types.deferred(ty).is_some() {
+        if self.types().deferred(ty).is_some() {
             return self.instantiate_deferred_type_reference(ty, mapper, None);
         }
         match self.data(ty) {
@@ -376,7 +405,7 @@ impl<'p> Checker<'p> {
                 })
             }
             TypeData::Synth(shape) => {
-                let cycles_before = self.cycles;
+                let scope = self.begin_scope();
                 let mut new = Shape {
                     literal: shape.literal,
                     is_regular: shape.is_regular,
@@ -424,20 +453,29 @@ impl<'p> Checker<'p> {
                 // `instantiateAnonymousType`
                 new.instantiation_expression = shape.instantiation_expression;
                 new.is_js_literal = shape.is_js_literal;
-                let instantiated = self.synth(new);
-                if self.is_generic_single_signature(shape) {
-                    let holds = self.cycles == cycles_before;
-                    return self.single_signature_instantiation(ty, mapper, instantiated, holds);
+                let stored = self.end_scope_by_counters(scope);
+                if let Some(arguments) = shape.single_signature_arguments {
+                    // `new` has no arguments, so it never equals `shape`.
+                    let is_unchanged = new.call == shape.call && new.construct == shape.construct;
+                    let instantiated = if is_unchanged { ty } else { self.synth(new) };
+                    return self.single_signature_instantiation(
+                        ty,
+                        arguments,
+                        mapper,
+                        instantiated,
+                        stored,
+                    );
                 }
-                instantiated
+                self.synth(new)
             }
             TypeData::Cond {
                 file,
                 node,
                 mapper: own,
+                ..
             } => {
                 // A declared type has no mapper in tsgo. Here it has one of identity pairs.
-                if self.p.types.mapping(mapper).iter().all(|p| p.0 == p.1) {
+                if self.types().mapping(mapper).iter().all(|p| p.0 == p.1) {
                     return ty;
                 }
                 let new = self.map_mapper(*own, mapper);
@@ -465,7 +503,7 @@ impl<'p> Checker<'p> {
             }
             &TypeData::Substitution { base, constraint } => {
                 // A declared type has no mapper in tsgo. Here it has one of identity pairs.
-                if self.p.types.mapping(mapper).iter().all(|p| p.0 == p.1) {
+                if self.types().mapping(mapper).iter().all(|p| p.0 == p.1) {
                     return ty;
                 }
                 let base = self.instantiate(base, mapper);
@@ -599,81 +637,70 @@ impl<'p> Checker<'p> {
         self.tuple(&out_elems, &out_flags, readonly)
     }
 
-    /// Whether all there is to `shape` is one made-up signature that has type parameters.
-    fn is_generic_single_signature(&self, shape: &Shape) -> bool {
-        let only = match (shape.call.as_slice(), shape.construct.as_slice()) {
-            ([only], []) | ([], [only]) => *only,
-            _ => return false,
-        };
-        shape.props.is_empty()
-            && shape.index.is_empty()
-            && matches!(self.p.types.sig(only), SigData::Synth { type_params, .. } if !type_params.is_empty())
-    }
-
     /// Where `instantiations` keeps what goes with the single signature type `ty` and `arguments`: under a mapper from `ty`
     /// itself, which nothing is instantiated with.
     fn single_signature_key(&self, ty: TypeId, arguments: TypeId) -> (TypeId, MapperId) {
-        (ty, self.p.types.mapper_of(&[(ty, arguments)]))
+        (ty, self.types().mapper_of(&[(ty, arguments)]))
     }
 
-    /// `getSignatureInstantiation` with `inferredTypeParameters`: `made` is the type of the clone of the signature of `returned`
-    /// (`ObjectFlagsSingleSignatureType`), and `inferred` is its mapper (`instantiatedSignature.mapper`). Keeps the outer type
-    /// parameters of the declaration of that signature as `inferred` has them, as a tuple.
-    pub(super) fn note_single_signature_type(
+    /// `getSignatureInstantiation` with `inferredTypeParameters`: the type of `sig`, the clone of the signature of `returned`
+    /// (`ObjectFlagsSingleSignatureType`), with `inferred` as its mapper (`instantiatedSignature.mapper`).
+    pub(super) fn single_signature_type(
         &mut self,
-        made: TypeId,
+        sig: SigId,
+        construct: bool,
         returned: TypeId,
         inferred: MapperId,
-    ) {
-        let TypeData::Fns { mapper: outer, .. } = self.data(returned) else {
-            return;
+    ) -> TypeId {
+        let made = self.type_of_signature(sig, construct);
+        let (TypeData::Fns { mapper: outer, .. }, TypeData::Synth(shape)) =
+            (self.data(returned), self.data(made))
+        else {
+            return made;
         };
-        let arguments: Vec<TypeId> = self
-            .p
-            .types
-            .mapping(*outer)
-            .iter()
-            .map(|&(param, _)| self.p.types.map(inferred, param).unwrap_or(param))
+        let arguments: Vec<TypeId> = (self.mapping_in_declaration_order(*outer).iter())
+            .map(|&(param, _)| self.types().map(inferred, param).unwrap_or(param))
             .collect();
         if arguments.is_empty() || !self.has_type_variables(made) {
-            return;
+            return made;
         }
         let flags = vec![ElemFlags::REQUIRED; arguments.len()];
         let arguments = self.tuple(&arguments, &flags, false);
-        let key = self.single_signature_key(made, made);
-        self.p.instantiations.insert(key, arguments);
+        self.synth(Shape {
+            single_signature_arguments: Some(arguments),
+            ..(**shape).clone()
+        })
     }
 
-    /// `getObjectTypeInstantiation` of a type that `note_single_signature_type` was told of. `ObjectType.instantiations` goes by the
+    /// `getObjectTypeInstantiation` of a type with `single_signature_arguments`. `ObjectType.instantiations` is keyed on the
     /// type arguments for the outer type parameters of the declaration: the first instantiation with the same ones is the
-    /// answer, whatever else `mapper` says. `instantiated`: `ty` under `mapper`. `holds`: it may be kept.
+    /// answer, whatever else `mapper` says. `instantiated`: `ty` under `mapper`, and `stored`: how its computation ended.
     fn single_signature_instantiation(
         &mut self,
         ty: TypeId,
+        arguments: TypeId,
         mapper: MapperId,
         instantiated: TypeId,
-        holds: bool,
+        stored: Result<Stored, Open>,
     ) -> TypeId {
-        let noted = self.single_signature_key(ty, ty);
-        let Some(arguments) = self.p.instantiations.get(&noted) else {
-            return instantiated;
-        };
         let arguments = self.instantiate(arguments, mapper);
         let key = self.single_signature_key(ty, arguments);
-        if let Some(first) = self.p.instantiations.get(&key) {
+        if let Some(first) = self.p.instantiations.get(&mut self.task, &key) {
             return first;
         }
-        if instantiated == ty || !holds {
-            return instantiated;
+        match stored {
+            Ok(stored) if instantiated != ty => {
+                (self.p.instantiations).insert(&mut self.task, key, instantiated, stored)
+            }
+            _ => instantiated,
         }
-        self.p.instantiations.insert(key, instantiated)
     }
 
     pub fn instantiate_sig(&mut self, sig: SigId, mapper: MapperId) -> SigId {
         if mapper == MapperId::IDENTITY {
             return sig;
         }
-        let data = match self.p.types.sig(sig) {
+        let data = match self.types().sig(sig) {
             SigData::Decl {
                 file,
                 func,
@@ -706,16 +733,17 @@ impl<'p> Checker<'p> {
             SigData::Synth {
                 type_params,
                 params,
-                ret,
                 this,
                 of,
+                is_union,
+                ..
             } => {
                 // `instantiateSignatureEx`: the type parameters that are still to be given are made anew where what is around them
                 // changes, and everything in the signature speaks of the new ones.
                 let mut remaining: Vec<TypeId> = Vec::with_capacity(type_params.len());
                 let mut fresh: Vec<(TypeId, TypeId)> = Vec::new();
                 for &param in type_params.iter() {
-                    if self.p.types.map(mapper, param).is_some() {
+                    if self.types().map(mapper, param).is_some() {
                         continue;
                     }
                     let mut new = param;
@@ -733,7 +761,7 @@ impl<'p> Checker<'p> {
                 let mapper = if fresh.is_empty() {
                     mapper
                 } else {
-                    let fresh = self.p.types.mapper(fresh);
+                    let fresh = self.types().mapper(fresh);
                     self.compose(fresh, mapper)
                 };
                 let params: Vec<SigParam> = params
@@ -743,15 +771,18 @@ impl<'p> Checker<'p> {
                         ..*p
                     })
                     .collect();
+                // `getReturnTypeOfSignature`, `case sig.target != nil`
+                let ret = self.sig_return(sig);
                 SigData::Synth {
                     type_params: remaining.into(),
                     params: params.into(),
-                    ret: self.instantiate(*ret, mapper),
+                    ret: self.instantiate(ret, mapper),
                     this: this.map(|t| self.instantiate(t, mapper)),
                     of: of
                         .iter()
                         .map(|&part| self.instantiate_sig(part, mapper))
                         .collect(),
+                    is_union: *is_union,
                 }
             }
             // `cloneSignature` with a return type of its own, which goes through the same mapper as the rest.
@@ -772,7 +803,7 @@ impl<'p> Checker<'p> {
                 }
             }
         };
-        self.p.types.intern_sig(data)
+        self.types().intern_sig(data)
     }
 
     /// Whether `ty` is one of the type parameters `list` of `file`, as declared.
@@ -791,7 +822,7 @@ impl<'p> Checker<'p> {
         mapper: MapperId,
     ) -> Option<TypeId> {
         let declared = self.type_param(file, tp);
-        let Some(value) = self.p.types.map(mapper, declared) else {
+        let Some(value) = self.types().map(mapper, declared) else {
             return Some(declared);
         };
         let TypeData::TypeParam(f, t, around) = *self.data(value) else {
@@ -802,14 +833,13 @@ impl<'p> Checker<'p> {
         }
         let own = self.hir(file)[func].type_params;
         let outer = self
-            .p
-            .types
+            .types()
             .mapping(mapper)
             .iter()
             .copied()
             .filter(|pair| !self.is_declared_among(pair.0, file, own))
             .collect();
-        (around == self.p.types.mapper(outer)).then_some(value)
+        (around == self.types().mapper(outer)).then_some(value)
     }
 
     /// `instantiateSignatureEx`: the mapper of a signature of `func` that has `own`, after `second`. It says what the type
@@ -824,16 +854,26 @@ impl<'p> Checker<'p> {
         second: MapperId,
     ) -> MapperId {
         let type_params = self.hir(file)[func].type_params;
-        let mapping = self.p.types.mapping(own);
+        let mapping = self.mapping_in_declaration_order(own);
         let mut pairs: smallvec::SmallVec<[(TypeId, TypeId); 8]> =
             smallvec::SmallVec::with_capacity(mapping.len() + type_params.len());
-        for &(param, value) in mapping {
+        for &(param, value) in mapping.iter() {
             if !self.is_declared_among(param, file, type_params) {
                 pairs.push((param, self.instantiate(value, second)));
             }
         }
         if type_params.is_empty() {
-            return self.p.types.mapper_of(&pairs);
+            // `sig.typeParameters = context.typeParameters`: they are its own, and `own` need not mention them.
+            if self.takes_context(file, func).is_some() {
+                for param in self.adopted_type_params_of(file, func, own) {
+                    if let Some(given) = self.types().map(second, param)
+                        && !pairs.iter().any(|pair| pair.0 == param)
+                    {
+                        pairs.push((param, given));
+                    }
+                }
+            }
+            return self.types().mapper_of(&pairs);
         }
         let outer = pairs.len();
         let mut around = None;
@@ -841,12 +881,12 @@ impl<'p> Checker<'p> {
             let declared = self.type_param(file, tp);
             match self.open_type_param(file, func, tp, own) {
                 // `second` goes by what the signature has.
-                Some(open) => match self.p.types.map(second, open) {
+                Some(open) => match self.types().map(second, open) {
                     Some(given) => pairs.push((declared, given)),
                     None => {
                         // Where nothing is filled in it is the declared one, which needs no saying.
                         let around =
-                            *around.get_or_insert_with(|| self.p.types.mapper_of(&pairs[..outer]));
+                            *around.get_or_insert_with(|| self.types().mapper_of(&pairs[..outer]));
                         let fresh = self.cloned_type_param(file, tp, around);
                         if fresh != declared {
                             pairs.push((declared, fresh));
@@ -854,31 +894,31 @@ impl<'p> Checker<'p> {
                     }
                 },
                 None => {
-                    if let Some(given) = self.p.types.map(own, declared) {
+                    if let Some(given) = self.types().map(own, declared) {
                         pairs.push((declared, self.instantiate(given, second)));
                     }
                 }
             }
         }
-        self.p.types.mapper_of(&pairs)
+        self.types().mapper_of(&pairs)
     }
 
     /// The same of a construct signature of `class`, whose type parameters are those of the class. They are not made anew.
     fn class_sig_mapper(&mut self, class: Sym, own: MapperId, second: MapperId) -> MapperId {
         let mut pairs: smallvec::SmallVec<[(TypeId, TypeId); 8]> = smallvec::SmallVec::new();
-        for &(param, value) in self.p.types.mapping(own) {
+        for &(param, value) in self.mapping_in_declaration_order(own).iter() {
             pairs.push((param, self.instantiate(value, second)));
         }
         // Those of what the class is declared in count as well: its static side is instantiated with them
         // (`getObjectTypeInstantiation`, `resolveAnonymousTypeMembers`).
         for param in self.all_type_params_of_symbol(class).iter().copied() {
-            if self.p.types.map(own, param).is_none()
-                && let Some(value) = self.p.types.map(second, param)
+            if self.types().map(own, param).is_none()
+                && let Some(value) = self.types().map(second, param)
             {
                 pairs.push((param, value));
             }
         }
-        self.p.types.mapper_of(&pairs)
+        self.types().mapper_of(&pairs)
     }
 
     /// `getReturnTypeOfSignature`, `getTypePredicateOfSignature`: what `signature.target` has, through `signature.mapper`. `ty`: what
@@ -896,7 +936,7 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         let own = self.hir(file)[func].type_params;
         let may_differ = !own.is_empty()
-            && self.p.types.mapping(mapper).iter().any(|pair| {
+            && self.types().mapping(mapper).iter().any(|pair| {
                 (self.has_any_flag(pair.1) || pair.1.is_never())
                     && self.is_declared_among(pair.0, file, own)
             });
@@ -904,8 +944,7 @@ impl<'p> Checker<'p> {
             return self.instantiate(ty, mapper);
         }
         let mut first: smallvec::SmallVec<[(TypeId, TypeId); 8]> = self
-            .p
-            .types
+            .types()
             .mapping(mapper)
             .iter()
             .copied()
@@ -915,11 +954,11 @@ impl<'p> Checker<'p> {
         if first.iter().all(|pair| pair.0 == pair.1) {
             return self.instantiate(ty, mapper);
         }
-        let around = self.p.types.mapper_of(&first);
+        let around = self.types().mapper_of(&first);
         let mut second: smallvec::SmallVec<[(TypeId, TypeId); 4]> = smallvec::SmallVec::new();
         for tp in own.iter() {
             let declared = self.type_param(file, tp);
-            if let Some(given) = self.p.types.map(mapper, declared) {
+            if let Some(given) = self.types().map(mapper, declared) {
                 let open = self.cloned_type_param(file, tp, around);
                 first.push((declared, open));
                 if given != open {
@@ -928,8 +967,8 @@ impl<'p> Checker<'p> {
             }
         }
         let (first, second) = (
-            self.p.types.mapper_of(&first),
-            self.p.types.mapper_of(&second),
+            self.types().mapper_of(&first),
+            self.types().mapper_of(&second),
         );
         let open = self.instantiate(ty, first);
         self.instantiate(open, second)

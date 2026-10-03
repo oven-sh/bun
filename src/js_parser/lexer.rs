@@ -230,7 +230,7 @@ pub struct Lexer<'a> {
     /// parser does, so that there is a tree to check however much is wrong with the file.
     pub(crate) tolerant: bool,
     /// How many times in a row something was put up with at one and the same place.
-    pub(crate) stuck: u8,
+    pub(crate) stuck: u32,
     /// Tolerant mode: how many errors were not logged because the log was disabled. TypeScript keeps the errors of a speculative
     /// parse that succeeds (`mark`, `rewind`), so one during which this changed has to be run again with the log enabled.
     pub(crate) swallowed: u32,
@@ -1172,16 +1172,21 @@ impl<'a> Lexer<'a> {
         self.put_up_with(at)
     }
 
-    /// Adds where the bracket `opening` is to message `index` of the log, for `hir::File::opening_brackets`.
+    /// `parseExpectedMatchingBrackets`: attaches the position of the `opening` bracket to log message `index` as related info.
+    fn note_opening_bracket(&mut self, index: usize, opening: u8, open: Loc) {
+        let text: &'static [u8] = match opening {
+            b'(' => b"TS1007 (\0)",
+            b'[' => b"TS1007 [\0]",
+            _ => b"TS1007 {\0}",
+        };
+        self.add_related_info(index, Range { loc: open, len: 0 }, text);
+    }
+
+    /// `AddRelatedInfo` for log message `index`: `text`, in the format of `ts_error_about`, with the range `r`.
     #[cold]
     #[inline(never)]
-    fn note_opening_bracket(&mut self, index: usize, opening: u8, open: Loc) {
-        let text: &'static [u8; 8] = match opening {
-            b'(' => b"TS1007 (",
-            b'[' => b"TS1007 [",
-            _ => b"TS1007 {",
-        };
-        let note = bun_ast::range_data(Some(self.source), Range { loc: open, len: 0 }, text);
+    pub(crate) fn add_related_info(&mut self, index: usize, r: Range, text: &'static [u8]) {
+        let note = bun_ast::range_data(Some(self.source), r, text);
         let msg = &mut self.log().msgs[index];
         let mut notes = core::mem::take(&mut msg.notes).into_vec();
         notes.push(note);
@@ -1546,14 +1551,15 @@ impl<'a> Lexer<'a> {
         true
     }
 
-    /// Something was just objected to, and the token stays where it is. `before`: where the last objection before it was.
-    /// Whoever keeps coming back to one place without getting anywhere is stopped.
+    /// Call after reporting an error without consuming the token. `before`: the position of the previous error. Fails after too many
+    /// errors in a row at one position, which stops a loop that makes no progress. The limit is above any nesting depth the stack
+    /// allows, because every open bracket reports one error at the end of the file while the parser unwinds.
     #[cold]
     #[inline(never)]
     pub(crate) fn put_up_with(&mut self, before: Loc) -> Result<(), Error> {
         if before.eql(self.loc()) {
             self.stuck += 1;
-            if self.stuck > 16 {
+            if self.stuck > 1 << 20 {
                 return Err(Error::SyntaxError);
             }
         } else {

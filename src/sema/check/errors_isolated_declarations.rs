@@ -16,7 +16,7 @@ use super::enclosing_declaration::Enclosing;
 use super::sink::held;
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent, PatParent};
-use bstr::ByteSlice;
+use bun_core::strings;
 use std::ops::ControlFlow;
 
 /// `PseudoType`
@@ -114,22 +114,18 @@ impl<'p> Checker<'p> {
     pub(super) fn new_isolated_declarations(&self, file: FileId) -> Option<Emit> {
         let is_on = self.files().options.isolated_declarations
             && !self.hir(file).has_errors
-            && !self
-                .files()
-                .module(file)
-                .path
-                .contains_str(b"/node_modules/");
+            && !strings::contains(&self.files().module(file).path, b"/node_modules/");
         is_on.then(|| Emit::new(file))
     }
 
     /// What the transformer has reported is said.
     pub(super) fn finish_isolated_declarations(&mut self, tx: Emit) {
-        self.iso_say_all(tx.said);
+        self.iso_say_all(tx.file, tx.said);
     }
 
     /// `SortAndDeduplicateDiagnostics`, `compactAndMergeRelatedInfos`: what is reported twice is one error, with the related
     /// information of both in the order of the file.
-    fn iso_say_all(&mut self, mut said: Vec<Said>) {
+    fn iso_say_all(&mut self, file: FileId, mut said: Vec<Said>) {
         said.sort_by(|a, b| {
             (a.start, a.end, a.code)
                 .cmp(&(b.start, b.end, b.code))
@@ -158,7 +154,7 @@ impl<'p> Checker<'p> {
                 });
                 one.related.dedup();
             }
-            let at = (self.checking.unwrap(), one.start, one.end);
+            let at = (file, one.start, one.end);
             self.add_diagnostic(Reported::new(at, one.code, held(one.args)))
                 .related_information = one.related;
         }
@@ -1272,7 +1268,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── optional parameters ─────────────────────────────
 
     /// `isOptionalParameter`
-    fn is_optional_parameter(&mut self, file: FileId, p: ParamId) -> bool {
+    pub(super) fn is_optional_parameter(&mut self, file: FileId, p: ParamId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let param = &hir[p];
         if param.flags.contains(Flags::OPTIONAL) {

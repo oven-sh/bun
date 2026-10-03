@@ -18,17 +18,18 @@ pub fn parse(
     bun_js_parser::sema::summarize(path.as_bytes(), text, atoms, experimental_decorators, false).0
 }
 
-const STACK: usize = 256 << 20;
-
-/// Runs `work(i)` for every `i` below `count`, on `threads` threads with room to recurse.
+/// Runs `work(i)` for every `i` below `count` on `threads` threads. Their stack size is `BUN_SEMA_STACK_MB`, 256 by default. The threads of
+/// `bun check` have `bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE` (4 MB; 18 MB on Windows).
 pub fn for_each_parallel(threads: usize, count: usize, work: impl Fn(usize) + Sync) {
+    let megabytes = std::env::var("BUN_SEMA_STACK_MB").ok();
+    let stack = megabytes.and_then(|n| n.parse().ok()).unwrap_or(256usize) << 20;
     let next = std::sync::atomic::AtomicUsize::new(0);
     std::thread::scope(|scope| {
         for _ in 0..threads.max(1) {
             std::thread::Builder::new()
-                .stack_size(STACK)
+                .stack_size(stack)
                 .spawn_scoped(scope, || {
-                    native::set_stack_size(STACK - (1 << 20));
+                    native::set_stack_size(stack - (256 << 10));
                     loop {
                         let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         if i >= count {

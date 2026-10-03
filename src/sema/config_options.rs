@@ -1,8 +1,4 @@
-//! What is wrong with the `compilerOptions` of a configuration file as they are written: an option there is no such thing as, or a value
-//! that is not the kind of thing the option takes.
-//!
-//! Configuration files are written for all versions of TypeScript. What an older version took and the current one has removed is let
-//! through without a word. Only what never meant anything is a mistake.
+//! Validates the `compilerOptions` of a config file: unknown options and values of the wrong type.
 
 use crate::hir::ExprId;
 use crate::json::{Json, TsConfigSourceFile};
@@ -42,7 +38,6 @@ bun_core::comptime_string_map! {
         b"alwaysstrict" => (b"alwaysStrict", Kind::Boolean),
         b"assumechangesonlyaffectdirectdependencies" => (b"assumeChangesOnlyAffectDirectDependencies", Kind::Boolean),
         b"baseurl" => (b"baseUrl", Kind::FilePath),
-        b"charset" => (b"charset", Kind::String),
         b"checkjs" => (b"checkJs", Kind::Boolean),
         b"checkers" => (b"checkers", Kind::Number),
         b"composite" => (b"composite", Kind::Boolean),
@@ -71,7 +66,6 @@ bun_core::comptime_string_map! {
         b"generatetrace" => (b"generateTrace", Kind::String),
         b"ignoredeprecations" => (b"ignoreDeprecations", Kind::String),
         b"importhelpers" => (b"importHelpers", Kind::Boolean),
-        b"importsnotusedasvalues" => (b"importsNotUsedAsValues", Kind::OneOf(&[b"remove", b"preserve", b"error"], &[])),
         b"incremental" => (b"incremental", Kind::Boolean),
         b"init" => (b"init", Kind::Boolean),
         b"inlinesourcemap" => (b"inlineSourceMap", Kind::Boolean),
@@ -82,7 +76,6 @@ bun_core::comptime_string_map! {
         b"jsxfactory" => (b"jsxFactory", Kind::String),
         b"jsxfragmentfactory" => (b"jsxFragmentFactory", Kind::String),
         b"jsximportsource" => (b"jsxImportSource", Kind::String),
-        b"keyofstringsonly" => (b"keyofStringsOnly", Kind::Boolean),
         b"lib" => (b"lib", Kind::List(Element::String)),
         b"libreplacement" => (b"libReplacement", Kind::Boolean),
         b"listemittedfiles" => (b"listEmittedFiles", Kind::Boolean),
@@ -111,16 +104,13 @@ bun_core::comptime_string_map! {
         b"noimplicitoverride" => (b"noImplicitOverride", Kind::Boolean),
         b"noimplicitreturns" => (b"noImplicitReturns", Kind::Boolean),
         b"noimplicitthis" => (b"noImplicitThis", Kind::Boolean),
-        b"noimplicitusestrict" => (b"noImplicitUseStrict", Kind::Boolean),
         b"nolib" => (b"noLib", Kind::Boolean),
         b"nopropertyaccessfromindexsignature" => (b"noPropertyAccessFromIndexSignature", Kind::Boolean),
         b"noresolve" => (b"noResolve", Kind::Boolean),
-        b"nostrictgenericchecks" => (b"noStrictGenericChecks", Kind::Boolean),
         b"nouncheckedindexedaccess" => (b"noUncheckedIndexedAccess", Kind::Boolean),
         b"nouncheckedsideeffectimports" => (b"noUncheckedSideEffectImports", Kind::Boolean),
         b"nounusedlocals" => (b"noUnusedLocals", Kind::Boolean),
         b"nounusedparameters" => (b"noUnusedParameters", Kind::Boolean),
-        b"out" => (b"out", Kind::String),
         b"outdir" => (b"outDir", Kind::FilePath),
         b"outfile" => (b"outFile", Kind::FilePath),
         b"paths" => (b"paths", Kind::Object),
@@ -128,7 +118,6 @@ bun_core::comptime_string_map! {
         b"pprofdir" => (b"pprofDir", Kind::String),
         b"preserveconstenums" => (b"preserveConstEnums", Kind::Boolean),
         b"preservesymlinks" => (b"preserveSymlinks", Kind::Boolean),
-        b"preservevalueimports" => (b"preserveValueImports", Kind::Boolean),
         b"preservewatchoutput" => (b"preserveWatchOutput", Kind::Boolean),
         b"pretty" => (b"pretty", Kind::Boolean),
         b"project" => (b"project", Kind::String),
@@ -154,8 +143,6 @@ bun_core::comptime_string_map! {
         b"strictnullchecks" => (b"strictNullChecks", Kind::Boolean),
         b"strictpropertyinitialization" => (b"strictPropertyInitialization", Kind::Boolean),
         b"stripinternal" => (b"stripInternal", Kind::Boolean),
-        b"suppressexcesspropertyerrors" => (b"suppressExcessPropertyErrors", Kind::Boolean),
-        b"suppressimplicitanyindexerrors" => (b"suppressImplicitAnyIndexErrors", Kind::Boolean),
         b"target" => (b"target", Kind::OneOf(
             &[b"es6", b"es2015", b"es2016", b"es2017", b"es2018", b"es2019", b"es2020", b"es2021", b"es2022", b"es2023", b"es2024", b"es2025", b"esnext"],
             &[b"es3", b"es5"],
@@ -174,14 +161,6 @@ bun_core::comptime_string_map! {
 bun_core::comptime_string_set! {
     /// The options declared `IsCommandLineOnly` (tsoptions).
     static COMMAND_LINE_ONLY_OPTIONS = { b"help", b"ignoreConfig", b"listFilesOnly", b"locale", b"showConfig", b"watch" };
-}
-
-bun_core::comptime_string_set! {
-    /// What older versions took and TypeScript 7 has no such option as.
-    static REMOVED = {
-        b"charset", b"importsNotUsedAsValues", b"keyofStringsOnly", b"noImplicitUseStrict", b"noStrictGenericChecks", b"out",
-        b"preserveValueImports", b"suppressExcessPropertyErrors", b"suppressImplicitAnyIndexErrors",
-    };
 }
 
 /// Something wrong with an option.
@@ -258,8 +237,8 @@ fn nearest(name: &[u8]) -> Option<&'static [u8]> {
     )
 }
 
-/// `convertJsonOption` for each of `options`, which is what `written`, the `compilerOptions` of `file`, says. `as_typescript_does`:
-/// going by TypeScript 7 alone, to which what only older versions took means nothing, and which suggests nothing but another case.
+/// Runs `convertJsonOption` on each of `options`, the converted value of `written` (the `compilerOptions` object of `file`).
+/// `as_typescript_does`: for an unknown option, suggest only a different letter case, as TypeScript 7 does.
 pub fn problems(
     file: &TsConfigSourceFile,
     written: ExprId,
@@ -285,13 +264,11 @@ pub fn problems(
             });
             continue;
         }
-        let is_removed = |name: &[u8]| as_typescript_does && REMOVED.contains(name);
-        let Some(kind) = kind_of(name).filter(|_| !is_removed(name)) else {
+        let Some(kind) = kind_of(name) else {
             let meant = if as_typescript_does {
                 OPTIONS
                     .get_ascii_case_insensitive(name)
                     .map(|option| option.0)
-                    .filter(|known| !is_removed(known))
             } else {
                 nearest(name)
             };

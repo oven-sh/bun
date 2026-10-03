@@ -149,7 +149,7 @@ impl Checker<'_> {
         let keys = self.keyof(ty);
         // `getExtractStringType`: `Extract<keys, string>`. Only generic keys need the conditional type.
         let strings = if self.is_generic(keys)
-            && let Some(name) = self.files().atoms.lookup(b"Extract")
+            && let Some(name) = self.atoms().lookup(b"Extract")
             && let Some(extract) = self.files().global(name, SymFlags::TYPE_ALIAS)
         {
             self.type_reference(extract, &[keys, TypeId::STRING])

@@ -108,6 +108,11 @@ pub(super) fn get_leading_comment_ranges(text: &[u8], pos: usize) -> Vec<(usize,
     iterate_comment_ranges(text, pos, false)
 }
 
+/// `GetTrailingCommentRanges`
+pub(super) fn get_trailing_comment_ranges(text: &[u8], pos: usize) -> Vec<(usize, usize)> {
+    iterate_comment_ranges(text, pos, true)
+}
+
 /// `iterateCommentRanges`: the comments that follow `pos`, from where to where. A `//` comment goes up to its line break. Those on
 /// the line of `pos` trail what is before it: they are left out unless `trailing`, which stops at the end of that line.
 fn iterate_comment_ranges(text: &[u8], mut pos: usize, trailing: bool) -> Vec<(usize, usize)> {
@@ -1004,22 +1009,11 @@ impl<'a> Spans<'a> {
     /// `node` as it is written, with those of the parentheses around it that open at `floor` or later. `floor` is where the type
     /// that `node` is the first part of starts, which the parentheses before that are around. 0 for a type that is part of no other.
     fn ty_in(self, node: TypeNodeId, floor: usize) -> usize {
-        let mut end = self.non_null_suffix(self.ty(node));
+        let mut end = self.ty(node);
         for _ in 0..self.parens_before(floor, self.type_pos(node)) {
-            end = self.non_null_suffix(self.eat(end, b")"));
+            end = self.eat(end, b")");
         }
         end
-    }
-
-    /// Past the `!` of JSDoc's `T!`, of which only `T` is kept (`parsePostfixTypeOrHigher`). `T` ends at `at`.
-    fn non_null_suffix(self, at: usize) -> usize {
-        let next = self.skip_trivia(at);
-        if self.byte(next) == b'!' && self.byte(next + 1) != b'=' && line_end(self.text, at) >= next
-        {
-            next + 1
-        } else {
-            at
-        }
     }
 
     /// `node` itself, whatever parentheses it is in.

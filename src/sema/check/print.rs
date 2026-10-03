@@ -36,6 +36,7 @@ const ALLOW_THIS_IN_OBJECT_LITERAL: u32 = 1 << 9;
 pub(super) const WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL: u32 = 1 << 10;
 const USE_TYPE_OF_FUNCTION: u32 = 1 << 11;
 const USE_STRUCTURAL_FALLBACK: u32 = 1 << 12;
+const MULTILINE_OBJECT_LITERALS: u32 = 1 << 13;
 /// What `typeToString` hands `typeToStringEx`.
 pub(super) const TYPE_TO_STRING: u32 =
     ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
@@ -44,6 +45,7 @@ pub(super) const DECLARATION_EMIT_NODE_BUILDER_FLAGS: u32 = WRITE_CLASS_EXPRESSI
     | USE_TYPE_OF_FUNCTION
     | USE_STRUCTURAL_FALLBACK
     | GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS
+    | MULTILINE_OBJECT_LITERALS
     | NO_TRUNCATION;
 /// `FlagsIgnoreErrors`, which `typeToStringEx`, `symbolToStringEx` and `signatureToStringEx` add.
 const IGNORE_ERRORS: u32 =
@@ -267,7 +269,7 @@ impl Checker<'_> {
     fn declaration_name_of_variable(&self, file: FileId, pat: PatId) -> Vec<u8> {
         let hir = self.hir(file);
         match hir[pat].kind {
-            PatKind::Ident(name) => self.files().atoms.bytes(name).to_vec(),
+            PatKind::Ident(name) => self.atoms().bytes(name).to_vec(),
             _ => hir.text[hir[pat].pos as usize..self.end_of_pat(file, pat) as usize].to_vec(),
         }
     }
@@ -287,7 +289,7 @@ impl Checker<'_> {
 
     /// `signatureToString`. It is cut short whatever `noErrorTruncation` says.
     pub(super) fn write_signature(&mut self, out: &mut Vec<u8>, signature: SigId) {
-        let kind = match *self.p.types.sig(self.p.types.sig_origin(signature)) {
+        let kind = match *self.types().sig(self.types().sig_origin(signature)) {
             SigData::Construct { .. } | SigData::DefaultConstruct { .. } => {
                 SignatureKind::Construct
             }
@@ -401,6 +403,35 @@ impl<'p> Checker<'p> {
         })
     }
 
+    /// What the printer makes of `what`, a node of `file` that the declaration transformer takes over as it is written. The transformer
+    /// has gone through it for what stands in the way, so nothing is tracked.
+    pub(super) fn text_of_written(
+        &mut self,
+        file: FileId,
+        what: Written,
+        enclosing_declaration: Enclosing,
+    ) -> Vec<u8> {
+        let flags = DECLARATION_EMIT_NODE_BUILDER_FLAGS;
+        with_printer(
+            self,
+            Some(enclosing_declaration),
+            None,
+            flags,
+            |printer| match what {
+                Written::Type(node) => {
+                    printer.is_transformer = true;
+                    printer.reuse_type_node(file, node).text
+                }
+                Written::TypeParameter(tp) => {
+                    (printer.visit_type_parameter_declaration(file, tp)).unwrap_or_default()
+                }
+                Written::BindingName(pat) => printer.binding_name_text(file, pat),
+                Written::PropertyName(name) => printer.property_key_text(file, name),
+                Written::EntityName(e) => printer.entity_name_text(file, e).unwrap_or_default(),
+            },
+        )
+    }
+
     /// `NodeBuilder.SerializeTypeForExpression`
     pub(super) fn serialize_type_for_expression(
         &mut self,
@@ -422,6 +453,18 @@ impl<'p> Checker<'p> {
             |printer| printer.type_to_node(ty).text,
         )
     }
+}
+
+/// See `Checker::text_of_written`.
+#[derive(Copy, Clone)]
+pub(super) enum Written {
+    Type(TypeNodeId),
+    TypeParameter(TypeParamId),
+    /// `cloneBindingName`
+    BindingName(PatId),
+    PropertyName(hir::Node),
+    /// `a.b.c`
+    EntityName(ExprId),
 }
 
 /// `typeToStringEx`
@@ -484,10 +527,13 @@ fn with_printer<'p, T>(
     if is_barrier {
         checker.eager.push(checker.stack.len());
     }
+    let indent = (checker.declaration_indent).filter(|_| flags & MULTILINE_OBJECT_LITERALS != 0);
     let result = {
         let mut printer = Printer {
             c: &mut *checker,
             flags,
+            is_transformer: false,
+            indent,
             approximate_length: 0,
             truncating: false,
             visited_types: Vec::new(),
@@ -536,6 +582,20 @@ struct Node {
 }
 
 impl Node {
+    /// What was written with the first line `from` levels in, with it `to` levels in.
+    fn indented(mut self, from: usize, to: usize) -> Node {
+        let (old, new) = (
+            [b"\n", &b"    ".repeat(from)[..]].concat(),
+            [b"\n", &b"    ".repeat(to)[..]].concat(),
+        );
+        for text in std::iter::once(&mut self.text).chain(&mut self.types) {
+            if text.contains(&b'\n') {
+                *text = bun_core::strings::replace_owned(&text[..], &old, &new);
+            }
+        }
+        self
+    }
+
     fn new(text: impl Into<Vec<u8>>, precedence: u8) -> Node {
         Node {
             text: text.into(),
@@ -699,6 +759,8 @@ struct RecoveryBoundary {
 #[derive(Clone)]
 struct SerializedTypeEntry {
     node: Node,
+    /// `Printer::indent` where it was made.
+    indent: Option<usize>,
     truncating: bool,
     added_length: usize,
     tracked_symbols: Vec<TrackedSymbolArgs>,
@@ -719,6 +781,11 @@ struct OuterScope {
 struct Printer<'c, 'p> {
     c: &'c mut Checker<'p>,
     flags: u32,
+    /// What is written is what the declaration transformer makes of a node of the file (`visitDeclarationSubtree`), and not what the
+    /// node builder makes of it to write a type with (`getExistingNodeTreeVisitor`). They differ in little.
+    is_transformer: bool,
+    /// `writer.GetIndent()`, of the line that is being written. `None`: all is written on one line (`SingleLineStringWriter`).
+    indent: Option<usize>,
     approximate_length: usize,
     truncating: bool,
     visited_types: Vec<TypeId>,
@@ -894,7 +961,7 @@ impl Checker<'_> {
 
 impl<'p> Printer<'_, 'p> {
     fn text(&self, name: Atom) -> Vec<u8> {
-        self.c.files().atoms.bytes(name).to_vec()
+        self.c.atoms().bytes(name).to_vec()
     }
 
     // ───────────────────────────── the tracker (`symboltracker.go`, `nodecopy.go`) ─────────────────────────────
@@ -1054,12 +1121,14 @@ impl<'p> Printer<'_, 'p> {
         self.truncating
     }
 
-    /// `...`. Without truncation it is `any` with a comment, and comments are not written.
+    /// `...`. Without truncation it is `any` with a comment, and comments are only written to a declaration file.
     fn elision(&self) -> Node {
-        Node::simple(if self.flags & NO_TRUNCATION != 0 {
-            b"any"
+        Node::simple(if self.flags & NO_TRUNCATION == 0 {
+            &b"..."[..]
+        } else if self.indent.is_some() {
+            &b"/*elided*/ any"[..]
         } else {
-            b"..."
+            &b"any"[..]
         })
     }
 
@@ -1143,7 +1212,7 @@ impl<'p> Printer<'_, 'p> {
                 return self.symbol_to_type_node(symbol, false, Vec::new());
             }
             TypeData::StringLit { value, .. } => {
-                let value = self.c.files().atoms.bytes(*value);
+                let value = self.c.atoms().bytes(*value);
                 self.approximate_length += value.len() + 2;
                 return Node::simple(quoted(value, b'"', false));
             }
@@ -1202,8 +1271,7 @@ impl<'p> Printer<'_, 'p> {
         // `t.AsTypeReference().node != nil`
         let node_of_reference = self
             .c
-            .p
-            .types
+            .types()
             .deferred(ty)
             .map(|reference| Identity::Node(reference.file, reference.node));
         match self.c.data(ty) {
@@ -1399,7 +1467,10 @@ impl<'p> Printer<'_, 'p> {
             }
             self.truncating |= cached.truncating;
             self.approximate_length += cached.added_length;
-            return cached.node;
+            return match (cached.indent, self.indent) {
+                (Some(from), Some(to)) if from != to => cached.node.indented(from, to),
+                _ => cached.node,
+            };
         }
         let mut depth = 0;
         if let Some(identity) = identity {
@@ -1433,6 +1504,7 @@ impl<'p> Printer<'_, 'p> {
                 key,
                 SerializedTypeEntry {
                     node: node.clone(),
+                    indent: self.indent,
                     truncating: self.truncating,
                     added_length,
                     tracked_symbols,
@@ -1653,7 +1725,7 @@ impl<'p> Printer<'_, 'p> {
         }
         let name = files.symbol(symbol).name;
         if name.is_some() {
-            return files.atoms.bytes(name).to_vec();
+            return self.c.atoms().bytes(name).to_vec();
         }
         match decls.first() {
             Some(&(_, Decl::Class(_))) => b"__class".to_vec(),
@@ -1747,11 +1819,10 @@ impl<'p> Printer<'_, 'p> {
         {
             return found;
         }
-        let files = self.c.files();
         let mut locals: Vec<(Atom, SymFlags, Option<Sym>)> = Vec::new();
         // The block of the type parameters is inside that of the parameters. In each a later entry hides an earlier one.
         for (name, parameter) in self.fake_scope_type_parameters.iter().rev() {
-            let Some(name) = files.atoms.lookup(name) else {
+            let Some(name) = self.c.atoms().lookup(name) else {
                 continue;
             };
             if locals.iter().any(|local| local.0 == name) {
@@ -1783,7 +1854,7 @@ impl<'p> Printer<'_, 'p> {
         if name.is_none() {
             return false;
         }
-        let text = files.atoms.bytes(name);
+        let text = self.c.atoms().bytes(name);
         let mut parameters = self.fake_scope_parameters.iter();
         let mut type_parameters = self.fake_scope_type_parameters.iter();
         parameters.any(|local| local.0 == name) || type_parameters.any(|local| local.0 == text)
@@ -2309,7 +2380,7 @@ impl<'p> Printer<'_, 'p> {
 
     /// `newTypeParameter(newSymbol(SymbolFlagsTypeParameter, "T"))`: another each time, as long as each is named before the next is made.
     fn new_type_parameter(&self, like: TypeId) -> Option<TypeId> {
-        let name = self.c.files().atoms.intern(b"T");
+        let name = self.c.atoms().intern(b"T");
         self.c
             .renamed_type_param(like, name, self.type_parameter_names.len())
     }
@@ -2701,8 +2772,9 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// The same for a function expression that initializes a variable at the top of a file or a namespace: the variable. If that is
-    /// the enclosing declaration, the function expression itself.
-    fn variable_of_function_expression(&self, ty: TypeId) -> Option<Sym> {
+    /// the enclosing declaration, the function expression itself. Whether that is one without a name, which nothing can refer to: then
+    /// the symbol is that of the variable all the same.
+    fn variable_of_function_expression(&self, ty: TypeId) -> Option<(Sym, bool)> {
         let TypeData::Fns { decls, .. } = self.c.data(ty) else {
             return None;
         };
@@ -2723,18 +2795,19 @@ impl<'p> Printer<'_, 'p> {
         {
             return None;
         }
-        // `symbol.ValueDeclaration.Parent != b.ctx.enclosingDeclaration`. One without a name goes by that of the variable anyway.
+        // `symbol.ValueDeclaration.Parent != b.ctx.enclosingDeclaration`
         let own = bound.fn_symbol[func.idx()];
-        let symbol = if own.is_some()
-            && self
-                .enclosing_declaration
-                .is_some_and(|at| (at.file, at.variable) == (file, declaration))
-        {
+        let is_itself = self
+            .enclosing_declaration
+            .is_some_and(|at| (at.file, at.variable) == (file, declaration));
+        let symbol = if is_itself && own.is_some() {
             own
         } else {
             bound.pat_symbol[hir[declaration].pat.idx()]
         };
-        symbol.is_some().then(|| self.c.files().sym(file, symbol))
+        symbol
+            .is_some()
+            .then(|| (self.c.files().sym(file, symbol), is_itself && own.is_none()))
     }
 
     /// `isStaticMethodSymbol`: the name of the static method `ty` is the type of.
@@ -2816,7 +2889,7 @@ impl<'p> Printer<'_, 'p> {
                 Identity::Origin(match origin {
                     Origin::ObjectLiteral(file, literal, ..)
                     | Origin::WidenedLiteral(file, literal, ..) => {
-                        Origin::WidenedLiteral(file, literal, false, false)
+                        Origin::WidenedLiteral(file, literal, false, false, false)
                     }
                     _ => origin,
                 })
@@ -2847,8 +2920,9 @@ impl<'p> Printer<'_, 'p> {
                 let class = self.symbol_to_type_node(class, true, Vec::new());
                 return Node::new(cat!(class.text, b".", name), TYPE_OPERATOR);
             }
-            if let Some(variable) = self.variable_of_function_expression(ty)
-                && (!has_structural_fallback || self.is_value_symbol_accessible(variable))
+            if let Some((variable, is_anonymous)) = self.variable_of_function_expression(ty)
+                && (!has_structural_fallback
+                    || !is_anonymous && self.is_value_symbol_accessible(variable))
             {
                 return self.symbol_to_type_node(variable, true, Vec::new());
             }
@@ -2870,8 +2944,9 @@ impl<'p> Printer<'_, 'p> {
 
     /// `createTypeNodeFromObjectType`
     fn object_type_to_node(&mut self, ty: TypeId) -> Node {
+        let with_errors = &self.c.p.mapped_types_with_errors;
         if self.c.mapped_origin(ty).is_some()
-            && (self.c.is_generic(ty) || self.c.p.mapped_types_with_errors.get(&ty).is_some())
+            && (self.c.is_generic(ty) || with_errors.get(&mut self.c.task, &ty).is_some())
         {
             return self.mapped_type_to_node(ty);
         }
@@ -2972,14 +3047,95 @@ impl<'p> Printer<'_, 'p> {
     ) -> Node {
         let saved_flags = self.flags;
         self.flags |= IN_OBJECT_TYPE_LITERAL;
+        let outer = self.indent_members();
         let elements = self.type_elements(ty, call, construct, index, properties, mapper);
+        self.indent = outer;
         self.flags = saved_flags;
         self.approximate_length += 2;
         if elements.is_empty() {
             Node::simple(b"{}")
         } else {
-            Node::simple(cat!(b"{ ", elements.join(&b" "[..]), b" }"))
+            Node::simple(self.braces(&elements))
         }
+    }
+
+    /// `setCommentRange(node, propertySymbol.ValueDeclaration)`. A property of a mapped type has `Declarations` and no `ValueDeclaration`.
+    fn comments_of_value_declaration(&mut self, prop: &Prop) -> Vec<u8> {
+        let has_value_declaration = match prop.source {
+            PropSource::Symbol(_) | PropSource::Literal(..) => true,
+            PropSource::Copy(_, _, has_value_declaration) => has_value_declaration,
+            _ => false,
+        };
+        match self.value_declaration_of_property(prop) {
+            Some((file, declaration)) if has_value_declaration && self.indent.is_some() => {
+                self.comments_before(file, declaration)
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// `setCommentRange`, and what the printer makes of it: the comments before the declaration `node` of `file`, if a declaration file
+    /// is written for `file`.
+    pub(super) fn comments_before(&self, file: FileId, node: hir::Node) -> Vec<u8> {
+        let Some(indent) = self.indent else {
+            return Vec::new();
+        };
+        if self.c.files().options.remove_comments
+            || self.enclosing_declaration.is_none_or(|it| it.file != file)
+        {
+            return Vec::new();
+        }
+        let hir = self.c.hir(file);
+        // `node.Pos()`
+        let pos = match hir.data(node) {
+            NodeData::Member(m) => Some(hir[m].loc.pos),
+            NodeData::Param(p) => (hir[p].loc.end != 0).then_some(hir[p].loc.pos),
+            // Where the `{` or the comma before it ends.
+            NodeData::Prop(p) => match hir[self.c.bound(file).prop_owner[p.idx()]] {
+                Expr {
+                    kind: ExprKind::Object(props),
+                    pos,
+                    ..
+                } if props.at(0) == p => Some(pos + 1),
+                Expr {
+                    kind: ExprKind::Object(_),
+                    ..
+                } => {
+                    let comma = self.c.skip_trivia_from(file, hir[PropId(p.0 - 1)].end);
+                    (hir.text.get(comma as usize) == Some(&b',')).then_some(comma + 1)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(pos) = pos else {
+            return Vec::new();
+        };
+        let comments = super::spans::get_leading_comment_ranges(&hir.text, pos as usize);
+        super::errors_declaration_emit::comments_text(&hir.text, comments, indent)
+    }
+
+    /// What is written from now on is a member of a type literal. What it returns is for `indent`, once they are written.
+    fn indent_members(&mut self) -> Option<usize> {
+        let outer = self.indent;
+        self.indent = outer.map(|level| level + 1);
+        outer
+    }
+
+    /// `emitTypeLiteral`: `SingleLineTypeLiteralMembers`, or `MultiLineTypeLiteralMembers`.
+    fn braces(&self, members: &[Vec<u8>]) -> Vec<u8> {
+        let Some(level) = self.indent else {
+            return cat!(b"{ ", members.join(&b" "[..]), b" }");
+        };
+        let mut text = b"{\n".to_vec();
+        for member in members {
+            text.extend_from_slice(&b"    ".repeat(level + 1));
+            text.extend_from_slice(member);
+            text.push(b'\n');
+        }
+        text.extend_from_slice(&b"    ".repeat(level));
+        text.push(b'}');
+        text
     }
 
     /// `createTypeNodesFromResolvedType`
@@ -3193,7 +3349,7 @@ impl<'p> Printer<'_, 'p> {
         let mut keyed: Vec<((u8, (bool, u32, u32), &'p [u8]), &Prop)> =
             Vec::with_capacity(props.len());
         for prop in props {
-            let name = self.c.files().atoms.bytes(prop.name);
+            let name = self.c.atoms().bytes(prop.name);
             let place = match &prop.source {
                 PropSource::Literal(file, written) => {
                     let pos = self
@@ -3322,7 +3478,7 @@ impl<'p> Printer<'_, 'p> {
 
     /// `getPropertyNameNodeForSymbol`
     fn property_name(&mut self, prop: &Prop) -> Vec<u8> {
-        let bytes = self.c.files().atoms.bytes(prop.name);
+        let bytes = self.c.atoms().bytes(prop.name);
         if bytes.first() == Some(&b'#') {
             return self.c.written_name(prop.name).to_vec();
         }
@@ -3396,7 +3552,7 @@ impl<'p> Printer<'_, 'p> {
 
     /// `getNameOfSymbolFromNameType`, going by the name alone.
     fn name_from_name_type(&self, name: Atom) -> Vec<u8> {
-        let bytes = self.c.files().atoms.bytes(name);
+        let bytes = self.c.atoms().bytes(name);
         if bytes.first() == Some(&b'#') {
             return self.c.written_name(name).to_vec();
         }
@@ -3629,7 +3785,7 @@ impl<'p> Printer<'_, 'p> {
             self.c.remove_missing_type(ty, is_optional)
         };
         // `isLateBoundName`
-        if self.c.files().atoms.is_symbol_name(prop.name) {
+        if self.c.atoms().is_symbol_name(prop.name) {
             self.track_late_bound_name(prop);
         }
         let declared = if reverse_mapped.is_some() {
@@ -3693,7 +3849,23 @@ impl<'p> Printer<'_, 'p> {
                         &name,
                         is_optional,
                     );
-                    elements.push(cat!(text, b";"));
+                    // `core.Coalesce(signature.declaration, propertySymbol.ValueDeclaration)`
+                    let origin = self.c.types().sig_origin(signature);
+                    let comments = match self.c.sig_decl(origin) {
+                        Some((file, func, _)) => {
+                            let declaration = match self.c.bound(file).fns[func.idx()].owner {
+                                FnOwner::Member(m) => self.c.hir(file).node(m),
+                                FnOwner::Expr(e) => match self.c.bound(file).expr_parent[e.idx()] {
+                                    Parent::Prop(p) => self.c.hir(file).node(p),
+                                    _ => hir::Node::NONE,
+                                },
+                                _ => hir::Node::NONE,
+                            };
+                            self.comments_before(file, declaration)
+                        }
+                        None => self.comments_of_value_declaration(prop),
+                    };
+                    elements.push(cat!(comments, text, b";"));
                 }
                 if !signatures.is_empty() || !is_optional {
                     return;
@@ -3719,7 +3891,10 @@ impl<'p> Printer<'_, 'p> {
             b""
         };
         let question: &[u8] = if is_optional { b"?" } else { b"" };
-        elements.push(cat!(modifier, name, question, b": ", node.text, b";"));
+        let comments = self.comments_of_value_declaration(prop);
+        elements.push(cat!(
+            comments, modifier, name, question, b": ", node.text, b";"
+        ));
     }
 
     // ───────────────────────────── signatures ─────────────────────────────
@@ -3746,14 +3921,16 @@ impl<'p> Printer<'_, 'p> {
                         cat! { self.property_key_text(file, hir.property_name(hir.node(p))), b": ", value }
                     });
                 }
-                let last = props.iter().next_back();
-                let comma = last.map_or(&b""[..], |last| {
-                    self.trailing_comma_after(file, self.c.end_of_pat_prop(file, last))
-                });
+                let ends: Vec<u32> = (props.iter())
+                    .map(|p| self.c.end_of_pat_prop(file, p))
+                    .collect();
                 if parts.is_empty() {
                     b"{}".to_vec()
                 } else {
-                    cat!(b"{ ", parts.join(&b", "[..]), comma, b" }")
+                    let open = hir[pat].pos + 1;
+                    let list =
+                        self.list_text(file, parts, &ends, Some(open), b",", true, usize::MAX);
+                    cat!(b"{ ", list, b" }")
                 }
             }
             PatKind::Array(elems) => {
@@ -3766,27 +3943,67 @@ impl<'p> Printer<'_, 'p> {
                         name
                     });
                 }
-                let last = elems.iter().next_back();
-                let comma = last.map_or(&b""[..], |last| {
-                    self.trailing_comma_after(file, self.c.end_of_pat_elem(file, last))
-                });
-                cat!(b"[", parts.join(&b", "[..]), comma, b"]")
+                let ends: Vec<u32> = (elems.iter())
+                    .map(|e| self.c.end_of_pat_elem(file, e))
+                    .collect();
+                let open = hir[pat].pos + 1;
+                let list = self.list_text(file, parts, &ends, Some(open), b",", true, usize::MAX);
+                cat!(b"[", list, b"]")
             }
         }
     }
 
-    /// `NodeList.HasTrailingComma`: the comma, if one follows the last element of a list, which ends at `end`.
-    fn trailing_comma_after(&self, file: FileId, end: u32) -> &'static [u8] {
-        let next = self.c.skip_trivia_from(file, end);
-        match self.c.hir(file).text.get(next as usize) {
-            Some(b',') => b",",
-            _ => b"",
+    /// `emitListItems`, of a list on one line whose elements are nodes of `file`: `parts` is what is written for each, `ends` their
+    /// `End()`. `first_pos`: `Pos()` of the first, where that is not `Pos()` of the list's parent, which emits those comments. The
+    /// others start where the delimiter before them ends. `delimiter`, `parent_end`: see `Writer::emit_list_items`. The comments
+    /// between them are written where a declaration file is written for `file`.
+    pub(super) fn list_text(
+        &self,
+        file: FileId,
+        parts: Vec<Vec<u8>>,
+        ends: &[u32],
+        first_pos: Option<u32>,
+        delimiter: &[u8],
+        allows_trailing_comma: bool,
+        parent_end: usize,
+    ) -> Vec<u8> {
+        use super::errors_declaration_emit::{Element, Writer};
+        let text = &self.c.hir(file).text[..];
+        let token = *delimiter.last().unwrap_or(&b',');
+        // Where the delimiter after what ends at `end` ends.
+        let after_delimiter = |end: u32| {
+            let at = self.c.skip_trivia_from(file, end);
+            (text.get(at as usize) == Some(&token)).then_some(at + 1)
+        };
+        let has_trailing_comma = allows_trailing_comma
+            && ends
+                .last()
+                .is_some_and(|&end| after_delimiter(end).is_some());
+        let writes_comments = self.is_transformer
+            && !self.c.files().options.remove_comments
+            && self.enclosing_declaration.is_some_and(|it| it.file == file);
+        let Some(indent) = self.indent.filter(|_| writes_comments) else {
+            let separator = cat!(delimiter, b" ");
+            let comma: &[u8] = if has_trailing_comma { b"," } else { b"" };
+            return cat!(parts.join(&separator[..]), comma);
+        };
+        let mut pos = first_pos;
+        let mut elements = Vec::with_capacity(parts.len());
+        for (part, &end) in parts.into_iter().zip(ends) {
+            elements.push(Element {
+                range: pos.map(|pos| (pos as usize, end as usize)),
+                text: part,
+            });
+            pos = after_delimiter(end);
         }
+        let mut writer = Writer::new(text, indent);
+        writer.emit_list_items(&elements, delimiter, false, has_trailing_comma, parent_end);
+        writer.into_text()
     }
 
     /// `signature.parameters`, with what `symbolToParameterDeclaration` finds out about each.
     fn signature_parameters(&mut self, signature: SigId) -> Vec<Parameter> {
-        let (file, func, mapper) = match self.c.p.types.sig(signature) {
+        let (file, func, mapper) = match self.c.types().sig(signature) {
             SigData::WithReturn { sig: inner, .. } => {
                 let inner = *inner;
                 return self.signature_parameters(inner);
@@ -4125,13 +4342,10 @@ impl<'p> Printer<'_, 'p> {
         let (declared, expanded, outer_scope) = self.enter_signature_scope(signature);
         self.approximate_length += 3;
         let mut type_parameters = Vec::new();
-        let mut own_type_parameters = self.c.sig_type_params(signature).into_vec();
-        let mut clones = Vec::new();
-        if own_type_parameters.is_empty() {
-            own_type_parameters = self.type_parameters_taken_from_context(signature);
-            if self.has_inference_context(signature) {
-                clones.clone_from(&own_type_parameters);
-            }
+        let own_type_parameters = self.c.sig_type_params(signature).into_vec();
+        let mut clones = self.type_parameters_taken_from_context(signature);
+        if !clones.is_empty() && !self.has_inference_context(signature) {
+            clones.clear();
         }
         for parameter in own_type_parameters {
             type_parameters.push(self.type_parameter_declaration(parameter, &clones));
@@ -4185,8 +4399,7 @@ impl<'p> Printer<'_, 'p> {
         if let Some((_, _, mapper)) = self.c.sig_decl(signature)
             && self
                 .c
-                .p
-                .types
+                .types()
                 .mapping(mapper)
                 .iter()
                 .any(|pair| pair.0 != pair.1)
@@ -4197,7 +4410,7 @@ impl<'p> Printer<'_, 'p> {
         let expanded = self.expanded_parameters(&declared);
         let own_type_parameters = self.c.sig_type_params(signature).into_vec();
         let is_instantiated = self.c.sig_decl(signature).is_some_and(|declared| {
-            let mapping = self.c.p.types.mapping(declared.2);
+            let mapping = self.c.types().mapping(declared.2);
             mapping.iter().any(|pair| pair.0 != pair.1)
         });
         let declarations_of = |parameters: &[Parameter]| -> Vec<Option<(FileId, ParamId)>> {
@@ -4215,7 +4428,7 @@ impl<'p> Printer<'_, 'p> {
 
     /// `assignContextualParameterTypes`: `sig.typeParameters = context.typeParameters`
     fn type_parameters_taken_from_context(&mut self, signature: SigId) -> Vec<TypeId> {
-        match *self.c.p.types.sig(signature) {
+        match *self.c.types().sig(signature) {
             SigData::WithReturn { sig: inner, .. } => {
                 self.type_parameters_taken_from_context(inner)
             }
@@ -4227,7 +4440,7 @@ impl<'p> Printer<'_, 'p> {
     /// an argument of a call whose type arguments are inferred, or in a literal or a conditional that is. The contextual signature
     /// is instantiated then, and `instantiateSignature` clones its type parameters. Here the function has the declared ones.
     fn has_inference_context(&mut self, signature: SigId) -> bool {
-        let (file, func) = match *self.c.p.types.sig(signature) {
+        let (file, func) = match *self.c.types().sig(signature) {
             SigData::WithReturn { sig: inner, .. } => return self.has_inference_context(inner),
             SigData::Decl { file, func, .. } => (file, func),
             _ => return false,
@@ -4241,7 +4454,7 @@ impl<'p> Printer<'_, 'p> {
                 Parent::Prop(p) if bound.prop_owner[p.idx()].is_some() => bound.prop_owner[p.idx()],
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Call(call) | ExprKind::New(call) if hir[call].callee != at => {
-                        let resolved = self.c.p.calls.get(&(file, parent));
+                        let resolved = self.c.kept_call(file, parent);
                         let declared = resolved
                             .and_then(|resolved| resolved.sig)
                             .and_then(|sig| self.c.sig_decl(sig));
@@ -4446,10 +4659,10 @@ impl<'p> Printer<'_, 'p> {
         let new_name = new_type_variable.map(|new_param| {
             self.approximate_length += 37;
             // `prependTypeMapping`
-            let mut pairs = self.c.p.types.mapping(mapper).to_vec();
+            let mut pairs = self.c.types().mapping(mapper).to_vec();
             pairs.retain(|pair| pair.0 != root_check_type);
             pairs.push((root_check_type, new_param));
-            mapper = self.c.p.types.mapper(pairs);
+            mapper = self.c.types().mapper(pairs);
             self.type_parameter_to_name(new_param)
         });
         let piece = |printer: &mut Self, which: usize| {

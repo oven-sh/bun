@@ -77,7 +77,11 @@ impl Checker<'_> {
         }
         // Everything about the call is worked out for good before candidates are tried again.
         let resolved = self.resolved_signature(file, e);
-        if let Some(said) = self.p.said_of_calls_resolved_again.get_ref(&(file, e)) {
+        if let Some(said) = self
+            .p
+            .said_of_calls_resolved_again
+            .get_ref(&mut self.task, &(file, e))
+        {
             self.reported.extend_from_slice(said);
         }
         let called = if is_new {
@@ -218,7 +222,7 @@ impl Checker<'_> {
             let sig = resolved.sig.or(only);
             // `signature.declaration != nil`
             let has_declaration =
-                sig.map(|sig| self.sig_decl(self.p.types.sig_origin(sig)).is_some());
+                sig.map(|sig| self.sig_decl(self.types().sig_origin(sig)).is_some());
             if self.p.files.options.no_implicit_any {
                 // `checkCallExpression`
                 if has_declaration != Some(false) {
@@ -648,7 +652,7 @@ impl Checker<'_> {
         let mut sig = sig;
         let mut steps = 0;
         let (class, of, func) = loop {
-            match *self.p.types.sig(self.p.types.sig_origin(sig)) {
+            match *self.types().sig(self.types().sig_origin(sig)) {
                 SigData::Construct {
                     class, file, func, ..
                 } => break (class, file, func),
@@ -781,7 +785,7 @@ impl Checker<'_> {
 
     /// What `resolveCall` said of the call `e` when it was resolved for good.
     pub(super) fn report_call_resolution(&mut self, file: FileId, e: ExprId) {
-        if let Some(said) = self.p.said_of_calls.get_ref(&(file, e)) {
+        if let Some(said) = self.p.said_of_calls.get_ref(&mut self.task, &(file, e)) {
             self.reported.extend_from_slice(said);
         }
     }
@@ -832,7 +836,14 @@ impl Checker<'_> {
                 let node = hir.ids(list).nth(index).unwrap();
                 let end = self.end_of_type_node(file, node);
                 // 2344, or what says more.
-                self.report_not_assignable_with_end(given, constraint, hir[node].pos, end, 2344);
+                self.report_not_assignable_with_end(
+                    file,
+                    given,
+                    constraint,
+                    hir[node].pos,
+                    end,
+                    2344,
+                );
             }
         } else {
             let mut fitting = Vec::new();
@@ -883,7 +894,7 @@ impl Checker<'_> {
         let declared = self.declared_sig(failed);
         let SigData::Construct {
             class, file, func, ..
-        } = *self.p.types.sig(declared)
+        } = *self.types().sig(declared)
         else {
             return self.implementation_signature(failed);
         };
@@ -909,7 +920,7 @@ impl Checker<'_> {
         // The mapper the construct signatures of the class have as they are declared.
         let statics = self.type_of_symbol(class);
         let mapper = self.signatures(statics, true).iter().find_map(|&sig| {
-            match *self.p.types.sig(sig) {
+            match *self.types().sig(sig) {
                 SigData::Construct {
                     class: of,
                     file: at,
@@ -919,7 +930,7 @@ impl Checker<'_> {
                 _ => None,
             }
         })?;
-        Some(self.p.types.intern_sig(SigData::Construct {
+        Some(self.types().intern_sig(SigData::Construct {
             class,
             file,
             func: implementation,
@@ -1020,7 +1031,7 @@ impl Checker<'_> {
                         ),
                     };
                     // 2684, or what says more.
-                    self.report_not_assignable_with_end(given, wanted, start, end, 2684);
+                    self.report_not_assignable_with_end(file, given, wanted, start, end, 2684);
                 }
                 return false;
             }
@@ -1237,7 +1248,7 @@ impl Checker<'_> {
         let hir = self.hir(file);
         // A `this` parameter is not among `params`. What is made for a union may have one where its declaration has none.
         let declares_this = hir[func].this_ty(hir).is_some();
-        let has_this = match self.p.types.sig(sig) {
+        let has_this = match self.types().sig(sig) {
             SigData::Synth { this, .. } => this.is_some(),
             _ => declares_this,
         };

@@ -318,11 +318,11 @@ impl Checker<'_> {
         let ty = match hir[e].kind {
             // `checkSpreadExpression`
             ExprKind::Spread(operand) => {
-                let iterable = self.get_type_of_expression(file, operand);
+                let iterable = self.get_type_of_expression_after_check(file, operand);
                 self.iterated_type_if_any(iterable, false)
                     .unwrap_or(TypeId::ANY)
             }
-            _ => self.get_type_of_expression(file, e),
+            _ => self.get_type_of_expression_after_check(file, e),
         };
         self.regular(ty)
     }
@@ -627,7 +627,7 @@ impl<'p> Checker<'p> {
     /// (`isLiteralOfContextualType`) and what is a const context (`isConstContext`), and a generic function keeps its declared
     /// type (`instantiateTypeWithSingleGenericCallSignature`). The cached type of an argument is the one from which the type
     /// arguments of its call were inferred.
-    pub(super) fn get_type_of_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
+    pub(super) fn get_type_of_expression_after_check(&mut self, file: FileId, e: ExprId) -> TypeId {
         // The first check, in which the calls around `e` are resolved.
         self.type_of_expr(file, e);
         let outer = self.begin_recheck();
@@ -660,15 +660,16 @@ impl<'p> Checker<'p> {
 
     /// Whether `flowAnalysisDisabled` is still set after `file` has been checked. `checkBlock` resets it at the end of a function
     /// or module block, so it only stays set for a reference outside any such block.
-    pub(super) fn is_flow_analysis_left_disabled(&self, file: FileId) -> bool {
+    pub(super) fn is_flow_analysis_left_disabled(&mut self, file: FileId) -> bool {
         // A walk nests at most once per flow node.
-        if self.bound(file).flow_places <= super::flow::MAX_FLOW_DEPTH
-            || self.p.flows_too_deep.len() == 0
-        {
+        if self.bound(file).flow_places <= super::flow::MAX_FLOW_DEPTH {
             return false;
         }
         (0..self.hir(file).exprs.len() as u32).map(ExprId).any(|e| {
-            self.p.flows_too_deep.get(&(file, e)).is_some()
+            self.p
+                .flows_too_deep
+                .get(&mut self.task, &(file, e))
+                .is_some()
                 && self.function_or_module_block_of(file, e) == crate::bind::Parent::File
         })
     }

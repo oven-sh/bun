@@ -13,13 +13,6 @@ pub struct ResolvedCall {
     pub ret: TypeId,
 }
 
-impl crate::local::MaybeLocal for ResolvedCall {
-    #[inline]
-    fn is_local(&self) -> bool {
-        self.sig.is_local() || self.ret.is_local()
-    }
-}
-
 impl crate::table::Packed for ResolvedCall {
     type Cell = std::sync::atomic::AtomicU64;
     #[inline]
@@ -112,6 +105,9 @@ enum SigParent {
 impl<'p> Checker<'p> {
     /// Whether the type of `e` depends on parameters that get their types from where `e` is used.
     pub fn is_context_sensitive(&self, file: FileId, e: ExprId) -> bool {
+        if self.is_stack_low() {
+            return false;
+        }
         let hir = self.hir(file);
         match hir[e].kind {
             ExprKind::Fn(f) => {
@@ -173,8 +169,24 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `links.resolvedSignature` of `call`, if it is cached, with what the signature returns.
+    #[inline]
+    pub(super) fn kept_call(&self, file: FileId, call: ExprId) -> Option<ResolvedCall> {
+        let sig = self.p.calls.get(&self.task, &(file, call))?;
+        let ret = self.p.call_return_types.get(&self.task, &(file, call))?;
+        Some(ResolvedCall { sig, ret })
+    }
+
+    /// `links.resolvedSignature = result`. The first value stays.
+    fn keep_call(&mut self, file: FileId, call: ExprId, resolved: ResolvedCall, stored: Stored) {
+        (self.p.call_return_types).insert(&self.task, (file, call), resolved.ret, stored);
+        self.p
+            .calls
+            .insert(&self.task, (file, call), resolved.sig, stored);
+    }
+
     pub fn resolved_signature(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
-        if let Some(known) = self.p.calls.get(&(file, call)) {
+        if let Some(known) = self.kept_call(file, call) {
             return known;
         }
         if let Some(&(.., resolved)) = self
@@ -185,8 +197,11 @@ impl<'p> Checker<'p> {
         {
             return resolved;
         }
+        if let Some(raw) = self.provisional(Query::Call(file, call)) {
+            return crate::table::Packed::unpack(raw);
+        }
         if self.prepare_question_about_expr(file, call)
-            && let Some(known) = self.p.calls.get(&(file, call))
+            && let Some(known) = self.kept_call(file, call)
         {
             return known;
         }
@@ -216,29 +231,34 @@ impl<'p> Checker<'p> {
         let resolved = self.with_return_type(resolved);
         self.resolved_meanwhile.pop();
         // tsgo stores `links.resolvedSignature` even while `contextualBindingPatterns` is non-empty.
-        let holds = self.leave()
-            || !self.contextual_binding_patterns.is_empty()
-                && self.taints == self.taints_before_patterns;
+        // A nested resolution of a call in flight is not the result of the call.
+        let left = self.leave(Query::Call(file, call));
+        if let Err(open) = left
+            && !is_under_way
+        {
+            let raw = crate::table::Packed::pack(resolved);
+            self.keep_provisionally(Query::Call(file, call), raw, open);
+        }
+        let is_tainted_by_patterns_only = !self.contextual_binding_patterns.is_empty()
+            && self.taints == self.taints_before_patterns;
+        let stored = (left.ok()).or_else(|| is_tainted_by_patterns_only.then(Stored::new));
         // A call that is asked for while it is being resolved is resolved once more, and `resolveCall` reports what is wrong with it
         // as things stand then. Only the first time is kept.
         if is_under_way {
             if let Some(said) = said
-                && self
-                    .p
-                    .said_of_calls_resolved_again
-                    .get_ref(&(file, call))
+                && (self.p.said_of_calls_resolved_again)
+                    .get_ref(&mut self.task, &(file, call))
                     .is_none()
             {
-                self.p
-                    .said_of_calls_resolved_again
-                    .insert_ref((file, call), said);
+                let (key, stored) = ((file, call), Stored::new());
+                (self.p.said_of_calls_resolved_again).insert_ref(&self.task, key, said, stored);
             }
-        } else if holds {
-            // First: another thread that finds the call resolved finds this too.
+        } else if let Some(stored) = stored {
+            // A task that finds the call resolved finds this too: both go to one barrier.
             if let Some(said) = said {
-                self.p.said_of_calls.insert_ref((file, call), said);
+                (self.p.said_of_calls).insert_ref(&self.task, (file, call), said, stored);
             }
-            self.p.calls.insert((file, call), resolved);
+            self.keep_call(file, call, resolved, stored);
         }
         resolved
     }
@@ -804,7 +824,7 @@ impl<'p> Checker<'p> {
         ty: TypeId,
     ) -> Option<TypeId> {
         // `getPropertyNameForKnownSymbolName`
-        let name = self.files().atoms.symbol_name(b"hasInstance");
+        let name = self.atoms().symbol_name(b"hasInstance");
         // `getPropertyOfType`: an index signature is no property.
         let mut methods = Vec::new();
         for &part in self.parts(ty) {
@@ -957,13 +977,7 @@ impl<'p> Checker<'p> {
             // `resolvedSignature = result`, before the errors are reported.
             self.resolved_meanwhile.push((file, call, resolved));
             let since = self.reported.len();
-            // Whoever asks first resolves the call, from whatever file. What is reported is in the file of the call.
-            let checking = (self.checking, self.is_type_checked);
-            if self.checking != Some(file) {
-                (self.checking, self.is_type_checked) = (Some(file), false);
-            }
             self.report_call_resolution_errors(&s, signatures, head_message);
-            (self.checking, self.is_type_checked) = checking;
             self.resolved_meanwhile.pop();
             // Another checker may be the one to report it.
             let said = self.reported.split_off(since);
@@ -1250,12 +1264,13 @@ impl<'p> Checker<'p> {
             self.sig_return(generic),
             self.sig_this_type(generic),
         );
-        self.p.types.intern_sig(SigData::Synth {
+        self.types().intern_sig(SigData::Synth {
             type_params: Box::new([]),
             params: params.into(),
             ret,
             this,
             of: Box::new([]),
+            is_union: true,
         })
     }
 
@@ -1288,7 +1303,7 @@ impl<'p> Checker<'p> {
         for (i, &param) in params.iter().enumerate() {
             pairs.push((param, self.get_inferred_type(&part, i, true)));
         }
-        self.p.types.mapper(pairs)
+        self.types().mapper(pairs)
     }
 
     /// `createOuterReturnMapper(context)`, applied to `ty`. The clone is made once.
@@ -1302,7 +1317,7 @@ impl<'p> Checker<'p> {
             let mut pairs = Vec::new();
             let mentioned = c.params_mentioned_in(ty, &context.params);
             for (&param, _) in context.params.iter().zip(mentioned).filter(|m| m.1) {
-                let first = c.p.types.map(context.return_mapper, param).unwrap_or(param);
+                let first = c.types().map(context.return_mapper, param).unwrap_or(param);
                 let second = if clone.params.contains(&first) {
                     let mapper = c.fixing_mapper(&mut clone, first);
                     c.instantiate(first, mapper)
@@ -1312,7 +1327,7 @@ impl<'p> Checker<'p> {
                 pairs.push((param, second));
             }
             context.outer_return_context = Some(clone);
-            let mapper = c.p.types.mapper(pairs);
+            let mapper = c.types().mapper(pairs);
             c.instantiate(ty, mapper)
         })
         .unwrap_or(ty)
@@ -1339,23 +1354,24 @@ impl<'p> Checker<'p> {
             self.sig_this_type(returned),
         );
         // `cloneSignature`: it is declared where `returned` is.
-        let generalized = self.p.types.intern_sig(SigData::Synth {
+        let generalized = self.types().intern_sig(SigData::Synth {
             type_params: inferred_type_params.into(),
             params: params.into(),
             ret,
             this,
             of: Box::new([returned]),
+            is_union: true,
         });
-        let ret = self.type_of_signature(generalized, construct);
         let returned_type = self.sig_return(sig);
-        self.note_single_signature_type(ret, returned_type, mapper);
+        let ret = self.single_signature_type(generalized, construct, returned_type, mapper);
         let (params, this) = (self.sig_params(sig), self.sig_this_type(sig));
-        self.p.types.intern_sig(SigData::Synth {
+        self.types().intern_sig(SigData::Synth {
             type_params: Box::new([]),
             params: params.into(),
             ret,
             this,
             of: Box::new([]),
+            is_union: true,
         })
     }
 
@@ -1381,7 +1397,7 @@ impl<'p> Checker<'p> {
     /// than one declaration (`addImplementationSuccessElaboration`). Constructors are not supported: `sig_of_fn` does not give them
     /// the type parameters of the class.
     pub(super) fn implementation_signature(&mut self, failed: SigId) -> Option<SigId> {
-        let (file, func, _) = self.sig_decl(self.p.types.sig_origin(failed))?;
+        let (file, func, _) = self.sig_decl(self.types().sig_origin(failed))?;
         let (hir, bound) = (self.hir(file), self.bound(file));
         let has_body = |f: &Func| has_body(f);
         match bound.fns[func.idx()].owner {
@@ -1615,12 +1631,13 @@ impl<'p> Checker<'p> {
         let returns: Vec<TypeId> = sigs.iter().map(|&sig| self.sig_return(sig)).collect();
         let ret = self.intersection(&returns);
         // It is declared where the first of them is.
-        self.p.types.intern_sig(SigData::Synth {
+        self.types().intern_sig(SigData::Synth {
             type_params: Box::new([]),
             params: params.into(),
             ret,
             this,
             of: Box::new([sigs[0]]),
+            is_union: true,
         })
     }
 
@@ -1848,12 +1865,12 @@ impl<'p> Checker<'p> {
     /// The signature whose declaration `sig` has (`Signature.declaration`). `getDefaultConstructSignatures` clones or instantiates
     /// the signatures of what the class extends: both keep the declaration, and whether literal types are asked for.
     pub(super) fn declared_sig(&mut self, sig: SigId) -> SigId {
-        let mut sig = self.p.types.sig_origin(sig);
+        let mut sig = self.types().sig_origin(sig);
         for _ in 0..64 {
-            let SigData::DefaultConstruct { base: Some(of), .. } = *self.p.types.sig(sig) else {
+            let SigData::DefaultConstruct { base: Some(of), .. } = *self.types().sig(sig) else {
                 break;
             };
-            sig = self.p.types.sig_origin(of);
+            sig = self.types().sig_origin(of);
         }
         sig
     }
@@ -1867,22 +1884,24 @@ impl<'p> Checker<'p> {
             [first, ..] => first,
         };
         let p = self.p;
-        let kept = p.candidate_orders.get_ref(&first);
+        let kept = p.candidate_orders.get_ref(&mut self.task, &first);
         if let Some(kept) = kept
             && let Some(ordered) = Self::order_kept_for(kept, sigs)
         {
             return List::Kept(ordered);
         }
-        let before = self.what_only_holds_for_now();
+        let scope = self.begin_scope();
         let ordered = self.candidates_in_order_uncached(sigs);
-        // One list is kept for a signature. What is shared outlives what is local.
+        let ended = self.end_scope_by_counters(scope);
+        // One list is kept for a signature.
         if kept.is_none()
-            && self.what_only_holds_for_now() == before
-            && (first.is_local() || !sigs.iter().any(|sig| sig.is_local()))
+            && let Ok(stored) = ended
         {
             let both: Box<[SigId]> = sigs.iter().chain(&ordered).copied().collect();
-            let kept = p.candidate_orders.insert_ref(first, both).1;
-            // Another thread may have put in another list that starts the same.
+            let kept = (p.candidate_orders)
+                .insert_ref(&mut self.task, first, both, stored)
+                .1;
+            // The entry that stays may be another list that starts the same.
             if let Some(ordered) = Self::order_kept_for(kept, sigs) {
                 return List::Kept(ordered);
             }
@@ -1903,7 +1922,7 @@ impl<'p> Checker<'p> {
         for &sig in sigs {
             // A clone is declared where what it is a clone of is (`Signature.declaration`).
             let declared = self.declared_sig(sig);
-            let declaration = match *self.p.types.sig(declared) {
+            let declaration = match *self.types().sig(declared) {
                 SigData::Decl { file, func, .. } | SigData::Construct { file, func, .. } => {
                     Some((file, func))
                 }
@@ -2477,8 +2496,7 @@ impl<'p> Checker<'p> {
             return Some(declared);
         }
         match self
-            .p
-            .types
+            .types()
             .map(around, self.string_literal(declared, true))
             .map(|renamed| self.data(renamed))
         {
@@ -2500,12 +2518,12 @@ impl<'p> Checker<'p> {
             return None;
         };
         let declared = self.string_literal(self.hir(file)[tp].name, true);
-        let mut pairs = self.p.types.mapping(around).to_vec();
+        let mut pairs = self.types().mapping(around).to_vec();
         pairs.retain(|pair| pair.0 != declared);
         pairs.push((declared, self.string_literal(name, false)));
         let serial = self.number_literal(serial as f64, true);
         pairs.push((serial, serial));
-        Some(self.cloned_type_param(file, tp, self.p.types.mapper(pairs)))
+        Some(self.cloned_type_param(file, tp, self.types().mapper(pairs)))
     }
 
     /// `getUniqueTypeParameters`: `own`, with a renamed clone for each type parameter whose name occurs in `inferred` or earlier in
@@ -2533,7 +2551,7 @@ impl<'p> Checker<'p> {
                 continue;
             }
             // `getUniqueTypeParameterName`
-            let text = self.files().atoms.bytes(name);
+            let text = self.atoms().bytes(name);
             let mut base_len = text.len();
             while base_len > 1 && text[base_len - 1].is_ascii_digit() {
                 base_len -= 1;
@@ -2545,7 +2563,7 @@ impl<'p> Checker<'p> {
                     &mut bun_core::fmt::ItoaBuf::new(),
                     index,
                 ));
-                let augmented = self.files().atoms.intern(&augmented);
+                let augmented = self.atoms().intern(&augmented);
                 if !names.contains(&augmented) {
                     break augmented;
                 }
@@ -2595,10 +2613,10 @@ impl<'p> Checker<'p> {
                 unique.push(param);
                 continue;
             }
-            let mut pairs = self.p.types.mapping(around).to_vec();
+            let mut pairs = self.types().mapping(around).to_vec();
             pairs.retain(|pair| !renames_of_siblings.iter().any(|rename| rename.0 == pair.0));
             pairs.extend(renames_of_siblings.iter().copied());
-            unique.push(self.cloned_type_param(file, tp, self.p.types.mapper(pairs)));
+            unique.push(self.cloned_type_param(file, tp, self.types().mapper(pairs)));
         }
         Some(unique)
     }
@@ -2738,10 +2756,8 @@ impl<'p> Checker<'p> {
             }
         }
         let (index, count) = (index + offset, count + offset);
-        // `resolvingSignature`, by this checker. FOR SPEED the stack is not gone through for a call that is kept and that this checker
-        // has had resolved: it is not entered again.
-        let is_cached = self.p.calls.get(&(file, call)).is_some()
-            && self.resolved_signatures.contains(&(file, call));
+        // `resolvingSignature`. FOR SPEED the stack is not gone through for a call that is cached: it is not entered again.
+        let is_cached = self.p.calls.get(&self.task, &(file, call)).is_some();
         if !is_cached
             && !self
                 .resolved_meanwhile

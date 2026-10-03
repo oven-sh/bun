@@ -760,7 +760,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     fn stmt_without_jsdoc(&mut self, stmt: &Stmt) -> Option<StmtId> {
         if !self.stack_check.is_safe_to_recurse() {
             self.b.file.syntax_errors += 1;
-            self.b.file.has_errors = true;
+            self.b.file.ran_out_of_stack = true;
             return None;
         }
         let pos = self.pos_of(stmt.loc);
@@ -1082,7 +1082,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     fn binding(&mut self, binding: &ast::Binding) -> PatId {
         let pos = self.pos_of(binding.loc);
         if !self.stack_check.is_safe_to_recurse() {
-            self.b.file.has_errors = true;
+            self.b.file.ran_out_of_stack = true;
             return self.b.file.pat(PatKind::Missing, pos, pos);
         }
         // A name that is a piece of the text is as long as it is written.
@@ -1381,10 +1381,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             self.js_error_at_types(ret, ret, 8010);
             // `checkGrammarStatementInAmbientContext`, `checkGrammarAccessor`: of whatever has a body in an ambient context.
             if self.is_ambient || flags.contains(Flags::AMBIENT) {
-                self.b
-                    .file
-                    .early_errors
-                    .push((self.pos_of(func.body.loc), 1183));
+                let body = self.pos_of(func.body.loc);
+                self.b.file.error(DiagnosticKind::Grammar, body, 0, 1183);
             }
             FnBody::Block(self.stmts(func.body.stmts.slice(), false))
         };
@@ -1447,10 +1445,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             _ => {
                 if self.is_ambient {
-                    self.b
-                        .file
-                        .early_errors
-                        .push((self.pos_of(arrow.body.loc), 1183));
+                    let body = self.pos_of(arrow.body.loc);
+                    self.b.file.error(DiagnosticKind::Grammar, body, 0, 1183);
                 }
                 FnBody::Block(self.stmts(stmts, false))
             }
@@ -1773,7 +1769,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             .remove(Flags::CONST | Flags::EXPORT | Flags::DEFAULT);
         // `checkVariableLikeDeclaration`
         if is_named_by_bigint {
-            self.b.file.checker_errors.push((member.name_pos, 1539));
+            self.b
+                .file
+                .error(DiagnosticKind::Checker, member.name_pos, 0, 1539);
         }
         member.init = self.optional_expr(property.initializer.as_ref().or(property.value.as_ref()));
         member
@@ -1852,7 +1850,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         if !self.stack_check.is_safe_to_recurse() {
             let pos = self.pos_of(expr.loc);
             self.b.file.syntax_errors += 1;
-            self.b.file.has_errors = true;
+            self.b.file.ran_out_of_stack = true;
             self.written_end = pos;
             self.written_start = pos;
             return self.b.file.expr(ExprKind::Missing, pos, pos);
@@ -1992,7 +1990,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             && let Some(less_than) = self.note(target.loc, Mark::InstantiationStart)
         {
             let end = self.b.file[obj].end;
-            self.b.file.error(less_than, end, 1477);
+            self.b
+                .file
+                .error(DiagnosticKind::Parse, less_than, end, 1477);
         }
     }
 
@@ -2411,10 +2411,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                     && !matches!(&rest.value.data, Data::EBinary(b) if matches!(b.op, OpCode::BinAssign))
                     && array.comma_after_spread.start > self.noted.real_loc(*loc).start
                 {
-                    self.b
-                        .file
-                        .early_errors
-                        .push((self.pos_of(array.comma_after_spread), 1013));
+                    let comma = self.pos_of(array.comma_after_spread);
+                    self.b.file.error(DiagnosticKind::Grammar, comma, 0, 1013);
                 }
                 for item in items {
                     self.report_trailing_comma_after_rest(item);
@@ -2427,10 +2425,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                     && let Some(value) = &last.value
                     && object.comma_after_spread.start > self.noted.real_loc(value.loc).start
                 {
-                    self.b
-                        .file
-                        .early_errors
-                        .push((self.pos_of(object.comma_after_spread), 1013));
+                    let comma = self.pos_of(object.comma_after_spread);
+                    self.b.file.error(DiagnosticKind::Grammar, comma, 0, 1013);
                 }
                 for property in properties {
                     if let Some(value) = &property.value {
@@ -2508,7 +2504,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             if !is_computed && matches!(written_key.data, Data::EBigInt(_)) {
                 key = PropKey::None;
                 if matches!(kind, PropKind::Init | PropKind::Shorthand) {
-                    self.b.file.checker_errors.push((pos, 1539));
+                    self.b.file.error(DiagnosticKind::Checker, pos, 0, 1539);
                 }
             }
             let mut value = match (&property.value, kind) {

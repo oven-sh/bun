@@ -281,12 +281,15 @@ fn run_quietly(
         progress,
         only: None,
         order: 1,
+        digests: false,
+        plan_options: bun_sema_driver::PlanOptions::default(),
         keeps_everything: false,
         stops_where_tsc_does: true,
         says_it_as_typescript_does: false,
         loaded: None,
         checked: None,
         after_file: None,
+        declaration_file_written: None,
     };
     bun_sema_driver::check_then(&request, then)
 }

@@ -136,10 +136,7 @@ rows!(
     mapped,
     modifiers,
     names,
-    early_errors,
-    error_ends,
-    error_arguments,
-    checker_errors,
+    diagnostics,
     specifier_uses
 );
 
@@ -847,7 +844,6 @@ impl TypeSyntax<'_> {
         self.last_index_signature = self
             .last_index_signature
             .filter(|member| member.signature.idx() < file.fns.len());
-        self.last_postfix_nullable = None;
     }
 }
 

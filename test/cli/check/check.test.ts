@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-// `lib.*.d.ts` come from the `typescript` package a project has installed.
+// `bun check` reads `lib.*.d.ts` from the `typescript` package installed in the project.
 const typescript = dirname(require.resolve("typescript/package.json"));
 
 const tsconfig = JSON.stringify({
@@ -22,7 +22,7 @@ const tsconfig = JSON.stringify({
 function project(files: Record<string, string>, { withTypeScript = true } = {}) {
   const dir = tempDir("bun-check", {
     "tsconfig.json": tsconfig,
-    // Neither the DOM's types nor Node's are loaded, which keeps the tests fast.
+    // Avoids loading the DOM and Node.js type definitions, which keeps the tests fast.
     "console.d.ts": `declare var console: { log(...args: unknown[]): void };\n`,
     ...files,
   });
@@ -33,7 +33,7 @@ function project(files: Record<string, string>, { withTypeScript = true } = {}) 
   return dir;
 }
 
-// Neither an agent nor continuous integration, whatever runs the tests.
+// Disable AI agent and CI detection regardless of the environment the tests run in.
 const env = {
   ...bunEnv,
   AGENT: "0",
@@ -41,7 +41,7 @@ const env = {
   REPL_ID: undefined,
   GITHUB_ACTIONS: undefined,
   NO_COLOR: "1",
-  // Nothing installed globally stands in for what a project lacks.
+  // Prevent fallback to globally installed packages.
   BUN_INSTALL_GLOBAL_DIR: "/nowhere",
 };
 
@@ -76,7 +76,58 @@ const hasTerminal = (() => {
   }
 })();
 
+// Runs `cmd` as a person does: in a terminal, with colors. The progress line is drawn at once instead of after 300 ms.
+async function inTerminal(cwd: string, cmd: string[]) {
+  const decoder = new TextDecoder();
+  let output = "";
+  await using child = Bun.spawn({
+    cmd: [bunExe(), ...cmd],
+    cwd,
+    env: { ...env, NO_COLOR: undefined, FORCE_COLOR: "1", BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: "0" },
+    terminal: {
+      cols: 80,
+      rows: 24,
+      data(_terminal, chunk) {
+        output += decoder.decode(chunk, { stream: true });
+      },
+    },
+  });
+  const exitCode = await child.exited;
+  return { output: Bun.stripANSI(output), hasColors: output.includes("\x1b[3"), exitCode, signalCode: child.signalCode };
+}
+
 describe.concurrent("bun check", () => {
+  test("colors change nothing but the colors", async () => {
+    using dir = project({
+      "index.ts": `interface User {\n  id: number;\n}\n\nconst ada: User = {\n  id: "1",\n};\nconsole.log(\`\${ada.nmae}\`);\n`,
+    });
+    const [plain, colored] = await Promise.all([
+      check(dir, ["--pretty"]),
+      check(dir, ["--pretty"], { NO_COLOR: undefined, FORCE_COLOR: "1" }),
+    ]);
+    const withoutColors = (text: string) =>
+      Bun.stripANSI(text)
+        .replace(/\[\d+(\.\d+)?m?s\]/g, "[time]")
+        .trim();
+    expect(colored.stdout).toContain("\x1b[");
+    expect(colored.stderr).toContain("\x1b[");
+    expect(withoutColors(colored.stdout)).toBe(plain.stdout);
+    expect(withoutColors(colored.stderr)).toBe(plain.stderr);
+    expect(colored.exitCode).toBe(1);
+  });
+
+  test("the typescript package may be installed globally", async () => {
+    using dir = project({ "index.ts": `const wrong: string = 1;\n` }, { withTypeScript: false });
+    using globalDir = tempDir("bun-check-global", {});
+    mkdirSync(join(String(globalDir), "node_modules"), { recursive: true });
+    symlinkSync(typescript, join(String(globalDir), "node_modules", "typescript"), "junction");
+    const { stdout, exitCode } = await check(dir, [], { BUN_INSTALL_GLOBAL_DIR: String(globalDir) });
+    expect(stdout).toMatchInlineSnapshot(
+      `"index.ts(1,7): error TS2322: Type 'number' is not assignable to type 'string'."`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
   // The progress line is drawn by a thread of its own, and only for a person at a terminal.
   test.skipIf(isWindows || !hasTerminal)("shows progress in a terminal", async () => {
     using dir = project({ "index.ts": `const wrong: string = 1;\n` });
@@ -111,7 +162,7 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("one line an error where nobody is looking", async () => {
+  test("prints one line per error when stdout is not a terminal", async () => {
     using dir = project({
       "index.ts": `const n: number = "one";\nconst s: string = n;\nexport {};\n`,
     });
@@ -124,7 +175,7 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("--pretty shows the source around each error", async () => {
+  test("--pretty prints a source excerpt for each error", async () => {
     using dir = project({
       "index.ts": `interface User {\n  id: number;\n  name: string;\n}\n\nconst ada: User = {\n  id: "1",\n  name: "Ada",\n};\n\nconsole.log(ada.nmae);\n`,
     });
@@ -151,7 +202,7 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("an agent gets tags, the source, and no colors", async () => {
+  test("AI agents get tagged output with source excerpts and no colors", async () => {
     using dir = project({
       "index.ts": `export function f(a: number) {\n  return a.lenght;\n}\n`,
     });
@@ -170,7 +221,7 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("GitHub Actions gets annotations", async () => {
+  test("prints annotations on GitHub Actions", async () => {
     using dir = project({ "src/a.ts": `export const a: string = 1;\n` });
     const { stdout, exitCode } = await check(dir, [], { GITHUB_ACTIONS: "true" });
     expect(stdout).toMatchInlineSnapshot(`
@@ -180,7 +231,7 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("the reasons under an error", async () => {
+  test("prints the message chain of an error", async () => {
     using dir = project({
       "index.ts": `interface A { a: { b: { c: number } } }\nconst x = { a: { b: { c: "no" } } };\nconst y: A = x;\nexport { y };\n`,
     });
@@ -192,7 +243,7 @@ describe.concurrent("bun check", () => {
     `);
   });
 
-  test("errors come file by file, in order, whatever thread finds them", async () => {
+  test("output is sorted by file and position, independent of thread scheduling", async () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 60; i++) {
       files[`src/m${String(i).padStart(2, "0")}.ts`] =
@@ -208,7 +259,7 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("--threads 1 says the same", async () => {
+  test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,
       "b.ts": `export const b = "b";\nexport const c: boolean = b;\n`,
@@ -221,7 +272,7 @@ describe.concurrent("bun check", () => {
     `);
   });
 
-  test("what else an error has to do with is shown under it", async () => {
+  test("prints related information under an error", async () => {
     using dir = project({
       "types.ts": `export interface User {\n  id: number;\n  email: string;\n}\n`,
       "index.ts": `import type { User } from "./types";\nconst ada: User = { id: 1 };\nconst o = { colour: "red" };\no.color;\nexport {};\n`,
@@ -278,23 +329,23 @@ describe.concurrent("bun check", () => {
       <related file="index.ts" line="3" column="13">'colour' is declared here.</related>
       </error>"
     `);
-    // As `tsc --pretty false` has it.
+    // Same format as `tsc --pretty false`.
     expect(plain.stdout).toMatchInlineSnapshot(`
       "index.ts(2,7): error TS2741: Property 'email' is missing in type '{ id: number; }' but required in type 'User'.
       index.ts(4,3): error TS2551: Property 'color' does not exist on type '{ colour: string; }'. Did you mean 'colour'?"
     `);
   });
 
-  describe("a project in a bad way", () => {
+  describe("many errors", () => {
     const files = {
-      // The same mistake sixty times in two files, another three times, and one that is by itself.
+      // One error repeated 60 times across two files, a second one 3 times, and a third one once.
       "a.ts": Array.from({ length: 40 }, (_, i) => `console.lgo(${i});`).join("\n") + `\nexport {};\n`,
       "b.ts":
         Array.from({ length: 20 }, (_, i) => `console.lgo(${i});`).join("\n") +
         `\nconst a: string = 1, b: string = 2, c: string = 3;\nmissing;\nexport {};\n`,
     };
 
-    test("each kind of error once, what there is most of first", async () => {
+    test("groups repeated errors, most frequent first", async () => {
       using dir = project(files);
       const { stdout, stderr, exitCode } = await check(dir, ["--pretty"]);
       expect(stdout).toMatchInlineSnapshot(`
@@ -330,7 +381,7 @@ describe.concurrent("bun check", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("for an agent too", async () => {
+    test("groups repeated errors for AI agents", async () => {
       using dir = project(files);
       const { stdout } = await check(dir, [], { AGENT: "1" });
       expect(stdout).toMatchInlineSnapshot(`
@@ -371,7 +422,7 @@ describe.concurrent("bun check", () => {
       `);
     });
 
-    test("--all shows every one, and so does what is not for reading", async () => {
+    test("--all and machine-readable output list every error", async () => {
       using dir = project(files);
       const [all, plain] = await Promise.all([check(dir, ["--pretty", "--all"]), check(dir)]);
       expect(all.stdout.match(/error: TS/g)).toHaveLength(64);
@@ -390,7 +441,7 @@ describe.concurrent("bun check", () => {
       expect(stdout + stderr).not.toContain("more files");
     });
 
-    test("fifty errors are each shown", async () => {
+    test("50 errors are not grouped", async () => {
       using dir = project({
         "a.ts": Array.from({ length: 50 }, (_, i) => `console.lgo(${i});`).join("\n") + `\nexport {};\n`,
       });
@@ -399,8 +450,8 @@ describe.concurrent("bun check", () => {
     });
   });
 
-  describe("one kind of error at a time, as tsc has it", () => {
-    test("what does not parse is all that is said", async () => {
+  describe("diagnostic stages, as in tsc", () => {
+    test("syntax errors suppress semantic errors", async () => {
       using dir = project({
         "a.ts": `const a = ;\nexport {};\n`,
         "b.ts": `export const b: string = 1;\n`,
@@ -410,7 +461,7 @@ describe.concurrent("bun check", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("so are options that do not go together", async () => {
+    test("compiler option errors suppress semantic errors", async () => {
       using dir = project({
         "tsconfig.json": `{ "compilerOptions": { "noEmit": true, "checkJs": true, "allowJs": false, "lib": ["esnext"], "types": [] } }`,
         "b.ts": `export const b: string = 1;\n`,
@@ -423,7 +474,7 @@ describe.concurrent("bun check", () => {
     });
   });
 
-  test("says how to get the types of what Bun provides", async () => {
+  test("suggests installing @types/bun", async () => {
     using dir = project({
       "console.d.ts": ``,
       "index.ts": `import { test } from "bun:test";\nconsole.log(test);\n`,
@@ -436,8 +487,8 @@ describe.concurrent("bun check", () => {
     expect(plain.stderr).toBe(pretty.stderr);
   });
 
-  describe("what is checked", () => {
-    test("the project of the nearest tsconfig.json, from a directory below it", async () => {
+  describe("input selection", () => {
+    test("finds the nearest tsconfig.json from a subdirectory", async () => {
       using dir = project({
         "src/deep/a.ts": `export const a: string = 1;\n`,
         "other.ts": `export const o: string = 2;\n`,
@@ -449,7 +500,7 @@ describe.concurrent("bun check", () => {
       `);
     });
 
-    test("-p takes a file or a directory", async () => {
+    test("-p accepts a file or a directory", async () => {
       using dir = project({
         "packages/a/tsconfig.json": tsconfig,
         "packages/a/index.ts": `export const a: string = 1;\n`,
@@ -465,7 +516,7 @@ describe.concurrent("bun check", () => {
       expect(byFile.stdout).toBe(byDirectory.stdout);
     });
 
-    test("files that are named, and what they import, with the options of the project", async () => {
+    test("path arguments: checks those files and their imports with the compiler options of the project", async () => {
       using dir = project({
         "a.ts": `import "./b";\nlet a;\nexport const x: string = a;\n`,
         "b.ts": `export const b: string = 1;\n`,
@@ -478,14 +529,14 @@ describe.concurrent("bun check", () => {
       `);
     });
 
-    test("a file that is named means what it means in the project", async () => {
+    test("path arguments: global declarations of the whole project stay visible", async () => {
       using dir = project({
-        // Nothing imports these two. What they declare is there for every file all the same.
+        // These two files are not imported, but their global declarations are visible in every file.
         "globals.ts": `declare global {\n  var answer: number;\n}\nexport {};\n`,
         "more.ts": `declare module "./lib" {\n  interface Options {\n    extra: boolean;\n  }\n}\nexport {};\n`,
         "lib.ts": `export interface Options {\n  name: string;\n}\n`,
         "index.ts": `import type { Options } from "./lib";\nconst o: Options = { name: "a", extra: true };\nconsole.log(o, answer.toFixed());\n`,
-        // Neither is this, and it is not checked.
+        // Not imported either, and not checked.
         "other.ts": `export const wrong: string = 1;\n`,
         "broken.ts": `const = ;\n`,
       });
@@ -518,7 +569,7 @@ describe.concurrent("bun check", () => {
         "b.ts": `export {};\n`,
       });
       const [after, only] = await Promise.all([check(dir, ["--listFiles"]), check(dir, ["--listFilesOnly"])]);
-      // TypeScript's own files come first. A file comes after what it imports.
+      // Lib files are listed first. A file is listed after its imports.
       const listed = (stdout: string) => stdout.split("\n").filter(line => !line.includes("/typescript/lib/lib."));
       expect(after.stdout).toContain("/typescript/lib/lib.es5.d.ts");
       expect(listed(after.stdout).map(line => line.replace(/^\S*\//, ""))).toEqual([
@@ -566,7 +617,41 @@ describe.concurrent("bun check", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("declaration files are checked unless skipLibCheck says not to", async () => {
+    test("workspaces without a root tsconfig.json: one project per package, default options for the other files", async () => {
+      const implicitAny = `export function f(x) {\n  return x;\n}\n`;
+      const loose = JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, strict: false } });
+      using dir = tempDir("bun-check", {
+        "package.json": JSON.stringify({ workspaces: ["packages/*", "!packages/left-out", "tools"] }),
+        "packages/loose/tsconfig.json": loose,
+        "packages/loose/index.ts": implicitAny,
+        "packages/strict/tsconfig.json": tsconfig,
+        // A file imported from another package is checked by that package's project.
+        "packages/strict/index.ts": `import { f as loose } from "../loose/index";\nexport const a: string = loose(1);\n` + implicitAny,
+        "packages/left-out/tsconfig.json": loose,
+        "packages/left-out/index.ts": implicitAny,
+        "tools/tsconfig.json": loose,
+        "tools/index.ts": implicitAny,
+        "scripts/build.ts": implicitAny,
+      });
+      mkdirSync(join(String(dir), "node_modules"));
+      symlinkSync(typescript, join(String(dir), "node_modules", "typescript"), "junction");
+      const { stdout, stderr, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "packages/left-out/index.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type.
+        packages/strict/index.ts(3,19): error TS7006: Parameter 'x' implicitly has an 'any' type.
+        scripts/build.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."
+      `);
+      expect(stderr).toMatchInlineSnapshot(`
+        "Found 3 errors in 3 files, checked 5 files across 4 projects [time]
+
+          1  packages/left-out/index.ts:1
+          1  packages/strict/index.ts:3
+          1  scripts/build.ts:1"
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("declaration files are checked unless skipLibCheck is set", async () => {
       const files = { "types.d.ts": `declare const a: Missing;\n`, "a.ts": `export const b = a;\n` };
       using skipping = project(files);
       using looking = project({
@@ -594,7 +679,7 @@ describe.concurrent("bun check", () => {
     };
     const monorepo = (extra: Record<string, string> = {}) =>
       project({
-        // A solution file: no files of its own.
+        // A solution-style tsconfig.json: only `references`, no files.
         "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "packages/app" }] }),
         "console.d.ts": "",
         "packages/lib/tsconfig.json": JSON.stringify({ compilerOptions: options, include: ["src"] }),
@@ -608,7 +693,7 @@ describe.concurrent("bun check", () => {
         ...extra,
       });
 
-    test("every referenced project is checked, without building anything", async () => {
+    test("checks every referenced project without a build", async () => {
       using dir = monorepo();
       const { stdout, stderr, exitCode } = await check(dir);
       expect(stdout).toBe("");
@@ -616,7 +701,7 @@ describe.concurrent("bun check", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("errors in a project that is only reached through another one", async () => {
+    test("reports errors in transitively referenced projects", async () => {
       using dir = monorepo({ "packages/lib/src/broken.ts": `export const wrong: string = 1;\n` });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(
@@ -625,7 +710,7 @@ describe.concurrent("bun check", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("each project is checked with its own options, and each file once", async () => {
+    test("checks each project with its own compiler options and each file once", async () => {
       using dir = monorepo({
         // Implicit any: an error under lib's options, allowed under app's.
         "packages/lib/src/loose.ts": `export function f(x) {\n  return x;\n}\n`,
@@ -637,7 +722,7 @@ describe.concurrent("bun check", () => {
       );
     });
 
-    test("a package that exports its build output is imported from source", async () => {
+    test("resolves imports of the build output of a referenced package without a build", async () => {
       // Nothing was built: no `dist` directory exists.
       using dir = project({
         "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "packages/app" }] }),
@@ -692,7 +777,7 @@ describe.concurrent("bun check", () => {
       `);
     });
 
-    test("build output is only imported from source for a referenced project", async () => {
+    test("does not generate build output for a project that is not referenced", async () => {
       using dir = project({
         "tsconfig.json": JSON.stringify({ compilerOptions: { ...options, composite: false }, include: ["app"] }),
         "console.d.ts": "",
@@ -712,7 +797,7 @@ describe.concurrent("bun check", () => {
       );
     });
 
-    test("a reference that does not exist", async () => {
+    test("reports a reference to a missing project", async () => {
       using dir = monorepo({
         "tsconfig.json": JSON.stringify({
           files: [],
@@ -723,10 +808,168 @@ describe.concurrent("bun check", () => {
       expect(stdout).toMatchInlineSnapshot(`"error TS6053: File '<dir>/packages/gone/tsconfig.json' not found."`);
       expect(exitCode).toBe(1);
     });
+
+    test("a referenced project is seen through its declaration files", async () => {
+      using dir = monorepo({
+        "packages/lib/tsconfig.json": JSON.stringify({
+          compilerOptions: { ...options, stripInternal: true },
+          include: ["src"],
+        }),
+        "packages/lib/src/index.ts": `
+export type Image = {
+  src: string;
+  /** @internal */
+  path: string;
+};
+export class Box {
+  private size = 1;
+  /** @internal */
+  open() {}
+  grow() {
+    return this.size + 1;
+  }
+}
+`,
+        "packages/app/src/index.ts": `
+import { Box, type Image } from "../../lib/src/index";
+export const image: Image = { src: "a" };
+new Box().open();
+export const n: string = new Box().grow();
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "packages/app/src/index.ts(4,11): error TS2339: Property 'open' does not exist on type 'Box'.
+        packages/app/src/index.ts(5,14): error TS2322: Type 'number' is not assignable to type 'string'."
+      `);
+      // Nothing is written.
+      expect(existsSync(join(String(dir), "packages/lib/src/index.d.ts"))).toBe(false);
+    });
+
+    test("global declarations loaded by a referenced project do not leak into the referencing project", async () => {
+      using dir = monorepo({
+        "packages/lib/src/globals.d.ts": `declare const secret: number;\n`,
+        "packages/lib/src/index.ts": `/// <reference path="./globals.d.ts" />\nexport const twice = () => secret * 2;\n`,
+        "packages/app/src/index.ts": `import { twice } from "../../lib/src/index";\nexport const a = twice() + secret;\n`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"packages/app/src/index.ts(2,28): error TS2304: Cannot find name 'secret'."`,
+      );
+    });
+
+    test("a project that fails under noEmitOnError emits no declaration files", async () => {
+      using dir = monorepo({
+        "packages/lib/package.json": JSON.stringify({ name: "lib", types: "./dist/index.d.ts" }),
+        "packages/lib/tsconfig.json": JSON.stringify({
+          compilerOptions: { ...options, noEmitOnError: true, rootDir: "src", outDir: "dist" },
+          include: ["src"],
+        }),
+        "packages/lib/src/index.ts": `export const double = (n: number) => n * 2;\nexport const wrong: string = 1;\n`,
+        "packages/app/src/index.ts": [
+          `import { double } from "lib";`,
+          `import { wrong } from "../../lib/src/index";`,
+          `export const a = double(2), b = wrong;`,
+          ``,
+        ].join("\n"),
+      });
+      const modules = join(String(dir), "packages/app/node_modules");
+      mkdirSync(modules, { recursive: true });
+      symlinkSync(join(String(dir), "packages/lib"), join(modules, "lib"), "junction");
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "packages/app/src/index.ts(1,24): error TS2307: Cannot find module 'lib' or its corresponding type declarations.
+        packages/app/src/index.ts(2,23): error TS6305: Output file '<dir>/packages/lib/dist/index.d.ts' has not been built from source file '<dir>/packages/lib/src/index.ts'.
+        packages/lib/src/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'."
+      `);
+    });
+
+    test("imports in a generated declaration file resolve from the location of the source file", async () => {
+      using dir = monorepo({
+        "packages/lib/tsconfig.json": JSON.stringify({
+          compilerOptions: { ...options, rootDir: ".", outDir: "build" },
+          include: ["src"],
+        }),
+        // Not emitted: from build/src/index.d.ts, "../types/id" is not there.
+        "packages/lib/types/id.d.ts": `export type Id = string;\n`,
+        "packages/lib/src/index.ts": `import type { Id } from "../types/id";\nexport declare const id: Id;\n`,
+        "packages/app/src/index.ts": `import { id } from "../../lib/src/index";\nexport const n: number = id;\n`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"packages/app/src/index.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'."`,
+      );
+    });
+
+    test("generated declaration files keep literal types, expando properties and untyped parameters", async () => {
+      using dir = monorepo({
+        "packages/lib/src/index.ts": `
+type Icon = "gear" | "x" | (string & NonNullable<unknown>);
+export const app = { icon: "gear" } satisfies { icon?: Icon };
+const Component = (props: { value: string }) => props.value;
+Component.isStatic = () => true;
+export default Component;
+// @ts-expect-error
+export const handler = (context, next) => next();
+`,
+        "packages/app/src/index.ts": `
+import Component, { app, handler } from "../../lib/src/index";
+export const a: 1 = app.icon;
+export const b: 1 = Component.isStatic;
+export const c: 1 = handler;
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "packages/app/src/index.ts(3,14): error TS2322: Type '"gear"' is not assignable to type '1'.
+        packages/app/src/index.ts(4,14): error TS2322: Type '() => boolean' is not assignable to type '1'.
+        packages/app/src/index.ts(5,14): error TS2322: Type '(context: any, next: any) => any' is not assignable to type '1'."
+      `);
+    });
+
+    test("a type of a referenced package whose exports point at its sources can be named", async () => {
+      using dir = monorepo({
+        "packages/lib/package.json": JSON.stringify({ name: "lib", exports: { "./*": "./src/*.ts" } }),
+        "packages/lib/tsconfig.json": JSON.stringify({
+          compilerOptions: { ...options, rootDir: "src", outDir: "dist" },
+          include: ["src"],
+        }),
+        "packages/lib/src/Types.ts": `export interface Box<T> {\n  value: T;\n}\n`,
+        "packages/lib/src/Make.ts": `import type { Box } from "./Types";\nexport declare function make<T>(value: T): Box<T>;\n`,
+        // The declaration file says `import("lib/Types").Box<number>`, which index.ts does not import.
+        "packages/app/src/index.ts": `import { make } from "lib/Make";\nexport const made = make(1);\nexport const wrong: string = made.value;\n`,
+      });
+      mkdirSync(join(String(dir), "packages/app/node_modules"), { recursive: true });
+      symlinkSync(join(String(dir), "packages/lib"), join(String(dir), "packages/app/node_modules/lib"), "junction");
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"packages/app/src/index.ts(3,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
+      );
+    });
+
+    test("a generated declaration file names a dependency by its package name in a project with paths", async () => {
+      using dir = monorepo({
+        "packages/lib/tsconfig.json": JSON.stringify({
+          compilerOptions: { ...options, rootDir: "src", outDir: "dist", paths: { "@/*": ["./src/client/*"] } },
+          include: ["src"],
+        }),
+        "packages/lib/node_modules/dep/package.json": JSON.stringify({ name: "dep", types: "index.d.ts" }),
+        "packages/lib/node_modules/dep/index.d.ts": `export { make } from "./make";\n`,
+        "packages/lib/node_modules/dep/make.d.ts": `import type { Box } from "./box";\nexport declare function make<T>(value: T): Box<T>;\n`,
+        "packages/lib/node_modules/dep/box.d.ts": `export interface Box<T> {\n  value: T;\n}\n`,
+        "packages/lib/src/client/one.ts": `export const one = 1;\n`,
+        "packages/lib/src/index.ts": `import { make } from "dep";\nimport { one } from "@/one";\nexport const made = make(one);\n`,
+        "packages/app/src/index.ts": `import { made } from "../../lib/src/index";\nexport const wrong: string = made.value;\n`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"packages/app/src/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
+      );
+    });
   });
 
-  describe("files nothing imports", () => {
-    test("a test, and the helper next to it that it imports", async () => {
+  describe("files that are not imported", () => {
+    test("checks a test file and the helper it imports", async () => {
       using dir = project({
         "src/add.ts": `export const add = (a: number, b: number) => a + b;\n`,
         "test/helper.ts": `import { add } from "../src/add";\nexport const three = add(1, 2);\nexport const wrong: string = three;\n`,
@@ -742,7 +985,7 @@ describe.concurrent("bun check", () => {
       `);
     });
 
-    test("what a file nothing imports adds to the global scope is seen everywhere", async () => {
+    test("global declarations in a file that is not imported are visible everywhere", async () => {
       using dir = project({
         "test/setup.ts": `declare global {\n  var answer: number;\n}\nexport {};\n`,
         "test/script.ts": `declare const fromScript: string;\n`,
@@ -755,7 +998,7 @@ describe.concurrent("bun check", () => {
       `);
     });
 
-    test("types made in one file do not leak into the next", async () => {
+    test("file-local types do not leak into other files", async () => {
       const files: Record<string, string> = {};
       for (let i = 0; i < 40; i++) {
         files[`test/t${i}.test.ts`] =
@@ -774,7 +1017,7 @@ describe.concurrent("bun check", () => {
   });
 
   describe("modules", () => {
-    test("a package with types, a package without, and one that is not there", async () => {
+    test("typed, untyped and missing packages", async () => {
       using dir = project({
         "node_modules/typed/package.json": `{ "name": "typed", "types": "./types.d.ts", "main": "./index.js" }`,
         "node_modules/typed/types.d.ts": `export declare function typed(): number;\n`,
@@ -817,7 +1060,7 @@ describe.concurrent("bun check", () => {
       `);
     });
 
-    test("types from @types, and only those that are asked for", async () => {
+    test("loads only the @types packages listed in `types`", async () => {
       using dir = project({
         "tsconfig.json": JSON.stringify({
           compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, types: ["wanted"] },
@@ -833,7 +1076,7 @@ describe.concurrent("bun check", () => {
     });
   });
 
-  describe("what is in a file", () => {
+  describe("language features", () => {
     test("@ts-expect-error, @ts-ignore and @ts-nocheck", async () => {
       using dir = project({
         "a.ts": `// @ts-expect-error\nexport const a: string = 1;\n// @ts-ignore\nexport const b: string = 2;\n// @ts-expect-error\nexport const c: string = "fine";\n`,
@@ -850,7 +1093,7 @@ describe.concurrent("bun check", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("JavaScript with checkJs goes by its JSDoc", async () => {
+    test("checkJs uses JSDoc types", async () => {
       using dir = project({
         "tsconfig.json": JSON.stringify({
           compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, allowJs: true, checkJs: true },
@@ -882,7 +1125,7 @@ describe.concurrent("bun check", () => {
       `);
     });
 
-    test("lines that end in CRLF, tabs, and characters wider than a byte", async () => {
+    test("CRLF line endings, tabs and multi-byte characters", async () => {
       using dir = project({
         "a.ts": `const é = "é";\r\n\tconst 名前: number = é;\r\nconst s = "😀😀"; const n: number = s;\r\nexport { 名前, n };\r\n`,
       });
@@ -945,8 +1188,8 @@ export { n, area, u };
     });
   });
 
-  describe("what TypeScript's own tests do not cover", () => {
-    test("a variable its own initializer refers to through a callback", async () => {
+  describe("cases not covered by TypeScript's test suite", () => {
+    test("a variable referenced in a callback inside its own initializer", async () => {
       using dir = project({
         "a.ts": `
 interface Server<W> { port: number | undefined; data: W }
@@ -954,7 +1197,7 @@ declare function serve<W = undefined>(options: { fetch(request: string): string 
 declare function plain(options: { fetch(request: string): string }): Server<string>;
 declare const untyped: any;
 const server = serve({ fetch() { return \`\${server.port}\`; } });
-// The arguments of the only signature there is, if it is not generic, are not looked at for the type of the variable.
+// With a single non-generic signature, the call arguments are not checked while the type of the variable is being resolved.
 const fine = plain({ fetch() { return \`\${fine.port}\`; } });
 const a = untyped(a);
 const later = untyped(() => later);
@@ -974,7 +1217,7 @@ export {};
       using dir = project({
         "one.d.ts": `declare module "thing" {\n  class Thing {\n    constructor(size: number);\n    one: string;\n  }\n}\n`,
         "two.d.ts": `declare module "thing" {\n  class Thing {\n    constructor(size: number);\n    two: string;\n  }\n}\n`,
-        // One constructor, not two overloads, and what only the second has is not there.
+        // The declarations are not merged: one constructor, not two overloads, and no members from the second version.
         "a.ts": `import { Thing } from "thing";\nnew Thing("big").two;\n`,
       });
       const { stdout } = await check(dir, ["a.ts"]);
@@ -982,6 +1225,288 @@ export {};
         "a.ts(2,11): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
         a.ts(2,18): error TS2339: Property 'two' does not exist on type 'Thing'."
       `);
+    });
+
+    test("instantiating a generic intersection can reduce it to never", async () => {
+      using dir = project({
+        "a.ts": `
+type Narrowed<T, C> = T extends C ? T : C extends T ? C : T & C;
+declare function narrowed<const T0, const T1>(t0: T0, t1: T1): Narrowed<T0, T1>;
+declare function typed<T>(): T;
+declare function id<T>(x: T): T;
+type Eq<L, R> = (<T>() => T extends (L & T) | T ? true : false) extends (<T>() => T extends (R & T) | T ? true : false) ? true : false;
+
+type Direct = { readonly a: "cat" } & { readonly a: "dog" };
+type ViaAlias = Narrowed<{ readonly a: "cat" }, { readonly a: "dog" }>;
+const viaCall = narrowed(typed<{ readonly a: "cat" }>(), typed<{ readonly a: "dog" }>());
+const viaId = id(viaCall);
+
+const p1: 1 = null! as Eq<Direct, never>;
+const p2: 2 = null! as Eq<ViaAlias, never>;
+const p3: 3 = null! as Eq<typeof viaCall, never>;
+const p4: 4 = null! as Eq<typeof viaId, never>;
+const q1: 1 = null! as Direct;
+const q2: 2 = null! as ViaAlias;
+const q3: 3 = viaCall;
+const q4: 4 = viaId;
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(13,7): error TS2322: Type 'true' is not assignable to type '1'.
+        a.ts(14,7): error TS2322: Type 'true' is not assignable to type '2'.
+        a.ts(15,7): error TS2322: Type 'true' is not assignable to type '3'.
+        a.ts(16,7): error TS2322: Type 'true' is not assignable to type '4'."
+      `);
+    });
+
+    test("an intersection with a type parameter is reduced by the constraint of the parameter", async () => {
+      using dir = project({
+        "a.ts": `
+type R<D extends { ok: 1 }> = D;
+// a type parameter whose constraint is an object type
+type A1<D extends { type: 'a' }> = R<D & { type: 'c' }>;
+// .. a union
+type A2<D extends { type: 'a' } | { type: 'b' }> = R<D & { type: 'c' }>;
+// .. an indexed access
+type A3<M extends Record<string, { type: 'a' }>, K extends keyof M> = R<M[K] & { type: 'c' }>;
+// not generic
+type A4 = R<{ type: 'a' } & { type: 'c' }>;
+// generic, and the conflict is between the two that are not
+type A5<D> = R<D & { type: 'a' } & { type: 'c' }>;
+function f1<D extends { type: 'a' }>(x: D & { type: 'c' }) { const p: 1 = x; }
+function f2<D extends { type: 'a' } | { type: 'b' }>(x: D & { type: 'c' }) { const p: 2 = x; }
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toBe("");
+    });
+
+    test("a context-sensitive function inherits type parameters from its contextual signature", async () => {
+      using dir = project({
+        "a.ts": `
+type NodeKind = "a" | "b";
+type T = <kind extends NodeKind>(kind: kind, inner: { k: kind }) => { k: kind } | null;
+declare const k: NodeKind;
+const m1 = ((kind, inner) => ({ ...inner })) satisfies T;
+m1<"a">("a", { k: "a" });
+m1("a", { k: "a" });
+m1(k, { k });
+const r1: 1 = m1("a", { k: "a" });
+const m5 = ((kind, inner) => inner) satisfies T;
+m5(k, { k });
+const m6 = ((kind) => null) satisfies T;
+m6(k);
+declare function id<F>(f: F): F;
+const m7 = id<T>((kind, inner) => inner);
+m7(k, { k });
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`"a.ts(9,7): error TS2322: Type '{ k: "a"; }' is not assignable to type '1'."`);
+    });
+
+    test("constraint of a distributive conditional type over an inferred type parameter", async () => {
+      using dir = project({
+        "a.ts": `
+type Fn = (...args: any[]) => unknown;
+type collect<fn, result> = result & fn extends (...args: infer args) => infer returns
+  ? result extends fn ? never : collect<fn, result & ((...args: args) => returns)> | ((...args: args) => returns)
+  : never;
+type flat<fn, result> = result & fn extends (...args: infer args) => infer returns
+  ? result extends fn ? never : ((...args: args) => returns)
+  : never;
+type one<fn> = fn extends (...args: infer args) => infer returns ? collect<fn, returns> | ((...args: args) => returns) : never;
+
+function b1<fn extends Fn>(a: Parameters<collect<fn, unknown>>) { const x: 1 = a.length; }
+function b2<fn extends Fn>(a: Parameters<flat<fn, unknown>>) { const x: 2 = a.length; }
+function b3<fn extends Fn>(a: Parameters<one<fn>>) { const x: 3 = a.length; }
+function c1<fn extends Fn>(a: collect<fn, unknown>) { const x: 1 = a(); }
+function c2<fn extends Fn>(a: flat<fn, unknown>) { const x: 2 = a(); }
+function c3<fn extends Fn>(a: one<fn>) { const x: 3 = a(); }
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(11,73): error TS2322: Type 'number' is not assignable to type '1'.
+        a.ts(12,70): error TS2322: Type 'number' is not assignable to type '2'.
+        a.ts(13,60): error TS2322: Type 'number' is not assignable to type '3'.
+        a.ts(15,58): error TS2322: Type 'unknown' is not assignable to type '2'.
+        a.ts(16,48): error TS2322: Type 'unknown' is not assignable to type '3'."
+      `);
+    });
+
+    test("constraint of a recursive conditional type", async () => {
+      using dir = project({
+        "a.ts": `
+type Type = { values: string };
+type FS<C extends Record<string, Type>, S> = S extends Type ? FS<C, C[keyof C]> : never;
+type V<T extends Type> = T["values"];
+function a1<C extends Record<string, Type>, P extends C, K extends keyof P>(a: V<FS<C, P[K]>>) { const t: string = a; }
+function a2<C extends Record<string, Type>, P extends C>(a: V<FS<C, P[keyof P]>>) { const t: string = a; }
+function a3<C extends Record<string, Type>>(a: V<FS<C, C[string]>>) { const t: string = a; }
+function a4<C extends Record<string, Type>>(a: V<FS<C, C[keyof C]>>) { const t: string = a; }
+function a5<C extends Record<string, Type>>(a: V<FS<C, Type>>) { const t: string = a; }
+function p1<C extends Record<string, Type>>(a: FS<C, C[keyof C]>["values"]) { const s: string = a; }
+function p4<C extends Record<string, Type>, P extends C>(a: FS<C, P[string]>["values"]) { const s: string = a; }
+function r1<C extends Record<string, Type>>(a: FS<C, C[keyof C]>) { a.values; }
+type Wrapped<T extends Type> = { values: T["values"] };
+type FromObject<Context extends Record<string, Type>, Props extends Context, Shape extends Record<keyof Props, Type> = {
+  [Key in keyof Props]: Wrapped<FS<Context, Props[Key]>>;
+}> = Shape;
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(6,91): error TS2322: Type 'V<FS<C, P[keyof P]>>' is not assignable to type 'string'.
+          Type 'FS<C, P[string | number | symbol]>["values"]' is not assignable to type 'string'.
+            Type 'FS<C, P[string]>["values"] | FS<C, P[number]>["values"] | FS<C, P[symbol]>["values"]' is not assignable to type 'string'.
+              Type 'FS<C, P[string]>["values"]' is not assignable to type 'string'.
+                Type 'FS<C, C[string]>["values"]' is not assignable to type 'string'.
+                  Type 'FS<C, C[keyof C]>["values"]' is not assignable to type 'string'.
+        a.ts(7,77): error TS2322: Type 'V<FS<C, C[string]>>' is not assignable to type 'string'.
+          Type 'FS<C, C[keyof C]>["values"]' is not assignable to type 'string'.
+        a.ts(8,78): error TS2322: Type 'V<FS<C, C[keyof C]>>' is not assignable to type 'string'.
+          Type 'FS<C, C[string | number | symbol]>["values"]' is not assignable to type 'string'.
+        a.ts(9,72): error TS2322: Type 'V<FS<C, C[keyof C]>>' is not assignable to type 'string'.
+          Type 'FS<C, C[string | number | symbol]>["values"]' is not assignable to type 'string'.
+        a.ts(10,48): error TS2536: Type '"values"' cannot be used to index type 'FS<C, C[keyof C]>'.
+        a.ts(10,85): error TS2322: Type 'FS<C, C[keyof C]>["values"]' is not assignable to type 'string'.
+          Type 'FS<C, C[string | number | symbol]>["values"]' is not assignable to type 'string'.
+        a.ts(11,61): error TS2536: Type '"values"' cannot be used to index type 'FS<C, P[string]>'.
+        a.ts(11,97): error TS2322: Type 'FS<C, P[string]>["values"]' is not assignable to type 'string'.
+          Type 'FS<C, C[string]>["values"]' is not assignable to type 'string'.
+            Type 'FS<C, C[keyof C]>["values"]' is not assignable to type 'string'.
+        a.ts(12,71): error TS2339: Property 'values' does not exist on type 'FS<C, C[keyof C]>'."
+      `);
+    });
+
+    test("members of a mapped type requested while they are being resolved", async () => {
+      using dir = project({
+        "a.ts": `
+type Property<T> = T extends Doc ? T : Converted<T>;
+type Converted<T> = T extends Record<string, any> ? { [K in keyof T]: Property<T[K]> } : T;
+type RequireId<T> = T extends { _id?: infer U } ? T & { _id: U } : T & { _id: number };
+
+declare class Schema<Raw = { [key: string]: { schema: number } }, Lean = RequireId<Converted<Raw>>> {
+    lean: Lean;
+}
+
+declare class Doc {
+    schema: Schema;
+}
+
+export declare const first: Schema;
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toBe("");
+    });
+
+    test("the return type of a union call signature is resolved lazily", async () => {
+      using dir = project({
+        "a.ts": `
+class Query<Row> {
+  declare row: Row;
+  where(filter: string): Both<Row | null> {
+    return null!;
+  }
+  limit(n: number): Both<Row> {
+    return null!;
+  }
+  #first(filter: string | undefined) {
+    const scoped = filter === undefined ? this : this.where(filter);
+    return scoped.limit(1).#tagged();
+  }
+  #tagged() {
+    return this;
+  }
+}
+type Both<Row> = Query<Row> & { extra: Row };
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(7,21): error TS2577: Return type annotation circularly references itself.
+        a.ts(10,3): error TS7023: '#first' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions."
+      `);
+    });
+
+    test("`string & {}` keeps literal union members, however the empty type literal is spelled", async () => {
+      using dir = project({
+        "a.ts": `
+type Empty = {};
+declare const kept: "a" | (string & NonNullable<unknown>);
+declare const lost: "a" | (string & Empty);
+export const a: 1 = kept;
+export const b: 1 = lost;
+export const c: 1 = { icon: "gear" } satisfies { icon?: "gear" | (string & NonNullable<unknown>) };
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,14): error TS2322: Type '"a" | (string & {})' is not assignable to type '1'.
+          Type '"a"' is not assignable to type '1'.
+        a.ts(6,14): error TS2322: Type 'string' is not assignable to type '1'.
+        a.ts(7,14): error TS2322: Type '{ icon: "gear"; }' is not assignable to type '1'."
+      `);
+    });
+
+    test("instantiations of one mapped type are ordered by creation in a union", async () => {
+      using dir = project({
+        "a.ts": `
+type Flat<T> = { [K in keyof T]: T[K] } & {};
+export type Early = typeof second;
+declare const first: Flat<{ a: 1 }>;
+declare const second: Flat<{ b: 1 }>;
+export const x: 1 = null! as typeof first | typeof second;
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout.split("\n")[0]).toBe(
+        "a.ts(6,14): error TS2322: Type '{ b: 1; } | { a: 1; }' is not assignable to type '1'.",
+      );
+    });
+
+    test("a parameter annotation that depends on the parameter types of its own function", async () => {
+      using dir = project({
+        "a.ts": `
+function f(a: ReturnType<typeof f>) {
+  return a;
+}
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(2,12): error TS2502: 'a' is referenced directly or indirectly in its own type annotation."`,
+      );
+    });
+
+    test("discriminant narrowing ignores union members whose constraint is never", async () => {
+      using dir = project({
+        "a.ts": `
+type ValueOf<T, K extends keyof T = keyof T> = T[K];
+type Tools = Record<string, { a: string }>;
+type Denied<TOOLS extends Tools> = { type: "denied" } & ValueOf<{ [NAME in keyof TOOLS]: { type: "denied"; name: NAME } }>;
+type Part<TOOLS extends Tools> = { type: "a"; id: string } | { type: "b" } | Denied<TOOLS>;
+export function f<TOOLS extends Tools>(part: Exclude<Part<TOOLS>, { type: "denied" }>) {
+  return part.type === "a" ? part.id : undefined;
+}
+export function g<N extends never>(part: { type: "a"; id: string } | { type: "b" } | N) {
+  return part.type === "a" ? part.id : undefined;
+}
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toBe("");
     });
   });
 
@@ -999,7 +1524,7 @@ export {};
         check(dir),
         check(dir, ["--strict"]),
         check(dir, ["--strict", "--noImplicitAny", "false"]),
-        // Any case, and `=`.
+        // Flag names are case-insensitive and accept `=`.
         check(dir, ["--STRICT=true", "--nouncheckedindexedaccess", "--noImplicitAny=false"]),
       ]);
       expect(plain.stdout).toBe("");
@@ -1010,13 +1535,13 @@ export {};
       expect(indexed.stdout).toMatchInlineSnapshot(`"a.ts(4,22): error TS2532: Object is possibly 'undefined'."`);
     });
 
-    test("a boolean flag does not swallow a file name", async () => {
+    test("a boolean flag does not consume the next argument", async () => {
       using dir = project(files);
       const { stdout } = await check(dir, ["--strict", "a.ts"]);
       expect(stdout).toMatchInlineSnapshot(`"a.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."`);
     });
 
-    test("--noEmit takes a value like any other, and nothing is written whatever it is", async () => {
+    test("--noEmit accepts a value and no files are emitted either way", async () => {
       using dir = project(files);
       const results = await Promise.all([
         check(dir, ["--noEmit"]),
@@ -1030,7 +1555,7 @@ export {};
       expect(existsSync(join(String(dir), "out"))).toBe(false);
     });
 
-    test("lists, and values that are not allowed", async () => {
+    test("list options and invalid values", async () => {
       using dir = project({ ...files, "a.ts": `export const p = new Promise<void>(r => r());\n` });
       const [es5, bad, missing, unknown] = await Promise.all([
         check(dir, ["--lib", "es5"]),
@@ -1056,7 +1581,7 @@ export {};
       expect([bad.exitCode, missing.exitCode, unknown.exitCode]).toEqual([1, 1, 1]);
     });
 
-    test("reach referenced projects, and -b names a project", async () => {
+    test("apply to referenced projects, and -b selects a project", async () => {
       using dir = project({
         "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "lib" }] }),
         "console.d.ts": "",
@@ -1079,8 +1604,8 @@ export {};
     });
   });
 
-  describe("when it cannot start", () => {
-    test("TypeScript's lib files are nowhere to be found", async () => {
+  describe("startup errors", () => {
+    test("TypeScript's lib files are not installed", async () => {
       using dir = project({ "a.ts": `export const a = 1;\n` }, { withTypeScript: false });
       const { stdout, stderr, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(
@@ -1090,7 +1615,7 @@ export {};
       expect(exitCode).toBe(1);
     });
 
-    test("a tsconfig.json that is wrong", async () => {
+    test("invalid tsconfig.json", async () => {
       using dir = project({
         "tsconfig.json": `{ "compilerOptions": { "strict": "yes", "target": "es1", "nonsense": true } }`,
         "a.ts": `export const a = 1;\n`,
@@ -1105,7 +1630,59 @@ export {};
       expect(exitCode).toBe(1);
     });
 
-    test("-p names nothing", async () => {
+    test("compiler options that TypeScript 7 removed are unknown options", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "suppressImplicitAnyIndexErrors": true, "out": "x.js" } }`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "tsconfig.json(1,56): error TS5023: Unknown compiler option 'suppressImplicitAnyIndexErrors'.
+        tsconfig.json(1,96): error TS5023: Unknown compiler option 'out'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("an empty input set is an error", async () => {
+      using dir = tempDir("bun-check", { "README.md": "", "empty/README.md": "" });
+      for (const args of [[], ["empty"]]) {
+        const { stdout, stderr, exitCode } = await check(dir, args);
+        expect(stdout).toBe(`error: Nothing to check: no TypeScript files in '${["<dir>", ...args].join("/")}'`);
+        expect(stderr).toMatchInlineSnapshot(`"Found 1 error, checked 0 files [time]"`);
+        expect(exitCode).toBe(1);
+      }
+      // As for tsc, a tsconfig.json that extends another one may select no files.
+      using empty = project({
+        "base.json": tsconfig,
+        "tsconfig.json": `{ "extends": "./base.json", "files": [], "include": [] }`,
+      });
+      const selectsNothing = await check(empty);
+      expect(selectsNothing.stdout).toBe("");
+      expect(selectsNothing.exitCode).toBe(0);
+    });
+
+    test("missing path arguments are reported before the project is loaded", async () => {
+      // The invalid tsconfig.json and the missing lib files are never read.
+      using dir = project({ "tsconfig.json": `{ "compilerOptions": { "nonsense": true } }` }, { withTypeScript: false });
+      const { stdout, stderr, exitCode } = await check(dir, ["nope.ts", "src/nope"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "error TS6053: File '<dir>/nope.ts' not found.
+        error TS6053: File '<dir>/src/nope' not found."
+      `);
+      expect(stderr).toMatchInlineSnapshot(`"Found 2 errors, checked 0 files [time]"`);
+      expect(exitCode).toBe(1);
+    });
+
+    // The superuser can read every file.
+    const canReadEverything = process.platform === "win32" || process.getuid?.() === 0;
+    test.skipIf(canReadEverything)("a source file that cannot be read is reported", async () => {
+      using dir = project({ "a.ts": `import "./secret";\n`, "secret.ts": `export {};\n` });
+      chmodSync(join(String(dir), "secret.ts"), 0o000);
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`"error TS5083: Cannot read file '<dir>/secret.ts'."`);
+      expect(exitCode).toBe(1);
+    });
+
+    test("-p with a path that does not exist", async () => {
       using dir = project({});
       const { stdout, stderr, exitCode } = await check(dir, ["-p", "nowhere"]);
       expect(stdout + stderr).toMatchInlineSnapshot(
@@ -1114,7 +1691,7 @@ export {};
       expect(exitCode).toBe(1);
     });
 
-    test("a flag it does not know", async () => {
+    test("unknown flag", async () => {
       using dir = project({});
       const { stderr, exitCode } = await check(dir, ["--frobnicate"]);
       expect(stderr).toMatchInlineSnapshot(`
@@ -1134,7 +1711,7 @@ export {};
   });
 });
 
-// Stands in for `@types/bun`, which brings all of `@types/node` with it.
+// A minimal replacement for `@types/bun`, which would pull in all of `@types/node`.
 const bunTypes = {
   "node_modules/@types/bun/package.json": `{ "name": "@types/bun", "version": "1.0.0", "types": "index.d.ts" }`,
   "node_modules/@types/bun/index.d.ts": `declare var Bun: { version: string };\ndeclare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n}\n`,
@@ -1144,8 +1721,8 @@ const withoutTypes = JSON.stringify({
   compilerOptions: { strict: true, lib: ["esnext"], moduleResolution: "bundler", skipLibCheck: true },
 });
 
-describe.concurrent("the types of what Bun provides", () => {
-  test("are included where there is no tsconfig.json", async () => {
+describe.concurrent("@types/bun", () => {
+  test("is included when there is no tsconfig.json", async () => {
     using dir = project(bunTypes);
     rmSync(join(String(dir), "tsconfig.json"));
     const { stdout, exitCode } = await check(dir, ["index.ts"]);
@@ -1153,11 +1730,11 @@ describe.concurrent("the types of what Bun provides", () => {
     expect(exitCode).toBe(0);
   });
 
-  // As `tsc` does since TypeScript 6.0, and as the editor does.
+  // Matches `tsc` since TypeScript 6.0 and the editor.
   test.each([
-    ["says nothing about types", withoutTypes],
-    ["leaves them out of types", tsconfig],
-  ])("are left out where tsconfig.json %s, and the hint says what to add", async (_, config) => {
+    ["has no `types`", withoutTypes],
+    ["has `types` without \"bun\"", tsconfig],
+  ])("is not included when tsconfig.json %s, and the hint explains the fix", async (_, config) => {
     using dir = project({ ...bunTypes, "tsconfig.json": config });
     const { stdout, stderr, exitCode } = await check(dir);
     expect(stdout).toContain("error TS2307: Cannot find module 'bun:test' or its corresponding type declarations.");
@@ -1169,7 +1746,7 @@ describe.concurrent("the types of what Bun provides", () => {
   });
 });
 
-test("TypeScript 7 under an isolated install: the lib files are beside the real package", async () => {
+test("TypeScript 7 with the isolated linker: finds the lib files next to the real package directory", async () => {
   using dir = project({ "index.ts": `export const first: string = [1].at(0);\n` }, { withTypeScript: false });
   const store = join(String(dir), "node_modules", ".bun", "typescript@7.0.0", "node_modules");
   mkdirSync(join(store, "typescript"), { recursive: true });
@@ -1186,7 +1763,43 @@ test("TypeScript 7 under an isolated install: the lib files are beside the real 
 });
 
 describe.concurrent("--check", () => {
-  test("a JavaScript entry point is read for what it imports, whatever allowJs says", async () => {
+  // These draw the same progress line as `bun check`, on a thread of its own, and the process goes on afterwards.
+  describe.skipIf(isWindows || !hasTerminal)("in a terminal", () => {
+    const files = (n: string) => ({
+      "package.json": JSON.stringify({ scripts: { hello: "echo ran 1" } }),
+      "bun-test.d.ts": `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n}\n`,
+      "a.ts": `const n: number = ${n};\nconsole.log("ran", n);\n`,
+      "a.test.ts": `import { test } from "bun:test";\nconst n: number = ${n};\ntest("a", () => void n);\n`,
+    });
+    const commands: [string[], string][] = [
+      [["--check", "a.ts"], "ran 1"],
+      [["run", "--check", "hello"], "ran 1"],
+      [["build", "--check", "a.ts", "--outdir", "out"], "a.js"],
+      [["test", "--check", "a.test.ts"], "1 pass"],
+    ];
+
+    test.each(commands)("bun %j does its job after the check", async (cmd, expected) => {
+      using dir = project(files("1"));
+      const { output, exitCode, signalCode } = await inTerminal(String(dir), cmd);
+      expect(output).toContain("Loading");
+      expect(output).toContain(expected);
+      expect(signalCode).toBeNull();
+      expect(exitCode).toBe(0);
+    });
+
+    test("errors are shown with the source and in color", async () => {
+      using dir = project(files(`"1"`));
+      const { output, hasColors, exitCode, signalCode } = await inTerminal(String(dir), ["--check", "a.ts"]);
+      expect(output).toContain(`1 | const n: number = "1";`);
+      expect(output).toContain("error: TS2322: Type 'string' is not assignable to type 'number'.");
+      expect(output).not.toContain("ran 1");
+      expect(hasColors).toBe(true);
+      expect(signalCode).toBeNull();
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  test("a JavaScript entry point is loaded for its imports regardless of allowJs", async () => {
     using dir = project({
       "good.js": `import { n } from "./n";\nconsole.log("ran", n);\n`,
       "n.ts": `export const n: number = 1;\n`,
@@ -1223,7 +1836,7 @@ describe.concurrent("--check", () => {
     expect(stopped.exitCode).toBe(1);
   });
 
-  test("bun test --help says that there is --check", async () => {
+  test("bun test --help lists --check", async () => {
     using dir = project({});
     const { stdout, stderr } = await run(String(dir), ["test", "--help"]);
     expect(stdout + stderr).toContain("bun test --check");
@@ -1237,7 +1850,7 @@ describe.concurrent("--check", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("bun run --check does not run a file that does not, nor one that imports one", async () => {
+  test("bun run --check does not run a file with type errors, or one that imports such a file", async () => {
     using dir = project({
       "a.ts": `import "./b";\nconsole.log("ran");\n`,
       "b.ts": `export const b: string = 1;\n`,

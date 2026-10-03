@@ -8,7 +8,7 @@
 
 use super::explain::Line;
 use super::explain::NOWHERE;
-use super::relate::{REC_BOTH, Relater, Relation, STATE_NONE, Ternary};
+use super::relate::{REC_BOTH, Relater, Relation, STACK_DEPTH_OVERFLOW, STATE_NONE, Ternary};
 use super::related::Place;
 use super::sink::held;
 use super::*;
@@ -337,6 +337,12 @@ impl<'p> Checker<'p> {
             is_too_deep |= is_own;
             !is_own
         });
+        // "such that we don't attempt the overflowing operation again"
+        if !is_related && !is_too_deep && !is_trial {
+            let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
+            let entry = self.p.relations.get(&mut self.task, &key);
+            is_too_deep = entry.is_some_and(|entry| entry & STACK_DEPTH_OVERFLOW != 0);
+        }
         match () {
             _ if is_too_complex => Err(2859),
             _ if is_too_deep => Err(2321),
@@ -441,7 +447,7 @@ impl<'p> Checker<'p> {
         level: u32,
     ) -> (Vec<Line>, Vec<Reported>) {
         // No node: only the lines are asked for.
-        let nowhere = (self.checking.unwrap_or(FileId(0)), 0, 0);
+        let nowhere = (self.task.file.unwrap_or(FileId(0)), 0, 0);
         match self.relation_diagnostic(source, target, relation, nowhere, head) {
             (_, Some(mut diagnostic)) => {
                 for line in &mut diagnostic.lines {
@@ -460,7 +466,7 @@ impl<'p> Checker<'p> {
     /// `getParameterNameAtPosition`. An element of a rest parameter that has no label goes by the name of the parameter and its
     /// place (`getTupleElementLabel`).
     pub(super) fn parameter_name_at_position(&self, params: &[SigParam], pos: usize) -> Atom {
-        let atoms = &self.files().atoms;
+        let atoms = &self.atoms();
         let numbered = |name: &[u8], index: usize| {
             let mut digits = bun_core::fmt::ItoaBuf::new();
             atoms.intern(&[name, b"_", bun_core::fmt::itoa(&mut digits, index)].concat())
@@ -542,7 +548,7 @@ impl<'p> Checker<'p> {
         match predicate.param {
             Some(index) if index < params.len() => {
                 let name = self.parameter_name_at_position(params, index);
-                text.extend_from_slice(self.files().atoms.bytes(name));
+                text.extend_from_slice(self.atoms().bytes(name));
             }
             Some(_) => {}
             None => text.extend_from_slice(b"this"),
@@ -558,7 +564,7 @@ impl<'p> Checker<'p> {
     pub(super) fn enum_value_text(&self, value: EnumValue) -> String {
         match value {
             EnumValue::String(text) => {
-                let text = self.files().atoms.bytes(text);
+                let text = self.atoms().bytes(text);
                 super::print::to_valid_utf8(super::print::quoted(text, b'"', false))
             }
             EnumValue::Number(bits) => crate::atom::number_to_string(f64::from_bits(bits)),
@@ -587,7 +593,7 @@ impl<'p> Checker<'p> {
     /// `getSuggestedTypeForNonexistentStringLiteralType`
     fn suggested_string_literal_type(&self, source: TypeId, target: TypeId) -> Option<TypeId> {
         let value = |t: TypeId| match *self.data(t) {
-            TypeData::StringLit { value, .. } => Some(self.files().atoms.bytes(value)),
+            TypeData::StringLit { value, .. } => Some(self.atoms().bytes(value)),
             _ => None,
         };
         let types = self.parts(target);
@@ -611,36 +617,40 @@ impl<'p> Checker<'p> {
             return None;
         };
         // `CachedTypeKindEquivalentBaseType`
-        if let Some(known) = self.p.equivalent_base_types.get(&ty) {
+        if let Some(known) = self.p.equivalent_base_types.get(&mut self.task, &ty) {
             return known;
         }
-        if !self.is_non_augmenting_declaration(target) {
-            return self.p.equivalent_base_types.insert(ty, None);
-        }
-        let bases = self.base_types(target);
-        let base = match bases[..] {
-            [mut base] if self.is_declared_as_reference(target, 0) => {
-                let args = self.type_arguments(ty);
-                let params = self.all_type_params_of_symbol(target);
-                if !params.is_empty() && args.len() >= params.len() {
-                    let mapper = self.mapper_from(&params, &args[..params.len()]);
-                    base = self.instantiate(base, mapper);
+        let scope = self.begin_scope();
+        let (base, is_final) = if !self.is_non_augmenting_declaration(target) {
+            (None, true)
+        } else {
+            let bases = self.base_types(target);
+            let base = match bases[..] {
+                [mut base] if self.is_declared_as_reference(target, 0) => {
+                    let args = self.type_arguments(ty);
+                    let params = self.all_type_params_of_symbol(target);
+                    if !params.is_empty() && args.len() >= params.len() {
+                        let mapper = self.mapper_from(&params, &args[..params.len()]);
+                        base = self.instantiate(base, mapper);
+                    }
+                    if args.len() > params.len()
+                        && let Some(&this_argument) = args.last()
+                    {
+                        base = self.type_with_this_argument(base, this_argument);
+                    }
+                    Some(base)
                 }
-                if args.len() > params.len()
-                    && let Some(&this_argument) = args.last()
-                {
-                    base = self.type_with_this_argument(base, this_argument);
-                }
-                Some(base)
-            }
-            _ => None,
+                _ => None,
+            };
+            // `base_types` returns an empty list while that query is in progress on this checker, so `base` can be provisional. It is
+            // final only if it was computed from the cached base types.
+            let cached = self.p.base_types.get(&mut self.task, &target);
+            (base, cached.as_deref() == Some(&bases[..]))
         };
-        // `base_types` returns an empty list while that query is in progress on this checker, so `base` can be provisional. Cache it only if
-        // it was computed from the cached base types: another thread can publish them after the call above.
-        if self.p.base_types.get(&target).as_deref() != Some(&bases[..]) {
-            return base;
+        match self.end_scope_as(scope, !is_final) {
+            Ok(stored) => (self.p.equivalent_base_types).insert(&mut self.task, ty, base, stored),
+            Err(_) => base,
         }
-        self.p.equivalent_base_types.insert(ty, base)
     }
 
     /// `reportErrorResults`
@@ -681,7 +691,7 @@ impl<'p> Checker<'p> {
             self.report_error(r, 2696, &[]);
         } else if is_jsx && self.is_intersection(target) {
             if let TypeData::Intersection(parts) = self.data(target)
-                && let Some(file) = self.checking
+                && let Some(file) = self.task.file
                 && let (Some(a), Some(b)) = (
                     self.jsx_type(file, known::IntrinsicAttributes),
                     self.jsx_type(file, known::IntrinsicClassAttributes),
@@ -725,13 +735,19 @@ impl<'p> Checker<'p> {
         let copy = self.cloned_type_param(declared.0, declared.1, around);
         let to_copy = self.mapper_from(&[source], &[copy]);
         // A circle the copy is in says nothing about what is being worked out around.
-        let cycles = self.cycles;
+        let cycles = (self.cycles, self.cycle_at);
         // `getIntersectionTypeEx` asks what the copy in `T & {}` extends, which is nothing yet. That answer is kept, there as here.
+        let scope = self.begin_scope();
         let constraint = self.instantiate(target, to_copy);
-        self.p.type_param_constraints.insert(copy, Some(constraint));
-        self.base_constraint(copy);
-        self.cycles = cycles;
-        self.p.circular_constraints.get(&copy).is_none()
+        if let Ok(stored) = self.end_scope_as(scope, false) {
+            let constraint = Some(constraint);
+            self.p
+                .type_param_constraints
+                .insert(&mut self.task, copy, constraint, stored);
+        }
+        let may_extend = self.has_non_circular_base_constraint(copy);
+        (self.cycles, self.cycle_at) = cycles;
+        may_extend
     }
 
     /// `getErrorRangeForNode` of `symbol.Declarations[0]` of the type parameter `tp` of `file`: all of the declaration, from `const`,

@@ -8,10 +8,11 @@ use crate::sema::ts_syntax as ts;
 use bun_ast::Expr;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{
-    Alias, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, Func, IdList, Interface, Keyword,
-    Mapped, Member, MemberId, MemberKind, Param, ParamId, PatElem, PatElemId, PatId, PatKind,
-    PatProp, PatPropId, PropKey, ResolutionMode, Span, SpecifierKind, SpecifierUse, StmtId,
-    StmtKind, TextRange, TupleElem, TypeNodeId, TypeNodeKind, TypeParam, TypeParamId,
+    Alias, Chain, Diagnostic, DiagnosticKind, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, Func,
+    IdList, Interface, Keyword, Mapped, Member, MemberId, MemberKind, Param, ParamId, PatElem,
+    PatElemId, PatId, PatKind, PatProp, PatPropId, PropKey, ResolutionMode, Span, SpecifierKind,
+    SpecifierUse, StmtId, StmtKind, TextRange, TupleElem, TypeNodeId, TypeNodeKind, TypeParam,
+    TypeParamId,
 };
 
 use super::builder::Builder;
@@ -76,7 +77,8 @@ impl Builder<'_> {
                 let name = label.map_or(Atom::NONE, |label| self.identifier(&label, pos(loc)));
                 if is_rest && is_optional && label.is_some() {
                     // `checkNamedTupleMember`: A tuple member cannot be both optional and rest.
-                    self.file.error(pos(loc), pos(end), 5085);
+                    self.file
+                        .error(DiagnosticKind::Grammar, pos(loc), pos(end), 5085);
                     // `getTupleElementFlags`, `getTypeFromNamedTupleTypeNode`: it is optional.
                     is_rest = false;
                     ty = self.rest_element_type(ty);
@@ -122,9 +124,10 @@ impl Builder<'_> {
             // a property, the whole of a signature.
             match members.iter().next().map(|first| self.file[first]) {
                 Some(first) if first.kind != MemberKind::Property => {
-                    self.file.error(pos(loc), first.loc.end, 7061);
+                    self.file
+                        .error(DiagnosticKind::Grammar, pos(loc), first.loc.end, 7061);
                 }
-                _ => self.file.early_errors.push((pos(loc), 7061)),
+                _ => self.file.error(DiagnosticKind::Grammar, pos(loc), 0, 7061),
             }
         }
         TypeNodeKind::Mapped(self.file.add_mapped(Mapped {
@@ -166,7 +169,7 @@ impl Builder<'_> {
         // kept in `args` of a node without a specifier. The type arguments are never looked at.
         if argument.is_some() {
             let bun_sema::hir::TypeNode { pos, end, .. } = self.file[argument];
-            self.file.error(pos, end, 1141);
+            self.file.error(DiagnosticKind::Checker, pos, end, 1141);
             return TypeNodeKind::Import {
                 spec: Atom::NONE,
                 name: Span::EMPTY,
@@ -184,7 +187,7 @@ impl Builder<'_> {
         });
         if let Some(loc) = assert_keyword_loc {
             // Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
-            self.file.early_errors.push((pos(loc), 2880));
+            self.file.error(DiagnosticKind::Parse, pos(loc), 0, 2880);
         }
         TypeNodeKind::Import {
             spec,
@@ -198,7 +201,7 @@ impl Builder<'_> {
     /// `checkJSDocTypeIsInJsFile`
     pub(crate) fn check_jsdoc_type_is_in_js_file(&mut self, at: u32, code: u32) {
         if !self.is_js {
-            self.file.early_errors.push((at, code));
+            self.file.error(DiagnosticKind::Grammar, at, 0, code);
         }
     }
 
@@ -442,7 +445,8 @@ impl Builder<'_> {
 
     pub(crate) fn add_signature_body(&mut self, func: FnId, body: ts::FunctionBody) {
         // `checkGrammarAccessor`: An implementation cannot be declared in ambient contexts.
-        self.file.error(pos(body.loc), pos(body.end), 1183);
+        self.file
+            .error(DiagnosticKind::Grammar, pos(body.loc), pos(body.end), 1183);
         self.pending.push(PendingPart::FunctionBody(func, body));
     }
 
@@ -478,13 +482,13 @@ impl Builder<'_> {
             members,
         } = self.ts[id];
         for (loc, code) in heritage_errors.into_iter().flatten() {
-            match code {
-                // Where the keyword ends. Nothing is said of a clause after the first.
-                1097 => {
-                    (self.file).error_about(self::pos(loc), self::pos(loc), code, &[b"extends"])
-                }
-                _ => self.file.early_errors.push((self::pos(loc), code)),
-            }
+            let (at, args): (_, &[&[u8]]) = match code {
+                // An empty range at the end of the keyword. Only the first clause is checked.
+                1097 => ((self::pos(loc), self::pos(loc)), &[b"extends"]),
+                _ => ((self::pos(loc), 0), &[]),
+            };
+            let diagnostic = Diagnostic::new(DiagnosticKind::Grammar, at, code, args);
+            self.file.diagnostics.push(diagnostic);
         }
         let interface = self.file.add_interface(Interface {
             name: self.identifier(&name.text, self::pos(name.loc)),
@@ -576,13 +580,15 @@ impl Builder<'_> {
         for (at, code) in index_signature_errors.into_iter().flatten() {
             match code {
                 // Without a parameter it is said of the signature.
-                1096 if at == pos(start) => self.file.error(at, pos(end), code),
-                _ => self.file.early_errors.push((at, code)),
+                1096 if at == pos(start) => {
+                    self.file.error(DiagnosticKind::Grammar, at, pos(end), code)
+                }
+                _ => self.file.error(DiagnosticKind::Grammar, at, 0, code),
             }
         }
         // `checkVariableLikeDeclaration`: said whatever else is wrong with the file.
         if kind == MemberKind::Property && matches!(key, ts::PropertyKey::BigInt) {
-            self.file.checker_errors.push((pos(loc), 1539));
+            self.file.error(DiagnosticKind::Checker, pos(loc), 0, 1539);
         }
         let is_number = matches!(key, ts::PropertyKey::Number(_));
         let mut key = self.key(key);
@@ -756,6 +762,7 @@ impl Builder<'_> {
                 TypeNodeKind::Array(ty)
                 | TypeNodeKind::Keyof(ty)
                 | TypeNodeKind::Readonly(ty)
+                | TypeNodeKind::JSDoc { ty, .. }
                 | TypeNodeKind::Predicate { ty, .. } => id!(ty, types),
                 TypeNodeKind::Tuple(elements) => run!(elements, tuple_elems),
                 TypeNodeKind::Fn(signature) => id!(signature, fns),

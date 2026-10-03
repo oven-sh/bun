@@ -177,7 +177,7 @@ impl Checker<'_> {
             FnOwner::Member(m) => self.has_grammar_error_in_modifiers(file, m),
             // Those of a member of an object literal are no list yet: the parser objects to them.
             _ => {
-                !hir.early_errors.is_empty()
+                !hir.diagnostics.is_empty()
                     && !has_parse_diagnostics(hir)
                     && (hir[func].name.is_some()
                         || matches!(
@@ -903,27 +903,30 @@ fn is_enum_like(c: &mut Checker<'_>, ty: TypeId) -> bool {
 /// modifiers and keywords in between.
 fn has_modifier_error(hir: &File, name: u32) -> bool {
     let text = &hir.text[..];
-    hir.early_errors.iter().any(|&(at, _)| {
-        let mut i = at as usize;
-        if at >= name {
-            return false;
-        }
-        loop {
-            i = skip_trivia(text, i);
-            if i >= name as usize {
-                return i == name as usize;
-            }
-            if text.get(i) == Some(&b'*') {
-                i += 1;
-                continue;
-            }
-            let word = word_at(text, i);
-            if !MODIFIERS_AND_KEYWORDS.contains(word) {
+    let diagnostics = hir.diagnostics.iter();
+    diagnostics
+        .filter(|d| d.kind == DiagnosticKind::Grammar)
+        .any(|&Diagnostic { start: at, .. }| {
+            let mut i = at as usize;
+            if at >= name {
                 return false;
             }
-            i += word.len();
-        }
-    })
+            loop {
+                i = skip_trivia(text, i);
+                if i >= name as usize {
+                    return i == name as usize;
+                }
+                if text.get(i) == Some(&b'*') {
+                    i += 1;
+                    continue;
+                }
+                let word = word_at(text, i);
+                if !MODIFIERS_AND_KEYWORDS.contains(word) {
+                    return false;
+                }
+                i += word.len();
+            }
+        })
 }
 
 bun_core::comptime_string_set! {

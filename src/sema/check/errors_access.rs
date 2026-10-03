@@ -193,7 +193,7 @@ impl Checker<'_> {
 
     /// The name of a property whose declaration cannot be read: a `#x` as it is written, `[Symbol.iterator]` for what a symbol names.
     fn name_of_unread_property(&self, name: Atom) -> String {
-        let bytes = self.files().atoms.bytes(name);
+        let bytes = self.atoms().bytes(name);
         let Some(symbol) = bytes.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) else {
             return String::from_utf8_lossy(as_written(bytes)).into_owned();
         };
@@ -493,7 +493,7 @@ impl Checker<'_> {
                 };
                 if variable == Some(symbol) {
                     // `hasNumericPropertyNames`: the one index signature it has is for numbers.
-                    let over = self.type_of_expr(file, expr);
+                    let over = self.get_type_of_expression(file, expr);
                     let over = self.reduced_apparent_type(over);
                     if matches!(self.index_signatures_of(over)[..], [(TypeId::NUMBER, _)]) {
                         return true;
@@ -531,7 +531,7 @@ impl Checker<'_> {
         access: Option<(FileId, ExprId)>,
         closest: bool,
     ) -> Option<Atom> {
-        let text = as_written(self.files().atoms.bytes(name));
+        let text = as_written(self.atoms().bytes(name));
         let access = access.and_then(|(file, e)| match self.hir(file)[e].kind {
             ExprKind::Dot { obj, chain, .. } => Some((file, e, obj, chain)),
             _ => None,
@@ -545,7 +545,7 @@ impl Checker<'_> {
                 break;
             };
             for prop in &members.shape().props {
-                let candidate = as_written(self.files().atoms.bytes(prop.name));
+                let candidate = as_written(self.atoms().bytes(prop.name));
                 if candidate.starts_with(crate::atom::SYMBOL_NAME_PREFIX)
                     || !is_close(text, candidate)
                     || self.is_union(object)
@@ -682,8 +682,7 @@ impl Checker<'_> {
     /// `getSuggestionForNonexistentIndexSignature`: it has a `get`, or a `set`, that takes the key.
     fn has_accessor_method_for(&mut self, object: TypeId, key: TypeId, is_written: bool) -> bool {
         let Some(name) = self
-            .files()
-            .atoms
+            .atoms()
             .lookup(if is_written { b"set" } else { b"get" })
         else {
             return false;
@@ -897,7 +896,7 @@ impl Checker<'_> {
             && contained.iter().all(|&m| match self.data(m) {
                 // A class expression need not have a name.
                 TypeData::Ref { target, .. } if self.files().symbol(*target).name.is_some() => {
-                    let name = self.files().atoms.bytes(self.files().symbol(*target).name);
+                    let name = self.atoms().bytes(self.files().symbol(*target).name);
                     matches!(name, b"EventTarget" | b"Node" | b"Element")
                         || name.starts_with(b"HTML") && name.ends_with(b"Element")
                 }
@@ -945,8 +944,8 @@ impl Checker<'_> {
         if container.is_none() {
             return None;
         }
-        let container = self.files().atoms.text(container);
-        let missing = self.files().atoms.text(name);
+        let container = self.atoms().text(container);
+        let missing = self.atoms().text(name);
         let (_, features) = LIBRARY_FEATURES.iter().find(|(ty, _)| *ty == container)?;
         features
             .iter()
@@ -1028,7 +1027,7 @@ impl Checker<'_> {
                 .all(|&p| self.class_of_private_property(p, name) == Some(first))
                 .then_some(first);
         }
-        let atoms = &self.files().atoms;
+        let atoms = &self.atoms();
         let written = as_written(atoms.bytes(name));
         let members = self.members(ty)?;
         for prop in &members.shape().props {
@@ -1079,7 +1078,7 @@ impl Checker<'_> {
                 .any(|&class| class == type_class)
         {
             // Each class has a name of its own for what is written alike.
-            let atoms = &self.files().atoms;
+            let atoms = &self.atoms();
             let written = as_written(atoms.bytes(name));
             let meant = hir[type_class].members.iter().find(|&m| {
                 matches!(hir[m].key, PropKey::Private(key) if as_written(atoms.bytes(key)) == written)

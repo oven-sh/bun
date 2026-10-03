@@ -98,8 +98,7 @@ impl Checker<'_> {
             text: &hir.text,
             is_module: module.is_module(),
             // `tryParseImportAttributes`, `parseImportType`: `assert` where `with` belongs is an error of the parser's.
-            grammar: !has_parse_diagnostics(hir)
-                && !hir.early_errors.iter().any(|&(_, code)| code == 2880),
+            grammar: !has_parse_diagnostics(hir) && !hir.diagnostics.iter().any(|d| d.code == 2880),
             is_js: hir.is_js,
             is_verbatim,
             verbatim_commonjs: is_verbatim && self.xm_emits_commonjs(file),
@@ -166,7 +165,12 @@ impl Checker<'_> {
             }
             // Ensures that the flow of `e` has been walked. The type is cached if an earlier pass asked for it.
             self.type_of_expr(file, e);
-            if self.p.flows_too_deep.len() == 0 || self.p.flows_too_deep.get(&(file, e)).is_none() {
+            if self
+                .p
+                .flows_too_deep
+                .get(&mut self.task, &(file, e))
+                .is_none()
+            {
                 continue;
             }
             let block = self.function_or_module_block_of(file, e);
@@ -368,7 +372,7 @@ impl Checker<'_> {
         } else if !is_at_top {
             self.error_at((cx.file, name_pos, 0), 2435, &[]);
         } else if let ModuleName::String(name) = module.name
-            && is_relative(files.atoms.bytes(name))
+            && is_relative(self.atoms().bytes(name))
         {
             self.error_at((cx.file, name_pos, 0), 2436, &[]);
         }
@@ -385,7 +389,7 @@ impl Checker<'_> {
         around: Around,
     ) -> bool {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
-        let text = files.atoms.bytes(name);
+        let text = self.atoms().bytes(name);
         // `collectModuleReferences`: whether it is one of `ModuleAugmentations` at all.
         let is_collected = if around.module.is_none() {
             around.is_ambient || hir[m].flags.contains(Flags::AMBIENT)
@@ -522,7 +526,7 @@ impl Checker<'_> {
                 return false;
             }
             // `isTopLevelInExternalModuleAugmentation`: there it has been said that the statement has no business being there.
-            if !around.is_augmentation && is_relative(self.files().atoms.bytes(spec)) {
+            if !around.is_augmentation && is_relative(self.atoms().bytes(spec)) {
                 self.error_at((cx.file, start, self.end_of_stmt(cx.file, s)), 2439, &[]);
                 return false;
             }
@@ -810,10 +814,10 @@ impl Checker<'_> {
                     .xm_get_import_attributes(cx.file, hir[s].loc)
                     .is_some_and(|(.., attributes)| {
                         attributes.iter().map(|attribute| hir[attribute]).any(|it| {
-                            it.key.name().map(|name| files.atoms.bytes(name)) == Some(b"type")
+                            it.key.name().map(|name| self.atoms().bytes(name)) == Some(b"type")
                                 && self
                                     .xm_string_literal_like(cx.file, it.value)
-                                    .is_some_and(|(value, _)| files.atoms.bytes(value) == b"json")
+                                    .is_some_and(|(value, _)| self.atoms().bytes(value) == b"json")
                         })
                     })
             {
@@ -1262,8 +1266,7 @@ impl Checker<'_> {
         );
         // `getGlobalImportAttributesTypeChecked` returns `emptyObjectType` if there is no such interface, and the check is skipped.
         if let Some(sym) = self
-            .files()
-            .atoms
+            .atoms()
             .lookup(b"ImportAttributes")
             .and_then(|name| self.global_type_of_arity(name, 0))
             && let Some(source) = self.get_type_from_import_attributes(cx.file, object)
@@ -1331,13 +1334,13 @@ impl Checker<'_> {
         if !matches!(hir.text.get(only.pos as usize), Some(b'"' | b'\'')) {
             return false;
         }
-        if only.key.name().map(|name| self.files().atoms.bytes(name)) != Some(b"resolution-mode") {
+        if only.key.name().map(|name| self.atoms().bytes(name)) != Some(b"resolution-mode") {
             return report(self, (file, only.pos, 0), 1463);
         }
         let Some((value, _)) = self.xm_string_literal_like(file, only.value) else {
             return false;
         };
-        matches!(self.files().atoms.bytes(value), b"import" | b"require")
+        matches!(self.atoms().bytes(value), b"import" | b"require")
             || report(self, (file, self.start_of(file, only.value), 0), 1453)
     }
 

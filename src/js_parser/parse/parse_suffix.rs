@@ -1171,7 +1171,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED
             // `tryParseTypeArgumentsInExpression`
             && !p.lexer.is_javascript_file()
-            && p.try_skip_type_script_type_arguments_with_backtracking()
+            && p.try_skip_type_script_type_arguments_with_backtracking()?
         {
             *optional_chain = Self::sfx_chain_after_type_arguments(p, old_optional_chain);
             // `parseSuperExpression`: type arguments after `super` are objected to from where the keyword ends. Not after what `new`
@@ -1283,7 +1283,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let less_than = p.lexer.loc();
         if Self::IS_TYPESCRIPT_ENABLED
             && !p.lexer.is_javascript_file()
-            && p.try_skip_type_script_type_arguments_with_backtracking()
+            && p.try_skip_type_script_type_arguments_with_backtracking()?
         {
             *optional_chain = Self::sfx_chain_after_type_arguments(p, old_optional_chain);
             p.note_type_arguments(left, less_than);

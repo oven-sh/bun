@@ -15,7 +15,7 @@ use crate::program::FileId;
 impl Checker<'_> {
     /// Whether nothing is being worked out: what is asked now is asked from outside.
     #[inline]
-    fn is_asked_from_outside(&self) -> bool {
+    pub(super) fn is_asked_from_outside(&self) -> bool {
         self.stack.is_empty() && self.contextual.is_empty()
     }
 

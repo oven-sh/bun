@@ -36,7 +36,7 @@ impl Checker<'_> {
         if self.files().module(place.0).is_lib {
             return None;
         }
-        let property_name = if self.files().atoms.is_symbol_name(name) {
+        let property_name = if self.atoms().is_symbol_name(name) {
             let key = self.key_type_of_name(name)?;
             self.type_to_string(key)
         } else {

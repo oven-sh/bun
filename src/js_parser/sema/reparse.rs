@@ -158,13 +158,11 @@ impl<'p, 'a> Lower<'p, 'a> {
         for (doc, &is_attached) in self.jsdoc.list.iter().zip(&self.jsdoc_is_attached) {
             file.jsdoc_comments.push((doc.start, doc.end));
             if is_attached {
-                file.jsdoc_errors.extend_from_slice(&doc.errors);
-                if !doc.error_arguments.is_empty() {
-                    file.error_arguments.extend_from_slice(&doc.error_arguments);
-                }
-                if !doc.error_ends.is_empty() {
-                    file.error_ends.extend_from_slice(&doc.error_ends);
-                }
+                let parse_errors = doc
+                    .diagnostics
+                    .iter()
+                    .filter(|d| d.kind == DiagnosticKind::JsDoc);
+                file.diagnostics.extend(parse_errors.cloned());
             }
         }
         file.jsdoc_types.sort_unstable_by_key(|t| t.0);
@@ -330,7 +328,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             } else {
                 name.start
             };
-            self.b.file.early_errors.push((at, 1003));
+            self.b.file.error(DiagnosticKind::Parse, at, 0, 1003);
         }
     }
 
@@ -341,11 +339,17 @@ impl<'p, 'a> Lower<'p, 'a> {
         let list = &self.jsdoc.list;
         let after = list.partition_point(|doc| doc.start <= start);
         if let Some(doc) = after.checked_sub(1).map(|index| &list[index]) {
-            self.b.file.jsdoc_errors.extend(
-                doc.checker_errors
-                    .iter()
-                    .filter(|error| (start..end).contains(&error.0)),
-            );
+            let checker_errors = doc
+                .diagnostics
+                .iter()
+                .filter(|d| d.kind != DiagnosticKind::JsDoc && (start..end).contains(&d.start));
+            self.b
+                .file
+                .diagnostics
+                .extend(checker_errors.cloned().map(|d| Diagnostic {
+                    kind: DiagnosticKind::JsDoc,
+                    ..d
+                }));
         }
     }
 
@@ -852,7 +856,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                         // `checkGrammarConstructorTypeParameters`: the list starts with its first tag.
                         if self.b.file[func].kind == FnKind::Constructor && !type_params.is_empty()
                         {
-                            self.b.file.error(tag.pos, tag.end, 1092);
+                            self.b
+                                .file
+                                .error(DiagnosticKind::Grammar, tag.pos, tag.end, 1092);
                         }
                     }
                 } else if let Host::Class(class) = *host
@@ -887,13 +893,17 @@ impl<'p, 'a> Lower<'p, 'a> {
                         ..
                     } = self.b.file[func];
                     if self.b.file[param].flags.contains(Flags::REST) {
-                        self.b.file.error(tag.pos, tag.end, 1047);
+                        self.b
+                            .file
+                            .error(DiagnosticKind::Grammar, tag.pos, tag.end, 1047);
                     } else if kind == FnKind::Setter
                         && type_params.is_empty()
                         && params.len() == 1
                         && ret.is_none()
                     {
-                        self.b.file.error(tag.pos, tag.end, 1051);
+                        self.b
+                            .file
+                            .error(DiagnosticKind::Grammar, tag.pos, tag.end, 1051);
                     }
                 }
             }
@@ -924,10 +934,11 @@ impl<'p, 'a> Lower<'p, 'a> {
                         FnKind::Getter | FnKind::Setter => Some(2784),
                         _ => None,
                     };
-                    self.b
-                        .file
-                        .checker_errors
-                        .extend(code.map(|code| (tag.name_pos, code)));
+                    if let Some(code) = code {
+                        self.b
+                            .file
+                            .error(DiagnosticKind::Checker, tag.name_pos, 0, code);
+                    }
                 }
             }
             TagKind::Return(Some(ty)) => {
@@ -1025,7 +1036,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             && target != self.name_atom(source)
         {
             let names = [tag_name, source.text.slice(), self.b.atoms.bytes(target)];
-            (self.b.file).error_about(source.start, source.end, 8023, &names);
+            let at = (source.start, source.end);
+            let diagnostic = Diagnostic::new(DiagnosticKind::Grammar, at, 8023, &names);
+            self.b.file.diagnostics.push(diagnostic);
         }
         // `HasSamePropertyAccessName`
         let is_same = is_entity_name
@@ -1343,9 +1356,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             } else {
                 &[&whole]
             };
-            let (start, end) = (name[0].start, name[name.len() - 1].end);
-            self.b.file.jsdoc_param_errors.push((func, start, code));
-            self.b.file.explain_error(start, end, code, args);
+            let at = (name[0].start, name[name.len() - 1].end);
+            let diagnostic = Diagnostic::new(DiagnosticKind::Checker, at, code, args);
+            self.b.file.jsdoc_param_errors.push((func, diagnostic));
         }
     }
 

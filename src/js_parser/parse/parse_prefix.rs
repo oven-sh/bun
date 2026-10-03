@@ -60,7 +60,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && !p.lexer.is_javascript_file()
         {
             let less_than = p.lexer.loc();
-            if p.try_skip_type_script_type_arguments_with_backtracking() {
+            if p.try_skip_type_script_type_arguments_with_backtracking()? {
                 p.lexer
                     .ts_error(p.lexer.range_from(super_range.end()), 2754);
                 // A template drops the type arguments.
@@ -978,7 +978,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.lexer.identifier != b"target" {
                     let name = p.lexer.range();
                     let named = [p.lexer.raw(), b"new", b"target"].join(&0);
-                    p.lexer.ts_error_about(name, 17012, &named);
+                    p.lexer.ts_grammar_error_about(name, 17012, &named);
                     other_name = Some(p.new_expr(E::EString::init(p.lexer.identifier), name.loc));
                 }
             }
@@ -1028,7 +1028,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Skip over TypeScript type arguments here if there are any
             if p.lexer.token == T::TLessThan
                 && !p.lexer.is_javascript_file()
-                && p.try_skip_type_script_type_arguments_with_backtracking()
+                && p.try_skip_type_script_type_arguments_with_backtracking()?
             {
                 let more = p.kept_type_arguments();
                 type_arguments = type_arguments.or(more);
@@ -1411,7 +1411,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let skipped = if only_a_cast {
                 SkipTypeParameterResult::DidNotSkipAnything
             } else {
-                p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking()
+                p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking()?
             };
             match skipped {
                 SkipTypeParameterResult::DidNotSkipAnything => {}

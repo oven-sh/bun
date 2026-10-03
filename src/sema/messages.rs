@@ -1148,6 +1148,7 @@ static MESSAGES: &[(u32, Category, &str)] = &[
     (6266, E, "Option '{0}' can only be specified on command line."),
     (6278, M, "There are types at '{0}', but this result could not be resolved when respecting package.json \"exports\". The '{1}' library may need to update its package.json or typings."),
     (6304, E, "Composite projects may not disable declaration emit."),
+    (6305, E, "Output file '{0}' has not been built from source file '{1}'."),
     (6306, E, "Referenced project '{0}' must have setting \"composite\": true."),
     (6307, E, "File '{0}' is not listed within the file list of project '{1}'. Projects must list all files or use an 'include' pattern."),
     (6310, E, "Referenced project '{0}' may not disable emit."),

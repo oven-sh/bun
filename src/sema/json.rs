@@ -3,7 +3,8 @@
 use crate::atom::Interner;
 use crate::check::spans::Spans;
 use crate::hir::{
-    ExprId, ExprKind, File, PropId, PropKey, PropKind, StmtKind, UnOp, is_parenthesized, start_of,
+    Diagnostic, DiagnosticKind, ExprId, ExprKind, File, PropId, PropKey, PropKind, StmtKind, UnOp,
+    is_parenthesized, start_of,
 };
 use crate::resolve::{Host, Options};
 
@@ -275,9 +276,10 @@ pub fn validate_json(hir: &mut File, text: &[u8]) {
         validate_json_value(Spans { hir, text }, root, &mut refused);
     }
     hir.has_parse_diagnostics |= !refused.is_empty();
-    hir.early_errors
-        .extend(refused.iter().map(|&(start, code, _)| (start, code)));
-    hir.error_ends.extend(refused);
+    hir.diagnostics
+        .extend(refused.iter().map(|&(start, code, end)| {
+            Diagnostic::new(DiagnosticKind::Parse, (start, end), code, &[])
+        }));
 }
 
 /// `TsConfigSourceFile`
@@ -303,27 +305,18 @@ impl TsConfigSourceFile {
         Some(TsConfigSourceFile { hir, atoms, root })
     }
 
-    /// `SourceFile.Diagnostics`: the code, what goes into the message, from where to where.
+    /// `SourceFile.Diagnostics`: the code, the message arguments, the start and the end.
     pub fn diagnostics(&self) -> impl Iterator<Item = (u32, Vec<Vec<u8>>, u32, u32)> {
-        let hir = &self.hir;
-        let is_the_parsers = |e: &&(u32, u32)| {
-            crate::check::errors_js::SYNTACTIC_ERRORS
-                .binary_search(&e.1)
-                .is_ok()
-        };
-        let errors = hir.early_errors.iter().filter(is_the_parsers);
-        errors.map(|&(start, code)| {
-            let mut ends = hir.error_ends.iter();
-            let end = ends.find(|e| e.0 == start && e.1 == code);
-            let mut named = hir.error_arguments.iter();
-            let named = named.find(|named| (named.0, named.1) == (start, code));
-            let args = named.map(|named| named.2.iter().map(|arg| arg.to_vec()).collect());
-            (
-                code,
-                args.unwrap_or_default(),
-                start,
-                end.map_or(start, |e| e.2),
-            )
+        let diagnostics = self.hir.diagnostics.iter();
+        let parse_errors = diagnostics.filter(|d| d.kind == DiagnosticKind::Parse);
+        parse_errors.map(|d| {
+            let args = d.args.iter().map(|arg| arg.to_vec()).collect();
+            let end = if d.end == Diagnostic::NO_LENGTH {
+                0
+            } else {
+                d.end
+            };
+            (d.code, args, d.start, end.max(d.start))
         })
     }
 

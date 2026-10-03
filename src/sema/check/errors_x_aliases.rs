@@ -8,16 +8,17 @@
 //! 7.0.2's checker.go, `getSourceFileFromReference` of its fileloader.go, `getBindAndCheckDiagnosticsWithChecker` and
 //! `GetIncludeProcessorDiagnostics` of its program.go and `processCommentDirective` of its scanner.go.
 //!
-//! `check_x_comment_directives` is an entry of its own: it goes by what all the others have said, so it comes after them.
+//! Comment directives: `Directives` tells which directive suppresses a diagnostic, `expected_errors` makes the TS2578 of each
+//! `@ts-expect-error`, and `Program::finish_file` drops those whose directive was used.
 
 use super::explain::NOWHERE;
-use super::sink::held;
+use super::sink::{NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, MemberOwner, Parent, PatParent, SymbolId};
 use crate::program::TypeOnlyDeclaration;
 use crate::resolve::{ModuleKind, is_declaration_file_name, join, path_is_relative};
 use crate::verify::relative_from_file;
-use bstr::ByteSlice;
+use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 
@@ -41,8 +42,66 @@ pub(super) struct SpecifierSite {
     pub(super) is_not_validated: bool,
 }
 
-/// `directivesByLine`: (line, start of the directive, is `@ts-expect-error`, is used).
-type DirectivesByLine = Vec<(usize, u32, bool, bool)>;
+/// `directivesByLine` of a file that has comment directives.
+struct DirectivesOfFile {
+    line_starts: Vec<u32>,
+    /// (line, start of the directive, is `@ts-expect-error`). One for a line: the last in a line is the one that counts.
+    by_line: Vec<(usize, u32, bool)>,
+}
+
+impl DirectivesOfFile {
+    fn new(hir: &hir::File) -> Option<DirectivesOfFile> {
+        if hir.comment_directives.is_empty() {
+            return None;
+        }
+        let line_starts = compute_ecma_line_starts(&hir.text);
+        let mut by_line: Vec<(usize, u32, bool)> = Vec::new();
+        for &CommentDirective { start, kind, .. } in &hir.comment_directives {
+            let line = line_starts.partition_point(|&line_start| line_start <= start) - 1;
+            if by_line.last().is_some_and(|last| last.0 == line) {
+                by_line.pop();
+            }
+            by_line.push((line, start, kind == CommentDirectiveKind::ExpectError));
+        }
+        Some(DirectivesOfFile {
+            line_starts,
+            by_line,
+        })
+    }
+
+    /// `getDiagnosticsWithPrecedingDirectives`: where the directive starts that suppresses a diagnostic at `start`.
+    fn preceding(&self, text: &[u8], start: u32) -> u32 {
+        let mut line = self
+            .line_starts
+            .partition_point(|&line_start| line_start <= start)
+            - 1;
+        while line > 0 {
+            line -= 1;
+            if let Ok(i) = (self.by_line).binary_search_by_key(&line, |directive| directive.0) {
+                return self.by_line[i].1;
+            }
+            if !is_comment_or_blank_line(text, self.line_starts[line] as usize) {
+                break;
+            }
+        }
+        NO_DIRECTIVE
+    }
+}
+
+/// `DirectivesOfFile` of the files in which a list of diagnostics is located, each made once.
+#[derive(Default)]
+pub(super) struct Directives(FxHashMap<FileId, Option<DirectivesOfFile>>);
+
+impl Directives {
+    /// Where the directive of `file`, whose tree is `hir`, starts that suppresses a diagnostic at `start`. `NO_DIRECTIVE`: none does.
+    pub(super) fn preceding(&mut self, file: FileId, hir: &hir::File, start: u32) -> u32 {
+        let of_file = self.0.entry(file);
+        match of_file.or_insert_with(|| DirectivesOfFile::new(hir)) {
+            Some(directives) => directives.preceding(&hir.text, start),
+            None => NO_DIRECTIVE,
+        }
+    }
+}
 
 impl Checker<'_> {
     pub(super) fn check_x_aliases(&mut self, file: FileId) {
@@ -64,9 +123,9 @@ impl Checker<'_> {
         let path = &files.module(file).path[..];
         for &(kind, value, start, _) in &self.hir(file).references {
             if kind == ReferenceKind::Path
-                && join(dirname::<Posix>(path), files.atoms.bytes(value)) == path
+                && join(dirname::<Posix>(path), self.atoms().bytes(value)) == path
             {
-                let end = start + files.atoms.bytes(value).len() as u32;
+                let end = start + self.atoms().bytes(value).len() as u32;
                 self.error_at((file, start, end), 1006, &[]);
             }
         }
@@ -395,12 +454,12 @@ impl Checker<'_> {
             };
             let specifier = match specifier {
                 Atom::NONE => &b"..."[..],
-                specifier => files.atoms.bytes(specifier),
+                specifier => self.atoms().bytes(specifier),
             };
             let mut import_text = [b"import(\"", specifier, b"\")"].concat();
             if matches!(decl, Decl::ImportSpec(_)) {
                 import_text.push(b'.');
-                import_text.extend_from_slice(files.atoms.bytes(identifier));
+                import_text.extend_from_slice(self.atoms().bytes(identifier));
             }
             let args = [Arg::Atom(identifier), Arg::Bytes(&import_text)];
             self.error_at(at, 18042, &args);
@@ -536,7 +595,7 @@ impl Checker<'_> {
             let at = (file, start, end);
             let name = match type_only {
                 // An `export type *` has no name.
-                TypeOnlyDeclaration::ExportStar(..) => files.atoms.intern(b"*"),
+                TypeOnlyDeclaration::ExportStar(..) => self.atoms().intern(b"*"),
                 TypeOnlyDeclaration::Alias(alias, ..) => files.symbol(alias).name,
             };
             let code = if is_export { 1379 } else { 1380 };
@@ -839,7 +898,7 @@ impl Checker<'_> {
         let mode =
             crate::program::mode_for_usage_location(options, importing.default_mode, &written);
         let (key, at) = ((spec, mode), self.place_of_token(file, start));
-        let text = files.atoms.text(spec);
+        let text = self.atoms().text(spec);
         if let Some(without_prefix) = text.strip_prefix("@types/") {
             self.error_at(at, 6137, &[Arg::Text(without_prefix), Arg::Atom(spec)]);
         }
@@ -898,7 +957,7 @@ impl Checker<'_> {
                 let should_rewrite =
                     path_is_relative(text.as_bytes()) && strip_ts_extension(&text).is_some();
                 let may_be_emitted = target.hir.kind != FileKind::Declaration
-                    && !target.path.contains_str(b"/node_modules/");
+                    && !strings::contains(&target.path, b"/node_modules/");
                 if !using_ts_extension && should_rewrite {
                     let path = relative_from_file(&importing.path, &target.path);
                     self.error_at(at, 2876, &[Arg::Bytes(&path)]);
@@ -968,6 +1027,12 @@ impl Checker<'_> {
         if site.is_not_validated {
             return false;
         }
+        // "See if this was possibly a projectReference redirect"
+        let mut unbuilt = importing.unbuilt_imports.iter();
+        if let Some(&(.., output, source)) = unbuilt.find(|u| (u.0, u.1) == key) {
+            self.error_at(at, 6305, &[Arg::Atom(output), Arg::Atom(source)]);
+            return false;
+        }
         let mut extensionless = importing.extensionless_imports.iter();
         if !options.resolve_json_module && text.ends_with(".json") {
             self.error_at(at, 2732, &[Arg::Atom(spec)]);
@@ -978,7 +1043,7 @@ impl Checker<'_> {
             // Only of what is not found is it said that Node's `import` wants the extension written.
             match extension {
                 Some(extension) => {
-                    let suggested = [files.atoms.bytes(spec), extension].concat();
+                    let suggested = [self.atoms().bytes(spec), extension].concat();
                     self.error_at(at, 2835, &[Arg::Bytes(&suggested)])
                 }
                 None => self.error_at(at, 2834, &[]),
@@ -1104,30 +1169,35 @@ impl Checker<'_> {
 
     // ───────────────────────────── comments that are about errors ─────────────────────────────
 
-    /// `getBindAndCheckDiagnosticsWithChecker`: drops all diagnostics of a `// @ts-nocheck` file, removes the diagnostics suppressed by
-    /// `// @ts-ignore` and `// @ts-expect-error`, and reports TS2578 for an unused `@ts-expect-error`. Must run after all other
-    /// checker diagnostics of the file have been collected.
-    pub fn check_x_comment_directives(&mut self, file: FileId) {
+    /// TS2578 for each `@ts-expect-error` of `file`, settled. `finish_file` reports those whose directive suppressed nothing, which is
+    /// known only after the last barrier. Made at the end of `check_file`: the report step makes no query and reads no tree.
+    pub(super) fn expected_errors(&mut self, file: FileId) -> Vec<Reported> {
         let hir = self.hir(file);
-        let text = &hir.text[..];
-        // `SkipTypeChecking`
-        if hir.check_directive == Some(false) {
-            self.reported.clear();
-            return;
+        // `SkipTypeChecking`. An error that may have been there and was not found is not said to be missing.
+        if hir.check_directive == Some(false)
+            || self.is_plain_js(file)
+            || hir.has_errors
+            || hir.syntax_errors > 0
+        {
+            return Vec::new();
         }
-        let directives = &hir.comment_directives;
-        let Some((line_starts, by_line)) = self.get_diagnostics_with_preceding_directives(file, 0)
+        let Some(DirectivesOfFile {
+            line_starts,
+            by_line,
+        }) = DirectivesOfFile::new(hir)
         else {
-            return;
+            return Vec::new();
         };
-        // An error that may have been there and was not found is not said to be missing.
-        if hir.has_errors || hir.syntax_errors > 0 {
-            return;
+        if !by_line.iter().any(|directive| directive.2) {
+            return Vec::new();
         }
-        for &(line, start, expects_error, has_come) in &by_line {
-            if !expects_error || has_come {
-                continue;
-            }
+        let text = &hir.text[..];
+        let mut statement_starts: Vec<u32> = hir.stmts.iter().map(|s| s.start).collect();
+        statement_starts.sort_unstable();
+        let exprs = indices_by_position(hir.exprs.iter().map(|e| e.pos));
+        let types = indices_by_position(hir.types.iter().map(|node| node.pos));
+        let mut expected = Vec::new();
+        for &(line, start, _) in by_line.iter().filter(|directive| directive.2) {
             // What it is about: the next line that is neither empty nor a comment, and what is begun there up to the next statement.
             let mut next = line + 1;
             while next < line_starts.len()
@@ -1138,95 +1208,65 @@ impl Checker<'_> {
             let end = text.len() as u32;
             let from = line_starts.get(next).copied().unwrap_or(end);
             let line_end = line_starts.get(next + 1).copied().unwrap_or(end);
-            let to = hir
-                .stmts
-                .iter()
-                .map(|s| s.start)
-                .filter(|&pos| pos >= line_end)
-                .min()
-                .unwrap_or(end);
-            if self.xa_is_all_known(file, from, to) {
-                let end = directives
-                    .iter()
-                    .find(|directive| directive.start == start)
-                    .map_or(0, |directive| directive.end);
-                self.error_at((file, start, end), 2578, &[]);
+            let next_statement = statement_starts.partition_point(|&pos| pos < line_end);
+            let to = statement_starts.get(next_statement).copied().unwrap_or(end);
+            if self.xa_is_all_known(file, (&exprs[..], &types[..]), from, to) {
+                let directive = hir.comment_directives.iter().find(|it| it.start == start);
+                let at = (file, start, directive.map_or(0, |it| it.end));
+                let mut unused = Reported::new(at, 2578, Default::default());
+                self.settle_place(&mut unused);
+                expected.push(unused);
             }
         }
-    }
-
-    /// `getDiagnosticsWithPrecedingDirectives` over `self.reported[first..]`: removes the diagnostics that a preceding `@ts-ignore` or
-    /// `@ts-expect-error` suppresses. Returns the line starts and the directive table, or `None` if the file has no directives.
-    pub(super) fn get_diagnostics_with_preceding_directives(
-        &mut self,
-        file: FileId,
-        first: usize,
-    ) -> Option<(Vec<u32>, DirectivesByLine)> {
-        let hir = self.hir(file);
-        let text = &hir.text[..];
-        let directives = &hir.comment_directives;
-        if directives.is_empty() {
-            return None;
-        }
-        let line_starts = compute_ecma_line_starts(text);
-        let line_of = |pos: u32| line_starts.partition_point(|&start| start <= pos) - 1;
-        let mut by_line = DirectivesByLine::new();
-        for &CommentDirective { start, kind, .. } in directives {
-            let expects_error = kind == CommentDirectiveKind::ExpectError;
-            let line = line_of(start);
-            // The last in a line is the one that counts.
-            if by_line.last().is_some_and(|last| last.0 == line) {
-                by_line.pop();
-            }
-            by_line.push((line, start, expects_error, false));
-        }
-        let mut seen = 0;
-        self.reported.retain(|d| {
-            seen += 1;
-            if seen <= first {
-                return true;
-            }
-            let mut line = line_of(d.start);
-            while line > 0 {
-                line -= 1;
-                if let Ok(i) = by_line.binary_search_by_key(&line, |directive| directive.0) {
-                    by_line[i].3 = true;
-                    return false;
-                }
-                if !is_comment_or_blank_line(text, line_starts[line] as usize) {
-                    break;
-                }
-            }
-            true
-        });
-        Some((line_starts, by_line))
+        expected
     }
 
     /// Whether the type of everything written from `from` up to `to` has been worked out. An error that rests on one that has
-    /// not is kept back.
-    fn xa_is_all_known(&mut self, file: FileId, from: u32, to: u32) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.exprs.len() {
-            if !(from..to).contains(&hir.exprs[i].pos) || bound.is_unchecked(i) {
+    /// not is kept back. `exprs`, `types`: `indices_by_position` of the expressions and the type nodes of `file`.
+    fn xa_is_all_known(
+        &mut self,
+        file: FileId,
+        (exprs, types): (&[(u32, u32)], &[(u32, u32)]),
+        from: u32,
+        to: u32,
+    ) -> bool {
+        let bound = self.bound(file);
+        for i in indices_in_range(exprs, from, to) {
+            if bound.is_unchecked(i as usize) {
                 continue;
             }
-            let e = ExprId(i as u32);
-            let ty = self.type_at(file, e);
+            let ty = self.type_at(file, ExprId(i));
             if self.is_non_inferrable_type(ty) {
                 return false;
             }
         }
-        for i in 0..hir.types.len() {
-            if !(from..to).contains(&hir.types[i].pos) || bound.is_unchecked_type(i) {
+        for i in indices_in_range(types, from, to) {
+            if bound.is_unchecked_type(i as usize) {
                 continue;
             }
-            let ty = self.type_from_node(file, TypeNodeId(i as u32));
+            let ty = self.type_from_node(file, TypeNodeId(i));
             if self.is_non_inferrable_type(ty) {
                 return false;
             }
         }
         true
     }
+}
+
+/// `(position, index)` for each of `positions`, sorted.
+fn indices_by_position(positions: impl Iterator<Item = u32>) -> Vec<(u32, u32)> {
+    let mut sorted: Vec<(u32, u32)> = positions.zip(0..).collect();
+    sorted.sort_unstable();
+    sorted
+}
+
+/// The indices in `sorted` (`indices_by_position`) whose position is in `from..to`, ascending.
+fn indices_in_range(sorted: &[(u32, u32)], from: u32, to: u32) -> Vec<u32> {
+    let first = sorted.partition_point(|&(pos, _)| pos < from);
+    let end = sorted.partition_point(|&(pos, _)| pos < to).max(first);
+    let mut indices: Vec<u32> = sorted[first..end].iter().map(|&(_, i)| i).collect();
+    indices.sort_unstable();
+    indices
 }
 
 // ───────────────────────────── how things are written ─────────────────────────────

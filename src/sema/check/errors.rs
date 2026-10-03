@@ -4,33 +4,34 @@
 //! The codes are the TypeScript compiler's. An error that would rest on something the resolver could not work out is not
 //! reported: better to miss one than to make one up.
 
+use super::errors_x_aliases::Directives;
 use super::errors_x_operators::has_empty_object_intersection;
-use super::sink::held;
+use super::explain::{Explained, NOWHERE};
+use super::sink::{NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::program::SymbolTable;
-use bstr::ByteSlice;
+use bun_core::strings;
 
-/// What `check_file` found. What a question that was under way reported is in the sink. `finish_file` makes the errors of the file of it.
+/// What `check_file` hands to `Program::finish_file`, settled. What was reported inside a query is in the buffer of its file.
 pub struct Checked {
     /// `GetSyntacticDiagnostics`
     syntactic: Vec<Reported>,
-    /// `getBindAndCheckDiagnostics`, as far as it was reported with no question under way: what is never checked has been taken back.
-    /// `None`: the file is not checked.
+    /// `getBindAndCheckDiagnostics`, as far as it was reported with no query in flight, and `JSDocDiagnostics`. `None`: the file is not
+    /// checked.
     semantic: Option<Vec<Reported>>,
     /// `GetDeclarationDiagnostics`
     declaration: Vec<Reported>,
-    has_parse_diagnostics: bool,
+    /// `GetIncludeProcessorDiagnostics`, without those that a directive suppresses.
+    include: Vec<Reported>,
+    /// `Checker::expected_errors`
+    expected_errors: Vec<Reported>,
     never_checked: Vec<(u32, u32)>,
+    /// `Options::writes_declaration_files`: what is written to the declaration file of the file, if there is one.
+    pub declaration_file: Option<Vec<u8>>,
 }
 
 impl Checked {
-    pub(super) fn is_empty(&self) -> bool {
-        self.syntactic.is_empty()
-            && self.declaration.is_empty()
-            && self.semantic.as_ref().is_none_or(Vec::is_empty)
-    }
-
     /// Moves the declaration diagnostics (`GetDeclarationDiagnostics`) into a `Checked` of their own, so that `finish_file` converts them
     /// separately. `None` if there are none.
     pub fn take_declaration_diagnostics(&mut self) -> Option<Checked> {
@@ -38,9 +39,51 @@ impl Checked {
             syntactic: Vec::new(),
             semantic: None,
             declaration: std::mem::take(&mut self.declaration),
-            has_parse_diagnostics: self.has_parse_diagnostics,
+            include: Vec::new(),
+            expected_errors: Vec::new(),
             never_checked: Vec::new(),
+            declaration_file: None,
         })
+    }
+}
+
+impl Program {
+    /// The errors of `file`, after the last barrier. It makes no query and reads no tree.
+    pub fn finish_file(&self, file: FileId, checked: Checked) -> Vec<Explained> {
+        let mut out = Vec::new();
+        if let Some(semantic) = checked.semantic {
+            out = semantic;
+            // What `checkSourceFile` never comes to is not reported, whichever task evaluated it.
+            let is_checked = |d: &Reported| {
+                let mut never_checked = checked.never_checked.iter();
+                !never_checked.any(|&(from, to)| (from..to).contains(&d.start))
+            };
+            out.extend(self.take_buffer(file).into_iter().filter(is_checked));
+            // `getDiagnosticsWithPrecedingDirectives`
+            let used = out.iter().map(|d| d.directive);
+            let mut used: Vec<u32> = used.filter(|&start| start != NO_DIRECTIVE).collect();
+            used.sort_unstable();
+            out.retain(|d| d.directive == NO_DIRECTIVE);
+            let expected = checked.expected_errors.into_iter();
+            out.extend(expected.filter(|unused| used.binary_search(&unused.start).is_err()));
+            out.extend(checked.include);
+        }
+        // `GetSyntacticDiagnostics`, `GetDeclarationDiagnostics`: no comment directive takes these back.
+        out.extend(checked.declaration);
+        out.extend(checked.syntactic);
+        // A diagnostic without an end and arguments duplicates a complete one with the same start and code. It is dropped unless it
+        // has related info, which `compactAndMergeRelatedInfos` merges into the complete one.
+        let complete: Vec<(u32, u32)> = out
+            .iter()
+            .filter(|d| !d.was_bare)
+            .map(|d| (d.start, d.code))
+            .collect();
+        let is_duplicate = |d: &Reported| {
+            d.was_bare && d.related_information.is_empty() && complete.contains(&(d.start, d.code))
+        };
+        out.retain(|d| !is_duplicate(d));
+        self.sort_and_deduplicate_diagnostics(&mut out);
+        out.into_iter().map(Explained::new).collect()
     }
 }
 
@@ -73,97 +116,56 @@ impl PartialEq for Container {
 impl Checker<'_> {
     /// All that asks a question about `file`. What it leads other files, or other files lead this one, to report is in the sink.
     pub fn check_file(&mut self, file: FileId) -> Checked {
-        self.noted_ahead.clear();
+        self.task
+            .begin_file(file, !self.files().module(file).is_leaf);
+        self.provisional.clear();
+        self.refused_expressions.clear();
+        self.work_trap = WORK_TRAP_DISARMED;
         self.limits = 0;
         self.instantiations_up_to_a_limit.clear();
+        self.relations_cut_short.clear();
+        self.variances_cut_short.clear();
         self.deferred_diagnostics.clear();
+        // What the file before it in the task found after its own `check_circular_mapped_properties` is dropped, as for the last file.
+        self.circular_mapped_props.clear();
         self.node_check_flags.clear();
         self.never_checked.borrow_mut().clear();
         self.reported.clear();
         self.release_shapes_for_now();
         self.is_type_checked = false;
         let hir = self.hir(file);
-        // The parser or the binder ran out of stack.
-        if hir.has_errors && hir.early_errors.is_empty() {
+        if hir.ran_out_of_stack {
             self.ran_out_of_stack.set(true);
         }
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate: only the second depends on whether the
         // file is checked.
-        self.checking = Some(file);
-        let is_syntactic = |d: &Reported| {
-            is_syntactic_early_error(hir, d.start, d.code)
-                // `checkJSDecoratorSyntax`: the parser's `jsDiagnostics`, which `hasParseDiagnostics` does not count.
-                || hir.is_js && matches!(d.code, 1206 | 8038)
-        };
-        for &(start, code) in hir.early_errors.iter() {
-            self.error_at((file, start, 0), code, &[]);
-            explain_early_error(self, file, start, code);
-        }
-        // `parseExpectedMatchingBrackets`
-        for &(start, open, bracket) in hir.opening_brackets.iter() {
-            let closing = match bracket {
-                b'(' => ")",
-                b'[' => "]",
-                _ => "}",
-            };
-            self.relate(start, 1005, |_| {
-                vec![Reported::new(
-                    (file, open, open),
-                    1007,
-                    held(vec![char::from(bracket).to_string(), closing.to_owned()]),
-                )]
-            });
-        }
-        self.relate_early_errors(file, &hir.early_errors);
-        // `hasParseDiagnostics`: in a file with parser or scanner errors, `grammarErrorOnNode` and its like report nothing, and neither do
-        // the binder's `checkContextualIdentifier` and `checkPrivateIdentifier`. Early errors with their codes are dropped as well.
-        // Errors the checker reports with a plain `error` stay.
-        let has_parse_diagnostics = hir.has_parse_diagnostics
-            || self
-                .reported
-                .iter()
-                .any(|d| is_syntactic_early_error(hir, d.start, d.code));
-        let (syntactic, early): (Vec<Reported>, Vec<Reported>) = std::mem::take(&mut self.reported)
-            .into_iter()
-            .partition(is_syntactic);
-        self.reported = syntactic;
-        // `GetSyntacticDiagnostics`: `file.JSDiagnostics()`
-        for &(start, end, code, what) in hir.js_diagnostics.iter() {
-            let args = (!what.is_empty()).then(|| what.into());
-            self.add_diagnostic(Reported::new(
-                (file, start, end),
-                code,
-                args.into_iter().collect(),
-            ));
-        }
+        self.report_hir_diagnostics(file, &[DiagnosticKind::Parse, DiagnosticKind::Js]);
         self.get_additional_js_syntactic_diagnostics(file);
         // `getBindAndCheckDiagnostics` has nothing to say of a JSON file.
         let is_json = hir.kind == FileKind::Json;
-        if self.only_syntax || is_json || !self.reports_semantic_errors(file) {
-            let mut checked = self.checked(None, false);
-            if !self.only_syntax {
+        if self.wanted != Wanted::All || is_json || !self.reports_semantic_errors(file) {
+            let syntactic = std::mem::take(&mut self.reported);
+            let mut declaration = Vec::new();
+            if self.wanted != Wanted::Syntactic {
                 self.emit_resolver_links = Default::default();
-                checked.declaration = self.get_declaration_diagnostics(file);
+                declaration = self.get_declaration_diagnostics(file);
             }
-            return checked;
+            self.is_type_checked = true;
+            return self.checked(syntactic, declaration);
         }
-        self.settle_what_was_noted_ahead();
         let syntactic = std::mem::take(&mut self.reported);
-        for d in early {
-            if !has_parse_diagnostics || !is_grammar_error(d.code) {
-                self.reported.push(d);
-            }
+        // `hasParseDiagnostics`: parse errors suppress `grammarErrorOnNode` and similar, and the binder's `checkContextualIdentifier`
+        // and `checkPrivateIdentifier`. They do not suppress errors reported through a plain `c.error`.
+        let has_parse_diagnostics = hir.has_parse_diagnostics;
+        if !has_parse_diagnostics {
+            self.report_hir_diagnostics(file, &[DiagnosticKind::Grammar]);
         }
-        for &(start, code) in hir.checker_errors.iter() {
-            self.error_at((file, start, 0), code, &[]);
-            explain_early_error(self, file, start, code);
-        }
+        self.report_hir_diagnostics(file, &[DiagnosticKind::Checker]);
         // `checkUnmatchedJSDocParameters`
-        for &(start, code) in self.bound(file).jsdoc_param_errors.iter() {
-            self.error_at((file, start, 0), code, &[]);
-            explain_early_error(self, file, start, code);
+        for &index in self.bound(file).jsdoc_param_errors.iter() {
+            let diagnostic = &hir.jsdoc_param_errors[index as usize].1;
+            self.add_diagnostic(Reported::from_hir(file, diagnostic));
         }
-        self.checking = Some(file);
         self.emit_resolver_links = Default::default();
         if self.p.files.options.emits_first {
             self.inline_const_enums(file);
@@ -204,145 +206,108 @@ impl Checker<'_> {
         self.check_strict_mode_statements(file);
         // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: what they never look at is taken back, whoever said it.
         self.take_back_what_is_never_checked(file);
-        // These name a type, which is not asked for before everything has been checked.
-        for &(start, code) in &hir.early_errors {
-            if matches!(code, 17019 | 17020) {
-                explain_jsdoc_nullable_type(self, file, start, code);
-            }
-        }
+        self.check_circular_mapped_properties();
         self.report_unresolved_identifiers();
         // `GetDeclarationDiagnostics`: no comment directive takes these back, and plain JavaScript has them too.
-        self.settle_what_was_noted_ahead();
-        // What is reported of another file goes where that file finds it.
-        let (semantic, elsewhere) = (std::mem::take(&mut self.reported).into_iter())
-            .partition(|d: &Reported| d.file == file);
+        // A diagnostic located in another file goes to the buffer of that file at the barrier.
+        let reported = std::mem::take(&mut self.reported).into_iter();
+        let (semantic, elsewhere): (Vec<_>, Vec<_>) = reported.partition(|d| d.file == file);
         self.reported = elsewhere;
-        self.commit_reported_from(0);
+        self.log_reported_from(0);
         let declaration = self.get_declaration_diagnostics(file);
         self.is_type_checked = true;
-        let mut checked = self.checked(Some(semantic), has_parse_diagnostics);
-        (checked.syntactic, checked.declaration) = (syntactic, declaration);
+        let mut directives = Directives::default();
+        let semantic = semantic.into_iter();
+        let mut semantic: Vec<Reported> =
+            (semantic.filter_map(|d| self.settled(d, &mut directives))).collect();
+        let expected_errors = self.expected_errors(file);
+        // The diagnostics of the file have been collected: what judging the directives was the first to evaluate reports nothing.
+        self.reported.clear();
+        let mut checked = self.checked(syntactic, declaration);
+        checked.expected_errors = expected_errors;
+        if hir.check_directive != Some(false) {
+            // `JSDocDiagnostics`: after the filters of `settled`, and a directive suppresses them.
+            if !self.is_plain_js(file) {
+                self.report_hir_diagnostics(file, &[DiagnosticKind::JsDoc]);
+                for mut d in std::mem::take(&mut self.reported) {
+                    self.settle_place(&mut d);
+                    d.directive = directives.preceding(file, hir, d.start);
+                    semantic.push(d);
+                }
+            }
+            // `GetIncludeProcessorDiagnostics`: skipped under `SkipTypeChecking`. Its directive filter is a separate pass that does not
+            // mark directives as used.
+            self.include_processor_diagnostics(file);
+            checked.include = std::mem::take(&mut self.reported);
+            (checked.include).retain(|d| directives.preceding(file, hir, d.start) == NO_DIRECTIVE);
+            for d in &mut checked.include {
+                self.settle_place(d);
+            }
+        }
+        checked.semantic = Some(semantic);
         checked
     }
 
     /// `GetDeclarationDiagnostics`. It also runs for files that are not type-checked. `self.reported` must be empty on entry.
     fn get_declaration_diagnostics(&mut self, file: FileId) -> Vec<Reported> {
         self.check_module_exports_assignments(file);
-        if self.files().options.emits_declarations {
+        let options = &self.files().options;
+        if options.emits_declarations && options.writes_declaration_files {
+            self.declaration_file = self.emit_declaration_file(file);
+        } else if options.emits_declarations {
             self.check_declaration_emit(file);
         }
-        self.settle_what_was_noted_ahead();
         std::mem::take(&mut self.reported)
     }
 
-    /// What has been reported and not committed is `GetSyntacticDiagnostics`.
-    fn checked(&mut self, semantic: Option<Vec<Reported>>, has_parse_diagnostics: bool) -> Checked {
-        self.settle_what_was_noted_ahead();
-        Checked {
-            syntactic: std::mem::take(&mut self.reported),
-            semantic,
-            declaration: Vec::new(),
-            has_parse_diagnostics,
-            never_checked: self.never_checked.take(),
-        }
-    }
-
-    /// The errors of `file`, once every file whose checker may report in it has been through `check_file`.
-    pub fn finish_file(&mut self, file: FileId, checked: Checked) -> Vec<explain::Explained> {
-        let hir = self.hir(file);
-        (self.checking, self.is_type_checked) = (Some(file), true);
-        self.reported.clear();
-        self.noted_ahead.clear();
-        if let Some(semantic) = checked.semantic {
-            self.reported = semantic;
-            let settled = self.drain_sink(file, &checked.never_checked);
-            self.reported.extend(settled);
-            if checked.has_parse_diagnostics {
-                // `bindNamespaceExportDeclaration` reports 1184 whether or not the file parses.
-                self.reported.retain(|d| {
-                    !is_grammar_error(d.code)
-                        || d.code == 1184 && is_before_namespace_export(hir, d.start)
-                });
-            }
-            let is_plain_js = self.is_plain_js(file);
-            if is_plain_js {
-                self.reported
-                    .retain(|d| errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_ok());
-            }
-            if !is_plain_js {
-                // `JSDocDiagnostics`
-                for &(start, code) in hir.jsdoc_errors.iter() {
-                    self.error_at((file, start, 0), code, &[]);
-                    explain_early_error(self, file, start, code);
-                }
-                self.relate_early_errors(file, &hir.jsdoc_errors);
-                // Last: it goes by all that is left. `getDiagnosticsWithPrecedingDirectives`: not by what the parser says.
-                self.check_x_comment_directives(file);
-            }
-            // `GetIncludeProcessorDiagnostics`: skipped under `SkipTypeChecking`. Its directive filter is a separate pass that does not
-            // mark directives as used.
-            if hir.check_directive != Some(false) {
-                let first = self.reported.len();
-                self.include_processor_diagnostics(file);
-                if self.reported.len() > first {
-                    self.get_diagnostics_with_preceding_directives(file, first);
-                }
-            }
-        }
-        self.settle_what_was_noted_ahead();
-        // `GetSyntacticDiagnostics`, `GetDeclarationDiagnostics`: no comment directive takes these back.
-        let mut out = std::mem::take(&mut self.reported);
-        out.extend(checked.declaration);
-        out.extend(checked.syntactic);
-        // What is reported bare is the same error as what is reported with its arguments.
-        let said: Vec<(u32, u32)> = out
-            .iter()
-            .filter(|d| !d.is_bare())
-            .map(|d| (d.start, d.code))
-            .collect();
-        out.retain(|d| !d.is_bare() || !said.contains(&(d.start, d.code)));
-        for d in &mut out {
+    fn checked(&mut self, mut syntactic: Vec<Reported>, mut declaration: Vec<Reported>) -> Checked {
+        for d in syntactic.iter_mut().chain(&mut declaration) {
             self.settle_place(d);
         }
-        self.sort_and_deduplicate_diagnostics(&mut out);
-        out.into_iter().map(|d| self.explained(d)).collect()
+        Checked {
+            syntactic,
+            semantic: None,
+            declaration,
+            include: Vec::new(),
+            expected_errors: Vec::new(),
+            never_checked: self.never_checked.take(),
+            declaration_file: self.declaration_file.take(),
+        }
     }
 
-    /// `AddRelatedInfo`, of what arrives as an early error.
-    fn relate_early_errors(&mut self, file: FileId, errors: &[(u32, u32)]) {
-        let hir = self.hir(file);
-        for &(start, code) in errors {
-            let (from, to, related) = match code {
-                // `parseTypedefTag`: it does not say where.
-                8033 => (0, 0, 8034),
-                // `checkGrammarModifiers`, `checkJSDecoratorSyntax`: the first decorator of what the one at `start` decorates.
-                8038 => {
-                    let at_sign = |c: &Self, e: ExprId| {
-                        let name = (c.start_of(file, e) as usize).min(hir.text.len());
-                        let found = hir.text[..name].iter().rposition(|&b| b == b'@');
-                        found.map(|at| at as u32)
-                    };
-                    let after_export = hir
-                        .decorators
-                        .iter()
-                        .find(|d| at_sign(self, d.1) == Some(start));
-                    let Some(&(owner, _)) = after_export else {
-                        continue;
-                    };
-                    let Some(&(_, first)) = hir.decorators.iter().find(|d| d.0 == owner) else {
-                        continue;
-                    };
-                    let Some(from) = at_sign(self, first) else {
-                        continue;
-                    };
-                    (from, self.end_of_expr(file, first), 1486)
-                }
-                _ => continue,
-            };
-            self.relate(start, code, |_| {
-                vec![Reported::bare((file, from, to), related)]
-            });
+    /// `d`, a diagnostic of `getBindAndCheckDiagnostics`, with what only the tree of its file can tell filled in: where it ends, and
+    /// which comment directive suppresses it. `None`: its file does not report it. On the thread of the task, before `d` leaves it.
+    pub(super) fn settled(&self, mut d: Reported, directives: &mut Directives) -> Option<Reported> {
+        if d.file == NOWHERE.0 {
+            return Some(d);
         }
+        let hir = self.hir(d.file);
+        // `SkipTypeChecking`
+        if hir.check_directive == Some(false) {
+            return None;
+        }
+        // `bindNamespaceExportDeclaration` reports 1184 whether or not the file parses.
+        if hir.has_parse_diagnostics
+            && is_grammar_error(d.code)
+            && !(d.code == 1184 && is_before_namespace_export(hir, d.start))
+        {
+            return None;
+        }
+        if !self.is_plain_js(d.file) {
+            d.directive = directives.preceding(d.file, hir, d.start);
+        } else if errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_err() {
+            return None;
+        }
+        self.settle_place(&mut d);
+        Some(d)
+    }
+
+    /// Reports the HIR diagnostics of `file` whose kind is in `kinds`.
+    fn report_hir_diagnostics(&mut self, file: FileId, kinds: &[DiagnosticKind]) {
+        let diagnostics = self.hir(file).diagnostics.iter();
+        let diagnostics = diagnostics.filter(|d| kinds.contains(&d.kind));
+        self.reported
+            .extend(diagnostics.map(|d| Reported::from_hir(file, d)));
     }
 
     // ───────────────────────────── modules ─────────────────────────────
@@ -383,9 +348,9 @@ impl Checker<'_> {
         let modules = self.files().modules.iter();
         let (mut has_types_package, mut has_declarations) = (false, false);
         for module in modules {
-            has_types_package |= module.path.contains_str(&types);
+            has_types_package |= strings::contains(&module.path, types.as_bytes());
             has_declarations |= crate::resolve::is_declaration_file_name(&module.path)
-                && module.path.contains_str(&own);
+                && strings::contains(&module.path, own.as_bytes());
         }
         let (code, args) = if has_types_package {
             (7040, vec![package.to_owned(), mangled])
@@ -494,8 +459,7 @@ impl Checker<'_> {
             .collect();
         if !import_options.is_empty()
             && let Some(sym) = self
-                .files()
-                .atoms
+                .atoms()
                 .lookup(b"ImportCallOptions")
                 .and_then(|name| self.global_type_symbol(name))
         {
@@ -520,7 +484,7 @@ impl Checker<'_> {
             if let ExprKind::Object(props) = hir[options].kind
                 && let Some(prop) = props.iter().map(|p| hir[p]).find(|prop| {
                     prop.kind == PropKind::Init
-                        && matches!(prop.key, PropKey::Name(name) if self.files().atoms.bytes(name) == b"assert")
+                        && matches!(prop.key, PropKey::Name(name) if self.atoms().bytes(name) == b"assert")
                         // `IsIdentifier(prop.Name())`: `"assert"` and `["assert"]` have the same key.
                         && !matches!(hir.text.get(prop.pos as usize), None | Some(b'"' | b'\'' | b'['))
                 })
@@ -718,7 +682,7 @@ impl Checker<'_> {
         start: u32,
     ) -> (u32, Option<Sym>) {
         let files = self.files();
-        let text = files.atoms.bytes(name);
+        let text = self.atoms().bytes(name);
         // `getSuggestedSymbolForNonexistentModule`: for a name, not for a string, and only what a module declares (`SymbolFlagsModuleMember`).
         let is_identifier = !matches!(self.hir(from).text.get(start as usize), Some(b'"' | b'\''));
         let module_member = SymFlags::VARIABLE
@@ -736,13 +700,14 @@ impl Checker<'_> {
         };
         if is_identifier
             && exports.iter().any(|&(other, s)| {
-                files.flags(s).intersects(module_member) && is_close(text, files.atoms.bytes(other))
+                files.flags(s).intersects(module_member)
+                    && is_close(text, self.atoms().bytes(other))
             })
         {
             let candidates = exports
                 .iter()
                 .filter(|&&(_, s)| files.flags(s).intersects(module_member))
-                .map(|&(other, s)| (files.atoms.bytes(other), Meant::Symbol(s)));
+                .map(|&(other, s)| (self.atoms().bytes(other), Meant::Symbol(s)));
             return match get_spelling_suggestion_for_name(files, text, candidates) {
                 Some(Meant::Symbol(meant)) => (2724, Some(meant)),
                 _ => (2724, None),
@@ -1144,7 +1109,7 @@ impl Checker<'_> {
             let (location, scope) = (hir.node(node), bound.type_scope[node.idx()]);
             let (start, end) = self.get_error_range_for_node(file, location);
             if let Some(written) = hir.text.get(start as usize..end as usize) {
-                let name = self.files().atoms.intern(written);
+                let name = self.atoms().intern(written);
                 self.on_failed_to_resolve_symbol(
                     file,
                     location,
@@ -1158,11 +1123,15 @@ impl Checker<'_> {
         }
     }
 
-    /// `addLazyDiagnostic`, which `onFailedToResolveSymbol` is wrapped in in checker.ts. To say what is wrong with a name classes are asked
-    /// for their members, which here closes a circle with a question that is under way. So it is said when none is.
+    /// `addLazyDiagnostic`, which `onFailedToResolveSymbol` is wrapped in in checker.ts. Choosing the message queries the members of
+    /// classes, which would close a cycle with a query in flight. So it is reported when no query is in flight.
+    ///
+    /// Only for the file being checked. No other task stores the entry of an unresolved identifier (`is_noted_for_check_file`), so
+    /// `check_file` of another file evaluates its own identifiers itself, before its last call of this function.
     fn report_unresolved_identifiers(&mut self) {
         while !self.unresolved_identifiers.is_empty() {
             let mut unresolved = std::mem::take(&mut self.unresolved_identifiers);
+            unresolved.retain(|u| Some(u.0) == self.task.file);
             unresolved.sort_unstable_by_key(|u| (u.0, u.1));
             unresolved.dedup_by_key(|u| (u.0, u.1));
             for (file, e, name) in unresolved {
@@ -1184,7 +1153,7 @@ impl Checker<'_> {
             return;
         };
         // `await x` where it cannot be: the parser took the keyword for a name, and has said what is wrong.
-        if bound.is_unchecked(e.idx()) || hir.early_errors.contains(&(hir[e].pos, 1308)) {
+        if bound.is_unchecked(e.idx()) || hir.has_diagnostic(hir[e].pos, 1308) {
             return;
         }
         match bound.expr_parent[e.idx()] {
@@ -1370,7 +1339,7 @@ impl Checker<'_> {
         node: Node,
         name: Atom,
     ) -> u32 {
-        let (hir, text) = (self.hir(file), self.files().atoms.bytes(name));
+        let (hir, text) = (self.hir(file), self.atoms().bytes(name));
         if let Some(&(with_all_types, otherwise)) = CANNOT_FIND_NAME_DIAGNOSTICS.get(text) {
             // `UsesWildcardTypes`: there is nothing to add to `types` then.
             let types = self.p.files.options.types.as_ref();
@@ -1407,7 +1376,7 @@ impl Checker<'_> {
             let (start, end) = self.get_error_range_for_node(file, location);
             (file, start, end)
         });
-        let (text, said) = (files.atoms.bytes(name), Arg::Atom(name));
+        let (text, said) = (self.atoms().bytes(name), Arg::Atom(name));
         if let NodeData::Expr(e) = hir.data(location)
             && self.check_and_report_error_for_extending_interface(file, e)
         {
@@ -1651,25 +1620,6 @@ impl Checker<'_> {
     }
 }
 
-/// Whether an entry of `early_errors` is a parser or scanner diagnostic (`SourceFile.Diagnostics()`).
-fn is_syntactic_early_error(hir: &hir::File, start: u32, code: u32) -> bool {
-    // `parse_for_sema` sets the flag by who logged each error. Without it, a code the parser shares with the checker (1005 18016 ..) is
-    // the checker's.
-    if !hir.has_parse_diagnostics {
-        return false;
-    }
-    match code {
-        // `createIdentifier` reports a reserved word. For `await` and `yield` it is the binder's `checkContextualIdentifier`.
-        1359 => !hir
-            .text
-            .get(start as usize..)
-            .is_some_and(|word| word.starts_with(b"await") || word.starts_with(b"yield")),
-        // `reportObviousDecoratorErrors`, `checkGrammarModifiers`
-        1206 | 8038 => false,
-        _ => errors_js::SYNTACTIC_ERRORS.binary_search(&code).is_ok(),
-    }
-}
-
 /// Codes that are not reported in a file with parse diagnostics (`hasParseDiagnostics`). Only for diagnostics that are not the parser's own.
 fn is_grammar_error(code: u32) -> bool {
     errors_js::GRAMMAR_ERRORS.binary_search(&code).is_ok()
@@ -1861,22 +1811,23 @@ fn similar_in_scope_and_where(
 ) -> Option<(Meant, bool)> {
     let files = c.files();
     let try_resolve_alias = &mut |sym| Some(files.symbol_flags(sym));
+    let name = (name, c.atoms().bytes(name));
     files.suggested_symbol_for_nonexistent_symbol(file, scope, name, meaning, try_resolve_alias)
 }
 
 impl Files {
     /// `getSuggestedSymbolForNonexistentSymbol`, and whether what it finds is among the locals of a block that exports it.
     /// `try_resolve_alias`: the flags of `tryResolveAlias(candidate)`, all of them for `unknownSymbol`. `None`: nil.
+    /// `text`: that of `name`, which may be a task's own atom.
     pub(crate) fn suggested_symbol_for_nonexistent_symbol(
         &self,
         file: FileId,
         scope: ScopeId,
-        name: Atom,
+        (name, text): (Atom, &[u8]),
         meaning: SymFlags,
         try_resolve_alias: &mut dyn FnMut(Sym) -> Option<SymFlags>,
     ) -> Option<(Meant, bool)> {
         let (files, hir, bound) = (self, self.hir(file), self.bound(file));
-        let text = files.atoms.bytes(name);
         let (mut word, mut is_among_locals) = (None, false);
         // tsgo keeps the name of a function or class expression out of every symbol table: `Resolve` compares it directly.
         let is_in_table = |&&(_, id): &&(Atom, crate::bind::SymbolId)| match bound.symbols[id.idx()]
@@ -2105,76 +2056,6 @@ pub(super) fn can_be_equal(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> 
     nullable(left) || nullable(right) || c.are_comparable(left, right)
 }
 
-/// `checkJSDocTypeIsInJsFile`: 17019 of `T?` or `T!`, 17020 of `?T` or `!T`, which starts at `start`.
-fn explain_jsdoc_nullable_type(c: &mut Checker<'_>, file: FileId, start: u32, code: u32) {
-    let hir = c.hir(file);
-    let text = &hir.text[..];
-    let is_postfix = code == 17019;
-    // With `?` the tree has a union of `T` and a `null` that is put where all of it starts. With `!` it has `T` alone.
-    let nullable = hir.types.iter().find_map(|t| match t.kind {
-        TypeNodeKind::Union(members) if t.pos == start && members.len() == 2 => {
-            let (operand, null) = (hir.id_at(members, 0), hir.id_at(members, 1));
-            let is_made_up = hir[null].pos == start
-                && matches!(hir[null].kind, TypeNodeKind::Keyword(Keyword::Null));
-            is_made_up.then_some(operand)
-        }
-        _ => None,
-    });
-    let operand = nullable.or_else(|| {
-        let at = if is_postfix {
-            start
-        } else {
-            skip_trivia(text, start as usize + 1) as u32
-        };
-        // What is around comes after what is inside.
-        (0..hir.types.len())
-            .rev()
-            .map(|i| TypeNodeId(i as u32))
-            .find(|&node| {
-                hir[node].pos == at
-                    && (!is_postfix
-                        || text.get(skip_trivia(text, c.end_of_type_node(file, node) as usize))
-                            == Some(&b'!'))
-            })
-    });
-    let Some(operand) = operand else {
-        return;
-    };
-    let operand_end = c.end_of_type_node(file, operand);
-    let end = if is_postfix {
-        skip_trivia(text, operand_end as usize) as u32 + 1
-    } else {
-        operand_end
-    };
-    c.explain_to(start, end, code, |c| {
-        let mut ty = c.type_from_node(file, operand);
-        if nullable.is_none() {
-            return vec!["!".to_owned(), c.type_to_string(ty)];
-        }
-        // `getNullableType`
-        if !ty.is_never() && ty != TypeId::VOID {
-            ty = if is_postfix {
-                c.union(&[ty, TypeId::UNDEFINED])
-            } else {
-                c.union(&[ty, TypeId::UNDEFINED, TypeId::NULL])
-            };
-        }
-        vec!["?".to_owned(), c.type_to_string(ty)]
-    });
-}
-
-/// What the message of an error of the parser names. `settle_place` has where it ends.
-fn explain_early_error(c: &mut Checker<'_>, file: FileId, start: u32, code: u32) {
-    let said = c.hir(file).error_arguments.iter();
-    let mut said: Vec<_> = said.filter(|e| (e.0, e.1) == (start, code)).collect();
-    // `parseErrorAtPosition` keeps a second error at a place if another lies between the two.
-    said.sort_unstable();
-    said.dedup();
-    for (_, _, args) in said {
-        c.note_printed(start, 0, code, args.clone());
-    }
-}
-
 // ───────────────────────────── operators ─────────────────────────────
 
 impl Checker<'_> {
@@ -2183,7 +2064,7 @@ impl Checker<'_> {
         let ExprKind::Ident(name) = self.hir(file)[e].kind else {
             return false;
         };
-        self.files().atoms.bytes(name) == b"NaN" && {
+        self.atoms().bytes(name) == b"NaN" && {
             let global = self.files().global(name, SymFlags::VALUE);
             global.is_some() && self.symbol_of_identifier(file, e, name) == global
         }
@@ -2806,7 +2687,7 @@ impl<'p> Checker<'p> {
         }
         // `getIndexedAccessTypeOrUndefined`: in `a[k]` no property is looked for where `a` has only a string index signature.
         if matches!(self.hir(file)[e].kind, ExprKind::Index { .. })
-            && !self.files().atoms.is_symbol_name(name)
+            && !self.atoms().is_symbol_name(name)
         {
             let reduced = self.reduced(ty);
             if self.is_string_index_signature_only(reduced) {

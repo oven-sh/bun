@@ -272,6 +272,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Before `export` and after it.
             Some(first) => {
                 Self::grammar_error(p, at, 8038);
+                // Related info: the first decorator of the declaration.
+                use crate::sema::Mark::{AtSign, DecoratorEnd};
+                let decorator = first.values[0].loc;
+                if let (Some(start), Some(end)) =
+                    (p.noted(decorator, AtSign), p.noted(decorator, DecoratorEnd))
+                    && !p.lexer.is_log_disabled
+                {
+                    let r = bun_ast::Range {
+                        loc: bun_ast::usize2loc(start as usize),
+                        len: (end - start) as i32,
+                    };
+                    let index = p.log().msgs.len() - 1;
+                    p.lexer.add_related_info(index, r, b"TS1486");
+                }
                 let mut all: Vec<Expr> = first.values.to_vec();
                 all.extend_from_slice(more.slice());
                 opts.ts_decorators = Some(DeferredTsDecorators {

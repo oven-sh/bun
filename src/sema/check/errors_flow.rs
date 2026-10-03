@@ -9,15 +9,14 @@
 use super::*;
 use crate::bind::{FnOwner, Parent, UNREACHABLE};
 
-/// Where the return type `node` starts as it is written. Neither the parentheses around a type are kept nor a `|` or a `&` before
-/// its only member, nor the `!` of a JSDocNonNullableType; what comes before a return type is a `:`, which none of these can be
-/// mistaken for.
+/// The start of the return type `node` in the source. Parentheses around a type and a leading `|` or `&` have no node, so this scans
+/// back over them. A return type follows a `:`, which ends the scan.
 fn start_of_return_type(hir: &hir::File, node: TypeNodeId) -> u32 {
     let text = &hir.text[..];
     let mut at = (hir[node].pos as usize).min(text.len());
     loop {
         let before = text[..at].trim_ascii_end().len();
-        if before == 0 || !matches!(text[before - 1], b'(' | b'|' | b'&' | b'!') {
+        if before == 0 || !matches!(text[before - 1], b'(' | b'|' | b'&') {
             return at as u32;
         }
         at = before - 1;
@@ -115,7 +114,9 @@ impl Checker<'_> {
             self.reported_unreachable_nodes.push(next);
         }
         let end = self.end_of_stmt(file, last);
-        self.error_at((file, hir[s].start, end), 7027, &[]);
+        let is_error = self.p.files.options.allow_unreachable_code == Some(false);
+        let diagnostic = self.new_diagnostic((file, hir[s].start, end), 7027, &[]);
+        self.add_error_or_suggestion(is_error, diagnostic);
         true
     }
 

@@ -8,7 +8,7 @@
 use crate::sema::ts_syntax as ts;
 use bun_ast::op::Level;
 use bun_ast::{Range, StoreStr};
-use bun_sema::hir::{Flags, TypeNodeKind};
+use bun_sema::hir::{Diagnostic, DiagnosticKind, Flags, TypeNodeKind};
 
 use super::TypeSyntax;
 use crate::Error;
@@ -203,14 +203,8 @@ pub(crate) struct JsDoc {
     pub(crate) start: u32,
     pub(crate) end: u32,
     pub(crate) tags: Vec<Tag>,
-    /// What the parser objects to in it: start and code.
-    pub(crate) errors: Vec<(u32, u32)>,
-    /// What the checker objects to in its syntax, which it only sees once that is reparsed.
-    pub(crate) checker_errors: Vec<(u32, u32)>,
-    /// `hir::File::error_arguments`
-    pub(crate) error_arguments: Vec<(u32, u32, Box<[Box<[u8]>]>)>,
-    /// `hir::File::error_ends`
-    pub(crate) error_ends: Vec<(u32, u32, u32)>,
+    /// The diagnostics in the comment. `JsDoc`: parse errors. Other kinds: checker errors, reported only for the parts that are reparsed.
+    pub(crate) diagnostics: Vec<Diagnostic>,
 }
 
 /// The JSDoc comments of a file that can have tags, in source order.
@@ -478,66 +472,34 @@ impl<'p, 'a> Reader<'p, 'a> {
             is_in_lexer: false,
         };
         let tags = reader.comment(start);
-        let (errors, checker_errors, error_arguments, error_ends) = reader.take_errors(logged);
         JsDoc {
             start: start as u32,
             end: end as u32,
             tags,
-            errors,
-            checker_errors,
-            error_arguments,
-            error_ends,
+            diagnostics: reader.take_errors(logged),
         }
     }
 
-    /// What was logged since the log had `before` messages, errors and warnings, by the codes TypeScript has for it: the errors of
-    /// its parser, and those of its checker.
-    #[allow(clippy::type_complexity)]
-    fn take_errors(
-        &mut self,
-        before: (usize, u32, u32),
-    ) -> (
-        Vec<(u32, u32)>,
-        Vec<(u32, u32)>,
-        Vec<(u32, u32, Box<[Box<[u8]>]>)>,
-        Vec<(u32, u32, u32)>,
-    ) {
+    /// Removes the messages logged after `before` (the message, error and warning counts) and converts the errors to diagnostics.
+    fn take_errors(&mut self, before: (usize, u32, u32)) -> Vec<Diagnostic> {
         let source = self.p.source.contents();
         let log = self.p.log();
-        let (mut errors, mut checker_errors) = (Vec::new(), Vec::new());
-        let (mut error_arguments, mut error_ends) = (Vec::new(), Vec::new());
-        for msg in log.msgs.drain(before.0..) {
-            if msg.kind != bun_ast::Kind::Err {
-                continue;
+        let errors = log
+            .msgs
+            .drain(before.0..)
+            .filter(|msg| msg.kind == bun_ast::Kind::Err);
+        let diagnostics = errors.filter_map(|msg| {
+            // `ScanJSDocToken` does not scan `</` as one token.
+            let mut diagnostic = super::diagnostic(&msg.data, &msg.notes, source, false)??;
+            if diagnostic.kind == DiagnosticKind::Parse {
+                diagnostic.kind = DiagnosticKind::JsDoc;
             }
-            let Some(offset) = msg.data.location.as_ref().map(|location| location.offset) else {
-                continue;
-            };
-            let at = source.get(offset..).unwrap_or_default();
-            match super::early_error(&msg.data.text, at) {
-                // `checkTypeReferenceNode`: `A.<T>` is as good as `A<T>` in a comment.
-                Some((0 | 8020, _)) | None => {}
-                Some((code, delta)) => {
-                    // `Lexer::ts_grammar_error`, `P::ts_checker_error`
-                    let is_of_checker =
-                        msg.data.text.starts_with(b"TG") || msg.data.text.starts_with(b"TC");
-                    let list = if is_of_checker {
-                        &mut checker_errors
-                    } else {
-                        &mut errors
-                    };
-                    let start = (offset as i64 + i64::from(delta)).max(0) as u32;
-                    list.push((start, code));
-                    if let Some(args) = super::error_arguments(&msg.data, code, source) {
-                        error_arguments.push((start, code, args));
-                    }
-                    // `ScanJSDocToken` makes no token of `</`.
-                    error_ends.extend(super::error_end(&msg.data, source, false));
-                }
-            }
-        }
+            // `checkTypeReferenceNode`: `A.<T>` is equivalent to `A<T>` in a JSDoc comment.
+            (diagnostic.code != 8020).then_some(diagnostic)
+        });
+        let diagnostics = diagnostics.collect();
         (log.errors, log.warnings) = (before.1, before.2);
-        (errors, checker_errors, error_arguments, error_ends)
+        diagnostics
     }
 
     /// `parseErrorAt`

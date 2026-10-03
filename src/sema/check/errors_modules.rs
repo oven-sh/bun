@@ -113,7 +113,7 @@ impl Checker<'_> {
             } else {
                 SymFlags::NAMESPACE
             };
-            let text = files.atoms.bytes(name);
+            let text = self.atoms().bytes(name);
             let exported = files.namespace_member(resolved, name);
             // `getSymbol`: an alias goes by what it stands for.
             let found = self.get_symbol(exported, wanted).or_else(|| {
@@ -143,13 +143,13 @@ impl Checker<'_> {
             let is_candidate = |&(other, sym): &(Atom, Sym)| {
                 other != known::export_equals
                     && files.flags(sym).intersects(SymFlags::MODULE_MEMBER)
-                    && is_close(text, files.atoms.bytes(other))
+                    && is_close(text, self.atoms().bytes(other))
             };
             let is_misspelt = exports.iter().any(is_candidate);
             if is_misspelt {
                 {
                     let candidates = exports.iter().filter(|&candidate| is_candidate(candidate));
-                    let get_name = |candidate: &(Atom, Sym)| files.atoms.bytes(candidate.0);
+                    let get_name = |candidate: &(Atom, Sym)| self.atoms().bytes(candidate.0);
                     let suggested =
                         get_spelling_suggestion(text, candidates, get_name, |a, b| a.1.cmp(&b.1));
                     let arg0 = fully_qualified_name(self, resolved);
@@ -167,7 +167,7 @@ impl Checker<'_> {
                         Some(true) => {
                             // `getContainingQualifiedNameNode`: all of the names. `entityNameToString`
                             let written: Vec<&[u8]> =
-                                texts.iter().map(|&n| files.atoms.bytes(n)).collect();
+                                texts.iter().map(|&n| self.atoms().bytes(n)).collect();
                             self.error(file, names, 2749, &[Arg::Bytes(&written.join(&b'.'))]);
                             return;
                         }
@@ -414,7 +414,7 @@ pub(super) fn fully_qualified_name_of(c: &mut Checker<'_>, symbol: AliasTarget) 
         AliasTarget::Unknown => return b"unknown".to_vec(),
     };
     let Some((mut prop, _)) = c.get_property_of_type(object, name) else {
-        return c.files().atoms.bytes(name).to_vec();
+        return c.atoms().bytes(name).to_vec();
     };
     // `getSpreadSymbol` keeps the `Parent` of the original property.
     while let PropSource::Copy(_, of, true) = &prop.source {

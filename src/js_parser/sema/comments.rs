@@ -8,8 +8,8 @@
 use crate::lexer::{Lexer, starts_with_line_break};
 use bun_sema::atom::Interner;
 use bun_sema::hir::{
-    CommentDirective, CommentDirectiveKind, File, FileKind, JsxPragmas, ReferenceKind,
-    ResolutionMode,
+    CommentDirective, CommentDirectiveKind, DiagnosticKind, File, FileKind, JsxPragmas,
+    ReferenceKind, ResolutionMode,
 };
 
 /// `Lexer::comment_flags`
@@ -171,7 +171,8 @@ fn single_line_pragma(text: &[u8], comment_pos: usize, atoms: &Interner, file: &
         (None, Some(lib), _) => (ReferenceKind::Lib, lib),
         (None, None, Some(path)) => (ReferenceKind::Path, path),
         (None, None, None) => {
-            file.error(comment_pos as u32, (comment_pos + text.len()) as u32, 1084);
+            let end = (comment_pos + text.len()) as u32;
+            file.error(DiagnosticKind::Parse, comment_pos as u32, end, 1084);
             return;
         }
     };
@@ -181,7 +182,7 @@ fn single_line_pragma(text: &[u8], comment_pos: usize, atoms: &Interner, file: &
             b"import" => ResolutionMode::Import,
             b"require" => ResolutionMode::Require,
             _ => {
-                file.early_errors.push(((comment_pos + from) as u32, 1453));
+                file.error(DiagnosticKind::Parse, (comment_pos + from) as u32, 0, 1453);
                 ResolutionMode::None
             }
         },

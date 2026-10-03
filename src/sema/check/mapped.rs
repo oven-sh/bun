@@ -27,11 +27,11 @@ pub(super) enum AccessNode {
 impl<'p> Checker<'p> {
     /// The pairs of `mapper`, and after them `ty` for `param`.
     fn mapper_with_pair(&self, mapper: MapperId, param: TypeId, ty: TypeId) -> MapperId {
-        let mapping = self.p.types.mapping(mapper);
+        let mapping = self.types().mapping(mapper);
         let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = SmallVec::with_capacity(mapping.len() + 1);
         pairs.extend_from_slice(mapping);
         pairs.push((param, ty));
-        self.p.types.mapper_of(&pairs)
+        self.types().mapper_of(&pairs)
     }
 
     /// Whether what `ty` is depends on type parameters in a way that puts off `keyof`, `T[K]` and `extends`.
@@ -262,7 +262,7 @@ impl<'p> Checker<'p> {
 
     /// The literal type that names the property `name`, as far as the name alone tells. `None` for private names.
     pub(super) fn key_type_of_name(&mut self, name: Atom) -> Option<TypeId> {
-        let text = self.files().atoms.bytes(name);
+        let text = self.atoms().bytes(name);
         // A string that starts with `#` is a string like another: it is the renaming that tells (`rename_private_names`).
         if text.starts_with(b"#") && text.contains(&b'@') {
             return None;
@@ -270,7 +270,7 @@ impl<'p> Checker<'p> {
         if let Some(rest) = text.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) {
             // As `property_name_of_type` writes it.
             let mut parts = rest.splitn(2, |&c| c == b'@');
-            let symbol = self.files().atoms.intern(parts.next().unwrap());
+            let symbol = self.atoms().intern(parts.next().unwrap());
             let number = |b: &[u8]| {
                 std::str::from_utf8(b)
                     .ok()
@@ -316,7 +316,7 @@ impl<'p> Checker<'p> {
         if prop.flags.contains(PropFlags::STRING_NAME) {
             return Some(self.string_literal(prop.name, false));
         }
-        let text = self.files().atoms.bytes(prop.name);
+        let text = self.atoms().bytes(prop.name);
         let (file, key, is_string) = match &prop.source {
             PropSource::Symbol(sym)
                 if let Some((file, Decl::Member(member))) =
@@ -642,7 +642,7 @@ impl<'p> Checker<'p> {
                         value: EnumValue::String(value),
                         ..
                     } if c.is_numeric_name(value) => {
-                        c.files().atoms.text(value).parse().unwrap_or(f64::NAN)
+                        c.atoms().text(value).parse().unwrap_or(f64::NAN)
                     }
                     _ => return false,
                 };
@@ -809,7 +809,7 @@ impl<'p> Checker<'p> {
                 });
             }
             if self.is_numeric_name(name) && self.every_type(object, |c, t| c.is_tuple(t)) {
-                let at: f64 = self.files().atoms.text(name).parse().unwrap_or(f64::NAN);
+                let at: f64 = self.atoms().text(name).parse().unwrap_or(f64::NAN);
                 let ends = |c: &Self, t: TypeId| matches!(c.data(t), TypeData::Tuple { flags, .. } if Self::fixed_length(flags) == flags.len());
                 if access_node != AccessNode::None
                     && !access_flags.contains(AccessFlags::ALLOW_MISSING)
@@ -1108,19 +1108,31 @@ impl<'p> Checker<'p> {
         mapper: MapperId,
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
+        let q = Query::Cond(file, node, mapper);
         if alias.is_none()
-            && let Some(known) = self.p.conditionals.get(&(file, node, mapper))
+            && let Some(known) = (self.p.conditionals).get(&mut self.task, &(file, node, mapper))
         {
             return known;
         }
-        if !self.enter(Query::Cond(file, node, mapper)) {
+        if alias.is_none()
+            && let Some(raw) = self.provisional(q)
+        {
+            return TypeId(raw as u32);
+        }
+        if !self.enter(q) {
             return self.excessively_deep();
         }
         let ty = self.conditional_type_uncached(file, node, mapper, false, alias);
-        if self.leave() && alias.is_none() {
-            self.p.conditionals.insert((file, node, mapper), ty);
+        match (self.leave(q), alias) {
+            (Ok(stored), None) => {
+                (self.p.conditionals).insert(&mut self.task, (file, node, mapper), ty, stored)
+            }
+            (Err(open), None) => {
+                self.keep_provisionally(q, u64::from(ty.0), open);
+                ty
+            }
+            (_, Some(_)) => ty,
         }
-        ty
     }
 
     /// `ConditionalRoot.isDistributive`
@@ -1148,7 +1160,7 @@ impl<'p> Checker<'p> {
         let check_declared = self.type_from_node(file, check);
         // `T extends U ? X : Y` on a bare `T` is applied to each member of a union.
         if matches!(self.data(check_declared), TypeData::TypeParam(..))
-            && let Some(value) = self.p.types.map(mapper, check_declared)
+            && let Some(value) = self.types().map(mapper, check_declared)
         {
             // `getConditionalTypeInstantiation`: an intersection nothing can be is not there to be gone through.
             let value = self.reduced(value);
@@ -1156,15 +1168,15 @@ impl<'p> Checker<'p> {
                 && self.is_distributive_conditional(file, node)
             {
                 let of_member = |c: &mut Self, part: TypeId| {
-                    let mut pairs = c.p.types.mapping(mapper).to_vec();
+                    let mut pairs = c.types().mapping(mapper).to_vec();
                     for p in &mut pairs {
                         if p.0 == check_declared {
                             p.1 = part;
                         }
                     }
-                    let one = c.p.types.mapper(pairs);
+                    let one = c.types().mapper(pairs);
                     if for_constraint {
-                        c.resolve_conditional(file, node, one, true, None)
+                        c.resolve_conditional(file, node, one, mapper, None)
                     } else {
                         c.conditional_type(file, node, one)
                     }
@@ -1172,6 +1184,11 @@ impl<'p> Checker<'p> {
                 return self.map_type_with_alias(value, of_member, alias);
             }
         }
+        let for_constraint = if for_constraint {
+            mapper
+        } else {
+            MapperId::IDENTITY
+        };
         self.resolve_conditional(file, node, mapper, for_constraint, alias)
     }
 
@@ -1189,13 +1206,13 @@ impl<'p> Checker<'p> {
         self.is_tuple(ty) && self.type_arguments(ty).iter().any(|&e| self.is_generic(e))
     }
 
-    /// `getConditionalType`
+    /// `getConditionalType`. `for_constraint`: see `TypeData::Cond`.
     fn resolve_conditional(
         &mut self,
         file: FileId,
         node: TypeNodeId,
         mapper: MapperId,
-        for_constraint: bool,
+        for_constraint: MapperId,
         mut alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
         let (mut file, mut node, mut mapper) = (file, node, mapper);
@@ -1259,11 +1276,11 @@ impl<'p> Checker<'p> {
                     // The `infer` positions are found in the `extends` type with everything else filled in.
                     let target = self.instantiate(extends_declared, mapper);
                     let inferred = self.infer_from_types(&params, check_ty, target, mapper);
-                    let mapping = self.p.types.mapping(mapper);
+                    let mapping = self.types().mapping(mapper);
                     let mut pairs = Vec::with_capacity(mapping.len() + params.len());
                     pairs.extend_from_slice(mapping);
                     pairs.extend(params.iter().copied().zip(inferred));
-                    combined = self.p.types.mapper(pairs);
+                    combined = self.types().mapper(pairs);
                 }
             }
             let extends_ty = self.instantiate(extends_declared, combined);
@@ -1274,7 +1291,7 @@ impl<'p> Checker<'p> {
                 || self.is_generic(extends_ty)
                 || check_tuples && self.has_generic_element(extends_ty)
             {
-                break self.deferred_conditional_type(file, node, mapper, alias);
+                break self.deferred_conditional_type(file, node, mapper, for_constraint, alias);
             }
             let extends_is_top = self.has_any_flag(extends_ty) || extends_ty == TypeId::UNKNOWN;
             let (branch, branch_mapper, is_false_branch) = if !extends_is_top
@@ -1283,7 +1300,7 @@ impl<'p> Checker<'p> {
             {
                 // `any` may pass. So may what extends `check_ty`, if something that passes is one of the things `check_ty` can be.
                 let with_true = self.has_any_flag(check_ty)
-                    || for_constraint && !extends_ty.is_never() && {
+                    || for_constraint != MapperId::IDENTITY && !extends_ty.is_never() && {
                         let (extends_ty, check_ty) = (
                             self.permissive_instantiation(extends_ty),
                             self.permissive_instantiation(check_ty),
@@ -1299,7 +1316,13 @@ impl<'p> Checker<'p> {
                 (no, mapper, true)
             } else {
                 if !extends_is_top && !self.is_assignable_restrictive(check_ty, extends_ty) {
-                    break self.deferred_conditional_type(file, node, mapper, alias);
+                    break self.deferred_conditional_type(
+                        file,
+                        node,
+                        mapper,
+                        for_constraint,
+                        alias,
+                    );
                 }
                 (yes, combined, false)
             };
@@ -1358,9 +1381,15 @@ impl<'p> Checker<'p> {
         file: FileId,
         node: TypeNodeId,
         mapper: MapperId,
+        for_constraint: MapperId,
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
-        let deferred = self.intern(TypeData::Cond { file, node, mapper });
+        let deferred = self.intern(TypeData::Cond {
+            file,
+            node,
+            mapper,
+            for_constraint,
+        });
         match alias {
             Some((alias, type_arguments)) => self.with_alias(deferred, alias, type_arguments),
             None => deferred,
@@ -1383,6 +1412,7 @@ impl<'p> Checker<'p> {
             file: root_file,
             node: root,
             mapper: own,
+            ..
         } = *self.data(declared)
         else {
             return Err(declared);
@@ -1406,7 +1436,7 @@ impl<'p> Checker<'p> {
         if root_mapper == own {
             return Err(declared);
         }
-        if is_distributive && let Some(value) = self.p.types.map(root_mapper, root_check) {
+        if is_distributive && let Some(value) = self.types().map(root_mapper, root_check) {
             if self.is_union(value) || value.is_never() {
                 return Err(declared);
             }
@@ -1415,22 +1445,14 @@ impl<'p> Checker<'p> {
     }
 
     /// `getConstraintFromConditionalType`, and the base constraint of what it gives (`computeBaseConstraint`).
-    pub(super) fn constraint_of_conditional(
-        &mut self,
-        file: FileId,
-        node: TypeNodeId,
-        mapper: MapperId,
-    ) -> TypeId {
-        let TypeNodeKind::Cond { check, .. } = self.hir(file)[node].kind else {
-            return TypeId::UNKNOWN;
-        };
-        // `conditionalConstraintDepth`: what is checked is asked about on a stack of its own, so nothing else ends a row of these. One
-        // that `stack` has no room for would be refused, which keeps everything above from being kept, and it would all be asked again.
+    pub(super) fn constraint_of_conditional(&mut self, this: TypeId) -> TypeId {
+        let (file, _, mapper, [check, ..]) = self.cond_origin(this);
+        // `conditionalConstraintDepth`. The second test comes before `enter` would refuse a query for lack of room on `stack`.
         if self.conditional_constraint_depth >= 100 || self.stack.len() + 20 >= MAX_DEPTH {
+            self.gave_up();
             return TypeId::UNKNOWN;
         }
         self.conditional_constraint_depth += 1;
-        let this = self.intern(TypeData::Cond { file, node, mapper });
         // `getConstraintOfTypeParameter`: a type parameter whose constraint comes back to it has none to put in its place.
         let check_declared = self.type_from_node(file, check);
         let checked = self.instantiate(check_declared, mapper);
@@ -1439,14 +1461,11 @@ impl<'p> Checker<'p> {
                 self.data(checked),
                 TypeData::TypeParam(..) | TypeData::ThisParam(_)
             )
-            && {
-                self.base_constraint(checked);
-                self.p.circular_constraints.get(&checked).is_some()
-            };
+            && !self.has_non_circular_base_constraint(checked);
         let constraint = if is_circular {
             self.default_constraint_of_conditional(this)
         } else {
-            self.constraint_of(this).unwrap_or(TypeId::UNKNOWN)
+            self.constraint_from_conditional(this)
         };
         self.conditional_constraint_depth -= 1;
         // What is left of a type variable is no constraint. A mapped type over one is an object type like another.
@@ -1470,16 +1489,19 @@ impl<'p> Checker<'p> {
 
     /// `getConstraintOfTypeParameter`, of the parameter of the mapped type at `node`.
     fn constraint_of_mapped_param(&mut self, file: FileId, node: TypeNodeId) -> Option<TypeId> {
-        if let Some(known) = self.p.mapped_param_constraints.get(&(file, node)) {
+        if let Some(known) = (self.p.mapped_param_constraints).get(&mut self.task, &(file, node)) {
             return known;
         }
-        let before = self.what_only_holds_for_now();
+        let scope = self.begin_scope();
         let param = self.type_param(file, self.mapped_decl(file, node).param);
         let constraint = self.constraint_of_type_param(param);
-        if self.what_only_holds_for_now() == before {
-            self.p
-                .mapped_param_constraints
-                .insert((file, node), constraint);
+        if let Ok(stored) = self.end_scope_by_counters(scope) {
+            return (self.p.mapped_param_constraints).insert(
+                &mut self.task,
+                (file, node),
+                constraint,
+                stored,
+            );
         }
         constraint
     }
@@ -1578,10 +1600,10 @@ impl<'p> Checker<'p> {
         if base == modifiers || base.is_never() || !self.every_type(base, is_array_like) {
             return ty;
         }
-        let mut pairs = self.p.types.mapping(mapper).to_vec();
+        let mut pairs = self.types().mapping(mapper).to_vec();
         pairs.retain(|p| p.0 != source);
         pairs.push((source, base));
-        let applied = self.p.types.mapper(pairs);
+        let applied = self.types().mapper(pairs);
         self.instantiate_mapped(file, node, applied)
     }
 
@@ -1606,8 +1628,7 @@ impl<'p> Checker<'p> {
         let anon = |c: &mut Self| {
             // `instantiateMappedType` instantiates the constraint type at once (its wildcard test), so a cycle through the keys starts
             // here. `getTypeFromMappedTypeNode` has resolved the constraint of the declared type.
-            if c.p
-                .types
+            if c.types()
                 .mapping(mapper)
                 .iter()
                 .any(|pair| pair.0 != pair.1)
@@ -1628,7 +1649,7 @@ impl<'p> Checker<'p> {
         let Some(source) = self.homomorphic_type_variable(file, node, MapperId::IDENTITY) else {
             return anon(self);
         };
-        let Some(value) = self.p.types.map(mapper, source) else {
+        let Some(value) = self.types().map(mapper, source) else {
             return anon(self);
         };
         if value == source {
@@ -1675,13 +1696,13 @@ impl<'p> Checker<'p> {
             return t;
         }
         let with = |c: &mut Self, t: TypeId| {
-            let mut pairs = c.p.types.mapping(mapper).to_vec();
+            let mut pairs = c.types().mapping(mapper).to_vec();
             for p in &mut pairs {
                 if p.0 == source {
                     p.1 = t;
                 }
             }
-            c.p.types.mapper(pairs)
+            c.types().mapper(pairs)
         };
         let mapped = self.mapped_decl(file, node);
         let one = with(self, t);
@@ -1861,7 +1882,9 @@ impl<'p> Checker<'p> {
                 }
             }
             // `Exclude<keyof T, "a">`: over what `keyof T` is at least.
-            TypeData::Cond { file, node, mapper } => {
+            TypeData::Cond {
+                file, node, mapper, ..
+            } => {
                 let TypeNodeKind::Cond { check, .. } = self.hir(file)[node].kind else {
                     return ty;
                 };
@@ -1869,20 +1892,20 @@ impl<'p> Checker<'p> {
                     return ty;
                 }
                 let declared = self.type_from_node(file, check);
-                let Some(checked) = self.p.types.map(mapper, declared) else {
+                let Some(checked) = self.types().map(mapper, declared) else {
                     return ty;
                 };
                 let bound = self.lower_bound_of_key_type(checked);
                 if bound == checked {
                     return ty;
                 }
-                let mut pairs = self.p.types.mapping(mapper).to_vec();
+                let mut pairs = self.types().mapping(mapper).to_vec();
                 for pair in &mut pairs {
                     if pair.0 == declared {
                         pair.1 = bound;
                     }
                 }
-                let mapper = self.p.types.mapper(pairs);
+                let mapper = self.types().mapper(pairs);
                 self.conditional_type(file, node, mapper)
             }
             // `mapTypeEx(.., noReductions)`: `string` from `keyof S` does not swallow the names next to it.
@@ -2174,7 +2197,8 @@ impl<'p> Checker<'p> {
     /// mapper of `of` with the key type for the type parameter, or that mapper composed with another in a copy of the property
     /// (`getTypeOfInstantiatedSymbol`). `strips` is `CheckFlagsStripOptional`.
     pub(super) fn type_of_mapped_prop(&mut self, of: TypeId, prop: &Prop, strips: bool) -> TypeId {
-        let known = self.p.mapped_prop_types.get(&(of, prop.name));
+        let q = Query::MappedProp(of, prop.name);
+        let known = (self.p.mapped_prop_types).get(&mut self.task, &(of, prop.name));
         // `TypeFlagsAny`: no type variables, so it is the same under every mapper.
         if let Some(known) = known
             && self.has_any_flag(known)
@@ -2187,15 +2211,18 @@ impl<'p> Checker<'p> {
         // `resolvedType` belongs to the symbol of `of`. The type of a copy depends on the mapper of the copy, so it is not cached here.
         // Composing adds pairs or changes type arguments; the key type has no type variables.
         let (own, with_key) = (
-            self.p.types.mapping(mapper),
-            self.p.types.mapping(prop.mapper),
+            self.types().mapping(mapper),
+            self.types().mapping(prop.mapper),
         );
         let is_copy =
             with_key.len() != own.len() + 1 || !own.iter().all(|pair| with_key.contains(pair));
         if !is_copy && let Some(known) = known {
             return known;
         }
-        if !self.enter(Query::MappedProp(of, prop.name)) {
+        if !is_copy && let Some(raw) = self.provisional(q) {
+            return TypeId(raw as u32);
+        }
+        if !self.enter(q) {
             return if self.came_full_circle {
                 TypeId::ERROR
             } else {
@@ -2215,19 +2242,28 @@ impl<'p> Checker<'p> {
             prop.flags.contains(PropFlags::OPTIONAL),
             strips,
         );
-        let is_cacheable = self.leave();
+        let left = self.leave(q);
         if self.left_a_circle {
             self.circular_mapped_property(of, prop.name);
-            let kept = self
-                .p
-                .mapped_prop_types
-                .insert((of, prop.name), TypeId::ERROR);
+            let stored = self.cycle_result();
+            let kept = (self.p.mapped_prop_types).insert(
+                &mut self.task,
+                (of, prop.name),
+                TypeId::ERROR,
+                stored,
+            );
             return if is_copy { TypeId::ERROR } else { kept };
         }
-        if is_cacheable && !is_copy {
-            self.p.mapped_prop_types.insert((of, prop.name), ty);
+        match left {
+            Ok(stored) if !is_copy => {
+                (self.p.mapped_prop_types).insert(&mut self.task, (of, prop.name), ty, stored)
+            }
+            Err(open) if !is_copy => {
+                self.keep_provisionally(q, u64::from(ty.0), open);
+                ty
+            }
+            _ => ty,
         }
-        ty
     }
 
     /// `resolveMappedTypeMembers`
@@ -2303,8 +2339,7 @@ impl<'p> Checker<'p> {
                         // settled the modifiers.
                         Some(i) => {
                             let so_far = self
-                                .p
-                                .types
+                                .types()
                                 .map(shape.props[i].mapper, param)
                                 .unwrap_or(key);
                             let all = self.union(&[so_far, key]);
@@ -2439,7 +2474,7 @@ impl<'p> Checker<'p> {
         if types.contains(&TypeId::WILDCARD) {
             return TypeId::WILDCARD;
         }
-        let mut new_texts: Vec<Vec<u8>> = vec![self.files().atoms.bytes(texts[0]).to_vec()];
+        let mut new_texts: Vec<Vec<u8>> = vec![self.atoms().bytes(texts[0]).to_vec()];
         let mut new_types: Vec<TypeId> = Vec::new();
         for (i, &ty) in types.iter().enumerate() {
             let literal: Option<Vec<u8>> = match *self.data(ty.plain()) {
@@ -2447,14 +2482,14 @@ impl<'p> Checker<'p> {
                 | TypeData::EnumLit {
                     value: EnumValue::String(value),
                     ..
-                } => Some(self.files().atoms.bytes(value).to_vec()),
+                } => Some(self.atoms().bytes(value).to_vec()),
                 TypeData::NumberLit { bits, .. }
                 | TypeData::EnumLit {
                     value: EnumValue::Number(bits),
                     ..
                 } => {
                     let name = self.number_name(f64::from_bits(bits));
-                    Some(self.files().atoms.bytes(name).to_vec())
+                    Some(self.atoms().bytes(name).to_vec())
                 }
                 TypeData::BoolLit { value, .. } => Some(if value {
                     b"true".to_vec()
@@ -2463,14 +2498,14 @@ impl<'p> Checker<'p> {
                 }),
                 TypeData::BigIntLit { text, negative, .. } => {
                     let mut t = if negative { b"-".to_vec() } else { Vec::new() };
-                    t.extend_from_slice(self.files().atoms.bytes(text));
+                    t.extend_from_slice(self.atoms().bytes(text));
                     Some(t)
                 }
                 TypeData::Intrinsic(Intrinsic::Null) => Some(b"null".to_vec()),
                 TypeData::Intrinsic(Intrinsic::Undefined) => Some(b"undefined".to_vec()),
                 _ => None,
             };
-            let next = self.files().atoms.bytes(texts[i + 1]);
+            let next = self.atoms().bytes(texts[i + 1]);
             match literal {
                 Some(text) => {
                     let last = new_texts.last_mut().unwrap();
@@ -2486,10 +2521,10 @@ impl<'p> Checker<'p> {
                         new_texts
                             .last_mut()
                             .unwrap()
-                            .extend_from_slice(self.files().atoms.bytes(inner_texts[0]));
+                            .extend_from_slice(self.atoms().bytes(inner_texts[0]));
                         for (j, &t) in inner_types.iter().enumerate() {
                             new_types.push(t);
-                            new_texts.push(self.files().atoms.bytes(inner_texts[j + 1]).to_vec());
+                            new_texts.push(self.atoms().bytes(inner_texts[j + 1]).to_vec());
                         }
                         new_texts.last_mut().unwrap().extend_from_slice(next);
                     } else if self.is_generic(ty) || self.is_pattern_literal_placeholder(ty) {
@@ -2506,7 +2541,7 @@ impl<'p> Checker<'p> {
             combine_surrogate_pairs(text);
         }
         if new_types.is_empty() {
-            let value = self.files().atoms.intern(&new_texts[0]);
+            let value = self.atoms().intern(&new_texts[0]);
             return self.string_literal(value, false);
         }
         if new_texts.iter().all(Vec::is_empty) {
@@ -2520,10 +2555,7 @@ impl<'p> Checker<'p> {
                 return only;
             }
         }
-        let texts: Vec<Atom> = new_texts
-            .iter()
-            .map(|t| self.files().atoms.intern(t))
-            .collect();
+        let texts: Vec<Atom> = new_texts.iter().map(|t| self.atoms().intern(t)).collect();
         self.intern(TypeData::Template {
             texts: texts.into(),
             types: new_types.into(),
@@ -2534,7 +2566,7 @@ impl<'p> Checker<'p> {
     fn map_text(&self, kind: StringMappingKind, value: Atom) -> Atom {
         let mut mapped: Vec<u8> = Vec::new();
         // A lone surrogate, three bytes that are no UTF-8, has no case.
-        for (i, chunk) in self.files().atoms.bytes(value).utf8_chunks().enumerate() {
+        for (i, chunk) in self.atoms().bytes(value).utf8_chunks().enumerate() {
             let text = chunk.valid();
             let mut chars = text.chars();
             let text = match (kind, chars.next()) {
@@ -2551,7 +2583,7 @@ impl<'p> Checker<'p> {
             mapped.extend_from_slice(text.as_bytes());
             mapped.extend_from_slice(chunk.invalid());
         }
-        self.files().atoms.intern(&mapped)
+        self.atoms().intern(&mapped)
     }
 
     /// `getStringMappingType`

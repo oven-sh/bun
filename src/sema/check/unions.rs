@@ -71,7 +71,11 @@ impl<'p> Checker<'p> {
             {
                 return a;
             }
-            [a, b] if merge_constrained => Some(if a < b { (a, b) } else { (b, a) }),
+            [a, b] if merge_constrained => Some(if a.arrival_order() < b.arrival_order() {
+                (a, b)
+            } else {
+                (b, a)
+            }),
             _ => None,
         };
         if let Some((a, b)) = pair
@@ -97,7 +101,7 @@ impl<'p> Checker<'p> {
         for &ty in types {
             self.add_to_union(&mut members, ty);
         }
-        members.sort_unstable();
+        members.sort_unstable_by_key(|m| m.arrival_order());
         members.dedup();
         if members.first() == Some(&TypeId::UNRESOLVED) {
             return TypeId::UNRESOLVED;
@@ -122,7 +126,7 @@ impl<'p> Checker<'p> {
         for &ty in given {
             self.add_to_union(&mut members, ty);
         }
-        members.sort_unstable();
+        members.sort_unstable_by_key(|m| m.arrival_order());
         members.dedup();
         // `TypeFlagsIncludesWildcard`
         if members.contains(&TypeId::WILDCARD) {
@@ -138,7 +142,12 @@ impl<'p> Checker<'p> {
             [] => return (TypeId::NEVER, true),
             // What is not known, `any` and `unknown`, in this order, leave nothing of the others. Theirs are the lowest numbers.
             [TypeId::UNRESOLVED, TypeId::ANY, ..] => return (TypeId::ANY, true),
-            [first, ..] if first <= TypeId::UNKNOWN => return (first, true),
+            [
+                first @ (TypeId::UNRESOLVED | TypeId::ANY | TypeId::UNKNOWN),
+                ..,
+            ] => {
+                return (first, true);
+            }
             [only] => return (only, true),
             _ => {}
         }
@@ -166,10 +175,10 @@ impl<'p> Checker<'p> {
         }
         // A bit for each of the types with the lowest numbers that is there. They come first.
         let mut low = 0u32;
-        for m in members.iter().take_while(|m| m.0 < 32) {
-            low |= 1 << m.0;
+        for m in members.iter().take_while(|m| m.arrival_order() < 32) {
+            low |= 1 << m.arrival_order();
         }
-        let has = |t: TypeId| low & 1 << t.0 != 0;
+        let has = |t: TypeId| low & 1 << t.arrival_order() != 0;
         // The `undefined` of what is not there says nothing next to the real one.
         if has(TypeId::MISSING) && has(TypeId::UNDEFINED) {
             members.retain(|m| *m != TypeId::MISSING);
@@ -233,21 +242,30 @@ impl<'p> Checker<'p> {
                         } if number => false,
                         TypeData::BigIntLit { .. } if bigint => false,
                         TypeData::UniqueSymbol { .. } if symbol => false,
-                        _ if any_fresh && self.is_fresh_literal(m) => snapshot
-                            .binary_search(&self.with_freshness(m, false))
-                            .is_err(),
+                        _ if any_fresh && self.is_fresh_literal(m) => {
+                            let regular = self.with_freshness(m, false).arrival_order();
+                            snapshot
+                                .binary_search_by_key(&regular, |m| m.arrival_order())
+                                .is_err()
+                        }
                         _ => true,
                     }
                 });
             }
             if members.len() > 1 {
                 // `string` has taken the patterns out.
-                if has_pattern && !string {
+                let has_pattern = has_pattern && !string;
+                let has_constrained = has_constrained && merge_constrained;
+                if has_pattern || has_constrained {
                     is_plain = false;
+                    // Both evaluate something for each member, and what is evaluated first creates its types first. tsgo has the set
+                    // sorted from the start.
+                    self.sort_types(&mut members);
+                }
+                if has_pattern {
                     self.remove_string_literals_matched_by_template_literals(&mut members);
                 }
-                if has_constrained && merge_constrained {
-                    is_plain = false;
+                if has_constrained {
                     self.remove_constrained_type_variables(&mut members);
                 }
             }
@@ -283,11 +301,16 @@ impl<'p> Checker<'p> {
         for &u in &named {
             in_named.extend_from_slice(self.parts(u));
         }
-        in_named.sort_unstable();
+        in_named.sort_unstable_by_key(|m| m.arrival_order());
+        let is_in_named = |m: &TypeId| {
+            in_named
+                .binary_search_by_key(&m.arrival_order(), |n| n.arrival_order())
+                .is_ok()
+        };
         let mut origin: Vec<TypeId> = members
             .iter()
             .copied()
-            .filter(|m| in_named.binary_search(m).is_err())
+            .filter(|m| !is_in_named(m))
             .collect();
         if let [only] = named[..]
             && origin.is_empty()
@@ -302,7 +325,7 @@ impl<'p> Checker<'p> {
         } else {
             UnionOrigin::None
         };
-        self.p.types.intern_with(
+        self.types().intern_with(
             TypeData::Union(Box::from(members)),
             Provenance {
                 origin,
@@ -443,7 +466,7 @@ impl<'p> Checker<'p> {
             }
         }
         if changed {
-            members.sort_unstable();
+            members.sort_unstable_by_key(|m| m.arrival_order());
             members.dedup();
         }
     }
@@ -663,7 +686,7 @@ impl<'p> Checker<'p> {
                                 new_origin = UnionOrigin::Union(left.into());
                             }
                         }
-                        self.p.types.intern_with(
+                        self.types().intern_with(
                             TypeData::Union(Box::from(&kept[..])),
                             Provenance {
                                 origin: new_origin,
@@ -1048,16 +1071,23 @@ impl<'p> Checker<'p> {
             );
         }
         // `intersectionTypes`: what the same types came to before.
-        let key = (Box::<[TypeId]>::from(&set[..]), no_constraint_reduction);
-        if let Some(known) = self.p.distributed_intersections.get(&key) {
+        // `len(typeSet) >= 3 && len(types) > 2`. tsgo leaves it out of the key, so there the first caller decides for all.
+        let is_split = set.len() >= 3 && types.len() > 2;
+        let key = (
+            Box::<[TypeId]>::from(&set[..]),
+            no_constraint_reduction,
+            is_split,
+        );
+        let table = &self.p.distributed_intersections;
+        if let Some(known) = table.get(&mut self.task, &key) {
             return known;
         }
-        let before = self.what_only_holds_for_now();
+        let scope = self.begin_scope();
         let result = self.distribute_intersection(types.len(), set, no_constraint_reduction);
-        if self.what_only_holds_for_now() == before {
-            self.p.distributed_intersections.insert(key, result);
+        match self.end_scope_by_counters(scope) {
+            Ok(stored) => table.insert(&mut self.task, key, result, stored),
+            Err(_) => result,
         }
-        result
     }
 
     /// `checkCrossProductUnion`
@@ -1356,7 +1386,7 @@ impl<'p> Checker<'p> {
         Some(if name.is_none() {
             &b"\xFEclass"[..]
         } else {
-            files.atoms.bytes(name)
+            self.atoms().bytes(name)
         })
     }
 
@@ -1465,17 +1495,13 @@ impl<'p> Checker<'p> {
     /// declared.
     fn compare_type_mappers(&self, x: MapperId, y: MapperId) -> std::cmp::Ordering {
         let targets = |mapper: MapperId| -> Vec<TypeId> {
-            let mut pairs = self.p.types.mapping(mapper).to_vec();
-            pairs.sort_by_key(|pair| match *self.data(pair.0) {
-                TypeData::TypeParam(file, tp, _) => (0u8, file.0, tp.0),
-                _ => (1, 0, pair.0.0),
-            });
-            pairs.into_iter().map(|pair| pair.1).collect()
+            let pairs = self.mapping_in_declaration_order(mapper);
+            pairs.iter().map(|pair| pair.1).collect()
         };
         self.compare_type_lists(&targets(x), &targets(y))
     }
 
-    /// `CompareTypes` without its last resort, the ids, which depend on which thread came first here.
+    /// `CompareTypes` without its last resort, the ids.
     fn compare_types_without_ids(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         use std::cmp::Ordering::Equal;
         if a == b {
@@ -1486,7 +1512,7 @@ impl<'p> Checker<'p> {
         if by_flags.is_ne() {
             return by_flags;
         }
-        let atoms = &self.files().atoms;
+        let atoms = &self.atoms();
         let types = |x: TypeId, y: TypeId| self.compare_types_without_ids(x, y);
         let lists = |x: &[TypeId], y: &[TypeId]| self.compare_type_lists(x, y);
         let place = |t: TypeId| {
@@ -1553,7 +1579,28 @@ impl<'p> Checker<'p> {
                 })
             }
         };
-        match (self.data(a), self.data(b)) {
+        // Where one type is always created from the other, the order of their ids in tsgo is a function of the two types.
+        let creation_step = |t: TypeId| match *self.data(t) {
+            // `getFreshTypeOfLiteralType`
+            TypeData::StringLit { fresh, .. }
+            | TypeData::NumberLit { fresh, .. }
+            | TypeData::BigIntLit { fresh, .. }
+            | TypeData::BoolLit { fresh, .. }
+            | TypeData::EnumLit { fresh, .. }
+            | TypeData::Enum { fresh, .. } => u8::from(fresh),
+            // `checkObjectLiteral`, `getRegularTypeOfObjectLiteral`, `getWidenedTypeOfObjectLiteral`
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(.., is_fresh),
+                ..
+            } => u8::from(!is_fresh),
+            TypeData::Anon {
+                origin: Origin::WidenedLiteral(..),
+                ..
+            } => 2,
+            TypeData::Synth(ref shape) => u8::from(shape.is_regular),
+            _ => 0,
+        };
+        let by_structure = match (self.data(a), self.data(b)) {
             (TypeData::Ref { target: s, args: x }, TypeData::Ref { target: t, args: y }) => {
                 s.cmp(t).then_with(|| arguments(x, y))
             }
@@ -1608,7 +1655,7 @@ impl<'p> Checker<'p> {
                     .then_with(|| x.partial_cmp(&y).unwrap_or(Equal))
             }
             (TypeData::BoolLit { value: x, .. }, TypeData::BoolLit { value: y, .. }) => x.cmp(y),
-            // Ordered by id, and `zeroBigIntType` is made with the checker.
+            // tsgo orders them by id, and creates `zeroBigIntType` with the checker.
             (TypeData::BigIntLit { text: x, .. }, TypeData::BigIntLit { text: y, .. }) => {
                 let is_zero =
                     |text: Atom| atoms.bytes(text).iter().all(|&c| c == b'0' || c == b'n');
@@ -1618,9 +1665,24 @@ impl<'p> Checker<'p> {
                 TypeData::Marker(Marker::Restrictive(x)),
                 TypeData::Marker(Marker::Restrictive(y)),
             ) => types(*x, *y),
-            (TypeData::Marker(x), TypeData::Marker(y)) => x.cmp(y),
-            // By name, then by id. They are made with the checker, in this order.
-            (TypeData::Intrinsic(_), TypeData::Intrinsic(_)) => a.cmp(&b),
+            (TypeData::Marker(x), TypeData::Marker(y)) => {
+                let rank = |marker: &Marker| match *marker {
+                    Marker::Super => (0, 0),
+                    Marker::Sub => (1, 0),
+                    Marker::Other => (2, 0),
+                    Marker::SuperForCheck => (3, 0),
+                    Marker::SubForCheck => (4, 0),
+                    Marker::Restrictive(_) => (5, 0),
+                    Marker::TupleElement(index) => (6, index),
+                    Marker::TupleThis => (7, 0),
+                };
+                rank(x).cmp(&rank(y))
+            }
+            // tsgo: by name, then by id. The ids of intrinsic types are constants: `TypeStore::new` interns them in the order of
+            // `well_known!`.
+            (TypeData::Intrinsic(_), TypeData::Intrinsic(_)) => {
+                a.arrival_order().cmp(&b.arrival_order())
+            }
             (TypeData::Keyof(x), TypeData::Keyof(y))
             | (TypeData::EvolvingArray(x), TypeData::EvolvingArray(y))
             | (TypeData::StringMapping { ty: x, .. }, TypeData::StringMapping { ty: y, .. }) => {
@@ -1658,7 +1720,10 @@ impl<'p> Checker<'p> {
             // members through the right.
             (TypeData::Synth(x), TypeData::Synth(y)) => match (x.spread_of, y.spread_of) {
                 (Some((l, r)), Some((m, s))) => types(l, m).then_with(|| types(r, s)),
-                _ => Equal,
+                _ => match (x.single_signature_arguments, y.single_signature_arguments) {
+                    (Some(x), Some(y)) => types(x, y),
+                    (x, y) => y.is_some().cmp(&x.is_some()),
+                },
             },
             // `ObjectFlagsObjectTypeKindMask`, then `compareTypeMappers`: what has none comes last.
             (x, y) => {
@@ -1671,6 +1736,7 @@ impl<'p> Checker<'p> {
                     TypeData::EvolvingArray(_) => 3,
                     _ => 0,
                 };
+                let kind_of_both_is_mapped = kind(x) == 1 && kind(y) == 1;
                 let mapper = |data: &TypeData| match *data {
                     TypeData::Anon { mapper, .. }
                     | TypeData::Fns { mapper, .. }
@@ -1681,20 +1747,42 @@ impl<'p> Checker<'p> {
                 kind(x)
                     .cmp(&kind(y))
                     .then_with(|| match (mapper(x), mapper(y)) {
+                        // `instantiateAnonymousType` combines the mapper of a mapped type with one for its fresh type parameter, and
+                        // `compareTypeMappers` says nothing of a `CompositeTypeMapper`: the ids decide.
+                        (Some(x), Some(y)) if kind_of_both_is_mapped => {
+                            self.is_instantiating(y).cmp(&self.is_instantiating(x))
+                        }
                         (Some(x), Some(y)) => self.compare_type_mappers(x, y),
                         (x, y) => y.is_some().cmp(&x.is_some()),
                     })
             }
-        }
+        };
+        by_structure.then_with(|| creation_step(a).cmp(&creation_step(b)))
     }
 
-    /// `CompareTypes`: the order the members of a union, and of an origin that is a union, are kept in. It goes by nothing but the two
-    /// types: the same members have to come to the same union whoever makes it, and whenever.
+    /// `CompareTypes`: the order of the constituents of a union, and of an origin that is a union. Where tsgo falls back to the type ids,
+    /// this falls back to `creation_order`.
     pub fn compare_types(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
-        self.compare_types_without_ids(a, b).then(a.cmp(&b))
+        let types = self.types();
+        types.take_has_ordered_by_own_id();
+        let order = self
+            .compare_types_without_ids(a, b)
+            .then_with(|| types.creation_order(a, b));
+        // Here, or further in: `mapping_in_declaration_order`.
+        if types.take_has_ordered_by_own_id() {
+            types.mark_ordered_by_id(a);
+            types.mark_ordered_by_id(b);
+        }
+        order
     }
 
-    fn sort_types(&self, types: &mut [TypeId]) {
+    /// See `Types::creation_order`.
+    #[inline]
+    pub(super) fn creation_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+        self.types().creation_order(a, b)
+    }
+
+    pub(super) fn sort_types(&self, types: &mut [TypeId]) {
         types.sort_by(|&a, &b| self.compare_types(a, b));
     }
 

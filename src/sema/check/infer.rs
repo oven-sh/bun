@@ -161,7 +161,7 @@ impl Inference {
 impl<'p> Checker<'p> {
     /// `ObjectFlagsNonInferrableType`: there is a hole in it.
     pub(super) fn is_non_inferrable_type(&self, ty: TypeId) -> bool {
-        let flags = self.p.types.object_flags(ty);
+        let flags = self.types().object_flags(ty);
         flags.contains(ObjectFlags::HAS_UNRESOLVED)
     }
 
@@ -402,7 +402,7 @@ impl<'p> Checker<'p> {
         }
         // `source.AsTypeReference().node != nil && target.AsTypeReference().node != nil`
         let are_both_deferred =
-            self.p.types.deferred(source).is_some() && self.p.types.deferred(target).is_some();
+            self.types().deferred(source).is_some() && self.types().deferred(target).is_some();
         match (self.data(source), self.data(target)) {
             // Two that are both put off go by way of `invokeOnce`, or it might never end.
             (TypeData::Ref { target: st, .. }, TypeData::Ref { target: tt, .. })
@@ -589,7 +589,7 @@ impl<'p> Checker<'p> {
         sources: &[TypeId],
         targets: &[TypeId],
     ) {
-        if let Some(known) = self.p.variances.get_ref(&of) {
+        if let Some(known) = self.p.variances.get_ref(&mut self.task, &of) {
             return self.infer_from_type_arguments(n, sources, targets, known);
         }
         let variances = self.variances_of(of);
@@ -863,11 +863,7 @@ impl<'p> Checker<'p> {
         let matches = self.infer_types_from_template_literal_type(source, texts, types);
         // Nothing but placeholders, and no match: `never` for each, so that what comes of it fits nothing. What they extend,
         // `string`, would fit.
-        if matches.is_none()
-            && !texts
-                .iter()
-                .all(|&t| self.files().atoms.bytes(t).is_empty())
-        {
+        if matches.is_none() && !texts.iter().all(|&t| self.atoms().bytes(t).is_empty()) {
             return;
         }
         for (i, &target) in types.iter().enumerate() {
@@ -894,11 +890,11 @@ impl<'p> Checker<'p> {
         source: TypeId,
         constraint: TypeId,
     ) -> Option<TypeId> {
-        let text = self.files().atoms.text(value).into_owned();
+        let text = self.atoms().text(value).into_owned();
         let number = text
             .parse::<f64>()
             .ok()
-            .filter(|v| v.is_finite() && self.files().atoms.text(self.number_name(*v)) == text);
+            .filter(|v| v.is_finite() && self.atoms().text(self.number_name(*v)) == text);
         // `isValidBigIntString(text, roundTripOnly)`: just what a bigint prints as.
         let negative = text.starts_with('-');
         let digits = text.strip_prefix('-').unwrap_or(&text);
@@ -933,7 +929,7 @@ impl<'p> Checker<'p> {
                 } => (number.map(f64::to_bits) == Some(*bits)).then_some((5, t)),
                 // `parseBigIntLiteralType`
                 TypeData::Intrinsic(Intrinsic::BigInt) if is_bigint => {
-                    let written = c.files().atoms.intern(digits.as_bytes());
+                    let written = c.atoms().intern(digits.as_bytes());
                     Some((
                         6,
                         c.intern(TypeData::BigIntLit {
@@ -949,7 +945,7 @@ impl<'p> Checker<'p> {
                     ..
                 } => (is_bigint
                     && *minus == negative
-                    && c.files().atoms.bytes(*written) == digits.as_bytes())
+                    && c.atoms().bytes(*written) == digits.as_bytes())
                 .then_some((6, t)),
                 TypeData::BoolLit { value: v, .. } => {
                     (text == if *v { "true" } else { "false" }).then_some((7, t))
@@ -1496,7 +1492,7 @@ impl<'p> Checker<'p> {
     ) {
         let source = self.base_sig(source);
         // `target.declaration`: the signature of a union is declared where the first it stands for is.
-        let is_method = match self.sig_decl(self.p.types.sig_origin(target)) {
+        let is_method = match self.sig_decl(self.types().sig_origin(target)) {
             Some((file, func, _)) => matches!(
                 self.hir(file)[func].kind,
                 FnKind::Method | FnKind::Constructor
@@ -1532,7 +1528,13 @@ impl<'p> Checker<'p> {
         source: SigId,
         target: SigId,
     ) -> SmallVec<[(TypeId, TypeId); 8]> {
-        let (sp, tp) = (self.sig_params(source), self.sig_params(target));
+        let tp = self.sig_params(target);
+        // `getTypeAtPosition(source, i)`, and `getRestTypeAtPosition(source, ..)` for all that are left.
+        let asked = match tp.last() {
+            Some(last) if last.rest => usize::MAX,
+            _ => tp.len(),
+        };
+        let sp = self.sig_params_asked_for(source, asked);
         let (source_count, target_count) = (self.parameter_count(&sp), self.parameter_count(&tp));
         let (source_rest, target_rest) =
             (self.effective_rest_type(&sp), self.effective_rest_type(&tp));
@@ -1855,21 +1857,16 @@ impl<'p> Checker<'p> {
                         })
             }
             TypeData::Intrinsic(Intrinsic::Auto | Intrinsic::SilentNever) => true,
-            // `checkObjectLiteral`: `objectFlags |= getObjectFlags(t) & ObjectFlagsPropagatingFlags`. `autoType` gets into a literal only
-            // as what a target of an assignment pattern is declared as. The members were looked at with the literal.
-            // `getWidenedTypeOfObjectLiteral` keeps the flag, and what is expected of a call is widened (`without_pattern_marks`).
-            &TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e, ..) | Origin::WidenedLiteral(file, e, ..),
+            // `checkObjectLiteral` propagates the flag from the member types (`look_at_members`), and
+            // `getWidenedTypeOfObjectLiteral` keeps it. The contextual type of a call is widened (`without_pattern_marks`).
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(.., object_flags, _),
                 ..
-            } if self.is_assignment_target(file, e) => match self.hir(file)[e].kind {
-                ExprKind::Object(props) => props.iter().any(|p| {
-                    self.p
-                        .literal_prop_types
-                        .get(file, p.idx())
-                        .is_some_and(|member| self.is_non_inferrable(member, depth + 1))
-                }),
-                _ => false,
-            },
+            } if object_flags.contains(ObjectFlags::NON_INFERRABLE_TYPE) => true,
+            TypeData::Anon {
+                origin: Origin::WidenedLiteral(.., true),
+                ..
+            } => true,
             // `createDeferredTypeReference` sets no propagating flags.
             TypeData::Tuple {
                 elems: TypeArguments::Given(list),
@@ -1887,8 +1884,7 @@ impl<'p> Checker<'p> {
             // parameter in an anonymous type does not mark it, unless an alias stands for it and that is a type argument of the alias.
             TypeData::Anon { mapper, .. } | TypeData::Fns { mapper, .. }
                 if self
-                    .p
-                    .types
+                    .types()
                     .mapping(*mapper)
                     .iter()
                     .any(|pair| self.is_non_inferrable(pair.1, depth + 1)) =>
@@ -2039,10 +2035,11 @@ impl<'p> Checker<'p> {
         target: TypeId,
         of: TypeId,
     ) -> Option<TypeId> {
-        if let Some(cached) = self.p.reverse_mapped_cache.get(&(source, target, of)) {
+        let key = (source, target, of);
+        if let Some(cached) = self.p.reverse_mapped_cache.get(&mut self.task, &key) {
             return Some(cached.unwrap_or(TypeId::UNKNOWN));
         }
-        let before = self.what_only_holds_for_now();
+        let scope = self.begin_scope();
         self.reverse_mapped_source_stack.push(source);
         self.reverse_mapped_target_stack.push(target);
         let saved = self.reverse_expanding;
@@ -2077,12 +2074,10 @@ impl<'p> Checker<'p> {
         self.reverse_mapped_source_stack.pop();
         self.reverse_mapped_target_stack.pop();
         self.reverse_expanding = saved;
-        if self.what_only_holds_for_now() == before {
-            self.p
-                .reverse_mapped_cache
-                .insert((source, target, of), result);
+        match self.end_scope_by_counters(scope) {
+            Ok(stored) => (self.p.reverse_mapped_cache).insert(&mut self.task, key, result, stored),
+            Err(_) => result,
         }
-        result
     }
 
     /// `getRestTypeAtPosition`
@@ -2166,12 +2161,9 @@ impl<'p> Checker<'p> {
         self.normalized_tuple(&elems[from..], &flags[from..], readonly)
     }
 
-    /// `getBaseSignature`: `sig` with each of its type parameters, declared or adopted, replaced by its base constraint.
+    /// `getBaseSignature`: `sig` with each of its type parameters replaced by its base constraint.
     pub fn base_sig(&mut self, sig: SigId) -> SigId {
-        let mut params = self.sig_type_params(sig);
-        if params.is_empty() {
-            params = self.adopted_type_params(sig).into();
-        }
+        let params = self.sig_type_params(sig);
         if params.is_empty() {
             return sig;
         }
@@ -2205,9 +2197,19 @@ impl<'p> Checker<'p> {
     /// type parameters adopts those of its contextual signature (`sig.typeParameters = context.typeParameters`). Returns the
     /// adopted type parameters that `sig` has no type argument for.
     pub(super) fn adopted_type_params(&mut self, sig: SigId) -> Vec<TypeId> {
-        let SigData::Decl { file, func, mapper } = *self.p.types.sig(sig) else {
-            return Vec::new();
-        };
+        match *self.types().sig(sig) {
+            SigData::Decl { file, func, mapper } => self.adopted_type_params_of(file, func, mapper),
+            _ => Vec::new(),
+        }
+    }
+
+    /// `adopted_type_params`, of the signature of `func` that has `mapper`.
+    pub(super) fn adopted_type_params_of(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        mapper: MapperId,
+    ) -> Vec<TypeId> {
         if !self.hir(file)[func].type_params.is_empty() {
             return Vec::new();
         }
@@ -2226,8 +2228,7 @@ impl<'p> Checker<'p> {
         };
         let mut params = self.sig_type_params(contextual).into_vec();
         params.retain(|&param| {
-            self.p
-                .types
+            self.types()
                 .map(mapper, param)
                 .is_none_or(|given| given == param)
         });
@@ -2600,12 +2601,12 @@ impl<'p> Checker<'p> {
         if pairs.is_empty() {
             return MapperId::IDENTITY;
         }
-        self.p.types.mapper(pairs)
+        self.types().mapper(pairs)
     }
 
     /// `context.mapper`, for what `ty` mentions (`InferenceTypeMapper.Map`).
     pub(super) fn fixing_mapper(&mut self, n: &mut Inference, ty: TypeId) -> MapperId {
-        if !self.has_type_variables(ty) {
+        if !self.may_mention_type_parameter(ty) {
             return MapperId::IDENTITY;
         }
         let mentioned = self.params_mentioned_in(ty, &n.params);
@@ -2624,7 +2625,7 @@ impl<'p> Checker<'p> {
         if pairs.is_empty() {
             return MapperId::IDENTITY;
         }
-        self.p.types.mapper(pairs)
+        self.types().mapper(pairs)
     }
 
     /// `inferFromIntraExpressionSites`
@@ -2657,6 +2658,13 @@ impl<'p> Checker<'p> {
     /// Whether `param` occurs in `ty`, as far as can be told without resolving members.
     pub fn mentions(&self, ty: TypeId, param: TypeId) -> bool {
         self.any_type_in(ty, false, |t| t == param)
+    }
+
+    /// `couldContainTypeVariables`: whether instantiating `ty` can come to map a type parameter.
+    fn may_mention_type_parameter(&self, ty: TypeId) -> bool {
+        self.types()
+            .object_flags(ty)
+            .intersects(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_REVERSE_MAPPED)
     }
 
     /// `mentions`, for each of `params`, going through `ty` once.
@@ -2693,7 +2701,7 @@ impl<'p> Checker<'p> {
             if found(ty) {
                 return true;
             }
-            if !self.has_type_variables(ty) || seen.contains(&ty) {
+            if !self.may_mention_type_parameter(ty) || seen.contains(&ty) {
                 continue;
             }
             if seen.len() < seen.inline_size() {
@@ -2701,7 +2709,7 @@ impl<'p> Checker<'p> {
             } else if !seen_later.insert(ty) {
                 continue;
             }
-            let values = |mapper: MapperId| self.p.types.mapping(mapper).iter().map(|pair| pair.1);
+            let values = |mapper: MapperId| self.types().mapping(mapper).iter().map(|pair| pair.1);
             match self.data(ty) {
                 TypeData::Union(types) | TypeData::Intersection(types) => {
                     left.extend_from_slice(types);
@@ -2732,13 +2740,15 @@ impl<'p> Checker<'p> {
                 }
                 TypeData::IndexedAccess { obj, index, .. } => left.extend([*obj, *index]),
                 TypeData::Substitution { base, constraint } => left.extend([*base, *constraint]),
-                TypeData::ReverseMapped { source: t, .. }
-                | TypeData::Keyof(t)
-                | TypeData::StringMapping { ty: t, .. } => left.push(*t),
+                // `instantiateReverseMappedType` instantiates all three.
+                TypeData::ReverseMapped { source, mapped, of } => {
+                    left.extend([*source, *mapped, *of]);
+                }
+                TypeData::Keyof(t) | TypeData::StringMapping { ty: t, .. } => left.push(*t),
                 _ => {}
             }
             while let Some(sig) = signatures.pop() {
-                match self.p.types.sig(sig) {
+                match self.types().sig(sig) {
                     SigData::Decl { mapper, .. } | SigData::Construct { mapper, .. } => {
                         left.extend(values(*mapper))
                     }

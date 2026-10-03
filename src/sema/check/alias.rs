@@ -23,7 +23,7 @@ impl<'p> Checker<'p> {
     /// `UnionType.origin`
     #[inline]
     pub(super) fn origin(&self, ty: TypeId) -> &'p UnionOrigin {
-        match self.p.types.provenance(ty) {
+        match self.types().provenance(ty) {
             Some(provenance) => &provenance.origin,
             None => &NO_ORIGIN,
         }
@@ -31,7 +31,7 @@ impl<'p> Checker<'p> {
 
     /// `getUnionTypeFromSortedList`: the members of `union`, with `origin` and no alias.
     pub(super) fn with_origin(&self, union: TypeId, origin: UnionOrigin) -> TypeId {
-        self.p.types.intern_with(
+        self.types().intern_with(
             self.data(union).clone(),
             Provenance {
                 origin,
@@ -43,16 +43,16 @@ impl<'p> Checker<'p> {
     /// The alias `ty` keeps.
     #[inline]
     pub(super) fn stored_alias(&self, ty: TypeId) -> Option<&'p (Sym, Box<[TypeId]>)> {
-        self.p.types.provenance(ty)?.alias.as_ref()
+        self.types().provenance(ty)?.alias.as_ref()
     }
 
     /// `ty` with `alias` and `type_arguments` for `Type.alias`.
     pub(super) fn with_alias(&self, ty: TypeId, alias: Sym, type_arguments: &[TypeId]) -> TypeId {
-        let origin = match self.p.types.provenance(ty) {
+        let origin = match self.types().provenance(ty) {
             Some(provenance) => provenance.origin.clone(),
             None => UnionOrigin::None,
         };
-        self.p.types.intern_with(
+        self.types().intern_with(
             self.data(ty).clone(),
             Provenance {
                 alias: Some((alias, type_arguments.into())),
@@ -88,7 +88,9 @@ impl<'p> Checker<'p> {
                 origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
                 mapper,
             }
-            | TypeData::Cond { file, node, mapper } => (file, node, mapper),
+            | TypeData::Cond {
+                file, node, mapper, ..
+            } => (file, node, mapper),
             TypeData::Fns { ref decls, mapper } => {
                 let [(file, func)] = decls[..] else {
                     return None;
@@ -112,7 +114,7 @@ impl<'p> Checker<'p> {
     ) -> Option<(Sym, Vec<TypeId>)> {
         let scope = self.bound(file).type_scope[node.idx()];
         let (alias, parameters) = self.alias_for_type_node(file, scope, node)?;
-        let map = |&parameter: &TypeId| self.p.types.map(mapper, parameter).unwrap_or(parameter);
+        let map = |&parameter: &TypeId| self.types().map(mapper, parameter).unwrap_or(parameter);
         Some((alias, parameters.iter().map(map).collect()))
     }
 
@@ -216,7 +218,7 @@ impl<'p> Checker<'p> {
         mapper: MapperId,
         alias: (Sym, &[TypeId]),
     ) -> TypeId {
-        if self.p.types.deferred(ty).is_some() {
+        if self.types().deferred(ty).is_some() {
             return self.instantiate_deferred_type_reference(ty, mapper, Some(alias));
         }
         match self.data(ty) {
@@ -230,6 +232,7 @@ impl<'p> Checker<'p> {
                 file,
                 node,
                 mapper: own,
+                ..
             } => {
                 let new = self.map_mapper(own, mapper);
                 self.conditional_type_instantiation(file, node, new, Some(alias))
@@ -265,7 +268,7 @@ impl<'p> Checker<'p> {
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
         let kept = self.stored_alias(ty);
-        if alias.is_none() && kept.is_none() || self.p.types.deferred(result).is_some() {
+        if alias.is_none() && kept.is_none() || self.types().deferred(result).is_some() {
             return result;
         }
         // `createDeferredTypeReference`, `instantiateAnonymousType`
@@ -366,7 +369,7 @@ impl<'p> Checker<'p> {
 
     /// `ty` as `createTypeReference` makes it: a reference or a tuple without the alias of the deferred reference it is.
     pub(super) fn without_alias_of_reference(&mut self, ty: TypeId) -> TypeId {
-        if self.stored_alias(ty).is_none() && self.p.types.deferred(ty).is_none() {
+        if self.stored_alias(ty).is_none() && self.types().deferred(ty).is_none() {
             return ty;
         }
         let arguments = self.type_arguments(ty);

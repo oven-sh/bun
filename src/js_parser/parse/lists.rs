@@ -93,8 +93,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Call before parsing each element. Ports the loop condition of `parseList` and `parseDelimitedList`.
     #[inline]
     pub(crate) fn classify_list_token(&mut self, kind: ListKind) -> Result<ListStep, Error> {
-        // A speculative parse must still fail on errors.
-        if !self.lexer.tolerant || self.lexer.is_log_disabled {
+        // A speculative parse must still fail on errors. The parser of type members accepts any run of words as modifiers and a name,
+        // so for that list the test is made here: a token that starts no member ends the list, and `expect("}")` fails the attempt.
+        if !self.lexer.tolerant || self.lexer.is_log_disabled && kind != ListKind::TypeMembers {
             return Ok(ListStep::Element);
         }
         self.classify_list_token_slow(kind)

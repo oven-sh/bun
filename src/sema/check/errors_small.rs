@@ -161,7 +161,7 @@ impl Checker<'_> {
         {
             // `evaluator.IsTruthy`
             let is_truthy = match *value {
-                EnumValue::String(text) => !self.files().atoms.bytes(text).is_empty(),
+                EnumValue::String(text) => !self.atoms().bytes(text).is_empty(),
                 EnumValue::Number(bits) => {
                     let number = f64::from_bits(bits);
                     number != 0.0 && !number.is_nan()

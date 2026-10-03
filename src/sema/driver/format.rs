@@ -5,6 +5,7 @@
 
 use crate::{Category, Diagnostic, Report};
 use bstr::{BString, ByteSlice};
+use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::relative_normalized;
 use bun_sema::util::FxHashMap;
@@ -103,13 +104,12 @@ fn plural(n: usize, one: &[u8], many: &[u8]) -> BString {
 /// How many columns of a terminal `text` takes: two for most of what is written in East Asia and for emoji, none for what combines with the
 /// character before it.
 fn columns(text: &[u8]) -> usize {
-    bun_core::strings::visible::width::exclude_ansi_colors::utf8(text)
+    strings::visible::width::exclude_ansi_colors::utf8(text)
 }
 
 /// The longest start of `text` that fits `width` columns.
 fn fitting(text: &[u8], width: usize) -> &[u8] {
-    let end =
-        bun_core::strings::visible::width::exclude_ansi_colors::utf8_index_at_width(text, width);
+    let end = strings::visible::width::exclude_ansi_colors::utf8_index_at_width(text, width);
     &text[..end]
 }
 
@@ -140,7 +140,7 @@ fn to_data(d: &Diagnostic, style: &Style, says_code: bool, shown: usize) -> bun_
             true => (d.end_column - d.column) as usize,
             false => usize::MAX,
         },
-        line_text: Some(bstr::join("\n", lines).replace(b"\t", b" ").into()),
+        line_text: Some(strings::replace_owned(&bstr::join("\n", lines), b"\t", b" ").into()),
         ..Default::default()
     });
     bun_ast::Data {
@@ -282,9 +282,12 @@ fn write_plain(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
 
 /// What is between the quotes of an attribute.
 fn attribute(text: &[u8]) -> BString {
-    text.replace(b"&", b"&amp;")
-        .replace(b"\"", b"&quot;")
-        .into()
+    strings::replace_owned(
+        &strings::replace_owned(text, b"&", b"&amp;"),
+        b"\"",
+        b"&quot;",
+    )
+    .into()
 }
 
 fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], style: &Style) {
@@ -321,7 +324,7 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
         let end = end - blank(&mut d.source[at + 1..end].iter().rev());
         let gutter = bun_core::fmt::digit_count(d.source_line as usize + end - 1);
         for (line, text) in (d.source_line + first as u32..).zip(&d.source[first..end]) {
-            let text = text.replace(b"\t", b" ");
+            let text = strings::replace_owned(text, b"\t", b" ");
             let _ = writeln!(out, "{line:>gutter$} | {}", text.trim_ascii_end().as_bstr());
             if line == d.line {
                 let (from, end) = (d.column as usize - 1, d.end_column as usize - 1);
@@ -390,8 +393,12 @@ fn write_github_annotation(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
         );
     }
     // (`bun_core::fmt::github_action` leaves `%` as it is.)
-    let text = d.text.replace(b"%", b"%25").replace(b"\r", b"%0D");
-    let text = text.replace(b"\n", b"%0A");
+    let text = strings::replace_owned(
+        &strings::replace_owned(&d.text, b"%", b"%25"),
+        b"\r",
+        b"%0D",
+    );
+    let text = strings::replace_owned(&text, b"\n", b"%0A");
     let _ = writeln!(out, "title=TS{}::{}", d.code, text.as_bstr());
 }
 

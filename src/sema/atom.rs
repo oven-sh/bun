@@ -1,5 +1,8 @@
-//! Interned names. One table for the whole program, filled from every parser thread.
+//! Interned names. One table for the whole program, filled from every parser thread, and FROZEN WHILE THE PROGRAM IS CHECKED: a text that
+//! is new then is an atom of the task that comes upon it (`OwnStore`), and the link step publishes it.
 
+use crate::local::LOCAL;
+use crate::types::OwnStore;
 use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
 
 /// A name. Its number is its place in a list that every parser thread adds to, so it is another in every run: atoms have no order.
@@ -19,6 +22,11 @@ impl Atom {
     #[inline]
     pub fn is_none(self) -> bool {
         self == Atom::NONE
+    }
+    /// Whether a task has created it, and it is not published yet.
+    #[inline]
+    pub fn is_own(self) -> bool {
+        self.0 & LOCAL != 0 && self != Atom::NONE
     }
     #[inline]
     pub fn is_some(self) -> bool {
@@ -200,6 +208,7 @@ known_atoms! {
     __esModule = "__esModule",
     async_ = "async",
     AsyncDisposable = "AsyncDisposable",
+    tslib = "tslib",
 }
 
 /// What the name of a property that a symbol names starts with: `InternalSymbolNamePrefix` and `@`. No text has the byte 0xFE in
@@ -268,7 +277,7 @@ fn short(text: &[u8]) -> ((u64, u64, u64), u32) {
 
 /// What a text is found by.
 #[inline]
-fn hash_of(text: &[u8]) -> u64 {
+pub(crate) fn hash_of(text: &[u8]) -> u64 {
     if text.len() > Recent::LONGEST {
         spread_hash(text)
     } else {
@@ -297,7 +306,7 @@ impl crate::table::Id for Atom {
     }
     #[inline]
     fn local_number(self) -> Option<u32> {
-        None
+        self.is_own().then_some(self.0 & !LOCAL)
     }
 }
 
@@ -325,6 +334,11 @@ impl Interner {
         );
         assert_eq!(this.intern(b"\xFEglobal"), known::global_augmentation);
         this
+    }
+
+    /// For the link step.
+    pub(crate) fn halves(&self) -> (&[GrowingPlaces], &AppendVec<Box<[u8]>>) {
+        (&self.shards, &self.texts)
     }
 
     /// Which interner it is, of all there have been: what is remembered of one says nothing of another.
@@ -387,6 +401,7 @@ impl Interner {
 
     #[inline]
     pub fn bytes(&self, atom: Atom) -> &[u8] {
+        debug_assert!(!atom.is_own(), "only `Atoms` knows a task's own");
         self.texts.get(atom.0)
     }
 
@@ -407,12 +422,88 @@ impl Interner {
         if atom.is_none() {
             return std::borrow::Cow::Borrowed("<none>");
         }
-        match self.bytes(atom) {
-            [0xFE, rest @ ..] => {
-                std::borrow::Cow::Owned(format!("__{}", String::from_utf8_lossy(rest)))
-            }
-            bytes => String::from_utf8_lossy(bytes),
+        as_text(self.bytes(atom))
+    }
+}
+
+fn as_text(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
+    match bytes {
+        [0xFE, rest @ ..] => {
+            std::borrow::Cow::Owned(format!("__{}", String::from_utf8_lossy(rest)))
         }
+        bytes => String::from_utf8_lossy(bytes),
+    }
+}
+
+/// THE PUBLISHED ATOMS AND THE TASK'S OWN, which is all that a task sees. `Checker::atoms` makes one.
+#[derive(Copy, Clone)]
+pub struct Atoms<'p> {
+    published: &'p Interner,
+    own: &'p OwnStore,
+}
+
+impl<'p> Atoms<'p> {
+    #[inline(always)]
+    pub fn new(published: &'p Interner, own: &OwnStore) -> Atoms<'p> {
+        // SAFETY: as in `Types::new`.
+        let own = unsafe { &*std::ptr::from_ref(own) };
+        Atoms { published, own }
+    }
+
+    #[inline]
+    fn find_published(&self, spread: u64, text: &[u8]) -> Option<Atom> {
+        let texts = &self.published.texts;
+        (self.published.shards[shard_of(spread)])
+            .find_frozen(spread, |i| &**texts.get(i) == text)
+            .map(Atom)
+    }
+
+    pub fn intern(&self, text: &[u8]) -> Atom {
+        let spread = hash_of(text);
+        match self.find_published(spread, text) {
+            Some(atom) => atom,
+            None => self.own.intern_atom(spread, text),
+        }
+    }
+
+    #[inline]
+    pub fn intern_str(&self, text: &str) -> Atom {
+        self.intern(text.as_bytes())
+    }
+
+    /// The atom of `text`, if it is published or the task has created it.
+    pub fn lookup(&self, text: &[u8]) -> Option<Atom> {
+        let spread = hash_of(text);
+        self.find_published(spread, text)
+            .or_else(|| self.own.find_atom(spread, text))
+    }
+
+    #[inline]
+    pub fn bytes(&self, atom: Atom) -> &'p [u8] {
+        if atom.is_own() {
+            self.own.atom_bytes(atom)
+        } else {
+            self.published.bytes(atom)
+        }
+    }
+
+    /// See `Interner::symbol_name`.
+    pub fn symbol_name(&self, name: &[u8]) -> Atom {
+        self.intern(&[SYMBOL_NAME_PREFIX, name].concat())
+    }
+
+    /// `isLateBoundName`
+    #[inline]
+    pub fn is_symbol_name(&self, atom: Atom) -> bool {
+        atom.is_some() && self.bytes(atom).starts_with(SYMBOL_NAME_PREFIX)
+    }
+
+    /// See `Interner::text`.
+    pub fn text(&self, atom: Atom) -> std::borrow::Cow<'p, str> {
+        if atom.is_none() {
+            return std::borrow::Cow::Borrowed("<none>");
+        }
+        as_text(self.bytes(atom))
     }
 }
 

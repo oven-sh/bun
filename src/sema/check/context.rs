@@ -44,7 +44,7 @@ impl<'p> Checker<'p> {
     fn prepare_around(&mut self, file: FileId, e: ExprId) {
         let bound = self.bound(file);
         if self.prepared_exprs.0 != file {
-            if self.checking != Some(file) {
+            if self.task.file != Some(file) {
                 return self.prepare_parent(file, bound.expr_parent[e.idx()]);
             }
             self.prepared_exprs = (file, vec![false; bound.expr_parent.len()]);
@@ -98,11 +98,15 @@ impl<'p> Checker<'p> {
                 Parent::Expr(parent) => match hir[parent].kind {
                     ExprKind::Call(c) | ExprKind::New(c) => {
                         if hir[c].callee != at
-                            && self.p.calls.get(&(file, parent)).is_none()
+                            && self.p.calls.get(&self.task, &(file, parent)).is_none()
                             && !self.stack.contains(&Query::Call(file, parent))
                         {
-                            // The call may be an argument itself: outermost first.
-                            self.prepare_context(file, parent);
+                            // The call may be an argument itself: resolve the outermost enclosing call first. As the outermost query,
+                            // `resolved_signature` does that itself. Doing it twice doubles the work per nesting level if the enclosing
+                            // calls are non-cacheable.
+                            if !self.is_asked_from_outside() {
+                                self.prepare_context(file, parent);
+                            }
                             self.resolved_signature(file, parent);
                         }
                         return;
@@ -152,7 +156,9 @@ impl<'p> Checker<'p> {
 
     /// Works out what the component of the JSX element `e` takes, whatever encloses the element first.
     fn prepare_jsx(&mut self, file: FileId, e: ExprId) {
-        if self.p.calls.get(&(file, e)).is_none() && !self.stack.contains(&Query::Call(file, e)) {
+        if self.p.calls.get(&self.task, &(file, e)).is_none()
+            && !self.stack.contains(&Query::Call(file, e))
+        {
             self.prepare_context(file, e);
             self.resolved_signature(file, e);
         }
@@ -270,7 +276,7 @@ impl<'p> Checker<'p> {
                         if outer == pattern {
                             // What is made of it holds for as long as the implied type is being worked out.
                             self.mark_tainted_by_pattern_from(floor.min(self.stack.len()));
-                            self.cycles += 1;
+                            self.note_cycle();
                             return true;
                         }
                         inner = outer;
@@ -419,7 +425,7 @@ impl<'p> Checker<'p> {
                     }
                 }
                 // `getNamedMembers`: what nothing declares comes in the order of the names.
-                let atoms = &self.files().atoms;
+                let atoms = &self.atoms();
                 shape
                     .props
                     .sort_by(|a, b| atoms.bytes(a.name).cmp(atoms.bytes(b.name)));
@@ -869,9 +875,8 @@ impl<'p> Checker<'p> {
             };
         }
         // `appendContextualPropertyTypeConstituent`: `any` says nothing, and is not to drown what the others say.
-        let program = self.p;
-        let said = move |t: TypeId| {
-            if program.has_any_flag(t) {
+        let said = |c: &Self, t: TypeId| {
+            if c.has_any_flag(t) {
                 TypeId::UNKNOWN
             } else {
                 t
@@ -885,24 +890,23 @@ impl<'p> Checker<'p> {
             }
             // A mapped type that does not know its keys yet has no say on index signatures.
             if self.is_generic_mapped_without_remapping(m) {
-                found.extend(
-                    self.contextual_property_of_generic_mapped(m, name)
-                        .map(said),
-                );
+                let property = self.contextual_property_of_generic_mapped(m, name);
+                found.extend(property.map(|t| said(self, t)));
                 continue;
             }
             match self.concrete_contextual_property(m, name, Some(this)) {
                 Some(declared) => {
                     ignore_index_infos = true;
                     candidates.clear();
-                    found.push(said(declared));
+                    found.push(said(self, declared));
                 }
                 None if !ignore_index_infos => candidates.push(m),
                 None => {}
             }
         }
         for m in candidates {
-            found.extend(self.contextual_type_from_index_infos(m, name).map(said));
+            let indexed = self.contextual_type_from_index_infos(m, name);
+            found.extend(indexed.map(|t| said(self, t)));
         }
         match found[..] {
             [] => None,
@@ -930,7 +934,7 @@ impl<'p> Checker<'p> {
     /// key `name`.
     fn contextual_property_of_generic_mapped(&mut self, t: TypeId, name: Atom) -> Option<TypeId> {
         // A name that is a symbol stands for that symbol.
-        let is_symbol = self.files().atoms.is_symbol_name(name);
+        let is_symbol = self.atoms().is_symbol_name(name);
         let key = if is_symbol {
             self.key_type_of_name(name)?
         } else {
@@ -989,9 +993,7 @@ impl<'p> Checker<'p> {
         let (prop, mut mapper) = self.property_in(&members, name)?;
         // `isCircularMappedProperty`
         if let PropSource::Mapped(of, ..) = prop.source
-            && self.p.mapped_prop_types.get(&(of, prop.name)).is_none()
-            && self.stack[self.resolution_start.min(self.stack.len())..]
-                .contains(&Query::MappedProp(of, prop.name))
+            && self.is_resolving(Query::MappedProp(of, prop.name))
         {
             return None;
         }
@@ -1000,7 +1002,7 @@ impl<'p> Checker<'p> {
             && let TypeData::Ref { target, .. } = self.data(part)
         {
             let param = self.intern(TypeData::ThisParam(*target));
-            let mapping = self.p.types.mapping(mapper);
+            let mapping = self.types().mapping(mapper);
             if mapping.iter().any(|pair| pair.0 == param && pair.1 != this) {
                 let mut pairs = mapping.to_vec();
                 for pair in &mut pairs {
@@ -1008,7 +1010,7 @@ impl<'p> Checker<'p> {
                         pair.1 = this;
                     }
                 }
-                mapper = self.p.types.mapper(pairs);
+                mapper = self.types().mapper(pairs);
             }
         }
         let ty = self.type_of_prop(prop, mapper);
@@ -1021,8 +1023,7 @@ impl<'p> Checker<'p> {
         if let TypeData::Tuple { flags, .. } = self.data(part)
             && self.is_numeric_name(name)
             && self
-                .files()
-                .atoms
+                .atoms()
                 .text(name)
                 .parse::<f64>()
                 .is_ok_and(|n| n >= 0.0)
@@ -1035,7 +1036,7 @@ impl<'p> Checker<'p> {
         }
         let members = self.members(part)?;
         // A name that is a symbol goes by the signature for symbols.
-        if self.files().atoms.is_symbol_name(name) {
+        if self.atoms().is_symbol_name(name) {
             self.applicable_index_info(&members, TypeId::SYMBOL)
                 .map(|info| info.value)
         } else {
@@ -1304,6 +1305,7 @@ impl<'p> Checker<'p> {
                         | Query::Pat(..)
                         | Query::Symbol(_)
                         | Query::Return(..)
+                        | Query::ReturnOfSignature(_)
                         | Query::ReturnAtFirstLook(..)
                 )
             })
@@ -1419,7 +1421,7 @@ impl<'p> Checker<'p> {
                 | ExprKind::False
                 | ExprKind::Null
         ) || self.every_type(given, |c, t| c.is_primitive(t))
-            && self.p.expr_types.get(file, e.idx()) == Some(given);
+            && self.kept_type_of_expr(file, e) == Some(given);
         (given, is_for_good)
     }
 
@@ -1602,7 +1604,7 @@ impl<'p> Checker<'p> {
                             self.is_expected_by_pattern(file, parent, t, context_flags)
                         })
                     {
-                        return Some(self.type_of_expr(file, left));
+                        return Some(self.get_type_of_expression(file, left));
                     }
                     context
                 }
@@ -1666,7 +1668,7 @@ impl<'p> Checker<'p> {
                 if hir.ids(args).nth(1) != Some(e) {
                     return Some(TypeId::ANY);
                 }
-                let name = self.files().atoms.lookup(b"ImportCallOptions")?;
+                let name = self.atoms().lookup(b"ImportCallOptions")?;
                 let sym = self.global_type_symbol(name)?;
                 Some(self.declared_type(sym))
             }
@@ -1766,7 +1768,7 @@ impl<'p> Checker<'p> {
                                     let key = self.type_of_expr(file, index);
                                     match self.property_name_of_type(key) {
                                         Some(name) => self.contextual_property(declared, name),
-                                        None => Some(self.type_of_expr(file, target)),
+                                        None => Some(self.get_type_of_expression(file, target)),
                                     }
                                 }
                                 _ => None,
@@ -1802,7 +1804,7 @@ impl<'p> Checker<'p> {
                     if self.declares_member_of_object_literal(file, assignment, obj) {
                         return None;
                     }
-                    let this = self.type_of_expr(file, obj);
+                    let this = self.get_type_of_expression(file, obj);
                     let this = self.apparent_type(this);
                     let name = match hir[target].kind {
                         ExprKind::Dot { name, .. } => Some(name),
@@ -1830,7 +1832,7 @@ impl<'p> Checker<'p> {
             }
         }
         // `getTypeOfExpression(left)`
-        Some(self.type_of_expr(file, target))
+        Some(self.get_type_of_expression(file, target))
     }
 
     /// `bindThisPropertyAssignment`, `getThisClassAndSymbolTable`: whether `assignment`, which assigns to a property of `this`, is in
@@ -2110,28 +2112,13 @@ impl<'p> Checker<'p> {
                     self.sig_params(first),
                     self.sig_this_type(first),
                 );
-                // The return type of a composite signature is resolved on demand, and nobody asks while that of a member is being
-                // resolved (`isResolvingReturnTypeOfSignature`).
-                if found
-                    .iter()
-                    .any(|&s| self.is_resolving_return_type(s) || self.is_at_first_look(s))
-                {
-                    return Some(self.p.types.intern_sig(SigData::Synth {
-                        type_params: type_params.into(),
-                        params: params.into(),
-                        ret: TypeId::UNRESOLVED,
-                        this,
-                        of: found.into_boxed_slice(),
-                    }));
-                }
-                let returns: Parts = found.iter().map(|&s| self.sig_return(s)).collect();
-                let ret = self.union_reduced(&returns);
-                Some(self.p.types.intern_sig(SigData::Synth {
+                Some(self.types().intern_sig(SigData::Synth {
                     type_params: type_params.into(),
                     params: params.into(),
-                    ret,
+                    ret: TypeId::UNRESOLVED,
                     this,
-                    of: Box::new([]),
+                    of: found.into_boxed_slice(),
+                    is_union: true,
                 }))
             }
         }
@@ -2156,43 +2143,6 @@ impl<'p> Checker<'p> {
             [only] => Some(only),
             _ => self.intersected_signature(&fitting),
         }
-    }
-
-    /// `assignContextualParameterTypes`: a context-sensitive function without type parameters adopts those of a generic contextual
-    /// signature (`sig.typeParameters = context.typeParameters`). Returns `sig` unchanged if it adopts nothing.
-    pub(super) fn with_adopted_type_params(&mut self, sig: SigId) -> SigId {
-        let SigData::Decl { mapper, .. } = *self.p.types.sig(sig) else {
-            return sig;
-        };
-        // Only the signature as declared qualifies: its mapper may map the type parameters in scope to themselves. The copy
-        // stores the return type, so none is made while that type is being resolved.
-        if self
-            .p
-            .types
-            .mapping(mapper)
-            .iter()
-            .any(|&(from, to)| from != to)
-            || self.is_resolving_return_type(sig)
-        {
-            return sig;
-        }
-        let adopted = self.adopted_type_params(sig);
-        // `SigData::Synth` cannot hold a type predicate.
-        if adopted.is_empty() || self.sig_predicate(sig).is_some() {
-            return sig;
-        }
-        let (params, ret, this) = (
-            self.sig_params(sig),
-            self.sig_return(sig),
-            self.sig_this_type(sig),
-        );
-        self.p.types.intern_sig(SigData::Synth {
-            type_params: adopted.into(),
-            params: params.into(),
-            ret,
-            this,
-            of: Box::new([]),
-        })
     }
 
     /// `getIntersectedSignatures`: one signature for a function that is to be all of `sigs`.
@@ -2258,11 +2208,11 @@ impl<'p> Checker<'p> {
     /// Whether `sig` is the signature `func` declares, not an instantiation of it.
     pub(super) fn is_signature_of_declaration(&self, sig: SigId, file: FileId, func: FnId) -> bool {
         matches!(
-            *self.p.types.sig(sig),
+            *self.types().sig(sig),
             SigData::Decl { file: f, func: g, mapper }
                 if f == file
                     && g == func
-                    && self.p.types.mapping(mapper).iter().all(|&(from, to)| from == to)
+                    && self.types().mapping(mapper).iter().all(|&(from, to)| from == to)
         )
     }
 
@@ -2431,29 +2381,39 @@ impl<'p> Checker<'p> {
 
     /// Whether `sig` is of a function that is being looked at for the first time: see `Query::ReturnAtFirstLook`.
     fn is_at_first_look(&self, sig: SigId) -> bool {
-        match *self.p.types.sig(sig) {
+        match *self.types().sig(sig) {
             SigData::Decl { file, func, .. } => {
-                self.p.fn_return_types.get(file, func.idx()).is_none()
-                    && self.stack.contains(&Query::ReturnAtFirstLook(file, func))
+                let q = Query::ReturnAtFirstLook(file, func);
+                self.may_be_in_flight(q) && self.stack.contains(&q)
             }
             SigData::Synth { ref of, .. } => of.iter().any(|&s| self.is_at_first_look(s)),
             _ => false,
         }
     }
 
+    /// Whether the return type of the declaration of `sig` is being resolved, whatever the mapper of `sig` is. For callers that must
+    /// not read a return type at a point where tsgo does not read it.
+    pub(super) fn is_resolving_return_type_of_declaration(&self, sig: SigId) -> bool {
+        match *self.types().sig(sig) {
+            SigData::Decl { file, func, .. } => self.is_resolving(Query::Return(file, func)),
+            SigData::Synth { ref of, .. } => of
+                .iter()
+                .any(|&s| self.is_resolving_return_type_of_declaration(s)),
+            _ => false,
+        }
+    }
+
     /// `isResolvingReturnTypeOfSignature`
     pub(super) fn is_resolving_return_type(&self, sig: SigId) -> bool {
-        match *self.p.types.sig(sig) {
-            SigData::Decl { file, func, .. } => {
-                let from = self.resolution_start.min(self.stack.len());
-                self.p.fn_return_types.get(file, func.idx()).is_none()
-                    && self.stack[from..]
-                        .iter()
-                        .rposition(|q| *q == Query::Return(file, func))
-                        .is_some_and(|i| !self.is_answered_since(from + i))
+        match *self.types().sig(sig) {
+            SigData::Decl { mapper, .. } if self.is_instantiating(mapper) => {
+                self.is_resolving(Query::ReturnOfSignature(sig))
             }
-            SigData::Synth { ref of, .. } => of.iter().any(|&s| self.is_resolving_return_type(s)),
-            _ => false,
+            SigData::Synth { ref of, .. } => {
+                of.iter().any(|&s| self.is_resolving_return_type(s))
+                    || self.is_resolving(Query::ReturnOfSignature(sig))
+            }
+            _ => self.is_resolving_return_type_of_declaration(sig),
         }
     }
 

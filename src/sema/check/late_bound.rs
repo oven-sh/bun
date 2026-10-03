@@ -21,7 +21,7 @@ pub(super) struct LateBoundSymbols {
     pub(super) conflicts: Vec<LateBoundConflict>,
 }
 
-/// `None`: no name is worked out there.
+/// `None`: the container has no late-bound member on that side.
 pub(super) type LateBoundMembers = Option<Arc<LateBoundSymbols>>;
 
 impl<'p> Checker<'p> {
@@ -70,8 +70,8 @@ impl<'p> Checker<'p> {
         if let Some(known) = self.late_bound_members.get(&(container, is_static)) {
             return known.clone();
         }
-        // "In the event we recursively resolve the members/exports of the symbol, we set the initial value of
-        // resolvedMembers/resolvedExports to the early-bound members/exports of the symbol."
+        // `links[resolutionKind] = earlySymbols` comes before the late-bound members are added: a recursive query gets the early-bound
+        // members alone.
         self.late_bound_members.insert((container, is_static), None);
         let files = self.files();
         // `getMembersOfDeclaration`: those with a dynamic name, each with `decl.Symbol().Flags`.

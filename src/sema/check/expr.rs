@@ -9,17 +9,6 @@ use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
 use smallvec::SmallVec;
 use std::ops::ControlFlow;
 
-impl Slots {
-    /// What a slot that holds `raw` says.
-    #[inline]
-    fn unpack(raw: u32) -> Option<TypeId> {
-        match raw {
-            0 => None,
-            n => Some(TypeId(n - 1)),
-        }
-    }
-}
-
 /// `getAssignmentTargetKind`
 #[derive(Copy, Clone)]
 pub(super) struct TargetKind {
@@ -63,9 +52,6 @@ impl<'p> Checker<'p> {
 
     /// `checkExpression`. `checkExpressionEx`, where the parent of `e` is checked under a mode that it hands on.
     pub fn type_of_expr(&mut self, file: FileId, e: ExprId) -> TypeId {
-        if self.trace_cycles {
-            self.looked_at.insert((file, e));
-        }
         let check_mode = self.check_mode();
         if check_mode.is_empty() || e.is_none() {
             return self.type_of_expr_as_written(file, e);
@@ -182,12 +168,13 @@ impl<'p> Checker<'p> {
                         c.sig_return(instantiated),
                         c.sig_this_type(instantiated),
                     );
-                    return c.p.types.intern_sig(SigData::Synth {
+                    return c.types().intern_sig(SigData::Synth {
                         type_params: Box::new([]),
                         params: params.into(),
                         ret,
                         this,
                         of: Box::new([]),
+                        is_union: true,
                     });
                 }
             }
@@ -217,23 +204,30 @@ impl<'p> Checker<'p> {
 
     /// The type that is kept for `e`.
     #[inline]
-    pub(super) fn kept_type_of_expr(&self, file: FileId, e: ExprId) -> Option<TypeId> {
-        if file == self.file_at_hand
-            && let Some(slot) = self.exprs_at_hand.get(e.idx())
-        {
-            return Slots::unpack(slot.load(std::sync::atomic::Ordering::Relaxed));
-        }
-        Slots::unpack(self.p.expr_types.0.raw((file, e.0)))
+    pub(super) fn kept_type_of_expr(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        self.p.expr_types.get(&mut self.task, &(file, e))
     }
 
+    /// `links.resolvedType = c.checkExpressionEx(..)`: of two nested visits of `e` the outer one assigns last.
     #[inline]
-    fn keep_type_of_expr(&self, file: FileId, e: ExprId, ty: TypeId) {
-        if file == self.file_at_hand
-            && let Some(slot) = self.exprs_at_hand.get(e.idx())
-        {
-            slot.store(ty.0 + 1, std::sync::atomic::Ordering::Relaxed);
-        } else {
-            self.p.expr_types.set(file, e.idx(), ty);
+    fn keep_type_of_expr(&mut self, file: FileId, e: ExprId, ty: TypeId, stored: Stored) {
+        self.p
+            .expr_types
+            .rewrite(&mut self.task, (file, e), ty, stored);
+    }
+
+    /// Whether evaluating `e` leaves something in the checker that a pass of `check_file` of `file` reads later: `first_jsx`,
+    /// `unresolved_identifiers`. A hit leaves nothing. So only the task that is going through `file` stores the entry, and every other task
+    /// evaluates `e` again.
+    #[cold]
+    fn is_noted_for_check_file(&self, file: FileId, e: ExprId) -> bool {
+        match self.hir(file)[e].kind {
+            ExprKind::Jsx(_) => true,
+            ExprKind::Ident(_) => {
+                let mut noted = self.unresolved_identifiers.iter();
+                noted.any(|it| it.0 == file && it.1 == e)
+            }
+            _ => false,
         }
     }
 
@@ -319,6 +313,9 @@ impl<'p> Checker<'p> {
                 return known;
             }
         }
+        if !afresh && let Some(raw) = self.provisional(Query::Expr(file, e)) {
+            return TypeId(raw as u32);
+        }
         // Resolving the calls around it may well have settled it.
         if !is_rechecked
             && self.prepare_question_about_expr(file, e)
@@ -343,8 +340,8 @@ impl<'p> Checker<'p> {
         ) {
             self.resolve_chain_from_the_inside(file, e);
         }
-        let (ty, holds) = match self.type_of_plain_literal(file, e) {
-            Some(ty) => (ty, true),
+        let (ty, stored) = match self.type_of_plain_literal(file, e) {
+            Some(ty) => (ty, Some(Stored::new())),
             None => {
                 // `checkExpressionWithContextualType` has no guard against re-entry. A visit begun before the pattern was looked at
                 // this way took its names for what they are declared as: this one does not go the same way.
@@ -367,13 +364,22 @@ impl<'p> Checker<'p> {
                 if afresh && self.inference_contexts.len() != self.context_free_level {
                     self.drop_reported();
                 }
-                (ty, self.leave())
+                let left = self.leave(Query::Expr(file, e));
+                if let Err(open) = left
+                    && !afresh
+                {
+                    self.keep_provisionally(Query::Expr(file, e), u64::from(ty.0), open);
+                }
+                (ty, left.ok())
             }
         };
-        if holds && !afresh {
-            self.keep_type_of_expr(file, e, ty);
+        if let Some(stored) = stored
+            && !afresh
+            && (self.task.file == Some(file) || !self.is_noted_for_check_file(file, e))
+        {
+            self.keep_type_of_expr(file, e, ty, stored);
         }
-        if holds && is_memoised {
+        if stored.is_some() && is_memoised {
             self.rechecked_exprs.insert((file, e), ty);
         }
         ty
@@ -430,10 +436,9 @@ impl<'p> Checker<'p> {
         let visible = after_call.max(self.resolution_start).min(self.stack.len());
         // tsgo resolves the type of a variable, a parameter or a member before it checks the initializer. That resolution is always
         // under way when the access is first checked, and printing runs into it. `enter` marks that circularity.
-        if !self.stack[visible..]
-            .iter()
-            .all(|&q| matches!(q, Query::Return(..)) || !self.is_resolution(q))
-        {
+        if !self.stack[visible..].iter().all(|&q| {
+            matches!(q, Query::Return(..) | Query::ReturnOfSignature(_)) || !self.is_resolution(q)
+        }) {
             return None;
         }
         // `checkFunctionExpressionOrObjectLiteralMethodDeferred` resolves the return type of a function before it checks the body. In
@@ -444,7 +449,8 @@ impl<'p> Checker<'p> {
                 && self.hir(f)[func].ret.is_none()
                 && !self.stack[..depth].contains(&self.stack[i])
             {
-                self.report_circular_return_type(f, func);
+                (self.p.circular_returns).insert(&mut self.task, (f, func), (), Stored::new());
+                self.report_circular_return_type(Some(Query::Return(f, func)), f, func);
             }
         }
         Some(TypeId::ERROR)
@@ -470,7 +476,7 @@ impl<'p> Checker<'p> {
         // The loop type is incomplete: nothing computed since the loop was pushed is cached.
         self.taint_from(pushed_at);
         let ty = self.type_of_expr_uncached(file, e);
-        self.leave();
+        let _ = self.leave(Query::Expr(file, e));
         Some(ty)
     }
 
@@ -531,7 +537,7 @@ impl<'p> Checker<'p> {
             // `checkBinaryLikeExpression` goes down the left however deep that is.
             ExprKind::Binary { left, .. } => {
                 // The left of `at`, if `at` is an operator nothing is known of yet.
-                let further = |c: &Self, at: ExprId| {
+                let further = |c: &mut Self, at: ExprId| {
                     if at.is_none() {
                         return None;
                     }
@@ -560,7 +566,7 @@ impl<'p> Checker<'p> {
             ExprKind::Call(_) => {
                 // What `at` is got from, and whether `at` is a call before `e`. `None` where the chain begins, or at a call that
                 // is known.
-                let further = |c: &Self, at: ExprId| match hir[at].kind {
+                let further = |c: &mut Self, at: ExprId| match hir[at].kind {
                     ExprKind::Call(call) => {
                         let is_link = at != e;
                         if is_link && c.has_type_of_expr(file, at) {
@@ -995,7 +1001,7 @@ impl<'p> Checker<'p> {
                 }
                 return (TypeId::ANY, stops);
             }
-            if !self.files().atoms.bytes(name).is_empty()
+            if !self.atoms().bytes(name).is_empty()
                 && !self.check_and_report_error_for_extending_interface(file, e)
             {
                 let containing = if matches!(self.data(left), TypeData::ThisParam(_)) {
@@ -1384,11 +1390,12 @@ impl<'p> Checker<'p> {
             ExprKind::Call(c) => {
                 // `resolveCallExpression` under `CheckModeSkipGenericFunctions` defers a call of a generic function that returns a
                 // function: `resolvingSignature`, of which `checkCallExpression` makes `silentNeverType`. `getResolvedSignature`
-                // returns a signature that is cached first: by this checker, see `resolved_signatures`.
+                // returns a signature that is cached first.
                 if self
                     .check_mode()
                     .contains(CheckMode::SKIP_GENERIC_FUNCTIONS)
                     && !self.resolved_signatures.contains(&(file, e))
+                    && self.p.calls.get(&self.task, &(file, e)).is_none()
                     && self.is_call_of_generic_function_returning_function(file, e)
                 {
                     // `skippedGenericFunction`
@@ -1506,12 +1513,12 @@ impl<'p> Checker<'p> {
             ExprKind::Array(items) => self.type_of_array_literal(file, e, items),
             ExprKind::Object(props) => self.type_of_object_literal(file, e, props),
             ExprKind::Fn(func) => {
-                self.check_node_deferred_where_it_is_worked_out(file, e);
+                self.check_node_deferred(file, e);
                 self.check_function_expression_or_object_literal_method(file, e, func)
             }
             // `checkClassExpression`: what the symbol of the class is, as for a class that is declared.
             ExprKind::Class(class) => {
-                self.check_node_deferred_where_it_is_worked_out(file, e);
+                self.check_node_deferred(file, e);
                 let sym = self.class_sym(file, class);
                 self.type_of_symbol(sym)
             }
@@ -1607,12 +1614,15 @@ impl<'p> Checker<'p> {
             ExprKind::Jsx(j) => {
                 let is_fragment = hir[j].tag.is_none();
                 if !is_fragment {
-                    self.check_node_deferred_where_it_is_worked_out(file, e);
+                    self.check_node_deferred(file, e);
                 }
-                if self.checking == Some(file) {
-                    self.first_jsx.0 = self.first_jsx.0.or(Some(e));
+                if self.task.file == Some(file) {
+                    if self.first_jsx.0 != file {
+                        self.first_jsx = (file, None, None);
+                    }
+                    self.first_jsx.1 = self.first_jsx.1.or(Some(e));
                     if is_fragment {
-                        self.first_jsx.1 = self.first_jsx.1.or(Some(e));
+                        self.first_jsx.2 = self.first_jsx.2.or(Some(e));
                     }
                 }
                 match self.jsx_element_type(file) {
@@ -1899,7 +1909,7 @@ impl<'p> Checker<'p> {
         // later caller. The two differ after a circularity that goes through a call. A reference in the variable's own initializer
         // is never the first caller: the declaration is.
         let declared = if self.cycles != cycles_before
-            && let Some(cached) = self.p.symbol_types.get(&sym)
+            && let Some(cached) = self.p.symbol_types.get(&mut self.task, &sym)
             && cached != declared
             && self.is_in_own_initializer(file, e, sym)
         {
@@ -2439,7 +2449,7 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether `type_of_expr` has the type of `e` at hand.
-    fn has_type_of_expr(&self, file: FileId, e: ExprId) -> bool {
+    fn has_type_of_expr(&mut self, file: FileId, e: ExprId) -> bool {
         if self.is_rechecking() {
             self.rechecked_exprs.contains_key(&(file, e))
         } else {
@@ -2462,7 +2472,9 @@ impl<'p> Checker<'p> {
         let outer = self.begin_recheck();
         let ty = self.type_of_literal_prop_uncached(file, p);
         self.end_recheck(outer);
-        if self.leave() && is_memoised {
+        // A check by value stores nothing in `literal_prop_types`.
+        self.settle_reported_without_entry();
+        if self.leave(Query::LiteralProp(file, p)).is_ok() && is_memoised {
             self.rechecked_members.insert((file, p), ty);
         }
         let prop = &self.hir(file)[p];
@@ -2533,7 +2545,7 @@ impl<'p> Checker<'p> {
         shape.literal = Literalness::Literal;
         shape.symbol_declared_at = self.symbol_declaration_of_object_type(kept);
         shape.is_js_literal = self.has_js_literal_flag(kept);
-        shape.contains_widening_type = self.has_member_with_widening_type(file, e, 0);
+        shape.contains_widening_type = self.contains_widening_type(kept, 0);
         let ty = self.synth(shape);
         self.with_propagated_non_inferrable_flag(ty)
     }
@@ -2785,11 +2797,11 @@ impl<'p> Checker<'p> {
                         !self.is_any(m) && !self.is_nullish(m) && self.is_assignable(m, list)
                     })
                 });
-            let made_before = self.p.types.len();
+            let made_before = self.types().made_before();
             let ty = self.normalized_tuple(&types, &flags, is_readonly);
             // `createArrayLiteralType`, which what is assigned to does not get to.
             if !in_pattern {
-                self.p.types.mark_manifest(ty, made_before);
+                self.types().mark_from_type_node(ty, made_before);
                 self.note_array_literal_type(file, e, ty);
             }
             return ty;
@@ -2812,9 +2824,9 @@ impl<'p> Checker<'p> {
         } else {
             self.union_reduced(&types)
         };
-        let made_before = self.p.types.len();
+        let made_before = self.types().made_before();
         let ty = self.array_of(element);
-        self.p.types.mark_manifest(ty, made_before);
+        self.types().mark_from_type_node(ty, made_before);
         self.note_array_literal_type(file, e, ty);
         ty
     }
@@ -2918,7 +2930,7 @@ impl<'p> Checker<'p> {
             TypeData::Anon {
                 origin:
                     Origin::ObjectLiteral(_, _, is_js_literal, ..)
-                    | Origin::WidenedLiteral(_, _, is_js_literal, _),
+                    | Origin::WidenedLiteral(_, _, is_js_literal, ..),
                 ..
             } => is_js_literal,
             TypeData::Synth(ref shape) => shape.is_js_literal,
@@ -2989,14 +3001,14 @@ impl<'p> Checker<'p> {
         if !self.is_rechecking() {
             self.check_grammar_object_literal_expression(file, e, props);
         }
-        self.look_at_members(file, props);
+        let object_flags = self.look_at_members(file, e, props);
         self.check_spread_overrides(file, props);
         if !props.iter().any(|p| hir[p].kind == PropKind::Spread) {
             let scope = self.scope_of_expr(file, e);
             let mapper = self.identity_mapper_with_adopted(file, scope);
             let is_js_literal = self.is_js_literal(file, e);
             let kept = self.intern(TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e, is_js_literal, false, true),
+                origin: Origin::ObjectLiteral(file, e, is_js_literal, false, object_flags, true),
                 mapper,
             });
             return if self.is_rechecking() {
@@ -3091,17 +3103,26 @@ impl<'p> Checker<'p> {
         ) {
             result = self.spread_in_literal(result, segment, is_const);
         }
-        if self.has_member_with_widening_type(file, e, 0) {
+        if object_flags.contains(ObjectFlags::CONTAINS_WIDENING_TYPE) {
             result = self.with_propagated_widening_flag(file, e, result);
         }
         self.with_propagated_non_inferrable_flag(result)
     }
 
-    /// `checkObjectLiteral` looks at every name and then at every value there and then: what leads back to something that is being
-    /// worked out is a circle. Accessors wait (`checkNodeDeferred`), and what is spread is looked at where it is spread. The members
-    /// are asked for one by one when they are read: what they are, and how sure that is, says nothing about the literal.
-    fn look_at_members(&mut self, file: FileId, props: Span<PropId>) {
+    /// The member loop of `checkObjectLiteral`: checks every computed name, then every value, so that a cycle through a member is
+    /// found while the literal is checked. Accessors are deferred (`checkNodeDeferred`). A spread expression is checked where it
+    /// is spread. The members of the literal's type are resolved lazily, by `type_of_literal_prop`, so the type is cacheable even
+    /// if a member type is not. Returns `objectFlags`: `t.objectFlags & ObjectFlagsPropagatingFlags` of the member types.
+    fn look_at_members(
+        &mut self,
+        file: FileId,
+        literal: ExprId,
+        props: Span<PropId>,
+    ) -> ObjectFlags {
         let hir = self.hir(file);
+        // Outside a re-check `autoType` is the only non-inferrable type of a member: the declared type of an assignment target.
+        let in_destructuring_pattern = self.is_assignment_target(file, literal);
+        let mut object_flags = ObjectFlags::empty();
         for p in props.iter() {
             if let PropKey::Computed(key) = hir[p].key {
                 self.type_of_expr(file, key);
@@ -3113,13 +3134,20 @@ impl<'p> Checker<'p> {
                 continue;
             }
             if matches!(hir[prop.value].kind, ExprKind::Fn(_)) {
-                self.check_node_deferred_where_it_is_worked_out(file, prop.value);
+                self.check_node_deferred(file, prop.value);
             }
             if matches!(prop.kind, PropKind::Getter | PropKind::Setter) {
                 continue;
             }
-            self.check_literal_member(file, p);
+            let ty = self.check_literal_member(file, p);
+            if self.contains_widening_type(ty, 0) {
+                object_flags |= ObjectFlags::CONTAINS_WIDENING_TYPE;
+            }
+            if in_destructuring_pattern && self.is_non_inferrable(ty, 0) {
+                object_flags |= ObjectFlags::NON_INFERRABLE_TYPE;
+            }
         }
+        object_flags
     }
 
     /// `checkFunctionExpressionOrObjectLiteralMethod`
@@ -3138,16 +3166,18 @@ impl<'p> Checker<'p> {
                 && let returned = self.sig_return(contextual_signature)
                 && self.has_type_variables(returned)
             {
-                if let Some(cached) = self.p.context_free_types.get(&(file, func)) {
+                if let Some(cached) = (self.p.context_free_types).get(&mut self.task, &(file, func))
+                {
                     return cached;
                 }
                 let ret = self.return_type_of_fn_uncached(file, func, check_mode);
-                let return_only_signature = self.p.types.intern_sig(SigData::Synth {
+                let return_only_signature = self.types().intern_sig(SigData::Synth {
                     type_params: Box::new([]),
                     params: Box::new([]),
                     ret,
                     this: None,
                     of: Box::new([]),
+                    is_union: true,
                 });
                 let return_only_type = self.synth(Shape {
                     call: vec![return_only_signature],
@@ -3158,10 +3188,14 @@ impl<'p> Checker<'p> {
                 if self.is_innermost_tainted() {
                     return return_only_type;
                 }
-                return self
-                    .p
-                    .context_free_types
-                    .insert((file, func), return_only_type);
+                let stored = Stored::new();
+                (self.p.context_free_types).insert(
+                    &self.task,
+                    (file, func),
+                    return_only_type,
+                    stored,
+                );
+                return return_only_type;
             }
             return self.any_function_type();
         }
@@ -3238,13 +3272,13 @@ impl<'p> Checker<'p> {
         }
         if contextual_signature.is_some()
             && f.ret.is_none()
-            && self.p.fn_return_types.get(file, func.idx()).is_none()
+            && (self.p.fn_return_types.get(&mut self.task, &(file, func))).is_none()
             && self.enter(Query::ReturnAtFirstLook(file, func))
         {
             let ty = self.return_type_of_fn_uncached(file, func, check_mode);
-            // `if signature.resolvedReturnType == nil`
-            if self.leave() && self.p.fn_return_types.get(file, func.idx()).is_none() {
-                self.p.fn_return_types.set(file, func.idx(), ty);
+            // `if signature.resolvedReturnType == nil`: the first value stays.
+            if let Ok(stored) = self.leave(Query::ReturnAtFirstLook(file, func)) {
+                (self.p.fn_return_types).insert(&mut self.task, (file, func), (ty, false), stored);
                 self.note_result(Query::Return(file, func));
             }
         }
@@ -3254,7 +3288,7 @@ impl<'p> Checker<'p> {
         self.end_recheck(outer);
         self.context_checking.pop();
         if holds {
-            self.p.context_checked.insert((file, func), assigned);
+            (self.p.context_checked).insert(&self.task, (file, func), assigned, Stored::new());
             self.context_checked_here.insert((file, func));
         }
     }
@@ -3262,10 +3296,10 @@ impl<'p> Checker<'p> {
     /// `links.flags&NodeCheckFlagsContextChecked != 0`. The first contextual check of a function also updates the inference context of the
     /// enclosing call. Another thread's check updated that thread's context, so its entry in `Program::context_checked` counts only if no
     /// inference context of this checker covers `e`.
-    fn is_context_checked(&self, file: FileId, e: ExprId, func: FnId) -> bool {
+    fn is_context_checked(&mut self, file: FileId, e: ExprId, func: FnId) -> bool {
         // `context_checked_here` is a subset of `Program::context_checked`.
         self.context_checking.iter().any(|c| c.0 == (file, func))
-            || self.p.context_checked.get(&(file, func)).is_some()
+            || (self.p.context_checked.get(&mut self.task, &(file, func))).is_some()
                 && (self.inference_contexts.is_empty()
                     || self.context_checked_here.contains(&(file, func))
                     || !self
@@ -3274,7 +3308,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `NodeCheckFlagsContextChecked`, with what `assignContextualParameterTypes` was given.
-    pub(super) fn context_checked(&self, file: FileId, func: FnId) -> Option<Option<SigId>> {
+    pub(super) fn context_checked(&mut self, file: FileId, func: FnId) -> Option<Option<SigId>> {
         match self
             .context_checking
             .iter()
@@ -3282,7 +3316,7 @@ impl<'p> Checker<'p> {
             .find(|c| c.0 == (file, func))
         {
             Some(under_way) => Some(under_way.1),
-            None => self.p.context_checked.get(&(file, func)),
+            None => self.p.context_checked.get(&mut self.task, &(file, func)),
         }
     }
 
@@ -3339,7 +3373,7 @@ impl<'p> Checker<'p> {
             } else {
                 self.non_fixing_mapper(n, ty)
             };
-            for &pair in self.p.types.mapping(mapper) {
+            for &pair in self.types().mapping(mapper) {
                 if !pairs.contains(&pair) {
                     pairs.push(pair);
                 }
@@ -3348,7 +3382,7 @@ impl<'p> Checker<'p> {
         if pairs.is_empty() {
             return sig;
         }
-        let mapper = self.p.types.mapper(pairs);
+        let mapper = self.types().mapper(pairs);
         self.instantiate_sig(sig, mapper)
     }
 
@@ -3580,7 +3614,7 @@ impl<'p> Checker<'p> {
                         source = getter;
                     }
                     (
-                        self.files().atoms.is_symbol_name(name),
+                        self.atoms().is_symbol_name(name),
                         self.is_numeric_name(name),
                     )
                 }
@@ -3635,7 +3669,7 @@ impl<'p> Checker<'p> {
                 value,
                 readonly,
                 declaration: None,
-                components: self.p.types.intern_components(&components),
+                components: self.types().intern_components(&components),
             });
         }
         infos
@@ -3797,24 +3831,26 @@ impl<'p> Checker<'p> {
 
     /// The type of a property of an object literal, as something that can be assigned to later.
     pub(super) fn type_of_literal_prop(&mut self, file: FileId, p: PropId) -> TypeId {
-        if let Some(known) = self.p.literal_prop_types.get(file, p.idx()) {
+        if let Some(known) = self.p.literal_prop_types.get(&mut self.task, &(file, p)) {
             return known;
         }
-        if let Some(held) = self.held_for_now(file, p) {
-            return held;
+        if let Some(raw) = self.provisional(Query::LiteralProp(file, p)) {
+            return TypeId(raw as u32);
         }
         if !self.enter(Query::LiteralProp(file, p)) {
             return TypeId::UNRESOLVED;
         }
-        let cycles_before = self.cycles;
         let ty = self.type_of_literal_prop_uncached(file, p);
-        let came_back = self.cycles != cycles_before;
-        if self.leave() {
-            self.p.literal_prop_types.set(file, p.idx(), ty);
-        } else {
-            self.hold_for_now(file, p, ty, came_back);
+        match self.leave(Query::LiteralProp(file, p)) {
+            // Of two nested visits of `p` the outer one assigns last, as for an expression.
+            Ok(stored) => {
+                (self.p.literal_prop_types).rewrite(&mut self.task, (file, p), ty, stored)
+            }
+            Err(open) => {
+                self.keep_provisionally(Query::LiteralProp(file, p), u64::from(ty.0), open);
+                ty
+            }
         }
-        ty
     }
 
     fn type_of_literal_prop_uncached(&mut self, file: FileId, p: PropId) -> TypeId {
@@ -3913,7 +3949,7 @@ impl<'p> Checker<'p> {
             }
             // `checkVoidExpression`: the operand waits.
             UnOp::Void => {
-                self.check_node_deferred_where_it_is_worked_out(file, e);
+                self.check_node_deferred(file, e);
                 TypeId::UNDEFINED
             }
             UnOp::Delete => {
@@ -3951,7 +3987,7 @@ impl<'p> Checker<'p> {
                     }
                     ExprKind::BigInt(text) if is_bare && op == UnOp::Minus => {
                         // `NewPseudoBigInt`: zero has no sign.
-                        let digits = self.files().atoms.bytes(text);
+                        let digits = self.atoms().bytes(text);
                         let negative = !digits.iter().all(|&c| c == b'0' || c == b'n');
                         self.fresh_bigint_literal(text, negative)
                     }
@@ -4304,8 +4340,12 @@ impl<'p> Checker<'p> {
         {
             Some(module) => files.module_export(module, known::JSX),
             None => {
-                let name =
-                    super::errors_jsx::jsx_namespace(files, self.hir(file), is_opening_fragment);
+                let name = super::errors_jsx::jsx_namespace(
+                    files,
+                    self.atoms(),
+                    self.hir(file),
+                    is_opening_fragment,
+                );
                 files
                     .resolve_name(file, ScopeId(0), name, SymFlags::NAMESPACE)
                     .and_then(|container| files.resolve_alias_if_needed(container))

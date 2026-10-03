@@ -1160,7 +1160,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut invalid_log = LocList::new_in(p.arena);
             let mut args = BumpVec::<G::Arg>::new_in(p.arena);
-            let mut this_parameter = bun_ast::Loc::EMPTY;
             let mut return_type = crate::sema::ts_syntax::TypeId::NONE;
 
             if opts.is_async {
@@ -1183,16 +1182,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut invalid_log,
                     is_spread,
                 );
-                // `parseParameterEx` takes `this` for a parameter of any function.
+                // `parseParameterEx` accepts `this` as the name of any parameter of any function.
                 let is_this = tuple.binding.is_none()
-                    && i == 0
                     && !is_spread
                     && p.lexer.tolerant
                     && matches!(item.data, js_ast::expr::Data::EThis(_));
                 // double allocations
                 let binding = if is_this {
                     let _ = invalid_log.pop();
-                    this_parameter = p.real_loc(item.loc);
                     let r#ref = p.store_name_in_ref(b"this");
                     p.b(B::Identifier { r#ref }, item.loc)
                 } else {
@@ -1275,7 +1272,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 } else {
                     // Otherwise, do the less expensive check
-                    is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking();
+                    is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking()?;
                 }
                 if is_arrow_fn {
                     return_type = p.kept_type_or_error();
@@ -1285,17 +1282,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if is_arrow_fn || opts.force_arrow_fn {
                 p.maybe_comma_spread_error(comma_after_spread);
                 p.log_arrow_arg_errors(&mut arrow_arg_errors);
-                if !this_parameter.is_empty() {
-                    // `checkParameter`
-                    p.log().add_range_error(
-                        Some(p.source),
-                        bun_ast::Range {
-                            loc: this_parameter,
-                            len: 4,
-                        },
-                        b"TC2730",
-                    );
-                }
 
                 // Now that we've decided we're an arrow function, report binding pattern
                 // conversion errors
@@ -3269,7 +3255,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.restore(&old_lexer);
         if result {
             // `checkGrammarVariableDeclarationList`
-            self.lexer.ts_error(
+            self.lexer.ts_grammar_error(
                 bun_ast::Range {
                     loc: keyword.end(),
                     len: 0,
@@ -3427,7 +3413,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         match p
                             .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
-                            ) {
+                            )? {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
                                 let type_parameters = p.kept_type_parameters(result);

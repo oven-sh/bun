@@ -131,19 +131,6 @@ fn is_said_by_the_binder(code: u32) -> bool {
     )
 }
 
-/// What parser.go and scanner.go say while a file is parsed, among what `early_errors` keeps: the rest of that is the binder's
-/// and the checker's. 1359 is left out, which is only noted there for `await` as a name, and that is the binder's.
-fn is_said_by_the_parser(code: u32) -> bool {
-    matches!(
-        code,
-        1002 | 1003 | 1005 | 1007 | 1010..=1012 | 1034 | 1068 | 1069 | 1084 | 1109 | 1110 | 1121 | 1124..=1132 | 1134..=1140
-            | 1142 | 1144..=1146 | 1160 | 1161 | 1177..=1181 | 1185 | 1198 | 1199 | 1206 | 1209 | 1223 | 1228 | 1260 | 1327
-            | 1328 | 1351..=1353 | 1357 | 1369 | 1381 | 1382 | 1385..=1390 | 1433..=1443 | 1453 | 1472 | 1477 | 1478
-            | 1486..=1490 | 2657 | 2754 | 2809 | 2819 | 2880 | 6188 | 6189 | 17002 | 17006..=17008 | 17014 | 17015 | 17021
-            | 18009 | 18016 | 18026 | 18029 | 18030
-    )
-}
-
 // ───────────────────────────── where `await` can be ─────────────────────────────
 
 /// Where something is written, as `checkGrammarAwaitOrAwaitUsing` tells places apart.
@@ -719,7 +706,8 @@ impl Checker<'_> {
         self.check_type_assignable_to(source, target, Some(at), Some(2850 + u32::from(is_await)));
     }
 
-    /// What the passes say where `checkSourceFile` never comes is taken back. The parser's and the binder's stays. After all the passes.
+    /// Removes the diagnostics reported inside ranges that `checkSourceFile` never visits. Parser and binder diagnostics stay. Runs
+    /// after all passes.
     pub(super) fn take_back_what_is_never_checked(&mut self, file: FileId) {
         let hir = self.hir(file);
         // These are noted while parsing, but they are the checker's to say.
@@ -740,8 +728,12 @@ impl Checker<'_> {
                 !(never_checked.iter()).any(|&(from, to)| (from..to).contains(&d.start))
                     || d.code == 1141
                     || is_said_by_the_binder(d.code)
-                    || is_said_by_the_parser(d.code)
-                        && hir.early_errors.contains(&(d.start, d.code))
+                    || hir.diagnostics.iter().any(|parsed| {
+                        !matches!(
+                            parsed.kind,
+                            DiagnosticKind::Grammar | DiagnosticKind::Checker
+                        ) && (parsed.start, parsed.code) == (d.start, d.code)
+                    })
             });
         }
     }
@@ -759,7 +751,7 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // The statements in which `await` was taken for a name, and whether the statement was over right after the name.
         let mut noted: Vec<(StmtId, bool)> = Vec::new();
-        if let Some(name) = self.files().atoms.lookup(b"await") {
+        if let Some(name) = self.atoms().lookup(b"await") {
             for &e in index.of(ExprTag::Ident) {
                 // `parsePropertyName` puts it back, and `{ await }` is no more than the name of a property to the parser.
                 if matches!(hir[e].kind, ExprKind::Ident(n) if n == name)

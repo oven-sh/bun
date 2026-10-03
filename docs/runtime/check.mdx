@@ -87,11 +87,17 @@ Without a `tsconfig.json`, `bun check` uses the compiler options that [`bun init
 }
 ```
 
+If there is nothing to check, `bun check` reports an error and exits with code 1. A CI job that runs in the wrong directory fails instead of passing.
+
 ### Project references
 
 `bun check` follows `references` in `tsconfig.json`, like `tsc -b`. Each referenced project is checked with its own options, and each file is checked once.
 
 Bun reads a referenced project from its source files. You do not have to build the project first, and Bun does not write `.d.ts` or `.tsbuildinfo` files.
+
+### Workspaces
+
+In a monorepo without a `tsconfig.json` at the root, `bun check` reads `workspaces` from the root `package.json`. Each workspace that has a `tsconfig.json` is checked with its own options, as `bun check -p` would check it. Files that no workspace's `tsconfig.json` selects are checked with the default options above. Each file is checked once.
 
 ## Check before you run, build, or test
 

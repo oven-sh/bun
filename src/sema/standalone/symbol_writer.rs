@@ -360,7 +360,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                             .iter()
                             .map(|&part| match part {
                                 known::empty => "unknown".into(),
-                                _ => files.atoms.text(part),
+                                _ => self.c.atoms().text(part),
                             })
                             .collect();
                         Some(Found::Undeclared(path.join(".")))
@@ -532,7 +532,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     };
                 }
                 // `c.checkExpression(node).symbol`, which is not memoised.
-                let ty = self.c.get_type_of_expression(file, e);
+                let ty = self.c.get_type_of_expression_after_check(file, e);
                 self.symbol_of_type(ty)
             }
             // The `meta` of `import.meta` is the member of `getGlobalImportMetaExpressionType`.
@@ -540,11 +540,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 Some(Found::Undeclared("ImportMetaExpression.meta".to_owned()))
             }
             // `getSymbolAtLocation`, `KindMetaProperty`: the name has a symbol only if it is the right one.
-            ExprKind::NewTarget(name)
-                if is_name && self.c.files().atoms.bytes(name) != b"target" =>
-            {
-                None
-            }
+            ExprKind::NewTarget(name) if is_name && self.c.atoms().bytes(name) != b"target" => None,
             // `checkExpression(node).symbol`. The `target` of `new.target` has the same symbol.
             ExprKind::Super | ExprKind::ImportMeta | ExprKind::NewTarget(_) => {
                 let ty = self.c.type_of_expr(file, e);
@@ -731,7 +727,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         let this = hir.params.get(hir[function].this_param.idx())?;
         // `DeclarationNameToString`
         let name = match hir[this.pat].kind {
-            PatKind::Ident(name) => self.c.files().atoms.text(name).to_string(),
+            PatKind::Ident(name) => self.c.atoms().text(name).to_string(),
             _ => "(Missing)".to_owned(),
         };
         Some(Found::Anonymous {

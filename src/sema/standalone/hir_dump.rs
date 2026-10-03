@@ -65,15 +65,12 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         check_directive,
         is_module_by_decree,
         has_errors,
+        ran_out_of_stack: _,
         decorators,
         legacy_decorators,
-        early_errors,
-        error_arguments: _,
-        error_ends: _,
-        js_diagnostics,
+        diagnostics,
         syntax_errors,
         error_pos: _,
-        opening_brackets: _,
         source_len,
         text: _,
         unclosed_literals: _,
@@ -91,12 +88,10 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         import_attributes,
         specifier_expressions,
         has_parse_diagnostics,
-        checker_errors,
         parens,
         jsx_expressions,
         jsx_pragmas,
         jsdoc_comments,
-        jsdoc_errors,
         jsdoc_types,
         jsdoc_modifiers,
         jsdoc_param_errors,
@@ -195,15 +190,6 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     if *has_parse_diagnostics {
         put!(d, 0, "", "has_parse_diagnostics");
     }
-    if !checker_errors.is_empty() {
-        put!(
-            d,
-            0,
-            "",
-            "checker_errors[{}]: {checker_errors:?}",
-            checker_errors.len()
-        );
-    }
     for &(with_pos, attributes) in import_attributes {
         put!(d, 0, "", "import_attributes at {with_pos}:");
         d.expr(1, "attributes", attributes);
@@ -245,11 +231,18 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         put!(d, 1, "", "{kind} {spec} pos={pos}");
     }
 
-    let mut errors = early_errors.clone();
-    errors.sort_unstable();
-    put!(d, 0, "", "early_errors[{}]:", errors.len());
-    for (pos, code) in errors {
-        put!(d, 1, "", "pos={pos} code={code}");
+    let mut sorted: Vec<&Diagnostic> = diagnostics.iter().collect();
+    sorted.sort_by_key(|d| (d.start, d.code, d.end));
+    put!(d, 0, "", "diagnostics[{}]:", sorted.len());
+    for Diagnostic {
+        kind,
+        start,
+        end,
+        code,
+        ..
+    } in sorted
+    {
+        put!(d, 1, "", "{kind:?} {start}..{end} {code}");
     }
 
     let JsxPragmas {
@@ -278,11 +271,6 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
             jsdoc_comments.len()
         );
     }
-    if !jsdoc_errors.is_empty() {
-        let mut errors = jsdoc_errors.clone();
-        errors.sort_unstable();
-        put!(d, 0, "", "jsdoc_errors[{}]: {errors:?}", errors.len());
-    }
     for &(owner, ty) in jsdoc_types {
         let (kind, pos) = match owner {
             JsDocTypeOwner::Fn(id) => ("Fn", file.fns.get(id.idx()).map(|func| func.start)),
@@ -304,10 +292,13 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
             None => put!(d, 0, "", "jsdoc_modifiers {NO_SUCH_NODE} {flags:?}"),
         }
     }
-    for &(start, end, code, _) in js_diagnostics {
-        put!(d, 0, "", "js_diagnostic {start}..{end} {code}");
-    }
-    for &(func, pos, code) in jsdoc_param_errors {
+    for &(
+        func,
+        Diagnostic {
+            start: pos, code, ..
+        },
+    ) in jsdoc_param_errors
+    {
         match file.fns.get(func.idx()) {
             Some(func) => put!(
                 d,
@@ -1430,7 +1421,10 @@ impl Dump<'_> {
                 put!(self, depth, label, "{head} texts={}", self.names(texts));
                 self.list(d, "types", types, Self::ty);
             }
-            TypeNodeKind::Array(ty) | TypeNodeKind::Keyof(ty) | TypeNodeKind::Readonly(ty) => {
+            TypeNodeKind::Array(ty)
+            | TypeNodeKind::Keyof(ty)
+            | TypeNodeKind::Readonly(ty)
+            | TypeNodeKind::JSDoc { ty, .. } => {
                 self.line(depth, label, &head);
                 self.ty(d, "ty", ty);
             }
@@ -1670,6 +1664,8 @@ fn type_kind_name(kind: TypeNodeKind) -> &'static str {
         TypeNodeKind::Keyof(_) => "Keyof",
         TypeNodeKind::Readonly(_) => "Readonly",
         TypeNodeKind::UniqueSymbol => "UniqueSymbol",
+        TypeNodeKind::JSDoc { is_nullable, .. } if is_nullable => "JSDocNullable",
+        TypeNodeKind::JSDoc { .. } => "JSDocNonNullable",
         TypeNodeKind::Typeof { .. } => "Typeof",
         TypeNodeKind::Import { .. } => "Import",
         TypeNodeKind::Predicate { .. } => "Predicate",

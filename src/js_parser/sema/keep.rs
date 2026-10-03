@@ -14,7 +14,7 @@ use crate::sema::ts_syntax::{
     StatementData, StatementId, TupleElement, TypeAlias, TypeId, TypeParam, TypeParams, Types,
 };
 use bun_ast::{Expr, Loc, StoreStr};
-use bun_sema::hir::{PatKind, TypeNode, TypeNodeKind};
+use bun_sema::hir::{DiagnosticKind, PatKind, TypeNode, TypeNodeKind};
 
 use super::TypeSyntax;
 use crate::lexer::{PropertyModifierKeyword, T};
@@ -64,7 +64,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn emit_type(&mut self, kind: TypeNodeKind, pos: u32) {
         let syntax = self.type_syntax_mut();
         syntax.last_type = syntax.b.file.ty(kind, pos, 0);
-        syntax.last_postfix_nullable = None;
     }
 
     /// `finishNode`, of the type parsed last, unless it is finished: it ends where the token before the current one does.
@@ -577,37 +576,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.emit_type(tuple, pos);
     }
 
-    /// `parseTupleElementType`: if the last parsed type, which starts at `start`, is `T?` as a whole, returns `T`.
-    pub(crate) fn optional_tuple_element_type(&mut self, start: Loc) -> Option<TypeId> {
+    /// `parseTupleElementType`: if the last parsed type is a postfix `T?`, removes that node and returns `T`.
+    pub(crate) fn optional_tuple_element_type(&mut self) -> Option<TypeId> {
         let syntax = self.type_syntax_mut();
-        let (made, operand, before) = syntax.last_postfix_nullable.take()?;
-        if made != syntax.last_type || syntax.b.file[made].pos != start.start as u32 {
-            return None;
+        let types = &mut syntax.b.file.types;
+        match types.get(syntax.last_type.idx())?.kind {
+            TypeNodeKind::JSDoc {
+                ty,
+                is_nullable: true,
+                is_postfix: true,
+            } => {
+                types.truncate(syntax.last_type.idx());
+                Some(ty)
+            }
+            _ => None,
         }
-        // Nothing was made since.
-        syntax.rewind_rows(before);
-        Some(operand)
     }
 
     /// Wraps the last parsed type in JSDoc's `?` (`is_nullable`) or `!`, written after it (`is_postfix`) or before it. The result
     /// starts at `pos`.
     pub(crate) fn emit_jsdoc_type(&mut self, is_nullable: bool, is_postfix: bool, pos: u32) {
-        let operand = self.last_type();
-        if operand.is_none() {
-            return;
-        }
-        let syntax = self.type_syntax_mut();
-        let before = syntax.rows();
-        let code = if is_postfix { 17019 } else { 17020 };
-        syntax.b.check_jsdoc_type_is_in_js_file(pos, code);
-        // `T!` is `T`.
-        if is_nullable {
-            let union = syntax.b.union_with_keyword(operand, Keyword::Null, pos);
-            self.emit_type(union, pos);
-            if is_postfix {
-                let made = self.last_type();
-                self.type_syntax_mut().last_postfix_nullable = Some((made, operand, before));
-            }
+        let ty = self.last_type();
+        if ty.is_some() {
+            let kind = TypeNodeKind::JSDoc {
+                ty,
+                is_nullable,
+                is_postfix,
+            };
+            self.emit_type(kind, pos);
         }
     }
 
@@ -626,7 +622,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let syntax = self.type_syntax_mut();
         if syntax.last_type.is_some() {
             // `checkNamedTupleMember`. The element is required (`getTupleElementFlags`).
-            syntax.b.file.error(pos, end, 5087);
+            syntax.b.file.error(DiagnosticKind::Grammar, pos, end, 5087);
             syntax.last_type = syntax.b.rest_element_type(syntax.last_type);
         }
     }
@@ -636,7 +632,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let end = self.lexer.full_start().start as u32;
         let b = &mut self.type_syntax_mut().b;
         // `checkNamedTupleMember`. The element is required (`getTupleElementFlags`), and `getTypeFromOptionalTypeNode` adds `undefined`.
-        b.file.error(pos, end, 5086);
+        b.file.error(DiagnosticKind::Grammar, pos, end, 5086);
         let union = b.union_with_keyword(operand, Keyword::Undefined, pos);
         self.emit_type(union, pos);
     }
@@ -677,6 +673,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let syntax = self.type_syntax_mut();
         let name = syntax.b.identifier(&name, loc.start as u32);
         syntax.last_binding = syntax.b.add_pattern(PatKind::Ident(name), loc, end);
+    }
+
+    /// `createMissingIdentifier`: a name of no length at `loc`.
+    pub(crate) fn emit_missing_binding(&mut self, loc: bun_ast::Loc) {
+        let syntax = self.type_syntax_mut();
+        let name = syntax.b.atom(b"");
+        syntax.last_binding = syntax.b.add_pattern(PatKind::Ident(name), loc, loc);
     }
 
     /// `{ name }`, after the name.

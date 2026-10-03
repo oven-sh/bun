@@ -57,7 +57,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.lexer.contents.get(key_range.loc.start as usize),
                                 Some(b'"' | b'\'')
                             ) {
-                                p.lexer.ts_error(key_range, 1341);
+                                p.lexer.ts_grammar_error(key_range, 1341);
                             }
                         } else if kind == PropertyKind::Get {
                             p.log().add_range_error(
@@ -537,7 +537,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             if opts.is_async && !opts.is_class {
                                                 // `checkGrammarModifiers`. Those of a class member are gone over
                                                 // when it is lowered.
-                                                p.lexer.ts_error(name_range, 1030);
+                                                p.lexer.ts_grammar_error(name_range, 1030);
                                             }
                                             opts.is_async = true;
                                             p.push_member_modifier(opts, keyword, name_range.loc);

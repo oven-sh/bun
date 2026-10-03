@@ -139,7 +139,7 @@ impl Checker<'_> {
             // (`isStaticPrivateIdentifierProperty`). What `createUnionOrIntersectionProperty` makes of several is no
             // `SymbolFlagsPrototype`.
             if prop.name == known::prototype && !matches!(prop.source, PropSource::Intersected(..))
-                || self.files().atoms.bytes(prop.name).first() == Some(&b'#')
+                || self.atoms().bytes(prop.name).first() == Some(&b'#')
             {
                 continue;
             }
@@ -727,7 +727,7 @@ impl Checker<'_> {
                 {
                     continue;
                 }
-                let name_type = self.type_of_expr(f, key);
+                let name_type = self.get_type_of_expression(f, key);
                 let flags = if member.flags.contains(Flags::OPTIONAL) {
                     PropFlags::OPTIONAL
                 } else {

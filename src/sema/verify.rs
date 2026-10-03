@@ -10,9 +10,10 @@ use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{JsxEmit, ModuleKind, Options, path_is_relative};
 use crate::util::FxHashSet;
 use bstr::ByteSlice;
-use bun_core::strings::without_trailing_slash;
+use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, relative_normalized};
+use strings::without_trailing_slash;
 
 /// `hasZeroOrOneAsteriskCharacter`
 fn has_at_most_one_asterisk(text: &[u8]) -> bool {
@@ -27,7 +28,7 @@ fn path_is_absolute(path: &[u8]) -> bool {
         // A DOS volume: `c:`, `c:/` or `c:\`, but not `c:d`
         [volume, b':'] | [volume, b':', b'/' | b'\\', ..] if volume.is_ascii_alphabetic() => true,
         // A URL
-        _ => path.contains_str(b"://"),
+        _ => strings::contains(path, b"://"),
     }
 }
 

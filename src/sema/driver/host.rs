@@ -26,7 +26,7 @@ pub fn find_lib_dir(
     global_node_modules: Option<&[u8]>,
 ) -> Option<Vec<u8>> {
     let in_node_modules = |node_modules: &[u8]| -> Option<Vec<u8>> {
-        let plain = [&node_modules[..], b"/typescript/lib"].concat();
+        let plain = [node_modules, b"/typescript/lib"].concat();
         if host.is_file(&[&plain[..], b"/lib.es5.d.ts"].concat()) {
             return Some(plain);
         }
@@ -163,8 +163,10 @@ pub struct Disk {
     reading: Option<bun_threading::Semaphore>,
     /// Readers that are not in use, least recently used first.
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
+    /// See `Host::take_unreadable`.
+    unreadable: bun_threading::Guarded<Vec<Vec<u8>>>,
     /// `Host::times`, in nanoseconds.
-    times: [AtomicU64; 8],
+    times: [AtomicU64; Phase::ALL.len()],
 }
 
 /// Reusable state for reading files. Owned by the [`Disk`], so every directory handle is closed when it is dropped.
@@ -222,7 +224,9 @@ fn read_whole(directory: impl bun_sys::AsFd, name: &[u8], buffer: &mut Vec<u8>) 
 /// `decodeBytes`: what a file says, going by the mark at its start. `BOM` knows no big endian, so the pairs are swapped first.
 fn decoded(mut bytes: Vec<u8>) -> Cow<'static, [u8]> {
     if bytes.starts_with(&[0xFE, 0xFF]) {
-        bytes.chunks_exact_mut(2).for_each(|pair| pair.swap(0, 1));
+        for pair in bytes.as_chunks_mut::<2>().0 {
+            pair.swap(0, 1);
+        }
     }
     Cow::Owned(match BOM::detect(&bytes) {
         Some(mark) => mark.remove_and_convert_to_utf8_and_free(bytes),
@@ -267,6 +271,7 @@ impl Disk {
                 places
             }),
             idle_readers: bun_threading::Guarded::new(Vec::new()),
+            unreadable: bun_threading::Guarded::new(Vec::new()),
             times: Default::default(),
         }
     }
@@ -364,7 +369,7 @@ impl Disk {
             }
         };
         if real_parent == b"/" {
-            [&b"/"[..], &written[..]].concat()
+            [&b"/"[..], written].concat()
         } else {
             inside(real_parent, written)
         }
@@ -445,7 +450,7 @@ impl Host for Disk {
     fn spent(&self, phase: Phase, time: Duration) {
         self.times[phase as usize].fetch_add(time.as_nanos() as u64, Ordering::Relaxed);
     }
-    fn times(&self) -> [Duration; 8] {
+    fn times(&self) -> [Duration; Phase::ALL.len()] {
         Phase::ALL
             .map(|phase| Duration::from_nanos(self.times[phase as usize].load(Ordering::Relaxed)))
     }
@@ -484,6 +489,15 @@ impl Host for Disk {
         });
         self.return_reader(reader);
         read.map(decoded)
+    }
+    fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
+        self.read(path).unwrap_or_else(|| {
+            self.unreadable.lock().push(path.to_vec());
+            Cow::default()
+        })
+    }
+    fn take_unreadable(&self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut *self.unreadable.lock())
     }
     fn is_file(&self, path: &[u8]) -> bool {
         match self.find(path) {

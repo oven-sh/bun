@@ -129,7 +129,11 @@ impl<'p> Printer<'_, 'p> {
         }
         let pt = self.c.iso_pseudo_of_return(file, func);
         // `getReturnTypeOfSignature`: an annotation that comes back to itself is given up for `anyType`, which is not what it says.
-        if self.c.p.circular_returns.get(&(file, func)).is_some() {
+        let (p, key) = (self.c.p, (file, func));
+        if (p.fn_return_types.get(&mut self.c.task, &key))
+            .is_some_and(|(_, is_circular)| is_circular)
+            || p.circular_returns.get(&mut self.c.task, &key).is_some()
+        {
             return None;
         }
         let report_errors = !self.suppress_report_inference_fallback;
@@ -175,7 +179,10 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// `symbol.ValueDeclaration`, or else the first of `symbol.Declarations`.
-    fn value_declaration_of_property(&mut self, prop: &Prop) -> Option<(FileId, hir::Node)> {
+    pub(super) fn value_declaration_of_property(
+        &mut self,
+        prop: &Prop,
+    ) -> Option<(FileId, hir::Node)> {
         if matches!(prop.source, PropSource::Intersected(..)) {
             return None;
         }
@@ -536,7 +543,7 @@ impl<'p> Printer<'_, 'p> {
                             Some(b'`') => b'`',
                             _ => b'"',
                         };
-                        Node::simple(quoted(self.c.files().atoms.bytes(value), quote, false))
+                        Node::simple(quoted(self.c.atoms().bytes(value), quote, false))
                     }
                     ExprKind::Template { exprs } if exprs.is_empty() => {
                         let text = hir.id_at(hir.template_texts(exprs), 0);
@@ -702,10 +709,13 @@ impl<'p> Printer<'_, 'p> {
         let is_const = literal.is_some() && self.c.is_const_context(file, literal);
         let saved_flags = self.flags;
         self.flags |= IN_OBJECT_TYPE_LITERAL;
+        let outer = self.indent_members();
         let mut members = Vec::with_capacity(elements.len());
         for element in elements {
             let readonly: &[u8] = if is_const { b"readonly " } else { b"" };
-            members.push(match &element.kind {
+            // `SetCommentRange(newProp, e.Name.Parent.Loc)`
+            let comments = self.comments_before(file, hir.node(element.prop));
+            let member = match &element.kind {
                 PseudoElementKind::Method {
                     func,
                     params,
@@ -750,10 +760,12 @@ impl<'p> Printer<'_, 'p> {
                     let ty = self.pseudo_type_to_node(file, ty);
                     cat!(b"get ", name, b"(): ", ty.text, b";")
                 }
-            });
+            };
+            members.push(cat!(comments, member));
         }
         self.flags = saved_flags;
-        Node::simple(cat!(b"{ ", members.join(&b" "[..]), b" }"))
+        self.indent = outer;
+        Node::simple(self.braces(&members))
     }
 }
 
@@ -959,7 +971,7 @@ impl<'p> Printer<'_, 'p> {
                             Some(rest) if rest.iter().find(is_quote) == Some(&b'\'') => b'\'',
                             _ => b'"',
                         };
-                        quoted(self.c.files().atoms.bytes(spec), quote, false)
+                        quoted(self.c.atoms().bytes(spec), quote, false)
                     }
                 };
                 let mut text = cat!(query, b"import(", specifier, b")");
@@ -973,12 +985,19 @@ impl<'p> Printer<'_, 'p> {
             }
             // Out of the scope it is written in it is written from its type, which reads the same.
             TypeNodeKind::UniqueSymbol => Node::new(b"unique symbol", TYPE_OPERATOR),
+            // `getLiteralTextOfNode`: a literal of the file is written as it is written there.
+            TypeNodeKind::StringLit(_) | TypeNodeKind::NumberLit(_)
+                if self.is_transformer && !hir.text.is_empty() =>
+            {
+                let end = self.c.end_of_type_node(file, node) as usize;
+                Node::simple(&hir.text[(pos as usize).min(end)..end])
+            }
             TypeNodeKind::StringLit(value) => {
                 let quote = match hir.text.get(pos as usize) {
                     Some(b'\'') => b'\'',
                     _ => b'"',
                 };
-                Node::simple(quoted(self.c.files().atoms.bytes(value), quote, false))
+                Node::simple(quoted(self.c.atoms().bytes(value), quote, false))
             }
             TypeNodeKind::NumberLit(index) => Node::simple(
                 crate::atom::number_to_string(
@@ -1017,11 +1036,33 @@ impl<'p> Printer<'_, 'p> {
                 let of = self.visit_existing_type_node(file, of, 0)?;
                 Node::new(cat!(b"readonly ", of.emit(POSTFIX)), TYPE_OPERATOR)
             }
+            // nodecopy.go copies a `JSDocNullableType` as a union with `null` and unwraps a `JSDocNonNullableType`.
+            TypeNodeKind::JSDoc {
+                ty, is_nullable, ..
+            } => {
+                let of = self.visit_existing_type_node(file, ty, pos)?;
+                if !is_nullable {
+                    return Some(of);
+                }
+                Node::union(vec![of, Node::simple(b"null")])
+            }
             TypeNodeKind::Tuple(elems) => {
                 let mut parts = Vec::with_capacity(elems.len());
+                // `IsOriginalNodeSingleLine`: the transformer gives it `EFSingleLine` then, the node builder always.
+                let text = &hir.text[..];
+                let from = super::super::errors_declaration_emit::pos_before(text, pos as usize);
+                let to = (self.c.end_of_type_node(file, node) as usize).clamp(from, text.len());
+                let is_on_several_lines = self.is_transformer && text[from..to].contains(&b'\n');
+                let outer = match is_on_several_lines {
+                    true => self.indent_members(),
+                    false => self.indent,
+                };
                 for e in elems.iter() {
                     let elem = hir[e];
-                    let ty = self.visit_existing_type_node(file, elem.ty, 0)?;
+                    let Some(ty) = self.visit_existing_type_node(file, elem.ty, 0) else {
+                        self.indent = outer;
+                        return None;
+                    };
                     let dots: &[u8] = if elem.rest { b"..." } else { b"" };
                     parts.push(if elem.name.is_some() {
                         let question: &[u8] = if elem.optional { b"?" } else { b"" };
@@ -1032,14 +1073,35 @@ impl<'p> Printer<'_, 'p> {
                         cat!(dots, ty.text)
                     });
                 }
-                Node::simple(cat!(b"[", parts.join(&b", "[..]), b"]"))
+                self.indent = outer;
+                match outer.filter(|_| is_on_several_lines && !parts.is_empty()) {
+                    // `MultiLineTupleTypeElements`
+                    Some(level) => {
+                        let separator = cat!(b",\n", b"    ".repeat(level + 1));
+                        Node::simple(cat! {
+                            b"[\n", b"    ".repeat(level + 1), parts.join(&separator[..]), b"\n",
+                            b"    ".repeat(level), b"]"
+                        })
+                    }
+                    None => Node::simple(cat!(b"[", parts.join(&b", "[..]), b"]")),
+                }
             }
             TypeNodeKind::Union(list) => {
                 let nodes = self.visit_existing_type_nodes(file, list, pos)?;
-                Node::union(nodes)
+                let mut union = Node::union(nodes);
+                if self.is_transformer {
+                    union.text =
+                        self.type_node_list_text(file, node, list, union.types.clone(), b'|');
+                }
+                union
             }
             TypeNodeKind::Intersection(list) => {
                 let nodes = self.visit_existing_type_nodes(file, list, pos)?;
+                if self.is_transformer {
+                    let parts = nodes.into_iter().map(|it| it.emit(TYPE_OPERATOR)).collect();
+                    let text = self.type_node_list_text(file, node, list, parts, b'&');
+                    return Some(Node::new(text, INTERSECTION));
+                }
                 Node::new(join_nodes(nodes, b" & ", TYPE_OPERATOR), INTERSECTION)
             }
             TypeNodeKind::Fn(f) => {
@@ -1060,7 +1122,11 @@ impl<'p> Printer<'_, 'p> {
             TypeNodeKind::Object(members) => {
                 let scope = self.c.bound(file).type_scope[node.idx()];
                 let mut elements = Vec::with_capacity(members.len());
+                let outer = self.indent_members();
                 for m in members.iter() {
+                    if self.is_transformer && self.c.should_strip_internal(file, hir[m].loc.pos) {
+                        continue;
+                    }
                     let outer_scope = hir[m]
                         .func
                         .some()
@@ -1069,12 +1135,17 @@ impl<'p> Printer<'_, 'p> {
                     if let Some(outer_scope) = outer_scope {
                         self.leave_scope(outer_scope);
                     }
-                    elements.push(element?);
+                    let Some(element) = element else {
+                        self.indent = outer;
+                        return None;
+                    };
+                    elements.push(cat!(self.comments_before(file, hir.node(m)), element));
                 }
+                self.indent = outer;
                 if elements.is_empty() {
                     Node::simple(b"{}")
                 } else {
-                    Node::simple(cat!(b"{ ", elements.join(&b" "[..]), b" }"))
+                    Node::simple(self.braces(&elements))
                 }
             }
             TypeNodeKind::Cond {
@@ -1122,10 +1193,16 @@ impl<'p> Printer<'_, 'p> {
                 let key = self.c.type_param(file, mapped.param);
                 let outer_scope = self.enter_new_scope(&[], &[key], None, false);
                 let name = self.type_parameter_to_name(key);
+                // The node builder gives its copy `EFSingleLine`. The transformer leaves the node as it is.
+                let outer = match self.is_transformer {
+                    true => self.indent_members(),
+                    false => self.indent.take(),
+                };
                 let constraint =
                     self.visit_existing_type_node(file, hir[mapped.param].constraint, 0);
                 let name_type = self.visit_existing_type_node(file, mapped.name_ty, 0);
                 let template = self.visit_existing_type_node(file, mapped.ty, 0);
+                self.indent = outer;
                 self.leave_scope(outer_scope);
                 let (constraint, name_type, template) = (constraint?, name_type?, template?);
                 let renamed = if mapped.name_ty.is_some() {
@@ -1143,9 +1220,14 @@ impl<'p> Printer<'_, 'p> {
                     MappedModifier::Add => b"?",
                     MappedModifier::Remove => b"-?",
                 };
-                Node::simple(cat! {
-                    b"{ ", readonly, b"[", name, b" in ", constraint.text, renamed, b"]", question,
-                    b": ", template.text, b"; }"
+                let member = cat! {
+                    readonly, b"[", name, b" in ", constraint.text, renamed, b"]", question,
+                    b": ", template.text, b";"
+                };
+                Node::simple(if self.is_transformer {
+                    self.braces(&[member])
+                } else {
+                    cat!(b"{ ", member, b" }")
                 })
             }
             TypeNodeKind::Predicate { param, ty, asserts } => {
@@ -1162,6 +1244,40 @@ impl<'p> Printer<'_, 'p> {
                 Node::simple(text)
             }
         })
+    }
+
+    /// `list_text`, of the constituents `list` of the union or intersection `node`, or of the type arguments of the reference `node`.
+    /// `token`: `|`, `&`, or the `<` the arguments follow.
+    fn type_node_list_text(
+        &self,
+        file: FileId,
+        node: TypeNodeId,
+        list: IdList<TypeNodeId>,
+        parts: Vec<Vec<u8>>,
+        token: u8,
+    ) -> Vec<u8> {
+        let hir = self.c.hir(file);
+        let ends: Vec<u32> = (hir.ids(list))
+            .map(|it| self.c.end_of_type_node(file, it))
+            .collect();
+        let start = hir[node].pos;
+        let (first_pos, delimiter): (Option<u32>, &[u8]) = match token {
+            b'<' => {
+                let open = bun_core::strings::index_of_char(&hir.text[start as usize..], b'<');
+                (open.map(|open| start + open + 1), b",")
+            }
+            // A leading `|` or `&`.
+            _ => (
+                (hir.text.get(start as usize) == Some(&token)).then_some(start + 1),
+                if token == b'|' { b" |" } else { b" &" },
+            ),
+        };
+        // The last constituent ends where the union or the intersection ends, which emits what trails it.
+        let parent_end = match (token, ends.last()) {
+            (b'|' | b'&', Some(&end)) => end as usize,
+            _ => usize::MAX,
+        };
+        self.list_text(file, parts, &ends, first_pos, delimiter, false, parent_end)
     }
 
     fn visit_existing_type_nodes(
@@ -1192,7 +1308,7 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// A `TypeParameterDeclaration`
-    fn visit_type_parameter_declaration(
+    pub(super) fn visit_type_parameter_declaration(
         &mut self,
         file: FileId,
         tp: TypeParamId,
@@ -1226,7 +1342,11 @@ impl<'p> Printer<'_, 'p> {
     /// A `ParameterDeclaration`. Without a type it is `any`.
     fn visit_parameter_declaration(&mut self, file: FileId, p: ParamId) -> Option<Vec<u8>> {
         let parameter = self.c.hir(file)[p];
-        let ty = self.visit_existing_type_node(file, parameter.ty, 0)?;
+        let mut ty = self.visit_existing_type_node(file, parameter.ty, 0)?;
+        // `ensureType`: the transformer writes the type it has.
+        if self.is_transformer && parameter.ty.is_none() && parameter.flags.contains(Flags::REST) {
+            ty = Node::simple(b"any[]");
+        }
         Some(cat! {
             if parameter.flags.contains(Flags::REST) { &b"..."[..] } else { b"" },
             self.binding_name_text(file, parameter.pat),
@@ -1509,8 +1629,21 @@ impl<'p> Printer<'_, 'p> {
             return self.serialize_type_name(file, scope, &names, false, arguments);
         }
         let path: Vec<Vec<u8>> = names.iter().map(|&name| self.text(name)).collect();
+        let arguments = if self.is_transformer && !arguments.is_empty() {
+            let parts = arguments
+                .into_iter()
+                .map(|it| it.emit(CONDITIONAL))
+                .collect();
+            cat!(
+                b"<",
+                self.type_node_list_text(file, node, args, parts, b'<'),
+                b">"
+            )
+        } else {
+            type_arguments_text(arguments)
+        };
         Some(Node {
-            text: cat!(path.join(&b"."[..]), type_arguments_text(arguments)),
+            text: cat!(path.join(&b"."[..]), arguments),
             precedence: NON_ARRAY,
             reference: match &path[..] {
                 [only] => Some(only.clone()),

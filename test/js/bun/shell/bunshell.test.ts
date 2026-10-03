@@ -522,6 +522,174 @@ describe("bunshell", () => {
     );
   });
 
+  // The target keeps the bytes that fit. The shell reports the short write on
+  // its own stderr, and a command that would exit 0 exits 1.
+  describe.concurrent("redirect into a Buffer that is too small", () => {
+    const writeError = (argv0: string) => `${argv0}: write error: No space left on device\n`;
+    // The shell runs a subprocess under the path that `which` resolves, so the report names that path.
+    const resolvedBun = async () => (await $`which ${BUN}`.text()).trimEnd();
+
+    test.each([4, 11])("builtin, %d of 12 bytes fit", async size => {
+      const buf = Buffer.alloc(size);
+      const r = await $`echo hello world > ${buf}`.quiet();
+      expect({ written: buf.toString("latin1"), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+        written: "hello world\n".slice(0, size),
+        stderr: writeError("echo"),
+        exitCode: 1,
+      });
+    });
+
+    test("builtin: an exact fit succeeds", async () => {
+      const buf = Buffer.alloc(12);
+      const r = await $`echo hello world > ${buf}`.quiet();
+      expect({ written: buf.toString("latin1"), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+        written: "hello world\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("builtin that writes one chunk per operand", async () => {
+      const buf = Buffer.alloc(4);
+      const r = await $`which ${BUN} ${BUN} > ${buf}`.quiet();
+      expect({ written: buf.toString("latin1"), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+        written: (await resolvedBun()).slice(0, 4),
+        stderr: writeError("which"),
+        exitCode: 1,
+      });
+    });
+
+    test("builtin, with stderr on a file descriptor", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          BUN,
+          "-e",
+          `import { $ } from "bun";
+           const buf = Buffer.alloc(4);
+           const r = await $\`echo hello world > \${buf}\`.nothrow();
+           console.log(JSON.stringify({ written: buf.toString("latin1"), stderr: r.stderr.toString(), exitCode: r.exitCode }));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe(writeError("echo"));
+      expect(JSON.parse(stdout)).toEqual({ written: "hell", stderr: writeError("echo"), exitCode: 1 });
+      expect(exitCode).toBe(0);
+    });
+
+    test("builtin: the right side of `||` runs", async () => {
+      const buf = Buffer.alloc(4);
+      const r = await $`echo hello world > ${buf} || echo write_failed`.quiet();
+      expect({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+        stdout: "write_failed\n",
+        stderr: writeError("echo"),
+        exitCode: 0,
+      });
+    });
+
+    test("builtin: only the window of a Uint8Array view is written", async () => {
+      const backing = new Uint8Array(24).fill(0x2e);
+      const r = await $`echo hello world > ${new Uint8Array(backing.buffer, 8, 4)}`.quiet();
+      expect({
+        backing: Buffer.from(backing).toString("latin1"),
+        stderr: r.stderr.toString(),
+        exitCode: r.exitCode,
+      }).toEqual({
+        backing: "........hell............",
+        stderr: writeError("echo"),
+        exitCode: 1,
+      });
+    });
+
+    test("builtin that also fails on its own", async () => {
+      using dir = tempDir("shell-redirect-overflow", { "a-long-file-name.txt": "" });
+      const buf = Buffer.alloc(4);
+      const r = await $`ls a-long-file-name.txt missing > ${buf}`.cwd(String(dir)).quiet();
+      expect({ written: buf.toString("latin1"), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+        written: "a-lo",
+        stderr: "ls: missing: No such file or directory\n" + writeError("ls"),
+        exitCode: 1,
+      });
+    });
+
+    test.each([4, 10])("subprocess, %d of 11 bytes fit", async size => {
+      const buf = Buffer.alloc(size);
+      const r = await $`${BUN} -e ${'process.stdout.write("hello world")'} > ${buf}`.quiet();
+      expect({ written: buf.toString("latin1"), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+        written: "hello world".slice(0, size),
+        stderr: writeError(await resolvedBun()),
+        exitCode: 1,
+      });
+    });
+
+    test("subprocess: an exact fit succeeds", async () => {
+      const buf = Buffer.alloc(11);
+      const r = await $`${BUN} -e ${'process.stdout.write("hello world")'} > ${buf}`.quiet();
+      expect({ written: buf.toString("latin1"), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+        written: "hello world",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("subprocess: stderr", async () => {
+      const buf = Buffer.alloc(4);
+      const r = await $`${BUN} -e ${'process.stderr.write("hello world")'} 2> ${buf}`.quiet();
+      expect({ written: buf.toString("latin1"), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+        written: "hell",
+        stderr: writeError(await resolvedBun()),
+        exitCode: 1,
+      });
+    });
+
+    test("subprocess: the right side of `||` runs", async () => {
+      const buf = Buffer.alloc(4);
+      const r = await $`${BUN} -e ${'process.stdout.write("hello world")'} > ${buf} || echo write_failed`.quiet();
+      expect({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+        stdout: "write_failed\n",
+        stderr: writeError(await resolvedBun()),
+        exitCode: 0,
+      });
+    });
+
+    test("subprocess: its own exit code is kept", async () => {
+      const buf = Buffer.alloc(4);
+      const r = await $`${BUN} -e ${'process.stdout.write("hello world"); process.exitCode = 5'} > ${buf}`.quiet();
+      expect({ written: buf.toString("latin1"), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+        written: "hell",
+        stderr: writeError(await resolvedBun()),
+        exitCode: 5,
+      });
+    });
+
+    test("subprocess that exits after the shell starts the report", async () => {
+      // A command that is only a command substitution has an exit code before
+      // it runs. So the Cmd finishes when the pipes close, and the process
+      // exit arrives while the report is still on its way to the stderr fd.
+      await using proc = Bun.spawn({
+        cmd: [
+          BUN,
+          "-e",
+          `import { $ } from "bun";
+           const resolved = (await $\`which \${process.execPath}\`.text()).trimEnd();
+           const buf = Buffer.alloc(4);
+           const r = await $\`$(echo \${process.execPath} -e 'process.stdout.write("hello-world")') > \${buf}\`.nothrow();
+           console.log(JSON.stringify({ resolved, written: buf.toString("latin1"), stderr: r.stderr.toString(), exitCode: r.exitCode }));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const { resolved, ...result } = JSON.parse(stdout);
+      expect(stderr).toBe(writeError(resolved));
+      expect(result).toEqual({ written: "hell", stderr: writeError(resolved), exitCode: 1 });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("pipeline", async () => {
     const { stdout } = await $`echo "LMAO" | cat`;
 

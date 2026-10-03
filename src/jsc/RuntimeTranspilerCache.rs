@@ -64,7 +64,10 @@ bun_core::declare_scope!(cache, visible);
 /// `onResolve` rewrote (`namespace:path`). Older entries request the bare path, and
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
-const EXPECTED_VERSION: u32 = 34;
+/// Version 35: The parser keeps a `const` of one `switch` case out of the other cases,
+/// keeps `[x][0]()` as a call on the array, prints `new.target` in a class field initializer
+/// or a static block as `undefined`, and keeps assignment and delete targets as references.
+const EXPECTED_VERSION: u32 = 35;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

@@ -147,6 +147,13 @@ static_assert([] {
         && methodIdFromWire("BREW") == HTTP_METHOD_NONE;
 }(), "methodIdFromWire() returns each name's index in HTTP_METHOD_NAMES and no id for any other token");
 
+/* Answers a request whose method has no id. No route and no Request can
+ * carry such a method, so no handler runs for it (RFC 9110 15.6.2). */
+template <typename Response>
+void endMethodNotImplemented(Response *response) {
+    response->writeStatus("501 Not Implemented")->end();
+}
+
 } // namespace uWS
 
 #endif // UWS_HTTPMETHOD_H

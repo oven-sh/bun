@@ -3,6 +3,7 @@
 
 #include "quic.h"
 #include "QueryParser.h"
+#include "HttpMethod.h"
 
 #include <cctype>
 #include <string_view>
@@ -66,6 +67,9 @@ struct Http3Request {
         }
         return {methodLower, n};
     }
+
+    /* The id of :method, or HTTP_METHOD_NONE for a token that is none of HTTP_METHOD_NAMES */
+    uint8_t getMethodId() { return methodIdFromWire(method); }
 
     std::string_view getHeader(std::string_view lowerCasedHeader) {
         if (lowerCasedHeader == "host") return authority;

@@ -379,7 +379,7 @@ private:
             nodeHttpRequestTrailers = &nodeHttpResponseData->nodeHttpRequestTrailers;
         }
 
-        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpContextData->maxHeadersCount, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpContextData->maxHeadersCount, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader, /* strict methods: */ IsNodeHttp, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
 
@@ -523,13 +523,18 @@ private:
                 ((AsyncSocket<SSL> *) s)->cork();
             }
 
-            /* Route the method and URL */
-            selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
-            if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
-                /* We have to force close this socket as we have no handler for it.
-                 * close() first sends the responses to earlier requests of this read. */
-                ((AsyncSocket<SSL> *) s)->close();
-                return nullptr;
+            /* node:http's parser is strict: it answers 400 to a method with no id. */
+            if (!IsNodeHttp && httpRequest->getMethodId() == HTTP_METHOD_NONE) [[unlikely]] {
+                endMethodNotImplemented((HttpResponse<SSL> *) s);
+            } else {
+                /* Route the method and URL */
+                selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
+                if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
+                    /* We have to force close this socket as we have no handler for it.
+                     * close() first sends the responses to earlier requests of this read. */
+                    ((AsyncSocket<SSL> *) s)->close();
+                    return nullptr;
+                }
             }
 
             /* First of all we need to check if this socket was deleted due to upgrade */

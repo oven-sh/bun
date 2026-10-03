@@ -1709,7 +1709,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     if (!http2::isKnownMethod(method)) {
         /* RFC 9110 §15.6.2. The router would dispatch it to the "any" handler,
          * which cannot represent the method and would report GET. */
-        stream->writeStatus("501 Not Implemented")->end();
+        endMethodNotImplemented(stream);
         return !closed;
     }
     return dispatchRequest(stream, list.data(), (unsigned) list.size());

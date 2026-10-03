@@ -515,6 +515,7 @@ void setUpNativeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, Transf
 void initializeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSPromise* startPromise, double writableHighWaterMark, JSC::JSObject* writableSizeAlgorithm, double readableHighWaterMark, JSC::JSObject* readableSizeAlgorithm); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamError(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamErrorWritableAndUnblockWrite(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp
+void transformStreamKeepQueuedOutputReadable(JSC::VM&, JSTransformStream*, JSC::JSValue error); // userJS: no — TransformStreamOperations.cpp
 void transformStreamSetBackpressure(JSC::JSGlobalObject*, JSTransformStream*, bool backpressure); // userJS: no — TransformStreamOperations.cpp
 void transformStreamUnblockWrite(JSC::JSGlobalObject*, JSTransformStream*); // userJS: no — TransformStreamOperations.cpp
 void setUpTransformStreamDefaultController(JSC::VM&, JSTransformStream*, JSTransformStreamDefaultController*); // userJS: no — TransformStreamOperations.cpp

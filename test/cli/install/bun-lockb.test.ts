@@ -142,7 +142,7 @@ it("migrating bun.lockb keeps a peer required when it is satisfied only by the d
   const { packages } = Bun.JSONC.parse(migrated) as { packages: Record<string, unknown[]> };
   expect(Object.keys(packages).sort()).toStrictEqual(["peer-deps", "peer-deps/no-deps"]);
   expect(packages["peer-deps"][2]).toStrictEqual({ peerDependencies: { "no-deps": "*" } });
-  expect(packages["peer-deps/no-deps"][0]).toBe("no-deps@file:./vendor/no-deps");
+  expect(packages["peer-deps/no-deps"][0]).toBe("no-deps@file:vendor/no-deps");
   expect(migrated).not.toContain("optionalPeers");
 
   await runBunInstall(env, fresh);

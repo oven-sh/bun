@@ -1813,11 +1813,10 @@ impl<'a> PackageInstaller<'a> {
                         // This is a transitive folder dependency. It is installed with a single symlink to the target folder/file,
                         // and is not hoisted.
                         //
-                        // A transitive `Resolution::Folder` declared by a local `file:` package
-                        // is relative to the top-level dir (`Package::parse` normalized it), so
-                        // install it from `installer.cache_dir` (the cwd, set in the switch above).
+                        // Relative to the top-level dir when a local `file:` package or a root rule wrote it.
                         if resolution.tag == resolution::Tag::Folder
-                            && self.lockfile().is_folder_tree_id(self.current_tree_id)
+                            && (self.lockfile().is_folder_tree_id(self.current_tree_id)
+                                || self.lockfile().is_overridden_dependency(dependency_id))
                         {
                             break 'result installer.install(
                                 self.skip_delete,

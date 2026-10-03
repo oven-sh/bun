@@ -6389,6 +6389,11 @@ declare module "bun" {
   interface OnResolveResult {
     /**
      * The destination of the import
+     *
+     * In a runtime plugin, a path without a `namespace` is resolved from the
+     * importing module like any other import, without running `onResolve`
+     * callbacks on it. If nothing is found there, it is used as it is when an
+     * `onLoad` callback matches it.
      */
     path: string;
     /**

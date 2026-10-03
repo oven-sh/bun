@@ -467,10 +467,6 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
     path
 }
 
-pub fn without_leading_slash(this: &[u8]) -> &[u8] {
-    strings::trim_left(this, b"/")
-}
-
 pub fn without_leading_path_separator(this: &[u8]) -> &[u8] {
     strings::trim_left(this, &[crate::SEP])
 }

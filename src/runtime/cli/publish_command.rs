@@ -1552,7 +1552,13 @@ impl PublishCommand {
         });
 
         let mut iter = DirIterator::iterate(workspace_dir);
-        while let Some(entry) = iter.next().ok().flatten() {
+        loop {
+            let entry = match iter.next() {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break,
+                // The README is optional registry metadata: a failed scan publishes without it.
+                Err(_) => break,
+            };
             if entry.kind == bun_sys::EntryKind::Directory {
                 continue;
             }
@@ -1774,7 +1780,19 @@ impl PublishCommand {
                     });
 
                     let mut iter = DirIterator::iterate(dir);
-                    while let Some(entry) = iter.next().ok().flatten() {
+                    loop {
+                        let entry = match iter.next() {
+                            Ok(Some(entry)) => entry,
+                            Ok(None) => break,
+                            Err(e) => {
+                                Output::err(
+                                    e,
+                                    "failed to read bin directory: '{}'",
+                                    (bstr::BStr::new(&dir_subpath),),
+                                );
+                                Global::crash();
+                            }
+                        };
                         let (name, subpath): (&'static ZStr, &'static ZStr) = {
                             // Entry names are UTF-8 on every platform.
                             let name = entry.name.slice_u8();

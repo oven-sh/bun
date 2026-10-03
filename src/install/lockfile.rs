@@ -2089,7 +2089,8 @@ pub(crate) fn linked_workspace_path(
     workspace_versions: &VersionHashMap,
     name_hash: PackageNameHash,
     range: &Semver::query::Group,
-    buf: &[u8],
+    range_buf: &[u8],
+    workspace_buf: &[u8],
 ) -> Option<SemverString> {
     if !link_workspace_packages {
         return None;
@@ -2099,7 +2100,9 @@ pub(crate) fn linked_workspace_path(
         return Some(path);
     }
     let version = *workspace_versions.get(&name_hash)?;
-    range.satisfies(version, buf, buf).then_some(path)
+    range
+        .satisfies(version, range_buf, workspace_buf)
+        .then_some(path)
 }
 
 impl Lockfile {
@@ -2170,6 +2173,7 @@ impl Lockfile {
                         &self.workspace_versions,
                         Semver::string::Builder::string_hash(npm.name.slice(buf)),
                         &npm.version,
+                        buf,
                         buf,
                     )
                     .is_some()

@@ -1313,6 +1313,171 @@ describe.concurrent("what onResolve answers without a namespace", () => {
   });
 });
 
+// Without a node_modules directory, Bun installs the package it does not find.
+describe.concurrent("the registry is not asked for a bare name that onResolve answers about as well", () => {
+  // onResolve answers the first with itself, so it is not asked again. It is about the name it answers the second with.
+  const asksOnResolve = "onResolve itself-served.js\nonResolve dir/served.virtual\nonResolve served.virtual\n";
+  it.each([
+    [
+      "an import statement",
+      "entry.mjs",
+      `import a from "itself-served.js"; import b from "dir/served.virtual"; console.log(a, b);`,
+    ],
+    [
+      "import()",
+      "entry.mjs",
+      `console.log((await import("itself-served.js")).default, (await import("dir/served.virtual")).default);`,
+    ],
+    [
+      "require()",
+      "entry.cjs",
+      `console.log(require("itself-served.js").default, require("dir/served.virtual").default);`,
+    ],
+    [
+      "import.meta.require()",
+      "entry.mjs",
+      `console.log(import.meta.require("itself-served.js").default, import.meta.require("dir/served.virtual").default);`,
+    ],
+    [
+      "require.resolve()",
+      "entry.cjs",
+      `console.log(require.resolve("itself-served.js"), require.resolve("dir/served.virtual"));`,
+    ],
+    [
+      "import.meta.resolve()",
+      "entry.mjs",
+      `console.log(import.meta.resolve("itself-served.js"), import.meta.resolve("dir/served.virtual"));`,
+    ],
+    [
+      "Bun.resolveSync()",
+      "entry.mjs",
+      `console.log(Bun.resolveSync("itself-served.js", import.meta.dir), Bun.resolveSync("dir/served.virtual", import.meta.dir));`,
+    ],
+    [
+      "Bun.resolve()",
+      "entry.mjs",
+      `console.log(await Bun.resolve("itself-served.js", import.meta.dir), await Bun.resolve("dir/served.virtual", import.meta.dir));`,
+    ],
+  ])("by %s", async (_, name, source) => {
+    expect(await run(name, source)).toEqual({
+      stdout: asksOnResolve + "itself-served.js served.virtual\n",
+      stderr: "",
+      exitCode: 0,
+      asked: ["/not-answered"],
+    });
+  });
+
+  it("whether or not an onLoad serves it", async () => {
+    const source = `
+      for (const specifier of ["itself-not-served.js", "dir/not-served.virtual"])
+        try { require.resolve(specifier); } catch (error) { console.log(error.message.split("\\n")[0]); }
+    `;
+    expect(await run("entry.cjs", source)).toEqual({
+      stdout:
+        "onResolve itself-not-served.js\nCannot find module 'itself-not-served.js'\n" +
+        "onResolve dir/not-served.virtual\nonResolve not-served.virtual\nCannot find module 'not-served.virtual'\n",
+      stderr: "",
+      exitCode: 0,
+      asked: ["/not-answered"],
+    });
+  });
+
+  it("and is for one it does not, though the filter of an onLoad or of an onResolve that declines matches", async () => {
+    const source = `
+      for (const specifier of ["package.redirect", "file.redirect", "file.declines"])
+        try { console.log(require.resolve(specifier)); } catch (error) { console.log(error.message.split("\\n")[0]); }
+    `;
+    expect(await run("entry.cjs", source)).toEqual({
+      stdout:
+        "onResolve package.redirect\nCannot find module 'a-package'\n" +
+        "onResolve file.redirect\nb-package/file.transformed\n" +
+        "onResolve file.declines\nonResolve c-package/file.declines\nCannot find module 'c-package/file.declines'\n",
+      stderr: "",
+      exitCode: 0,
+      asked: ["/a-package", "/b-package", "/c-package", "/not-answered"],
+    });
+  });
+
+  it("and onResolve is not asked again about an answer in a namespace", async () => {
+    expect(await run("entry.cjs", `console.log(require("moved.namespace").default);`)).toEqual({
+      stdout: "onResolve moved.namespace\ninner.js\n",
+      stderr: "",
+      exitCode: 0,
+      asked: ["/not-answered"],
+    });
+  });
+
+  it("and what onResolve says about the bare name is an error if it is not valid", async () => {
+    const source = `try { require.resolve("first.invalid"); } catch (error) { console.log(error.message); }`;
+    expect(await run("entry.cjs", source)).toEqual({
+      stdout: `onResolve first.invalid\nonResolve second.invalid\nExpected "path" to be a string in onResolve plugin\n`,
+      stderr: "",
+      exitCode: 0,
+      asked: ["/not-answered"],
+    });
+  });
+
+  async function run(name: string, source: string) {
+    const asked: string[] = [];
+    using registry = Bun.serve({
+      port: 0,
+      fetch(request) {
+        asked.push(new URL(request.url).pathname);
+        return new Response("{}", { status: 404 });
+      },
+    });
+    using dir = tempDir("plugin-onresolve-registry", {
+      "plugin.ts": `
+        import { basename } from "node:path";
+        const redirects = { "package.redirect": "a-package", "file.redirect": "b-package/file.transformed" };
+        function logged(answer) {
+          return args => (console.log("onResolve", args.path), answer(args));
+        }
+        Bun.plugin({
+          name: "answers",
+          setup(build) {
+            build.onResolve({ filter: /^itself-/ }, logged(({ path }) => ({ path })));
+            build.onResolve({ filter: /\\.virtual$/ }, logged(({ path }) => ({ path: basename(path) })));
+            build.onResolve({ filter: /\\.redirect$/ }, logged(({ path }) => ({ path: redirects[path] })));
+            build.onResolve({ filter: /\\.declines$/ }, logged(({ path }) => (path === "file.declines" ? { path: "c-package/" + path } : undefined)));
+            build.onResolve({ filter: /\\.namespace$/ }, logged(() => ({ path: "inner.js", namespace: "custom" })));
+            build.onResolve({ filter: /.*/, namespace: "custom" }, logged(() => undefined));
+            build.onResolve({ filter: /\\.invalid$/ }, logged(({ path }) => ({ path: path === "first.invalid" ? "second.invalid" : 42 })));
+            build.onLoad({ filter: /.*/, namespace: "custom" }, ({ path }) => ({
+              contents: "export default " + JSON.stringify(path),
+              loader: "js",
+            }));
+            build.onLoad({ filter: /^(itself-served\\.js|served\\.virtual)$/ }, ({ path }) => ({
+              contents: "export default " + JSON.stringify(path),
+              loader: "js",
+            }));
+            build.onLoad({ filter: /\\.transformed$/ }, async ({ path }) => ({
+              contents: await Bun.file(path).text(),
+              loader: "js",
+            }));
+          },
+        });
+      `,
+      // The last line is what no plugin answers about, which is asked of the registry.
+      [name]: source + `\nimport("not-answered").catch(() => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./plugin.ts", name],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: registry.url.href,
+        NPM_CONFIG_REGISTRY: registry.url.href,
+        BUN_INSTALL_CACHE_DIR: resolve(String(dir), ".cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, asked };
+  }
+});
+
 it.concurrent("an onLoad in the namespace of builtins leaves their aliases alone", async () => {
   const source = `
     Bun.plugin({ name: "node", setup(build) { build.onLoad({ filter: /^never$/, namespace: "node" }, () => {}); } });

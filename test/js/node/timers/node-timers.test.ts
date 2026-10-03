@@ -46,25 +46,59 @@ it("node.js util.promisify(setInterval) works", async () => {
 });
 
 it("timers expose util.promisify.custom as a lazy accessor without loading node:util first", async () => {
-  // Matches Node's lib/timers.js: an enumerable, non-configurable getter that resolves to timers/promises.
+  // Matches Node's lib/timers.js: an enumerable, non-configurable, getter-only accessor that resolves to
+  // the timers/promises export of the same realm. A strict-mode write and Object.assign throw, a sloppy-mode
+  // write is a no-op. The same probe runs in the main thread and in a worker, before either loads a module.
+  const probe = `const probe = () => {
+    const sym = Symbol.for("nodejs.util.promisify.custom");
+    const timers = [setTimeout, setInterval, setImmediate];
+    const shape = fn => {
+      const d = Object.getOwnPropertyDescriptor(fn, sym);
+      return d && { get: typeof d.get, set: typeof d.set, enumerable: d.enumerable, configurable: d.configurable };
+    };
+    const before = timers.map(shape);
+    // new Function so that the directive is compiled as written, instead of going through the transpiler.
+    const write = (fn, body) => { try { new Function("fn", "sym", body)(fn, sym); return "no throw"; } catch (e) { return e.constructor.name; } };
+    const writes = timers.map(fn => ({
+      strict: write(fn, '"use strict"; fn[sym] = 1;'),
+      sloppy: write(fn, 'fn[sym] = 1;'),
+      assign: write(fn, 'Object.assign(fn, { [sym]: 1 });'),
+    }));
+    // Read after the writes, so this also proves they changed nothing.
+    const tp = require("node:timers/promises");
+    const same = [setTimeout[sym] === tp.setTimeout, setInterval[sym] === tp.setInterval, setImmediate[sym] === tp.setImmediate];
+    return { before, writes, same };
+  };`;
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
-      `const sym = Symbol.for("nodejs.util.promisify.custom");
-       const shape = fn => { const d = Object.getOwnPropertyDescriptor(fn, sym); return d && { get: typeof d.get, set: typeof d.set, enumerable: d.enumerable, configurable: d.configurable }; };
-       const before = [setTimeout, setInterval, setImmediate].map(shape);
-       const tp = require("node:timers/promises");
-       const same = [setTimeout[sym] === tp.setTimeout, setInterval[sym] === tp.setInterval, setImmediate[sym] === tp.setImmediate];
-       console.log(JSON.stringify({ before, same }));`,
+      `${probe}
+       const main = probe();
+       const { Worker } = require("node:worker_threads");
+       const worker = new Worker(${JSON.stringify(probe)} + 'require("node:worker_threads").parentPort.postMessage(probe());', {
+         eval: true,
+       });
+       let inWorker;
+       worker.once("message", result => { inWorker = result; });
+       worker.once("exit", workerExitCode => {
+         console.log(JSON.stringify({ main, inWorker, workerExitCode }));
+       });`,
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   const accessor = { get: "function", set: "undefined", enumerable: true, configurable: false };
-  expect(JSON.parse(stdout)).toEqual({ before: [accessor, accessor, accessor], same: [true, true, true] });
+  const rejected = { strict: "TypeError", sloppy: "no throw", assign: "TypeError" };
+  const expected = {
+    before: [accessor, accessor, accessor],
+    writes: [rejected, rejected, rejected],
+    same: [true, true, true],
+  };
+  expect(JSON.parse(stdout)).toEqual({ main: expected, inWorker: expected, workerExitCode: 0 });
   expect(exitCode).toBe(0);
 });
 

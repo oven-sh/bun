@@ -1438,6 +1438,164 @@ describe("postMessage transfer list", () => {
   });
 });
 
+// Serializing the message runs user code (the getters below), which can invalidate an entry
+// of the transfer list after the list was checked. The transfer must then fail as a whole:
+// node reports the DataCloneError with every listed ArrayBuffer still intact. Bun used to
+// detach the buffers first and reject the port afterwards, so the caller got an error and
+// lost its data.
+describe("transfer list invalidated while the message is serialized", () => {
+  const dataClone = expect.objectContaining({ name: "DataCloneError", code: 25 });
+
+  // `first` is serialized, then the getter closes `transferred`, then `last`.
+  function messageClosingListedPort(transferred: MessagePort) {
+    const first = new ArrayBuffer(8);
+    const last = new ArrayBuffer(8);
+    const message = {
+      first,
+      get closeIt() {
+        transferred.close();
+        return 1;
+      },
+      transferred,
+      last,
+    };
+    return { message, transfer: [first, transferred, last], buffers: [first, last] };
+  }
+
+  test("port.postMessage: a getter closing a listed port leaves the listed buffers intact", () => {
+    const { port1, port2 } = new MessageChannel();
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    const { message, transfer, buffers } = messageClosingListedPort(transferred);
+    expect(() => port1.postMessage(message, transfer)).toThrow(dataClone);
+    expect(buffers.map(b => b.byteLength)).toEqual([8, 8]);
+    expect(receiveMessageOnPort(port2)).toBeUndefined();
+    port1.close();
+    port2.close();
+    peer.close();
+  });
+
+  test("worker.postMessage: a getter closing a listed port leaves the listed buffers intact", async () => {
+    const worker = new Worker("", { eval: true });
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    try {
+      const { message, transfer, buffers } = messageClosingListedPort(transferred);
+      expect(() => worker.postMessage(message, transfer)).toThrow(dataClone);
+      expect(buffers.map(b => b.byteLength)).toEqual([8, 8]);
+    } finally {
+      await worker.terminate();
+      peer.close();
+    }
+  });
+
+  test("new Worker: a workerData getter closing a listed port leaves the listed buffers intact", async () => {
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    let worker: Worker | undefined;
+    try {
+      const { message, transfer, buffers } = messageClosingListedPort(transferred);
+      expect(() => {
+        worker = new Worker("", { eval: true, workerData: message, transferList: transfer });
+      }).toThrow(dataClone);
+      expect(buffers.map(b => b.byteLength)).toEqual([8, 8]);
+    } finally {
+      await worker?.terminate();
+      peer.close();
+    }
+  });
+
+  // The invalidated port is only in the transfer list, not in the message, so only the
+  // post-serialization check can notice it.
+  test("port.postMessage: a getter transferring a listed port elsewhere leaves the listed buffers intact", () => {
+    const { port1, port2 } = new MessageChannel();
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    const { port1: elsewhere, port2: elsewherePeer } = new MessageChannel();
+    const buffer = new ArrayBuffer(8);
+    const message = {
+      buffer,
+      get moveIt() {
+        elsewhere.postMessage(null, [transferred]);
+        return 1;
+      },
+    };
+    expect(() => port1.postMessage(message, [buffer, transferred])).toThrow(dataClone);
+    expect(buffer.byteLength).toBe(8);
+    expect(receiveMessageOnPort(port2)).toBeUndefined();
+    port1.close();
+    port2.close();
+    elsewhere.close();
+    elsewherePeer.close();
+    peer.close();
+  });
+
+  // A mark applied by a getter counts like one applied before the call: the buffer is not
+  // detached. (Node also refuses, as a TypeError raised by the detach itself.)
+  function expectMarkDuringSerializationToBeHonored(send: (message: object, transfer: ArrayBuffer[]) => unknown) {
+    const buffer = new ArrayBuffer(16);
+    const message = {
+      get markIt() {
+        markAsUntransferable(buffer);
+        return 1;
+      },
+      buffer,
+    };
+    expect(() => send(message, [buffer])).toThrow(dataClone);
+    expect(buffer.byteLength).toBe(16);
+  }
+
+  test("structuredClone honors markAsUntransferable applied during serialization", () => {
+    expectMarkDuringSerializationToBeHonored((message, transfer) => structuredClone(message, { transfer }));
+  });
+
+  test("port.postMessage honors markAsUntransferable applied during serialization", () => {
+    const { port1, port2 } = new MessageChannel();
+    expectMarkDuringSerializationToBeHonored((message, transfer) => port1.postMessage(message, transfer));
+    expect(receiveMessageOnPort(port2)).toBeUndefined();
+    port1.close();
+    port2.close();
+  });
+
+  test("worker.postMessage honors markAsUntransferable applied during serialization", async () => {
+    const worker = new Worker("", { eval: true });
+    try {
+      expectMarkDuringSerializationToBeHonored((message, transfer) => worker.postMessage(message, transfer));
+    } finally {
+      await worker.terminate();
+    }
+  });
+
+  // The other direction of the same rule: once the buffers are detached, the listed ports go
+  // with them even though the message itself is dropped because the sending port is closed.
+  // Node performs the transfer for a closed sender too; bun used to leave the port usable.
+  test.each([
+    ["before the call", true],
+    ["by a getter during serialization", false],
+  ])("port.postMessage on a port closed %s still detaches the listed port", async (_name, closeBeforeCall) => {
+    const { port1: sender, port2: senderPeer } = new MessageChannel();
+    const { port1: transferred, port2: peer } = new MessageChannel();
+    const { promise: peerSawClose, resolve } = Promise.withResolvers<void>();
+    peer.on("close", () => resolve());
+    const buffer = new ArrayBuffer(8);
+    if (closeBeforeCall) sender.close();
+    const message = {
+      buffer,
+      get closeSender() {
+        sender.close();
+        return 1;
+      },
+      transferred,
+    };
+    expect(() => sender.postMessage(message, [buffer, transferred])).not.toThrow();
+    expect(buffer.byteLength).toBe(0);
+    const { port1: other, port2: otherPeer } = new MessageChannel();
+    expect(() => other.postMessage(null, [transferred])).toThrow("MessagePort in transfer list is already detached");
+    // The transferred endpoint had no receiver, which closes the channel from the peer's view.
+    await peerSawClose;
+    peer.close();
+    senderPeer.close();
+    other.close();
+    otherPeer.close();
+  });
+});
+
 test("MessagePort NodeEventTarget methods", () => {
   const { port1 } = new MessageChannel();
   expect(typeof port1.listenerCount).toBe("function");

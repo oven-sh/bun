@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMusl, isWindows, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 describe.concurrent("run-shell", () => {
@@ -36,6 +36,46 @@ describe.concurrent("run-shell", () => {
     });
     const stderr = await proc.stderr.text();
     expect(stderr).toBe("error: Failed to run script.sh due to error Unexpected ')'\n");
+  });
+
+  // Windows has no RLIMIT_NOFILE. On musl bun raises the hard fd limit at
+  // startup, which succeeds as root and defeats the limit set below.
+  test.skipIf(isWindows || isMusl)("a failure to start the interpreter reports the full system error", async () => {
+    using dir = tempDir("run-shell-emfile", { "hello.sh": "echo hello\n" });
+
+    // Before the shell runs a script it dups stdout and stderr. A hard
+    // RLIMIT_NOFILE equal to the number of fds bun holds at that point makes
+    // the dup fail with EMFILE. That number depends on the platform and the
+    // build (event loop fds, the cwd fd, stdin), so scan upward. A lower
+    // limit fails earlier with a different error, and a limit one above it
+    // fails on the second dup, so the scan cannot step over the window.
+    //
+    // At startup bun walks the cwd's directory chain with one open fd per
+    // level. From a deep temp dir that walk needs more fds than the dup
+    // does, and no limit reaches the dup. Run from `/` so the walk is one
+    // directory.
+    let stderr: string | undefined;
+    for (let limit = 6; limit <= 16; limit++) {
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `ulimit -n ${limit} && exec "$0" "$1"`, bunExe(), join(String(dir), "hello.sh")],
+        cwd: "/",
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (err.includes("Failed to run script hello.sh")) {
+        expect(exitCode).toBe(1);
+        stderr = err;
+        break;
+      }
+      if (out === "hello\n") break;
+    }
+
+    expect(stderr, "no fd limit between 6 and 16 made the shell's dup fail").toBeDefined();
+    // `dup` is implemented with `fcntl(F_DUPFD_CLOEXEC)`, so that is the
+    // syscall the error names.
+    expect(stderr).toBe("EMFILE: Too many open files: Failed to run script hello.sh (fcntl)\n");
   });
 });
 

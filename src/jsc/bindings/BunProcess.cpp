@@ -4515,6 +4515,15 @@ void Process::emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral event
     queueNextTick(globalObject, function, args);
 }
 
+void Process::emitEvent(Zig::GlobalObject* globalObject, const MarkedArgumentBuffer& args)
+{
+    auto* function = m_emitHelperFunction.getInitializedOnMainThread(this);
+    WTF::NakedPtr<JSC::Exception> exception;
+    JSC::call(globalObject, function, JSC::getCallData(function), this, args, exception);
+    if (exception) [[unlikely]]
+        Bun__reportUnhandledError(globalObject, JSValue::encode(exception.get()));
+}
+
 extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, EncodedJSValue func, EncodedJSValue arg1)
 {
     auto process = globalObject->processObject();
@@ -4968,11 +4977,12 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
         }
     }
 
-    if (process->wrapped().hasEventListeners(ident)) {
+    if (ident == names.internalMessagePublicName() || process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
+        args.append(jsString(vm, ident.string()));
         args.append(message);
         args.append(JSValue::decode(handle));
-        process->wrapped().emit(ident, args);
+        process->emitEvent(global, args);
     }
 }
 
@@ -4980,11 +4990,9 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
-    auto ident = Identifier::fromString(vm, "disconnect"_s);
-    if (process->wrapped().hasEventListeners(ident)) {
-        JSC::MarkedArgumentBuffer args;
-        process->wrapped().emit(ident, args);
-    }
+    JSC::MarkedArgumentBuffer args;
+    args.append(jsString(vm, String("disconnect"_s)));
+    process->emitEvent(global, args);
 }
 
 extern "C" void Process__emitMemoryPressureEvent(Zig::GlobalObject* global, int level)

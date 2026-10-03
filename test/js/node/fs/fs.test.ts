@@ -4290,6 +4290,30 @@ describe("fs.ReadStream", () => {
   });
 });
 
+describe.each([
+  ["createReadStream", (options: any) => createReadStream(null as any, options)],
+  ["createWriteStream", (options: any) => createWriteStream(null as any, options)],
+  ["new fs.ReadStream", (options: any) => new fs.ReadStream(null as any, options)],
+  ["new fs.WriteStream", (options: any) => new fs.WriteStream(null as any, options)],
+])("%s with an invalid options.fd", (_, construct) => {
+  const expected = 'The "options.fd" property must be of type number or an instance of FileHandle.';
+
+  it.each([
+    ["3", "Received type string ('3')"],
+    [true, "Received type boolean (true)"],
+    [3n, "Received type bigint (3n)"],
+    [{}, "Received an instance of Object"],
+  ])("rejects fd: %p with node's message", (fd, received) => {
+    expect(() => construct({ fd })).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `${expected} ${received}`,
+      }),
+    );
+  });
+});
+
 describe("createWriteStream", () => {
   it.todoIf(isBroken && isWindows)("simple write stream finishes", async () => {
     const streamPath = join(tmpdirSync(), "create-write-stream.txt");
@@ -5101,6 +5125,26 @@ it("existsSync with invalid path doesn't throw", () => {
   expect(existsSync(123 as any)).toBe(false);
   expect(existsSync(undefined as any)).toBe(false);
   expect(existsSync({ invalid: 1 } as any)).toBe(false);
+});
+
+describe("fs._toUnixTimestamp", () => {
+  // Node passes ["Date", "Time in seconds"] as the expected types, so its
+  // message really does read "an Time in seconds".
+  it.each([
+    ["x", undefined, '"time"', "Received type string ('x')"],
+    [NaN, undefined, '"time"', "Received type number (NaN)"],
+    [{}, undefined, '"time"', "Received an instance of Object"],
+    [Infinity, "atime", '"atime"', "Received type number (Infinity)"],
+    [undefined, "mtime", '"mtime"', "Received undefined"],
+  ])("rejects %p (name: %p) with node's message", (time, name, label, received) => {
+    expect(() => (fs as any)._toUnixTimestamp(time, name)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The ${label} argument must be an instance of Date or an Time in seconds. ${received}`,
+      }),
+    );
+  });
 });
 
 describe("utimesSync", () => {

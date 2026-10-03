@@ -12,6 +12,7 @@ const {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  utimesTime,
 } = require("internal/fs/cp-sync");
 
 const {
@@ -310,8 +311,8 @@ async function setDestTimestamps(src, dest) {
   // The initial srcStat.atime cannot be trusted
   // because it is modified by the read(2) system call
   // (See https://nodejs.org/api/fs.html#fs_stat_time_values)
-  const updatedSrcStat = await stat(src);
-  return utimes(dest, updatedSrcStat.atime, updatedSrcStat.mtime);
+  const updatedSrcStat = await stat(src, { bigint: true });
+  return utimes(dest, utimesTime(updatedSrcStat.atimeNs), utimesTime(updatedSrcStat.mtimeNs));
 }
 
 function onDir(srcStat, destStat, src, dest, opts) {

@@ -66,6 +66,13 @@ declare module "bun" {
     unref(): void;
   }
 
+  /**
+   * Incremental writer for an S3 upload. {@link S3File.writer} returns it.
+   *
+   * If the upload fails, the pending `flush()` and `end()` promises reject
+   * with the error. If neither is pending, the next `flush()` or `end()` call
+   * rejects with it.
+   */
   interface NetworkSink extends FileSink {
     /**
      * Write a chunk of data to the network.

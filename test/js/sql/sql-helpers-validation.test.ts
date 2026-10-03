@@ -176,3 +176,132 @@ describe("sqlite helper behavior preserved", () => {
     expect(await sql`SELECT 1 as num WHERE 1 IN ${sql([null, 1])}`).toEqual([{ num: 1 }]);
   });
 });
+
+// The command a helper belongs to is found by scanning the query backwards for
+// the nearest keyword. The scan is case-insensitive, and what precedes the
+// keyword must not change the answer however long it is. Both scanners (the
+// shared one for postgres/mysql, and sqlite's own) are covered.
+const detectionAdapters: [string, string, () => SQL][] = [
+  [
+    "postgres",
+    "Helpers are only allowed for INSERT, UPDATE and IN commands",
+    () => new SQL("postgres://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 }),
+  ],
+  [
+    "mysql",
+    "Helpers are only allowed for INSERT, UPDATE and IN commands",
+    () => new SQL("mysql://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 }),
+  ],
+  ["sqlite", "Helpers are only allowed for INSERT, UPDATE and WHERE IN commands", () => new SQL("sqlite://:memory:")],
+];
+
+describe.each(detectionAdapters)("%s helper command detection", (_adapter, noKeywordMessage, makeSql) => {
+  test("INSERT is matched in any case", async () => {
+    await using sql = makeSql();
+    for (const query of [
+      () => sql`INSERT INTO t ${sql({})}`,
+      () => sql`insert into t ${sql({})}`,
+      () => sql`InSeRt InTo t ${sql({})}`,
+    ]) {
+      const err = await query().catch(e => e);
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).toBe("Cannot INSERT with no columns");
+    }
+  });
+
+  test("UPDATE and SET are matched in any case", async () => {
+    await using sql = makeSql();
+    for (const query of [
+      () => sql`UPDATE t SET ${sql({})}`,
+      () => sql`update t set ${sql({})}`,
+      () => sql`UpDaTe t SeT ${sql({})}`,
+      () => sql`update t ${sql({})}`,
+    ]) {
+      const err = await query().catch(e => e);
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).toBe("Cannot UPDATE with no columns");
+    }
+  });
+
+  test("every whitespace character separates the keyword from the helper", async () => {
+    await using sql = makeSql();
+    for (const query of [
+      () => sql`INSERT INTO t\n${sql({})}`,
+      () => sql`INSERT INTO t\t${sql({})}`,
+      () => sql`INSERT INTO t\r${sql({})}`,
+      () => sql`INSERT INTO t\f${sql({})}`,
+      () => sql`INSERT INTO t\v${sql({})}`,
+      () => sql`INSERT INTO t   ${sql({})}`,
+    ]) {
+      const err = await query().catch(e => e);
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).toBe("Cannot INSERT with no columns");
+    }
+  });
+
+  test("a keyword inside a quoted identifier is not matched", async () => {
+    await using sql = makeSql();
+    const err = await sql`SELECT * FROM "insert" ${sql({})}`.catch(e => e);
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect(err.message).toBe(noKeywordMessage);
+  });
+
+  test("quoted characters are dropped from the token, not treated as separators", async () => {
+    await using sql = makeSql();
+    // A quoted run next to the keyword leaves the keyword intact, because the
+    // quoted characters are removed rather than ending the token.
+    const attached = await sql`"x"INSERT INTO t ${sql({})}`.catch(e => e);
+    expect(attached).toBeInstanceOf(SyntaxError);
+    expect(attached.message).toBe("Cannot INSERT with no columns");
+
+    // A quoted run inside the keyword breaks it, because what is left is not it.
+    for (const query of [() => sql`IN"S"ERT INTO t ${sql({})}`, () => sql`S"E"T ${sql({})}`]) {
+      const err = await query().catch(e => e);
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).toBe(noKeywordMessage);
+    }
+  });
+
+  test("a long query before the keyword does not change the command", async () => {
+    await using sql = makeSql();
+    // The scan only needs the token nearest the helper, so a large body in
+    // front of it must not change what is detected.
+    const padding = Buffer.alloc(100_000, "x").toString();
+
+    const insert = await sql`INSERT INTO t /* ${sql.unsafe(padding)} */ ${sql({})}`.catch(e => e);
+    expect(insert).toBeInstanceOf(SyntaxError);
+    expect(insert.message).toBe("Cannot INSERT with no columns");
+
+    const update = await sql`UPDATE t SET /* ${sql.unsafe(padding)} */ ${sql({})}`.catch(e => e);
+    expect(update).toBeInstanceOf(SyntaxError);
+    expect(update.message).toBe("Cannot UPDATE with no columns");
+
+    // and a long query with no keyword at all is still rejected
+    const none = await sql`SELECT * FROM t /* ${sql.unsafe(padding)} */ ${sql({})}`.catch(e => e);
+    expect(none).toBeInstanceOf(SyntaxError);
+    expect(none.message).toBe(noKeywordMessage);
+  });
+});
+
+describe("bare ANY/ALL is only IN on mysql", () => {
+  // A query that is nothing but ANY or ALL reaches the end-of-scan branch rather
+  // than the whitespace branch, and only mysql treats it as IN there. This is
+  // the one caller of that branch, so it is easy to lose in a refactor.
+  test("postgres rejects the helper", async () => {
+    await using sql = new SQL("postgres://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 });
+    for (const query of [() => sql`any ${sql([1, 2])}`, () => sql`ALL ${sql([1, 2])}`]) {
+      const err = await query().catch(e => e);
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).toBe("Helpers are only allowed for INSERT, UPDATE and IN commands");
+    }
+  });
+
+  test("mysql accepts the helper and goes on to connect", async () => {
+    await using sql = new SQL("mysql://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 });
+    for (const query of [() => sql`any ${sql([1, 2])}`, () => sql`ALL ${sql([1, 2])}`]) {
+      const err = await query().catch(e => e);
+      expect(err).not.toBeInstanceOf(SyntaxError);
+      expect(err.message).toBe("Failed to connect");
+    }
+  });
+});

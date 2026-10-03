@@ -2574,10 +2574,11 @@ impl NodeBuilderImpl {
         }
         // `b.cloneBindingNameVisitor.VisitEachChild(node)`: the visitor calls cloneBindingName on every child and makes the nodes with `b.f`.
         let mut visited = visit_each_child(
+            a,
             c,
             node,
             |c, child| NodeBuilderImpl.clone_binding_name(c, child),
-            |c| NodeBuilderImpl.f(c),
+            |c, run| run(&mut NodeBuilderImpl.f(c)),
         );
         if is_binding_element(a, visited) {
             let binding_element = a.as_binding_element(visited);
@@ -2634,11 +2635,12 @@ impl NodeBuilderImpl {
         let parameter_name_text = c.type_predicates[type_predicate].parameter_name;
         let predicate_type = c.type_predicates[type_predicate].t;
         let mut asserts_modifier = NodeId::NIL;
-        if kind == TypePredicateKind::AssertsThis || kind == TypePredicateKind::AssertsIdentifier {
+        if kind == TypePredicateKind::ASSERTS_THIS || kind == TypePredicateKind::ASSERTS_IDENTIFIER
+        {
             asserts_modifier = self.f(c).new_token(Kind::AssertsKeyword);
         }
         let parameter_name;
-        if kind == TypePredicateKind::Identifier || kind == TypePredicateKind::AssertsIdentifier {
+        if kind == TypePredicateKind::IDENTIFIER || kind == TypePredicateKind::ASSERTS_IDENTIFIER {
             parameter_name = self.new_identifier(c, parameter_name_text, SymbolId::NIL);
             c.node_builder
                 .impl_
@@ -2963,7 +2965,7 @@ impl Checker<'_> {
                 .unwrap_or(&[])
                 .to_vec();
             for (i, t) in element_types.as_slice().iter().copied().enumerate() {
-                let name = associated_names.get(i).cloned().unwrap_or_default();
+                let name = c.text(associated_names.get(i).map_or(&[][..], Vec::as_slice));
                 let flags = element_infos
                     .as_slice()
                     .get(i)
@@ -2975,7 +2977,7 @@ impl Checker<'_> {
                     check_flags = CheckFlags::OPTIONAL_PARAMETER;
                 }
                 let symbol =
-                    c.new_symbol_ex(SymbolFlags::FUNCTION_SCOPED_VARIABLE, &name, check_flags);
+                    c.new_symbol_ex(SymbolFlags::FUNCTION_SCOPED_VARIABLE, name, check_flags);
                 let resolved_type = if flags.intersects(ElementFlags::REST) {
                     c.create_array_type(t)
                 } else {
@@ -3601,7 +3603,7 @@ impl NodeBuilderImpl {
             enclosing_declaration,
             text,
             SymbolFlags::VALUE | SymbolFlags::EXPORT_VALUE,
-            None,
+            MessageId::NIL,
             true,
             false,
         );
@@ -3613,7 +3615,7 @@ impl NodeBuilderImpl {
                 first_identifier,
                 text,
                 SymbolFlags::VALUE | SymbolFlags::EXPORT_VALUE,
-                None,
+                MessageId::NIL,
                 true,
                 false,
             );
@@ -3966,9 +3968,9 @@ impl NodeBuilderImpl {
                     let fake_getter_signature = c.new_signature(
                         SignatureFlags::NONE,
                         NodeId::NIL,
-                        &[],
+                        List::NIL,
                         SymbolId::NIL,
-                        &[],
+                        List::NIL,
                         property_type,
                         TypePredicateId::NIL,
                         0,
@@ -3989,12 +3991,13 @@ impl NodeBuilderImpl {
                     let links = c.value_symbol_links_get(setter_param);
                     c.value_symbol_links[links].resolved_type = write_type;
                     let void_type = c.void_type;
+                    let parameters = c.list_of(&[setter_param]);
                     let fake_setter_signature = c.new_signature(
                         SignatureFlags::NONE,
                         NodeId::NIL,
-                        &[],
+                        List::NIL,
                         SymbolId::NIL,
-                        &[setter_param],
+                        parameters,
                         void_type,
                         TypePredicateId::NIL,
                         0,
@@ -4021,14 +4024,14 @@ impl NodeBuilderImpl {
         if property
             .flags
             .intersects(SymbolFlags::FUNCTION | SymbolFlags::METHOD)
-            && c.get_properties_of_object_type(property_type).is_empty()
+            && c.get_properties_of_object_type(property_type).len() == 0
             && !c.is_readonly_symbol(property_symbol)
         {
-            let defined_type = c.filter_type(property_type, |c, t| {
+            let defined_type = c.filter_type(property_type, &mut |c, t| {
                 !c.types[t].flags.intersects(TypeFlags::UNDEFINED)
             });
-            let signatures = c.get_signatures_of_type(defined_type, SignatureKind::Call);
-            for signature in signatures.iter().copied() {
+            let signatures = c.get_signatures_of_type(defined_type, SignatureKind::CALL);
+            for signature in signatures.iter() {
                 let method_declaration = self.signature_to_signature_declaration_helper(
                     c,
                     signature,
@@ -4046,7 +4049,7 @@ impl NodeBuilderImpl {
                 self.set_comment_range(c, method_declaration, comment_source);
                 type_elements.push(method_declaration);
             }
-            if !signatures.is_empty() || optional_token.is_nil() {
+            if signatures.len() != 0 || optional_token.is_nil() {
                 return;
             }
         }

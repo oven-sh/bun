@@ -1073,10 +1073,11 @@ pub mod fs {
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
         /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
         pub entries: EntriesMap,
-        /// The entries of the last directory whose read failed, which
-        /// `read_listing` uses again when it reads that directory. Guarded by
-        /// `entries_mutex`.
-        failed_listing: Option<DirEntry>,
+        /// What the failed reads of a directory interned, until a read of it
+        /// succeeds. `EntryStore`, `FilenameStore` and `DirnameStore` only
+        /// grow, so `read_listing` uses these entries and this path again
+        /// when it reads the directory. Guarded by `entries_mutex`.
+        failed_listings: bun_collections::StringHashMap<DirEntry>,
         pub(crate) cwd: &'static [u8],
         #[cfg(not(windows))]
         pub(crate) file_limit: usize,
@@ -1093,7 +1094,7 @@ pub mod fs {
             RealFS {
                 entries_mutex: Mutex::default(),
                 entries: EntriesMap::new(),
-                failed_listing: None,
+                failed_listings: Default::default(),
                 cwd,
                 #[cfg(not(windows))]
                 file_limit,
@@ -1195,6 +1196,9 @@ pub mod fs {
         /// Every listing that `commit_listing` publishes comes from here, so
         /// the cache never holds the names of a read that stopped early.
         ///
+        /// A new listing is named `dir_path`, followed by a separator when
+        /// `dir_needs_sep`. A stale one (`in_place`) keeps its name.
+        ///
         /// A read that fails is tried once more, on a handle opened again by
         /// path, so a transient error does not reach the caller. When
         /// `owns_handle`, that handle replaces `*handle` and the old one is
@@ -1207,6 +1211,7 @@ pub mod fs {
             &mut self,
             in_place: Option<*mut DirEntry>,
             dir_path: &[u8],
+            dir_needs_sep: bool,
             generation: Generation,
             handle: &mut Fd,
             owns_handle: bool,
@@ -1214,7 +1219,7 @@ pub mod fs {
             reserve: usize,
             iterator: I,
         ) -> crate::CrateResult<DirEntry> {
-            let (dir, mut interned) = self.listing_dir(in_place, dir_path)?;
+            let (dir, mut interned) = self.listing_dir(in_place, dir_path, dir_needs_sep)?;
             let mut listing = DirEntry::init(dir, generation);
             listing.data.reserve(reserve);
             if store_fd {
@@ -1248,30 +1253,30 @@ pub mod fs {
             )
         }
 
-        /// The interned path for a new listing of `dir_path`, and the entries
-        /// that an earlier failed read of the same directory already interned.
+        /// The interned name for a listing of `dir_path`, and what the failed
+        /// reads of that directory left in `failed_listings`.
         fn listing_dir(
             &mut self,
             in_place: Option<*mut DirEntry>,
             dir_path: &[u8],
+            dir_needs_sep: bool,
         ) -> crate::CrateResult<(&'static [u8], Option<DirEntry>)> {
             // SAFETY: `in_place` points to a `DirEntry` inside the BSSMap
             // singleton; its `dir` field is DirnameStore-interned (&'static).
             let stale_dir = in_place.map(|p| unsafe { (*p).dir });
-            let interned = match &self.failed_listing {
-                Some(failed)
-                    if strings::paths::without_trailing_slash_windows_path(failed.dir)
-                        == strings::paths::without_trailing_slash_windows_path(
-                            stale_dir.unwrap_or(dir_path),
-                        ) =>
-                {
-                    self.failed_listing.take()
-                }
-                _ => None,
+            let interned = if self.failed_listings.is_empty() {
+                None
+            } else {
+                self.failed_listings
+                    .remove(strings::paths::without_trailing_slash_windows_path(
+                        stale_dir.unwrap_or(dir_path),
+                    ))
             };
             let dir = match (stale_dir, &interned) {
                 (Some(dir), _) => dir,
                 (None, Some(failed)) => failed.dir,
+                (None, None) if dir_needs_sep => DirnameStore::instance()
+                    .append_parts(&[dir_path, bun_paths::SEP_STR.as_bytes()])?,
                 (None, None) => DirnameStore::instance().append_slice(dir_path)?,
             };
             Ok((dir, interned))
@@ -1292,9 +1297,9 @@ pub mod fs {
             store_fd: bool,
             try_again: bool,
         ) -> crate::CrateResult<DirEntry> {
-            // `EntryStore` and `FilenameStore` only grow. `failed.data` collects
-            // every entry interned for this directory, so that the next read of
-            // it, here or in a later lookup, interns only names it has not seen.
+            // `failed.data` collects every entry interned for this directory, so
+            // that the next read of it, here or in a later lookup, interns only
+            // the names it has not seen.
             match &interned {
                 Some(earlier) => Self::keep_entries(&mut failed.data, &earlier.data)?,
                 None => {
@@ -1329,7 +1334,10 @@ pub mod fs {
                 }
             }
 
-            self.failed_listing = Some(failed);
+            self.failed_listings.put(
+                strings::paths::without_trailing_slash_windows_path(failed.dir),
+                failed,
+            )?;
             Err(err)
         }
 
@@ -1385,9 +1393,10 @@ pub mod fs {
             &mut self,
             in_place: Option<*mut DirEntry>,
             dir_path: &[u8],
+            dir_needs_sep: bool,
             generation: Generation,
         ) -> crate::CrateResult<DirEntry> {
-            let (dir, _) = self.listing_dir(in_place, dir_path)?;
+            let (dir, _) = self.listing_dir(in_place, dir_path, dir_needs_sep)?;
             Ok(DirEntry::init(dir, generation))
         }
 
@@ -1575,6 +1584,7 @@ pub mod fs {
                 } else {
                     dir_maybe_trail_slash
                 },
+                false,
                 generation,
                 &mut handle,
                 !had_handle,
@@ -1882,6 +1892,7 @@ pub mod fs {
                     let read = self.read_listing(
                         Some(e_ptr),
                         dir,
+                        false,
                         generation,
                         &mut handle,
                         true,

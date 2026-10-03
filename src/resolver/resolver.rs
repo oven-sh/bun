@@ -3443,6 +3443,7 @@ impl<'a> Resolver<'a> {
             let listing = match rfs!().read_listing(
                 in_place,
                 dir_path,
+                false,
                 self.generation,
                 &mut open_dir,
                 true,
@@ -4565,54 +4566,17 @@ impl<'a> Resolver<'a> {
                 open_dir_count.set(open_dir_count.get() + 1);
             }
 
-            let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
-                // SAFETY: non-empty `safe_path` is always a dirname_store-backed
-                // `&'static [u8]` (set from `entries.dir` above); widen the
-                // `RawSlice`-tied borrow back to its true `'static` lifetime.
-                unsafe { bun_ptr::detach_lifetime(queue_top_safe_path) }
-            } else {
-                // ensure trailing slash
-                if _safe_path.is_none() {
-                    // Now that we've opened the topmost directory successfully, it's reasonable to store the slice.
-                    // `path` spans `input_path_len + 1` for the NUL-splice above; the
-                    // logical input is `path[..input_path_len]`.
-                    let input = &path[..input_path_len];
-                    if input[input.len() - 1] != SEP {
-                        let parts: [&[u8]; 2] = [input, SEP_STR.as_bytes()];
-                        _safe_path = Some(self.fs_ref().dirname_store.append_parts(&parts)?);
-                    } else {
-                        _safe_path = Some(self.fs_ref().dirname_store.append_slice(input)?);
-                    }
-                }
-
-                let safe_path = _safe_path.unwrap();
-
-                // An empty needle must yield index 0, not None. On Windows
-                // `queue_top_unsafe_path` is empty when
-                // `windows_filesystem_root` cannot classify the input — e.g.
-                // `import(":://x")` is "absolute" per std but has no drive root,
-                // so `root_path` is `path[0..0]`. Treat that as 0 so the
-                // resolver caches a not-found instead of panicking.
-                let dir_path_i = if queue_top_unsafe_path.is_empty() {
-                    0
+            // The key only. The path itself is interned below, once the
+            // directory is listed: a walk that stops at a failed read leaves
+            // nothing in `DirnameStore`.
+            let mut cached_dir_entry_result = rfs!()
+                .entries
+                .get_or_put(if !queue_top_safe_path.is_empty() {
+                    queue_top_safe_path
                 } else {
-                    strings::index_of(safe_path, queue_top_unsafe_path).expect("unreachable")
-                };
-                let mut end = dir_path_i + queue_top_unsafe_path.len();
-
-                // Directories must always end in a trailing slash or else various bugs can occur.
-                // This covers "what happens when the trailing"
-                end += usize::from(
-                    safe_path.len() > end
-                        && end > 0
-                        && safe_path[end - 1] != SEP
-                        && safe_path[end] == SEP,
-                );
-                &safe_path[dir_path_i..end]
-            };
-
-            let mut cached_dir_entry_result =
-                rfs!().entries.get_or_put(dir_path).expect("unreachable");
+                    queue_top_unsafe_path
+                })
+                .expect("unreachable");
 
             let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
                 core::ptr::null_mut();
@@ -4631,6 +4595,10 @@ impl<'a> Resolver<'a> {
             }
 
             if needs_iter {
+                // Directories must always end in a trailing slash or else various bugs can occur.
+                let dir_needs_sep = queue_top_unsafe_path
+                    .last()
+                    .is_some_and(|&last| last != SEP);
                 // A permission-denied ancestor has no fd to enumerate; its
                 // entry set stays empty.
                 let mut listing = None;
@@ -4642,7 +4610,8 @@ impl<'a> Resolver<'a> {
                     // still rehash from there (cheap relative to starting at 0).
                     let read = rfs!().read_listing(
                         in_place,
-                        dir_path,
+                        queue_top_unsafe_path,
+                        dir_needs_sep,
                         self.generation,
                         &mut open_dir,
                         opened_here,
@@ -4690,7 +4659,7 @@ impl<'a> Resolver<'a> {
                                 // below it, so the next lookup reads it again.
                                 _ => {
                                     self.dir_read_failure =
-                                        Some(Fs::DirReadFailure::new(dir_path, err));
+                                        Some(Fs::DirReadFailure::new(queue_top_unsafe_path, err));
                                     return Err(err);
                                 }
                             }
@@ -4699,11 +4668,62 @@ impl<'a> Resolver<'a> {
                 }
                 let listing = match listing {
                     Some(listing) => listing,
-                    None => rfs!().opaque_listing(in_place, dir_path, self.generation)?,
+                    None => rfs!().opaque_listing(
+                        in_place,
+                        queue_top_unsafe_path,
+                        dir_needs_sep,
+                        self.generation,
+                    )?,
                 };
                 dir_entries_option =
                     rfs!().commit_listing(&mut cached_dir_entry_result, in_place, listing)?;
             }
+
+            let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
+                // SAFETY: non-empty `safe_path` is always a dirname_store-backed
+                // `&'static [u8]` (set from `entries.dir` above); widen the
+                // `RawSlice`-tied borrow back to its true `'static` lifetime.
+                unsafe { bun_ptr::detach_lifetime(queue_top_safe_path) }
+            } else {
+                // ensure trailing slash
+                if _safe_path.is_none() {
+                    // Now that we've listed the topmost directory successfully, it's reasonable to store the slice.
+                    // `path` spans `input_path_len + 1` for the NUL-splice above; the
+                    // logical input is `path[..input_path_len]`.
+                    let input = &path[..input_path_len];
+                    if input[input.len() - 1] != SEP {
+                        let parts: [&[u8]; 2] = [input, SEP_STR.as_bytes()];
+                        _safe_path = Some(self.fs_ref().dirname_store.append_parts(&parts)?);
+                    } else {
+                        _safe_path = Some(self.fs_ref().dirname_store.append_slice(input)?);
+                    }
+                }
+
+                let safe_path = _safe_path.unwrap();
+
+                // An empty needle must yield index 0, not None. On Windows
+                // `queue_top_unsafe_path` is empty when
+                // `windows_filesystem_root` cannot classify the input — e.g.
+                // `import(":://x")` is "absolute" per std but has no drive root,
+                // so `root_path` is `path[0..0]`. Treat that as 0 so the
+                // resolver caches a not-found instead of panicking.
+                let dir_path_i = if queue_top_unsafe_path.is_empty() {
+                    0
+                } else {
+                    strings::index_of(safe_path, queue_top_unsafe_path).expect("unreachable")
+                };
+                let mut end = dir_path_i + queue_top_unsafe_path.len();
+
+                // Directories must always end in a trailing slash or else various bugs can occur.
+                // This covers "what happens when the trailing"
+                end += usize::from(
+                    safe_path.len() > end
+                        && end > 0
+                        && safe_path[end - 1] != SEP
+                        && safe_path[end] == SEP,
+                );
+                &safe_path[dir_path_i..end]
+            };
 
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.

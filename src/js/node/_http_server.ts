@@ -4248,4 +4248,5 @@ export default {
   Server,
   ServerResponse,
   kConnectionsCheckingInterval,
+  _connectionListener: connectionListener,
 };

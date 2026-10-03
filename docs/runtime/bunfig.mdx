@@ -399,6 +399,8 @@ The `[install]` section configures the behavior of `bun install`.
 # configuration here
 ```
 
+`bunx` and `bun create <template>` install the package that they run into a temporary directory. That install reads the same files as `bun add` run in your directory: the `bunfig.toml` and `.npmrc` in the project root, then the global files.
+
 ### `install.optional`
 
 Whether to install optional dependencies. Default `true`.

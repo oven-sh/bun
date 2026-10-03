@@ -1,9 +1,16 @@
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
-const { STATUS_CODES, kPendingCallbacks } = require("internal/http");
+const {
+  STATUS_CODES,
+  kPendingCallbacks,
+  NodeHTTPGrantResult,
+  NodeHTTPResponseFlags,
+  checkResponseChunk,
+} = require("internal/http");
 const { SafeSet } = require("internal/primordials");
 const AsyncContextFrame = require("internal/async_context_frame");
+const { isAnyArrayBuffer, isArrayBufferView, isUint8Array } = require("node:util/types");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
@@ -79,13 +86,21 @@ function writeHeadAndEndWithTrailers(
   return this.end(chunk, encoding, undefined, strictContentLength, trailerSection);
 }
 
-function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
+// `queued`: the response waits behind a pipelined one. Like the native handle, this one then records
+// what it would write to the socket, and flushQueued() writes it when the response has the socket.
+function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout, queued) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
   let head: Http1FallbackResponseHead | null = null;
   let headWritten = false;
   let chunked = false;
   let noBody = false;
   let closeDelimited = false;
+  // The socket writes of a queued response, as [data, callback] pairs in call order.
+  let recorded: unknown[] | null = queued ? [] : null;
+  // The arguments of settleEnd() for a recorded end().
+  let recordedEnd: [number, boolean] | null = null;
+  // Body bytes, for res.strictContentLength.
+  let bytesWritten = 0;
   // The drain callback of a write() that reported backpressure, and its async context (native's onwritable slot).
   let onwritable: ((...args: unknown[]) => void) | null | undefined = null;
   let onwritableFrame;
@@ -206,19 +221,40 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     writeToSocket(out);
   }
 
+  // The chunk of a write() or an end() as bytes. The native check is the rule of the native handle: it throws for a chunk or an encoding that the native handle does not take.
   function toBuffer(chunk, encoding) {
     if (chunk == null) return null;
-    if (typeof chunk === "string") return Buffer.from(chunk, encoding || "utf8");
-    return chunk;
+    checkResponseChunk(chunk, encoding, false);
+    if (isUint8Array(chunk)) return chunk;
+    if (isArrayBufferView(chunk)) return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    if (isAnyArrayBuffer(chunk)) return new Uint8Array(chunk);
+    // A string, or a String object.
+    return Buffer.from(typeof chunk === "string" ? chunk : String(chunk), encoding || "utf8");
+  }
+
+  // Node's write_(): with res.strictContentLength a write must not pass the declared length, and an end must meet it.
+  function countBody(length, strictContentLength, fromEnd) {
+    const total = bytesWritten + length;
+    if (
+      typeof strictContentLength === "number" &&
+      (fromEnd ? total !== strictContentLength : total > strictContentLength)
+    ) {
+      throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(total, strictContentLength);
+    }
+    bytesWritten = total;
   }
 
   // Like the `conn.writable` gate of Node's _writeRaw: a write to a socket that was ended (after the client's FIN) would destroy it.
   function writeToSocket(data, callback?) {
+    if (recorded !== null) {
+      recorded.push(data, callback);
+      return;
+    }
     if (!socket.writableEnded) socket.write(data, callback);
   }
 
   function writeBody(buf, callback?) {
-    const length = buf ? (buf.byteLength ?? buf.length) : 0;
+    const length = buf ? buf.byteLength : 0;
     if (length) {
       if (chunked) {
         writeToSocket(length.toString(16) + "\r\n");
@@ -256,10 +292,36 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     if (!err && !socket.destroyed) flushed();
   }
 
+  // The part of end() that reads the socket: whether the bytes have left it, and what the end of the response does to the connection.
+  function settleEnd(handle, length, terminated) {
+    // Like Node's OutgoingMessage#end(): while the socket holds bytes, the response has finished when its last write completes.
+    if (socket.writableLength > 0 && !socket.destroyed) {
+      // An ended socket took no write, so its own 'finish' tells. The empty write is for an end() that wrote nothing: behind a body, _writev would copy that body.
+      if (socket.writableEnded) socket.once("finish", onEndWritten);
+      else if (!length && !terminated) socket.write("", "latin1", onEndWritten);
+    } else {
+      handle.finished = true;
+    }
+    const onfinished = handle.onfinished;
+    if (onfinished) {
+      handle.onfinished = null;
+      onfinished();
+    }
+    // A close-delimited body ends at EOF, so the response ends the connection.
+    if (closeDelimited && !socket.destroyed) {
+      socket.end();
+    }
+    // The native handle's contract: -(length + 1) while bytes still drain, so that ServerResponse#end() holds 'finish' back.
+    return handle.finished ? length : -(length + 1);
+  }
+
   const handle = {
-    // NodeHTTPResponseFlags.socket_closed, like the native getter: end() and write() stop at it.
+    // Like the native getter. end() and write() stop at socket_closed; a queued handle is not current.
     get flags() {
-      return this.aborted || socket.destroyed ? 1 : 0;
+      return (
+        (this.aborted || socket.destroyed ? NodeHTTPResponseFlags.socket_closed : 0) |
+        (recorded === null ? NodeHTTPResponseFlags.current : 0)
+      );
     },
     ended: false,
     // True once the bytes end() wrote have left the socket, like the native handle's.
@@ -277,7 +339,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     },
     // The socket's bytes while a write waits for 'drain' or an ended response is still flushing; a socket under its high water mark emits no 'drain'.
     get bufferedAmount() {
-      return onwritable || (this.ended && !this.finished) ? socket.writableLength : 0;
+      // A queued response has nothing in the socket: those bytes are of the response ahead.
+      return recorded === null && (onwritable || (this.ended && !this.finished)) ? socket.writableLength : 0;
     },
     // Native on_drain: the socket drained, so the waiting callback runs.
     socketDrained() {
@@ -289,15 +352,16 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     },
     // Runs once, from flushed(). ServerResponse#end()'s `onwritable` stays unused: its 'finish' comes a tick later, after a closing socket's 'close'.
     onflushed: null as (() => void) | null,
-    cork(callback) {
-      return callback();
-    },
     writeContinue() {
       writeToSocket("HTTP/1.1 100 Continue\r\n\r\n");
     },
     writeInformational(chunk, encoding) {
       // _writeRaw hands the fully-rendered 1xx block here (writeEarlyHints /
       // writeProcessing / writeInformation all route through it).
+      if (recorded !== null) {
+        recorded.push(typeof chunk === "string" ? Buffer.from(chunk, encoding || "utf8") : chunk, undefined);
+        return;
+      }
       if (!socket.writableEnded) socket.write(chunk, encoding);
     },
     writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs) {
@@ -325,27 +389,44 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       keepAliveTimeoutSecs,
     ) {
       // The native NodeHTTPResponse batches writeHead + end into one call;
-      // this fallback composes the same two steps.
+      // this fallback composes the same two steps. writeHead() writes nothing,
+      // so a chunk that end() rejects leaves nothing written.
       this.writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs);
       return this.end(chunk, encoding, undefined, strictContentLength);
     },
-    write(chunk, encoding, callback, _strictContentLength) {
+    writeHeadAndWrite(
+      statusCode,
+      statusMessage,
+      headers,
+      chunk,
+      encoding,
+      callback,
+      strictContentLength,
+      autoHeaderBits,
+      keepAliveTimeoutSecs,
+    ) {
+      this.writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs);
+      return this.write(chunk, encoding, callback, strictContentLength);
+    },
+    write(chunk, encoding, callback, strictContentLength) {
       const buf = toBuffer(chunk, encoding);
+      countBody(buf === null ? 0 : buf.byteLength, strictContentLength, false);
       writeHeadToSocket(null);
       const length = writeBody(buf);
       // Node's rule: the socket's own write() reports the backpressure. A discarded chunk (HEAD, 204, 304) is null.
-      if (buf === null || !socket.writableNeedDrain) return length;
+      if (buf === null || recorded !== null || !socket.writableNeedDrain) return length;
       // Like native write_or_end: a negative result, and the callback waits for the drain.
       if (callback) this.onwritable = callback;
       // An empty write has no length to negate.
       return length > 0 ? -length : -1;
     },
-    end(chunk, encoding, _callback, _strictContentLength, trailerSection?: string) {
+    end(chunk, encoding, _callback, strictContentLength, trailerSection?: string) {
       if (this.ended) return 0;
+      const buf = toBuffer(chunk, encoding);
+      const length = buf === null ? 0 : buf.byteLength;
+      countBody(length, strictContentLength, true);
       // A finished response emits no 'drain': native disarms its drain callback in end() too.
       this.onwritable = null;
-      const buf = toBuffer(chunk, encoding);
-      const length = buf ? (buf.byteLength ?? buf.length) : 0;
       writeHeadToSocket(length);
       // Like Node's `_hasBody && chunkedEncoding` gate: a bodiless (HEAD)
       // response never writes the terminating chunk, even when the user set
@@ -353,30 +434,39 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       const terminated = chunked && !noBody;
       writeBody(buf, terminated ? undefined : onEndWritten);
       if (terminated) {
-        if (!trailerSection) writeToSocket("0\r\n\r\n", onEndWritten);
-        // One latin1 write, like Node's _finish().
-        else if (!socket.writableEnded) socket.write(trailerSection, "latin1", onEndWritten);
+        // One latin1 write for the section, like Node's _finish().
+        writeToSocket(trailerSection ? Buffer.from(trailerSection, "latin1") : "0\r\n\r\n", onEndWritten);
       }
       this.ended = true;
-      // Like Node's OutgoingMessage#end(): while the socket holds bytes, the response has finished when its last write completes.
-      if (socket.writableLength > 0 && !socket.destroyed) {
-        // An ended socket took no write, so its own 'finish' tells. The empty write is for an end() that wrote nothing: behind a body, _writev would copy that body.
-        if (socket.writableEnded) socket.once("finish", onEndWritten);
-        else if (!length && !terminated) socket.write("", "latin1", onEndWritten);
+      if (recorded !== null) {
+        // The rest reads the socket, which another response has.
+        recordedEnd = [length, terminated];
+        return length;
+      }
+      return settleEnd(this, length, terminated);
+    },
+    // The response has the socket now: what the handle recorded goes out under one cork, like Node's _flushOutput().
+    flushQueued() {
+      const writes = recorded;
+      if (writes === null) return NodeHTTPGrantResult.flushed;
+      recorded = null;
+      socket.cork();
+      try {
+        for (let i = 0; i < writes.length; i += 2) {
+          writeToSocket(writes[i], writes[i + 1]);
+        }
+      } finally {
+        socket.uncork();
+      }
+      const end = recordedEnd;
+      let buffered;
+      if (end !== null) {
+        recordedEnd = null;
+        buffered = settleEnd(this, end[0], end[1]) < 0;
       } else {
-        this.finished = true;
+        buffered = socket.writableNeedDrain;
       }
-      const onfinished = this.onfinished;
-      if (onfinished) {
-        this.onfinished = null;
-        onfinished();
-      }
-      // A close-delimited body ends at EOF, so the response ends the connection.
-      if (closeDelimited && !socket.destroyed) {
-        socket.end();
-      }
-      // The native handle's contract: -(length + 1) while bytes still drain, so that ServerResponse#end() holds 'finish' back.
-      return this.finished ? length : -(length + 1);
+      return buffered ? NodeHTTPGrantResult.buffered : NodeHTTPGrantResult.flushed;
     },
     endWithTrailers,
     writeHeadAndEndWithTrailers,
@@ -404,7 +494,7 @@ function connectionListenerHTTP1(server, socket, options) {
   const { kHandle: kHttp1ResponseHandle, http1ServerPipeline } = require("internal/http");
   // Populated by node:_http_server, which the require("node:http") above loads.
   const {
-    queuePipelinedResponse,
+    constructFallbackResponse,
     advanceResponsePipeline,
     abortQueuedPipelinedResponses,
     lastPipelinedResponse,
@@ -522,14 +612,21 @@ function connectionListenerHTTP1(server, socket, options) {
       if (!socket._paused && socket.readable) socket.resume();
     };
 
-    const res = new ServerResponseClass(req);
+    // Node's parserOnIncoming outgoing queue: pipelined requests parse while
+    // the previous response is still assigned (its 'finish' detach is a tick
+    // away), so queue this response instead of letting assignSocket throw
+    // ERR_HTTP_SOCKET_ASSIGNED.
+    const queued = !!socket._httpMessage;
+    const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout, queued);
+    // Like the native dispatcher: the response has its handle, and its place
+    // in the queue, from its construction on.
+    const res = constructFallbackResponse(ServerResponseClass, req, handle, socket, queued);
     // The native dispatcher seeds these from the server; renderNativeHeaders
     // reads them to decide the Keep-Alive auto-header bits, so the fallback
     // path must carry them too or keep-alive responses lose their timeout line.
     res._keepAliveTimeout = keepAliveTimeout;
     const { maxRequestsPerSocket } = server;
     res._maxRequestsPerSocket = maxRequestsPerSocket;
-    const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
       if (!shouldKeepAlive && !socket.destroyed) {
@@ -539,21 +636,12 @@ function connectionListenerHTTP1(server, socket, options) {
     handle.onflushed = function () {
       finishDrainedResponse(res);
     };
-    res[kHttp1ResponseHandle] = handle;
-    // Node's parserOnIncoming outgoing queue: pipelined requests parse while
-    // the previous response is still assigned (its 'finish' detach is a tick
-    // away), so queue this response instead of letting assignSocket throw
-    // ERR_HTTP_SOCKET_ASSIGNED.
-    if (socket._httpMessage) {
-      queuePipelinedResponse(socket, res, versionMajor < 1 || versionMinor < 1);
-    } else {
-      res.assignSocket(socket);
-    }
+    if (!queued) res.assignSocket(socket);
     // node's resOnFinish: release the socket once the response completes,
     // then either end the connection (a response that advertised Connection:
     // close must not be followed by another one - the close path aborts the
     // queued responses) or hand the socket to the next queued pipelined
-    // response, replaying whatever it buffered.
+    // response, whose handle then writes what it recorded.
     res.on("finish", function onFallbackResponseFinish() {
       const finishedReq = this.req;
       if (!finishedReq._consuming && !finishedReq._readableState.resumeScheduled) finishedReq._dump();

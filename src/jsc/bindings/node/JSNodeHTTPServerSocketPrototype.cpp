@@ -193,23 +193,27 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketIsRequestTimedOut, (JSC::
 }
 
 // node:http HTTP/1.1 pipelining: make a queued pipelined response the
-// connection's current response right before its buffered output is flushed.
-// Arguments: (responseHandle, isAncient, connectionClose). Returns false when
-// the connection is already gone.
+// connection's current response and write what it recorded while it waited.
+// Arguments: (responseHandle, isAncient, connectionClose). Returns a
+// NodeHTTPGrantResult (src/js/internal/http.ts): 0 when the connection is
+// already gone, -1 when the socket has to drain first, 1 otherwise.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
-        return JSValue::encode(JSC::jsBoolean(false));
+        return JSValue::encode(JSC::jsNumber(0));
     }
     auto* response = dynamicDowncast<WebCore::JSNodeHTTPResponse>(callFrame->argument(0));
     if (!response) [[unlikely]] {
-        return JSValue::encode(JSC::jsBoolean(false));
+        return JSValue::encode(JSC::jsNumber(0));
     }
     bool isAncient = callFrame->argument(1).toBoolean(globalObject);
     bool connectionClose = callFrame->argument(2).toBoolean(globalObject);
-    return JSValue::encode(JSC::jsBoolean(thisObject->startPipelinedResponse(vm, response, isAncient, connectionClose)));
+    int32_t grant = thisObject->startPipelinedResponse(vm, response, isAncient, connectionClose);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(JSC::jsNumber(grant));
 }
 
 // node:http: stop parsing further HTTP requests on this connection (the user

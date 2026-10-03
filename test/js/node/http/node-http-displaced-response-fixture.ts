@@ -173,7 +173,6 @@ async function finished(call: string) {
   const handle = handles[0];
   const result = attempt(() => {
     if (call === "bufferedAmount") return void handle.bufferedAmount;
-    if (call === "cork") return void handle.cork(() => {});
     handle[call](call === "end" || call === "write" ? "late" : undefined);
   });
   server.close();
@@ -218,7 +217,7 @@ async function connected(trigger: string, withTrailers: boolean) {
   const pending = isPending(handleOf(responses[0]));
   // The connection did not queue response 1, so it does not give it the connection again.
   const socketHandle = handleOf(responses[1].socket!);
-  const regranted = socketHandle.startPipelinedResponse(handleOf(responses[0]), false, false);
+  const regranted = !!socketHandle.startPipelinedResponse(handleOf(responses[0]), false, false);
   client.write(request("/third"));
   await third.promise;
   const thirdQueued = responses[2].socket === null;
@@ -397,8 +396,9 @@ async function upgraded(use: string) {
   return { use, result, afterSwitch: Buffer.from(afterSwitch, "latin1").toString("hex") };
 }
 
-// Response 2 waits in the queue behind response 1. Its native handle is called directly: the
-// connection is not its own yet, so nothing of the call reaches the wire.
+// Response 2 waits in the queue behind response 1. Its native handle is called directly. The
+// connection is not its own yet, so nothing of the call reaches the wire then: the handle
+// records the call, and what it recorded goes out when response 2 has the connection.
 async function queued(call: string) {
   const responses: http.ServerResponse[] = [];
   const server = createServer((req, res) => {
@@ -407,11 +407,15 @@ async function queued(call: string) {
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
   const client = await connect(server);
+  // A write() or a flushHeaders() on the handle ends a head that has no length, so the body is chunked.
+  const headEnded = call === "write" || call === "flushHeaders";
+  // What response 2 ends with on the wire.
+  const last = call === "end" ? "early" : headEnded ? "0\r\n\r\n" : "second-body";
   let received = "";
   const bodies = Promise.withResolvers<void>();
   client.on("data", chunk => {
     received += chunk.toString("latin1");
-    if (received.includes("second-body")) bodies.resolve();
+    if (received.includes("first-body") && received.endsWith(last)) bodies.resolve();
   });
   client.write(request("/first") + request("/second"));
   while (responses.length < 2) await turn();
@@ -420,12 +424,13 @@ async function queued(call: string) {
   const isQueued = responses[1].socket === null;
   const handle = handleOf(responses[1]);
   const result = attempt(() => {
-    if (call === "cork") return void handle.cork(() => {});
     if (call === "writeHead") return void handle.writeHead(201, "Created", ["x-early", "yes"]);
     handle[call](call === "flushHeaders" || call === "writeContinue" ? undefined : "early");
   });
   responses[0].end("first-body");
-  responses[1].end("second-body");
+  // The handle has a head or a body that the ServerResponse does not know about, so the handle ends it.
+  if (headEnded || call === "writeHead") handle.end("second-body");
+  else if (call !== "end") responses[1].end("second-body");
   await bodies.promise;
 
   const closed = once(client, "close");
@@ -510,7 +515,6 @@ if (suite === "displaced") {
       "abort",
       "writeContinue",
       "bufferedAmount",
-      "cork",
     ],
     finished,
   );
@@ -529,10 +533,7 @@ if (suite === "displaced") {
     results.push(await upgraded(use));
   }
 } else if (suite === "queued") {
-  results = await all(
-    ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational", "cork"],
-    queued,
-  );
+  results = await all(["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational"], queued);
 } else if (suite === "draining") {
   results.push(await draining());
 }

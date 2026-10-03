@@ -1878,17 +1878,19 @@ describe("backpressure", () => {
         earlierResponsePending: boolean;
         returned: boolean[];
       }>();
+      let earlier: http.ServerResponse;
       await using server = http.createServer((req, res) => {
         if (req.url !== "/ignored") {
+          earlier = res;
           res.end(payload);
           return;
         }
         try {
           res.statusCode = req.method === "HEAD" ? 200 : 204;
           res.on("drain", () => called.push("drain"));
-          // Bun counts the unsent bytes of the earlier response on this
-          // response, Node counts them on the socket.
-          const earlierResponsePending = res.writableLength + req.socket.writableLength > 0;
+          // The unsent bytes of the earlier response count on that response,
+          // not on this one.
+          const earlierResponsePending = earlier.writableLength > 0 && res.writableLength === 0;
           const returned = [
             res.write("x", () => called.push("x")),
             res.write("", () => called.push("empty string")),

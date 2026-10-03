@@ -4,6 +4,7 @@ import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
+import tls from "node:tls";
 
 const skip = !fault.available() || isWindows;
 
@@ -309,6 +310,92 @@ describe.skipIf(skip)("node:http pipelining under stalled sends", () => {
     }).toEqual({ first: SIZE, firstIntact: true, second: "second" });
     expect(await proc.exited).toBe(0);
   });
+});
+
+describe.skipIf(skip)("node:http pipelining: a queued response gets the connection under refused sends", () => {
+  // The second response waits behind the first one. Its handle records what it is given, and the
+  // record goes out when the response gets the connection. The sends of that moment move nothing
+  // (send() reports 0), so the record stays in the buffer of the socket, although it is small.
+  // The callbacks and 'finish' of the response then wait for the socket, like those of a
+  // response that wrote more than the socket takes. No write() returned false, so no 'drain' comes.
+  const fixture = /* js */ `
+    const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+    const tls = process.env.TRANSPORT === "tls";
+    const events = [];
+    let first;
+    const listener = (req, res) => {
+      if (req.url === "/first") return void (first = res);
+      if (req.url === "/report") return void res.end(JSON.stringify(events));
+      res.on("socket", () => {
+        fault.set({ syscall: "send", action: "zero", repeat: 3 });
+        fault.set({ syscall: "writev", action: "zero", repeat: 3 });
+      });
+      res.on("drain", () => events.push("drain"));
+      res.on("finish", () => events.push("finish"));
+      const endLater = req.url === "/ended-by-the-write-callback";
+      res.write("ab", () => {
+        events.push("write callback");
+        if (endLater) res.end("cd", () => events.push("end callback"));
+      });
+      if (!endLater) res.end("cd", () => events.push("end callback"));
+      first.end("first");
+    };
+    const server = tls
+      ? require("node:https").createServer({ key: process.env.KEY, cert: process.env.CERT }, listener)
+      : require("node:http").createServer(listener);
+    server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+  `;
+
+  for (const transport of ["tcp", "tls"]) {
+    for (const url of ["/ended-while-queued", "/ended-by-the-write-callback"]) {
+      test(`${transport}: ${url.slice(1).replaceAll("-", " ")} (subprocess server)`, async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1", TRANSPORT: transport, KEY: certs.key, CERT: certs.cert },
+          stderr: "inherit",
+          stdout: "pipe",
+        });
+        let portLine = "";
+        for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+          portLine += chunk;
+          if (portLine.includes("\n")) break;
+        }
+
+        const socket: net.Socket =
+          transport === "tls"
+            ? tls.connect({ port: Number(portLine), host: "127.0.0.1", rejectUnauthorized: false })
+            : net.connect(Number(portLine), "127.0.0.1");
+        let wire = "";
+        let reported = false;
+        socket.on("data", chunk => {
+          wire += chunk.toString("latin1");
+          // The whole second response is here: ask what the server saw.
+          if (!reported && wire.endsWith("2\r\ncd\r\n0\r\n\r\n")) {
+            reported = true;
+            socket.write("GET /report HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+          }
+        });
+        socket.on("error", () => {});
+        socket.on(transport === "tls" ? "secureConnect" : "connect", () =>
+          socket.write(`GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET ${url} HTTP/1.1\r\nHost: localhost\r\n\r\n`),
+        );
+        await once(socket, "close");
+
+        // Each head ends with an empty line: the body of the first response, the chunks of the second, the report.
+        const [first, second, , report] = wire.split("\r\n\r\n").slice(1);
+        expect({
+          first: first?.split("HTTP/1.1")[0],
+          second,
+          events: report ? JSON.parse(report) : undefined,
+        }).toEqual({
+          first: "first",
+          second: "2\r\nab\r\n2\r\ncd\r\n0",
+          events: ["write callback", "finish", "end callback"],
+        });
+        proc.kill();
+      });
+    }
+  }
 });
 
 describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {

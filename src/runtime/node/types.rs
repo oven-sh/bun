@@ -508,6 +508,24 @@ impl StringOrBuffer<'static> {
         )
     }
 
+    /// The type test of [`from_js_with_encoding_maybe_async_into`] alone: whether it converts
+    /// `value`. This produces no bytes and runs no JS.
+    pub(crate) fn converts_with_encoding(
+        value: JSValue,
+        encoding: Encoding,
+        string_objects: StringObjects,
+    ) -> bool {
+        use jsc::JSType;
+        match value.js_type() {
+            JSType::String => true,
+            // Only the UTF-8 conversion reads `string_objects`.
+            JSType::StringObject | JSType::DerivedStringObject => {
+                encoding != Encoding::Utf8 || string_objects == StringObjects::Allow
+            }
+            other => other.is_array_buffer_like(),
+        }
+    }
+
     /// Out-param core of [`from_js_with_encoding_maybe_async`]. Writes into
     /// `*out` and returns `Ok(true)` on success, `Ok(false)` for not-a-
     /// string-or-buffer. See [`from_js_maybe_async_into`] for rationale.

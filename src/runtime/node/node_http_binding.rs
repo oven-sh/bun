@@ -108,3 +108,22 @@ pub(crate) fn set_max_http_header_size(
     bun_http::set_max_http_header_size(num as usize);
     Ok(JSValue::from(bun_http::max_http_header_size()))
 }
+
+/// `checkResponseChunk(chunk, encoding, typeOnly)`: the checks that the response handles make of
+/// the chunk of a write() or an end(), with nothing converted or written. One rule for the native
+/// handle and for the JS one of `internal/http1_server_fallback`.
+pub(crate) fn check_response_chunk(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let arguments = frame.arguments();
+    crate::server::NodeHTTPResponse::check_chunk(
+        global,
+        arguments.first().copied().unwrap_or(JSValue::UNDEFINED),
+        arguments.get(1).copied().unwrap_or(JSValue::UNDEFINED),
+        arguments
+            .get(2)
+            .is_some_and(|type_only| type_only.to_boolean()),
+    )?;
+    Ok(JSValue::UNDEFINED)
+}

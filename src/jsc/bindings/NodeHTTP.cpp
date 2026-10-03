@@ -548,7 +548,6 @@ static void NodeHTTPServer__writeHead(
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSObject* headersObject = headersObjectValue.getObject();
     if (!response->uWS::template AsyncSocket<isSSL>::isCorked() && response->getBufferedAmount() == 0) {
         response->uWS::template AsyncSocket<isSSL>::cork();
     }
@@ -567,111 +566,63 @@ static void NodeHTTPServer__writeHead(
         response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS;
     }
 
-    if (headersObject) {
-        if (auto* fetchHeaders = dynamicDowncast<WebCore::JSFetchHeaders>(headersObject)) {
-            writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
+    // The headers are a flat [name, value, name, value, ...] array, or absent.
+    // node:http's ServerResponse renders it, so that repeated header names
+    // (multiple Set-Cookie or duplicate Content-Length values, etc.) are
+    // written as separate header lines exactly as Node.js does.
+    //
+    // This function runs no JS: the caller can hold the bytes of a body chunk
+    // by reference while the head goes out, and it writes a recorded head when
+    // a queued response gets the connection. node:http renders every name and
+    // value to a string first; a pair that is not two strings in plain indexed
+    // storage is not a header.
+    if (auto* pairsArray = dynamicDowncast<JSC::JSArray>(headersObjectValue)) {
+        auto* httpResponseData = response->getHttpResponseData();
+        unsigned length = pairsArray->length();
+        for (unsigned i = 0; i + 1 < length; i += 2) {
+            if (!pairsArray->canGetIndexQuickly(i) || !pairsArray->canGetIndexQuickly(i + 1))
+                continue;
+            JSValue nameValue = pairsArray->getIndexQuickly(i);
+            JSValue headerValue = pairsArray->getIndexQuickly(i + 1);
+            if (!nameValue.isString() || !headerValue.isString())
+                continue;
+
+            String name = nameValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
-            if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-            return;
-        }
+            String value = headerValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, void());
 
-        // A flat [name, value, name, value, ...] array. Used by node:http's
-        // ServerResponse so that repeated header names (multiple Set-Cookie or
-        // duplicate Content-Length values, etc.) are written as separate
-        // header lines exactly as Node.js does.
-        if (auto* pairsArray = dynamicDowncast<JSC::JSArray>(headersObject)) {
-            auto* httpResponseData = response->getHttpResponseData();
-            unsigned length = pairsArray->length();
-            for (unsigned i = 0; i + 1 < length; i += 2) {
-                JSValue nameValue = pairsArray->getIndex(globalObject, i);
-                RETURN_IF_EXCEPTION(scope, void());
-                JSValue headerValue = pairsArray->getIndex(globalObject, i + 1);
-                RETURN_IF_EXCEPTION(scope, void());
-
-                String name = nameValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, void());
-                String value = headerValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, void());
-
-                // node:http marks framing decisions with a NUL-named sentinel
-                // pair instead of a real header: value "1" = close-delimited
-                // (the user removed the framing headers), value "2" = no body
-                // (HEAD - suppress all body framing like 204/304).
-                if (name.length() == 1 && name[0] == 0) {
-                    if (value == "2"_s) {
-                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS;
-                    } else {
-                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_CLOSE_DELIMITED;
-                    }
-                    continue;
+            // node:http marks framing decisions with a NUL-named sentinel
+            // pair instead of a real header: value "1" = close-delimited
+            // (the user removed the framing headers), value "2" = no body
+            // (HEAD - suppress all body framing like 204/304).
+            if (name.length() == 1 && name[0] == 0) {
+                if (value == "2"_s) {
+                    httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS;
+                } else {
+                    httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_CLOSE_DELIMITED;
                 }
-
-                WebCore::HTTPHeaderName headerName;
-                if (WebCore::findHTTPHeaderName(StringView(name), headerName)) {
-                    if (headerName == WebCore::HTTPHeaderName::ContentLength) {
-                        if (!(httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                            httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                            response->writeMark();
-                        }
-                    } else if (headerName == WebCore::HTTPHeaderName::Date) {
-                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
-                    } else if (headerName == WebCore::HTTPHeaderName::TransferEncoding) {
-                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
-                    }
-                }
-
-                writeResponseHeader<isSSL>(response, name, value);
+                continue;
             }
-            RETURN_IF_EXCEPTION(scope, void());
-            if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-            return;
-        }
 
-        if (headersObject->hasNonReifiedStaticProperties()) [[unlikely]] {
-            headersObject->reifyAllStaticProperties(globalObject);
-            RETURN_IF_EXCEPTION(scope, void());
-        }
-
-        auto* structure = headersObject->structure();
-
-        if (structure->canPerformFastPropertyEnumeration()) {
-            structure->forEachProperty(vm, [&](const auto& entry) {
-                JSValue headerValue = headersObject->getDirect(entry.offset());
-                if (!headerValue.isString()) {
-
-                    return true;
+            WebCore::HTTPHeaderName headerName;
+            if (WebCore::findHTTPHeaderName(StringView(name), headerName)) {
+                if (headerName == WebCore::HTTPHeaderName::ContentLength) {
+                    if (!(httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+                        response->writeMark();
+                    }
+                } else if (headerName == WebCore::HTTPHeaderName::Date) {
+                    httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+                } else if (headerName == WebCore::HTTPHeaderName::TransferEncoding) {
+                    httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
                 }
-
-                String key = entry.key();
-                String value = headerValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, false);
-
-                writeResponseHeader<isSSL>(response, key, value);
-
-                return true;
-            });
-        } else {
-            PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            headersObject->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(scope, void());
-
-            for (unsigned i = 0; i < propertyNames.size(); ++i) {
-                JSValue headerValue = headersObject->getIfPropertyExists(globalObject, propertyNames[i]);
-                RETURN_IF_EXCEPTION(scope, void());
-                if (!headerValue.isString()) {
-                    continue;
-                }
-
-                String key = propertyNames[i].string();
-                String value = headerValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, void());
-
-                writeResponseHeader<isSSL>(response, key, value);
             }
+
+            writeResponseHeader<isSSL>(response, name, value);
         }
     }
 
-    RETURN_IF_EXCEPTION(scope, void());
     if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
 }
 

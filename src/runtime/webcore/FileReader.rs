@@ -216,7 +216,8 @@ impl Lazy {
                 return Err(sys::Error::from_code(sys::Errno::EISDIR, sys::Tag::fstat));
             }
 
-            if sys::S::ISREG(mode) {
+            // A block device is read like a regular file: by offset, and the event loop watches neither.
+            if sys::S::ISREG(mode) || sys::S::ISBLK(mode) {
                 is_nonblocking = false;
             }
 
@@ -398,8 +399,10 @@ impl FileReader {
             }
             self.reader().set_limit(self.max_size);
             // `open_file_blob` presumes that whatever it opened with `O_NONBLOCK` is pollable.
+            // SAFETY: the reader cell is live for `self`'s lifetime; this is the raw re-entrancy-safe entry (its error dispatch runs user JS).
             #[cfg(unix)]
-            let watchable = pollable && self.reader().start_presumed_pollable(self.fd.get());
+            let watchable = pollable
+                && unsafe { IOReader::start_presumed_pollable(self.reader.get(), self.fd.get()) };
             #[cfg(windows)]
             let watchable = true;
             let start_result = if cfg!(unix) && pollable {
@@ -410,6 +413,13 @@ impl FileReader {
             } else {
                 self.reader().start(self.fd.get(), pollable)
             };
+            // Its reads go by the fd's position, so a slice starts there. What cannot seek has no window to honour, like a pipe.
+            #[cfg(unix)]
+            if pollable && !watchable {
+                if let Some(offset) = self.start_offset.filter(|&offset| offset > 0) {
+                    let _ = sys::set_file_offset(self.fd.get(), offset as u64);
+                }
+            }
             // No callback comes for an fd the event loop refuses to watch.
             if need_io_ref && (start_result.is_err() || !watchable) {
                 self.waiting_for_on_reader_done.set(false);

@@ -559,11 +559,10 @@ impl PosixBufferedReader {
             return sys::Result::Ok(());
         }
         if let Err(err) = self.start_polling(fd) {
-            // Note: this `&mut self` receiver still carries a protector across
-            // the (maybe-freeing) error dispatch — pre-existing on the parent
-            // chain, tracked with the raw-dispatch follow-up.
-            let vtable = self.vtable;
-            vtable.on_reader_error(err);
+            // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
+            // a protector across the (maybe-freeing) error dispatch — pre-existing
+            // on the parent chain, tracked with the raw-dispatch follow-up.
+            unsafe { Self::on_error(std::ptr::from_mut(self), err) };
         }
 
         sys::Result::Ok(())
@@ -582,10 +581,14 @@ impl PosixBufferedReader {
     }
 
     /// `start(fd, true)`, except that the event loop refusing to watch `fd` is not an error yet: it refuses what it has no
-    /// readiness to report for (`/dev/null`, a block device), and those reads do not wait. One that would reports the refusal
+    /// readiness to report for (`/dev/null`, `/dev/zero`), and those reads do not wait. One that would reports the refusal
     /// when it arms the poll. Returns `false` for such a refusal.
-    pub fn start_presumed_pollable(&mut self, fd: Fd) -> bool {
-        let Err(err) = self.start_polling(fd) else {
+    ///
+    /// # Safety
+    /// `this` is the live reader; `on_reader_error` may free the parent embedding `*this`, so it runs with no borrow of `*this` live.
+    pub unsafe fn start_presumed_pollable(this: *mut Self, fd: Fd) -> bool {
+        // SAFETY: caller contract; the borrow ends at `;`, before the dispatch below.
+        let Err(err) = (unsafe { (*this).start_polling(fd) }) else {
             return true;
         };
         let refusal = if cfg!(any(target_os = "linux", target_os = "android")) {
@@ -597,8 +600,8 @@ impl PosixBufferedReader {
         if err.get_errno() == refusal && !sys::isatty(fd) {
             return false;
         }
-        let vtable = self.vtable;
-        vtable.on_reader_error(err);
+        // SAFETY: caller contract.
+        unsafe { Self::on_error(this, err) };
         true
     }
 

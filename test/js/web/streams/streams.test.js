@@ -2700,7 +2700,8 @@ describe.skipIf(isWindows)("Bun.file().stream() over a device the event loop can
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(stdout).toBe('""\ntrue\n');
     expect(exitCode).toBe(0);
   });

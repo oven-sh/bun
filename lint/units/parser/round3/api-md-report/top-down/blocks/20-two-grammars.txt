@@ -1,0 +1,144 @@
+## The two grammars
+
+Round 1 gave every parse one type grammar that reads what tsc reads. It was measured on release builds against main
+(`/workspace/notes/lint/goals/parser3.md`): a parse without lint paid +10.7% and +14.6% instructions in the two groups
+of declaration files, and the parser text grew by 269,563 bytes. A parse without `--lint` pays nothing, so there are
+two grammars now, one for each job.
+
+| | a parse without lint | a lint parse |
+| --- | --- | --- |
+| entry | `Parser::parse`, `Parser::scan_imports`, `Parser::parse_only`, every other caller of `P` | `Parser::parse_for_lint`, `Parser::parse_for_lint_with_codes` |
+| type grammar | the skipper of main: `src/js_parser/parse/parse_skip_typescript.rs` | [[FILL lint-grammar-files: the files of the lint grammar, e.g. `src/js_parser/parse/lint_types.rs`; `git diff --stat <base> HEAD -- src/js_parser` names them, and r3report.sh lists them as NEW in siteaudit.txt]] |
+| sinks | `Discard`, `DecoratorMetadata` (`src/js_parser/parse/type_sink.rs`) | `Build` alone |
+| reads | what main reads | what tsc 6.0.2 and typescript-go 89d5d5b read |
+| makes | nothing, or the `ts::Metadata` of a decorated member | `bun_ast::ts` nodes and the records of the side table |
+| errors | the texts of main | the same log, with the code of the reference ("Syntax errors of a lint parse") |
+
+### A parse without lint
+
+It runs the type skipper of main with main's behaviour: what it accepts, what it rejects, every error text, every
+`emitDecoratorMetadata` value. The text of `parse_skip_typescript.rs` is main's control flow in the form of commit
+`2d28b35c01` ("js_parser: make the type grammar generic over a sink"; `parser3.md` names it `6b7ade0f2a`, which this
+clone does not have), with one later change: `Metadata::MDot` holds its names as a `StoreSlice<Ref>` in the arena, and
+`TypeSink::member` takes the arena (`be1ebe5295`).
+
+```rust
+/// What the type grammar keeps of the syntax it reads.
+pub(crate) trait TypeSink {
+    /// What one type leaves behind.
+    type Out: Default;
+    /// Binding level of the type after the ":" of a conditional type.
+    const CONDITIONAL_FALSE_LEVEL: Level;
+    // literal, keyword, function_type, parenthesized, keyof_type, readonly_type, typeof_query, tuple_type,
+    // object_type, template_literal_type, reference, member, index_or_array, union_left, union_right,
+    // intersection_left, intersection_right, conditional_true, conditional_false
+}
+```
+
+| sink | `Out` | `CONDITIONAL_FALSE_LEVEL` | used by |
+| --- | --- | --- | --- |
+| `Discard` | `()` | `Level::Lowest` | `skip_type_script_type`, `skip_typescript_return_type`, `skip_type_script_type_arguments`, and every other `skip_*` function |
+| `DecoratorMetadata` | `bun_ast::ts::Metadata` | `Level::BitwiseAnd` | `emitDecoratorMetadata`: `skip_type_script_type_with_metadata`, `skip_typescript_return_type_with_metadata` |
+
+[[CHECK sink-form: compare the trait and the table with src/js_parser/parse/type_sink.rs at the final commit: `grep -n "const \|type Out\|impl TypeSink for" src/js_parser/parse/type_sink.rs`]]
+
+`TypeSink::CONDITIONAL_FALSE_LEVEL` is back. Round 1 removed it (parser.md P1.2) by making both sinks read the type
+after the `:` of a conditional type at one level, which changed what a parse without lint reads. Main reads it at two
+levels, and a parse without lint is main.
+
+Every site outside the type grammar that round 1 changed runs main's code when the parse has no side table: the
+expression handlers (`as`, `satisfies`, `!`, `<T>x`, parentheses, type arguments), the statement reader, class
+members, parameters, enum members, import and export paths. [[CHECK shared-text: r3report.sh, siteaudit.txt ends with "PASS": every shared file is the reference text plus sites]]
+
+### A lint parse
+
+It reads a type with the productions of `internal/parser/parser.go` of typescript-go under their names
+(`parse_type`, `parse_union_type_or_higher`, `parse_intersection_type_or_higher`, `parse_type_operator_or_higher`,
+`parse_postfix_type_or_higher`, `parse_non_array_type`, `parse_function_or_constructor_type_to_error`, ...) and builds
+a `bun_ast::ts` node for each. [[CHECK lint-grammar-names: the names above are those of b882bfc32f; list the ones the lint grammar file has]]
+It is its own set of functions in its own files and is compiled for the `Build` sink only: no function of it has a
+`Discard` or a `DecoratorMetadata` instantiation, and no function of the skipper has a `Build` one.
+[[CHECK no-cross-instantiation: `python3 /workspace/notes/lint/tools/symsizes.py build/release/bun-profile` and `llvm-nm -C build/release/bun-profile | grep -c 'skip_type_script_type_with_opts::<.*Build>'` is 0]]
+
+The entries that the tests of the crate call are `pub` on `P` (no other crate holds a `P`):
+
+```rust
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+    /// Reads one type at `level` and builds its node.
+    pub fn build_type_script_type(&mut self, level: Level) -> Result<ts::Type, Error>;
+    /// parseTypeOrTypePredicate: reads a return type and builds its node.
+    pub fn build_typescript_return_type(&mut self) -> Result<ts::Type, Error>;
+    /// Reads type arguments, if "<" starts them here, and builds their list. The offset is the one after ">".
+    pub fn build_type_script_type_arguments<const IS_INSIDE_JSX_ELEMENT: bool, const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool>(
+        &mut self,
+    ) -> Result<Option<(ts::List<ts::Type>, u32)>, Error>;
+    /// parseTypeParameters: reads type parameters, if "<" starts them here, and builds their list. The offset is the one after ">".
+    pub fn build_type_script_type_parameters(&mut self) -> Result<Option<(ts::List<ts::TypeParameter>, u32)>, Error>;
+}
+```
+
+[[CHECK build-entries: the four signatures are those of src/js_parser/parse/type_sink.rs:1394-1462 at b882bfc32f; R1 moves them: `grep -rn "pub fn build_" src/js_parser`]]
+
+### How a site knows which parse it is
+
+By the side table, at run time. `P::starts_for_parse_only` is `None` in `Parser::parse` and `Parser::scan_imports`
+and holds the side table in a lint parse. `Parser::parse_only` has a table too, but it is the parser without
+TypeScript (`P<'a, false, false>`): in a TypeScript parser the option is set only by a lint parse. A site outside
+the type grammar where TypeScript-only syntax is dropped tests that option once, after the token test that guarded
+the site on main and inside `if Self::IS_TYPESCRIPT_ENABLED`, and calls a `#[cold]` function of the lint parse when
+it is set:
+
+```rust
+[[FILL site-shape: one real site, copied from the code. The audit expects this shape (siteaudit2.py, default --pred `(?:p|self)\.lint\(\)`):
+if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon {
+    if p.lint() {
+        return p.lint_type_annotation(owner);
+    }
+    p.lexer.next()?;
+    p.skip_type_script_type(Level::Lowest)?;
+}
+and the predicate itself, with its doc comment]]
+```
+
+That test is the whole cost of the lint parse for a parse without lint: one load and one conditional branch at a
+site that only TypeScript syntax reaches. With the option `None` the lines that run are main's. The compile-time
+switch of round 1, `TypeSink::STRICT`, is gone: a sink no longer says which parse it serves, because the skipper has
+no lint behaviour and the lint grammar has no other sink.
+
+JavaScript pays nothing: the parsers without TypeScript (`P<'a, false, false>` and `P<'a, false, true>`) have no
+added test, and their machine code is the one of the reference text.
+[[CHECK js-zero: r3report.sh prints "strict  ref-head  IDENT <n>  OFFSETS 0  CONSTS 0  DIFF 0 ... | PASS" and "0 calls into lint code from functions matching ..."]]
+Main itself reads the option at three places that JavaScript runs, for `Parser::parse_only`: the element of a class
+(`parse_class`), the `async` prefix (`parse_async_prefix_expr`) and the expression body of an arrow function
+(`parse_arrow_body`). A lint parse may hang its work behind those three tests, which cost what they cost on main.
+
+[[FILL site-table: every site, from `python3 round3/proof-cost/top-down-1b/siteaudit2.py --ref <ref tree> --head /workspace/wt/parser --sites` and the executed counts of sites.cg.<group>.txt:
+| file, function | token test that guards it | what a lint parse calls | executed tests in bun-types, typescript-lib, src-js, tsx (20, 20, 20, 2000 passes) |]]
+
+`P::is_lint_parse()` (`matches!(&self.starts_for_parse_only, Some(starts) if starts.is_lint)`) tells the side table
+of a lint parse from the one of `Parser::parse_only`. [[CHECK is-lint-readers: list its readers at the final commit: `grep -rn "is_lint_parse()" src/js_parser --include=*.rs | grep -v _tests`. Each must be lint-only code, or a path that only an error takes]]
+
+### What a lint parse reads with which grammar
+
+With the lint grammar, building nodes: every type that it records (annotations, return types and predicates, the type
+of a `this` parameter, the types of `as`, `satisfies` and `<T>x`, type arguments after an expression, in JSX and in
+heritage entries, every list of type parameters).
+[[PICK alias-interface: what a lint parse does with the type of a type alias, the `extends` clause and the members of an interface, and an index signature of a class. Check: `grep -n "skip_type_script_type_stmt\|skip_type_script_interface_stmt\|skip_class_index_signature" src/js_parser/parse/*.rs` and the rows of grammar_rows_tests.rs with `type X = ...` and `interface I ...`]]
+The type of a type alias, the `extends` clause and the members of an interface and an index signature of a class are
+read with the lint grammar too, so that a lint parse takes what tsc takes there (`type X = (a = 1) => void`,
+`interface I extends a() {}`). The nodes are dropped: these types have no record ("What has no record").
+[[OR]]
+The type of a type alias, the `extends` clause and the members of an interface and an index signature of a class are
+read with the lint grammar and recorded: [[FILL alias-interface-records: the record of each, with its key]].
+[[END]]
+
+With the skipper of main, in a lint parse too: [[FILL lint-uses-skipper: what a lint parse still reads with `skip_*` functions, each with what that means for valid TypeScript that main rejects there. At b882bfc32f these were the type that decorator metadata is made of (`lint_type_metadata`, read before the type is built) and the `<...>` that decides between a cast and an arrow function. Write "nothing" if none is left]]
+
+Decorator metadata in a lint parse: `G::Property::ts_metadata` and the metadata of a parameter are what the skipper
+of main computes, the values of "Decorator metadata that differs from tsc" included. No pass of a lint run prints
+them. [[CHECK lint-metadata: annotation_tests::a_decorated_member_keeps_its_metadata_beside_its_node, and a decorated member whose type main's skipper rejects, e.g. `class C { @d p: (a = 1) => void }`: the lint parse must take it]]
+
+### The cache of the runtime transpiler
+
+`EXPECTED_VERSION` in `src/jsc/RuntimeTranspilerCache.rs` is 33, as on main, and the line about version 34 is
+removed: the output of the transpiler does not change. [[CHECK cache-33: `git diff <base> HEAD -- src/jsc/RuntimeTranspilerCache.rs` is empty; the step `runtime` of parity.sh prints "versions 33" on both sides]]

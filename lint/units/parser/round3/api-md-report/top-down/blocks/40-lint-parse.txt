@@ -1,0 +1,131 @@
+## The lint parse: `Parser::parse_for_lint`
+
+File `src/js_parser/parse/parse_entry.rs`. Another crate names the items `bun_js_parser::Parser`,
+`bun_js_parser::ParserOptions`, `bun_js_parser::parse::parse_entry::ParsedForLint`,
+`bun_js_parser::p::StartsForParseOnly` and `bun_js_parser::parse::syntax_errors::SyntaxErrors`.
+
+```rust
+impl<'a> Parser<'a> {
+    pub fn init(
+        options: Options<'a>,
+        log: &mut bun_ast::Log,
+        source: &'a bun_ast::Source,
+        define: &'a Define,
+        bump: &'a Arena,
+    ) -> Result<Parser<'a>, Error>;
+
+    /// Parses for a lint run and visits nothing: no `// @bun` shortcut, no transpiler cache, a declaration file is ambient.
+    pub fn parse_for_lint<R>(self, f: impl FnOnce(&ParsedForLint<'_, 'a>) -> R) -> Result<R, Error>;
+
+    /// `parse_for_lint`. Where the parse fails, `errors` gets what the reference reports for the messages that it logged.
+    pub fn parse_for_lint_with_codes<R>(
+        self,
+        errors: &mut SyntaxErrors,
+        f: impl FnOnce(&ParsedForLint<'_, 'a>) -> R,
+    ) -> Result<R, Error>;
+}
+
+/// What `Parser::parse_for_lint` parsed: the tree as written, and what the parse pass keeps beside it.
+pub struct ParsedForLint<'p, 'a> {
+    /// The statements the parse pass keeps, unvisited: nothing is folded or bound.
+    pub stmts: &'p [bun_ast::Stmt],
+    /// The scopes of the parse pass in the order a visit pass enters them; a flattened scope leaves `None`.
+    pub scopes_in_order: &'p [Option<ScopeOrder<'a>>],
+    /// The symbols the parse pass declared; a `Ref` whose tag is `Symbol` indexes them.
+    pub symbols: &'p [bun_ast::Symbol],
+    /// The side table of the parse pass: what has no place in the tree.
+    pub sidecar: &'p StartsForParseOnly,
+    /// The arena the parse pass allocates in, type nodes included.
+    pub arena: &'a Arena,
+    /// The module paths of the file, by the `import_record_index` of a statement or an expression.
+    pub import_records: &'p [ImportRecord],
+    /// The name of the file says that all of it is ambient.
+    pub is_declaration_file: bool,
+    // private: the source and the allocated names, which `name_of` reads
+}
+
+impl<'a> ParsedForLint<'_, 'a> {
+    /// An unvisited identifier is its spelling, and a declared one the name of its symbol.
+    pub fn name_of(&self, r#ref: bun_ast::Ref) -> &'a [u8];
+}
+```
+
+[[CHECK entry-signatures: the block is src/js_parser/parse/parse_entry.rs:97-141 and :421-544 at b882bfc32f, where it was compared line by line. `python3 round2/api-md-gates-report/bottom-up/api_surface.py /workspace/wt/parser <this file>` must print "0 public names that API.md does not hold" for parse_entry.rs. After R5 add what B1 and B2 added to `Parser` and to `ParsedForLint`]]
+
+### What the caller sets up
+
+As for `Parser::parse`: an AST allocation scope is open (the tests use
+`bun_ast::ASTMemoryAllocator::borrowing(&arena).enter()`), and `Options::init(jsx, loader)` picks the parser:
+`options.ts` (`loader.is_typescript()`) selects `P<'a, true, false>`, otherwise `P<'a, false, false>`, and
+`options.jsx.parse` (`loader.is_jsx()`) turns JSX on at run time. The tests also set `features.no_macros` and
+`features.dont_bundle_twice`. With a JavaScript loader a type annotation is a syntax error and `a < b > (c)` is two
+operators.
+
+### What the entry does, in this order (`Parser::_parse_for_lint`)
+
+1. `is_declaration_file` is `options.ts` and `tspath.IsDeclarationFileName` of `source.path.text`: the base name
+   ends in `.d.ts`, `.d.mts` or `.d.cts`, or in `.ts` after a `.d.` (`a.d.css.ts` is one, `a.d.tsx` is none).
+2. The parser gets the side table `StartsForParseOnly::for_lint()`: from here `P::starts_for_parse_only` is set and
+   `P::is_lint_parse()` is true.
+3. A `#!` line is read past. It leaves nothing in the result.
+4. The statements of the file are read with `parse_stmts_up_to` in the scope `Module`. In a declaration file they
+   are read as after `declare` (`ParseStatementOptions::is_typescript_declare`).
+5. The parse fails when the log holds an error that it did not hold before `Parser::init` read its first token,
+   also when the parse pass only logged it and went on. `f` is not called, the result is `Err(Error::SyntaxError)`,
+   and `errors` gets its entries. A stack overflow is logged as `Maximum call stack size exceeded` at the token the
+   lexer is on and is `Err(Error::SyntaxError)` too (`Parser::parse_only` returns `Error::StackOverflow`).
+6. Otherwise the lists of `sidecar.attached` are sorted by key and `f` is called. The side table is freed when `f`
+   returns. `errors` is left as it was.
+
+[[CHECK entry-order: the six steps are parse_entry.rs:547-621 at b882bfc32f. After R5 (B1) add where the comments are gathered (the prototype of round 2 fills `sidecar.comments` between step 5 and step 6) and whether the entry turns `Lexer::track_comments` on]]
+
+An error in the first token of the file fails `Parser::init`, before any of this.
+[[CHECK first-token: after R5 (B2, B4) say what `Parser::init_for_lint` does for it, if that entry exists]]
+
+### What it does not do
+
+No visit pass: nothing is bound to a symbol by use, folded, lowered, removed or renamed, and no import is scanned.
+No `// @bun` shortcut (test `takes_no_shortcut_for_a_bundled_file`). The entry reads and writes no transpiler cache.
+No error recovery: a file with a syntax error gives no tree ("No error recovery").
+
+### What `f` gets
+
+- `stmts`: the list that `parse_stmts_up_to` made for the file. The parse pass itself leaves out `;` alone
+  (`S::Empty`), the directives `"use strict"` and `"use asm"`, and every statement that TypeScript erases. Another
+  directive is an `S::Directive`. A comment that starts with `//!` or `/*!` is an `S::Comment` in the list it
+  stands in, before the statement that follows it, and its `loc` is the `loc` of the token after the comment.
+- An identifier that is read is an `E::Identifier` whose `Ref` names its text. A declared name has a `Ref` with the
+  tag `Symbol`. `name_of` answers for both and for an allocated name. It never panics: a `Ref` that names nothing
+  gives an empty name.
+- `scopes_in_order` and `symbols` are what the parse pass of `Parser::parse` leaves for the same file. An erased
+  statement leaves no scope: the scopes of a declared function, class or namespace are discarded as before, so a
+  record can hold statements whose scopes are not in `scopes_in_order`. `ScopeOrder` has no public field and no
+  public method: another crate cannot read an entry.
+  [[CHECK same-tree: "are what the parse pass of Parser::parse leaves" is P3.1. It was measured once, in research on be1ebe5295 with a relinked binary and a switch that is not in the tree (round2/a3/top-down/results.txt: 3,206 files, 0 differ). State here what was run on the final commit, or that it was not run on it]]
+- `import_records`: an erased import or export has no import record. Its path is in its record
+  (`erased::ImportDeclaration::module_specifier`, `erased::ExportDeclaration::module_specifier`).
+- `is_declaration_file`: in such a file a function, a class, an enum, a namespace, an interface and a type alias
+  are records with `ErasedFlags::AMBIENT`. A variable statement without `declare` stays in `stmts` as an `S::Local`
+  whose bindings are not declared (each `Ref` names its text). `export default x`, `export = x` and the import and
+  export statements that bind values stay as in any file.
+- `arena`: the type nodes, the payloads of the records and the lists are in it. Every record and every node is
+  `Copy`: a copy may leave `f` and is good as long as the arena and the AST allocation scope are.
+
+`ParsedOnly` has `async_arrow_parameters`, `arrow_expression_body`, `class_element` and `import_path`.
+`ParsedForLint` has none of them: the three maps are filled in a lint parse too and are `pub(crate)`, and a path is
+`import_records[index].path.text`.
+
+### What a lint parse of JavaScript records
+
+With a JavaScript loader the parser is `P<'a, false, false>`, which has no site of the lint parse: JavaScript has
+no annotation, no type argument and no erased statement, and a parse of JavaScript pays nothing for the lint parse.
+So `sidecar.erased`, `sidecar.attached` and `sidecar.generics` are empty.
+[[PICK js-parens: the same decision as "parens" in "What changed for a caller in round 3"]]
+`sidecar.wrappers` is empty too: the parentheses of a JavaScript file are not recorded, because their site is the
+`(` that starts any expression, which every parse of JavaScript runs.
+[[OR]]
+`sidecar.wrappers` is empty too: no parse records parentheses.
+[[END]]
+What a lint parse of JavaScript has: `stmts`, `scopes_in_order`, `symbols`, `import_records`, the three maps of
+`Parser::parse_only`, which main fills at its own three sites, [[CHECK js-comments: after R5 (B1): "and the comments, the comment directives and the pragmas, which the lexer and the entry gather and no site of the parser"]]
+and, when the parse fails, the codes of its errors.

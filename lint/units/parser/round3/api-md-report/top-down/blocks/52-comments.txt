@@ -1,0 +1,109 @@
+### Comments, comment directives and pragmas
+
+[[PICK comments-section: R5 (B1). The first text is the plan of round 2, whose prototypes are round2/b1-comment-collection/top-down/{comments.rs,prototype.diff} and round2/b1-directives-pragmas/top-down/crate/{comment_directives.rs,pragmas.rs}; they were compiled in a scratch copy of the crate and never in the worktree. Keep it only for what `cargo test -p bun_js_parser --lib` ran at the final commit, with the names of the code: `grep -n "^pub \|^    pub " src/js_parser/parse/comments.rs src/js_parser/parse/comment_directives.rs src/js_parser/parse/pragmas.rs`]]
+Files `src/js_parser/parse/comments.rs`, `comment_directives.rs` and `pragmas.rs`: modules
+`bun_js_parser::parse::{comments, comment_directives, pragmas}`. The lexer of a lint parse keeps the range of every
+comment (`Lexer::all_comments`, which a parse without lint fills only for `features.minify_identifiers`), and the
+entry makes three tables of it when the parse has ended.
+
+```rust
+/// What the scanner of the reference makes of a comment.
+#[repr(u8)]
+pub enum CommentKind {
+    /// `//` up to the line break.
+    Line,
+    /// `/*` up to `*/`.
+    Block,
+    /// A block comment that starts with `/**` and is not `/**/`.
+    JSDoc,
+}
+/// A comment: `start` is the offset of its first `/`, `end` the offset after its last character.
+pub struct Comment { pub start: u32, pub end: u32, pub kind: CommentKind }
+/// Every comment of a file in source order, each once. The `#!` line is none.
+#[derive(Default)]
+pub struct Comments { pub list: Vec<Comment> /* private: how many stand before the first token */ }
+impl Comments {
+    /// The comments before the first token of the file: what the reference reads pragmas from.
+    pub fn leading(&self) -> &[Comment];
+}
+
+/// `ast.CommentDirectiveKind`
+#[repr(u8)]
+pub enum CommentDirectiveKind { ExpectError = 1, Ignore = 2 }
+/// `ast.CommentDirective`: a `//` comment from `start` to `end`, or the last line of a block comment.
+pub struct CommentDirective { pub start: u32, pub end: u32, pub kind: CommentDirectiveKind }
+/// `SourceFile.CommentDirectives`: what Scan records for `comments`, every comment of `text` in the order of the source.
+pub fn get_comment_directives(text: &[u8], comments: &[Range]) -> Vec<CommentDirective>;
+
+/// Which argument of a `/// <reference ... />` comment names what it refers to.
+#[repr(u8)]
+pub enum ReferenceDirectiveKind { Path, Types, Lib, NoDefaultLib }
+/// `core.ResolutionMode`: `CommonJS` is `require` and `ESM` is `import`.
+#[repr(u8)]
+pub enum ResolutionMode { None, CommonJS, ESM }
+/// `ast.FileReference` and the comment it is in: the file name is the source from `start` to `end`, the text between the quotes.
+pub struct ReferenceDirective {
+    pub start: u32,
+    pub end: u32,
+    pub comment_start: u32,
+    pub comment_end: u32,
+    pub kind: ReferenceDirectiveKind,
+    /// Of `resolution-mode` beside `types`.
+    pub resolution_mode: ResolutionMode,
+    /// `preserve="true"`
+    pub preserve: bool,
+}
+/// `ast.CheckJsDirective`: the comment from `start` to `end` is `// @ts-check` or `// @ts-nocheck`.
+pub struct CheckJsDirective { pub start: u32, pub end: u32, /* `@ts-check` */ pub enabled: bool }
+/// What processPragmasIntoFields reads from the comments before the first token.
+#[derive(Default)]
+pub struct Pragmas {
+    /// `ReferencedFiles`, `TypeReferenceDirectives` and `LibReferenceDirectives` as one list, in the order of the source.
+    pub reference_directives: Vec<ReferenceDirective>,
+    /// `CheckJsDirective`: the last `@ts-check` or `@ts-nocheck`.
+    pub check_js_directive: Option<CheckJsDirective>,
+}
+impl ReferenceDirective {
+    /// `FileReference.FileName`
+    pub fn file_name<'s>(&self, source_text: &'s [u8]) -> &'s [u8];
+}
+```
+
+Where a caller reads them: [[FILL comments-fields: the fields, e.g. `parsed.sidecar.comments`, `parsed.sidecar.comment_directives`, `parsed.sidecar.pragmas`]].
+
+What is a comment, as the scanner of the reference has it (`internal/scanner/scanner.go`):
+
+- A `//` comment ends before its line break. A `/* */` comment ends after `*/`. A block comment is `JSDoc` when it
+  starts with `/**` and the next character is not `/`.
+- Comments before the first token, after a `#!` line, between tokens, inside a JSX opening tag and after the last
+  token are all in the list, in source order, each once, also where the parser read the source twice.
+- Not in the list: the `#!` line; `<!--` and `-->`, which Bun's lexer reads as comments with a warning and the
+  reference does not know; a `//` or `/*` inside a string, a template, a regular expression or JSX text.
+  [[CHECK html-comments: what the code does with `-->` at the start of a line (`scan_legacy_html_close_comment`)]]
+
+A comment directive is `@ts-expect-error` or `@ts-ignore` as `processCommentDirective` reads it: in a `//` comment
+after the slashes and blanks; in a block comment on its last line only, after blanks and any run of `/` and `*`.
+Its range is the comment for a `//` comment, and the last line of the comment for a block comment.
+
+The pragmas are read from the comments before the first token only (`getCommentPragmas` over
+`GetLeadingCommentRanges(text, 0)`): `/// <reference path|types|lib|no-default-lib ... />` with `resolution-mode`
+and `preserve`, and `// @ts-check` and `// @ts-nocheck` (single-line comments only, the last one wins). A reference
+without `path`, `types`, `lib` or `no-default-lib="true"` is TS1084 `Invalid 'reference' directive syntax.` at the
+range of the comment. [[CHECK ts1084: whether the lint parse reports it, and whether that fails the parse]]
+The pragmas `@jsx`, `@jsxfrag`, `@jsximportsource` and `@jsxruntime` are not in the table: Bun's lexer reads them
+for every parse (`Lexer::jsx_pragma`). [[CHECK jsx-pragmas: name the field of the lexer that holds them, and whether `ParsedForLint` hands them out]]
+
+`ts::full_start(source, comments, start)` takes these comments: `comments` is the list of ranges in source order.
+[[CHECK full-start-input: how a caller gets `&[Range]` from `Comments` (a method, or the `start` and `end` of each `Comment`)]]
+
+A parse without lint is not changed by this: `Lexer::track_comments` stays `features.minify_identifiers` for it,
+the lexer has no added test in `Lexer::next`, and the character frequency of a minified build is what it was.
+[[CHECK comments-cost: the comments come through the lexer, not through a site: r3report.sh must still print js-control +0 Ir, +0 Bc and `Lexer::next` IDENT; the guard of the minifier is lexer-lint-hooks/top-down/minify-guard.mjs]]
+
+Tests: [[FILL comments-tests: the names of the tests and their oracle. Oracles that exist: round2/b1-comment-collection/top-down/all.tsc.tsv (267 sources, tsc 6.0.2), round2/b1-directives-pragmas/bottom-up/directives/expected-go.txt and pragmas/expected-go.txt (typescript-go 89d5d5b)]]
+[[OR]]
+Not done. The side table has no comment, no comment directive (`@ts-ignore`, `@ts-expect-error`) and no pragma
+(`/// <reference />`, `@ts-check`, `@ts-nocheck`): the lexer of a lint parse tracks comments only for
+`features.minify_identifiers`, as every parse does. A pass that needs them scans the source. `ts::full_start` gets
+an empty list and stops at a comment ("Offsets that a comment moves").
+[[END]]

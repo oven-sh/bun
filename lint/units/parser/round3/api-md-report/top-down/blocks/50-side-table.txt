@@ -1,0 +1,270 @@
+## The side table of a lint parse: `StartsForParseOnly`
+
+Files `src/js_parser/p.rs` and, under `src/js_parser/parse/`, `attached.rs`, `wrappers.rs`, `generics.rs`,
+`erased.rs`. Module paths: `bun_js_parser::parse::{attached, wrappers, generics, erased}`.
+
+```rust
+#[derive(Default)]
+pub struct StartsForParseOnly {
+    /// What a lint parse keeps of the statements and class members that leave no node.
+    pub erased: erased::ErasedTables,
+    /// What a lint parse keeps of the syntax around an expression that leaves no node.
+    pub wrappers: wrappers::Wrappers,
+    /// What a lint parse keeps of the TypeScript syntax of the nodes that stay.
+    pub attached: attached::Attached,
+    /// What a lint parse keeps of the type arguments after an expression and of the type parameters of an interface or of a type alias.
+    pub generics: generics::Generics,
+    // pub(crate): async_arrow_parameters, arrow_expression_bodies, class_elements (HashMap<i32, i32>),
+    // syntax_errors, is_lint
+}
+```
+
+[[CHECK sidecar-fields: p.rs:220-236 at b882bfc32f. After R5 (B1) add the public fields for the comments, the comment directives and the pragmas]]
+
+It is one `Box` on the parser (`P::starts_for_parse_only`), made by `Parser::parse_only` (three maps, nothing else)
+and by `Parser::parse_for_lint` (`is_lint`). The four tables hold thirteen lists. A record is `Copy`. An offset is a
+byte offset in the source (`u32`), `start` of the first byte, `end` after the last. A `Loc` alone names no node
+(`a.b.c` is three nodes at one `Loc`), so each kind has its own key:
+
+| table | what | key of a record | how a pass finds it |
+| --- | --- | --- | --- |
+| `attached` | the TypeScript syntax of a node that stays | `Owner` (a function, an arrow function, a class), or the `loc` of a binding, of a member key, of a class keyword, of a JSX element | the readers `*_of` of `Attached` |
+| `wrappers` | `as`, `satisfies`, `!`, `<T>x`, parentheses | `ExprId` of the operand | `Wrapper::wraps(&expr)` |
+| `generics` | type arguments after an expression; type parameters of an interface or a type alias | `ExprId` of the operand and `TypeArgumentsOf`; the end of the name of the declaration | `Generics::type_arguments_after(&operand)`, `Generics::type_parameters_of(&name)` |
+| `erased` | statements and class members that the tree does not hold | `Place` of a statement; `class_body` and `index` of a member | the place says the list and the index |
+
+### `attached`: what belongs to a node that stays
+
+```rust
+/// What a record of a function, of an arrow function or of a class belongs to: an offset alone names no node.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub enum Owner {
+    /// `G::Fn::open_parens_loc` of a function, method, accessor or constructor.
+    Fn(u32),
+    /// `Expr::loc` of an `E::Arrow`.
+    Arrow(u32),
+    /// `G::Class::class_keyword.loc`.
+    Class(u32),
+}
+impl Owner {
+    pub fn function(open_parens: Loc) -> Owner;
+    pub fn arrow(loc: Loc) -> Owner;
+    pub fn class(class_keyword: Loc) -> Owner;
+}
+
+/// The `?`, the `!` and the type after a binding or after the name of a class member.
+pub struct Annotation {
+    /// `Binding::loc` of the binding, or `Expr::loc` of the key of the class member.
+    pub owner: u32,
+    pub question: Option<u32>,
+    pub exclamation: Option<u32>,
+    pub type_node: Option<ts::Type>,
+}
+impl Annotation {
+    pub fn question_token(&self) -> Option<ts::Token>;
+    pub fn exclamation_token(&self) -> Option<ts::Token>;
+}
+
+/// A `this` parameter: the tree has no argument for it.
+pub struct ThisParameter {
+    pub owner: Owner,
+    /// How many arguments the tree has before it.
+    pub index: u32,
+    pub start: u32,
+    pub end: u32,
+    pub type_node: Option<ts::Type>,
+}
+/// The type parameters of a function, of an arrow function or of a class.
+pub struct TypeParameters { pub owner: Owner, pub lt: u32, pub end: u32, pub list: ts::List<ts::TypeParameter> }
+/// The type after the `:` that follows a parameter list: a return type or a type predicate.
+pub struct ReturnType { pub owner: Owner, pub type_node: ts::Type }
+/// One `extends` or `implements` clause of a class. `class` is `G::Class::class_keyword.loc`.
+pub struct Heritage { pub class: u32, pub clause: ts::HeritageClause }
+/// The type arguments after the name of a JSX element. `element` is `Expr::loc` of the `E::JSXElement`.
+pub struct JsxTypeArguments { pub element: u32, pub lt: u32, pub end: u32, pub list: ts::List<ts::Type> }
+/// A modifier that the tree keeps no trace of: `abstract` before `class`, `const` before `enum`.
+pub struct Keyword { pub owner: u32, pub start: u32, pub end: u32, pub kind: ts::ModifierKind }
+pub enum ModuleExportName { Identifier(ts::Name), String(ts::Literal) }
+pub struct Specifier { pub start: u32, pub end: u32, pub type_keyword: Option<u32>, pub property_name: Option<ModuleExportName>, pub name: ModuleExportName }
+pub struct TypeOnlySpecifier { pub statement: u32, pub index: u32, pub specifier: Specifier }
+
+#[derive(Default)]
+pub struct Attached {
+    pub annotations: Vec<Annotation>,
+    pub this_parameters: Vec<ThisParameter>,
+    pub type_parameters: Vec<TypeParameters>,
+    pub return_types: Vec<ReturnType>,
+    pub heritage: Vec<Heritage>,
+    pub jsx_type_arguments: Vec<JsxTypeArguments>,
+    pub keywords: Vec<Keyword>,
+    pub specifiers: Vec<TypeOnlySpecifier>,
+}
+impl Attached {
+    pub fn record_count(&self) -> usize;
+    pub fn annotation_of(&self, owner: Loc) -> Option<&Annotation>;
+    pub fn this_parameter_of(&self, owner: Owner) -> Option<&ThisParameter>;
+    pub fn type_parameters_of(&self, owner: Owner) -> Option<&TypeParameters>;
+    pub fn return_type_of(&self, owner: Owner) -> Option<&ReturnType>;
+    pub fn heritage_of(&self, class_keyword: Loc) -> &[Heritage];
+    pub fn jsx_type_arguments_of(&self, element: Loc) -> Option<&JsxTypeArguments>;
+    pub fn keywords_of(&self, owner: Loc) -> &[Keyword];
+    pub fn specifiers_of(&self, statement: Loc) -> &[TypeOnlySpecifier];
+}
+```
+
+`Attached::sort` and the methods that add a record (`optional`, `definite`, `annotation`, `this_parameter`,
+`type_parameter_list`, `return_type`, `heritage_clause`, `jsx_type_argument_list`, `keyword`, `type_only_specifier`,
+`specifiers_belong_to`) are `pub` too. They are for the parser: `parse_for_lint` has sorted every list by its key
+when `f` runs, and the readers above search the sorted lists. The records of one key keep the order of the source.
+
+How a later pass finds a record from the node it is at:
+
+| node at hand | call | what is recorded |
+| --- | --- | --- |
+| `G::Decl` of `var`, `let`, `const`, `using`, also in the head of `for` | `annotation_of(decl.binding.loc)` | the type after `:` |
+| `G::Arg` of a function, method, accessor, constructor or arrow function | `annotation_of(arg.binding.loc)` | the type after `:` |
+| `Catch::binding` | `annotation_of(binding.loc)` | the type after `:` |
+| `G::Property` of a class, kept or erased | `annotation_of(key.loc)` with `key = property.key` | the type of a field. For `[k]: T` the key is the expression in the brackets |
+| `G::Fn` | `Owner::function(func.open_parens_loc)`, then `type_parameters_of`, `this_parameter_of`, `return_type_of` | `<T>`, `this: T` with the count of arguments before it, the return type or predicate |
+| `E::Arrow` in the `Expr` `e` | `Owner::arrow(e.loc)`, then `type_parameters_of`, `return_type_of` | the same. `e.loc` is at `async`, at `<`, at `(` or at the one parameter |
+| `G::Class`, statement or expression, kept or erased | `Owner::class(class.class_keyword.loc)`, then `type_parameters_of`; `heritage_of(class.class_keyword.loc)` | `<T>`; the `extends` clause, then the `implements` clause |
+| `E::JSXElement` in the `Expr` `e` | `jsx_type_arguments_of(e.loc)` | `<Foo<T> />` |
+
+A record is made where the parse pass skipped the syntax before, and it is made for erased nodes as well: the
+annotations and the return type of an overload signature, of `declare function` and of the members of a declared
+class are in these lists under the same keys, and the node is in the record of `erased`.
+
+The `extends` clause holds one `TypeData::ExpressionWithTypeArguments` whose `expression` is `G::Class::extends`.
+An entry of `implements` is a `TypeData::TypeReference` where a type reference stands there and `,` or `{` follows
+it, otherwise an `ExpressionWithTypeArguments`.
+
+`Annotation::question` and `Annotation::exclamation` are always `None`, and `keywords` and `specifiers` are always
+empty: nothing in the parser calls `Attached::optional`, `definite`, `keyword`, `type_only_specifier` or
+`specifiers_belong_to`. Every `Annotation` has a `type_node`.
+[[CHECK attached-unused: true at b882bfc32f: `grep -rn "\.optional(\|\.definite(\|attached\.keyword(\|\.type_only_specifier(\|\.specifiers_belong_to(" src/js_parser` finds test code only]]
+
+`Annotation::owner` is a bare offset for two kinds of owner. One source makes them meet: in
+`class C { [a => 1]: T }` the key of the member and the binding of the parameter `a` have the same `loc`, so
+`annotation_of(binding.loc)` of that parameter finds the type of the member.
+
+### `wrappers`: what stands around an expression
+
+```rust
+/// Syntax around an expression that leaves no node: the tree holds `operand` where the source has the wrapper.
+pub struct Wrapper {
+    /// What the wrapper is around, as the tree holds it.
+    pub operand: Expr,
+    /// Offset of `as`, of `satisfies`, of `!`, of `<` or of `(`.
+    pub op: u32,
+    /// Offset after the type of `as` and `satisfies`, after `!`, after `>` or after `)`.
+    pub end: u32,
+    pub data: WrapperData,
+}
+pub enum WrapperData {
+    /// `operand as T`: `as const` has a `TypeReference` to the name `const`.
+    As(ts::Type),
+    /// `operand satisfies T`.
+    Satisfies(ts::Type),
+    /// `operand!`.
+    NonNull,
+    /// `<T>operand`: the operand is the whole unary expression after `>`.
+    TypeAssertion(ts::Type),
+    /// `(operand)`.
+    Parenthesized,
+}
+/// The identity of an expression node: where it starts, its kind, and the address of its payload when it has one.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ExprId { pub loc: i32, pub tag: ExprTag, pub payload: usize }
+#[derive(Default)]
+pub struct Wrappers {
+    /// In the order the parse pass finishes them: of the wrappers around one operand, an inner one comes first.
+    pub records: Vec<Wrapper>,
+}
+
+impl Wrapper {
+    pub fn wraps(&self, expr: &Expr) -> bool;
+    pub fn type_node(&self) -> Option<ts::Type>;
+}
+impl WrapperData { pub const fn kind_name(&self) -> &'static str; }
+impl ExprId { pub fn of(expr: &Expr) -> ExprId; }
+```
+
+`size_of::<Wrapper>()` is 48 (asserted).
+
+How to attach: the wrappers of the `Expr` `e` are the records with `wraps(&e)`, that is
+`ExprId::of(&record.operand) == ExprId::of(&e)`. `ExprId` is `Hash`: a pass builds one map from it. The payload is
+the address of the node for every kind that has a payload in a store (`E::Binary`, `E::Dot`, `E::Call`, ...), and 0
+for the kinds that are held inline (`E::Identifier`, `E::Number`, `E::This`, ...), which no other node of the same
+kind shares its `loc` with.
+
+`records` is in the order the parse pass finishes the wrappers, so for one operand the list order is from the
+inside to the outside: `(x as T)!` gives `As`, `Parenthesized`, `NonNull`, all around `x`; `<T><U>x` gives the
+assertion of `U` and then the one of `T`. A parent node holds the bare operand and does not know of the wrappers:
+`a + (b)` is an `E::Binary` of `a` and `b`.
+
+What is recorded in a lint parse of TypeScript: `x as T`, `x as const`, `x satisfies T`, `x!` (also in a
+decorator), `<T>x`.
+[[PICK wrappers-parens: the same decision as "parens" in "What changed for a caller in round 3"]]
+And every pair of parentheses around an expression (`(a)`, `(a, b)`, the body of `=> (b)`, `new (F)()`, `@(d)`):
+the `(` that starts an expression tests the side table in the TypeScript parser. Not recorded, because they are no
+parenthesized expression: the parentheses of the parameters of an arrow function, of a call, and of `if (..)`,
+`while (..)` and the like. A lint parse of JavaScript records no parentheses, and `Parser::parse_only` records none.
+[[OR]]
+No parentheses: `WrapperData::Parenthesized` is never made. The site is the `(` that starts any expression, and a
+test there is a cost for every parse. `(x as T)!` gives `As` and `NonNull`.
+[[END]]
+[[CHECK wrappers-order: the examples `(x as T)!` and `<T><U>x` are cases of wrappers::tests::records_are_those_of_the_known_sources at b882bfc32f; run it at the final commit]]
+
+### `generics`: type arguments after an expression, type parameters of an erased declaration
+
+```rust
+#[repr(u8)]
+pub enum TypeArgumentsOf {
+    /// `operand<T>`: before the arguments of a call, before a template, after the target of `new`, or alone as an instantiation expression.
+    Expression,
+    /// `operand?.<T>(...)`: the type arguments of the call.
+    OptionalCall,
+}
+/// Type arguments after an expression: the tree holds `operand` where the source has `operand<T>`.
+pub struct TypeArguments { pub operand: Expr, pub lt: u32, pub end: u32, pub list: ts::List<ts::Type>, pub of: TypeArgumentsOf }
+/// The type parameters of an interface or of a type alias, which leave no statement.
+pub struct DeclarationTypeParameters {
+    /// Offset after the name of the declaration: `erased::Name::end` of its record.
+    pub name_end: u32,
+    pub lt: u32,
+    pub end: u32,
+    pub list: ts::List<ts::TypeParameter>,
+}
+#[derive(Default)]
+pub struct Generics {
+    /// By where the `<` is.
+    pub type_arguments: Vec<TypeArguments>,
+    /// By where the `<` is.
+    pub type_parameters: Vec<DeclarationTypeParameters>,
+}
+impl TypeArguments { pub fn follows(&self, expr: &Expr) -> bool; }
+impl Generics {
+    pub fn record_count(&self) -> usize;
+    pub fn type_arguments_after<'s>(&'s self, operand: &'s Expr) -> impl Iterator<Item = &'s TypeArguments>;
+    pub fn type_parameters_of(&self, name: &erased::Name) -> Option<&DeclarationTypeParameters>;
+}
+```
+
+How to attach type arguments: by the operand, with `ExprId` as for a wrapper. The operand is the node the tree
+holds where the source has `operand<T>`: `E::Call::target` for `f<T>(x)`, for `a?.<T>(x)` and for `@d<T>()`,
+`E::New::target` for `new F<T>(x)` and `new F<T>`, `E::Template::tag` for a tagged template, and the expression
+itself for an instantiation expression (`const g = f<T>;`). The record does not say which of these it is, except
+`OptionalCall`: the pass sees it from the node that holds the operand. The type arguments of `extends B<T>` and of
+an entry of `implements` are in the `ts::HeritageClause` of `attached.heritage`, those of a JSX element in
+`attached.jsx_type_arguments`, those of a type reference in its type node.
+
+Where one operand has wrappers and type arguments, the two lists are merged by offset: a `TypeArguments` record
+goes directly after the last wrapper of that operand that is no `TypeAssertion` and whose `end` is at or before
+the `lt` of the record, and is the innermost where there is none. `(f<T>)` is the parentheses around the
+instantiation, `(<A>f)<T>()` is the call of the parentheses, `<A>f<T>` is the assertion of the instantiation. This
+rule is read from the order in which the parser makes the records. No test covers a source that mixes the two.
+[[CHECK merge-rule: with the second choice of "parens" the two examples with parentheses go: write the rule without them]]
+
+How to attach type parameters: the type parameters of an interface or of a type alias are found from its record in
+`erased`: `generics.type_parameters_of(&name)` with the `erased::Name` of `ErasedData::Interface` or
+`ErasedData::TypeAlias`. Those of a function, an arrow function and a class are in `attached.type_parameters`.

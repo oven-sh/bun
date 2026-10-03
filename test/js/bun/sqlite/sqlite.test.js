@@ -2157,6 +2157,196 @@ it("reports changes in Statement#run", () => {
   expect(db.query(sql).run().changes).toBe(2);
 });
 
+describe("changes counts only the rows that the statement changes itself", () => {
+  const entryPoints = {
+    "Database#run": (db, sql, ...params) => db.run(sql, ...params),
+    "Database#exec": (db, sql, ...params) => db.exec(sql, ...params),
+    "Statement#run from prepare()": (db, sql, ...params) => {
+      using stmt = db.prepare(sql);
+      return stmt.run(...params);
+    },
+    "Statement#run from query()": (db, sql, ...params) => db.query(sql).run(...params),
+  };
+
+  describe.each(Object.entries(entryPoints))("%s", (_, run) => {
+    it("not the shadow tables of a virtual table", () => {
+      using db = new Database(":memory:");
+      db.exec("CREATE VIRTUAL TABLE ft USING fts5(a, b); CREATE VIRTUAL TABLE rt USING rtree(id, x0, x1);");
+
+      expect({
+        fts5Insert: run(db, "INSERT INTO ft VALUES ('alpha beta', 'gamma')").changes,
+        fts5InsertTwoRows: run(db, "INSERT INTO ft VALUES (?, ?), (?, ?)", "a", "b", "c", "d").changes,
+        fts5UpdateTwoRows: run(db, "UPDATE ft SET b = 'delta' WHERE rowid <= 2").changes,
+        fts5DeleteThreeRows: run(db, "DELETE FROM ft").changes,
+        rtreeInsert: run(db, "INSERT INTO rt VALUES (1, 0, 1)").changes,
+        rtreeDelete: run(db, "DELETE FROM rt WHERE id = 1").changes,
+      }).toEqual({
+        fts5Insert: 1,
+        fts5InsertTwoRows: 2,
+        fts5UpdateTwoRows: 2,
+        fts5DeleteThreeRows: 3,
+        rtreeInsert: 1,
+        rtreeDelete: 1,
+      });
+    });
+
+    it("not the rows that a trigger writes", () => {
+      using db = new Database(":memory:");
+      db.exec(`
+        CREATE TABLE t (a);
+        CREATE TABLE log (x);
+        CREATE TRIGGER tr AFTER INSERT ON t BEGIN
+          INSERT INTO log VALUES (new.a);
+          INSERT INTO log VALUES (-new.a);
+        END;
+      `);
+
+      expect(run(db, "INSERT INTO t VALUES (1)").changes).toBe(1);
+      expect(run(db, "INSERT INTO t VALUES (?), (?)", 2, 3).changes).toBe(2);
+      expect(db.query("SELECT x FROM log ORDER BY rowid").values()).toEqual([[1], [-1], [2], [-2], [3], [-3]]);
+    });
+
+    it("not the rows that a foreign key action deletes", () => {
+      using db = new Database(":memory:");
+      db.exec(`
+        PRAGMA foreign_keys = ON;
+        CREATE TABLE parent (id INTEGER PRIMARY KEY);
+        CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id REFERENCES parent (id) ON DELETE CASCADE);
+        INSERT INTO parent VALUES (1), (2);
+        INSERT INTO child VALUES (10, 1), (11, 1), (12, 1), (20, 2);
+      `);
+
+      expect(run(db, "DELETE FROM parent WHERE id = 1").changes).toBe(1);
+      expect(db.query("SELECT id FROM child").values()).toEqual([[20]]);
+    });
+
+    // https://www.sqlite.org/c3ref/changes.html: an INSTEAD OF trigger makes the change, so the statement changes no row.
+    it("not the rows that an INSTEAD OF trigger writes for a view", () => {
+      using db = new Database(":memory:");
+      db.exec(`
+        CREATE TABLE t (a);
+        CREATE VIEW v AS SELECT a FROM t;
+        CREATE TRIGGER vi INSTEAD OF INSERT ON v BEGIN
+          INSERT INTO t VALUES (new.a);
+        END;
+      `);
+
+      expect(run(db, "INSERT INTO v VALUES (1)").changes).toBe(0);
+      expect(db.query("SELECT a FROM t").values()).toEqual([[1]]);
+    });
+
+    it("0 for a statement that changes no row, not the count of the write before it", () => {
+      using db = new Database(":memory:");
+      db.exec("CREATE TABLE t (a)");
+
+      // Each statement runs right after a write of two rows, the count that sqlite3_changes() still holds.
+      const afterWrite = sql => {
+        expect(run(db, "INSERT INTO t VALUES (1), (2)").changes).toBe(2);
+        return run(db, sql).changes;
+      };
+      expect({
+        select: afterWrite("SELECT a FROM t"),
+        createTable: afterWrite("CREATE TABLE other (a)"),
+        begin: afterWrite("BEGIN"),
+        commit: afterWrite("COMMIT"),
+        updateNoRow: afterWrite("UPDATE t SET a = 0 WHERE 0"),
+      }).toEqual({ select: 0, createTable: 0, begin: 0, commit: 0, updateNoRow: 0 });
+    });
+
+    // FTS5 keeps the rows of a transaction in memory. SAVEPOINT, RELEASE and COMMIT make it write them to its shadow tables.
+    it("0 for a SAVEPOINT, RELEASE or COMMIT that makes FTS5 write its pending rows", () => {
+      using db = new Database(":memory:");
+      db.exec("CREATE VIRTUAL TABLE ft USING fts5(a, b)");
+      const insert = () => expect(run(db, "INSERT INTO ft VALUES ('alpha beta', 'gamma')").changes).toBe(1);
+
+      run(db, "BEGIN");
+      insert();
+      const savepoint = run(db, "SAVEPOINT s1").changes;
+      insert();
+      run(db, "SAVEPOINT s2");
+      insert();
+      const release = run(db, "RELEASE s1").changes;
+      insert();
+      const commit = run(db, "COMMIT").changes;
+      expect({ savepoint, release, commit }).toEqual({ savepoint: 0, release: 0, commit: 0 });
+    });
+  });
+
+  it.each(["run", "exec"])("Database#%s does not add the FTS5 writes of a COMMIT in the same string", method => {
+    using db = new Database(":memory:");
+    db.exec("CREATE VIRTUAL TABLE ft USING fts5(a, b)");
+
+    const inserts = "INSERT INTO ft VALUES ('a', 'b'); INSERT INTO ft VALUES ('c', 'd'), ('e', 'f');";
+    expect({
+      autocommit: db[method](inserts).changes,
+      transaction: db[method](`BEGIN; ${inserts} COMMIT;`).changes,
+    }).toEqual({ autocommit: 3, transaction: 3 });
+  });
+
+  it.each(["run", "exec"])("Database#%s adds up the statements of a multi-statement string", method => {
+    using db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE t (a);
+      CREATE TABLE log (x);
+      CREATE TRIGGER tr AFTER INSERT ON t BEGIN
+        INSERT INTO log VALUES (new.a);
+      END;
+    `);
+
+    // The SELECT and the CREATE TABLE change no row, so they must not add the count of the INSERT before them again.
+    const sql = "INSERT INTO t VALUES (1); INSERT INTO t VALUES (2), (3); SELECT a FROM t; CREATE TABLE other (a);";
+    expect(db[method](sql).changes).toBe(3);
+    expect(db[method]("SELECT 1; SELECT 2;").changes).toBe(0);
+    expect(db.query("SELECT x FROM log ORDER BY rowid").values()).toEqual([[1], [2], [3]]);
+  });
+
+  // With foreign keys on, DROP TABLE runs a DELETE that SQLite counts. The second DROP is a no-op and sets no counter.
+  it.each(["prepare", "query"])("a reused DROP TABLE Statement from %s() reports 0 when it is a no-op", method => {
+    using db = new Database(":memory:");
+    db.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE parent (id INTEGER PRIMARY KEY);
+      CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id REFERENCES parent (id) ON DELETE CASCADE);
+      CREATE TABLE t (a);
+      INSERT INTO parent VALUES (1), (2), (3);
+      INSERT INTO child VALUES (10, 1);
+    `);
+    using drop = db[method]("DROP TABLE IF EXISTS parent");
+
+    expect([
+      drop.run().changes,
+      db.run("INSERT INTO t VALUES (1), (2), (3), (4), (5)").changes,
+      drop.run().changes,
+    ]).toEqual([3, 5, 0]);
+  });
+
+  // A Statement with bound parameters that changed rows once reads only sqlite3_changes64() on later runs.
+  it.each(["prepare", "query"])("a reused Statement from %s() reports its own rows on every run", method => {
+    using db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE t (id INTEGER PRIMARY KEY, a);
+      CREATE TABLE log (x);
+      CREATE TRIGGER tr AFTER UPDATE ON t BEGIN
+        INSERT INTO log VALUES (new.id);
+      END;
+    `);
+    using insert = db[method]("INSERT INTO t (a) VALUES (?), (?), (?)");
+    using update = db[method]("UPDATE t SET a = ? WHERE id <= ?");
+    using select = db[method]("SELECT count(*) FROM t");
+
+    expect([
+      update.run("x", 0).changes,
+      insert.run(1, 2, 3).changes,
+      update.run("x", 2).changes,
+      select.run().changes,
+      insert.run(4, 5, 6).changes,
+      update.run("y", 0).changes,
+      select.run().changes,
+      update.run("y", 1).changes,
+    ]).toEqual([0, 3, 2, 0, 3, 0, 0, 1]);
+  });
+});
+
 it("#13082", async () => {
   async function run(op) {
     const stmt = (() => {

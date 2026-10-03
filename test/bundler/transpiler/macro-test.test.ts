@@ -563,6 +563,50 @@ test.concurrent("sequential Bun.build() calls with different defines each reach 
   expect(exitCode).toBe(0);
 });
 
+// The macro file is an input of the build too. A build that follows an edit of it evaluates the
+// file as it is then, not the module a worker thread's VM kept from the build before.
+test.concurrent("sequential Bun.build() calls each evaluate the macro file as it is at that build", async () => {
+  const libs = [0, 1, 2, 3];
+  using dir = tempDir("macro-build-api-macro-file-edited", {
+    "macro.ts": `export function revision() {\n  return "none";\n}\n`,
+    ...Object.fromEntries(
+      libs.map(i => [
+        `lib${i}.ts`,
+        `import { revision } from "./macro.ts" with { type: "macro" };\nexport const revision${i} = revision();\n`,
+      ]),
+    ),
+    "entry.ts": [
+      ...libs.map(i => `import { revision${i} } from "./lib${i}.ts";`),
+      `console.log(${libs.map(i => `revision${i}`).join(", ")});`,
+      ``,
+    ].join("\n"),
+    "build.ts": `
+      import { writeFileSync } from "node:fs";
+      const stale: string[] = [];
+      for (const revision of ["first", "second", "the-third", "fourth"]) {
+        writeFileSync("./macro.ts", "export function revision() {\\n  return " + JSON.stringify(revision) + ";\\n}\\n");
+        const result = await Bun.build({ entrypoints: ["./entry.ts"], target: "bun" });
+        if (!result.success) throw new AggregateError(result.logs, "build " + revision + " failed");
+        const seen = [...(await result.outputs[0].text()).matchAll(/"[a-z-]+"/g)].map(m => m[0]);
+        if (seen.length === 0 || seen.some(s => s !== JSON.stringify(revision))) {
+          stale.push(revision + " => " + seen.join(","));
+        }
+      }
+      console.log(JSON.stringify(stale));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "build.ts"],
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({ lastLine: "[]", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 // Each move loads the build's `define` again. Kept, a string value is one copy per build and per
 // pool thread for as long as the VM lives: here 1 MiB a copy, 32 builds, two threads, 64 MB.
 test.concurrent("a macro VM that moves to another build frees the previous build's string define values", async () => {

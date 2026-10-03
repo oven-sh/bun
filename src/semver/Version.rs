@@ -114,6 +114,21 @@ impl<T: VersionInt> VersionType<T> {
         Self::parse(SlicedString { buf: slice, slice })
     }
 
+    /// One complete version with the leading `v`, `=` and whitespace removed.
+    pub fn clean(input: &[u8]) -> Option<&[u8]> {
+        let input = input.trim_ascii();
+        let parsed = Self::parse_utf8(input);
+        if !parsed.valid || parsed.wildcard != Wildcard::None || parsed.len as usize != input.len()
+        {
+            return None;
+        }
+        let mut start = 0;
+        while start < input.len() && is_version_prefix_byte(input[start]) {
+            start += 1;
+        }
+        Some(&input[start..])
+    }
+
     /// Copies the tag strings into `buf` at `*offset` (advancing it); the
     /// returned version's strings are offsets into the whole of `buf`.
     pub fn clone_into(self, slice: &[u8], buf: &mut [u8], offset: &mut usize) -> Self {
@@ -476,22 +491,9 @@ impl<T: VersionInt> VersionType<T> {
         let mut i: usize = input.len();
 
         for c in 0..input.len() {
-            match input[c] {
-                // newlines & whitespace
-                b' '
-                | b'\t'
-                | b'\n'
-                | b'\r'
-                | 0x0B // vertical tab
-                | 0x0C // form feed
-
-                // version separators
-                | b'v'
-                | b'=' => {}
-                _ => {
-                    i = c;
-                    break;
-                }
+            if !is_version_prefix_byte(input[c]) {
+                i = c;
+                break;
             }
         }
 
@@ -658,6 +660,10 @@ impl<T: VersionInt> VersionType<T> {
         debug_assert!(!input.is_empty() && input.iter().all(u8::is_ascii_digit));
         Some(T::parse_ascii(input).unwrap_or(T::ZERO))
     }
+}
+
+fn is_version_prefix_byte(c: u8) -> bool {
+    matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C | b'v' | b'=')
 }
 
 fn valid_pre_or_build_tag_character(c: u8) -> bool {
@@ -1237,5 +1243,40 @@ mod tests {
         assert_eq!(a2.tag.build.slice(&buf), b"build.aaaaaaaa");
         assert_eq!(b2.tag.pre.slice(&buf), b"canary.20240315");
         assert_eq!(b2.tag.build.slice(&buf), b"build.bbbbbbbb");
+    }
+
+    #[test]
+    fn clean_keeps_one_complete_version() {
+        for (input, expected) in [
+            (&b"1.0.0"[..], &b"1.0.0"[..]),
+            (b"v1.0.0", b"1.0.0"),
+            (b"=1.0.0", b"1.0.0"),
+            (b" v 1.0.0\n", b"1.0.0"),
+            (b"\x0b1.0.0", b"1.0.0"),
+            (b"1.0.0-beta.1+build.5", b"1.0.0-beta.1+build.5"),
+            (b"1.0.0 ", b"1.0.0"),
+        ] {
+            assert_eq!(Version::clean(input), Some(expected), "{input:?}");
+        }
+    }
+
+    #[test]
+    fn clean_rejects_anything_else() {
+        for input in [
+            &b""[..],
+            b"v",
+            b"1",
+            b"1.0",
+            b"1.0.0.1",
+            b"1.x.0",
+            b"*",
+            b"^1.0.0",
+            b"1.0.0 || 2.0.0",
+            b"not-a-version",
+            b"1.0.0-beta_1",
+            b"1.0.0 beta",
+        ] {
+            assert_eq!(Version::clean(input), None, "{input:?}");
+        }
     }
 }

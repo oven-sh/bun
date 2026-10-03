@@ -1,8 +1,8 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
-import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "fs";
+import { chmod, mkdir, readlink, rm, symlink } from "fs/promises";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { pathToFileURL } from "url";
@@ -552,6 +552,81 @@ test("can install folder dependencies on root package", async () => {
     join("..", "..", "..", "node_modules", ".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
     await file(packageJson).json(),
   ]);
+});
+
+// Every bin target gets `0o777 & ~umask` on each install, under both linkers. For a workspace
+// dependency the target is the source file in the repo. Windows links bins as shims and chmods nothing.
+describe.each(["isolated", "hoisted"] as const)("bin target modes with the %s linker", linker => {
+  describe.each([
+    ["022", 0o755],
+    ["077", 0o700],
+    ["002", 0o775],
+  ])("umask %s", (umask, expectedMode) => {
+    test.concurrent.skipIf(isWindows)("are 0o777 & ~umask after a fresh and a repeated install", async () => {
+      const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
+      const workspaceBin = join(packageDir, "packages", "tool", "cli.js");
+      const binDir = join(packageDir, "node_modules", ".bin");
+      // A cache that the tests share hardlinks one inode of the tarball's bin into each of them.
+      const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "umask-root",
+            workspaces: ["packages/*"],
+            dependencies: {
+              tool: "workspace:*",
+              dep: "file:./dep",
+              tb: "file:./tb-1.0.0.tgz",
+            },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "tool", "package.json"),
+          JSON.stringify({ name: "tool", version: "1.0.0", bin: { tool: "./cli.js" } }),
+        ),
+        write(workspaceBin, "#!/usr/bin/env node\nconsole.log(1)\n"),
+        write(join(packageDir, "dep", "package.json"), JSON.stringify({ name: "dep", version: "1.0.0", bin: "d.js" })),
+        write(join(packageDir, "dep", "d.js"), "#!/bin/sh\necho d\n"),
+        Bun.Archive.write(
+          join(packageDir, "tb-1.0.0.tgz"),
+          {
+            "package/package.json": JSON.stringify({ name: "tb", version: "1.0.0", bin: "t.js" }),
+            "package/t.js": "#!/bin/sh\necho t\n",
+          },
+          { compress: "gzip" },
+        ),
+      ]);
+      await Promise.all([chmod(workspaceBin, 0o644), chmod(join(packageDir, "dep", "d.js"), 0o644)]);
+
+      const want = expectedMode.toString(8);
+      async function installAndExpectModes() {
+        await using proc = spawn({
+          cmd: ["sh", "-c", `umask ${umask} && exec "$0" install`, bunExe()],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        const mode = (path: string) => (statSync(path).mode & 0o777).toString(8);
+        expect({
+          workspace: mode(workspaceBin),
+          workspaceLink: mode(join(binDir, "tool")),
+          folderLink: mode(join(binDir, "dep")),
+          tarballLink: mode(join(binDir, "tb")),
+        }).toEqual({ workspace: want, workspaceLink: want, folderLink: want, tarballLink: want });
+        expect(exitCode).toBe(0);
+      }
+
+      await installAndExpectModes();
+
+      await Promise.all(["tool", "dep", "tb"].map(name => chmod(realpathSync(join(binDir, name)), 0o644)));
+      await installAndExpectModes();
+    });
+  });
 });
 
 describe("isolated workspaces", () => {

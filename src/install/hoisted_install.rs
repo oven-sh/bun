@@ -265,11 +265,6 @@ pub(crate) fn install_hoisted_packages(
             buf_strings.as_slice(),
         );
 
-        #[cfg(unix)]
-        {
-            bin::Linker::ensure_umask();
-        }
-
         let mut installer: PackageInstaller = 'brk: {
             let (completed_trees, tree_ids_to_trees_the_id_depends_on) = 'trees: {
                 let trees = this.lockfile.buffers.trees.as_slice();

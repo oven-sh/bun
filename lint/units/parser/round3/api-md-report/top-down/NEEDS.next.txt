@@ -1,0 +1,145 @@
+# What the parser unit needs in files it does not own
+
+State at `[[FILL head: the last commit of round 3]]`. N1 landed. N2, N3 and N4 are open as they were.
+
+## N1. A diagnostic code on `bun_ast::Msg` (`src/ast/lib.rs`, owner: cli): landed
+
+Landed in `4d9b8e5139` ("ast: Metadata::Code carries a diagnostic code, Msg stays 152 bytes"), in this branch
+through `72cd14a00e`. What the tree has, read at `b882bfc32f`:
+
+```rust
+pub enum Metadata {
+    Build,
+    Resolve(MetadataResolve),
+    /// The number of a TypeScript diagnostic: `Code(1005)` is TS1005. `write_format` prints no code.
+    Code(u32),
+}
+
+impl Msg {
+    /// The number of the TypeScript diagnostic that this message is, if it is one.
+    pub fn code(&self) -> Option<u32>;
+}
+
+impl Log {
+    /// An error that is the TypeScript diagnostic `code` and has that diagnostic's text.
+    pub fn add_range_error_with_code(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        code: u32,
+        text: Cow<'static, [u8]>,
+        notes: Box<[Data]>,
+    );
+}
+```
+
+`Msg::set_code` was asked for and not added: `Msg::metadata` is a public field, so the parser writes
+`msg.metadata = Metadata::Code(code)` where it adds the code to a message of Bun after the fact. The three matches
+on `Metadata` without a `_` arm take a coded message as a build message (`src/jsc/VirtualMachine.rs:3617`,
+`src/jsc/lib.rs:1379`, `src/runtime/server/DevErrorPage.rs:159`).
+
+[[PICK n1-parser-side: R5 (B2)]]
+What the parser does with it since `[[FILL b2-commit]]`: a message of a lint parse that failed carries its code
+(`Msg::code()`), and `SyntaxErrors` keeps what a `Msg` cannot hold, the range and the text of the reference.
+`API.md`, "What a caller reads from where". Nothing is asked of the owner of `Msg` any more.
+[[OR]]
+What is left on our side, not done: the parser does not write the code yet. The codes are in the table
+`SyntaxErrors` (`Parser::parse_for_lint_with_codes`), and a caller reads `errors.get(i)`, not `msg.code()`. When the
+parser writes it: `P::finish_syntax_errors` sets `Metadata::Code` on each message that has a live record, the text
+of the message stays the one of Bun, and the table keeps the range and the text of the reference (parser2.md, B2).
+[[END]]
+
+Open for the owner of `Msg`, as before: whether the text of a coded message is the text of Bun
+(`Expected ";" but found "x"`) or the text of the reference (`';' expected.`). The parser keeps the text of Bun on
+the message and has the text of the reference in the table. The cli unit's `API.md` ("Diagnostic code on
+`bun_ast::Msg`") describes one call with tsc's text; `bun_lint::Diagnostic::from_msg` prints `TS<n>` and the text of
+the message. [[CHECK n1-text: what `bun --lint` prints for a coded message once it calls the lint parse]]
+
+## N2. No caller of the new public items in another crate (`mordant` ratchet `unused_pub`)
+
+`Parser::parse_for_lint`, `Parser::parse_for_lint_with_codes`, `SyntaxErrors::{entries, get}`, `SyntaxError`,
+`ParsedForLint`, the readers of the four tables and the type nodes are `pub` and have no caller outside
+`bun_js_parser` until the cli unit and the typecheck unit call them. At `b882bfc32f`
+`src/runtime/cli/lint_command.rs:241` calls `Parser::parse_only` for JavaScript and `Parser::parse` for TypeScript.
+The advisory job `mordant` counted 43 `unused_pub` in six files on run 36807579271: `src/ast/ts_nodes.rs` 17,
+`attached.rs` 16, `wrappers.rs` 3, `generics.rs` 3, `syntax_errors.rs` 2, `parse_entry.rs` 2
+(`/workspace/notes/lint/measure/parser/pass1b/ci-mordant-counts.txt`).
+[[CHECK n2-count: the count of the last CI run of the pull request, with the files that R1 and R5 added]]
+
+Needed from the cli unit: the call, in `src/runtime/cli/lint_command.rs`, for every loader:
+
+```rust
+let mut errors = bun_js_parser::parse::syntax_errors::SyntaxErrors::default();
+match parser.parse_for_lint_with_codes(&mut errors, |parsed| /* index, bind, check, lint */) {
+    Ok(result) => result,
+    Err(_) => {
+        for (index, msg) in log.msgs.iter().enumerate() {
+            match errors.get(index) {
+                // `error TS1005: ';' expected.` at `entry.start..entry.end`
+                Some(entry) => { /* entry.code or msg.code(), entry.text */ }
+                None => { /* the message of Bun */ }
+            }
+        }
+    }
+}
+```
+
+What the caller has to know (`API.md`): the closure gets a `ParsedForLint`, not a `ParsedOnly`; a declaration file
+is parsed as ambient by its name; a stack overflow is `Err(Error::SyntaxError)` with a message in the log, not
+`Error::StackOverflow`; [[CHECK n2-parens: with the decision on parentheses: "a JavaScript file has no record of its parentheses" or "no file has a record of its parentheses"]].
+
+## N3. No JavaScript reaches a lint parse in this worktree (`src/runtime`, owner: cli)
+
+For: the test files `test/bundler/transpiler/lint-parse*.test.ts` that parser.md allows, and every check of the
+lint parse that is to run with `bun bd test`.
+
+Everything that JavaScript or a command line can call is in `src/runtime`, and nothing there calls
+`Parser::parse_for_lint`. `Bun.Transpiler` and the one parser hook of `bun:internal-for-testing`
+(`bytecodeOrderNames`, which ends in `Parser::parse_only`) run a parse without lint. So no test that `bun bd test`
+runs can reach the lint grammar, `Parser::parse_for_lint`, the side table or a backtracking point of a lint parse,
+and no file `lint-parse*.test.ts` exists.
+
+The route is the command of the cli unit, `BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 bun --lint <file>`
+(`src/runtime/cli/lint_command.rs`): once it holds the call of N2, a test spawns it and reads what it prints. The
+rows for that test are ready: `round3/tests-known-differences/bottom-up/lint-command-rows.json` and
+`lint-parse-grammar.test.ts.draft` (the 366 cases of the four removed test files through the command; its
+expectations are predictions until the command exists).
+
+No binding of `bun:internal-for-testing` is asked for. One that printed the side table would need a printer of
+every table in `src/runtime`, or a `pub` one in the parser that only that binding calls.
+
+### Workaround on our side, in place now
+
+The tests of the lint parse are `#[test]`s inside `bun_js_parser`, which see what is `pub(crate)`, and they run in
+this worktree with `cargo test -p bun_js_parser --lib`: [[FILL tests-total: "<n> passed" at the final commit]]. The
+366 cases that round 1 asserted through `Bun.Transpiler` are the rows of `src/js_parser/parse/grammar_rows_tests.rs`.
+The test binary links because `src/js_parser/native_test_shims.rs` defines, in Rust and under `#[cfg(test)]`, the C
+and C++ symbols that it links to. `API.md`, "How the tests of the parser run", has the commands and what the
+stand-ins do.
+
+## N4. No job of CI runs the tests of `bun_js_parser` (`.github/workflows/rust-lints.yml`, no unit owns it)
+
+For the integrator. CI runs the `#[test]`s of a crate only in the job `cargo miri test`, for the crates of
+`MIRI_CRATES` in `scripts/rust-miri.ts`. `bun_js_parser` cannot join that list: a parse calls
+`bun_core::StackCheck::is_safe_to_recurse`, which reads the stack pointer with inline assembly (`frame_address` in
+`src/bun_core/util.rs`), and Miri runs no inline assembly. The job `cargo clippy` type-checks the tests
+(`cargo check --workspace --all-targets`) and runs none. Since round 3 this matters more: the 366 cases of the four
+removed `bun:test` files, which CI ran, are `#[test]`s of this crate now, which CI does not run.
+
+Needed: one step in the job `clippy`, after the step `cargo check --all-targets`:
+
+```yaml
+      - name: cargo test -p bun_js_parser
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: cargo test -p bun_js_parser --lib
+```
+
+The setup of that job builds the targets `codegen`, `clone-lolhtml` and `clone-rust-argon2` and installs clang and
+lld, which is what the step needs: the test binary links no object of C or C++. The step was not run in CI.
+
+### Workaround on our side, in place now
+
+The same command in the worktree, after one `bun bd --version`.
+
+[[CHECK needs-base: parser3.md: if /workspace/base was empty and the two files were downloaded again, write the commit that `./bun --revision` names here, with the result of `git merge-base --is-ancestor <commit> HEAD`. On 2026-10-03 the base is main at fa467dcae2, and HEAD b882bfc32f is the merge of that commit: nothing to ask]]

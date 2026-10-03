@@ -1,10 +1,3 @@
-10-02_16:30:35 anon=83MB pids=47 load=727.99 top=python3:81MB
-10-02_16:31:20 anon=68MB pids=46 load=829.36 top=python3:98MB
-10-02_16:31:56 anon=135MB pids=42 load=808.63 top=python3:122MB
-10-02_16:32:30 anon=35MB pids=44 load=747.78 top=clippy-driver:50MB
-10-02_16:33:07 anon=5MB pids=38 load=785.65 top=runc:[2:INIT]:10MB
-10-02_16:33:44 anon=15MB pids=49 load=797.67 top=bun.f4d755a9c:56MB
-10-02_16:34:25 anon=5MB pids=41 load=868.48 top=runc:[2:INIT]:9MB
 10-02_16:35:02 anon=103MB pids=50 load=961.17 top=bun.f4d755a9c:143MB
 10-02_16:35:39 anon=9MB pids=51 load=997.79 top=bun.f4d755a9c:58MB
 10-02_16:36:15 anon=12MB pids=57 load=961.84 top=bun.f4d755a9c:51MB
@@ -398,3 +391,10 @@
 10-03_05:35:36 anon=5MB pids=35 load=1335.28 top=postgres:12MB
 10-03_05:36:49 anon=351MB pids=34 load=1199.51 top=rustc:468MB
 10-03_05:38:01 anon=3MB pids=31 load=1345.03 top=postgres:12MB
+10-03_05:40:12 anon=4MB pids=29 load=1693.32 top=postgres:12MB
+10-03_05:42:06 anon=10MB pids=34 load=1712.55 top=postgres:12MB
+10-03_05:42:39 anon=226MB pids=34 load=1463.68 top=rustc:361MB
+10-03_05:44:13 anon=8MB pids=34 load=1535.59 top=postgres:12MB
+10-03_05:44:44 anon=8MB pids=31 load=1242.17 top=postgres:12MB
+10-03_05:46:01 anon=6MB pids=37 load=1158.70 top=postgres:12MB
+10-03_05:49:50 anon=5MB pids=51 load=1605.58 top=postgres:12MB

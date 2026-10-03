@@ -23,7 +23,7 @@ What ran in the worktree at that commit, each through `/workspace/tools/lk` with
 | `bash /workspace/notes/lint/units/parser/round3/proof-behaviour/older-tests.sh plain` | [[FILL gate-older-plain: its RESULT line and the eight counts]] |
 | `bash /workspace/notes/lint/units/parser/round3/proof-behaviour/older-tests.sh leak` | [[FILL gate-older-leak]] |
 | `bun bd test test/bundler/transpiler/lint-parse*.test.ts` | [[FILL gate-lint-parse-tests: the counts, or "no such file: NEEDS.md N3"]] |
-| `python3 /workspace/notes/lint/tools/commentcop.py <base>...HEAD --all` | [[FILL gate-commentcop: "0 in 0 files"]] |
+| `python3 /workspace/notes/lint/tools/commentcop.py <base>...HEAD` | [[FILL gate-commentcop: "0 in 0 files"]] |
 | `bun test test/internal/source-lints/` (reads sources, starts no build) | [[FILL gate-source-lints]] |
 | the behaviour proof, "Proofs of round 3" | [[FILL gate-r2: the RESULT line of parity.sh]] |
 | the cost proof, "Proofs of round 3" | [[FILL gate-r3: js-control +0 Ir, +0 Bc; the tests per KB of the four TypeScript groups]] |

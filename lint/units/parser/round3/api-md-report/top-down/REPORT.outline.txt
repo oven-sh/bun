@@ -1,0 +1,127 @@
+OUTLINE OF THE FINAL REPORT OF THE PARSER UNIT, ROUND 3 (COMMON.md, "Reports"). Fill every [[...]] from a run of the final
+commit. A line that cannot be filled from a run is written as "not run" or "not done", never left out.
+
+1. WHERE THE WORK STANDS
+   Branch robobun/abbc0c92/lint-parser at [[FILL head]], pushed. It holds main up to [[FILL base]] (the base binaries of
+   /workspace/base are the release build of that commit). One sentence each: R1 (two grammars), R2 (zero differing records),
+   R3 (js-control +0, the tests per KB), R4 (the 366 cases are tests of the lint parse; the lists are in API.md),
+   R5 (what of B1 to B5 is in the tree). Then the two sentences that COMMON.md rule 11 asks for: what works, what was
+   not verified.
+
+2. COMMITS
+   `git log --oneline --no-merges <the HEAD of the start of round 3, b882bfc32f>..HEAD -- src/js_parser src/ast/ts.rs src/ast/ts_nodes.rs src/jsc/RuntimeTranspilerCache.rs test/bundler/transpiler`
+   one line each, grouped by R1 to R5. For each group: the gate that ran on its last commit
+   (`cargo check -p bun_js_parser`, `cargo test -p bun_js_parser --lib`: <n> passed).
+   Also: each commit of main that was merged into the branch during the round (merges are the integrator's; the unit never merges).
+
+3. FILES
+   `git diff --stat <base> HEAD -- src/js_parser src/ast/ts.rs src/ast/ts_nodes.rs src/jsc/RuntimeTranspilerCache.rs test/bundler/transpiler`
+   as three lists:
+   a. SHARED files, which a parse without lint runs, each with its difference to main: "main's text", "main's text in the
+      sink form", or "main's text and <n> sites". From siteaudit.txt of r3report.sh.
+      At b882bfc32f (before round 3) the difference to main was 33 files, +19,904 -1,025 lines, with
+      parse_skip_typescript.rs +4,055, parse/mod.rs +824, parse_stmt.rs +543, parse_prefix.rs +264, parse_property.rs +182,
+      parse_fn.rs +152, parse_typescript.rs +106, parse_suffix.rs +56, parse_jsx.rs +10, p.rs +89, typescript.rs +2.
+   b. LINT-ONLY files (new): the lint grammar, type_sink.rs's `Build` (or its new home), attached.rs, erased.rs,
+      generics.rs, wrappers.rs, syntax_errors.rs, the comment files of R5, src/ast/ts_nodes.rs. Each with "a `mod` line
+      reaches it".
+   c. TEST files: native_test_shims.rs, type_sink_tests.rs, annotation_tests.rs, erased_tests.rs, grammar_rows_tests.rs,
+      the `mod tests` blocks. Removed: the four test/bundler/transpiler/typescript-grammar*.test.ts (366 cases).
+   Not the unit's, though under src/ast: lib.rs (+114, the code on Msg) and walk.rs (+1,114): owner cli.
+   src/jsc/RuntimeTranspilerCache.rs: no difference to main (EXPECTED_VERSION 33).
+   src/js_parser/UPSTREAM_PORTED: microsoft/typescript-go 89d5d5b2849a0db0957065889ca58536fa6d2e4a.
+
+4. WHAT IS DONE, each with the command that shows it
+   R1  the restructuring. Evidence: siteaudit.txt PASS (<n> sites, 0 violations); fncmp.strict.ref-head PASS;
+       `cargo test -p bun_js_parser --lib` <n> passed.
+   R2  API.md, "Behaviour": the RESULT line of parity.sh and the path of its summary. EXPECTED_VERSION 33.
+   R3  API.md, "Cost": the two tables. The four required statements of parser3.md, each yes or no:
+       js-control +0 Ir and +0 Bc; every added branch of the four TypeScript groups is one executed test (excess 0);
+       the tests per KB; the skipper, both sinks, has the machine code of the reference.
+   R4  grammar_rows_tests.rs: 366 rows, <n> tests pass; the two lists in API.md; the eight older files pass unchanged
+       (older-tests.sh plain and leak: the RESULT lines); the four test files are removed.
+       The table (input, main, tsc) that parser.md P1.3 asked for is "Decorator metadata that differs from tsc" of API.md:
+       63 values in 9 groups, now as defects of main, not as changes of this work.
+   R5  B1 comments, directives, pragmas: [[done with commit and tests | not done]]
+       B2 the code on the Msg: [[...]]
+       B3 the rejections of typescript-go (typecheck/NEEDS.md L2, eleven inputs): [[which of the eleven, with the test]]
+       B4 the list "Not done": [[which items closed]]
+       B5 tests through `bun --lint`: [[none: NEEDS.md N2, N3 | the file and its counts]]
+
+5. WHAT IS NOT DONE
+   The list "Not done" of API.md word for word, and:
+   - Error recovery, JSDoc parsing (out of scope).
+   - The defects of main of "Known differences of a parse without lint" (not fixed here by decision).
+   - "Known differences of the lint grammar": the sources a lint parse reads as main reads them, each with its site.
+   - "What has no record" of API.md.
+   - The proof of parser.md P3.1 on the final commit (a lint-parsed tree, visited and printed, equals the normal
+     transpile over every .ts and .tsx file under test/ and src/js): [[run: counts | not run on the final commit. Research of
+     round 2 on be1ebe5295 with a relinked binary and a switch that is not in the tree: 3,206 files, 0 differ
+     (round2/a3/top-down/results.txt)]]
+   - No CI job runs `cargo test -p bun_js_parser --lib` (NEEDS.md N4), and no `bun:test` file reaches a lint parse (N3).
+
+6. DEVIATIONS, each with its reason
+   From the goal files:
+   - parser.md P1.1 to P1.5 hold for a lint parse only: a parse without lint does not read what tsc reads, its decorator
+     metadata is main's, `TypeSink::CONDITIONAL_FALSE_LEVEL` is back, `EXPECTED_VERSION` is 33. Reason: parser3.md, the
+     decision after the measurement (+10.7% and +14.6% instructions without lint).
+   - parser3.md names commit 6b7ade0f2a for the sink form. This clone does not have it: the same change is 2d28b35c01
+     (an ancestor of HEAD; f050f6cbb2 is a second copy of it).
+   - parser3.md names the base f4d755a9cf. The base binaries are main at [[FILL base]] (fa467dcae2 on 2026-10-03);
+     `git diff f4d755a9cf fa467dcae2 -- src/js_parser src/ast src/js_printer src/transpiler` is empty.
+   - parser3.md says nine older test files. parser.md P1.6 names eight besides typescript-grammar.test.ts: eight ran.
+   - [[the decision on parentheses: parser.md P3.3 asks for a record of every pair of parentheses. What the tree does, and
+     the reason: the site is the `(` that starts any expression; a test there is paid by every parse (parser3.md, decision 3)]]
+   - [[each source of "Known differences of the lint grammar": R4 asks that every case becomes a test of the lint grammar.
+     <n> cases are held as what main makes of them, because their site is one that JavaScript reaches]]
+   - R3 compares through a third binary, the reference text linked into the crates of the head, besides base against head:
+     reason and what it shows (r3report.sh header).
+   From upstream (typescript-go 89d5d5b), for the lint grammar:
+   - No error recovery: the parser stops at its first error; there is no node for a missing type.
+   - `typeof x.#y` is accepted as typescript-go does; tsc 6.0.2 reports TS1003.
+   - The argument of TS1005 in a list (`';' expected.` where the reference says `',' expected.`), and the other items of
+     "Known differences from the first diagnostic of the reference" of API.md.
+   - The nodes: "How the nodes differ from the reference" of API.md (a literal type has no expression node, a modifier
+     list has no range, `Parameter.name` is a `bun_ast::Binding`, no `JSDocOptionalType` and `JSDocVariadicType`).
+   - Class members, parameters and heritage clauses are read by Bun's own productions, not by ports of
+     parseClassElement and parseParameter: only their types go through the lint grammar.
+
+7. PLACES WHERE THE UNIT IS UNSURE
+   - `Annotation::owner` is a bare offset for a binding and for a member key: `class C { [a => 1]: T }` makes the two meet.
+   - The rule that merges wrappers and type arguments of one operand is read from the order of the records; no test
+     covers a source that mixes the two.
+   - An expression inside a type node or an `implements` entry is read under a snapshot that is restored: its wrappers
+     and annotations are not recorded, and a `Ref` with the tag `Symbol` inside it indexes a slot that a later symbol took.
+   - Offsets next to a comment (API.md, "Offsets that a comment moves"): [[fixed by B1 with tests | wrong until B1]].
+   - `ts_metadata` of a decorated member in a lint-parsed tree is what main's skipper computes.
+   - The lint parse in the final binary is reached by no test that CI runs.
+   - 653 sources of the corpora are valid for tsc by the rule of round 2 and rejected by main and by round 1 alike;
+     whether a lint parse reads them was not run.
+   - [[the leak check of CI over the Rust tests: not applicable, the test binary has no ASAN; the eight older files ran with it]]
+   - [[what the clippy gate still reports, if anything: at b882bfc32f p.rs:7996, parse/erased_tests.rs:147, parse/generics.rs:719]]
+
+8. COMMANDS THAT REPRODUCE THE RESULTS (each through /workspace/tools/lk, timeout 3600000 ms, one at a time)
+   cd /workspace/wt/parser
+   bun bd -j8 --version                                            # once: codegen and vendor/ for cargo
+   cargo check -p bun_ast -p bun_js_parser --message-format=short
+   cargo check -p bun_ast -p bun_js_parser --all-targets --message-format=short
+   cargo clippy -p bun_ast -p bun_js_parser --no-deps --keep-going --message-format=short          (and --all-targets)
+   cargo fmt -p bun_ast -p bun_js_parser -- --check
+   cargo test -p bun_js_parser --lib                               # <n> passed
+   cargo test -p bun_js_parser --lib parse::grammar_rows_tests     # the 366 cases
+   bun run rust:miri -p bun_ast
+   bash /workspace/notes/lint/units/parser/round3/proof-behaviour/older-tests.sh plain
+   bash /workspace/notes/lint/units/parser/round3/proof-behaviour/older-tests.sh leak
+   python3 /workspace/notes/lint/tools/commentcop.py <base>...HEAD
+   bun test test/internal/source-lints/                            # reads sources, the installed bun runs it, as in CI
+   bun run build:release -j10                                      # after the commit is pushed; about 40 minutes
+   SAVE=/workspace/notes/lint/units/parser/round3/proof-behaviour/parity bash /workspace/notes/lint/units/parser/grammar-diff/parity.sh <tag> build/release/bun
+   python3 /workspace/notes/lint/tools/symsizes.py /workspace/base/bun-profile.f4d755a9c ; the same for build/release/bun-profile
+   BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 /workspace/notes/lint/tools/cgbench.sh <bun-profile> <out> <tag> 20      (base, head)
+   sh /workspace/notes/lint/units/parser/round3/proof-cost/tools/mkref.sh /tmp/costproof/root /workspace/wt/parser
+   sh /workspace/notes/lint/units/parser/round3/proof-cost/top-down-1b/r3cycle.sh ref /tmp/costproof/root/reflink
+   sh /workspace/notes/lint/units/parser/round3/proof-cost/top-down-1b/r3report.sh <out>
+   python3 /workspace/notes/lint/units/parser/round2/api-md-gates-report/bottom-up/api_surface.py /workspace/wt/parser /workspace/notes/lint/units/parser/API.md <new interface files> | tail -1
+   python3 /workspace/notes/lint/units/parser/round2/api-md-gates-report/bottom-up/copy_audit.py /workspace/wt/parser <new files>
+   python3 /workspace/notes/lint/units/parser/round2/api-md-gates-report/bottom-up/panic_audit.py /workspace/wt/parser <base>
+   /workspace/tools/save-notes "parser: <what>"                    # after each change of API.md, NEEDS.md or the report

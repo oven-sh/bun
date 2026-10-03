@@ -1,0 +1,2743 @@
+# API of the parser unit
+
+What other units call: the lint parse, its side table and the type nodes. Other units read only this file. Every
+section describes the commit that "State of this file" names. A sentence about a run names the command that ran.
+
+## State of this file
+
+Describes `[[FILL head: git -C /workspace/wt/parser rev-parse --short=10 HEAD, the last commit of round 3]]` on
+`robobun/abbc0c92/lint-parser`. The branch holds main up to
+`[[FILL base: the commit that /workspace/base/bun.f4d755a9c --revision prints (fa467dcae2 on 2026-10-03); git merge-base --is-ancestor <it> HEAD must succeed]]`,
+and the base binaries of the two proofs are the release build of that commit of main (`/workspace/base/README.txt`:
+the names `bun.f4d755a9c` and `bun-profile.f4d755a9c` are links to it).
+
+What ran in the worktree at that commit, each through `/workspace/tools/lk` with a timeout of 3600000 ms:
+
+| command | result |
+| --- | --- |
+| `cargo check -p bun_ast -p bun_js_parser --message-format=short`, and the same with `--all-targets` | [[FILL gate-check: "clean", or every finding]] |
+| `cargo clippy -p bun_ast -p bun_js_parser --no-deps --keep-going --message-format=short`, and the same with `--all-targets` | [[FILL gate-clippy: "clean". At b882bfc32f it was not: needless_pass_by_value at p.rs:7996 (serialize_metadata), and with --all-targets parse/erased_tests.rs:147 and parse/generics.rs:719]] |
+| `cargo fmt -p bun_ast -p bun_js_parser -- --check` | [[FILL gate-fmt]] |
+| `cargo test -p bun_js_parser --lib` | [[FILL gate-cargotest: "<n> passed; 0 failed". 70 at the start of round 3; 75 with the five tests of parse::grammar_rows_tests]] |
+| `bun run rust:miri -p bun_ast` | [[FILL gate-miri: the seven tests of ts_nodes.rs and the three of msg_code_tests]] |
+| `bash /workspace/notes/lint/units/parser/round3/proof-behaviour/older-tests.sh plain` | [[FILL gate-older-plain: its RESULT line and the eight counts]] |
+| `bash /workspace/notes/lint/units/parser/round3/proof-behaviour/older-tests.sh leak` | [[FILL gate-older-leak]] |
+| `bun bd test test/bundler/transpiler/lint-parse*.test.ts` | [[FILL gate-lint-parse-tests: the counts, or "no such file: NEEDS.md N3"]] |
+| `python3 /workspace/notes/lint/tools/commentcop.py <base>...HEAD` | [[FILL gate-commentcop: "0 in 0 files"]] |
+| `bun test test/internal/source-lints/` (reads sources, starts no build) | [[FILL gate-source-lints]] |
+| the behaviour proof, "Proofs of round 3" | [[FILL gate-r2: the RESULT line of parity.sh]] |
+| the cost proof, "Proofs of round 3" | [[FILL gate-r3: js-control +0 Ir, +0 Bc; the tests per KB of the four TypeScript groups]] |
+
+The eight older files are those of parser.md P1.6 without `typescript-grammar.test.ts`:
+`test/bundler/transpiler/decorator-metadata.test.ts`, `test/bundler/bundler_decorator_metadata.test.ts`,
+`test/bundler/transpiler/transpiler.test.js`, `test/bundler/esbuild/ts.test.ts`,
+`test/bundler/transpiler/decorators.test.ts`, `test/js/bun/typescript/type-export.test.ts`,
+`test/bundler/transpiler/transpiler-stack-overflow.test.ts`, `test/cli/run/transpiler-cache.test.ts`. Each is
+byte-identical to main (`git diff --quiet <base> HEAD -- <file>`).
+
+What waits on another unit (`NEEDS.md`):
+
+| | what | state |
+| --- | --- | --- |
+| N1 | a diagnostic code on `bun_ast::Msg` | landed in `4d9b8e5139`: `Metadata::Code(u32)`, `Msg::code()`, `Log::add_range_error_with_code`. [[CHECK n1-used: after R5 (B2) the parser writes the code on the message of a failed lint parse; say "the parser writes it since <commit>" or "the parser does not write it yet: the codes are in SyntaxErrors"]] |
+| N2 | a caller of the public items in another crate | [[CHECK n2: open at b882bfc32f: nothing outside src/js_parser calls parse_for_lint; src/runtime/cli/lint_command.rs:241 calls parse_only for JavaScript and Parser::parse for TypeScript. Re-read the line at the final commit]] |
+| N3 | JavaScript that reaches a lint parse | open for the same reason: no `lint-parse*.test.ts` can exist yet |
+| N4 | a CI job that runs `cargo test -p bun_js_parser --lib` | open. `bun_ast` is in `MIRI_CRATES` (`scripts/rust-miri.ts`), so the tests of `ts_nodes.rs` run in CI |
+
+## What changed for a caller in round 3
+
+Round 3 put a parse without lint back to the parser of main and gave the lint parse its own grammar. The shape of
+`ParsedForLint`, of the four tables of the side table and of the type nodes is the one of round 1, with these
+differences. Each is described in its section.
+
+- A parse without lint is main again, byte for byte: what it accepts, what it rejects, every error text, every
+  `emitDecoratorMetadata` value. The 366 cases that round 1 asserted for it are tests of the lint parse now, and what
+  main does with them is listed in "Known differences of a parse without lint".
+- `EXPECTED_VERSION` of the runtime transpiler cache is 33 again: the output of the transpiler does not change.
+- `TypeSink::STRICT` is gone, with `BUILDS`, `Sub` and `K`. A site asks the side table, not the sink ("How a site
+  knows which parse it is").
+- [[PICK parens: the decision on parentheses records. Check: the case of a `.js` source in wrappers::tests::records_are_those_of_the_known_sources, and `grep -n "starts_for_parse_only\|fn lint" src/js_parser/parse/parse_prefix.rs` around pfx_t_open_paren]]
+  Parentheses: a lint parse of TypeScript records every pair of parentheses around an expression, as before. A lint
+  parse of JavaScript records none: `wrappers.records` is empty for a `.js`, `.jsx`, `.mjs` or `.cjs` file. A pass
+  that needs the parentheses of a JavaScript file reads the tokens between two nodes.
+  [[OR]]
+  Parentheses: no parse records them. `WrapperData::Parenthesized` is never made, in TypeScript and in JavaScript: the
+  site is the `(` that starts any expression, which every parse runs. A pass that needs parentheses reads the tokens
+  between two nodes.
+  [[END]]
+- A lint parse of JavaScript fills none of the four tables ("What a lint parse of JavaScript records").
+- [[CHECK rows-as-main: the sources that a lint parse reads as main reads them are the table KNOWN_DIFFERENCES of src/js_parser/parse/grammar_rows_tests.rs; when it is empty delete this item and the section "Known differences of the lint grammar"]]
+  Some valid TypeScript that round 1 read is read by a lint parse as main reads it, because its site is one that
+  JavaScript reaches: "Known differences of the lint grammar" lists the sources.
+- [[CHECK comments-shape: after R5 (B1). New and additive: `StartsForParseOnly::comments` (module `bun_js_parser::parse::comments`), the comment directives and the pragmas. Name each new public field, type and function here, with the commit]]
+- [[CHECK codes-shape: after R5 (B2). Name what changed: the code is read with `Msg::code()`; `SyntaxErrors` keeps the range and the text of the reference; whether `SyntaxError::code` stays; whether `Parser::init_for_lint` and `Parser::init_for_lint_with_codes` were added]]
+- [[CHECK rejects-shape: after R5 (B3, B4). Sources that a lint parse of round 1 accepted and rejects now: name the list of "What a lint parse rejects"]]
+
+## The two grammars
+
+Round 1 gave every parse one type grammar that reads what tsc reads. It was measured on release builds against main
+(`/workspace/notes/lint/goals/parser3.md`): a parse without lint paid +10.7% and +14.6% instructions in the two groups
+of declaration files, and the parser text grew by 269,563 bytes. A parse without `--lint` pays nothing, so there are
+two grammars now, one for each job.
+
+| | a parse without lint | a lint parse |
+| --- | --- | --- |
+| entry | `Parser::parse`, `Parser::scan_imports`, `Parser::parse_only`, every other caller of `P` | `Parser::parse_for_lint`, `Parser::parse_for_lint_with_codes` |
+| type grammar | the skipper of main: `src/js_parser/parse/parse_skip_typescript.rs` | [[FILL lint-grammar-files: the files of the lint grammar, e.g. `src/js_parser/parse/lint_types.rs`; `git diff --stat <base> HEAD -- src/js_parser` names them, and r3report.sh lists them as NEW in siteaudit.txt]] |
+| sinks | `Discard`, `DecoratorMetadata` (`src/js_parser/parse/type_sink.rs`) | `Build` alone |
+| reads | what main reads | what tsc 6.0.2 and typescript-go 89d5d5b read |
+| makes | nothing, or the `ts::Metadata` of a decorated member | `bun_ast::ts` nodes and the records of the side table |
+| errors | the texts of main | the same log, with the code of the reference ("Syntax errors of a lint parse") |
+
+### A parse without lint
+
+It runs the type skipper of main with main's behaviour: what it accepts, what it rejects, every error text, every
+`emitDecoratorMetadata` value. The text of `parse_skip_typescript.rs` is main's control flow in the form of commit
+`2d28b35c01` ("js_parser: make the type grammar generic over a sink"; `parser3.md` names it `6b7ade0f2a`, which this
+clone does not have), with one later change: `Metadata::MDot` holds its names as a `StoreSlice<Ref>` in the arena, and
+`TypeSink::member` takes the arena (`be1ebe5295`).
+
+```rust
+/// What the type grammar keeps of the syntax it reads.
+pub(crate) trait TypeSink {
+    /// What one type leaves behind.
+    type Out: Default;
+    /// Binding level of the type after the ":" of a conditional type.
+    const CONDITIONAL_FALSE_LEVEL: Level;
+    // literal, keyword, function_type, parenthesized, keyof_type, readonly_type, typeof_query, tuple_type,
+    // object_type, template_literal_type, reference, member, index_or_array, union_left, union_right,
+    // intersection_left, intersection_right, conditional_true, conditional_false
+}
+```
+
+| sink | `Out` | `CONDITIONAL_FALSE_LEVEL` | used by |
+| --- | --- | --- | --- |
+| `Discard` | `()` | `Level::Lowest` | `skip_type_script_type`, `skip_typescript_return_type`, `skip_type_script_type_arguments`, and every other `skip_*` function |
+| `DecoratorMetadata` | `bun_ast::ts::Metadata` | `Level::BitwiseAnd` | `emitDecoratorMetadata`: `skip_type_script_type_with_metadata`, `skip_typescript_return_type_with_metadata` |
+
+[[CHECK sink-form: compare the trait and the table with src/js_parser/parse/type_sink.rs at the final commit: `grep -n "const \|type Out\|impl TypeSink for" src/js_parser/parse/type_sink.rs`]]
+
+`TypeSink::CONDITIONAL_FALSE_LEVEL` is back. Round 1 removed it (parser.md P1.2) by making both sinks read the type
+after the `:` of a conditional type at one level, which changed what a parse without lint reads. Main reads it at two
+levels, and a parse without lint is main.
+
+Every site outside the type grammar that round 1 changed runs main's code when the parse has no side table: the
+expression handlers (`as`, `satisfies`, `!`, `<T>x`, parentheses, type arguments), the statement reader, class
+members, parameters, enum members, import and export paths. [[CHECK shared-text: r3report.sh, siteaudit.txt ends with "PASS": every shared file is the reference text plus sites]]
+
+### A lint parse
+
+It reads a type with the productions of `internal/parser/parser.go` of typescript-go under their names
+(`parse_type`, `parse_union_type_or_higher`, `parse_intersection_type_or_higher`, `parse_type_operator_or_higher`,
+`parse_postfix_type_or_higher`, `parse_non_array_type`, `parse_function_or_constructor_type_to_error`, ...) and builds
+a `bun_ast::ts` node for each. [[CHECK lint-grammar-names: the names above are those of b882bfc32f; list the ones the lint grammar file has]]
+It is its own set of functions in its own files and is compiled for the `Build` sink only: no function of it has a
+`Discard` or a `DecoratorMetadata` instantiation, and no function of the skipper has a `Build` one.
+[[CHECK no-cross-instantiation: `python3 /workspace/notes/lint/tools/symsizes.py build/release/bun-profile` and `llvm-nm -C build/release/bun-profile | grep -c 'skip_type_script_type_with_opts::<.*Build>'` is 0]]
+
+The entries that the tests of the crate call are `pub` on `P` (no other crate holds a `P`):
+
+```rust
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+    /// Reads one type at `level` and builds its node.
+    pub fn build_type_script_type(&mut self, level: Level) -> Result<ts::Type, Error>;
+    /// parseTypeOrTypePredicate: reads a return type and builds its node.
+    pub fn build_typescript_return_type(&mut self) -> Result<ts::Type, Error>;
+    /// Reads type arguments, if "<" starts them here, and builds their list. The offset is the one after ">".
+    pub fn build_type_script_type_arguments<const IS_INSIDE_JSX_ELEMENT: bool, const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool>(
+        &mut self,
+    ) -> Result<Option<(ts::List<ts::Type>, u32)>, Error>;
+    /// parseTypeParameters: reads type parameters, if "<" starts them here, and builds their list. The offset is the one after ">".
+    pub fn build_type_script_type_parameters(&mut self) -> Result<Option<(ts::List<ts::TypeParameter>, u32)>, Error>;
+}
+```
+
+[[CHECK build-entries: the four signatures are those of src/js_parser/parse/type_sink.rs:1394-1462 at b882bfc32f; R1 moves them: `grep -rn "pub fn build_" src/js_parser`]]
+
+### How a site knows which parse it is
+
+By the side table, at run time. `P::starts_for_parse_only` is `None` in `Parser::parse` and `Parser::scan_imports`
+and holds the side table in a lint parse. `Parser::parse_only` has a table too, but it is the parser without
+TypeScript (`P<'a, false, false>`): in a TypeScript parser the option is set only by a lint parse. A site outside
+the type grammar where TypeScript-only syntax is dropped tests that option once, after the token test that guarded
+the site on main and inside `if Self::IS_TYPESCRIPT_ENABLED`, and calls a `#[cold]` function of the lint parse when
+it is set:
+
+```rust
+[[FILL site-shape: one real site, copied from the code. The audit expects this shape (siteaudit2.py, default --pred `(?:p|self)\.lint\(\)`):
+if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon {
+    if p.lint() {
+        return p.lint_type_annotation(owner);
+    }
+    p.lexer.next()?;
+    p.skip_type_script_type(Level::Lowest)?;
+}
+and the predicate itself, with its doc comment]]
+```
+
+That test is the whole cost of the lint parse for a parse without lint: one load and one conditional branch at a
+site that only TypeScript syntax reaches. With the option `None` the lines that run are main's. The compile-time
+switch of round 1, `TypeSink::STRICT`, is gone: a sink no longer says which parse it serves, because the skipper has
+no lint behaviour and the lint grammar has no other sink.
+
+JavaScript pays nothing: the parsers without TypeScript (`P<'a, false, false>` and `P<'a, false, true>`) have no
+added test, and their machine code is the one of the reference text.
+[[CHECK js-zero: r3report.sh prints "strict  ref-head  IDENT <n>  OFFSETS 0  CONSTS 0  DIFF 0 ... | PASS" and "0 calls into lint code from functions matching ..."]]
+Main itself reads the option at three places that JavaScript runs, for `Parser::parse_only`: the element of a class
+(`parse_class`), the `async` prefix (`parse_async_prefix_expr`) and the expression body of an arrow function
+(`parse_arrow_body`). A lint parse may hang its work behind those three tests, which cost what they cost on main.
+
+[[FILL site-table: every site, from `python3 round3/proof-cost/top-down-1b/siteaudit2.py --ref <ref tree> --head /workspace/wt/parser --sites` and the executed counts of sites.cg.<group>.txt:
+| file, function | token test that guards it | what a lint parse calls | executed tests in bun-types, typescript-lib, src-js, tsx (20, 20, 20, 2000 passes) |]]
+
+`P::is_lint_parse()` (`matches!(&self.starts_for_parse_only, Some(starts) if starts.is_lint)`) tells the side table
+of a lint parse from the one of `Parser::parse_only`. [[CHECK is-lint-readers: list its readers at the final commit: `grep -rn "is_lint_parse()" src/js_parser --include=*.rs | grep -v _tests`. Each must be lint-only code, or a path that only an error takes]]
+
+### What a lint parse reads with which grammar
+
+With the lint grammar, building nodes: every type that it records (annotations, return types and predicates, the type
+of a `this` parameter, the types of `as`, `satisfies` and `<T>x`, type arguments after an expression, in JSX and in
+heritage entries, every list of type parameters).
+[[PICK alias-interface: what a lint parse does with the type of a type alias, the `extends` clause and the members of an interface, and an index signature of a class. Check: `grep -n "skip_type_script_type_stmt\|skip_type_script_interface_stmt\|skip_class_index_signature" src/js_parser/parse/*.rs` and the rows of grammar_rows_tests.rs with `type X = ...` and `interface I ...`]]
+The type of a type alias, the `extends` clause and the members of an interface and an index signature of a class are
+read with the lint grammar too, so that a lint parse takes what tsc takes there (`type X = (a = 1) => void`,
+`interface I extends a() {}`). The nodes are dropped: these types have no record ("What has no record").
+[[OR]]
+The type of a type alias, the `extends` clause and the members of an interface and an index signature of a class are
+read with the lint grammar and recorded: [[FILL alias-interface-records: the record of each, with its key]].
+[[END]]
+
+With the skipper of main, in a lint parse too: [[FILL lint-uses-skipper: what a lint parse still reads with `skip_*` functions, each with what that means for valid TypeScript that main rejects there. At b882bfc32f these were the type that decorator metadata is made of (`lint_type_metadata`, read before the type is built) and the `<...>` that decides between a cast and an arrow function. Write "nothing" if none is left]]
+
+Decorator metadata in a lint parse: `G::Property::ts_metadata` and the metadata of a parameter are what the skipper
+of main computes, the values of "Decorator metadata that differs from tsc" included. No pass of a lint run prints
+them. [[CHECK lint-metadata: annotation_tests::a_decorated_member_keeps_its_metadata_beside_its_node, and a decorated member whose type main's skipper rejects, e.g. `class C { @d p: (a = 1) => void }`: the lint parse must take it]]
+
+### The cache of the runtime transpiler
+
+`EXPECTED_VERSION` in `src/jsc/RuntimeTranspilerCache.rs` is 33, as on main, and the line about version 34 is
+removed: the output of the transpiler does not change. [[CHECK cache-33: `git diff <base> HEAD -- src/jsc/RuntimeTranspilerCache.rs` is empty; the step `runtime` of parity.sh prints "versions 33" on both sides]]
+
+## Known differences of a parse without lint
+
+[[CHECK known-generated: this section and the next are the output of gen/lists3.mjs (`bash run.sh <state>` in round3/lint-grammar-tests-r4/bottom-up-1a) for `api-known-differences.as-without-lint-209-212-124-296-297-300-308.txt`. Make it again for the cases of `KNOWN_DIFFERENCES` of the grammar_rows_tests.rs that is in the tree, and for the base binary of the day. File and line after "Where main decides" are those of main at f4d755a9cf, whose parser files fa467dcae2 has unchanged; the branch has the same functions in the sink form, at other lines]]
+
+A parse without lint is the parser of main: what it accepts, what it rejects and what it prints are those of
+fa467dcae2 (its parser is the one of f4d755a9cf: no file under src/js_parser or src/ast differs). The lists below are where that parser differs from tsc 6.0.2 on TypeScript that tsc takes. They are
+defects of main. This work does not fix them: a fix changes what every run and every bundle reads, and it costs the
+type skipper its speed. Until this round, four test files (`test/bundler/transpiler/typescript-grammar*.test.ts`,
+366 cases) asserted the other behaviour for a parse without lint. They are gone, and each case is a case of
+`src/js_parser/parse/grammar_rows_tests.rs`, which reads the same source with a lint parse.
+
+"Valid" means what it meant in round 2: tsc reports no parse diagnostic and its checker reports no grammar error.
+Where the checker of tsc reports another rule for the form itself, the heading names its code.
+
+### Valid TypeScript that a parse without lint rejects
+
+222 sources in 23 groups. Each line is the source and the first error of main, with its line and column.
+A source is read with the `ts` loader unless the line says otherwise. "In the corpora" counts the sources of the
+three corpora of the differential harness (`testrows`, `targeted`, `small-sub`) that main rejects for the same cause.
+
+Inside the type skipper (`src/js_parser/parse/parse_skip_typescript.rs`):
+
+**A reserved word is the name of a type reference.** 25 sources, 185 in the corpora for the cause "a reserved word is the name of a type reference". Where main decides: parse_skip_typescript.rs:239 skip_type_script_type_with_opts, the arm of no type: Lexer::unexpected.
+
+```
+"let x: if;"  =>  Unexpected if (1:8)   [ts; tsx]
+"let x: class;"  =>  Unexpected class (1:8)
+"let x: function;"  =>  Unexpected function (1:8)
+"let x: in;"  =>  Unexpected in (1:8)
+"let x: extends;"  =>  Unexpected extends (1:8)
+"let x: super;"  =>  Unexpected super (1:8)
+"let x: delete;"  =>  Unexpected delete (1:8)
+"let x: if.x;"  =>  Unexpected if (1:8)
+"let x: class<T>;"  =>  Unexpected class (1:8)
+"let x: | if;"  =>  Unexpected if (1:10)
+"let x: A | if;"  =>  Unexpected if (1:12)
+"let x: A & class;"  =>  Unexpected class (1:12)
+"let x: keyof if;"  =>  Unexpected if (1:14)
+"let x: (if);"  =>  Unexpected if (1:9)
+"let x: (class);"  =>  Unexpected class (1:9)
+"let x: `${if}`;"  =>  Unexpected if (1:11)
+"const v = <if>x;"  =>  Unexpected if (1:12)
+"const v = <class>x;"  =>  Unexpected class (1:12)
+"const v = <enum>x;"  =>  Unexpected enum (1:12)
+"const v = x as if;"  =>  Unexpected if (1:16)
+"const v = x as var;"  =>  Unexpected var (1:16)
+"const v = x satisfies if;"  =>  Unexpected if (1:23)
+"const v = (): if => x;"  =>  Expected "=>" but found ":" (1:13)
+"x as if;"  =>  Unexpected if (1:6)   [tsx]
+"x as var;"  =>  Unexpected var (1:6)   [tsx]
+```
+
+**A reserved word is the label of a rest element of a tuple.** 4 sources, 201 in the corpora for the cause "a reserved word is the label of a rest element of a tuple". Where main decides: parse_skip_typescript.rs:239 skip_type_script_type_with_opts, the tuple arm (H6).
+
+```
+"type X = [...const: A[]];"  =>  Unexpected "const" (1:14)
+"type X = [...in: A[]];"  =>  Unexpected in (1:14)
+"type X = [...class: A[]];"  =>  Unexpected class (1:14)
+"type X = [...if: A[]];"  =>  Unexpected if (1:14)
+```
+
+**An import type takes type arguments; the value of an import attribute is an expression; `.<` stands before type arguments.** 9 sources, 43 in the corpora for the cause "an import type takes type arguments and an expression in an attribute; .< stands before type arguments". Where main decides: parse_skip_typescript.rs:239 skip_type_script_type_with_opts, the import arm; :1024 skip_type_script_object_type for the attributes.
+
+```
+"let x: typeof import(\"x\")<C>;"  =>  Expected ";" but found "<" (1:26)
+"type X = typeof import(\"x\")<C>;"  =>  Expected ";" but found "<" (1:28)
+"let x: import(\"x\")<T>;"  =>  Expected ";" but found "<" (1:19)
+"type X = import(\"x\")<T>;"  =>  Expected ";" but found "<" (1:21)
+"let x: import(\"x\", { with: { a: \"b\" } })<T>;"  =>  Expected ";" but found "<" (1:41)
+"let x: import(\"x\", { with: { a: \"b\" + \"c\" } });"  =>  Unexpected + (1:37)
+"type X = import(\"x\", { with: { a: \"b\" + \"c\" } });"  =>  Unexpected + (1:39)
+"let x: import(\"x\").A.<T>;"  =>  Expected identifier but found "<" (1:22)
+"type X = import(\"x\").A.<T>;"  =>  Expected identifier but found "<" (1:24)
+```
+
+**The type of an assertion predicate starts on the line after its subject.** 5 sources, 9 in the corpora for the cause "the type of an assertion predicate starts on the next line". Where main decides: parse_skip_typescript.rs:20 skip_typescript_return_type and the asserts arm of :239.
+
+```
+"type X = (a) => asserts a\nis B;"  =>  Expected ";" but found "B" (2:4)
+"const f = (a): (a) => asserts a\nis B => 0;"  =>  Expected ";" but found ":" (1:14)
+"const f = (a): asserts a\nis B => 0;"  =>  Expected ";" but found ":" (1:14)
+"const f = (a): asserts this\nis B => 0;"  =>  Expected ";" but found ":" (1:14)
+"function f(): asserts this\nis B { throw 0 }"  =>  Expected ";" but found "B" (2:4)
+```
+
+**A parameter of a signature has an initializer (the checker of tsc: TS2371, no grammar error).** 7 sources, 176 in the corpora for the cause "a parameter of a signature has an initializer". Where main decides: parse_skip_typescript.rs:60 skip_type_script_binding, :157 skip_typescript_fn_args, :1024 skip_type_script_object_type (H4, H7).
+
+```
+"type X = { a(b = 1): A };"  =>  Expected ")" but found "=" (1:16)
+"let x: { a(b = 1): A };"  =>  Expected ")" but found "=" (1:14)
+"interface I { (a = 1): A }"  =>  Expected ")" but found "=" (1:18)
+"let g: (a = 1) => void;"  =>  Expected ")" but found "=" (1:11)   [ts; tsx]
+"let x: ({ a = 1 }) => void;"  =>  Unexpected = (1:13)
+"let x: A<(a = 1) => void>;"  =>  Expected ")" but found "=" (1:13)
+"class C extends B<(a = 1) => void> {}"  =>  Expected ")" but found "=" (1:22)
+```
+
+**An array pattern of a signature has a hole.** 6 sources, 58 in the corpora for the cause "a binding pattern of a signature is read as a binding pattern". Where main decides: parse_skip_typescript.rs:60 skip_type_script_binding.
+
+```
+"let x: ([a, , b]) => void;"  =>  Unexpected , (1:13)
+"type X = ([a, , b]) => void;"  =>  Unexpected , (1:15)
+"let x: new ([a, , b]) => A;"  =>  Unexpected , (1:17)
+"type X = { ([a, , b]): void };"  =>  Unexpected , (1:17)
+"type X = { new ([a, , b]): A };"  =>  Unexpected , (1:21)
+"type X = A<([a, , b]) => void>;"  =>  Unexpected , (1:17)
+```
+
+**A modifier stands before a parameter of a signature (the checker of tsc: TS2369, no grammar error).** 2 sources, 110 in the corpora for the cause "a modifier stands before a parameter that is no parameter property". Where main decides: parse_skip_typescript.rs:157 skip_typescript_fn_args, :1024 skip_type_script_object_type.
+
+```
+"type X = { a(public b: B): A };"  =>  Expected ")" but found "b" (1:21)
+"let x: (public a: A) => void;"  =>  Expected ")" but found "a" (1:16)
+```
+
+**`out` and `in` name a type or a type parameter.** 27 sources, 63 in the corpora for the cause "out or in names a type or a type parameter". Where main decides: parse_skip_typescript.rs:1145 skip_type_script_type_parameters logs `The modifier "out" is not valid here` through the log, also inside an attempt that goes back (H3).
+
+```
+"function f<out>() {}"  =>  The modifier "out" is not valid here (1:12)
+"const f = function <out>() {};"  =>  The modifier "out" is not valid here (1:21)
+"function f<out = A>() {}"  =>  The modifier "out" is not valid here (1:12)
+"const f = function <out = A>() {};"  =>  The modifier "out" is not valid here (1:21)
+"function f<const out>() {}"  =>  The modifier "out" is not valid here (1:18)
+"const f = function <const out>() {};"  =>  The modifier "out" is not valid here (1:27)
+"const f = <out>(a): T => a;"  =>  The modifier "out" is not valid here (1:12)
+"const f = <out>(a: T) => a;"  =>  The modifier "out" is not valid here (1:12)
+"const f = <out = A>(a): T => a;"  =>  The modifier "out" is not valid here (1:12)
+"const f = <out = A>(a: T) => a;"  =>  The modifier "out" is not valid here (1:12)
+"const f = <const out>(a): T => a;"  =>  The modifier "out" is not valid here (1:18)
+"const f = function g<out>() {};"  =>  The modifier "out" is not valid here (1:22)   [tsx]
+"async function f<out>() {}"  =>  The modifier "out" is not valid here (1:18)   [tsx]
+"const f = function g<out = A>() {};"  =>  The modifier "out" is not valid here (1:22)   [tsx]
+"async function f<const out>() {}"  =>  The modifier "out" is not valid here (1:24)   [tsx]
+"const f = <out = A>() => 0;"  =>  The modifier "out" is not valid here (1:12)   [tsx]
+"const f = async <out = A>() => 0;"  =>  The modifier "out" is not valid here (1:18)   [tsx]
+"const v = <out>x;"  =>  The modifier "out" is not valid here (1:12)
+"<out>x;"  =>  The modifier "out" is not valid here (1:2)
+"const v = <out>(x);"  =>  The modifier "out" is not valid here (1:12)
+"const v = <in>x;"  =>  The modifier "in" is not valid here (1:12)
+"const v = <in>(x);"  =>  The modifier "in" is not valid here (1:12)
+"const v = <out>(x) => x;"  =>  The modifier "out" is not valid here (1:12)
+"const v = <out, T>(x) => x;"  =>  The modifier "out" is not valid here (1:12)
+"const v = <out = A>(x) => x;"  =>  The modifier "out" is not valid here (1:12)
+"f(<out, T>(x) => x);"  =>  The modifier "out" is not valid here (1:4)   [tsx]
+"f(<out = A>(x) => x);"  =>  The modifier "out" is not valid here (1:4)   [tsx]
+```
+
+**A comparison follows the type after `as` and `satisfies`.** 5 sources, 5 in the corpora for the cause "a comparison follows the type after as and satisfies". Where main decides: parse_skip_typescript.rs:1395 skip_type_script_type_arguments takes T::TLessThanEquals for the start of type arguments.
+
+```
+"const v = x as T <= y;"  =>  Unexpected = (1:19)
+"x as T <= y;"  =>  Unexpected = (1:9)
+"const v = x satisfies T <= y;"  =>  Unexpected = (1:26)
+"f(x as T <= y);"  =>  Unexpected = (1:11)   [tsx]
+"const v = [x as T <= y];"  =>  Unexpected = (1:20)   [tsx]
+```
+
+**An interface extends an expression (the checker of tsc: TS2499, no grammar error).** 2 sources, 207 in the corpora for the cause "an interface extends, or a class implements, an expression". Where main decides: parse_skip_typescript.rs:1352 skip_type_script_interface_stmt reads each entry with skip_type_script_type (H8).
+
+```
+"interface I extends a() {}"  =>  Expected "{" but found "(" (1:22)
+"interface I extends a.b() {}"  =>  Expected "{" but found "(" (1:24)
+```
+
+Outside the type skipper:
+
+**A class implements an expression (the checker of tsc: TS2500, no grammar error).** 1 sources, 207 in the corpora for the cause "an interface extends, or a class implements, an expression". Where main decides: parse/mod.rs:163 parse_class, `if Self::IS_TYPESCRIPT_ENABLED { if p.lexer.is_contextual_keyword(b"implements")`: each entry is skip_type_script_type (H8).
+
+```
+"class C implements a() {}"  =>  Expected "{" but found "(" (1:21)
+```
+
+**A modifier stands before a parameter of a function or method that is no constructor (the checker of tsc: TS2369, no grammar error).** 2 sources, 110 in the corpora for the cause "a modifier stands before a parameter that is no parameter property". Where main decides: parse_fn.rs:251 `if is_identifier && opts.is_constructor`: every parameter of a TypeScript file passes it. main fails later at parse_fn.rs:365 `p.lexer.expect(T::TCloseParen)`, after it declared the modifier as a parameter.
+
+```
+"function f(public a: A) {}"  =>  Expected ")" but found "a" (1:19)
+"class C { m(public a: A) {} }"  =>  Expected ")" but found "a" (1:20)
+```
+
+**A comma follows the rest parameter of a signature of a declared class.** 4 sources, 4 in the corpora for the cause "a comma follows the rest parameter of a signature of a declared class". Where main decides: parse_fn.rs:331 `if func.flags.contains(Flags::Function::HasRestArg)`: the else of `opts.is_typescript_declare` is `p.lexer.expect(T::TCloseParen)` (parse_fn.rs:337) at a comma, which always fails.
+
+```
+"declare class C { m(...a,): void; }"  =>  Expected ")" but found "," (1:25)
+"declare class C { constructor(...a,); }"  =>  Expected ")" but found "," (1:35)
+"declare class C { m(...a: A[],): void; }"  =>  Expected ")" but found "," (1:30)
+"declare class C { constructor(...a: A[],); }"  =>  Expected ")" but found "," (1:40)
+```
+
+**A comma ends an index signature of a class.** 4 sources, 4 in the corpora for the cause "a comma ends an index signature of a class". Where main decides: parse_property.rs:301 `if p.lexer.token == T::TColon && was_identifier && opts.is_class` inside `if Self::IS_TYPESCRIPT_ENABLED`, then expect_or_insert_semicolon at :309.
+
+```
+"class C { [k: string]: T, }"  =>  Expected ";" but found "," (1:25)
+"abstract class C extends B { [k: string]: T, }"  =>  Expected ";" but found "," (1:44)
+"const c = class { [k: string]: T, };"  =>  Expected ";" but found "," (1:33)
+"declare class C { [k: string]: T, }"  =>  Expected ";" but found "," (1:33)
+```
+
+**`accessor` is a modifier with experimentalDecorators.** 6 sources, 15 in the corpora for the cause "accessor is a modifier without standard decorators". Where main decides: parse_property.rs:464 PropertyModifierKeyword::PAccessor asks `p.options.features.standard_decorators` (:468): without it main reads a property named accessor and fails at the name after it.
+
+```
+"class C { accessor x: T; }"  =>  Expected ";" but found "x" (1:20)   [ts, experimentalDecorators]
+"class C { static accessor x = 1; }"  =>  Expected ";" but found "x" (1:27)   [ts, experimentalDecorators]
+"class C { accessor #x: T; }"  =>  Expected ";" but found "#x" (1:20)   [ts, experimentalDecorators]
+"class C { static accessor #x = 1; }"  =>  Expected ";" but found "#x" (1:27)   [ts, experimentalDecorators]
+"abstract class C extends B { abstract accessor x: T; }"  =>  Expected ";" but found "x" (1:48)   [ts, experimentalDecorators]
+"declare class C { accessor x: T; }"  =>  Expected ";" but found "x" (1:28)   [ts, experimentalDecorators]
+```
+
+**`as` and `satisfies` name a type alias, an interface or a namespace.** 35 sources, 37 in the corpora for the cause "as or satisfies names a type alias, an interface or a namespace". Where main decides: parse_stmt.rs:1706 parse_stmt_fallthrough reads the expression first, so parse_suffix.rs:23 sfx_handle_typescript_as reads a cast of the keyword: `type as = 1` fails in the type after as, `interface as {}` is the cast and the arm TsStmtInterface (parse_stmt.rs:1808) then finds no name. The keyword arms of parse_stmt.rs:1776 parse_stmt_fallthrough_ts_keyword and the Err of parse_expr_or_let_stmt (parse_stmt.rs:1728) are free places; both have to put the lexer back to the token after the keyword.
+
+```
+"type as = 1"  =>  Unexpected = (1:9)
+"declare type as = 1"  =>  Unexpected = (1:17)
+"type satisfies = 1"  =>  Unexpected = (1:16)
+"interface as {}"  =>  Expected identifier but found end of file (1:15)
+"export interface as {}"  =>  Expected identifier but found end of file (1:22)
+"interface satisfies {}"  =>  Expected identifier but found end of file (1:22)
+"declare namespace as {}"  =>  Unexpected "namespace" (1:9)
+"namespace as { export const x = 1; }"  =>  Unexpected = (1:31)   [ts; tsx]
+"namespace as.b { export const x = 1; }"  =>  Unexpected . (1:13)
+"namespace satisfies { export const x = 1; }"  =>  Unexpected = (1:38)
+"type as = 1; let x: as;"  =>  Unexpected = (1:9)   [ts; tsx]
+"type as<T> = T;"  =>  Expected "(" but found "=" (1:12)
+"type /* c */ as = 1"  =>  Unexpected = (1:17)
+"type as\n= 1"  =>  Unexpected = (2:1)
+"let type: any; type as = 1;"  =>  Unexpected = (1:24)
+"function f() { type as = 1; return 1 as as }"  =>  Unexpected = (1:24)
+"{ type satisfies = 1 }"  =>  Unexpected = (1:18)
+"export declare type satisfies = 1"  =>  Unexpected = (1:31)
+"interface as {}; foo()"  =>  Expected identifier but found ";" (1:16)
+"interface as<T> extends B<T> { a: T }"  =>  Expected "(" but found "extends" (1:17)
+"interface satisfies extends B {}"  =>  Unexpected extends (1:21)
+"declare interface as { a: 1 }"  =>  Expected identifier but found end of file (1:29)
+"export declare interface as {}"  =>  Expected identifier but found end of file (1:30)
+"export default interface as {}"  =>  Expected identifier but found end of file (1:30)
+"function f() { interface as {} }"  =>  Expected identifier but found "}" (1:32)
+"namespace N { export interface as {} }"  =>  Expected identifier but found "}" (1:38)
+"declare global { interface as {} }"  =>  Expected identifier but found "}" (1:34)
+"namespace as {}`x`"  =>  Expected ";" but found "`x`" (1:16)
+"module as.b {}"  =>  Unexpected . (1:10)
+"namespace as.b.c { export const a = 1 }"  =>  Unexpected . (1:13)
+"export namespace as { export const a = 1 }"  =>  Unexpected = (1:38)
+"namespace N { namespace as { export const x = 1 } export const y = as.x }"  =>  Unexpected = (1:45)
+"declare namespace as { const x: number; function f(): void }"  =>  Unexpected "namespace" (1:9)
+"declare module as.b {}"  =>  Unexpected . (1:18)
+"export declare namespace satisfies {}"  =>  Unexpected "namespace" (1:16)
+```
+
+**`abstract` stands before `declare`.** 4 sources, 4 in the corpora for the cause "abstract stands before declare". Where main decides: parse_stmt.rs:1830 the arm TsStmtAbstract of parse_stmt_fallthrough_ts_keyword takes only T::TClass (or decorators) after abstract.
+
+```
+"abstract declare class C {}"  =>  Expected ";" but found "declare" (1:10)   [ts; tsx]
+"export abstract declare class C {}"  =>  Expected ";" but found "declare" (1:17)
+"abstract declare class C { m(): void }"  =>  Expected ";" but found "declare" (1:10)
+"@d abstract declare class C {}"  =>  Expected "class" but found "declare" (1:13)
+```
+
+**A string in brackets names an enum member.** 14 sources, 15 in the corpora for the cause "a string in brackets names an enum member". Where main decides: parse_typescript.rs:576 parse_typescript_enum_stmt: a name that is no string and no identifier is `p.lexer.expect(T::TIdentifier)` (:645).
+
+```
+"enum E { [\"x\"] }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [\"x\"] = 1 }"  =>  Expected identifier but found "[" (1:10)   [ts; tsx]
+"enum E { ['x'] = 1, B = E.x }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [`x`] = 1 }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [\"x\"], [\"y\"] }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [ \"x\" ] = 1, }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [\"x\"] = \"s\" }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [\"x\"] = 1, [\"y\"] = x + 1 }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [\"a-b\"] = 1, B = E[\"a-b\"] }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [`x`] = 1, [`y`] }"  =>  Expected identifier but found "[" (1:10)
+"const enum E { [\"x\"] = 1 } var v = E.x;"  =>  Expected identifier but found "[" (1:16)
+"export enum E { [\"x\"] = 1 }"  =>  Expected identifier but found "[" (1:17)
+"declare enum E { [\"x\"] = 1 }"  =>  Expected identifier but found "[" (1:18)
+"namespace N { export enum E { [\"x\"] = 1 } }"  =>  Expected identifier but found "[" (1:31)
+```
+
+**A statement of a namespace starts with `import(` or `import.`.** 7 sources, 7 in the corpora for the cause "import starts an expression in a namespace". Where main decides: parse_stmt.rs:1410 t_import: `(opts.is_export || (opts.scope.is_namespace() && !opts.is_typescript_declare)) && token != T::TIdentifier` is `p.lexer.expected(T::TIdentifier)` (:1413).
+
+```
+"namespace N { import(\"x\"); }"  =>  Expected identifier but found "(" (1:21)   [ts; tsx]
+"namespace N { import.meta; }"  =>  Expected identifier but found "." (1:21)
+"namespace N { import(\"x\").then(f); }"  =>  Expected identifier but found "(" (1:21)
+"namespace N { import\n(\"x\"); }"  =>  Expected identifier but found "(" (2:1)
+"namespace N { import.meta.url; }"  =>  Expected identifier but found "." (1:21)
+"namespace N.M { import(\"x\"); }"  =>  Expected identifier but found "(" (1:23)
+"export namespace N { import(\"x\"); }"  =>  Expected identifier but found "(" (1:28)
+```
+
+**The attributes of an import start on the line after its path.** 3 sources, 3 in the corpora for the cause "the attributes of an import start on the next line". Where main decides: parse/mod.rs:1356 parse_path `if !p.lexer.has_newline_before && (assert || with)`: JavaScript reaches it for every module path, and a line break is the common case. main then reads a with statement and fails at `{`: that error (parse_stmt.rs:309 in t_with, which is #[cold]: `p.lexer.expect(T::TOpenParen)`) is the one free place, and the import statement and its record are already made there.
+
+```
+"import A from \"x\"\nwith { type: \"json\" };"  =>  Expected "(" but found "{" (2:6)
+"import \"x\"\nwith { type: \"json\" };"  =>  Expected "(" but found "{" (2:6)
+"import A from \"x\"\nwith { type: \"json\" }; A;"  =>  Expected "(" but found "{" (2:6)   [js]
+```
+
+**The colon of a conditional or of a case follows an operand that ends with a parenthesis.** 13 sources, 13 in the corpora for the cause "a colon follows an operand that ends with a parenthesis". Where main decides: parse/mod.rs:513 parse_paren_expr: `is_arrow_fn || opts.force_arrow_fn || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)` then `if level.gt(Level::Assign) { p.lexer.unexpected()?; ...` (:518).
+
+```
+"x = a ? 1 + async(b) : c;"  =>  Unexpected : (1:22)   [ts; tsx]
+"x = a ? -<T>(b) : c;"  =>  Unexpected : (1:17)
+"x = a ? -async(b) : c;"  =>  Unexpected : (1:19)
+"x = a ? y || async(b) : c;"  =>  Unexpected : (1:23)
+"x = a ? typeof async() : c => d;"  =>  Unexpected : (1:24)
+"x = a ? 1 + async<T>(b) : c;"  =>  Unexpected : (1:25)
+"switch (x) { case 1 + async(b): c; }"  =>  Unexpected : (1:31)
+"x = a ? !<T>(b) : c => d;"  =>  Unexpected : (1:17)
+"x = a ? typeof <T>(b) : c;"  =>  Unexpected : (1:23)
+"x = a ? 1 + <T>(b) : c;"  =>  Unexpected : (1:20)
+"async function f() { x = a ? await <T>(b) : c; }"  =>  Unexpected : (1:43)
+"switch (x) { case -<T>(b): c; }"  =>  Unexpected : (1:26)
+"switch (x) { case -async(b): c; }"  =>  Unexpected : (1:28)   [tsx]
+```
+
+**The colon of a conditional follows `<T>(...)` in its true branch.** 7 sources, 37 in the corpora for the cause "a colon follows parentheses between ? and : of a conditional". Where main decides: parse_prefix.rs:965 pfx_t_less_than and parse/mod.rs:1703 parse_async_prefix_expr (T::TLessThan) call parse_paren_expr with ParenExprOpts::default(): `flags == EFlags::AfterQuestionAndBeforeColon` is in hand there and is dropped, so parse/mod.rs:570 takes the cheap check.
+
+```
+"x = a ? <T>(b) : c => d;"  =>  Expected ":" but found ";" (1:24)
+"x = a ? <T>(b, c) : d => e;"  =>  Expected ":" but found ";" (1:27)
+"x = a ? async <T>(b) : c => d;"  =>  Expected ":" but found ";" (1:30)
+"x = a ? b ? c : <T>(d) : e => f;"  =>  Expected ":" but found ";" (1:32)
+"x = a ? b ? c : async <T>(d) : e => f;"  =>  Expected ":" but found ";" (1:38)
+"for (const k of a ? <T>(b) : c => d) {}"  =>  Expected ":" but found ")" (1:36)
+"x = { [a ? <T>(b) : c => d]: 1 };"  =>  Expected ":" but found "]" (1:27)
+```
+
+**The colon of a conditional follows the parenthesized body of an arrow function in its true branch.** 30 sources, 37 in the corpora for the cause "a colon follows parentheses between ? and : of a conditional". Where main decides: parse_fn.rs:520 parse_arrow_body reads the body with EFlags::None: the body of an arrow function in the true branch does not know of the `?`. JavaScript reaches parse_arrow_body and parse_suffix.rs:404 sfx_t_question. main fails at parse_suffix.rs:466 `p.lexer.expect(T::TColon)`, after the inner arrow function took the colon: that error is a free place for a parse that starts again with the offset of the colon as a hint.
+
+```
+"x = a ? y => (b) : c => d;"  =>  Expected ":" but found ";" (1:26)
+"x = a ? (y) => (b) : c => d;"  =>  Expected ":" but found ";" (1:28)   [ts; tsx]
+"x = a ? <T>(y: T) => (b) : c => d;"  =>  Expected ":" but found ";" (1:34)
+"x = a ? y => ({ y }) : z => ({ z });"  =>  Expected ":" but found ";" (1:36)   [tsx; ts]
+"x = a ? y => ([y]) : z => z;"  =>  Expected ":" but found ";" (1:28)
+"x = a ? y => (b, c) : d => e;"  =>  Expected ":" but found ";" (1:29)
+"x = a ? y => (b = 1) : c => d;"  =>  Expected ":" but found ";" (1:30)
+"x = a ? y => async (b) : c => d;"  =>  Expected ":" but found ";" (1:32)
+"x = a ? y => <T>(b) : c => d;"  =>  Expected ":" but found ";" (1:29)
+"x = a ? y => z => (b) : c => d;"  =>  Expected ":" but found ";" (1:31)
+"x = a ? y => q ? r : (b) : c => d;"  =>  Expected ":" but found ";" (1:34)
+"x = a ? async y => (b) : c => d;"  =>  Expected ":" but found ";" (1:32)
+"x = a ? async => (b) : c => d;"  =>  Expected ":" but found ";" (1:30)
+"x = a ? b ? c : y => (d) : e => f;"  =>  Expected ":" but found ";" (1:34)
+"f(a ? y => (b) : c => d);"  =>  Expected ":" but found ")" (1:24)
+"x = a ? (y, z) => ({ y, z }) : c => ({ c });"  =>  Expected ":" but found ";" (1:44)
+"x = a ? (y = 1) => (b) : c => d;"  =>  Expected ":" but found ";" (1:32)
+"x = a ? ({ y }) => (b) : c => d;"  =>  Expected ":" but found ";" (1:32)
+"x = a ? ({ y }: Y) => (b) : c => d;"  =>  Expected ":" but found ";" (1:35)
+"x = a ? ([y]: Y, z: Z) => (b) : c => d;"  =>  Expected ":" but found ";" (1:39)
+"x = a ? (y, ...z) => (b) : c => d;"  =>  Expected ":" but found ";" (1:34)
+"x = a ? async (y) => (b) : c => d;"  =>  Expected ":" but found ";" (1:34)
+"x = a ? <T>(y) => (b) : c => d;"  =>  Expected ":" but found ";" (1:31)
+"x = a ? <T,>(y) => (b) : c => d;"  =>  Expected ":" but found ";" (1:32)
+"x = a ? <T>() => (b) : c => d;"  =>  Expected ":" but found ";" (1:30)
+"x = a ? <T>(y: T) => ({ y }) : z => ({ z });"  =>  Expected ":" but found ";" (1:44)
+"x = a ? <T extends U>(y: T) => (b) : c => d;"  =>  Expected ":" but found ";" (1:44)
+"x = a ? <T>(...y: T[]) => (b) : c => d;"  =>  Expected ":" but found ";" (1:39)
+"x = a ? async <T>(y: T) => (b) : c => d;"  =>  Expected ":" but found ";" (1:40)
+"x = a ? async <T>() => (b) : c => d;"  =>  Expected ":" but found ";" (1:36)
+```
+
+### Decorator metadata that differs from tsc
+
+63 values in 9 groups, with `experimentalDecorators` and `emitDecoratorMetadata`. main accepts every source. Each line is the
+source, the key, the value of main and the value of tsc with `strictNullChecks` off. Where tsc writes a guarded
+reference to a name (`typeof (_a = typeof x !== "undefined" && x.b) === "function" ? _a : Object`), the line has the
+guard that Bun writes for the same name. `undefined` is how Bun prints `void 0`.
+
+**The operands of `|` and `&` are the check type of a conditional type: main reads `A | (B extends C ? D : E)`.** 9 values, 10 sources in the corpora.
+
+```
+"class C { @d p: number | A extends B ? string : never; }"  design:type  main: Number  tsc: String
+"class C { @d p: K & A extends B ? string : never; }"  design:type  main: undefined  tsc: String
+"class C { @d p: K | A extends B ? string[] : number[]; }"  design:type  main: Object  tsc: Array
+"class C { @d p: string | A extends B ? () => void : () => void; }"  design:type  main: Object  tsc: Function
+"class C { @d p: K | A extends B ? null : K; }"  design:type  main: typeof K === "undefined" ? Object : K  tsc: Object
+"class C { @d m(a: number | A extends B ? string : string) {} }"  design:paramtypes  main: [Object]  tsc: [String]
+"class C { @d m(): string & A extends B ? never : string { throw 0 } }"  design:returntype  main: undefined  tsc: String
+"class C { @d p: number | A extends B ? string : string; }"  design:type  main: Object  tsc: String
+"class C { @d p: string & A extends B ? never : string; }"  design:type  main: undefined  tsc: String
+```
+
+**The operand of `keyof`, `readonly` and `unique` ends before `extends`: main reads `keyof (A extends B ? C : D)`.** 7 values, 17 sources in the corpora.
+
+```
+"class C { @d p: keyof A extends B ? string : never; }"  design:type  main: Object  tsc: String
+"class C { @d p: readonly A[] extends B ? string : number; }"  design:type  main: Array  tsc: Object
+"class C { @d p: unique symbol extends B ? string : never; }"  design:type  main: undefined  tsc: String   [the checker of tsc: TS1335]
+"class C { @d m(a: keyof A extends B ? () => void : () => void) {} }"  design:paramtypes  main: [Object]  tsc: [Function]
+"class C { @d m(): readonly A[] extends B ? unknown : string { throw 0 } }"  design:returntype  main: Array  tsc: Object
+"class C { @d p: keyof A extends B ? () => void : () => void; }"  design:type  main: Object  tsc: Function
+"class C { @d p: readonly A[] extends B ? unknown : string; }"  design:type  main: Array  tsc: Object
+```
+
+**The type after the colon of a conditional type takes `|` and `&`: main ends it before them.** 8 values, 8 sources in the corpora.
+
+```
+"class C { @d p: A extends B ? string : never | number; }"  design:type  main: Number  tsc: Object
+"class C { @d p: A extends B ? unknown : string & string; }"  design:type  main: String  tsc: Object
+"class C { @d p: X extends Y ? A : (A | null); }"  design:type  main: typeof A === "undefined" ? Object : A  tsc: Object
+"class C { @d p: A extends B ? never : string | number; }"  design:type  main: undefined  tsc: Object
+"class C { @d p: A extends B ? string : unknown | null; }"  design:type  main: String  tsc: Object
+"class C { @d p: A extends B ? string : never & K; }"  design:type  main: undefined  tsc: Object
+"class C { @d p: X extends Y ? never : string & string; }"  design:type  main: undefined  tsc: String
+"class C { @d p: X extends Y ? string : never & string; }"  design:type  main: undefined  tsc: Object
+```
+
+**A keyword before a dot is the first name of a type reference: main reads the keyword type and drops the rest.** 6 values, 6 sources in the corpora.
+
+```
+"class C { @d p: any.b; }"  design:type  main: Object  tsc: typeof any === "undefined" || typeof any.b === "undefined" ? Object : any.b
+"class C { @d p: string.b; }"  design:type  main: String  tsc: typeof string === "undefined" || typeof string.b === "undefined" ? Object : string.b
+"class C { @d p: bigint.b<T>; }"  design:type  main: typeof BigInt === "undefined" ? Object : BigInt  tsc: typeof bigint === "undefined" || typeof bigint.b === "undefined" ? Object : bigint.b
+"class C { @d p: undefined.b; }"  design:type  main: undefined  tsc: Object
+"class C { @d m(a: never.b) {} }"  design:paramtypes  main: [undefined]  tsc: [typeof never === "undefined" || typeof never.b === "undefined" ? Object : never.b]
+"class C { @d p: never.b; }"  design:type  main: undefined  tsc: typeof never === "undefined" || typeof never.b === "undefined" ? Object : never.b
+```
+
+**`unique` takes the whole type after it: main gives it the tag of the array or tuple (the checker of tsc: TS1005 `'symbol' expected.`).** 2 values, 10 sources in the corpora.
+
+```
+"class C { @d p: unique symbol[]; }"  design:type  main: Array  tsc: Object   [the checker of tsc: TS1005]
+"class C { @d p: unique [A]; }"  design:type  main: Array  tsc: Object   [the checker of tsc: TS1005]
+```
+
+**The branches of a conditional type merge as the operands of `|` do: main takes one branch.** 6 values, 130 sources in the corpora.
+
+```
+"class C { @d p: X extends Y ? number : never; }"  design:type  main: undefined  tsc: Number
+"class C { @d p: X extends Y ? K : K; }"  design:type  main: typeof K === "undefined" ? Object : K  tsc: Object
+"class C { @d p: (X extends Y ? string : unknown); }"  design:type  main: String  tsc: Object
+"class C { @d p: X extends infer U extends V ? string : never; }"  design:type  main: undefined  tsc: String
+"class C { @d p: X extends Y ? never : A.B; }"  design:type  main: undefined  tsc: Object
+"class C { @d p: X extends Y ? A<B> : null; }"  design:type  main: typeof A === "undefined" ? Object : A  tsc: Object
+```
+
+**An operand of `|` and `&` counts as what it serializes to: main skips `never`, `unknown`, nested unions and dotted names.** 7 values, 7 sources in the corpora.
+
+```
+"class C { @d p: string | (never | never); }"  design:type  main: String  tsc: Object
+"class C { @d p: (null | undefined) | string; }"  design:type  main: String  tsc: Object
+"class C { @d p: A.B | C.D; }"  design:type  main: typeof C === "undefined" || typeof C.D === "undefined" ? Object : C.D  tsc: Object
+"class C { @d m(a: A.B & A.C) {} }"  design:paramtypes  main: [typeof A === "undefined" || typeof A.C === "undefined" ? Object : A.C]  tsc: [Object]
+"class C { @d p: string | never & string; }"  design:type  main: String  tsc: Object
+"class C { @d p: string & (unknown & unknown); }"  design:type  main: String  tsc: Object
+"class C { @d p: A.B & A.C; }"  design:type  main: typeof A === "undefined" || typeof A.C === "undefined" ? Object : A.C  tsc: Object
+```
+
+**An import type and `unique symbol` are `Object`: main skips them among the operands, and gives `import("x")["y"]` the tag of an array.** 5 values, 19 sources in the corpora.
+
+```
+"class C { @d p: A | unique symbol; }"  design:type  main: typeof A === "undefined" ? Object : A  tsc: Object   [the checker of tsc: TS1335]
+"class C { @d p: import(\"x\") | A; }"  design:type  main: typeof A === "undefined" ? Object : A  tsc: Object
+"class C { @d p: import(\"x\")[\"y\"]; }"  design:type  main: Array  tsc: Object
+"class C { @d p: unique symbol & A; }"  design:type  main: typeof A === "undefined" ? Object : A  tsc: Object   [the checker of tsc: TS1335]
+"class C { @d p: A | import(\"x\"); }"  design:type  main: typeof A === "undefined" ? Object : A  tsc: Object
+```
+
+**A type predicate is `Boolean` and an assertion predicate is `undefined`: main reads the name before `is` as a type.** 13 values, 64 sources in the corpora.
+
+```
+"class C { @d p: this is B; }"  design:type  main: Object  tsc: Boolean
+"class C { @d m(): a is B { throw 0 } }"  design:returntype  main: typeof a === "undefined" ? Object : a  tsc: Boolean
+"class C { @d m(): a is B | C { throw 0 } }"  design:returntype  main: typeof a === "undefined" ? Object : a  tsc: Boolean
+"class C { @d m(): string is B { throw 0 } }"  design:returntype  main: String  tsc: Boolean
+"class C { @d m(): asserts a { throw 0 } }"  design:returntype  main: Object  tsc: undefined
+"class C { @d m(): asserts a is B { throw 0 } }"  design:returntype  main: Object  tsc: undefined
+"class C { @d m(): asserts this is B { throw 0 } }"  design:returntype  main: Object  tsc: undefined
+"class C { @d m(): asserts a | B { throw 0 } }"  design:returntype  main: typeof B === "undefined" ? Object : B  tsc: Object
+"class C { @d m(): A | asserts a { throw 0 } }"  design:returntype  main: typeof A === "undefined" ? Object : A  tsc: Object
+"class C { @d p: this is this; }"  design:type  main: Object  tsc: Boolean
+"class C { @d m(): a is B extends C ? D : E { throw 0 } }"  design:returntype  main: typeof a === "undefined" ? Object : a  tsc: Boolean
+"class C { @d m(): this is B { throw 0 } }"  design:returntype  main: Object  tsc: Boolean
+"class C { @d m(): asserts this { throw 0 } }"  design:returntype  main: Object  tsc: undefined
+```
+
+### TypeScript that a parse without lint reads as another program
+
+6 sources. main accepts each and reads `interface as {}` and `namespace as {}` as the cast of the identifier `interface` or
+`namespace` to the type `{}`, where tsc reads a declaration named `as`. Each line is the source, what main prints, and
+what tsc's program prints.
+
+```
+"namespace as {}"  main: "namespace;\n"  tsc: ""
+"interface as {}\nfoo()"  main: "interface;\nfoo();\n"  tsc: "foo();\n"   [ts; tsx]
+"interface as { a: 1 }\nconst x = 1;"  main: "interface;\nconst x = 1;\n"  tsc: "const x = 1;\n"
+"interface as {}\n[x] = y"  main: "interface;\n[x] = y;\n"  tsc: "[x] = y;\n"
+"namespace as {}\nfoo()"  main: "namespace;\nfoo();\n"  tsc: "foo();\n"
+"namespace as {};"  main: "namespace;\n"  tsc: ""
+```
+
+### What the removed tests named and is no defect of main
+
+tsc does not take these sources as a whole, so main's reading is not listed above:
+
+```
+"import type A from \"x\"\nwith { type: \"json\" };"  [ts]  the checker of tsc: TS2857 Import attributes cannot be used with type-only imports or exports.; main rejects: Expected "(" but found "{" (2:6)
+"export { a } from \"x\"\nwith { type: \"json\" };"  [ts]  tsc: TS1005 '(' expected. at offset 27; main rejects: Expected "(" but found "{" (2:6)
+"export * from \"x\"\nwith { type: \"json\" };"  [ts]  tsc: TS1005 '(' expected. at offset 23; main rejects: Expected "(" but found "{" (2:6)
+"export * from \"x\"\nwith { type: \"json\" };"  [js]  tsc: TS1005 '(' expected. at offset 23; main rejects: Expected "(" but found "{" (2:6)
+"type as = 1\ntype as any"  [ts]  tsc: TS1005 '=' expected. at offset 20; main rejects: Unexpected = (1:9)
+"type as = 1\ntype as <T>(x: T) => void"  [ts]  tsc: TS1005 '=' expected. at offset 23; main rejects: Unexpected = (1:9)
+"interface as {}\ninterface as any\nfoo()"  [ts]  tsc: TS1005 '{' expected. at offset 29; main prints "interface;\ninterface;\nfoo();\n"
+"interface as {}\ninterface as {} | X\nfoo()"  [ts]  tsc: TS1109 Expression expected. at offset 32; main prints "interface;\ninterface;\nfoo();\n"
+"namespace as {}\nnamespace as any"  [ts]  tsc: TS1005 '{' expected. at offset 29; main prints "namespace;\nnamespace;\n"
+"namespace as {}\nnamespace as { foo(): void }"  [ts]  tsc: TS1005 ';' expected. at offset 36; main prints "namespace;\nnamespace;\n"
+"import A from \"x\"\nwith { type: \"json\" };\nimport B from \"y\"\nwith (A) {}"  [js]  tsc: TS1005 '{' expected. at offset 64; main rejects: Expected "(" but found "{" (2:6)
+```
+
+### What a lint parse does with these sources
+
+A lint parse reads 306 of the 313 sources of the removed tests as tsc reads them: the types with the lint grammar, the rest through the
+sites that test the side table. `src/js_parser/parse/grammar_rows_tests.rs` holds each source with what tsc builds for it.
+
+### Checked against the corpora of round 2
+
+The three corpora were run again with main at `f4d755a9cf`: `small-sub` (7,089 sources) gives the records of the run of
+round 2 at `e3566be889` without a difference, and the tables of `diff.mjs` against the release build of round 1
+(`23a20afa7e`) are those of `round2/a1-differential/top-down/runs/table.be1ebe5295.tsv`. Of the 153 sources of
+`probes/valid.plain.txt`, main rejects each. Beyond the cases above, the corpora hold:
+
+- 52 sources that main rejects and round 1 accepted, with no case of their own: `asserts is T`: the assertion about a parameter named `is` (the checker of tsc: TS1225 when no parameter has the name). Example: `class C { @d m(): asserts is A { return x; } }` is `Expected ";" but found "A"`.
+- 29 sources that main rejects and round 1 accepted, with no case of their own: `[function]`, `[...if]`: a reserved word as an element of a tuple; `import('x').#a`; `{ [+1]: A }`, `{ get #a(): A }`. Example: `type X = [function];` is `Expected ":" but found "]"`.
+- 2 sources that main rejects and round 1 accepted, with no case of their own: `implements [delete A]` (tsc: TS1102 from its binder). Example: `class C implements [delete A] {}` is `Unexpected delete`.
+- 653 sources that tsc takes by the rule above and that main and round 1 both reject; for 134 of them tsc reports nothing else about the form
+  (for the others mostly TS1228, TS1141, TS2371, TS2369, TS2499, TS2500). No case named them and the grammar of round 1 does not read them
+  without lint; whether a lint parse reads them was not run. Examples: `typeof import('x').a<>` (`Unexpected >`),
+  `typeof a.<C>` (`Expected identifier but found "<"`), `A extends  extends ? 1 : 2` (`Unexpected extends`), `declare {};`, `export { type if };`,
+  `try {} catch (e: any = 1) {}`, `enum E { [a] = 1 }` (tsc: TS1164).
+- 205 sources whose metadata differs from tsc in main and in round 1 alike. They need what no parse has (the declaration of the name:
+  a type alias, an enum, an interface, a type parameter), or are forms that no case named: a type named `asserts`, `abstract` or `const`
+  (main: `Object`, tsc: the guarded name), `readonly` before a type that is no array (main: `Array`; the checker of tsc: TS1354), the return type of
+  a method whose parameter has a decorator (main: `Object`, tsc: `void 0` or the type), the rest parameter (main: `Object`, tsc: the element type).
+
+## Known differences of the lint grammar
+
+7 sources (7 of the 366 cases) are read by a lint parse as a parse without lint reads them. Each stands at a site that JavaScript
+reaches too, where a branch for a lint parse is a cost for every parse. `grammar_rows_tests.rs` holds them with the first error
+of main in the table `KNOWN_DIFFERENCES` and with what tsc makes of them in `ROWS`, so a change that makes a lint parse read one of them fails the test until its line of the table is gone.
+
+**The attributes of an import start on the line after its path.** 4 sources. Where main decides: parse/mod.rs:1356 parse_path `if !p.lexer.has_newline_before && (assert || with)`: JavaScript reaches it for every module path, and a line break is the common case. main then reads a with statement and fails at `{`: that error (parse_stmt.rs:309 in t_with, which is #[cold]: `p.lexer.expect(T::TOpenParen)`) is the one free place, and the import statement and its record are already made there.
+
+```
+"import A from \"x\"\nwith { type: \"json\" };"  [ts]  a lint parse: Expected "(" but found "{" (2:6); tsc parses it
+"import \"x\"\nwith { type: \"json\" };"  [ts]  a lint parse: Expected "(" but found "{" (2:6); tsc parses it
+"import A from \"x\"\nwith { type: \"json\" }; A;"  [js]  a lint parse: Expected "(" but found "{" (2:6); tsc parses it
+"import A from \"x\"\nwith { type: \"json\" };\nimport B from \"y\"\nwith (A) {}"  [js]  a lint parse: Expected "(" but found "{" (2:6); tsc: TS1005 '{' expected. at offset 64
+```
+
+**The colon of a conditional follows the parenthesized body of an arrow function in its true branch.** 2 sources. Where main decides: parse_fn.rs:520 parse_arrow_body reads the body with EFlags::None: the body of an arrow function in the true branch does not know of the `?`. JavaScript reaches parse_arrow_body and parse_suffix.rs:404 sfx_t_question. main fails at parse_suffix.rs:466 `p.lexer.expect(T::TColon)`, after the inner arrow function took the colon: that error is a free place for a parse that starts again with the offset of the colon as a hint.
+
+```
+"x = a ? y => q ? r : (b) : c => d;"  [ts]  a lint parse: Expected ":" but found ";" (1:34); tsc parses it
+"x = a ? b ? c : y => (d) : e => f;"  [ts]  a lint parse: Expected ":" but found ";" (1:34); tsc parses it
+```
+
+**ruling: attributes of a type-only import on the next line.** 1 sources. Where main decides: the same site. tsc parses it and its checker reports TS2857.
+
+```
+"import type A from \"x\"\nwith { type: \"json\" };"  [ts]  a lint parse: Expected "(" but found "{" (2:6); tsc parses it; its checker: TS2857
+```
+
+## The lint parse: `Parser::parse_for_lint`
+
+File `src/js_parser/parse/parse_entry.rs`. Another crate names the items `bun_js_parser::Parser`,
+`bun_js_parser::ParserOptions`, `bun_js_parser::parse::parse_entry::ParsedForLint`,
+`bun_js_parser::p::StartsForParseOnly` and `bun_js_parser::parse::syntax_errors::SyntaxErrors`.
+
+```rust
+impl<'a> Parser<'a> {
+    pub fn init(
+        options: Options<'a>,
+        log: &mut bun_ast::Log,
+        source: &'a bun_ast::Source,
+        define: &'a Define,
+        bump: &'a Arena,
+    ) -> Result<Parser<'a>, Error>;
+
+    /// Parses for a lint run and visits nothing: no `// @bun` shortcut, no transpiler cache, a declaration file is ambient.
+    pub fn parse_for_lint<R>(self, f: impl FnOnce(&ParsedForLint<'_, 'a>) -> R) -> Result<R, Error>;
+
+    /// `parse_for_lint`. Where the parse fails, `errors` gets what the reference reports for the messages that it logged.
+    pub fn parse_for_lint_with_codes<R>(
+        self,
+        errors: &mut SyntaxErrors,
+        f: impl FnOnce(&ParsedForLint<'_, 'a>) -> R,
+    ) -> Result<R, Error>;
+}
+
+/// What `Parser::parse_for_lint` parsed: the tree as written, and what the parse pass keeps beside it.
+pub struct ParsedForLint<'p, 'a> {
+    /// The statements the parse pass keeps, unvisited: nothing is folded or bound.
+    pub stmts: &'p [bun_ast::Stmt],
+    /// The scopes of the parse pass in the order a visit pass enters them; a flattened scope leaves `None`.
+    pub scopes_in_order: &'p [Option<ScopeOrder<'a>>],
+    /// The symbols the parse pass declared; a `Ref` whose tag is `Symbol` indexes them.
+    pub symbols: &'p [bun_ast::Symbol],
+    /// The side table of the parse pass: what has no place in the tree.
+    pub sidecar: &'p StartsForParseOnly,
+    /// The arena the parse pass allocates in, type nodes included.
+    pub arena: &'a Arena,
+    /// The module paths of the file, by the `import_record_index` of a statement or an expression.
+    pub import_records: &'p [ImportRecord],
+    /// The name of the file says that all of it is ambient.
+    pub is_declaration_file: bool,
+    // private: the source and the allocated names, which `name_of` reads
+}
+
+impl<'a> ParsedForLint<'_, 'a> {
+    /// An unvisited identifier is its spelling, and a declared one the name of its symbol.
+    pub fn name_of(&self, r#ref: bun_ast::Ref) -> &'a [u8];
+}
+```
+
+[[CHECK entry-signatures: the block is src/js_parser/parse/parse_entry.rs:97-141 and :421-544 at b882bfc32f, where it was compared line by line. `python3 round2/api-md-gates-report/bottom-up/api_surface.py /workspace/wt/parser <this file>` must print "0 public names that API.md does not hold" for parse_entry.rs. After R5 add what B1 and B2 added to `Parser` and to `ParsedForLint`]]
+
+### What the caller sets up
+
+As for `Parser::parse`: an AST allocation scope is open (the tests use
+`bun_ast::ASTMemoryAllocator::borrowing(&arena).enter()`), and `Options::init(jsx, loader)` picks the parser:
+`options.ts` (`loader.is_typescript()`) selects `P<'a, true, false>`, otherwise `P<'a, false, false>`, and
+`options.jsx.parse` (`loader.is_jsx()`) turns JSX on at run time. The tests also set `features.no_macros` and
+`features.dont_bundle_twice`. With a JavaScript loader a type annotation is a syntax error and `a < b > (c)` is two
+operators.
+
+### What the entry does, in this order (`Parser::_parse_for_lint`)
+
+1. `is_declaration_file` is `options.ts` and `tspath.IsDeclarationFileName` of `source.path.text`: the base name
+   ends in `.d.ts`, `.d.mts` or `.d.cts`, or in `.ts` after a `.d.` (`a.d.css.ts` is one, `a.d.tsx` is none).
+2. The parser gets the side table `StartsForParseOnly::for_lint()`: from here `P::starts_for_parse_only` is set and
+   `P::is_lint_parse()` is true.
+3. A `#!` line is read past. It leaves nothing in the result.
+4. The statements of the file are read with `parse_stmts_up_to` in the scope `Module`. In a declaration file they
+   are read as after `declare` (`ParseStatementOptions::is_typescript_declare`).
+5. The parse fails when the log holds an error that it did not hold before `Parser::init` read its first token,
+   also when the parse pass only logged it and went on. `f` is not called, the result is `Err(Error::SyntaxError)`,
+   and `errors` gets its entries. A stack overflow is logged as `Maximum call stack size exceeded` at the token the
+   lexer is on and is `Err(Error::SyntaxError)` too (`Parser::parse_only` returns `Error::StackOverflow`).
+6. Otherwise the lists of `sidecar.attached` are sorted by key and `f` is called. The side table is freed when `f`
+   returns. `errors` is left as it was.
+
+[[CHECK entry-order: the six steps are parse_entry.rs:547-621 at b882bfc32f. After R5 (B1) add where the comments are gathered (the prototype of round 2 fills `sidecar.comments` between step 5 and step 6) and whether the entry turns `Lexer::track_comments` on]]
+
+An error in the first token of the file fails `Parser::init`, before any of this.
+[[CHECK first-token: after R5 (B2, B4) say what `Parser::init_for_lint` does for it, if that entry exists]]
+
+### What it does not do
+
+No visit pass: nothing is bound to a symbol by use, folded, lowered, removed or renamed, and no import is scanned.
+No `// @bun` shortcut (test `takes_no_shortcut_for_a_bundled_file`). The entry reads and writes no transpiler cache.
+No error recovery: a file with a syntax error gives no tree ("No error recovery").
+
+### What `f` gets
+
+- `stmts`: the list that `parse_stmts_up_to` made for the file. The parse pass itself leaves out `;` alone
+  (`S::Empty`), the directives `"use strict"` and `"use asm"`, and every statement that TypeScript erases. Another
+  directive is an `S::Directive`. A comment that starts with `//!` or `/*!` is an `S::Comment` in the list it
+  stands in, before the statement that follows it, and its `loc` is the `loc` of the token after the comment.
+- An identifier that is read is an `E::Identifier` whose `Ref` names its text. A declared name has a `Ref` with the
+  tag `Symbol`. `name_of` answers for both and for an allocated name. It never panics: a `Ref` that names nothing
+  gives an empty name.
+- `scopes_in_order` and `symbols` are what the parse pass of `Parser::parse` leaves for the same file. An erased
+  statement leaves no scope: the scopes of a declared function, class or namespace are discarded as before, so a
+  record can hold statements whose scopes are not in `scopes_in_order`. `ScopeOrder` has no public field and no
+  public method: another crate cannot read an entry.
+  [[CHECK same-tree: "are what the parse pass of Parser::parse leaves" is P3.1. It was measured once, in research on be1ebe5295 with a relinked binary and a switch that is not in the tree (round2/a3/top-down/results.txt: 3,206 files, 0 differ). State here what was run on the final commit, or that it was not run on it]]
+- `import_records`: an erased import or export has no import record. Its path is in its record
+  (`erased::ImportDeclaration::module_specifier`, `erased::ExportDeclaration::module_specifier`).
+- `is_declaration_file`: in such a file a function, a class, an enum, a namespace, an interface and a type alias
+  are records with `ErasedFlags::AMBIENT`. A variable statement without `declare` stays in `stmts` as an `S::Local`
+  whose bindings are not declared (each `Ref` names its text). `export default x`, `export = x` and the import and
+  export statements that bind values stay as in any file.
+- `arena`: the type nodes, the payloads of the records and the lists are in it. Every record and every node is
+  `Copy`: a copy may leave `f` and is good as long as the arena and the AST allocation scope are.
+
+`ParsedOnly` has `async_arrow_parameters`, `arrow_expression_body`, `class_element` and `import_path`.
+`ParsedForLint` has none of them: the three maps are filled in a lint parse too and are `pub(crate)`, and a path is
+`import_records[index].path.text`.
+
+### What a lint parse of JavaScript records
+
+With a JavaScript loader the parser is `P<'a, false, false>`, which has no site of the lint parse: JavaScript has
+no annotation, no type argument and no erased statement, and a parse of JavaScript pays nothing for the lint parse.
+So `sidecar.erased`, `sidecar.attached` and `sidecar.generics` are empty.
+[[PICK js-parens: the same decision as "parens" in "What changed for a caller in round 3"]]
+`sidecar.wrappers` is empty too: the parentheses of a JavaScript file are not recorded, because their site is the
+`(` that starts any expression, which every parse of JavaScript runs.
+[[OR]]
+`sidecar.wrappers` is empty too: no parse records parentheses.
+[[END]]
+What a lint parse of JavaScript has: `stmts`, `scopes_in_order`, `symbols`, `import_records`, the three maps of
+`Parser::parse_only`, which main fills at its own three sites, [[CHECK js-comments: after R5 (B1): "and the comments, the comment directives and the pragmas, which the lexer and the entry gather and no site of the parser"]]
+and, when the parse fails, the codes of its errors.
+
+## The side table of a lint parse: `StartsForParseOnly`
+
+Files `src/js_parser/p.rs` and, under `src/js_parser/parse/`, `attached.rs`, `wrappers.rs`, `generics.rs`,
+`erased.rs`. Module paths: `bun_js_parser::parse::{attached, wrappers, generics, erased}`.
+
+```rust
+#[derive(Default)]
+pub struct StartsForParseOnly {
+    /// What a lint parse keeps of the statements and class members that leave no node.
+    pub erased: erased::ErasedTables,
+    /// What a lint parse keeps of the syntax around an expression that leaves no node.
+    pub wrappers: wrappers::Wrappers,
+    /// What a lint parse keeps of the TypeScript syntax of the nodes that stay.
+    pub attached: attached::Attached,
+    /// What a lint parse keeps of the type arguments after an expression and of the type parameters of an interface or of a type alias.
+    pub generics: generics::Generics,
+    // pub(crate): async_arrow_parameters, arrow_expression_bodies, class_elements (HashMap<i32, i32>),
+    // syntax_errors, is_lint
+}
+```
+
+[[CHECK sidecar-fields: p.rs:220-236 at b882bfc32f. After R5 (B1) add the public fields for the comments, the comment directives and the pragmas]]
+
+It is one `Box` on the parser (`P::starts_for_parse_only`), made by `Parser::parse_only` (three maps, nothing else)
+and by `Parser::parse_for_lint` (`is_lint`). The four tables hold thirteen lists. A record is `Copy`. An offset is a
+byte offset in the source (`u32`), `start` of the first byte, `end` after the last. A `Loc` alone names no node
+(`a.b.c` is three nodes at one `Loc`), so each kind has its own key:
+
+| table | what | key of a record | how a pass finds it |
+| --- | --- | --- | --- |
+| `attached` | the TypeScript syntax of a node that stays | `Owner` (a function, an arrow function, a class), or the `loc` of a binding, of a member key, of a class keyword, of a JSX element | the readers `*_of` of `Attached` |
+| `wrappers` | `as`, `satisfies`, `!`, `<T>x`, parentheses | `ExprId` of the operand | `Wrapper::wraps(&expr)` |
+| `generics` | type arguments after an expression; type parameters of an interface or a type alias | `ExprId` of the operand and `TypeArgumentsOf`; the end of the name of the declaration | `Generics::type_arguments_after(&operand)`, `Generics::type_parameters_of(&name)` |
+| `erased` | statements and class members that the tree does not hold | `Place` of a statement; `class_body` and `index` of a member | the place says the list and the index |
+
+### `attached`: what belongs to a node that stays
+
+```rust
+/// What a record of a function, of an arrow function or of a class belongs to: an offset alone names no node.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub enum Owner {
+    /// `G::Fn::open_parens_loc` of a function, method, accessor or constructor.
+    Fn(u32),
+    /// `Expr::loc` of an `E::Arrow`.
+    Arrow(u32),
+    /// `G::Class::class_keyword.loc`.
+    Class(u32),
+}
+impl Owner {
+    pub fn function(open_parens: Loc) -> Owner;
+    pub fn arrow(loc: Loc) -> Owner;
+    pub fn class(class_keyword: Loc) -> Owner;
+}
+
+/// The `?`, the `!` and the type after a binding or after the name of a class member.
+pub struct Annotation {
+    /// `Binding::loc` of the binding, or `Expr::loc` of the key of the class member.
+    pub owner: u32,
+    pub question: Option<u32>,
+    pub exclamation: Option<u32>,
+    pub type_node: Option<ts::Type>,
+}
+impl Annotation {
+    pub fn question_token(&self) -> Option<ts::Token>;
+    pub fn exclamation_token(&self) -> Option<ts::Token>;
+}
+
+/// A `this` parameter: the tree has no argument for it.
+pub struct ThisParameter {
+    pub owner: Owner,
+    /// How many arguments the tree has before it.
+    pub index: u32,
+    pub start: u32,
+    pub end: u32,
+    pub type_node: Option<ts::Type>,
+}
+/// The type parameters of a function, of an arrow function or of a class.
+pub struct TypeParameters { pub owner: Owner, pub lt: u32, pub end: u32, pub list: ts::List<ts::TypeParameter> }
+/// The type after the `:` that follows a parameter list: a return type or a type predicate.
+pub struct ReturnType { pub owner: Owner, pub type_node: ts::Type }
+/// One `extends` or `implements` clause of a class. `class` is `G::Class::class_keyword.loc`.
+pub struct Heritage { pub class: u32, pub clause: ts::HeritageClause }
+/// The type arguments after the name of a JSX element. `element` is `Expr::loc` of the `E::JSXElement`.
+pub struct JsxTypeArguments { pub element: u32, pub lt: u32, pub end: u32, pub list: ts::List<ts::Type> }
+/// A modifier that the tree keeps no trace of: `abstract` before `class`, `const` before `enum`.
+pub struct Keyword { pub owner: u32, pub start: u32, pub end: u32, pub kind: ts::ModifierKind }
+pub enum ModuleExportName { Identifier(ts::Name), String(ts::Literal) }
+pub struct Specifier { pub start: u32, pub end: u32, pub type_keyword: Option<u32>, pub property_name: Option<ModuleExportName>, pub name: ModuleExportName }
+pub struct TypeOnlySpecifier { pub statement: u32, pub index: u32, pub specifier: Specifier }
+
+#[derive(Default)]
+pub struct Attached {
+    pub annotations: Vec<Annotation>,
+    pub this_parameters: Vec<ThisParameter>,
+    pub type_parameters: Vec<TypeParameters>,
+    pub return_types: Vec<ReturnType>,
+    pub heritage: Vec<Heritage>,
+    pub jsx_type_arguments: Vec<JsxTypeArguments>,
+    pub keywords: Vec<Keyword>,
+    pub specifiers: Vec<TypeOnlySpecifier>,
+}
+impl Attached {
+    pub fn record_count(&self) -> usize;
+    pub fn annotation_of(&self, owner: Loc) -> Option<&Annotation>;
+    pub fn this_parameter_of(&self, owner: Owner) -> Option<&ThisParameter>;
+    pub fn type_parameters_of(&self, owner: Owner) -> Option<&TypeParameters>;
+    pub fn return_type_of(&self, owner: Owner) -> Option<&ReturnType>;
+    pub fn heritage_of(&self, class_keyword: Loc) -> &[Heritage];
+    pub fn jsx_type_arguments_of(&self, element: Loc) -> Option<&JsxTypeArguments>;
+    pub fn keywords_of(&self, owner: Loc) -> &[Keyword];
+    pub fn specifiers_of(&self, statement: Loc) -> &[TypeOnlySpecifier];
+}
+```
+
+`Attached::sort` and the methods that add a record (`optional`, `definite`, `annotation`, `this_parameter`,
+`type_parameter_list`, `return_type`, `heritage_clause`, `jsx_type_argument_list`, `keyword`, `type_only_specifier`,
+`specifiers_belong_to`) are `pub` too. They are for the parser: `parse_for_lint` has sorted every list by its key
+when `f` runs, and the readers above search the sorted lists. The records of one key keep the order of the source.
+
+How a later pass finds a record from the node it is at:
+
+| node at hand | call | what is recorded |
+| --- | --- | --- |
+| `G::Decl` of `var`, `let`, `const`, `using`, also in the head of `for` | `annotation_of(decl.binding.loc)` | the type after `:` |
+| `G::Arg` of a function, method, accessor, constructor or arrow function | `annotation_of(arg.binding.loc)` | the type after `:` |
+| `Catch::binding` | `annotation_of(binding.loc)` | the type after `:` |
+| `G::Property` of a class, kept or erased | `annotation_of(key.loc)` with `key = property.key` | the type of a field. For `[k]: T` the key is the expression in the brackets |
+| `G::Fn` | `Owner::function(func.open_parens_loc)`, then `type_parameters_of`, `this_parameter_of`, `return_type_of` | `<T>`, `this: T` with the count of arguments before it, the return type or predicate |
+| `E::Arrow` in the `Expr` `e` | `Owner::arrow(e.loc)`, then `type_parameters_of`, `return_type_of` | the same. `e.loc` is at `async`, at `<`, at `(` or at the one parameter |
+| `G::Class`, statement or expression, kept or erased | `Owner::class(class.class_keyword.loc)`, then `type_parameters_of`; `heritage_of(class.class_keyword.loc)` | `<T>`; the `extends` clause, then the `implements` clause |
+| `E::JSXElement` in the `Expr` `e` | `jsx_type_arguments_of(e.loc)` | `<Foo<T> />` |
+
+A record is made where the parse pass skipped the syntax before, and it is made for erased nodes as well: the
+annotations and the return type of an overload signature, of `declare function` and of the members of a declared
+class are in these lists under the same keys, and the node is in the record of `erased`.
+
+The `extends` clause holds one `TypeData::ExpressionWithTypeArguments` whose `expression` is `G::Class::extends`.
+An entry of `implements` is a `TypeData::TypeReference` where a type reference stands there and `,` or `{` follows
+it, otherwise an `ExpressionWithTypeArguments`.
+
+`Annotation::question` and `Annotation::exclamation` are always `None`, and `keywords` and `specifiers` are always
+empty: nothing in the parser calls `Attached::optional`, `definite`, `keyword`, `type_only_specifier` or
+`specifiers_belong_to`. Every `Annotation` has a `type_node`.
+[[CHECK attached-unused: true at b882bfc32f: `grep -rn "\.optional(\|\.definite(\|attached\.keyword(\|\.type_only_specifier(\|\.specifiers_belong_to(" src/js_parser` finds test code only]]
+
+`Annotation::owner` is a bare offset for two kinds of owner. One source makes them meet: in
+`class C { [a => 1]: T }` the key of the member and the binding of the parameter `a` have the same `loc`, so
+`annotation_of(binding.loc)` of that parameter finds the type of the member.
+
+### `wrappers`: what stands around an expression
+
+```rust
+/// Syntax around an expression that leaves no node: the tree holds `operand` where the source has the wrapper.
+pub struct Wrapper {
+    /// What the wrapper is around, as the tree holds it.
+    pub operand: Expr,
+    /// Offset of `as`, of `satisfies`, of `!`, of `<` or of `(`.
+    pub op: u32,
+    /// Offset after the type of `as` and `satisfies`, after `!`, after `>` or after `)`.
+    pub end: u32,
+    pub data: WrapperData,
+}
+pub enum WrapperData {
+    /// `operand as T`: `as const` has a `TypeReference` to the name `const`.
+    As(ts::Type),
+    /// `operand satisfies T`.
+    Satisfies(ts::Type),
+    /// `operand!`.
+    NonNull,
+    /// `<T>operand`: the operand is the whole unary expression after `>`.
+    TypeAssertion(ts::Type),
+    /// `(operand)`.
+    Parenthesized,
+}
+/// The identity of an expression node: where it starts, its kind, and the address of its payload when it has one.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ExprId { pub loc: i32, pub tag: ExprTag, pub payload: usize }
+#[derive(Default)]
+pub struct Wrappers {
+    /// In the order the parse pass finishes them: of the wrappers around one operand, an inner one comes first.
+    pub records: Vec<Wrapper>,
+}
+
+impl Wrapper {
+    pub fn wraps(&self, expr: &Expr) -> bool;
+    pub fn type_node(&self) -> Option<ts::Type>;
+}
+impl WrapperData { pub const fn kind_name(&self) -> &'static str; }
+impl ExprId { pub fn of(expr: &Expr) -> ExprId; }
+```
+
+`size_of::<Wrapper>()` is 48 (asserted).
+
+How to attach: the wrappers of the `Expr` `e` are the records with `wraps(&e)`, that is
+`ExprId::of(&record.operand) == ExprId::of(&e)`. `ExprId` is `Hash`: a pass builds one map from it. The payload is
+the address of the node for every kind that has a payload in a store (`E::Binary`, `E::Dot`, `E::Call`, ...), and 0
+for the kinds that are held inline (`E::Identifier`, `E::Number`, `E::This`, ...), which no other node of the same
+kind shares its `loc` with.
+
+`records` is in the order the parse pass finishes the wrappers, so for one operand the list order is from the
+inside to the outside: `(x as T)!` gives `As`, `Parenthesized`, `NonNull`, all around `x`; `<T><U>x` gives the
+assertion of `U` and then the one of `T`. A parent node holds the bare operand and does not know of the wrappers:
+`a + (b)` is an `E::Binary` of `a` and `b`.
+
+What is recorded in a lint parse of TypeScript: `x as T`, `x as const`, `x satisfies T`, `x!` (also in a
+decorator), `<T>x`.
+[[PICK wrappers-parens: the same decision as "parens" in "What changed for a caller in round 3"]]
+And every pair of parentheses around an expression (`(a)`, `(a, b)`, the body of `=> (b)`, `new (F)()`, `@(d)`):
+the `(` that starts an expression tests the side table in the TypeScript parser. Not recorded, because they are no
+parenthesized expression: the parentheses of the parameters of an arrow function, of a call, and of `if (..)`,
+`while (..)` and the like. A lint parse of JavaScript records no parentheses, and `Parser::parse_only` records none.
+[[OR]]
+No parentheses: `WrapperData::Parenthesized` is never made. The site is the `(` that starts any expression, and a
+test there is a cost for every parse. `(x as T)!` gives `As` and `NonNull`.
+[[END]]
+[[CHECK wrappers-order: the examples `(x as T)!` and `<T><U>x` are cases of wrappers::tests::records_are_those_of_the_known_sources at b882bfc32f; run it at the final commit]]
+
+### `generics`: type arguments after an expression, type parameters of an erased declaration
+
+```rust
+#[repr(u8)]
+pub enum TypeArgumentsOf {
+    /// `operand<T>`: before the arguments of a call, before a template, after the target of `new`, or alone as an instantiation expression.
+    Expression,
+    /// `operand?.<T>(...)`: the type arguments of the call.
+    OptionalCall,
+}
+/// Type arguments after an expression: the tree holds `operand` where the source has `operand<T>`.
+pub struct TypeArguments { pub operand: Expr, pub lt: u32, pub end: u32, pub list: ts::List<ts::Type>, pub of: TypeArgumentsOf }
+/// The type parameters of an interface or of a type alias, which leave no statement.
+pub struct DeclarationTypeParameters {
+    /// Offset after the name of the declaration: `erased::Name::end` of its record.
+    pub name_end: u32,
+    pub lt: u32,
+    pub end: u32,
+    pub list: ts::List<ts::TypeParameter>,
+}
+#[derive(Default)]
+pub struct Generics {
+    /// By where the `<` is.
+    pub type_arguments: Vec<TypeArguments>,
+    /// By where the `<` is.
+    pub type_parameters: Vec<DeclarationTypeParameters>,
+}
+impl TypeArguments { pub fn follows(&self, expr: &Expr) -> bool; }
+impl Generics {
+    pub fn record_count(&self) -> usize;
+    pub fn type_arguments_after<'s>(&'s self, operand: &'s Expr) -> impl Iterator<Item = &'s TypeArguments>;
+    pub fn type_parameters_of(&self, name: &erased::Name) -> Option<&DeclarationTypeParameters>;
+}
+```
+
+How to attach type arguments: by the operand, with `ExprId` as for a wrapper. The operand is the node the tree
+holds where the source has `operand<T>`: `E::Call::target` for `f<T>(x)`, for `a?.<T>(x)` and for `@d<T>()`,
+`E::New::target` for `new F<T>(x)` and `new F<T>`, `E::Template::tag` for a tagged template, and the expression
+itself for an instantiation expression (`const g = f<T>;`). The record does not say which of these it is, except
+`OptionalCall`: the pass sees it from the node that holds the operand. The type arguments of `extends B<T>` and of
+an entry of `implements` are in the `ts::HeritageClause` of `attached.heritage`, those of a JSX element in
+`attached.jsx_type_arguments`, those of a type reference in its type node.
+
+Where one operand has wrappers and type arguments, the two lists are merged by offset: a `TypeArguments` record
+goes directly after the last wrapper of that operand that is no `TypeAssertion` and whose `end` is at or before
+the `lt` of the record, and is the innermost where there is none. `(f<T>)` is the parentheses around the
+instantiation, `(<A>f)<T>()` is the call of the parentheses, `<A>f<T>` is the assertion of the instantiation. This
+rule is read from the order in which the parser makes the records. No test covers a source that mixes the two.
+[[CHECK merge-rule: with the second choice of "parens" the two examples with parentheses go: write the rule without them]]
+
+How to attach type parameters: the type parameters of an interface or of a type alias are found from its record in
+`erased`: `generics.type_parameters_of(&name)` with the `erased::Name` of `ErasedData::Interface` or
+`ErasedData::TypeAlias`. Those of a function, an arrow function and a class are in `attached.type_parameters`.
+
+### `erased`: statements and class members that the tree does not hold
+
+```rust
+/// Where an erased statement stood.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Place {
+    /// Before the statement at `index` of the statements of the file.
+    Module { index: u32 },
+    /// Before the statement at `index` of the list whose scope the parse pass pushed at `scope`.
+    Scope { scope: u32, index: u32 },
+    /// Before the statement at `index` of the statements of the erased statement that starts at `parent`.
+    Erased { parent: u32, index: u32 },
+    /// Not in a list: the tree has a statement at `loc` in its place.
+    InTree { loc: u32 },
+}
+
+bitflags! {
+    pub struct ErasedFlags: u16 {
+        const EXPORT; const DEFAULT; const DECLARE;
+        /// `declare`, or inside a `declare` block.
+        const AMBIENT;
+        const ABSTRACT;
+        /// `import type`, `export type`.
+        const TYPE_ONLY;
+        /// The inner part of a dotted namespace name.
+        const NESTED;
+        /// `export declare var` in a namespace: the tree has an `S::Local` of the names at `Place::InTree`.
+        const STAND_IN;
+        const NO_BODY; const STATIC;
+    }
+}
+
+/// A statement that the parse pass leaves out of the statement list.
+pub struct Erased {
+    /// Offset of its first token: a decorator, `export`, `declare`, or its keyword.
+    pub start: u32,
+    /// Offset after its last token, the `;` included.
+    pub end: u32,
+    pub place: Place,
+    pub flags: ErasedFlags,
+    pub data: ErasedData,
+}
+pub enum ErasedData {
+    Interface(Name),
+    TypeAlias(Name),
+    /// A function without a body, or what follows `declare`: a function, class, variable statement, enum or `;`.
+    Declaration(Stmt),
+    Module(StoreRef<ModuleDeclaration>),
+    /// `export as namespace name`.
+    NamespaceExport(Name),
+    Import(StoreRef<ImportDeclaration>),
+    ImportEquals(StoreRef<ImportEqualsDeclaration>),
+    Export(StoreRef<ExportDeclaration>),
+}
+/// An identifier, or a keyword read as a name. `text` is without escapes.
+pub struct Name { pub start: u32, pub end: u32, pub text: StoreStr }
+/// A string literal: the range holds the quotes, `value` is what it says.
+pub struct StringLiteral { pub start: u32, pub end: u32, pub value: StoreStr }
+#[repr(u8)]
+pub enum ModuleKeyword { Namespace, Module, Global }
+pub enum ModuleName { Identifier(Name), String(StringLiteral) }
+pub struct ModuleDeclaration {
+    pub keyword: ModuleKeyword,
+    pub name: ModuleName,
+    /// The statements that the parse pass keeps of the body. `None`: `declare module "m";`.
+    pub body: Option<StoreSlice<Stmt>>,
+}
+pub enum ImportClause { Default(Name), Namespace(Name), Named(StoreSlice<ClauseItem>) }
+pub struct ImportDeclaration {
+    /// Offset of the `type` after `import`.
+    pub type_keyword: Option<u32>,
+    pub clause: ImportClause,
+    pub module_specifier: StringLiteral,
+}
+pub enum ModuleReference { External(Expr), Entity(Expr) }
+pub struct ImportEqualsDeclaration { pub name: Name, pub module_reference: ModuleReference }
+pub enum ExportClause { Star, Namespace(Name), Named(StoreSlice<ClauseItem>) }
+pub struct ExportDeclaration { pub clause: ExportClause, pub module_specifier: Option<StringLiteral> }
+
+/// A class member that the parse pass leaves out of `G::Class::properties`.
+pub struct ErasedMember {
+    pub start: u32,
+    pub end: u32,
+    /// `G::Class::body_loc`.
+    pub class_body: u32,
+    /// How many members `G::Class::properties` has before it.
+    pub index: u32,
+    pub flags: ErasedFlags,
+    pub data: ErasedMemberData,
+}
+pub enum ErasedMemberData {
+    /// An overload, or an abstract or declared member, as the parse pass built it.
+    Property(StoreRef<G::Property>),
+    /// An index signature: the parse pass builds nothing of it.
+    IndexSignature,
+}
+
+#[derive(Default)]
+pub struct ErasedTables {
+    /// In the order the parse pass finishes them: a statement follows the statements inside it.
+    pub statements: Vec<Erased>,
+    /// In the order the parse pass finishes them.
+    pub members: Vec<ErasedMember>,
+    // private: what `export type` holds for its caller, and the lists around the statement being read
+}
+```
+
+`ImportClause::Named` and `ExportClause::Named` hold the names in braces that are not marked `type`.
+`ModuleReference::External` is the string of `require("m")`, `Entity` a name or a dotted name, both as the parse
+pass built them.
+
+What each source is:
+
+| source | `data` | flags beside `EXPORT`, `DEFAULT` |
+| --- | --- | --- |
+| `interface I {}` | `Interface(name)` | `DECLARE`, `AMBIENT` |
+| `type A = T` | `TypeAlias(name)` | `DECLARE`, `AMBIENT` |
+| `declare var/let/const x: T` | `Declaration(S::Local)` | `DECLARE`, `AMBIENT`, `STAND_IN` |
+| `function f(): void;`, `declare function f(): void` | `Declaration(S::Function)` | `NO_BODY`, `DECLARE`, `AMBIENT` |
+| `declare class C {}`, a class of a declaration file | `Declaration(S::Class)` | `AMBIENT`, `DECLARE`, `ABSTRACT` |
+| `declare enum E {}`, `declare const enum E {}` | `Declaration(S::Enum)` | `DECLARE`, `AMBIENT` |
+| `declare;` | `Declaration` of an empty statement | `DECLARE`, `AMBIENT` |
+| `declare namespace N {}`, `declare module "m" {}`, `declare module "m";`, `declare global {}`, `global {}`, a namespace without a value | `Module` | `DECLARE`, `AMBIENT`, `NESTED`, `NO_BODY` |
+| `export as namespace N` | `NamespaceExport(name)` | `AMBIENT` |
+| `import type d from "m"`, `import type * as n from "m"`, `import type { a } from "m"`, `import { type a } from "m"` | `Import` | `TYPE_ONLY` after `import type`, `AMBIENT` |
+| `import type x = require("m")`, `import type x = a.b`, and `import x = ...` in a `declare` block | `ImportEquals` | `TYPE_ONLY`, `AMBIENT`, `DECLARE` |
+| `export type { a }`, `export type { a } from "m"`, `export type * from "m"`, `export type * as n from "m"`, `export { type a }`, `export { type a } from "m"` | `Export` | `TYPE_ONLY` after `export type`, `AMBIENT` |
+
+The name of a declared function, class or enum is in its `Stmt`: `parsed.name_of(name.ref_)`. A namespace with a
+dotted name is one record for each part: the inner parts have `NESTED`, start at their own name and stand at
+`Place::InTree` with the offset of the `.` before them.
+
+How to put an erased statement back between the statements that stay: `place` says the list and the index, and
+`index` counts the list as its node holds it (`ParsedForLint::stmts`, `S::Block::stmts`, `G::FnBody::stmts`, ...).
+The records of one place are in the order of the source. The offset `scope` of `Place::Scope` is where the parse
+pass pushed the scope of the list, which the tree has for every list:
+
+| list | `scope` |
+| --- | --- |
+| the file | `Place::Module` |
+| `S::Block::stmts` | `Stmt::loc` of the block, its `{` |
+| `G::FnBody::stmts` of a function, method, accessor, constructor, or of an arrow function with braces | `G::FnBody::loc`, its `{` |
+| `S::Try::body` | `Stmt::loc` of the `S::Try`, the word `try` |
+| `Catch::body` | `Catch::body_loc` |
+| `Finally::stmts` | `Finally::loc`, the word `finally` |
+| `G::ClassStaticBlock::stmts` | `G::ClassStaticBlock::loc`, its `{` |
+| `S::Namespace::stmts` | `Stmt::loc` of the `S::Namespace`: the keyword, or the `.` before the name of an inner part |
+| the body of an erased namespace, module or `global` block | `Place::Erased`: `parent` is the `start` of the `Module` record, the list is its `ModuleDeclaration::body` |
+| a `case` clause; the body of `if`, `else`, `for`, `while`, `do`, `with` or a label | no index: the placeholder `S::TypeScript` stays in the tree and the record has `Place::InTree` with its `Stmt::loc` |
+
+`Place::InTree { loc }` means that the tree has a statement with that `Stmt::loc` where the erased statement stood:
+an `S::TypeScript`, or with `STAND_IN` the `S::Local` that stands for `export declare var` in a namespace. A list
+inside an erased `Declaration` (the body of a function after `declare`) has `Place::Scope` as any list, though its
+scope is no longer in `scopes_in_order`.
+
+How to put an erased class member back: the members of the class `c` are the records with
+`class_body == c.body_loc`, in list order, each before `c.properties[index]`. `Property` holds the `G::Property`
+as the parse pass built it (an overload has an `E::Function` without a body and `NO_BODY`); its annotations and
+return type are in `attached`. `IndexSignature` has its range and its flags and nothing else. A member with
+`declare` or `abstract` that has a decorator and no value stays in `G::Class::properties` with
+`PropertyKind::Declare` or `PropertyKind::Abstract` and has no record.
+
+[[CHECK erased-cases: the tables above are the 40 cases of parse/erased_tests.rs (`records_are_those_of_the_known_sources`); run it at the final commit. A statement whose name is `as` or `satisfies` (`type as = 1`, `interface as {}`, `namespace as {}`) is a record like any other when the lint parse reads it: say so here, or list it under "Known differences of the lint grammar"]]
+
+### Comments, comment directives and pragmas
+
+[[PICK comments-section: R5 (B1). The first text is the plan of round 2, whose prototypes are round2/b1-comment-collection/top-down/{comments.rs,prototype.diff} and round2/b1-directives-pragmas/top-down/crate/{comment_directives.rs,pragmas.rs}; they were compiled in a scratch copy of the crate and never in the worktree. Keep it only for what `cargo test -p bun_js_parser --lib` ran at the final commit, with the names of the code: `grep -n "^pub \|^    pub " src/js_parser/parse/comments.rs src/js_parser/parse/comment_directives.rs src/js_parser/parse/pragmas.rs`]]
+Files `src/js_parser/parse/comments.rs`, `comment_directives.rs` and `pragmas.rs`: modules
+`bun_js_parser::parse::{comments, comment_directives, pragmas}`. The lexer of a lint parse keeps the range of every
+comment (`Lexer::all_comments`, which a parse without lint fills only for `features.minify_identifiers`), and the
+entry makes three tables of it when the parse has ended.
+
+```rust
+/// What the scanner of the reference makes of a comment.
+#[repr(u8)]
+pub enum CommentKind {
+    /// `//` up to the line break.
+    Line,
+    /// `/*` up to `*/`.
+    Block,
+    /// A block comment that starts with `/**` and is not `/**/`.
+    JSDoc,
+}
+/// A comment: `start` is the offset of its first `/`, `end` the offset after its last character.
+pub struct Comment { pub start: u32, pub end: u32, pub kind: CommentKind }
+/// Every comment of a file in source order, each once. The `#!` line is none.
+#[derive(Default)]
+pub struct Comments { pub list: Vec<Comment> /* private: how many stand before the first token */ }
+impl Comments {
+    /// The comments before the first token of the file: what the reference reads pragmas from.
+    pub fn leading(&self) -> &[Comment];
+}
+
+/// `ast.CommentDirectiveKind`
+#[repr(u8)]
+pub enum CommentDirectiveKind { ExpectError = 1, Ignore = 2 }
+/// `ast.CommentDirective`: a `//` comment from `start` to `end`, or the last line of a block comment.
+pub struct CommentDirective { pub start: u32, pub end: u32, pub kind: CommentDirectiveKind }
+/// `SourceFile.CommentDirectives`: what Scan records for `comments`, every comment of `text` in the order of the source.
+pub fn get_comment_directives(text: &[u8], comments: &[Range]) -> Vec<CommentDirective>;
+
+/// Which argument of a `/// <reference ... />` comment names what it refers to.
+#[repr(u8)]
+pub enum ReferenceDirectiveKind { Path, Types, Lib, NoDefaultLib }
+/// `core.ResolutionMode`: `CommonJS` is `require` and `ESM` is `import`.
+#[repr(u8)]
+pub enum ResolutionMode { None, CommonJS, ESM }
+/// `ast.FileReference` and the comment it is in: the file name is the source from `start` to `end`, the text between the quotes.
+pub struct ReferenceDirective {
+    pub start: u32,
+    pub end: u32,
+    pub comment_start: u32,
+    pub comment_end: u32,
+    pub kind: ReferenceDirectiveKind,
+    /// Of `resolution-mode` beside `types`.
+    pub resolution_mode: ResolutionMode,
+    /// `preserve="true"`
+    pub preserve: bool,
+}
+/// `ast.CheckJsDirective`: the comment from `start` to `end` is `// @ts-check` or `// @ts-nocheck`.
+pub struct CheckJsDirective { pub start: u32, pub end: u32, /* `@ts-check` */ pub enabled: bool }
+/// What processPragmasIntoFields reads from the comments before the first token.
+#[derive(Default)]
+pub struct Pragmas {
+    /// `ReferencedFiles`, `TypeReferenceDirectives` and `LibReferenceDirectives` as one list, in the order of the source.
+    pub reference_directives: Vec<ReferenceDirective>,
+    /// `CheckJsDirective`: the last `@ts-check` or `@ts-nocheck`.
+    pub check_js_directive: Option<CheckJsDirective>,
+}
+impl ReferenceDirective {
+    /// `FileReference.FileName`
+    pub fn file_name<'s>(&self, source_text: &'s [u8]) -> &'s [u8];
+}
+```
+
+Where a caller reads them: [[FILL comments-fields: the fields, e.g. `parsed.sidecar.comments`, `parsed.sidecar.comment_directives`, `parsed.sidecar.pragmas`]].
+
+What is a comment, as the scanner of the reference has it (`internal/scanner/scanner.go`):
+
+- A `//` comment ends before its line break. A `/* */` comment ends after `*/`. A block comment is `JSDoc` when it
+  starts with `/**` and the next character is not `/`.
+- Comments before the first token, after a `#!` line, between tokens, inside a JSX opening tag and after the last
+  token are all in the list, in source order, each once, also where the parser read the source twice.
+- Not in the list: the `#!` line; `<!--` and `-->`, which Bun's lexer reads as comments with a warning and the
+  reference does not know; a `//` or `/*` inside a string, a template, a regular expression or JSX text.
+  [[CHECK html-comments: what the code does with `-->` at the start of a line (`scan_legacy_html_close_comment`)]]
+
+A comment directive is `@ts-expect-error` or `@ts-ignore` as `processCommentDirective` reads it: in a `//` comment
+after the slashes and blanks; in a block comment on its last line only, after blanks and any run of `/` and `*`.
+Its range is the comment for a `//` comment, and the last line of the comment for a block comment.
+
+The pragmas are read from the comments before the first token only (`getCommentPragmas` over
+`GetLeadingCommentRanges(text, 0)`): `/// <reference path|types|lib|no-default-lib ... />` with `resolution-mode`
+and `preserve`, and `// @ts-check` and `// @ts-nocheck` (single-line comments only, the last one wins). A reference
+without `path`, `types`, `lib` or `no-default-lib="true"` is TS1084 `Invalid 'reference' directive syntax.` at the
+range of the comment. [[CHECK ts1084: whether the lint parse reports it, and whether that fails the parse]]
+The pragmas `@jsx`, `@jsxfrag`, `@jsximportsource` and `@jsxruntime` are not in the table: Bun's lexer reads them
+for every parse (`Lexer::jsx_pragma`). [[CHECK jsx-pragmas: name the field of the lexer that holds them, and whether `ParsedForLint` hands them out]]
+
+`ts::full_start(source, comments, start)` takes these comments: `comments` is the list of ranges in source order.
+[[CHECK full-start-input: how a caller gets `&[Range]` from `Comments` (a method, or the `start` and `end` of each `Comment`)]]
+
+A parse without lint is not changed by this: `Lexer::track_comments` stays `features.minify_identifiers` for it,
+the lexer has no added test in `Lexer::next`, and the character frequency of a minified build is what it was.
+[[CHECK comments-cost: the comments come through the lexer, not through a site: r3report.sh must still print js-control +0 Ir, +0 Bc and `Lexer::next` IDENT; the guard of the minifier is lexer-lint-hooks/top-down/minify-guard.mjs]]
+
+Tests: [[FILL comments-tests: the names of the tests and their oracle. Oracles that exist: round2/b1-comment-collection/top-down/all.tsc.tsv (267 sources, tsc 6.0.2), round2/b1-directives-pragmas/bottom-up/directives/expected-go.txt and pragmas/expected-go.txt (typescript-go 89d5d5b)]]
+[[OR]]
+Not done. The side table has no comment, no comment directive (`@ts-ignore`, `@ts-expect-error`) and no pragma
+(`/// <reference />`, `@ts-check`, `@ts-nocheck`): the lexer of a lint parse tracks comments only for
+`features.minify_identifiers`, as every parse does. A pass that needs them scans the source. `ts::full_start` gets
+an empty list and stops at a comment ("Offsets that a comment moves").
+[[END]]
+
+### What the typecheck unit asked for (`typecheck/NEEDS.md`, L1), item by item
+
+| item | where it is |
+| --- | --- |
+| the entry, the statements as written | `Parser::parse_for_lint`, `ParsedForLint::stmts` |
+| type nodes | `bun_ast::ts`, built by the lint grammar |
+| type annotations | `attached.annotation_of` (variables, parameters, catch bindings, class fields); return types and predicates `return_type_of`; `this` parameters `this_parameter_of` |
+| type parameters | functions, arrow functions, classes: `attached.type_parameters_of(Owner)`; interfaces, type aliases: `generics.type_parameters_of(&name)`; signatures inside a type: in the node |
+| type arguments of a call, of `new`, of a tagged template | `generics.type_arguments_after(&target_or_tag)`; JSX `attached.jsx_type_arguments_of`; heritage entries in the clause |
+| `as`, `satisfies`, `!`, `<T>expr` | `wrappers.records` with `wraps(&expr)` [[CHECK l1-parens: "; parentheses too" with the first choice of "parens", in a TypeScript file only]] |
+| `implements` | `attached.heritage_of(class_keyword.loc)`, with `extends` and its type arguments |
+| modifiers | `static`: `G::Property::flags`, `ErasedFlags::STATIC`. `declare`, `abstract` of an erased statement or member: `ErasedFlags`. `in`, `out`, `const` of a type parameter and the modifiers of a type member: in the node. A parameter property: `G::Arg::is_typescript_ctor_field`, without the word. `public`, `private`, `protected`, `readonly`, `override` of a class member or a parameter: no record |
+| index signatures | in a type literal: `ts::IndexSignature`. In a class: `ErasedMemberData::IndexSignature`, range and flags only. In an interface: no record |
+| overloads | functions: `ErasedData::Declaration(S::Function)` with `NO_BODY`; methods, constructors, accessors: `ErasedMemberData::Property` with `NO_BODY` |
+| `declare` | `ErasedFlags::DECLARE` and `AMBIENT` on the record of the statement or member |
+| `abstract` | a member: `ErasedFlags::ABSTRACT`, or `PropertyKind::Abstract` in the tree. An erased class: `ErasedFlags::ABSTRACT`. A class that stays: no record; its `Stmt::loc` is at `abstract` (at `export` for `export default abstract class`) and `class_keyword.loc` at `class` |
+| `enum` | `S::Enum` in the tree; after `declare` `ErasedData::Declaration(S::Enum)`. `const`: no record; the `Stmt::loc` of a const enum is at `const` |
+| `namespace` | `S::Namespace` in the tree, or `ErasedData::Module` |
+| `interface` | `ErasedData::Interface(name)` and its type parameters. The `extends` clause and the members: no record |
+| `type` | `ErasedData::TypeAlias(name)` and its type parameters. The type after `=`: no record |
+| `import =` | `S::Local` with `origin: LocalOrigin::TsImportEquals` in the tree; type-only or in a `declare` block `ErasedData::ImportEquals` |
+| `export =` | `S::ExportEquals` in the tree, also in the body of an erased module |
+| `export as namespace` | `ErasedData::NamespaceExport(name)` |
+| the `?` of a parameter or a member | no record. In a type node: `question_token`, `postfix_token` |
+| `accessor` | `G::Property::kind == PropertyKind::AutoAccessor` in the tree |
+
+[[CHECK l1-rows: the rows `interface`, `type` and `index signatures` change with the second choice of "alias-interface" in "What a lint parse reads with which grammar"]]
+
+### What has no record
+
+- The type of a type alias, and the `extends` clause and the members of an interface: a lint parse reads them and
+  keeps no node. [[CHECK no-record-alias: with the lint grammar, see "alias-interface"; at b882bfc32f it read them with `Discard`]]
+- The parameter and the types of an index signature of a class.
+- `?` and `!` after a binding or the name of a member; the `!` of `let x!: T`.
+- `public`, `private`, `protected`, `readonly`, `override` on a class member or a parameter; `abstract` before a
+  class that stays; `const` before an enum.
+- A name with `type` inside the braces of an import or export statement: `import { type A, b }` keeps `b` and
+  nothing of `A`.
+- The import attributes of an erased import or export, and the offset of `type` in `export type` and in
+  `import type x = ...`.
+- The wrappers, type arguments and annotations of an expression that a type node or an `implements` entry holds
+  (`ts::Parameter::initializer`, `ts::ComputedPropertyName::expression`, `ts::PropertySignature::initializer`,
+  `ts::ImportAttribute::value`, `ts::ExpressionWithTypeArguments::expression` of `implements`): such an expression
+  is read under a snapshot of the parser that is restored, which takes back what it recorded and declared. A `Ref`
+  with the tag `Symbol` inside it (a parameter of a function in it) indexes a slot that a later symbol took.
+- [[PICK no-record-parens: the same decision as "parens"]]
+  The parentheses of a JavaScript file.
+  [[OR]]
+  Parentheses, in any file.
+  [[END]]
+- [[CHECK no-record-comments: delete this item when R5 (B1) landed; else: "Comments, `@ts-ignore` and `@ts-expect-error`, triple-slash directives, `@ts-nocheck` and `@ts-check`."]]
+- The start of a class member that stays, the parameters of an async arrow function and the body of an arrow
+  function with an expression body: the three maps hold them and `ParsedForLint` has no reader.
+- Not built by the lint grammar: `TypeData::JSDocAll`, `KeywordKind::Intrinsic`, `ts::Body` (`GetAccessor::body`
+  and `SetAccessor::body` are `None`), `TypeParameter::expression` (always `None`).
+  [[CHECK not-built: `grep -n "JSDocAll\|Intrinsic\|ts::Body\|expression: None" <the lint grammar files>`]]
+
+### Offsets that a comment moves
+
+[[PICK comment-offsets: whether the lexer of a lint parse tracks comments (R5, B1). Check: a test with a comment at each of the six places below]]
+The lexer of a lint parse keeps every comment, and `ts::full_start` and the walk back of `erased.rs` get the list:
+the offsets below are right next to a comment too. [[FILL comment-offset-tests: the test that holds a comment at each place]]
+[[OR]]
+The lexer of a lint parse keeps no comment, so `ts::full_start` and the walk back of `erased.rs` stop at one. Wrong
+next to a comment until the comments are tracked:
+[[END]]
+
+- `Erased::end` and `ErasedMember::end` when a comment follows the statement before the next token.
+- `ErasedFlags::EXPORT` and `Erased::start` when a comment stands between `export` (or a decorator) and the
+  declaration: the keyword is looked for directly before the statement and is not found.
+- `ErasedFlags::NO_BODY` of `declare module "m";` when a comment follows it, and `ModuleKeyword` of a dotted name
+  with a comment inside.
+- `Wrapper::end` of parentheses that are read as possible parameters (`x = (a) /* c */ + b`).
+- `ts::HeritageClause::end` of `extends` without type arguments, the `end` of an `ExpressionWithTypeArguments` of
+  `implements`, and the `end` of a type node that ends in an expression.
+- `DeclarationTypeParameters::name_end` with a comment between the name and `<`: `type_parameters_of` finds nothing.
+
+### Speculation
+
+Every list is cut back where the parser goes back: `P::sidecar_mark` before an attempt, `P::rewind_sidecar` after
+it. `erased` and `attached` are cut by the lengths they had; `wrappers` and `generics` by the offset the lexer was
+at: every record whose `op` or `lt` is at or after it goes. The three maps of `parse_only` are not cut: an entry is
+written again with the same value when the source is read again.
+[[FILL speculation-points: the backtracking points of the final code and the test of each. At b882bfc32f: `lexer_backtracker_bool`, `lexer_backtracker_result` and `lexer_backtracker_kept` (parse_skip_typescript.rs), `restore_parser_snapshot` (p.rs), `lint_type_parameters_before_paren`, `lint_type_arguments_before_paren` and `lint_class_implements_entry` (generics.rs), `lint_try_arrow_return_type` (parse/mod.rs, which cuts `attached` alone); tests: seven in parse_skip_typescript.rs (one record in each of the thirteen lists, before and after each backtracker and the snapshot), `what_an_attempt_read_and_took_back_leaves_no_record` in annotation_tests.rs, the cases `speculation-arrow-*` of erased_tests.rs, `attempt-that-goes-back` and `arrow-body-read-twice` of generics.rs, `conditional-arrow-read-twice` of wrappers.rs. R1 restores the backtrackers of the skipper to main's text, which cut nothing: name the backtrackers of the lint grammar that cut the lists, and where the seven tests live now]]
+[[CHECK speculation-comments: after R5 (B1): the comment list is cut by `LexerSnapshot::all_comments_len`, which every lexer snapshot restores; the comment directives and the pragmas are computed after the parse from that list, so no backtracking point touches them]]
+
+## Type nodes: `bun_ast::ts`
+
+File `src/ast/ts_nodes.rs`, which has one commit (`e1c99be1a4`) and which `src/ast/ts.rs` declares with `#[path]` and
+re-exports: every name below is `bun_ast::ts::<name>`. The existing AST types are unchanged. The lint grammar builds
+these nodes with the `Build` sink, except `TypeData::JSDocAll`, `KeywordKind::Intrinsic`, `Body` and
+`TypeParameter::expression`, which nothing builds.
+[[CHECK nodes-unchanged: `git log --oneline -- src/ast/ts_nodes.rs` is one line, and `bun run rust:miri -p bun_ast` runs its seven tests]]
+
+### Rules that hold for every node
+
+- `start` and `end` are byte offsets in the source (`u32`). `start` is the offset of the first token of the node,
+  `end` is the offset after its last token. They are the `getStart()` and the `end` of tsc. `Type::loc()`,
+  `Type::range()` and `range(start, end)` give the `Loc` and the `Range` of a diagnostic.
+- The `pos` of tsc (the end of the token before the node) is not stored. `full_start(source, comments, start)`
+  computes it: it walks back from `start` over the white space of Bun's lexer and over `comments`, which must
+  hold every comment of the file in source order. A file that starts with `#!` gives 0 for its first token.
+- Every node type is `Copy`. A `Type` or a `Member` is a 20-byte handle: `start`, `end`, and a `TypeData` or
+  `MemberData` that holds the kind and a `StoreRef` to the payload. Payloads and lists are in the
+  `bun_alloc::Arena` that the caller passes, which is the arena of the lint parse. No node is put in the `Expr` or
+  `Stmt` store. The fields of type `Expr`, `Binding` and `StoreSlice<Stmt>` hold what the expression, binding and
+  statement parsers made.
+- A payload of `TypeData` has no `start` and `end` of its own: they are on the `Type` that holds it. The same holds
+  for a payload of `MemberData` and its `Member`.
+- `List<T>` derefs to `[T]`. `start` is the end of the token that opens the list (`<`, `(`, `[`, `{`), or the start
+  of the first token of the list when no token opens it (the types of a union, of an intersection and of a heritage
+  clause, the spans of a template). `end` is the end of the last item or of the comma after it, and `start` when the
+  list is empty. A trailing comma: `last.end < list.end`.
+- The range of a `Member` takes the `;` or `,` after it.
+- A `Name` holds the text without escapes. A private name keeps its `#` and `Name::is_private()` is true.
+
+### `size_of` of each node
+
+Every number has a `const` assertion in `src/ast/ts_nodes.rs`. Every node in the tables has alignment 4.
+
+Handles, names, tokens and parts:
+
+| `bun_ast::ts` | node of typescript-go `internal/ast` | `size_of` in bytes |
+| --- | --- | ---: |
+| `Type` | any type node: `start`, `end` and the kind | 20 (`Option<Type>` 20, align 4) |
+| `TypeData` | the kind of a type and the pointer to its payload | 12 |
+| `Member` | any type element: `start`, `end` and the kind | 20 |
+| `MemberData` | the kind of a type element and the pointer to its payload | 12 |
+| `List<T>` | `NodeList` | 20 (`Option<List<T>>` 20) |
+| `Token` | `Token` (`DotDotDotToken`, `QuestionToken`, `ExclamationToken`, `PlusToken`, `MinusToken`, `ReadonlyKeyword`, `AssertsKeyword`) | 12 (`Option<Token>` 12) |
+| `Name` | `Identifier`, `PrivateIdentifier` | 20 |
+| `EntityName` | `EntityName` | 20 |
+| `QualifiedName` | `QualifiedName` | 48 |
+| `Literal` | `StringLiteral`, `NumericLiteral`, `BigIntLiteral`, `NoSubstitutionTemplateLiteral`, `KeywordExpression` (`null`, `true`, `false`) | 20 |
+| `LiteralData` | the kind of a literal and its value | 12 |
+| `PropertyName` | `PropertyName` | 24 |
+| `ComputedPropertyName` | `ComputedPropertyName` | 24 |
+| `Modifier` | a modifier keyword (`Token`) or a `Decorator` | 24 |
+| `ModifierData` | the kind of a modifier | 16 |
+| `TypeParameter` | `TypeParameterDeclaration` | 96 |
+| `Parameter` | `ParameterDeclaration` | 96 |
+| `HeritageClause` | `HeritageClause` | 32 |
+| `TemplatePiece` | `TemplateHead`, `TemplateMiddle`, `TemplateTail` | 20 |
+| `TemplateLiteralTypeSpan` | `TemplateLiteralTypeSpan` | 48 |
+| `ImportAttributes` | `ImportAttributes` | 32 |
+| `ImportAttribute` | `ImportAttribute` | 48 |
+| `ImportAttributeName` | `ImportAttributeName` | 24 |
+| `TypePredicateParameterName` | `TypePredicateParameterName` (`Identifier` or `ThisTypeNode`) | 20 |
+| `Body` | `Block` of an accessor | 20 |
+
+Payloads of `TypeData` (`KeywordTypeNode`, `ThisTypeNode` and `JSDocAllType` have no payload):
+
+| `bun_ast::ts` | node of typescript-go `internal/ast` | `size_of` in bytes |
+| --- | --- | ---: |
+| `LiteralType` | `LiteralTypeNode` | 24 |
+| `TypeReference` | `TypeReferenceNode` | 40 |
+| `ExpressionWithTypeArguments` | `ExpressionWithTypeArguments` | 36 |
+| `ArrayType` | `ArrayTypeNode` | 20 |
+| `TupleType` | `TupleTypeNode` | 20 |
+| `NamedTupleMember` | `NamedTupleMember` | 64 |
+| `OptionalType` | `OptionalTypeNode` | 20 |
+| `RestType` | `RestTypeNode` | 20 |
+| `UnionType` | `UnionTypeNode` | 20 |
+| `IntersectionType` | `IntersectionTypeNode` | 20 |
+| `ConditionalType` | `ConditionalTypeNode` | 80 |
+| `InferType` | `InferTypeNode` | 96 |
+| `MappedType` | `MappedTypeNode` | 180 |
+| `IndexedAccessType` | `IndexedAccessTypeNode` | 40 |
+| `TypeOperator` | `TypeOperatorNode` | 24 |
+| `TypeQuery` | `TypeQueryNode` | 40 |
+| `FunctionType` | `FunctionTypeNode` | 60 |
+| `ConstructorType` | `ConstructorTypeNode` | 72 |
+| `TypeLiteral` | `TypeLiteralNode` | 20 |
+| `TemplateLiteralType` | `TemplateLiteralTypeNode` | 40 |
+| `ImportType` | `ImportTypeNode` | 76 |
+| `ParenthesizedType` | `ParenthesizedTypeNode` | 20 |
+| `TypePredicate` | `TypePredicateNode` | 52 |
+| `JSDocNullableType` | `JSDocNullableType` | 20 |
+| `JSDocNonNullableType` | `JSDocNonNullableType` | 20 |
+
+Payloads of `MemberData`:
+
+| `bun_ast::ts` | node of typescript-go `internal/ast` | `size_of` in bytes |
+| --- | --- | ---: |
+| `PropertySignature` | `PropertySignatureDeclaration` | 84 |
+| `MethodSignature` | `MethodSignatureDeclaration` | 108 |
+| `CallSignature` | `CallSignatureDeclaration` | 60 |
+| `ConstructSignature` | `ConstructSignatureDeclaration` | 60 |
+| `IndexSignature` | `IndexSignatureDeclaration` | 52 |
+| `GetAccessor` | `GetAccessorDeclaration` | 116 |
+| `SetAccessor` | `SetAccessorDeclaration` | 116 |
+
+The kinds `KeywordKind`, `TokenKind`, `TypeOperatorKind`, `TemplatePieceKind`, `ImportAttributesToken`, `ModifierKind`
+and `HeritageToken` are `#[repr(u8)]`: 1 byte.
+
+### Types
+
+```rust
+/// A type. `start` is the offset of its first token, `end` the offset after its last token.
+pub struct Type {
+    pub start: u32,
+    pub end: u32,
+    pub data: TypeData,
+}
+
+/// The kind of a type, with its payload in the arena of the lint parse.
+pub enum TypeData {
+    /// `KeywordTypeNode`: its kind is the kind of the keyword.
+    Keyword(KeywordKind),
+    /// `ThisTypeNode`.
+    This,
+    /// `JSDocAllType`, the type `*`.
+    JSDocAll,
+    Literal(StoreRef<LiteralType>),
+    TypeReference(StoreRef<TypeReference>),
+    /// An entry of a heritage clause that is not a plain entity name, and every entry of a class `extends`.
+    ExpressionWithTypeArguments(StoreRef<ExpressionWithTypeArguments>),
+    Array(StoreRef<ArrayType>),
+    Tuple(StoreRef<TupleType>),
+    NamedTupleMember(StoreRef<NamedTupleMember>),
+    Optional(StoreRef<OptionalType>),
+    Rest(StoreRef<RestType>),
+    Union(StoreRef<UnionType>),
+    Intersection(StoreRef<IntersectionType>),
+    Conditional(StoreRef<ConditionalType>),
+    Infer(StoreRef<InferType>),
+    Mapped(StoreRef<MappedType>),
+    IndexedAccess(StoreRef<IndexedAccessType>),
+    TypeOperator(StoreRef<TypeOperator>),
+    TypeQuery(StoreRef<TypeQuery>),
+    Function(StoreRef<FunctionType>),
+    Constructor(StoreRef<ConstructorType>),
+    TypeLiteral(StoreRef<TypeLiteral>),
+    TemplateLiteral(StoreRef<TemplateLiteralType>),
+    Import(StoreRef<ImportType>),
+    Parenthesized(StoreRef<ParenthesizedType>),
+    TypePredicate(StoreRef<TypePredicate>),
+    /// `?T` and `T?`: the postfix form starts where its operand starts.
+    JSDocNullable(StoreRef<JSDocNullableType>),
+    /// `!T` and `T!`: the postfix form starts where its operand starts.
+    JSDocNonNullable(StoreRef<JSDocNonNullableType>),
+}
+
+pub enum KeywordKind {
+    Any,
+    Unknown,
+    String,
+    Number,
+    BigInt,
+    Symbol,
+    Boolean,
+    Undefined,
+    Never,
+    Object,
+    Void,
+    /// Only as the whole right side of a type alias.
+    Intrinsic,
+}
+
+/// A list and its range.
+pub struct List<T> {
+    pub items: StoreSlice<T>,
+    /// The end of the token that opens the list, or the start of its first token when none opens it.
+    pub start: u32,
+    /// The end of the last item or of the comma after it, or `start` when the list is empty.
+    pub end: u32,
+}
+
+/// A token that TypeScript keeps as a node.
+pub struct Token {
+    pub start: u32,
+    pub end: u32,
+    pub kind: TokenKind,
+}
+
+pub enum TokenKind {
+    DotDotDot,
+    Question,
+    Exclamation,
+    Plus,
+    Minus,
+    Readonly,
+    Asserts,
+}
+
+/// An identifier, a keyword read as a name, or a private name with its `#`.
+pub struct Name {
+    pub start: u32,
+    pub end: u32,
+    /// The name without escapes.
+    pub text: StoreStr,
+}
+
+pub enum EntityName {
+    Identifier(Name),
+    QualifiedName(StoreRef<QualifiedName>),
+}
+
+pub struct QualifiedName {
+    pub start: u32,
+    pub end: u32,
+    pub left: EntityName,
+    pub right: Name,
+}
+
+/// A literal as a literal type, a property name or the name of an import attribute holds it.
+pub struct Literal {
+    pub start: u32,
+    pub end: u32,
+    pub data: LiteralData,
+}
+
+pub enum LiteralData {
+    Null,
+    True,
+    False,
+    Number(E::Number),
+    /// The digits without separators and without the `n`, with the radix prefix if the source has one.
+    BigInt(StoreRef<E::BigInt>),
+    String(StoreRef<E::EString>),
+    NoSubstitutionTemplate(StoreRef<E::EString>),
+}
+
+/// `negative` puts a `PrefixUnaryExpression` with the range of the type around `literal`.
+pub struct LiteralType {
+    pub literal: Literal,
+    pub negative: bool,
+}
+
+pub struct TypeReference {
+    pub type_name: EntityName,
+    pub type_arguments: Option<List<Type>>,
+}
+
+pub struct ExpressionWithTypeArguments {
+    pub expression: Expr,
+    pub type_arguments: Option<List<Type>>,
+}
+
+pub struct ArrayType {
+    pub element_type: Type,
+}
+
+pub struct TupleType {
+    pub elements: List<Type>,
+}
+
+pub struct NamedTupleMember {
+    pub dot_dot_dot_token: Option<Token>,
+    pub name: Name,
+    pub question_token: Option<Token>,
+    pub type_node: Type,
+}
+
+/// `T?` as an element of a tuple.
+pub struct OptionalType {
+    pub type_node: Type,
+}
+
+/// `...T` as an element of a tuple.
+pub struct RestType {
+    pub type_node: Type,
+}
+
+/// `types` starts at the leading `|` when the source has one.
+pub struct UnionType {
+    pub types: List<Type>,
+}
+
+/// `types` starts at the leading `&` when the source has one.
+pub struct IntersectionType {
+    pub types: List<Type>,
+}
+
+pub struct ConditionalType {
+    pub check_type: Type,
+    pub extends_type: Type,
+    pub true_type: Type,
+    pub false_type: Type,
+}
+
+pub struct InferType {
+    pub type_parameter: TypeParameter,
+}
+
+pub struct MappedType {
+    /// `Readonly`, or the `Plus` or `Minus` before `readonly`.
+    pub readonly_token: Option<Token>,
+    /// The name and, as its constraint, the type after `in`.
+    pub type_parameter: TypeParameter,
+    /// The type after `as`.
+    pub name_type: Option<Type>,
+    /// `Question`, or the `Plus` or `Minus` before `?`.
+    pub question_token: Option<Token>,
+    pub type_node: Option<Type>,
+    /// What follows the mapping before `}`: the checker rejects a list that is not empty.
+    pub members: List<Member>,
+}
+
+pub struct IndexedAccessType {
+    pub object_type: Type,
+    pub index_type: Type,
+}
+
+pub enum TypeOperatorKind {
+    KeyOf,
+    Unique,
+    Readonly,
+}
+
+pub struct TypeOperator {
+    pub operator: TypeOperatorKind,
+    pub type_node: Type,
+}
+
+pub struct TypeQuery {
+    pub expr_name: EntityName,
+    pub type_arguments: Option<List<Type>>,
+}
+
+pub struct FunctionType {
+    pub type_parameters: Option<List<TypeParameter>>,
+    pub parameters: List<Parameter>,
+    pub type_node: Option<Type>,
+}
+
+pub struct ConstructorType {
+    /// `abstract`, or nothing.
+    pub modifiers: StoreSlice<Modifier>,
+    pub type_parameters: Option<List<TypeParameter>>,
+    pub parameters: List<Parameter>,
+    pub type_node: Option<Type>,
+}
+
+pub struct TypeLiteral {
+    pub members: List<Member>,
+}
+
+pub enum TemplatePieceKind {
+    Head,
+    Middle,
+    Tail,
+}
+
+/// `TemplateHead`, `TemplateMiddle` or `TemplateTail`, from its `` ` `` or `}` to its `${` or `` ` ``.
+pub struct TemplatePiece {
+    pub start: u32,
+    pub end: u32,
+    pub kind: TemplatePieceKind,
+    /// The text without escapes.
+    pub text: StoreRef<E::EString>,
+}
+
+pub struct TemplateLiteralType {
+    pub head: TemplatePiece,
+    pub template_spans: List<TemplateLiteralTypeSpan>,
+}
+
+pub struct TemplateLiteralTypeSpan {
+    pub start: u32,
+    pub end: u32,
+    pub type_node: Type,
+    pub literal: TemplatePiece,
+}
+
+pub struct ImportType {
+    pub is_type_of: bool,
+    pub argument: Type,
+    pub attributes: Option<StoreRef<ImportAttributes>>,
+    pub qualifier: Option<EntityName>,
+    pub type_arguments: Option<List<Type>>,
+}
+
+pub enum ImportAttributesToken {
+    With,
+    Assert,
+}
+
+pub struct ImportAttributes {
+    pub start: u32,
+    pub end: u32,
+    pub token: ImportAttributesToken,
+    pub attributes: List<ImportAttribute>,
+    pub multi_line: bool,
+}
+
+pub struct ImportAttribute {
+    pub start: u32,
+    pub end: u32,
+    pub name: ImportAttributeName,
+    pub value: Expr,
+}
+
+pub enum ImportAttributeName {
+    Identifier(Name),
+    String(Literal),
+}
+
+pub struct ParenthesizedType {
+    pub type_node: Type,
+}
+
+pub struct TypePredicate {
+    pub asserts_modifier: Option<Token>,
+    pub parameter_name: TypePredicateParameterName,
+    pub type_node: Option<Type>,
+}
+
+pub enum TypePredicateParameterName {
+    Identifier(Name),
+    /// A `ThisTypeNode` with this range.
+    This {
+        start: u32,
+        end: u32,
+    },
+}
+
+pub struct JSDocNullableType {
+    pub type_node: Type,
+}
+
+pub struct JSDocNonNullableType {
+    pub type_node: Type,
+}
+
+/// A modifier keyword or a decorator, in the order of the source.
+pub struct Modifier {
+    pub start: u32,
+    pub end: u32,
+    pub data: ModifierData,
+}
+
+pub enum ModifierData {
+    Keyword(ModifierKind),
+    Decorator(Expr),
+}
+
+pub enum ModifierKind {
+    Abstract,
+    Accessor,
+    Async,
+    Const,
+    Declare,
+    Default,
+    Export,
+    In,
+    Private,
+    Protected,
+    Public,
+    Readonly,
+    Out,
+    Override,
+    Static,
+}
+
+pub struct TypeParameter {
+    pub start: u32,
+    pub end: u32,
+    /// `in`, `out` and `const`.
+    pub modifiers: StoreSlice<Modifier>,
+    pub name: Name,
+    pub constraint: Option<Type>,
+    /// What follows `extends` when it starts an expression and cannot start a type.
+    pub expression: Option<Expr>,
+    pub default_type: Option<Type>,
+}
+
+pub struct Parameter {
+    pub start: u32,
+    pub end: u32,
+    pub modifiers: StoreSlice<Modifier>,
+    pub dot_dot_dot_token: Option<Token>,
+    /// Not declared: each name is a `Ref` to its text. A `this` parameter is a `B::Identifier` that names `this`.
+    pub name: Binding,
+    pub question_token: Option<Token>,
+    pub type_node: Option<Type>,
+    pub initializer: Option<Expr>,
+}
+
+pub enum HeritageToken {
+    Extends,
+    Implements,
+}
+
+/// Each of `types` is a `TypeReference` or an `ExpressionWithTypeArguments`.
+pub struct HeritageClause {
+    pub start: u32,
+    pub end: u32,
+    pub token: HeritageToken,
+    pub types: List<Type>,
+}
+
+pub enum PropertyName {
+    Identifier(Name),
+    /// `String`, `Number` or `BigInt`.
+    Literal(Literal),
+    Computed(StoreRef<ComputedPropertyName>),
+}
+
+pub struct ComputedPropertyName {
+    pub start: u32,
+    pub end: u32,
+    pub expression: Expr,
+}
+
+/// A member of a type literal, of a mapped type or of an interface. Its range takes the `;` or `,` after it.
+pub struct Member {
+    pub start: u32,
+    pub end: u32,
+    pub data: MemberData,
+}
+
+pub enum MemberData {
+    PropertySignature(StoreRef<PropertySignature>),
+    MethodSignature(StoreRef<MethodSignature>),
+    CallSignature(StoreRef<CallSignature>),
+    ConstructSignature(StoreRef<ConstructSignature>),
+    IndexSignature(StoreRef<IndexSignature>),
+    GetAccessor(StoreRef<GetAccessor>),
+    SetAccessor(StoreRef<SetAccessor>),
+}
+
+pub struct PropertySignature {
+    pub modifiers: StoreSlice<Modifier>,
+    pub name: PropertyName,
+    /// `Question`.
+    pub postfix_token: Option<Token>,
+    pub type_node: Option<Type>,
+    /// The checker rejects it.
+    pub initializer: Option<Expr>,
+}
+
+pub struct MethodSignature {
+    pub modifiers: StoreSlice<Modifier>,
+    pub name: PropertyName,
+    /// `Question`.
+    pub postfix_token: Option<Token>,
+    pub type_parameters: Option<List<TypeParameter>>,
+    pub parameters: List<Parameter>,
+    pub type_node: Option<Type>,
+}
+
+pub struct CallSignature {
+    pub type_parameters: Option<List<TypeParameter>>,
+    pub parameters: List<Parameter>,
+    pub type_node: Option<Type>,
+}
+
+pub struct ConstructSignature {
+    pub type_parameters: Option<List<TypeParameter>>,
+    pub parameters: List<Parameter>,
+    pub type_node: Option<Type>,
+}
+
+pub struct IndexSignature {
+    pub modifiers: StoreSlice<Modifier>,
+    pub parameters: List<Parameter>,
+    pub type_node: Option<Type>,
+}
+
+pub struct GetAccessor {
+    pub modifiers: StoreSlice<Modifier>,
+    pub name: PropertyName,
+    pub type_parameters: Option<List<TypeParameter>>,
+    pub parameters: List<Parameter>,
+    pub type_node: Option<Type>,
+    /// The checker rejects it.
+    pub body: Option<Body>,
+}
+
+pub struct SetAccessor {
+    pub modifiers: StoreSlice<Modifier>,
+    pub name: PropertyName,
+    pub type_parameters: Option<List<TypeParameter>>,
+    pub parameters: List<Parameter>,
+    pub type_node: Option<Type>,
+    /// The checker rejects it.
+    pub body: Option<Body>,
+}
+
+/// The block of an accessor, from `{` to `}`.
+pub struct Body {
+    pub start: u32,
+    pub end: u32,
+    pub stmts: StoreSlice<Stmt>,
+}
+```
+
+### Functions
+
+```rust
+impl Type {
+    pub const fn keyword(kind: KeywordKind, start: u32, end: u32) -> Type;
+    pub const fn this(start: u32, end: u32) -> Type;
+    pub const fn jsdoc_all(start: u32, end: u32) -> Type;
+    /// Puts `payload` in `arena`.
+    pub fn alloc<T: IntoTypeData>(arena: &Arena, payload: T, start: u32, end: u32) -> Type;
+    pub const fn loc(&self) -> Loc;
+    pub const fn range(&self) -> Range;
+}
+impl Member {
+    /// Puts `payload` in `arena`.
+    pub fn alloc<T: IntoMemberData>(arena: &Arena, payload: T, start: u32, end: u32) -> Member;
+}
+/// Implemented by the 25 payloads of `TypeData`.
+pub trait IntoTypeData: Sized {
+    fn type_data(payload: StoreRef<Self>) -> TypeData;
+    fn into_type_data(self, arena: &Arena) -> TypeData;
+}
+/// Implemented by the 7 payloads of `MemberData`.
+pub trait IntoMemberData: Sized {
+    fn member_data(payload: StoreRef<Self>) -> MemberData;
+    fn into_member_data(self, arena: &Arena) -> MemberData;
+}
+impl<T> List<T> {
+    pub const fn empty(start: u32, end: u32) -> List<T>;
+    /// Leaves `items` in the arena it grew in.
+    pub fn from_bump(items: ArenaVec<'_, T>, start: u32, end: u32) -> List<T>;
+    /// Copies `items` to `arena`.
+    pub fn from_slice(arena: &Arena, items: &[T], start: u32, end: u32) -> List<T> where T: Copy;
+}
+impl Name {
+    pub const fn new(text: &[u8], start: u32, end: u32) -> Name;
+    pub fn is_private(&self) -> bool;
+}
+impl EntityName {
+    /// `left.right`, with the `QualifiedName` in `arena`: its range is from the start of `left` to the end of `right`.
+    pub fn qualified(arena: &Arena, left: EntityName, right: Name) -> EntityName;
+    pub fn start(&self) -> u32;
+    pub fn end(&self) -> u32;
+}
+impl LiteralData {
+    pub const fn number(value: f64) -> LiteralData;
+    pub fn bigint(arena: &Arena, digits: &[u8]) -> LiteralData;
+    /// `NoSubstitutionTemplate` when `is_template`, else `String`.
+    pub fn string(arena: &Arena, value: E::EString, is_template: bool) -> LiteralData;
+    pub const fn kind_name(&self) -> &'static str;
+}
+impl PropertyName {
+    pub fn computed(arena: &Arena, expression: Expr, start: u32, end: u32) -> PropertyName;
+    pub fn start(&self) -> u32;
+    pub fn end(&self) -> u32;
+}
+impl ImportAttributeName {
+    pub const fn start(&self) -> u32;
+    pub const fn end(&self) -> u32;
+}
+impl TypePredicateParameterName {
+    pub const fn start(&self) -> u32;
+    pub const fn end(&self) -> u32;
+}
+impl Modifier {
+    pub const fn keyword(kind: ModifierKind, start: u32, end: u32) -> Modifier;
+    pub const fn decorator(expression: Expr, start: u32, end: u32) -> Modifier;
+}
+impl TypeData { pub const fn kind_name(&self) -> &'static str; }
+impl MemberData { pub const fn kind_name(&self) -> &'static str; }
+impl KeywordKind { pub const fn kind_name(self) -> &'static str; }
+impl TemplatePieceKind { pub const fn kind_name(self) -> &'static str; }
+pub const fn range(start: u32, end: u32) -> Range;
+pub fn full_start(source: &[u8], comments: &[Range], start: u32) -> u32;
+```
+
+`kind_name` gives the name of the member of `ts.SyntaxKind` (`"TypeReference"`, `"StringKeyword"`,
+`"PropertySignature"`, `"TemplateHead"`). The reverse map `ts.SyntaxKind[kind]` of tsc 6.0.2 prints an alias for five
+of them: `TypePredicate` is `FirstTypeNode`, `ImportType` is `LastTypeNode`, `NumericLiteral` is `FirstLiteralToken`,
+`NoSubstitutionTemplateLiteral` is `FirstTemplateToken`, `TemplateTail` is `LastTemplateToken`.
+
+### How the nodes differ from the reference
+
+- A literal type has no expression node: `LiteralType.literal` is the literal and `negative` stands for the
+  `PrefixUnaryExpression` with operator `-`, whose range is the range of the `Type`.
+- `TypePredicate.parameter_name` holds the range of the `ThisTypeNode` and no node.
+- A modifier list is a `StoreSlice<Modifier>` without a range of its own: it runs from the `start` of its first
+  modifier to the `end` of its last.
+- `TemplatePiece` keeps the text without escapes. The raw text is the source between `start + 1` and the `${` or
+  the closing backtick.
+- `Parameter.name` is a `bun_ast::Binding`, which has a `loc` and no end.
+- `JSDocOptionalType` and `JSDocVariadicType` have no node: only the JSDoc parser of the reference builds them.
+- There is no node for a missing type: the parser stops at its first error.
+
+### State
+
+Built in the worktree and in CI on every platform. Every size of this section is a `const` assertion of
+`src/ast/ts_nodes.rs`, which every build evaluates.
+
+### Tests
+
+`#[cfg(test)] mod tests` in `src/ast/ts_nodes.rs`, seven tests, run by `bun run rust:miri -p bun_ast`. A test binary
+of `bun_ast` has no mimalloc, so a test cannot make an `Arena`: the tests keep their payloads in boxes and pick
+the variant with `IntoTypeData::type_data` and `IntoMemberData::member_data`. A test in another crate that has no
+arena can do the same. `bun_ast` is in `MIRI_CRATES` (`scripts/rust-miri.ts`), so CI runs them.
+
+## Syntax errors of a lint parse: the codes of the reference
+
+File `src/js_parser/parse/syntax_errors.rs`, module `bun_js_parser::parse::syntax_errors`.
+[[FILL syntax-tests-count: "`cargo test -p bun_js_parser --lib parse::syntax_errors`: <n> passed" at the final commit (nine at b882bfc32f)]]
+
+### Entry
+
+```rust
+impl<'a> Parser<'a> {
+    /// `parse_for_lint`. Where the parse fails, `errors` gets what the reference reports for the messages that it logged.
+    pub fn parse_for_lint_with_codes<R>(
+        self,
+        errors: &mut SyntaxErrors,
+        f: impl FnOnce(&ParsedForLint<'_, 'a>) -> R,
+    ) -> Result<R, Error>;
+}
+```
+
+`Parser::parse_for_lint(f)` is `parse_for_lint_with_codes(&mut SyntaxErrors::default(), f)`. The parse is the same in
+both. `errors` is left as it was when the parse succeeds.
+
+```rust
+/// The diagnostics of the reference for the messages that a lint parse left in the log.
+#[derive(Default)]
+pub struct SyntaxErrors { /* private */ }
+
+impl SyntaxErrors {
+    /// Every entry, by rising `msg`.
+    pub fn entries(&self) -> &[SyntaxError];
+    /// The entry of the message at index `msg` of the log.
+    pub fn get(&self, msg: usize) -> Option<&SyntaxError>;
+}
+
+/// What the reference reports for one message that a lint parse left in the log.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SyntaxError {
+    /// The index of the message in `Log::msgs`.
+    pub msg: u32,
+    /// The number of the diagnostic: 1005 is TS1005.
+    pub code: u32,
+    /// The offset of the first byte that the diagnostic marks.
+    pub start: u32,
+    /// The offset after the last byte that it marks: `start` where it marks a position.
+    pub end: u32,
+    /// The text of the diagnostic, its argument filled in.
+    pub text: Cow<'static, [u8]>,
+}
+```
+
+[[CHECK syntax-error-shape: syntax_errors.rs:86-165 at b882bfc32f. After R5 (B2) write the types as they are, and `Parser::init_for_lint` / `Parser::init_for_lint_with_codes` if they exist]]
+
+### What a caller reads from where
+
+[[PICK codes-on-msg: R5 (B2). Check: a test that reads `log.msgs[i].code()` after a lint parse that fails; `grep -n "Metadata::Code\|add_range_error_with_code" src/js_parser -r`]]
+The log that `Parser::init` got holds the messages of Bun as before, with their text unchanged. After a lint parse
+that failed:
+
+| what | where |
+| --- | --- |
+| the code of tsc | `log.msgs[i].code()`: `Some(1005)` for TS1005, `None` where the parser knows no code for the message. `bun_ast::Msg::metadata` is `Metadata::Code(code)` |
+| the text and the location of Bun | `log.msgs[i].data.text`, `log.msgs[i].data.location`, as in every parse |
+| the range of the reference | `errors.get(i)`: `start` and `end` |
+| the text of the reference, its argument filled in (`';' expected.`) | `errors.get(i)`: `text` |
+
+`errors.get(i)` is `None` exactly where `log.msgs[i].code()` is `None`. A caller that prints as tsc prints takes the
+code from the message and the range and the text from the entry; a caller that only needs the code needs no
+`SyntaxErrors`: `Parser::parse_for_lint` puts the codes on the messages too. A parse without lint puts no code on a
+message: `Msg::code()` is `None` for every message of `Parser::parse`.
+[[OR]]
+`bun_ast::Msg` can carry a code since `4d9b8e5139` (`Metadata::Code(u32)`, `Msg::code()`). The parser does not write
+it: for the message at index `i` of `log.msgs`, `errors.get(i)` is the diagnostic of the reference (`code`, `start`,
+`end`, `text`), or `None` when the parser knows none for it. A caller that wants a code reads `errors.get(i)`, not
+`msg.code()`. The log holds the messages of Bun as before, with their text unchanged.
+[[END]]
+
+`text` is the text of `diagnosticMessages.json` (`';' expected.`), `code` its number. `start` and `end` are the range
+of the message of Bun, which is the token the lexer was on, with three exceptions that follow the reference: TS1002
+and TS1160 are at the offset where the line or the file ends, TS1385 to TS1388 run from the end of the token before
+the type to the end of the type.
+
+### No error recovery
+
+The parser stops at its first error as today: error recovery is out of scope. A lint parse that fails returns `Err`
+and no tree, no node stands for what is missing, and `f` is not called. The log can hold more than one message,
+because some errors are logged and the parse goes on to the end of the statement or of the file before it fails: the
+first message of the parse is the error, the others are what followed from it. The reference recovers and reports
+more diagnostics for the same file: only its first one can be compared.
+
+### What an entry means
+
+An entry is the diagnostic that the reference has for the condition that Bun's parser found. Bun finds errors with
+its own grammar: where the reference decides in another place or has a more specific diagnostic, its first diagnostic
+for the same file is another one. The list "Known differences" below names the cases that are known.
+
+| Condition in Bun's parser | Message of Bun | Entry |
+| --- | --- | --- |
+| a token that the grammar requires is missing (`Lexer::expect`, `expect_contextual_keyword`, `expect_or_insert_semicolon`, `expect_greater_than`) | `Expected "x" but found ...` | TS1005 `'x' expected.` |
+| a name is missing and the lexer is on a reserved word | `Expected identifier but found "class"` | TS1359 `Identifier expected. 'class' is a reserved word that cannot be used here.` |
+| a name is missing | `Expected identifier but found ...` | TS1003 `Identifier expected.` |
+| a string has no closing quote | `Unterminated string literal` | TS1002 `Unterminated string literal.` |
+| a template has no closing backtick | `Unterminated string literal` | TS1160 `Unterminated template literal.` |
+| a comment has no `*/` | `Expected "*/" to terminate multi-line comment` | TS1010 `'*/' expected.` |
+| the token starts no expression (the last arm of `parse_prefix`) | `Unexpected x` | TS1109 `Expression expected.` |
+| the same at the first token of a statement of a block, of a function body or of the file, unless the token is a binary operator | `Unexpected x` | TS1128 `Declaration or statement expected.` |
+| the same for `default` at the top of the file | `Unexpected default` | TS1005 `'export' expected.` |
+| the same for `catch` and `finally` | `Unexpected catch` | TS1005 `'try' expected.` |
+| the token starts no type (the lint grammar) | `Unexpected x` | TS1110 `Type expected.` |
+| a function or constructor type is an operand of `\|` or `&` (the lint grammar) | the text of the entry | TS1385, TS1386, TS1387, TS1388 |
+| the token starts no member of an object type (the lint grammar) | `Unexpected x` | TS1131 `Property or signature expected.` |
+[[FILL codes-added: one row for each code that R5 (B3, B4) added, with the test that holds it]]
+
+The first six rows are read from the text of the message when the parse ends, because the lexer logs them and has
+no way to the table. The others are recorded where they are logged. Every other message has no entry: the
+`Syntax Error` of the lexer (numbers, escapes, regular expressions, characters), `Unexpected x` of the other call
+sites of `Lexer::unexpected`, and every message that the parser logs itself.
+
+The two rows about `parse_prefix` and about the first token of a statement are decided in code that every parse
+runs, on a path that only a syntax error takes: the last arm of `parse_prefix` and the error of
+`parse_stmt_fallthrough`. [[CHECK error-path-sites: these two calls must leave `P<false, false>::parse_prefix` and `parse_stmt_fallthrough` with the machine code of the reference (round3/r5-codes-on-msg/commands.sh measured the forms la0, la1, st0, st1); r3report.sh "strict ref-head ... DIFF 0" covers it. Name the form the code has]]
+
+### What a lint parse rejects that a parse without lint accepts
+
+How the parser knows that it is a lint parse: "How a site knows which parse it is". The checks below are in the lint
+grammar, which only a lint parse runs, or on a path that only an error takes. A parse without lint accepts, rejects
+and logs what main does.
+
+- A type that is missing inside an attempt. The skipper of main turns the log of the lexer off in an attempt and
+  goes on as if the type stood, so a parse without lint takes `let x: (a: ) => void`, `f<A | >(x)`, `f<,>;` and
+  `new A<B | >()`. The lint grammar records TS1110 for the missing type. If the attempt goes back, the message goes
+  with it. If the attempt stays, the parse fails, as the reference fails when it keeps type arguments that it read
+  with an error.
+- `typeHasArrowFunctionBlockingParseError`: inside an attempt, a return type that is missing before `=>` ends the
+  attempt, so `(a): => a` is no arrow function and the `:` is the error (TS1005 at the `:`).
+- `parseFunctionOrConstructorTypeToError`: `A | () => void`, `| new () => A`, `A & <T>() => T`,
+  `A | abstract new () => B` log the text of TS1385 to TS1388 and the parse goes on, as the reference goes on.
+- `|` or `&` where `parseTypeOperatorOrHigher` reads a type is TS1110: `A & | B`, `| | A`, `& | A`, `keyof | A`.
+  The skipper of main takes any run of these operators.
+- `isListElement` of `PCTypeMembers` (type literals and what follows the mapping of a mapped type): a token that
+  starts no member is TS1131 at that token, so `{ a A }` fails at `a` as in the reference, and not at `A`.
+[[CHECK rejects-tests: each item is a row of syntax_errors::tests::a_lint_parse_rejects_what_an_attempt_lets_pass or a_type_that_is_built_is_read_as_the_reference_reads_it at b882bfc32f. Run both at the final commit. An item holds only for a type that the lint parse reads with the lint grammar: see "What a lint parse reads with which grammar" for what it still reads with the skipper]]
+
+[[PICK b3-rejections: R5 (B3). The table is the first diagnostic of typescript-go 89d5d5b and of tsc 6.0.2 (round2/decompose-facts-B.txt, round2/b3-operand-strictness/bottom-up/table.rows.be1ebe5295.txt). Keep a row only when a test of the final commit asserts its code and range]]
+What typescript-go rejects outside the type grammar, and a lint parse with it (`typecheck/NEEDS.md`, L2):
+
+| source | the first diagnostic of the reference, offset and length |
+| --- | --- |
+| `a + b = c;` | TS1005 `';' expected.` at 6, 1 |
+| `-a = b;` | TS1005 `';' expected.` at 3, 1 |
+| `a++ = b;` | TS1005 `';' expected.` at 4, 1 |
+| `async function f() { await x = y; }` | TS1005 `';' expected.` at 29, 1 |
+| `a++ ++;` | TS1005 `';' expected.` at 4, 2 |
+| `a--.b;` | TS1005 `';' expected.` at 3, 1 |
+| `++ delete a.b;` | TS1109 `Expression expected.` at 3, 6 |
+| `new A?.b();` | TS1209 `Invalid optional chain from new expression. Did you mean to call 'A()'?` at 5, 2 |
+| `function* g() { yield*; }` | TS1109 `Expression expected.` at 22, 1 |
+| `a.` before a line `b in c;` | TS1003 `Identifier expected.` at 2, 0 |
+| `for (using of of []) {}` | TS1011 `An element access expression should take an argument.` at 18, 0 |
+
+The argument of TS1005 follows what holds the expression: `(a + b = c);` is `')' expected.`, `f(a + b = c);` is
+`',' expected.`, `x ? a + b = c : d;` is `':' expected.`. [[FILL b3-how: where the check is made (after the parse, from the tree and the wrapper records, or at a site), what it costs a parse without lint (nothing), and the test]]
+A parse without lint stays as it is. Its parse pass accepts all eleven. Its visit pass rejects `a + b = c`,
+`-a = b`, `a++ = b`, `await x = y`, `a++ ++` and `++ delete a.b` with `Invalid assignment target` and accepts
+`a--.b`, `new A?.b()`, `yield*` without an operand, the `a.` case and the `for` case.
+(Run on 2026-10-03 with the base binary, main at fa467dcae2, loaders `ts` and `js`: `scanImports` against `transformSync` of `Bun.Transpiler`, `round3/api-md-report/top-down/l2-main.mjs`.) [[CHECK b3-main: run l2-main.mjs again when the base binary is another commit of main]]
+[[OR]]
+Not done: what typescript-go rejects outside the type grammar (`typecheck/NEEDS.md`, L2). A lint parse accepts
+`a + b = c`, `-a = b`, `a++ = b`, `await x = y`, `a++ ++`, `a--.b`, `++ delete a.b`, `new A?.b()`, `yield*` without an
+operand, `a.` before a line `b in c`, and `for (using of of [])`, as `Parser::parse_only` does. The reference reports
+TS1005, TS1109, TS1209, TS1003 and TS1011 for them.
+[[END]]
+
+What a lint parse accepts that a parse without lint rejects: everything of "Valid TypeScript that a parse without
+lint rejects", but the sources of "Known differences of the lint grammar". And `isListTerminator` of
+`PCTypeArguments`: a token that starts no type and is no `,` ends a list of type arguments without an error where an
+element starts (after `<` or `,`), so `let x: A<>;` parses as it does in the reference (the checker reports TS1099),
+`f<>()` and `f<A,>(x)` are accepted, and `let x: A<;` is TS1005 `'>' expected.` and not `Unexpected ;`.
+[[CHECK type-argument-option: at b882bfc32f this is `SkipTypeOptions::IsTypeArgument` (src/js_parser/typescript.rs:316), a variant of an enum that the skipper shares. Say where the lint grammar keeps it after R1 and that the skipper does not test it]]
+
+typescript-go and tsc 6.0.2 disagree on `typeof x.#y`: typescript-go parses it (`parseTypeQuery` calls
+`parseEntityName` with `allowPrivateName`), tsc reports TS1003 at the offset after the private name. A lint parse
+follows typescript-go and accepts it. `const a: typeof #a = 1;` is `Expected identifier but found "#a"` in a parse
+without lint, as on main (`test/bundler/transpiler/transpiler.test.js` expects it).
+[[CHECK typeof-private: what a lint parse does with `const a: typeof #a = 1;` (at b882bfc32f only the `Build` sink read it)]]
+
+### How the table follows the log
+
+The parser drops and restores messages of the log while it backtracks. A record holds the index of its message and
+the address and the length of the text of the message. When the parse ends, a record counts only if the message at
+its index still has that text, and the last such record of a message wins. So no backtracking site has to know the
+table. A site that logs past the lexer inside an attempt must be one whose attempt truncates the log when it goes
+back. [[FILL log-truncation: the attempts of the lint grammar that truncate the log, by name. At b882bfc32f: `restore_parser_snapshot`, the lexer backtrackers, `set_aside_failed_read`, `build_in_type`, and `lexer_backtracker_kept` only in a parse that has a side table (parse_skip_typescript.rs:3396-3428, `rewind_lint_attempt`). R1 puts the backtrackers of the skipper back to main's text]]
+
+### Known differences from the first diagnostic of the reference
+
+- In a list the reference asks for `,` where Bun asks for the token that closes the list or for `;`: the code is
+  TS1005 in both, the argument differs (`let f = (a): => a` is `',' expected.` in the reference, `';' expected.` here).
+- Where a statement that is one name is followed by a token on the same line, the reference reports TS1434, TS1435,
+  TS1440, TS1228 or a name diagnostic for the name (`parseErrorForMissingSemicolonAfter`). Here it is TS1005
+  `';' expected.` at the token.
+- After a property of a class the reference reports TS1442, TS1441 or TS1436 (`parseSemicolonAfterPropertyName`),
+  and for a function without a body TS1144. Here it is TS1005.
+- The reference reports a token that starts no element of a list with the diagnostic of the list
+  (`parsingContextErrors`: TS1135, TS1137, TS1136, TS1138, TS1139, TS1131, TS1132, TS1134, TS1180, TS1181) or, where
+  the token ends the list, with TS1005 for the closing token (`f(` is `')' expected.`). Here an expression that is
+  missing is TS1109 and a type that is missing is TS1110.
+- A statement of a `case` clause that starts with a token that starts none is TS1129 in the reference, TS1128 here.
+- TS1130 (`'case' or 'default' expected.`) and TS1472 (`'catch' or 'finally' expected.`) are TS1005 with one token here.
+- At the end of the file the reference puts TS1003 at the end of the last token. Here it is at the end of the file.
+- The codes of the scanner for numbers, escapes and characters (TS1121, TS1124, TS1125, TS1127, TS1198, TS1199,
+  TS1351, TS1489, TS6188, TS6189) and TS1161 have no entry.
+[[CHECK known-differences-list: delete each item that R5 (B4) closed, with the test that proves it; add what the tests of R4 and R5 showed (grammar_rows_tests.rs has ten rows whose first diagnostic is tsc's: each passes, or is listed here)]]
+
+### Not done
+
+[[FILL not-done: the list at the final commit. At b882bfc32f it was the four items below; delete what R5 (B4) did, each with its test, and keep the rest word for word]]
+- The checks of the reference that sit on a path that a valid program takes and are outside the type grammar:
+  TS1477 (`a<b>.c`), TS17007 and TS17006 (`<A>x ** 2`, `-x ** 2`), TS1209 (`new A?.b()`), TS18030 (`this?.#a`),
+  TS2754 and TS1034 (`super<T>.x`, `super;`), TS2880 (`import ... assert {}`), TS1357 (`enum E { A B }`), TS1260 (a
+  keyword spelled with an escape), TS1011 (`a[]`), the list diagnostics above. A lint parse accepts these inputs as
+  before, or rejects them without an entry.
+- The members of classes, parameters and heritage clauses are strict only as far as the lint grammar reads them:
+  their types. Their messages have the entries of the table above and no other. The grammar errors of the checker
+  (`grammarchecks.go`: duplicate or misplaced modifiers, empty lists, `extends` twice) are no parse errors: the
+  typecheck unit reports them from the side table.
+- The checks that need the lint grammar are tested through `x as T`, and for the nodes by `type_sink_tests.rs` and
+  `parse::grammar_rows_tests`.
+- An error in the first token of a file fails `Parser::init`, before the table exists: its message has no entry.
+- Error recovery, and JSDoc parsing: out of scope (parser.md).
+
+### Probe
+
+`probes/diag-codes/`: `run.sh` prints, for each source of `inputs.txt`, the parse diagnostics of typescript-go
+(`/tmp/rr/parsediag`), of tsc 6.0.2 and the errors of the `bun` on PATH. `expected.txt` is its output with
+`bun` 1.4.3-canary.1+367d939d9, a binary of main.
+
+### Tests
+
+`mod tests` in `src/js_parser/parse/syntax_errors.rs`. [[FILL syntax-tests: the tests at the final commit. At b882bfc32f nine, all passing: five need no parser (the texts, the reading of `Expected a but found b`, the end of a string without a closing quote, a record whose message the log drops, a record whose message is set aside and put back). Three run `Parser::parse_for_lint_with_codes`: 19 sources with the code, range and text of their first error, 5 sources that only a lint parse rejects, 6 sources that the reference parses and a lint parse must take. A fourth reads types with the lint grammar through `x as T`: 7 sources for TS1385, TS1388, TS1110, TS1131 and TS1005, and 4 that parse]]
+The code and the range of each are the first diagnostic of typescript-go 89d5d5b, which is also the one of tsc
+6.0.2. Two sources differ from that on purpose: for `let f = (a): => a` the text is `';' expected.` (the reference:
+`',' expected.`), and `class C { #y = 1; m(x: C) { let a: typeof x.#y; } }` parses as in typescript-go (tsc: TS1003).
+
+## Proofs of round 3
+
+Two binaries. Base: the release build of main at `[[FILL base]]`, `/workspace/base/bun.f4d755a9c` (stripped) and
+`/workspace/base/bun-profile.f4d755a9c` (with symbols), both links to the canary release that
+`/workspace/base/README.txt` names. Head: `build/release/bun` and `build/release/bun-profile` of the worktree at
+`[[FILL head]]`, made by `/workspace/tools/lk bun run build:release -j10` after that commit was pushed
+(`build/release/bun --revision` names it). linux-x64.
+
+### Behaviour: a parse without lint equals main (R2)
+
+```sh
+cd /workspace/wt/parser && git status --short -- src test          # nothing: the binary is the commit
+SAVE=/workspace/notes/lint/units/parser/round3/proof-behaviour/parity \
+  /workspace/tools/lk bash /workspace/notes/lint/units/parser/grammar-diff/parity.sh [[FILL r2-tag]] /workspace/wt/parser/build/release/bun
+```
+
+`grammar-diff/parity.sh` runs both binaries over every corpus and compares record by record. It gets no cause
+list: one differing record fails the run. A record is one source in one configuration: the output, or the errors
+with message, line, column, length, offset, level and notes. The summary is `[[FILL r2-summary: the path of summary.<time>.txt under SAVE/<tag>/]]`.
+
+| step | what | sources | records | differ |
+| --- | --- | ---: | ---: | ---: |
+| `seams` | the sites outside the type grammar that round 1 changed, from the lists of the sites | 1,089 | 37,026 | [[FILL r2-seams]] |
+| `seams-bu` | the same sites, from the diff of main..round 1 under `src/js_parser` and `src/ast` | 744 | 25,296 | [[FILL r2-seams-bu]] |
+| `testrows` | the sources of the four removed test files | 301 | 10,234 | [[FILL r2-testrows]] |
+| `comments` | sources with a comment inside a construct | 122 | 4,148 | [[FILL r2-comments]] |
+| `targeted` | sources by construct | 3,952 | 134,368 | [[FILL r2-targeted]] |
+| `probes` | the probe inputs of round 2, at the sites where round 1 and main differ | 3,361 | 114,274 | [[FILL r2-probes]] |
+| `small-sub` | a part of `small` | 7,089 | 241,026 | [[FILL r2-small-sub]] |
+| `check` | the probe inputs of round 1, two parts of `small`, `targeted` again | 18,390 | 625,260 | [[FILL r2-check]] |
+| `bench` | the inputs of the transpiler benchmark | 329 | 11,186 | [[FILL r2-bench]] |
+| `tscases` | the single-file units of TypeScript's own tests | 14,635 | 497,590 | [[FILL r2-tscases]] |
+| `repo-ts`, `repo-js` | the tracked TypeScript and JavaScript files under `test/` and `src/js`, below 300 KB | [[FILL r2-repo-sources: 3,157 and 7,365 at 2102fb058f]] | [[FILL r2-repo-records: 107,338 and 250,410 at 2102fb058f]] | [[FILL r2-repo]] |
+| `small` | 11,646 type forms in 18 contexts | 209,628 | 7,127,352 | [[FILL r2-small]] |
+| `files` | every tracked TypeScript and JavaScript file under `test/` and `src/js`, with the configurations of its loader | [[FILL r2-files: "10,777 files, 104,438 records" at 2102fb058f]] | | [[FILL r2-files-differ]] |
+| `runtime` | the small corpora as modules that the runtime loads and never evaluates: the entries of the runtime transpiler cache | | versions 33 on both sides | [[FILL r2-runtime]] |
+| `bundle` | the small corpora, each source as the one entry point of `Bun.build`, as `.ts`, `.tsx` and `.js` | | | [[FILL r2-bundle]] |
+| `pmdiff` | the small corpora through `bun pm diff`: the parser with its default features and the visit pass | | | [[FILL r2-pmdiff]] |
+| `order` | the small corpora and the JavaScript files of the tree through `bytecodeOrderNames`: `Parser::parse_only` | | | [[FILL r2-order]] |
+
+The corpus steps are 34 configurations of `Bun.Transpiler` each (`harness.all.mjs`): 270,162 sources and 9,185,508
+records with the tree of 2102fb058f. [[FILL r2-total: the sum at the final commit, and the last line of the summary: "RESULT  ZERO differing records in <n> pairs of runs"]]
+
+The harness against itself and against round 1, as a test of the proof: the base against the base gives
+`RESULT  ZERO differing records in 42 pairs of runs` (`round3/proof-behaviour/parity/self-all-bc7a813b1/`), and the
+base against the release build of round 1 (`23a20afa7e`) differs in every corpus: 3,556 of 4,515 records of
+`testrows`, 2,423 of 59,280 of `targeted` and 111,240 of 3,144,420 of `small` with the 15 configurations of
+`harness.mjs` (`round3/proof-behaviour/parity/round1/`).
+
+### Cost: what a parse without lint pays (R3)
+
+```sh
+export BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
+python3 /workspace/notes/lint/tools/symsizes.py /workspace/base/bun-profile.f4d755a9c
+python3 /workspace/notes/lint/tools/symsizes.py /workspace/wt/parser/build/release/bun-profile
+stat -c '%s %n' /workspace/base/bun.f4d755a9c /workspace/wt/parser/build/release/bun
+/workspace/tools/lk /workspace/notes/lint/tools/cgbench.sh /workspace/base/bun-profile.f4d755a9c [[FILL r3-out]] base 20
+/workspace/tools/lk /workspace/notes/lint/tools/cgbench.sh /workspace/wt/parser/build/release/bun-profile [[FILL r3-out]] head 20
+python3 /workspace/notes/lint/tools/cgsum.py [[FILL r3-out]]/head.tsx.cg --top 60        # and base, and each group
+# the whole report: sizes, machine code by function, counts in both VEX modes, the executed tests by site, the text audit
+sh /workspace/notes/lint/units/parser/round3/proof-cost/tools/mkref.sh /tmp/costproof/root /workspace/wt/parser
+/workspace/tools/lk sh /workspace/notes/lint/units/parser/round3/proof-cost/top-down-1b/r3cycle.sh ref /tmp/costproof/root/reflink
+/workspace/tools/lk sh /workspace/notes/lint/units/parser/round3/proof-cost/top-down-1b/r3report.sh [[FILL r3-out]]
+```
+
+`cgbench.sh` runs the transpiler benchmark of this pull request (`bench/snippets/transpiler-typescript.mjs`, fixed
+inputs under `/workspace/notes/lint/benchroot`) once per group under cachegrind, 20 passes, JIT off. The counts are
+those of the symbols of `bun_js_parser`. `r3report.sh` puts a third binary between the two, the reference: main's
+parser text with the sink form, the boxed table and `Metadata::MDot` in the arena, linked into the crates of the
+head. Head against reference is the work of this round; reference against base is what the branch changes outside
+it, named function by function.
+
+Sizes (`symsizes.py`: symbols by address, bytes):
+
+| | base | head |
+| --- | ---: | ---: |
+| `bun_js_parser` text | 863 symbols, 1,400,688 | [[FILL r3-text]] |
+| of it, code that only a lint parse reaches (`r3report.sh`, `head.sym2.txt`) | 0 | [[FILL r3-lint-only]] |
+| `P<false, false>` | 281 symbols, 412,477 | [[FILL r3-p-ff]] |
+| `P<true, false>` | 319 symbols, 475,578 | [[FILL r3-p-tf]] |
+| `P<false, true>` | 91 symbols, 133,717 | [[FILL r3-p-ft]] |
+| `P<true, true>` | 131 symbols, 191,090 | [[FILL r3-p-tt]] |
+| `skip_type_script_type_with_opts`, `Discard` | 3,446 | [[FILL r3-discard]] |
+| `skip_type_script_type_with_opts`, `DecoratorMetadata` | 7,045 | [[FILL r3-metadata]] |
+| `Lexer::next` | 15,372 | [[FILL r3-lexer-next]] |
+| stripped binary | 80,868,992 | [[FILL r3-stripped]] |
+
+The base column is main at fa467dcae2, measured on 2026-10-03. [[CHECK r3-base-column: measure it again when the base binary is another commit]]
+[[FILL r3-size-notes: every row where head differs from base, explained. The lint parse is new code in `P<true, false>` and `P<false, false>` (its entry and its cold functions) and in the text: say how many bytes of the difference `head.sym2.txt` attributes to lint-only symbols, and that the rest is zero or name it. `P<true, true>` and `P<false, true>`, the scan-only parsers, hold no lint code]]
+
+Counts of the parser, default VEX, 20 passes (`table.base-head.txt` of `r3report.sh`; KB is 1,000 bytes of source):
+
+| | bun-types | typescript-lib | src-js | tsx | js-control |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| input bytes per pass | 1,076,221 | 3,784,758 | 3,268,179 | 7,003 | 1,506,667 |
+| passes | 20 | 20 | 20 | 2,000 | 20 |
+| instructions, base | [[FILL r3-ir-base-bun-types]] | [[FILL r3-ir-base-typescript-lib]] | [[FILL r3-ir-base-src-js]] | [[FILL r3-ir-base-tsx]] | [[FILL r3-ir-base-js-control]] |
+| instructions, head - base | [[FILL r3-ir-delta-bun-types]] | [[FILL r3-ir-delta-typescript-lib]] | [[FILL r3-ir-delta-src-js]] | [[FILL r3-ir-delta-tsx]] | [[FILL r3-ir-delta-js-control: required +0]] |
+| conditional branches, base | [[FILL r3-bc-base-bun-types]] | [[FILL r3-bc-base-typescript-lib]] | [[FILL r3-bc-base-src-js]] | [[FILL r3-bc-base-tsx]] | [[FILL r3-bc-base-js-control]] |
+| conditional branches, head - base | [[FILL r3-bc-delta-bun-types]] | [[FILL r3-bc-delta-typescript-lib]] | [[FILL r3-bc-delta-src-js]] | [[FILL r3-bc-delta-tsx]] | [[FILL r3-bc-delta-js-control: required +0]] |
+| executed tests of the side table | [[FILL r3-tests-bun-types]] | [[FILL r3-tests-typescript-lib]] | [[FILL r3-tests-src-js]] | [[FILL r3-tests-tsx]] | 0 |
+| branches that are no such test | [[FILL r3-excess-bun-types: required 0]] | [[FILL r3-excess-typescript-lib: required 0]] | [[FILL r3-excess-src-js: required 0]] | [[FILL r3-excess-tsx: required 0]] | 0 |
+| tests per KB of source | [[FILL r3-per-kb-bun-types]] | [[FILL r3-per-kb-typescript-lib]] | [[FILL r3-per-kb-src-js]] | [[FILL r3-per-kb-tsx]] | 0 |
+
+[[FILL r3-notes: one sentence for each of these, from the report:
+- js-control: +0 instructions and +0 conditional branches, in both VEX modes; "strict ref-head IDENT <n> ... DIFF 0 | PASS": every function that JavaScript and a scan-only parse run has the machine code of the reference.
+- The executed tests are counted as the conditional branches of the head on the source lines of the sites (`sites.cg.<group>.txt`), with `--vex-guest-chase=no`, where one conditional jump is one count; name the second count if a counting build was made.
+- "skipper ref-head IDENT <n> ... DIFF 0 | PASS": both sinks of the skipper have the machine code of the reference.
+- Every instruction of "head - base" that is no test: the function and the reason (`fnclass.base-ref.txt`, `cgclass.raw.<group>.base-ref.txt`). Before round 3 the same table had +10.7% and +14.6% instructions in the two groups of declaration files and +203,340 branches in js-control (parser3.md).
+- "siteaudit.txt": "<n> sites, 0 violations / PASS": the shared files are the reference text plus sites; `src/ast/ts.rs` is main's plus `MDot` and the lines that declare the type nodes.]]
+
+`P` does not grow: `P::starts_for_parse_only` is an `Option<Box<StartsForParseOnly>>` (main holds the three maps of
+`Parser::parse_only` inline), and `src/js_parser/p.rs` asserts `size_of::<P<'static, true, false>>() <= 3808` in a
+release build and `<= 3888` with debug assertions. No AST struct changed: the `const` layout assertions of the AST
+files pass unchanged.
+[[CHECK sizes: the two assertions are at p.rs:786-789 at b882bfc32f and came with c5aaa06d78; `cargo check -p bun_ast -p bun_js_parser` evaluates them. `git diff <base> HEAD -- src/ast` touches lib.rs (the code on `Msg`, owner: cli), ts.rs, ts_nodes.rs and walk.rs only]]
+
+## How the tests of the parser run
+
+Files `src/js_parser/native_test_shims.rs` and `src/js_parser/type_sink_tests.rs`, both under `#[cfg(test)]` in
+`src/js_parser/lib.rs`, and the `mod tests` and `*_tests.rs` files under `src/js_parser/parse/`: no build of bun
+holds them and nothing in them is for another unit to call. This section is for whoever runs or adds a test of the
+parser.
+
+### Which command runs which test
+
+In the worktree, after one `/workspace/tools/lk bun bd -j8 --version` (cargo needs `build/debug/codegen` and
+`vendor/` to resolve the workspace). Every command goes through `/workspace/tools/lk` with a timeout of 3600000 ms.
+
+| what runs | command |
+| --- | --- |
+| every test of the crate: [[FILL tests-total: "<n> tests" at the final commit]] | `cargo test -p bun_js_parser --lib` |
+| the type nodes alone (no parser): seven tests of `src/ast/ts_nodes.rs`, also in CI | `bun run rust:miri -p bun_ast` |
+| the `Build` sink on types read alone: five tests | `cargo test -p bun_js_parser --lib type_sink_tests` |
+| the lint parse: the entry, the four tables, the codes, the backtracking points | `cargo test -p bun_js_parser --lib parse::` |
+| the 366 cases of the four removed test files, read by a lint parse | `cargo test -p bun_js_parser --lib parse::grammar_rows_tests` |
+| the stand-ins: seven tests | `cargo test -p bun_js_parser --lib native_test_shims` |
+| a parse without lint: the eight older files of parser.md P1.6, as on main | `bun bd test <file>` for each, or `bash /workspace/notes/lint/units/parser/round3/proof-behaviour/older-tests.sh plain` |
+| a parse without lint against main, record by record | `bash /workspace/notes/lint/units/parser/grammar-diff/parity.sh <tag> build/release/bun` ("Proofs of round 3") |
+| a lint parse through the command | [[FILL tests-command: `BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 bun bd test test/bundler/transpiler/lint-parse*.test.ts` with its counts, or: "none: `bun --lint` does not call `Parser::parse_for_lint` yet (NEEDS.md, N2 and N3). The draft is round3/tests-known-differences/bottom-up/lint-parse-grammar.test.ts.draft"]] |
+
+The tests of the lint parse are the `mod tests` of the files under `src/js_parser/parse/` and the files
+`*_tests.rs` there: each name starts with `parse::`. No job of CI runs the tests of `bun_js_parser` (`NEEDS.md`, N4).
+
+| module | tests at b882bfc32f | what |
+| --- | ---: | --- |
+| `native_test_shims::tests` | 7 | the stand-ins |
+| `type_sink_tests` | 5 | types, closers, return types, type parameter lists, texts that start no type |
+| `parse::parse_entry::tests` | 5 | the entry: loaders, declaration file names, `// @bun`, `name_of` |
+| `parse::attached::tests` | 10 | the eight lists, their keys, the rewind |
+| `parse::annotation_tests` | 4 | annotations of the known sources, the lint twin of `parse_paren_expr`, metadata beside a decorated member |
+| `parse::wrappers::tests` | 5 | `ExprId`, the offsets of a record, the rewind, 13 sources, `<T>` without a type |
+| `parse::generics::tests` | 4 | type arguments and type parameters of the known sources, the rewind |
+| `parse::erased::tests`, `parse::erased_tests` | 11, 1 | places, flags, the 40 sources |
+| `parse::parse_skip_typescript::tests` | 7 | one record in each of the thirteen lists, before and after each backtracker and the snapshot |
+| `parse::parse_stmt::tests` | 2 | a declaration whose name is `as` or `satisfies` |
+| `parse::syntax_errors::tests` | 9 | the codes |
+[[FILL tests-modules: the table at the final commit, from `cargo test -p bun_js_parser --lib -- --list`: the modules that R1 moved (the seven backtracker tests, the two of parse_stmt), `parse::grammar_rows_tests` (four tests, and a fifth while `KNOWN_DIFFERENCES` has a row), and the tests of R5]]
+
+### The cases of the four removed test files (R4)
+
+`test/bundler/transpiler/typescript-grammar.test.ts`, `-expressions`, `-statements` and `-decorator-metadata`
+(180, 63, 66 and 57 cases) asserted what round 1 made a parse without lint do. A parse without lint is main again,
+where 256 of the 366 are rejected and 110 give another value or output, so the four files are gone. Every case is
+a row of `src/js_parser/parse/grammar_rows_tests.rs`, read by a lint parse:
+
+- `ROWS`: the 366 cases in the order of the four files (`const _: () = assert!(ROWS.len() == 366)`), each with its
+  dialect (`ts`, `tsx`, `js`, `ts` with `experimentalDecorators`) and with what tsc 6.0.2 makes of the source: the
+  type roots, the kept statements, the erased records, the wrapper records, or the code and the offset of its first
+  diagnostic. Test `a_lint_parse_reads_a_row_as_tsc_does`.
+- `TYPES`, `RETURN_TYPES`, `TYPE_PARAMETERS`: the type roots of the cases about the type grammar and about decorator
+  metadata, read alone as `type_sink_tests.rs` reads a type, each with the kind and the range of every node that tsc
+  builds. Tests `a_type_of_a_row_is_the_nodes_that_tsc_builds`, `a_return_type_of_a_row_is_the_nodes_that_tsc_builds`,
+  `the_type_parameters_of_a_row_end_at_their_closer`.
+- `KNOWN_DIFFERENCES`: the sources that a lint parse does not read as tsc does, each with what the lint parse makes
+  of it (the first message of main, or the statements main keeps). Test
+  `a_lint_parse_makes_this_of_a_source_that_it_does_not_read_as_tsc_does`. A change that makes a lint parse read one
+  of them fails the test until its line is gone. [[FILL rows-known: how many rows the table has at the final commit, or "the table and its test are gone: a lint parse reads all 313 distinct sources as tsc does"]]
+
+The file is generated: `round3/lint-grammar-tests-r4/bottom-up-1a/gen/rust5.mjs` (`bash run.sh <state>` there), from
+the rows and the facts of tsc under `round3/tests-known-differences/bottom-up/`. The 99 cases about decorator
+metadata assert the type nodes of the decorated member, not a `design:` value: a lint parse prints nothing. What
+main emits for them is in "Decorator metadata that differs from tsc".
+[[CHECK rows-generated: the file in the tree is the output of the generator for the state that was built: `diff <(bash run.sh <state>; rustfmt --edition 2024 < generated file) src/js_parser/parse/grammar_rows_tests.rs`; say which arguments (`--as-without-lint=<cases>`) made it]]
+
+### Why the test binary needs stand-ins
+
+A test binary of `bun_js_parser` links none of the C and C++ objects of bun. With one test that parses, the linker
+reported 46 undefined symbols at `e3566be889` (`measure/base/cargo-test-undefined-symbols.txt`). A binary without
+such a test links, because nothing in it reaches them. Miri is no way around the linker: a parse reads the stack
+pointer with inline assembly (`bun_core::StackCheck`), which Miri does not run. `src/parsers` has a file of the
+same name for its own tests.
+
+`native_test_shims.rs` defines 57 symbols in Rust, each `#[unsafe(no_mangle)]`: the 46, and the others of the two
+families that a change of the parser reaches first (the scans of `bun_highway`, the entry points of mimalloc).
+
+| symbols | what the stand-in does |
+| --- | --- |
+| `Bun__StackCheck__getMaxStack` | a bound 1 MiB below the first call of the thread, and the same bound at every later call |
+| `WTF__parseDouble` | the longest decimal prefix as fast_float reads it, parsed by `str::parse::<f64>` |
+| 17 scans `highway_*` of bytes and substrings | scalar loops with the predicate of each kernel of `highway_strings.cpp` |
+| 6 of `simdutf__*` | `validate_ascii`, `validate_utf8`, the two UTF-8 lengths of UTF-16, UTF-16 to UTF-8 with errors, base64 encode |
+| 24 of `mi_*` | blocks of the allocator of the test binary, kept in a table by address: a heap is a number, and `mi_heap_destroy` frees the blocks of its heap |
+| `__bun_macro_context_get_remap` | no path is one of a macro |
+| `bun_cpu_features`, `getRSS`, `getPeakRSS`, `compress2`, `is_executable_file`, `bun_restore_stdio`, `on_before_reload_process_posix`, `mi_process_info` | what the crash reporter and a reload of the process link to: they report nothing, or fail |
+
+What does not link: the visit pass. At the base a test of another crate that ran `Parser::parse` on TypeScript
+needed twelve more symbols, of JavaScriptCore among them (`WTF__dtoa`, `JSC__jsToNumber`,
+`Bun__JSC__operationMathPow`). A test stays on `Parser::init`, `P::init`, `Parser::parse_only`,
+`Parser::parse_for_lint` and what the parse pass calls. Where a later change makes the linker report a symbol, its
+stand-in goes into that file. The 57 stand-ins are enough for every test of the crate at b882bfc32f.
+[[CHECK shims-enough: `cargo test -p bun_js_parser --lib` links at the final commit; name a stand-in that R1, R4 or R5 added]]
+
+The pattern of a test that parses: `Arena::new()`; `ASTMemoryAllocator::borrowing(&arena).enter()`;
+`Source::init_path_string(path, text)`; `Options::init(Default::default(), loader)` with `features.no_macros` and
+`features.dont_bundle_twice`; `Parser::init(options, &mut log, &source, &define, &arena)`; then
+`parser.parse_for_lint(|parsed| ...)` or `parser.parse_for_lint_with_codes(&mut errors, |parsed| ...)`.
+
+### Reading one type alone
+
+`type_sink_tests.rs` makes a `P<'_, true, false>` the way `Parser::parse_only` makes its parser, with no side
+table, and calls the entries of the lint grammar that are `pub` on `P`: `build_type_script_type`,
+`build_typescript_return_type` and `build_type_script_type_parameters`. Five tests: 26 types with the kind and the
+range of every type node inside them, 6 lists that a `>` inside `>>`, `>>>`, `>=`, `>>=` or `>>>=` closes (the range
+of each list, the end of each node, the token and the offset after the type), 6 return types (predicates and
+`asserts`), 5 type parameter lists, 2 texts that start no type. Every expectation is what tsc 6.0.2 builds for
+`type T = <text>;`, `let x: <text>;`, `function f(x: any): <text> {}` and `function f<text>() {}`: `getStart()` and
+`end` of each node, `pos` and `end` of each list. `probes/test-seam/outline.mjs` and `rows.mjs` print the
+expectations from tsc (`rows.expected.txt`).
+
+## Memory: what an arena holds
+
+Rule: a value that an arena holds owns no memory of the global heap, because an arena never drops it.
+
+- Every node of `bun_ast::ts` and every record of the four tables is `Copy` (`ts::List<T>` by its own `impl`), so
+  none can hold a `Vec`, a `Box` or a `String`. What they point to is in the arena or in the AST stores:
+  `StoreRef`, `StoreSlice`, `StoreStr`, `Expr`, `Binding`, `Stmt`.
+- `ErasedMemberData::Property` points to a `G::Property` in the arena. It is not `Copy`: it holds
+  `ts_decorators: Vec<Expr, AstAlloc>`, whose buffer is in the AST allocation scope, as in every `G::Property` of a
+  class that stays, and `ts_metadata`, which holds no heap memory since `be1ebe5295` (`Metadata::MDot` is a
+  `StoreSlice<Ref>`).
+- The lists themselves are `Vec`s of the global heap: eight in `Attached`, two public and one private in
+  `ErasedTables`, two in `Generics`, one in `Wrappers`, three `HashMap`s, and `SyntaxErrors` (an entry holds a
+  `Cow<'static, [u8]>`). They are in the `Box` on the parser and are dropped with it, or with the side table when
+  `f` returns. [[CHECK memory-comments: after R5 (B1) add the lists of the comments, of the comment directives and of the pragmas]]
+- The lint grammar gathers the items of a list in a `Vec` on the stack and copies them to the arena with
+  `ts::List::from_slice`: the `Vec` is dropped where its function returns, also on an error.
+
+[[CHECK memory-audit: `python3 round2/api-md-gates-report/bottom-up/copy_audit.py /workspace/wt/parser <the new files of R1 and R5>`: at be1ebe5295 114 types outside test modules, 9 not `Copy` (the five tables, `ListFrame`, `AsyncTypeLists`, `SyntaxError`, `Recorded`), none of them held by an arena. The eight older test files pass under the leak check of CI ("State of this file")]]

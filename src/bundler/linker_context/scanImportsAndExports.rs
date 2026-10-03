@@ -1830,8 +1830,7 @@ mod __css_validation {
                             bstr::BStr::new(property_name),
                             bstr::BStr::new(local_original_name),
                         ),
-                    )
-                    .clone_line_text(self.log.clone_line_text),
+                    ),
                     notes: Box::<[bun_ast::Data]>::from(
                         &[
                             bun_ast::range_data(

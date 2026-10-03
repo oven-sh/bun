@@ -568,7 +568,6 @@ impl Framework {
     }
 
     pub(crate) fn add_react_install_command_note(log: &mut bun_ast::Log) -> crate::Result<()> {
-        let clone_line_text = log.clone_line_text;
         log.add_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Note,
             data: bun_ast::range_data(
@@ -582,8 +581,7 @@ impl Framework {
                     "\""
                 )
                 .as_bytes(),
-            )
-            .clone_line_text(clone_line_text),
+            ),
             ..Default::default()
         });
         Ok(())

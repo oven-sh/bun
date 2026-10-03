@@ -1946,7 +1946,7 @@ pub(crate) mod js_bundler {
                                 .to_vec(),
                         ),
                         location: Some(bun_ast::Location {
-                            file: std::borrow::Cow::Owned(file.to_vec()),
+                            file: file.into(),
                             line: -1,
                             column: -1,
                             ..Default::default()

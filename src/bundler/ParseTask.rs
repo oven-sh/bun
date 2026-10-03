@@ -906,7 +906,7 @@ pub mod parse_worker {
                         .ok_or(AnyError::ParserError)?,
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                let _ = temp_log.clone_to(log);
                 return result;
             }
             Loader::Yaml => {
@@ -932,7 +932,7 @@ pub mod parse_worker {
                         .ok_or(AnyError::ParserError)?,
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                let _ = temp_log.clone_to(log);
                 return result;
             }
             Loader::Json5 => {
@@ -954,7 +954,7 @@ pub mod parse_worker {
                         .ok_or(AnyError::ParserError)?,
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                let _ = temp_log.clone_to(log);
                 return result;
             }
             Loader::Xml => {
@@ -985,7 +985,7 @@ pub mod parse_worker {
                         .ok_or(AnyError::ParserError)?,
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                let _ = temp_log.clone_to(log);
                 return result;
             }
             Loader::Text => {
@@ -1314,7 +1314,7 @@ pub mod parse_worker {
                     Err(e) => {
                         // Surface the actual CSS parse diagnostic.
                         let _ = e.add_to_logger(&mut temp_log, source);
-                        let _ = temp_log.append_to_maybe_recycled(log, source);
+                        let _ = temp_log.append_to(log);
                         return Err(crate::Error::SyntaxError);
                     }
                 };
@@ -1335,7 +1335,7 @@ pub mod parse_worker {
                 ) {
                     // Surface the actual minify diagnostic.
                     let _ = e.add_to_logger(&mut temp_log, source);
-                    let _ = temp_log.append_to_maybe_recycled(log, source);
+                    let _ = temp_log.append_to(log);
                     return Err(crate::Error::MinifyError);
                 }
                 if css_ast.local_scope.count() > 0 {
@@ -1361,7 +1361,7 @@ pub mod parse_worker {
                     b"",
                     symbols,
                 );
-                let _ = temp_log.append_to_maybe_recycled(log, source);
+                let _ = temp_log.append_to(log);
                 let mut ast = JSAst::init(lazy?.ok_or(AnyError::ParserError)?);
                 let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 ast.css = Some(css_ast_heap);
@@ -1801,7 +1801,7 @@ pub mod parse_worker {
                 // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
                 // len > 0 are checked above; the plugin contract requires the buffer
                 // to remain valid for the duration of the `log` callback, and
-                // `append` dupes the bytes into the `Log` arena before that returns.
+                // `append` copies the bytes into the `Msg` before that returns.
                 return unsafe { core::slice::from_raw_parts(self.path_ptr, self.path_len) };
             }
             b""
@@ -1813,33 +1813,21 @@ pub mod parse_worker {
                 // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
                 // len > 0 are checked above; the plugin contract requires the buffer
                 // to remain valid for the duration of the `log` callback, and
-                // `append` dupes the bytes into the `Log` arena before that returns.
+                // `append` copies the bytes into the `Msg` before that returns.
                 return unsafe { core::slice::from_raw_parts(self.message_ptr, self.message_len) };
             }
             b""
         }
 
-        fn append(&self, log: &mut Log, namespace: &'static [u8]) {
-            // `Location.{file,line_text}`
-            // are `&'static [u8]` here; `Log::dupe` copies into Log-owned storage
-            // (freed when the Log drops) and returns a lifetime-erased borrow —
-            // the "alloc-dupe into the log arena" pattern. We dupe `path` too:
-            // a raw slice into C-plugin memory may be
-            // freed after `log_fn` returns, so duping is required.
+        fn append(&self, log: &mut Log, namespace: &[u8]) {
             let source_line_text = self.source_line_text();
-            let file = log.dupe(self.path());
-            let line_text = if !source_line_text.is_empty() {
-                Some(log.dupe(source_line_text))
-            } else {
-                None
-            };
             let location = Location::init(
-                file,
+                self.path(),
                 namespace,
                 self.line.max(-1),
                 self.column.max(-1),
                 (self.column_end - self.column).max(0) as u32,
-                line_text,
+                (!source_line_text.is_empty()).then_some(source_line_text),
             );
             let mut msg = Msg {
                 data: bun_ast::Data {

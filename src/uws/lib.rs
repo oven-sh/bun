@@ -275,9 +275,7 @@ pub mod ssl_wrapper {
         Running,
         /// A callback of the running pass called `handle_traffic` again.
         RerunRequested,
-        /// A callback of the running pass called `deinit`. `SSL_do_handshake`
-        /// can be below that callback on the stack, so the pass frees the
-        /// `SSL` when it has unwound.
+        /// A callback of the running pass called `deinit`. The pass frees the `SSL`.
         FreeRequested,
     }
 

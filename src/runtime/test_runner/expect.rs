@@ -241,7 +241,7 @@ impl Expect {
         }
         let render = |enabled: bool| -> Box<str> {
             #[allow(clippy::disallowed_methods)] // `args` is a `'static` template literal
-            let params = Output::pretty_fmt_rt(args.as_bytes(), enabled);
+            let params = Output::pretty_fmt_rt(args, enabled);
             if enabled {
                 if not {
                     format!(

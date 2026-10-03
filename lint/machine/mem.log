@@ -1,11 +1,3 @@
-10-02_15:14:23 anon=797MB pids=104 load=267.52 top=cachegrind-amd6:311MB
-10-02_15:14:54 anon=25MB pids=63 load=288.47 top=bun.bc7a813b1:48MB
-10-02_15:15:25 anon=326MB pids=56 load=292.68 top=bun.f4d755a9c:246MB
-10-02_15:15:55 anon=1661MB pids=105 load=278.00 top=bun.bc7a813b1:470MB
-10-02_15:16:28 anon=2404MB pids=56 load=354.18 top=bun.f4d755a9c:2563MB
-10-02_15:17:01 anon=198MB pids=70 load=402.64 top=bun.bc7a813b1:128MB
-10-02_15:17:32 anon=476MB pids=105 load=395.30 top=bun.bc7a813b1:135MB
-10-02_15:18:02 anon=902MB pids=92 load=384.69 top=bun.bc7a813b1:224MB
 10-02_15:18:33 anon=911MB pids=86 load=363.24 top=bun.bc7a813b1:238MB
 10-02_15:19:04 anon=884MB pids=94 load=341.05 top=bun.bc7a813b1:240MB
 10-02_15:19:34 anon=1026MB pids=155 load=333.50 top=bun.bc7a813b1:249MB
@@ -398,3 +390,11 @@
 10-03_02:57:38 anon=247MB pids=39 load=1861.96 top=rustc:395MB
 10-03_02:59:33 anon=272MB pids=35 load=1753.31 top=rustc:420MB
 10-03_03:01:14 anon=281MB pids=56 load=1844.10 top=rustc:398MB
+10-03_03:02:46 anon=267MB pids=43 load=1946.33 top=rustc:408MB
+10-03_03:03:46 anon=274MB pids=40 load=1599.54 top=rustc:430MB
+10-03_03:05:14 anon=297MB pids=39 load=1738.46 top=rustc:459MB
+10-03_03:06:11 anon=328MB pids=35 load=1648.89 top=rustc:491MB
+10-03_03:07:46 anon=346MB pids=35 load=1787.23 top=rustc:521MB
+10-03_03:09:11 anon=330MB pids=37 load=1818.11 top=rustc:486MB
+10-03_03:10:04 anon=334MB pids=35 load=1856.15 top=rustc:486MB
+10-03_03:10:53 anon=326MB pids=37 load=1689.71 top=rustc:475MB

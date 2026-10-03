@@ -3,8 +3,9 @@
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
+import path from "node:path";
 
 let tmp: string;
 beforeAll(() => {
@@ -267,6 +268,151 @@ describe("fs.promises.glob", () => {
     expect(Array.fromAsync(fs.promises.glob(["a/bar.txt", "a/baz.js"], { cwd: tmp }))).resolves.toStrictEqual(expected);
   });
 }); // </fs.promises.glob>
+
+describe("fs.glob walk", () => {
+  it.concurrent("does not call path.join() or path.resolve() once per entry", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 200; i++) files[`f${i}.txt`] = "";
+    using flat = tempDir("fs-glob-flat", files);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const path = require("node:path");
+          const calls = { join: 0, resolve: 0 };
+          for (const name of ["join", "resolve"]) {
+            const original = path[name];
+            path[name] = (...args) => (calls[name]++, original(...args));
+          }
+          const fs = require("node:fs");
+          const cwd = process.argv[1];
+          const sync = fs.globSync("*.txt", { cwd }).length;
+          const async = (await Array.fromAsync(fs.promises.glob("*.txt", { cwd }))).length;
+          console.log(JSON.stringify({ sync, async, perEntry: calls.join >= 200 || calls.resolve >= 200 }));
+        `,
+        String(flat),
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ sync: 200, async: 200, perEntry: false });
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("fs.promises.glob on a tree", () => {
+  // The async walk starts the readdir of the next few directories before it
+  // visits them. The result must not depend on that: same entries, same order
+  // as the sync walk, also when a directory has more subdirectories than the
+  // walk reads ahead.
+  let cwd: string;
+  beforeAll(() => {
+    const files: Record<string, string> = { "top.txt": "", ".hidden/h.txt": "" };
+    for (let i = 0; i < 20; i++) {
+      files[`d${i}/a.txt`] = "";
+      files[`d${i}/b.js`] = "";
+      files[`d${i}/sub/c.txt`] = "";
+      files[`d${i}/sub/deep/d.txt`] = "";
+    }
+    cwd = tempDirWithFiles("fs-glob-tree", files);
+  });
+  afterAll(() => fs.promises.rm(cwd, { recursive: true, force: true }));
+
+  describe.each(["**", "**/*.txt", "*/*/*.txt", "**/sub/**", "d1*/**/*.txt", "d3/sub/deep/*", "*/missing/*"])(
+    "%j",
+    pattern => {
+      it("gives what globSync gives", async () => {
+        const expected = fs.globSync(pattern, { cwd });
+        expect(await Array.fromAsync(fs.promises.glob(pattern, { cwd }))).toEqual(expected);
+        const dirents = (await Array.fromAsync(fs.promises.glob(pattern, { cwd, withFileTypes: true }))) as fs.Dirent[];
+        expect(dirents.map(dirent => path.relative(cwd, path.join(dirent.parentPath, dirent.name)) || ".")).toEqual(
+          expected,
+        );
+      });
+    },
+  );
+
+  // The walk does not await the readdir that it starts ahead of time. A
+  // rejection of that readdir must still reach the consumer, and only the
+  // consumer: it is not an unhandled rejection.
+  describe.each([
+    ["the root", "*.txt", "true"],
+    ["a queued directory", "*/*.txt", 'path.endsWith("d3")'],
+  ])("a readdir of %s that fails to sort", (_, pattern, fails) => {
+    it.concurrent("rejects the iteration", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const fsp = require("node:fs/promises");
+          const readdir = fsp.readdir;
+          fsp.readdir = async (path, options) =>
+            ${fails} ? { sort() { throw new Error("cannot sort"); } } : readdir(path, options);
+          try {
+            for await (const entry of fsp.glob(${JSON.stringify(pattern)}, { cwd: process.argv[1] })) {}
+            console.log("no error");
+          } catch (error) {
+            console.log("caught:", error.message);
+          }
+        `,
+          cwd,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "caught: cannot sort\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it.concurrent("reads the next directories while it matches the current one", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fsp = require("node:fs/promises");
+          const readdir = fsp.readdir;
+          let inFlight = 0;
+          let maxInFlight = 0;
+          fsp.readdir = async (path, options) => {
+            maxInFlight = Math.max(maxInFlight, ++inFlight);
+            try {
+              return await readdir(path, options);
+            } finally {
+              inFlight--;
+            }
+          };
+          const entries = await Array.fromAsync(fsp.glob("**/*.txt", { cwd: process.argv[1] }));
+          console.log(JSON.stringify({ entries: entries.length, maxInFlight }));
+        `,
+        cwd,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // 8 is the read-ahead window. Below the root a directory has at most one subdirectory, and the walk starts that
+    // one read after the read it awaited has settled, so the count never goes above the window.
+    expect(JSON.parse(stdout)).toEqual({ entries: 61, maxInFlight: 8 });
+    expect(exitCode).toBe(0);
+  });
+
+  it("stops without an error when the consumer breaks out early", async () => {
+    const seen: string[] = [];
+    for await (const entry of fs.promises.glob("**/*.txt", { cwd })) {
+      seen.push(entry);
+      if (seen.length === 3) break;
+    }
+    expect(seen).toHaveLength(3);
+  });
+});
 
 describe("fs.globSync exclude with withFileTypes", () => {
   it("invokes the exclude callback with Dirents when cwd differs from process.cwd()", () => {

@@ -232,6 +232,66 @@ describe("css tests", () => {
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
+  describe("number serialization", () => {
+    // Numbers are f32 and print with 6 significant digits. The digits that get
+    // rounded are the f32's own shortest representation (what lightningcss
+    // rounds), not its f64 expansion: 56.89655 is the shortest form of an f32
+    // whose f64 expansion is 56.896549224853516. Expectations are lightningcss output.
+    describe("rounds the f32's shortest digits", () => {
+      minify_test(".foo{line-height:56.89655}", ".foo{line-height:56.8966}");
+      minify_test(".foo{line-height:-56.89655}", ".foo{line-height:-56.8966}");
+      minify_test(".foo{width:56.89655px}", ".foo{width:56.8966px}");
+      minify_test(".foo{width:56.89655%}", ".foo{width:56.8966%}");
+      minify_test(".foo{--a:56.89655}", ".foo{--a:56.8966}");
+      minify_test(".foo{unknown:56.89655}", ".foo{unknown:56.8966}");
+      minify_test("@media (min-aspect-ratio: 56.89655){.a{b:c}}", "@media (aspect-ratio>=56.8966){.a{b:c}}");
+      minify_test(".foo{color:oklab(from lab(50% 0 0) l a b)}", ".foo{color:oklab(56.8966% 5.96046e-8 2.98023e-8)}");
+    });
+
+    // The f64 expansion of f32 0.000001 is 9.999999974752427e-7; rounding that
+    // to 6 digits carried into an unnormalized `10e-7`.
+    describe("magnitudes below 1", () => {
+      minify_test(".foo{opacity:0.000001}", ".foo{opacity:.000001}");
+      minify_test(".foo{opacity:-0.000001}", ".foo{opacity:-.000001}");
+      minify_test(".foo{width:0.000001px}", ".foo{width:.000001px}");
+      minify_test(".foo{width:-0.000001px}", ".foo{width:-.000001px}");
+      minify_test(".foo{--a:0.000001}", ".foo{--a:.000001}");
+      minify_test(".foo{unknown:0.000001}", ".foo{unknown:.000001}");
+      minify_test("@media (min-resolution: 0.000001dppx){.a{b:c}}", "@media (resolution>=.000001x){.a{b:c}}");
+      // Exponent form starts below 1e-6.
+      minify_test(".foo{opacity:0.0000012345678}", ".foo{opacity:.00000123457}");
+      minify_test(".foo{opacity:0.0000001}", ".foo{opacity:1e-7}");
+      minify_test(".foo{opacity:0.00000012345678}", ".foo{opacity:1.23457e-7}");
+      minify_test(".foo{width:0.0000001px}", ".foo{width:1e-7px}");
+      minify_test(".foo{width:0.9999995px}", ".foo{width:1px}");
+    });
+
+    // The exponent is written like lightningcss writes it (`1e21`, not the
+    // JavaScript `1e+21`), and f32 1e22 (f64 expansion 9.999999778196308e21)
+    // no longer carries into `10e+21`.
+    describe("magnitudes of 1e21 and above", () => {
+      minify_test(".foo{width:100000000000000000000px}", ".foo{width:100000000000000000000px}");
+      minify_test(".foo{width:1e21px}", ".foo{width:1e21px}");
+      minify_test(".foo{width:-1e21px}", ".foo{width:-1e21px}");
+      minify_test(".foo{width:1e22px}", ".foo{width:1e22px}");
+      minify_test(".foo{width:123456789012345678901234px}", ".foo{width:1.23457e23px}");
+      minify_test(".foo{width:3.4028235e38px}", ".foo{width:3.40282e38px}");
+      minify_test(".foo{line-height:1e22}", ".foo{line-height:1e22}");
+      minify_test(".foo{line-height:123456789012345678901234}", ".foo{line-height:1.23457e23}");
+      minify_test(".foo{--a:1e21}", ".foo{--a:1e21}");
+      minify_test(".foo{unknown:1e22em}", ".foo{unknown:1e22em}");
+    });
+
+    describe("integers and zero", () => {
+      minify_test(".foo{width:1234567px}", ".foo{width:1234570px}");
+      minify_test(".foo{width:999999.5px}", ".foo{width:1000000px}");
+      minify_test(".foo{width:9999995px}", ".foo{width:10000000px}");
+      minify_test(".foo{line-height:1e3}", ".foo{line-height:1000}");
+      minify_test(".foo{opacity:0}", ".foo{opacity:0}");
+      minify_test(".foo{opacity:-0}", ".foo{opacity:0}");
+      minify_test(".foo{line-height:-0.0}", ".foo{line-height:0}");
+    });
+  });
   describe("border_spacing", () => {
     minify_test(
       `
@@ -1442,13 +1502,13 @@ describe("css tests", () => {
         border-left-color: color(display-p3 .643308 .192455 .167712);
         border-left-color: lab(40% 56.6 39);
         border-right-color: #ee00be;
-        border-right-color: color(display-p3 .972961 -.362078 .804206);
+        border-right-color: color(display-p3 .972962 -.362078 .804206);
         border-right-color: lch(50.998% 135.363 338);
       }
 
       .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
         border-left-color: #ee00be;
-        border-left-color: color(display-p3 .972961 -.362078 .804206);
+        border-left-color: color(display-p3 .972962 -.362078 .804206);
         border-left-color: lch(50.998% 135.363 338);
         border-right-color: #b32323;
         border-right-color: color(display-p3 .643308 .192455 .167712);

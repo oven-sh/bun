@@ -978,23 +978,6 @@ impl Request {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
-    /// Fetch Request constructor step 45.1: the `input` Request's body is
-    /// about to become the new request's body, so it must be usable. Node's
-    /// message, since this is the constructor and not `clone()`.
-    fn throw_if_input_body_unusable(&self, global_this: &JSGlobalObject) -> JsResult<()> {
-        if self.body_is_unusable(global_this) {
-            return Err(global_this
-                .err(
-                    crate::webcore::jsc::ErrorCode::BODY_ALREADY_USED,
-                    format_args!(
-                        "Cannot construct a Request with a Request object that has already been used."
-                    ),
-                )
-                .throw());
-        }
-        Ok(())
-    }
-
     pub(crate) fn construct_into(
         cx: &bun_jsc::JsThread<'_>,
         arguments: &[JSValue],
@@ -1108,15 +1091,24 @@ impl Request {
                 && value_type == bun_jsc::JSType::FinalObject
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
-                // Not `as_direct`: a Bun.serve `routes:` BunRequest and a
-                // `class X extends Request` instance are Requests too.
-                if let Some(request) = value.as_class_ref::<Request>() {
-                    // Spec step 45's transfer applies only when this Request is
-                    // the *input* (arguments[0]); a Request supplied as *init*
-                    // (Bun extension) keeps the non-consuming tee, matching the
-                    // sibling Response-as-init branch below. The input is the
-                    // last slot: `new Request(a, a)` visits `a` as init first.
-                    let is_input = !is_first_argument_a_url && slot + 1 == values_to_try.len();
+                // Spec step 45's transfer applies only when this Request is
+                // the *input* (arguments[0]); a Request supplied as *init*
+                // (Bun extension) keeps the non-consuming tee, matching the
+                // sibling Response-as-init branch below. The input is the
+                // last slot: `new Request(a, a)` visits `a` as init first.
+                let is_input = !is_first_argument_a_url && slot + 1 == values_to_try.len();
+                // The input is matched by class: a Bun.serve `routes:` BunRequest
+                // and a `class X extends Request` instance are Requests too.
+                // Given as init, those two are read through their getters below.
+                let request = if is_input {
+                    value.as_class_ref::<Request>()
+                } else {
+                    // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
+                    value
+                        .as_direct::<Request>()
+                        .map(|request| unsafe { &*request })
+                };
+                if let Some(request) = request {
                     if values_to_try.len() == 1 {
                         match Request::clone_into(
                             request,
@@ -1172,27 +1164,16 @@ impl Request {
                     if !fields.contains(Fields::Body) {
                         match request.body_value() {
                             BodyValue::Null => {}
-                            _ if is_input => {
-                                // Fetch step 36, only where it would otherwise cost the
-                                // input its body: init turned a request with a body into
-                                // GET/HEAD. Node's message.
-                                if init_set_method
-                                    && matches!(req.method, Method::GET | Method::HEAD)
-                                {
-                                    bail!(Err(cx.global().throw_type_error(format_args!(
-                                        "Request with GET/HEAD method cannot have body."
-                                    ))));
-                                }
-                                if let Err(e) = request.throw_if_input_body_unusable(cx.global()) {
-                                    bail!(Err(e));
-                                }
+                            // Init made the request GET/HEAD: the body is copied as
+                            // before, so the input keeps it.
+                            _ if is_input
+                                && !(init_set_method
+                                    && matches!(req.method, Method::GET | Method::HEAD)) =>
+                            {
                                 transfer_input_body = true;
                                 fields.insert(Fields::Body);
                             }
                             _ => {
-                                if let Err(e) = request.throw_if_body_unusable(cx.global()) {
-                                    bail!(Err(e));
-                                }
                                 match request.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
@@ -1241,9 +1222,6 @@ impl Request {
                         match response.get_body_value() {
                             BodyValue::Null => {}
                             _ => {
-                                if let Err(e) = response.throw_if_body_unusable(cx.global()) {
-                                    bail!(Err(e));
-                                }
                                 match response.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
@@ -1259,7 +1237,7 @@ impl Request {
 
             if !fields.contains(Fields::Body) {
                 match value.fast_get(cx.global(), bun_jsc::BuiltinName::Body) {
-                    Ok(Some(body_)) if !body_.is_null() => {
+                    Ok(Some(body_)) => {
                         fields.insert(Fields::Body);
                         // fetch spec Request(init): `keepalive: true` with a ReadableStream
                         // body throws before body extraction (Node's message is "keepalive").
@@ -1281,7 +1259,7 @@ impl Request {
                             Err(e) => bail!(Err(e)),
                         }
                     }
-                    Ok(_) => {}
+                    Ok(None) => {}
                     Err(e) => bail!(Err(e)),
                 }
 
@@ -1464,11 +1442,6 @@ impl Request {
             let input = url_or_object
                 .as_class_ref::<Request>()
                 .expect("arguments[0] matched as a Request in the loop above");
-            // Checked again: the `url` / `signal` reads after the loop's check
-            // can run a getter on the input that locks or reads its body.
-            if let Err(e) = input.throw_if_input_body_unusable(cx.global()) {
-                bail!(Err(e));
-            }
             match input.transfer_body_value(cx) {
                 Ok(v) => *req.body_value_mut() = v,
                 Err(e) => bail!(Err(e)),
@@ -1545,12 +1518,6 @@ impl Request {
         preserve_url: bool,
         body_mode: BodyCloneMode,
     ) -> JsResult<()> {
-        // The fetch-spec usability check for every whole copy of a Request: the
-        // constructor's single-value arm, `clone()`, `server.fetch(request)`.
-        match body_mode {
-            BodyCloneMode::Transfer => self.throw_if_input_body_unusable(cx.global())?,
-            BodyCloneMode::Tee => self.throw_if_body_unusable(cx.global())?,
-        }
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
         // Headers first: a transfer leaves `self` `Used`, so it must be the

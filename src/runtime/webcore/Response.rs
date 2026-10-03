@@ -768,7 +768,6 @@ impl Response {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        this.throw_if_body_unusable(global_this)?;
         let this_value = callframe.this();
         let cloned = this.clone(&global_this.js_thread_of_caller(callframe))?;
 

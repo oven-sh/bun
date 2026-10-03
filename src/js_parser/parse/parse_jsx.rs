@@ -33,13 +33,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut key_prop_i: i32 = -1;
         let mut flags = flags::JSXElementBitset::empty();
         let mut start_tag: Option<ExprNodeIndex> = None;
-        let mut can_be_inlined = false;
 
         // Fragments don't have props
         // Fragments of the form "React.Fragment" are not parsed as fragments.
         if let Some(t) = tag.data.as_expr() {
             start_tag = Some(t);
-            can_be_inlined = p.options.features.jsx_optimization_inline;
 
             let mut spread_loc: bun_ast::Loc = bun_ast::Loc::EMPTY;
             let mut props: Vec<G::Property> = Vec::new();
@@ -88,7 +86,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 },
                             )
                         } else {
-                            can_be_inlined = false;
                             p.parse_jsx_prop_value_identifier(
                                 &mut previous_string_with_backslash_loc,
                             )?
@@ -109,7 +106,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         match p.lexer.token {
                             T::TDotDotDot => {
                                 p.lexer.next()?;
-                                can_be_inlined = false;
 
                                 if first_spread_prop_i == -1 {
                                     first_spread_prop_i = i;
@@ -127,8 +123,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             //  ->
                             //  <div foo={foo} />
                             T::TIdentifier => {
-                                can_be_inlined = false;
-
                                 // we need to figure out what the key they mean is
                                 // to do that, we must determine the key name
                                 let expr = p.parse_expr(Level::Lowest)?;
@@ -307,10 +301,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // The expression is optional, and may be absent
                     if p.lexer.token != T::TCloseBrace {
-                        if can_be_inlined {
-                            can_be_inlined = false;
-                        }
-
                         let mut item = p.parse_expr(Level::Lowest)?;
                         if is_spread {
                             item = p.new_expr(E::Spread { value: item }, loc);

@@ -1,8 +1,6 @@
 use bun_core::String as BunString;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 
-bun_output::declare_scope!(S3Stat, visible);
-
 #[bun_jsc::JsClass]
 pub(crate) struct S3Stat {
     pub(crate) size: u64,

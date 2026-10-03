@@ -3361,7 +3361,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             && anchor.depth == self.depth + 1))
                 {
                     anchor.visited = false;
-                    *event = AliasEvent::Source;
+                    *event = AliasEvent::Source(id);
                 }
             }
         }
@@ -3565,8 +3565,8 @@ enum AliasEvent {
     MergeAlias(usize),
     /// A `<<`, which is a scalar written in the node but not kept in it.
     MergeKey,
-    /// Where the anchor of a source of a `<<` is written in place.
-    Source,
+    /// Where the anchor of a `<<`, or of a source of one that is written in place, is written.
+    Source(usize),
 }
 
 /// A collection node's identity, for pointer comparison.
@@ -3822,7 +3822,36 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 let anchor = &mut counter.anchors[id];
                 if !core::mem::replace(&mut anchor.visited, true) {
                     (anchor.count, anchor.alias_count) = (1.0, 0.0);
-                    let (start, end) = (anchor.start, anchor.end);
+                    let AnchorCount {
+                        node,
+                        depth,
+                        mut start,
+                        end,
+                        ..
+                    } = *anchor;
+                    // A sequence of sources is converted here as any sequence: the anchors of
+                    // its items are defined, and an alias in it is no source.
+                    if let ast::ExprData::EArray(items) = &node.data {
+                        for at in start..end {
+                            if let AliasEvent::Source(item) = counter.events[at]
+                                && counter.anchors[item].depth == depth + 1
+                            {
+                                let item = &mut counter.anchors[item];
+                                (item.count, item.alias_count, item.visited) = (1.0, 0.0, true);
+                            }
+                        }
+                        for item in items.items.slice() {
+                            let AliasCheck::Count(counter) = &self.alias_check else {
+                                break;
+                            };
+                            let Some(site) = counter.alias_site(item) else {
+                                continue;
+                            };
+                            self.replay_alias_events(start, site.event, None)?;
+                            self.apply_alias_event(AliasEvent::Alias(site.anchor), None)?;
+                            start = site.event + 1;
+                        }
+                    }
                     self.replay_alias_events(start, end, None)?;
                 }
                 let AliasCheck::Count(counter) = &mut self.alias_check else {
@@ -3874,7 +3903,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.replay_alias_events(start, end, Some(id))?;
                 }
             }
-            AliasEvent::MergeKey | AliasEvent::Source => {}
+            AliasEvent::MergeKey | AliasEvent::Source(_) => {}
         }
         Ok(())
     }
@@ -3952,6 +3981,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if let AliasCheck::Count(counter) = &mut self.alias_check
             && is_merge_key(key)
         {
+            // Nor is the `<<` itself converted: an anchor on it is left to its first alias too.
+            if let Some(event) = counter.events.last_mut()
+                && let AliasEvent::Define(id) = *event
+                && let anchor = &mut counter.anchors[id]
+                && collection_id(&anchor.node).is_none()
+                && anchor.node.loc.start == key.loc.start
+            {
+                anchor.visited = false;
+                *event = AliasEvent::Source(id);
+            }
             if counter.holds == 0 {
                 counter.held_from = counter.events.len();
             }

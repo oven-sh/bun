@@ -786,6 +786,32 @@ root: &root
           ["a merge key as a scalar", "a: &x {<<: {}}\nb: *x", 2],
           ["a merge source written in place once more at its first alias", "a: &x 1\nb: {<<: &m {k: *x}}\nc: *m", 6],
           ["one written in a list of merge sources likewise", "a: &x 1\nb: {<<: [&m {k: *x}, *m]}", 6],
+          [
+            "the anchors in a list of merge sources anew when the list is aliased",
+            "a: {<<: &s [&d {k: 1}, {j: *d}]}\nb: *s",
+            4,
+          ],
+          [
+            "those anew when the list is a merge source through its alias",
+            "a: {<<: &s [&d {k: 1}]}\nx: *d\ny: *d\nb: {<<: *s}\nc: *d",
+            3,
+          ],
+          [
+            "an alias in such a list as any alias when the list is aliased",
+            "x: &x 1\na: &a {k: *x}\nm: {<<: &s [*a]}\nb: *s\nc: [*x, *x, *x, *x, *x, *x, *x, *x, *x, *x, *x, *x]",
+            15,
+          ],
+          [
+            "the anchor of a merge key from its first alias on",
+            "m: &m {a: 1}\nn: &n\n  &k <<: *m\nx: *k\ny: *k\nz: {<<: *n}\nw: *k\nv: *k\nu: *k",
+            6,
+          ],
+          ["one on a merge key in a flow mapping", "n: &n {&k <<: {a: 1}}\nx: *k\nz: {<<: *n}\nw: *k", 3],
+          [
+            "an anchored scalar before a merge key anew",
+            "m: &m {a: 1}\nn: &n {b: &v <<, <<: *m}\nx: *v\nz: {<<: *n}\nw: *v",
+            4,
+          ],
           ["a mapping that contains the alias", "&a {k: *a}", 2],
           ["what follows a cyclic alias in its collection", "&a [*a, 1]", 2],
           ["each document on its own", "---\na: &x 1\nb: *x\n---\na: &x 1\nb: *x\nc: *x", 3],

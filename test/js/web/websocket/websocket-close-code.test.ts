@@ -3,9 +3,12 @@
 // section 7.4 require of the client. The base received-close-code matrix lives
 // in websocket.test.js ("WebSocket CloseEvent reports the received close
 // code"); this file holds the close() validation and the cases added with it.
+// The last block covers the end of the closing handshake (RFC 6455 section 7.1.1).
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tls } from "harness";
 import crypto from "node:crypto";
 import { createServer, type Socket } from "node:net";
+import path from "node:path";
 
 describe.concurrent("WebSocket close() argument validation", () => {
   // Close codes an RFC 6455 endpoint must never put on the wire. close() has to
@@ -227,4 +230,49 @@ describe.concurrent("WebSocket client and server-sent close frames", () => {
       wasClean: false,
     });
   });
+});
+
+// RFC 6455 §7.1.1: the client lets the server close the TCP connection first,
+// but closes it itself when the server does not do so in a reasonable time.
+describe.concurrent("wss:// closing handshake with a server that never closes the connection", () => {
+  // BUN_CONFIG_WS_CLOSE_TIMEOUT=1: uSockets sweeps every 4 s, so the client
+  // drops the connection after ~4-8 s, hence the 30 s test budget.
+  // The scenarios are described at the top of the fixture.
+  it.each([
+    ["client-closes", "direct"],
+    ["server-closes", "direct"],
+    ["both-close", "direct"],
+    ["client-closes", "http-proxy"],
+    ["client-closes", "https-proxy"],
+  ])(
+    "%s, %s",
+    async (scenario, via) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "websocket-close-timeout-fixture.ts"), scenario, via],
+        env: {
+          ...bunEnv,
+          BUN_CONFIG_WS_CLOSE_TIMEOUT: "1",
+          // An ambient NO_PROXY for 127.0.0.1 also bypasses an explicit proxy.
+          NO_PROXY: "",
+          no_proxy: "",
+          TLS_CERT: tls.cert,
+          TLS_KEY: tls.key,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        close: { code: 1000, wasClean: true },
+        // The client must not answer a Close from the server with a second one.
+        closeFramesFromClient: 1,
+        // The timeout ends the connection with a FIN. A reset drops data that is still in flight
+        // behind the clean close event.
+        fin: true,
+      });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 });

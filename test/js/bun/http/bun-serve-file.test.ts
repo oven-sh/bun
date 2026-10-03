@@ -1485,15 +1485,23 @@ describe("Bun.file body that ends short of its Content-Length", () => {
 
   // One raw GET on its own connection. `closed` settles when the server ends
   // the connection, and `seen` is what arrived until then (`bodyStart` keeps
-  // the first 4096 body bytes). `onBodyStarted` runs once, with the first body
-  // bytes; its `settle` ends the wait when the test cannot go on.
+  // the first 4096 body bytes, `onlyZeros` says whether every body byte was
+  // 0). `onBodyStarted` runs once, with the first body bytes; its `settle`
+  // ends the wait when the test cannot go on.
   function getUntilClosed(
     server: ReturnType<typeof Bun.serve>,
     useTls: boolean,
     pathname: string,
     onBodyStarted: (settle: () => void) => void = () => {},
   ) {
-    const seen = { head: "", contentLength: -1, bodyBytes: 0, bodyStart: "", error: undefined as string | undefined };
+    const seen = {
+      head: "",
+      contentLength: -1,
+      bodyBytes: 0,
+      bodyStart: "",
+      onlyZeros: true,
+      error: undefined as string | undefined,
+    };
     const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
     let waiting = true;
     const settle = () => {
@@ -1536,6 +1544,7 @@ describe("Bun.file body that ends short of its Content-Length", () => {
       }
       const bodyStarted = seen.bodyBytes > 0;
       seen.bodyBytes += chunk.length;
+      seen.onlyZeros &&= chunk.equals(Buffer.alloc(chunk.length));
       if (seen.bodyStart.length < 4096) {
         seen.bodyStart += chunk.toString("latin1", 0, 4096 - seen.bodyStart.length);
       }
@@ -1556,7 +1565,8 @@ describe("Bun.file body that ends short of its Content-Length", () => {
 
   // The server sends until the socket stops taking bytes, so a file that the
   // loopback buffers can hold is sent whole before anything shrinks. This
-  // length is far beyond them. Only the length is set: no bytes are written.
+  // length is far beyond them. Only the length is set: no bytes are written,
+  // and the file reads as zeros.
   const SHRINKING_FILE_SIZE = 256 * 1024 * 1024;
 
   describe.concurrent.each([
@@ -1600,8 +1610,15 @@ describe("Bun.file body that ends short of its Content-Length", () => {
         inFlightWhenShrunk,
         contentLength: seen.contentLength,
         bodyShort: seen.bodyBytes < seen.contentLength,
+        bodyIsFileBytes: seen.onlyZeros,
         error: seen.error,
-      }).toEqual({ inFlightWhenShrunk: true, contentLength: SHRINKING_FILE_SIZE, bodyShort: true, error: undefined });
+      }).toEqual({
+        inFlightWhenShrunk: true,
+        contentLength: SHRINKING_FILE_SIZE,
+        bodyShort: true,
+        bodyIsFileBytes: true,
+        error: undefined,
+      });
     });
   });
 

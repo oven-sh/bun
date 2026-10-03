@@ -136,6 +136,18 @@ Steady state, instructions per call, 51 cases for each JIT tier (`BUN_JSC_useCon
 
 Size: `.text` 58,161,589 to 58,141,365 bytes (-20,224). `.data` and `.bss` do not change.
 
+Memory, as live cells and bytes of the GC heap after a full collection (`heapStats()` of `bun:jsc`; base is the canary 367d939d9, whose code for the creation of `process` is the code of the merge base):
+
+| | base | PR |
+| --- | ---: | ---: |
+| first read of `process` | 57 cells, 4,187 bytes | 48 cells, 3,991 bytes |
+| first `process.on("x", f)` | 0 | 173 cells, 25,544 bytes |
+| then `on` of a signal | 0 | 1 cell, 501 bytes |
+
+The 173 cells are the functions of the module and the code of the ones that ran. A program that loads `node:events` has them on main too. On main the listeners of `process` are in the C++ heap.
+
+Other counts: 12 native host functions removed, 5 added. One internal module added, no builtin function and no builtin name. `rt_sigaction`: 2 calls for the first `on` and the last `off` of a signal, none for a second listener, as on main.
+
 The same methods as builtin functions (an earlier version of this branch, 3916caabd7): the first `process.on()` needs 634,535 instructions. But `--compile --bytecode` has no bytecode for builtin functions: in an app that imports `node:events`, the first `on`, `emit`, `off` needs 1,009,461 (base 233,877) and the 9 other methods 732,183 (base 113,604). It also needs a way for builtins to share state, which is a new mechanism.
 
 #### Related pull requests

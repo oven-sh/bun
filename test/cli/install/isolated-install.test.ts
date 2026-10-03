@@ -2096,8 +2096,12 @@ describe.concurrent("a package whose own package.json disagrees with its registr
       const cwd = String(dir);
       const tmp = join(cwd, ".bun-tmp");
 
-      const summaries: string[] = [];
-      for (const args of [[], [], ["--frozen-lockfile"]]) {
+      const runs = [
+        { args: [], summary: "1 package installed" },
+        { args: [], summary: "(no changes)" },
+        { args: ["--frozen-lockfile"], summary: "(no changes)" },
+      ];
+      for (const { args, summary } of runs) {
         await using proc = spawn({
           cmd: [bunExe(), "install", ...args],
           cwd,
@@ -2107,10 +2111,9 @@ describe.concurrent("a package whose own package.json disagrees with its registr
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).not.toContain("error:");
+        expect(stdout).toContain(summary);
         expect(exitCode).toBe(0);
-        summaries.push(stdout.match(/\d+ packages? installed|no changes/)?.[0] ?? stdout);
       }
-      expect(summaries).toEqual(["1 package installed", "no changes", "no changes"]);
       expect(await file(join(cwd, "node_modules", "dep", "package.json")).json()).toEqual(packageJson);
     });
   }

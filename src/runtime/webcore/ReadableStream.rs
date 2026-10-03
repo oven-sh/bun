@@ -893,10 +893,25 @@ pub struct NewSource<C: SourceContext> {
     pub abort_handle: jsc::AbortHandle,
 }
 
-jsc::impl_abort_handle_owner!([C: SourceContext] NewSource<C>, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live.
-    unsafe { (*this).cancel() }
-});
+jsc::impl_abort_handle_owner!(
+    [C: SourceContext] NewSource<C>,
+    abort_handle,
+    // The wrapper owns this, and its slots root the peers that `cancel` tells. Nothing on the stack
+    // of a context that stops reaches it.
+    keep_alive = |this| -> Option<jsc::EnsureStillAlive> {
+        // SAFETY: trait contract — `this` is live.
+        unsafe { (*this).this_jsvalue.try_get() }.map(jsc::EnsureStillAlive)
+    },
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is live.
+        let this = unsafe { &mut *this };
+        // Collected and not swept yet: so are those peers, and the finalizer releases this.
+        if this.this_jsvalue.try_get().is_none() && !this.this_jsvalue.is_finalized() {
+            return;
+        }
+        this.cancel()
+    }
+);
 
 impl<C: SourceContext + Default> Default for NewSource<C> {
     fn default() -> Self {

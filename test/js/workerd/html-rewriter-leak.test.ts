@@ -1549,8 +1549,7 @@ test.concurrent(
 // one's place).
 test.concurrent("cancelling the output cancels a JS stream input while a collection is in flight", async () => {
   // A collector thread that never stops puts a collection inside that window.
-  // It is too slow for Windows and for debug builds, whose unoptimized frames
-  // keep the cell reachable in any case.
+  // It is too slow for Windows and for debug builds.
   const stress = !isWindows && !isDebug;
   const N = stress ? 100 : 50;
   const code = /* js */ `
@@ -1633,14 +1632,123 @@ test.concurrent("a parked rewrite that dies with its handler promise does not re
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(withoutAsanWarning(stderr)).toBe("");
-  // A crash leaves stdout empty.
-  expect({ stdout, exitCode }).toEqual({
-    stdout: expect.stringMatching(/^\{"rewrites":50,"cancelled":\d+\}$/),
-    exitCode: 0,
+  // A dead stream is not cancelled: nothing is left that could observe it.
+  expect(stdout).toBe(JSON.stringify({ rewrites: 50, cancelled: 0 }));
+  expect(exitCode).toBe(0);
+});
+
+// The handler's promise is collected while script still holds the Response, so
+// the abandon task is queued for a reachable rewrite. Script then drops the
+// Response: when the task runs the transform cell is unreachable, but no
+// collection has found that out. Failing the rewrite allocates, and a collection
+// in there freed the output stream that the error was then written to (a release
+// ASAN build reports a heap-use-after-free in ByteStream::on_data).
+test.concurrent(
+  "a parked rewrite that script drops before it is abandoned keeps its streams while it fails",
+  async () => {
+    const code = /* js */ `
+    const ROUNDS = 20;
+    const encoder = new TextEncoder();
+    const tick = () => new Promise(resolve => setImmediate(resolve));
+    const responses = [];
+    const promises = [];
+    let cancelled = 0;
+    function start() {
+      let controller;
+      const input = new ReadableStream({
+        start: c => void (controller = c),
+        cancel: () => void cancelled++,
+      });
+      const response = new HTMLRewriter()
+        .on("p", {
+          element() {
+            const promise = new Promise(() => {});
+            promises.push(promise);
+            return promise;
+          },
+        })
+        .transform(new Response(input));
+      response.body; // The output stream exists.
+      responses.push(response);
+      controller.enqueue(encoder.encode("<p>x</p>"));
+    }
+    for (let round = 0; round < ROUNDS; round++) {
+      for (let i = 0; i < 4; i++) start();
+      await tick();
+      promises.length = 0;
+      Bun.gc(true);
+      responses.length = 0;
+      await tick();
+    }
+    process.stdout.write(JSON.stringify({ rounds: ROUNDS, cancelledSome: cancelled > 0 }));
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      // A full collection at every 25th slow-path allocation: over the rounds, one lands inside a task.
+      env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "25" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(withoutAsanWarning(stderr)).toBe("");
+    // Some tasks did find their rewrite alive, which is the case under test.
+    expect(stdout).toBe(JSON.stringify({ rounds: 20, cancelledSome: true }));
+    expect(exitCode).toBe(0);
+  },
+);
+
+// dispose() cancels the sources of the streams that the graph's script was given, from native
+// code: nothing on that stack reaches a stream that script has dropped. A collection that
+// finished inside the cancel freed the source under it, and the rewrite that feeds it. After one
+// that had finished before, the cancel went on to the dead input of that rewrite. (Either way a
+// SEGV on a release build, "ASSERTION FAILED: decontaminate()" on a debug one.)
+test.concurrent.each([
+  ["is being collected", 0],
+  ["is collected and waits for its sweep", 1],
+])("disposing a Bun.ModuleGraph whose dropped rewrite %s", async (_, ticks) => {
+  // A file, not -e, as above.
+  using dir = tempDir("hr-dispose-dropped", {
+    "dispose.js": /* js */ `
+      const encoder = new TextEncoder();
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+      const rewrite = input => new HTMLRewriter().on("div", { element() {} }).transform(input);
+      function start(chained) {
+        for (let i = 0; i < 20; i++) {
+          const input = new ReadableStream({ start: c => void c.enqueue(encoder.encode("<div>x")), cancel() {} });
+          const output = rewrite(new Response(input));
+          // The output stream exists, and nothing keeps it.
+          (chained ? rewrite(output) : output).body;
+        }
+      }
+      let disposed = 0;
+      for (const chained of [false, true]) {
+        for (let i = 0; i < 20; i++) {
+          const graph = new Bun.ModuleGraph();
+          graph.run(() => start(chained));
+          await tick();
+          // Not synchronous: it finishes at a later allocation, and sweeps nothing.
+          Bun.gc(false);
+          for (let t = 0; t < ${ticks}; t++) await tick();
+          graph.dispose();
+          disposed++;
+        }
+      }
+      process.stdout.write(JSON.stringify({ disposed }));
+    `,
   });
-  // A dead stream is not cancelled: nothing is left that could observe it. (Unfixed, without a
-  // crash: all 50. The stack can keep a few of the rewrites reachable, and those are cancelled.)
-  expect(JSON.parse(stdout).cancelled).toBeLessThan(50 / 4);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "dispose.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(withoutAsanWarning(stderr)).toBe("");
+  expect(stdout).toBe(JSON.stringify({ disposed: 40 }));
+  expect(exitCode).toBe(0);
 });
 
 // The same for the array of pending onEndTag() callbacks, whose slots are also

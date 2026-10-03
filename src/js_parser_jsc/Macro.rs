@@ -28,7 +28,7 @@ use bun_jsc::virtual_machine::{
 };
 use bun_jsc::{
     self as jsc, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSValue,
-    JsError, ModuleLoader, WebCore,
+    JsError, MarkedArgumentBuffer, ModuleLoader, WebCore,
 };
 use bun_jsc::{BuildMessage, ResolveMessage};
 
@@ -488,7 +488,47 @@ impl Macro {
 
 struct Runner;
 
-type VisitMap = HashMap<JSValue, Expr>;
+mod visit_map {
+    use super::*;
+    use bun_collections::hash_map::GetOrPutResult;
+
+    /// Keyed by cell address. `roots` keeps every key alive so that no address gets reused.
+    pub(crate) struct VisitMap<'a> {
+        exprs: HashMap<JSValue, Expr>,
+        roots: &'a mut MarkedArgumentBuffer,
+    }
+
+    impl<'a> VisitMap<'a> {
+        pub(crate) fn new(roots: &'a mut MarkedArgumentBuffer) -> Self {
+            Self {
+                exprs: HashMap::default(),
+                roots,
+            }
+        }
+
+        pub(crate) fn get(&self, value: &JSValue) -> Option<&Expr> {
+            self.exprs.get(value)
+        }
+
+        pub(crate) fn get_or_put(
+            &mut self,
+            value: JSValue,
+        ) -> Result<GetOrPutResult<'_, Expr>, bun_alloc::AllocError> {
+            let entry = self.exprs.get_or_put(value)?;
+            if !entry.found_existing {
+                self.roots.append(value);
+            }
+            Ok(entry)
+        }
+
+        pub(crate) fn insert(&mut self, value: JSValue, expr: Expr) {
+            if self.exprs.insert(value, expr).is_none() {
+                self.roots.append(value);
+            }
+        }
+    }
+}
+use visit_map::VisitMap;
 
 thread_local! {
     static EXCEPTION_HOLDER: Cell<bool> = const { Cell::new(false) };
@@ -542,7 +582,7 @@ pub(crate) struct Run<'a> {
     pub(crate) bump: &'a bun_alloc::Arena,
     pub(crate) log: &'a mut Log,
     pub(crate) source: &'a Source,
-    pub(crate) visited: VisitMap,
+    pub(crate) visited: VisitMap<'a>,
     pub(crate) is_top_level: bool,
 }
 
@@ -569,20 +609,22 @@ impl<'a> Run<'a> {
                 .unwrap_or_else(|_| global.try_take_exception().unwrap_or_default())
         });
 
-        let mut runner = Run {
-            caller,
-            macro_,
-            global: VirtualMachine::get().global(),
-            bump,
-            log,
-            source,
-            visited: VisitMap::default(),
-            is_top_level: false,
-        };
+        MarkedArgumentBuffer::new(|roots| {
+            let mut runner = Run {
+                caller,
+                macro_,
+                global: VirtualMachine::get().global(),
+                bump,
+                log,
+                source,
+                visited: VisitMap::new(roots),
+                is_top_level: false,
+            };
 
-        // `runner.visited` dropped at scope exit (was `defer runner.visited.deinit(allocator)`)
+            // `runner.visited` dropped at scope exit (was `defer runner.visited.deinit(allocator)`)
 
-        runner.run(result)
+            runner.run(result)
+        })
     }
 
     pub(crate) fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {

@@ -4128,7 +4128,6 @@ pub mod bv2_impl {
                 jsx,
                 source_index: bun_ast::Index::init(source_index.get()),
                 module_type,
-                emit_decorator_metadata: false, // TODO
                 package_version: bun_ast::StoreStr::EMPTY,
                 loader: Some(loader),
                 known_target,

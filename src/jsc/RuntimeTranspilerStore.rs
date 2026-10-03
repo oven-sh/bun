@@ -815,7 +815,7 @@ impl TranspilerJob {
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
             jsx: transpiler.options.jsx.clone(),
-            emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
+            decorator_metadata: transpiler.options.decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,
             use_define_for_class_fields: transpiler.options.use_define_for_class_fields,
             virtual_source: None,

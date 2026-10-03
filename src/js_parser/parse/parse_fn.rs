@@ -286,7 +286,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.lexer.token == T::TColon {
                     p.lexer.next()?;
                     if !rest_arg {
-                        if p.options.features.emit_decorator_metadata
+                        if p.options.features.decorator_metadata.is_on()
                             && opts.allow_ts_decorators
                             && (opts.has_argument_decorators
                                 || opts.has_decorators
@@ -372,7 +372,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == T::TColon {
                 p.lexer.next()?;
 
-                if p.options.features.emit_decorator_metadata
+                if p.options.features.decorator_metadata.is_on()
                     && opts.allow_ts_decorators
                     && (opts.has_argument_decorators || opts.has_decorators)
                 {
@@ -380,7 +380,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else {
                     p.skip_typescript_return_type()?;
                 }
-            } else if p.options.features.emit_decorator_metadata
+            } else if p.options.features.decorator_metadata.is_on()
                 && opts.allow_ts_decorators
                 && (opts.has_argument_decorators || opts.has_decorators)
             {

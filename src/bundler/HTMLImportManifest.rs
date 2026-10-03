@@ -83,6 +83,13 @@ fn write_entry_item<W: Write + ?Sized>(
     loader: Loader,
     kind: OutputKind,
 ) -> Result<(), crate::Error> {
+    // An emitted `url` asset behaved exactly like `file`; report it as `file`
+    // to keep the manifest's loader vocabulary stable.
+    let loader = if loader == Loader::Url {
+        Loader::File
+    } else {
+        loader
+    };
     writer.write_all(b"{")?;
 
     if !input.is_empty() {

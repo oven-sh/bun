@@ -1812,6 +1812,7 @@ impl<'a> Transpiler<'a> {
             }
             options::Loader::Css => {}
             options::Loader::File
+            | options::Loader::Url
             | options::Loader::Napi
             | options::Loader::Base64
             | options::Loader::Dataurl
@@ -3024,6 +3025,7 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Sqlite
             | options::Loader::Wasm
             | options::Loader::File
+            | options::Loader::Url
             | options::Loader::Napi => {
                 output_file.value = self.build_copied_file_output(file_path_text, file_path_ext)?;
             }

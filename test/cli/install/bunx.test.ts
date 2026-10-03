@@ -1,8 +1,8 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
+import { chmodSync, copyFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -1202,27 +1202,26 @@ console.log(JSON.stringify({ ran: name + "@" + version, BUN_OPTIONS, BUN_INTERNA
 
   // Makes `<pkg>@<version>` the only version of `pkg` on the mock registry.
   async function publish(pkg: string, version: string, manifest: object = {}, files: Record<string, string> = {}) {
-    const root = tmpdirSync();
-    const dir = join(root, "package");
-    await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "package.json"), JSON.stringify({ name: pkg, version, bin: "cli.js", ...manifest }));
-    for (const [file, contents] of Object.entries({ "cli.js": cli, ...files })) {
-      await writeFile(join(dir, file), contents);
-    }
-    await Bun.$`tar -czf ${join(tgzDir, `${pkg}-${version}.tgz`)} -C ${root} package`;
-    handlers.set(
-      pkg,
-      dummyRegistry([], { [version]: { bin: { [pkg]: "cli.js" }, ...manifest, as: version } }, 0, tgzDir),
-    );
+    using root = tempDir("bun-options-package", {
+      package: {
+        "package.json": JSON.stringify({ name: pkg, version, bin: "cli.js", ...manifest }),
+        "cli.js": cli,
+        ...files,
+      },
+    });
+    await Bun.$`tar -czf ${join(tgzDir, `${pkg}-${version}.tgz`)} -C ${String(root)} package`;
+    // bun trusts a name from its default list only when the tarball is at this URL.
+    const dist = { tarball: `${registry}${pkg}/-/${pkg}-${version}.tgz` };
+    handlers.set(pkg, dummyRegistry([], { [version]: { bin: { [pkg]: "cli.js" }, ...manifest, dist } }, 0, tgzDir));
   }
 
   beforeAll(async () => {
     dummyBeforeAll();
     registry = `http://localhost:${getPort()}/`;
-    tgzDir = tmpdirSync();
+    tgzDir = String(tempDir("bun-options-tarballs", {}));
     setHandler(request => {
-      // "/<pkg>" is the manifest and "/<pkg>-<version>.tgz" is the tarball.
-      const pkg = new URL(request.url).pathname.slice(1).replace(/-\d+\.\d+\.\d+\.tgz$/, "");
+      // "/<pkg>" is the manifest and "/<pkg>/-/<pkg>-<version>.tgz" is the tarball.
+      const [pkg] = new URL(request.url).pathname.slice(1).split("/");
       return handlers.get(pkg)?.(request) ?? new Response("{}", { status: 404 });
     });
     await Promise.all([
@@ -1230,7 +1229,7 @@ console.log(JSON.stringify({ ran: name + "@" + version, BUN_OPTIONS, BUN_INTERNA
       publish(`create-${name}`, "1.0.0"),
       publish("bunx-package-probe", "1.0.0", { bin: { "probe-bin": "cli.js" } }),
       publish("bunx-latest-probe", "1.0.0"),
-      // bun trusts the name `esbuild` by default, so this postinstall runs.
+      // `esbuild` is on bun's default list of trusted names, so this postinstall runs.
       publish(
         "esbuild",
         "1.0.0",
@@ -1246,32 +1245,27 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
 
   afterAll(() => {
     dummyAfterAll();
+    rmSync(tgzDir, { recursive: true, force: true });
   });
 
   // The directories of one bunx user: a cwd, a bunx cache (in TMPDIR), and a
   // project and a global install directory that bunx has no reason to touch.
-  async function scratch() {
+  function scratch() {
     const { x_dir, env } = setup();
-    const project = tmpdirSync();
-    await writeFile(join(project, "package.json"), projectPackageJson);
-    const global = tmpdirSync();
+    const project = String(tempDir("bun-options-project", { "package.json": projectPackageJson }));
+    const global = String(tempDir("bun-options-global", {}));
     return { x_dir, project, global, env: { ...env, BUN_INSTALL: global, npm_config_registry: registry } };
   }
 
   // A JSON file from the one bunx cache directory in `dirs`, or null.
-  async function fromCache(dirs: Awaited<ReturnType<typeof scratch>>, path: string) {
+  async function fromCache(dirs: ReturnType<typeof scratch>, path: string) {
     const [found] = Array.from(new Bun.Glob(`bunx-*/${path}`).scanSync({ cwd: dirs.env.TMPDIR }));
     return found ? await Bun.file(join(dirs.env.TMPDIR, found)).json() : null;
   }
 
   // Runs `cmd`, which has to install `pkg` before it can run its bin.
   // `<project>` in a value of `vars` stands for the project directory.
-  async function run(
-    dirs: Awaited<ReturnType<typeof scratch>>,
-    pkg: string,
-    cmd: string[],
-    vars: Record<string, string> = {},
-  ) {
+  async function run(dirs: ReturnType<typeof scratch>, pkg: string, cmd: string[], vars: Record<string, string> = {}) {
     const env: Record<string, string> = { ...dirs.env };
     for (const [key, value] of Object.entries(vars)) env[key] = value.replace("<project>", dirs.project);
 
@@ -1313,7 +1307,7 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
     "--filter=foo",
     "-b",
   ])("BUN_OPTIONS=%s does not change where or whether bunx installs", async flag => {
-    const { env, result } = await run(await scratch(), name, [bunExe(), "x", name], { BUN_OPTIONS: flag });
+    const { env, result } = await run(scratch(), name, [bunExe(), "x", name], { BUN_OPTIONS: flag });
     expect(result).toEqual(ranFromCache(name, env.BUN_OPTIONS));
   });
 
@@ -1322,19 +1316,19 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
     ["bun create <template>", `create-${name}`, ["create", name]],
   ])("%s installs into the bunx cache with BUN_OPTIONS=--cwd=<project>", async (_, pkg, args) => {
     const vars = { BUN_OPTIONS: "--cwd=<project>" };
-    const { env, result } = await run(await scratch(), pkg, [bunExe(), ...args], vars);
+    const { env, result } = await run(scratch(), pkg, [bunExe(), ...args], vars);
     expect(result).toEqual(ranFromCache(pkg, env.BUN_OPTIONS));
   });
 
   // Environment variable names are not case-sensitive on Windows.
   it.concurrent.skipIf(!isWindows)("bun_options is BUN_OPTIONS on Windows", async () => {
-    const { env, result } = await run(await scratch(), name, [bunExe(), "x", name], { bun_options: "--cwd=<project>" });
+    const { env, result } = await run(scratch(), name, [bunExe(), "x", name], { bun_options: "--cwd=<project>" });
     expect(result).toEqual(ranFromCache(name, env.bun_options));
   });
 
   it.concurrent("a newer `@latest` replaces the cached version with BUN_OPTIONS=--cwd=<project>", async () => {
     const pkg = "bunx-latest-probe";
-    const dirs = await scratch();
+    const dirs = scratch();
     const first = await run(dirs, pkg, [bunExe(), "x", `${pkg}@latest`]);
     expect(first.result).toEqual(ranFromCache(pkg));
 
@@ -1345,21 +1339,20 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
 
   // https://github.com/oven-sh/bun/issues/39377
   it.concurrent("an executable named bunx installs with BUN_OPTIONS set", async () => {
-    const dirs = await scratch();
+    const dirs = scratch();
     // The install child finds its own path through this name. A symlink would
     // resolve to the real name.
     const bunx = join(dirs.x_dir, isWindows ? "bunx.exe" : "bunx");
     copyFileSync(bunExe(), bunx);
     // If the child takes `add` or `exec` for the name of a package to run, it
     // finds these and stops, and does not spawn a child of its own.
-    const decoys = tmpdirSync();
-    for (const decoy of ["add", "exec"]) {
-      if (isWindows) {
-        await writeFile(join(decoys, `${decoy}.cmd`), `@echo DECOY ${decoy}\r\n`);
-      } else {
-        await writeFile(join(decoys, decoy), `#!/bin/sh\necho DECOY ${decoy}\n`, { mode: 0o755 });
-      }
-    }
+    using decoys = tempDir(
+      "bun-options-decoys",
+      isWindows
+        ? { "add.cmd": "@echo DECOY add\r\n", "exec.cmd": "@echo DECOY exec\r\n" }
+        : { add: "#!/bin/sh\necho DECOY add\n", exec: "#!/bin/sh\necho DECOY exec\n" },
+    );
+    if (!isWindows) for (const decoy of ["add", "exec"]) chmodSync(join(String(decoys), decoy), 0o755);
 
     const vars = { BUN_OPTIONS: "--smol", PATH: `${decoys}${delimiter}${dirs.env.PATH ?? ""}` };
     const { result } = await run(dirs, name, [bunx, name], vars);
@@ -1367,14 +1360,14 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
   });
 
   it.concurrent("the bin does not inherit the marker of the internal install", async () => {
-    const { result } = await run(await scratch(), name, [bunExe(), "x", name]);
+    const { result } = await run(scratch(), name, [bunExe(), "x", name]);
     expect(result).toEqual(ranFromCache(name));
   });
 
   // Install flags are not bunx flags. They do not reach the install through
   // BUN_OPTIONS, as they do not through `bunx <flag> <package>`.
   it.concurrent("BUN_OPTIONS=--dev does not change how the bunx cache records the package", async () => {
-    const dirs = await scratch();
+    const dirs = scratch();
     const { result } = await run(dirs, name, [bunExe(), "x", name], { BUN_OPTIONS: "--dev" });
     expect(result).toEqual(ranFromCache(name, "--dev"));
     expect(await fromCache(dirs, "package.json")).toEqual({ dependencies: { [name]: "^1.0.0" } });
@@ -1391,7 +1384,7 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
     });
 
     const vars = { BUN_OPTIONS: `--registry=${other.url}` };
-    const { result } = await run(await scratch(), name, [bunExe(), "x", name], vars);
+    const { result } = await run(scratch(), name, [bunExe(), "x", name], vars);
     expect(result).toEqual(ranFromCache(name, vars.BUN_OPTIONS));
     expect(requests).toEqual([]);
   });
@@ -1404,7 +1397,7 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
     ["the arguments of `bun create`", `create-${name}`, ["create", "--silent", name], null],
   ])("--silent in %s silences the install", async (_, pkg, args, BUN_OPTIONS) => {
     const vars = BUN_OPTIONS ? { BUN_OPTIONS } : {};
-    const { stderr, result } = await run(await scratch(), pkg, [bunExe(), ...args], vars);
+    const { stderr, result } = await run(scratch(), pkg, [bunExe(), ...args], vars);
     expect(result).toEqual(ranFromCache(pkg, BUN_OPTIONS));
     expect(stderr).toBe("");
   });
@@ -1415,15 +1408,17 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
     ["the arguments of `bun create`", `create-${name}`, ["create", "--verbose", name], null],
   ])("--verbose in %s makes the install verbose", async (_, pkg, args, BUN_OPTIONS) => {
     const vars = BUN_OPTIONS ? { BUN_OPTIONS } : {};
-    const { stderr, result } = await run(await scratch(), pkg, [bunExe(), ...args], vars);
-    expect(result).toEqual(ranFromCache(pkg, BUN_OPTIONS));
+    const { stderr, result } = await run(scratch(), pkg, [bunExe(), ...args], vars);
+    // A verbose install also prints to stdout, before the bin runs.
+    const lastLine = result.stdout.split(/\r?\n/).at(-1);
+    expect({ ...result, stdout: lastLine }).toEqual(ranFromCache(pkg, BUN_OPTIONS));
     expect(stderr).toContain(`GET ${registry}${pkg}`);
   });
 
   // `--bun` makes `node` in the postinstall script a bun process, which reads
   // BUN_OPTIONS whatever machine the test runs on.
   it.concurrent("lifecycle scripts of the install run in the bunx cache and do not see BUN_OPTIONS", async () => {
-    const dirs = await scratch();
+    const dirs = scratch();
     const vars = { BUN_OPTIONS: "--cwd=<project>" };
     const { env, result } = await run(dirs, "esbuild", [bunExe(), "x", "--bun", "esbuild@latest"], vars);
     expect(result).toEqual(ranFromCache("esbuild", env.BUN_OPTIONS));
@@ -1431,7 +1426,7 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
   });
 
   it.concurrent("BUN_OPTIONS=--ignore-scripts does not stop the lifecycle scripts of the install", async () => {
-    const dirs = await scratch();
+    const dirs = scratch();
     const vars = { BUN_OPTIONS: "--ignore-scripts" };
     const { result } = await run(dirs, "esbuild", [bunExe(), "x", "--bun", "esbuild@latest"], vars);
     expect(result).toEqual(ranFromCache("esbuild", vars.BUN_OPTIONS));
@@ -1439,10 +1434,9 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
   });
 
   it.concurrent("ignoreScripts in the global bunfig.toml stops the lifecycle scripts of the install", async () => {
-    const dirs = await scratch();
-    const config = tmpdirSync();
-    await writeFile(join(config, ".bunfig.toml"), "[install]\nignoreScripts = true\n");
-    const vars = { XDG_CONFIG_HOME: config };
+    const dirs = scratch();
+    using config = tempDir("bun-options-config", { ".bunfig.toml": "[install]\nignoreScripts = true\n" });
+    const vars = { XDG_CONFIG_HOME: String(config) };
     const { result } = await run(dirs, "esbuild", [bunExe(), "x", "--bun", "esbuild@latest"], vars);
     expect(result).toEqual(ranFromCache("esbuild"));
     expect(await fromCache(dirs, "node_modules/esbuild/postinstall.json")).toBeNull();

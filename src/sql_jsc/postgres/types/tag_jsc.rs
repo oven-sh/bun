@@ -84,7 +84,8 @@ pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> 
         return Ok(Tag::int4);
     }
 
-    if value.is_any_int() {
+    // Not is_any_int(): JSC's Int52 test rejects 2^51 and up. -0 stays float8 to keep its sign.
+    if value.is_safe_integer() && !value.is_negative_zero() {
         let int = value.to_int64();
         if int >= i64::from(i32::MIN) && int <= i64::from(i32::MAX) {
             return Ok(Tag::int4);

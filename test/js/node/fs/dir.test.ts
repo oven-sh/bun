@@ -1,7 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { tempDir } from "harness";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 function noop() {}
 describe("fs.opendir", () => {
@@ -165,6 +167,64 @@ describe("fs.opendir async validation", () => {
       expect(err?.syscall).toBe("opendir");
     } finally {
       fs.rmSync(file, { force: true });
+    }
+  });
+});
+
+const openers: Record<string, (dirPath: fs.PathLike) => Promise<fs.Dir>> = {
+  "opendirSync": async dirPath => fs.opendirSync(dirPath),
+  "opendir": dirPath => {
+    const { promise, resolve, reject } = Promise.withResolvers<fs.Dir>();
+    fs.opendir(dirPath, (err, dir) => (err ? reject(err) : resolve(dir)));
+    return promise;
+  },
+  "promises.opendir": dirPath => fs.promises.opendir(dirPath),
+};
+
+describe.each(Object.keys(openers))("fs.%s path argument", name => {
+  const open = openers[name];
+
+  it("a file: URL makes Dir.path the path that the URL names", async () => {
+    using root = tempDir("opendir-url", { "sp ace \u00e9": { "entry.txt": "x" } });
+    const dirname = path.join(String(root), "sp ace \u00e9");
+    const dir = await open(pathToFileURL(dirname));
+    try {
+      expect(dir.path).toBe(dirname);
+      const entry = dir.readSync();
+      expect(fs.readFileSync(path.join(dir.path, entry!.name), "utf8")).toBe("x");
+    } finally {
+      dir.closeSync();
+    }
+  });
+
+  it.each([
+    ["ENOTDIR", "file.txt"],
+    ["ENOENT", "missing"],
+  ])("a file: URL reports the same %s as the string path", async (code, basename) => {
+    using root = tempDir("opendir-url-error", { "file.txt": "x" });
+    const target = path.join(String(root), basename);
+    const errorFrom = (dirPath: fs.PathLike) =>
+      open(dirPath).then(
+        dir => {
+          dir.closeSync();
+          throw new Error("opendir did not fail");
+        },
+        err => ({ code: err.code, syscall: err.syscall, path: err.path, message: err.message }),
+      );
+
+    const expected = await errorFrom(target);
+    expect(expected).toMatchObject({ code, syscall: "opendir" });
+    expect(await errorFrom(pathToFileURL(target))).toEqual(expected);
+  });
+
+  it("a Buffer stays the same Buffer in Dir.path", async () => {
+    using root = tempDir("opendir-buffer", {});
+    const buffer = Buffer.from(String(root));
+    const dir = await open(buffer);
+    try {
+      expect<fs.PathLike>(dir.path).toBe(buffer);
+    } finally {
+      dir.closeSync();
     }
   });
 });
